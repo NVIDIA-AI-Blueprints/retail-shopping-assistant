@@ -218,9 +218,9 @@ export RAIL_API_KEY=$NGC_API_KEY
 
 #### Launching
 ```bash
-# Clone the repository
-git clone <repository-url>
-cd shopping-assistant-demo
+# Clone the repository (SSH is assumed here)
+git clone git@github.com:NVIDIA-AI-Blueprints/retail-shopping-assistant.git
+cd retail-shopping-assistant
 
 # Launch the local NIMs
 docker compose -f docker-compose-nim-local.yaml up -d
@@ -235,6 +235,6 @@ Once launched, you can access the solution by navigating to `http://localhost:30
 
 #### Configuration
 
-You can change many important properties such as context length, top_k for vector retrieval, and various prompts within the configuration file in `langgraph/chain_server/app/config.yaml`.
+You can change many important properties such as context length, top_k for vector retrieval, and various prompts within the configuration file in `chain_server/app/config.yaml`.
 
 

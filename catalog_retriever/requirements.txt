@@ -1,0 +1,12 @@
+fastapi
+uvicorn
+openai
+pydantic
+langchain
+langchain-core
+langchain-milvus
+pymilvus
+numpy
+pandas
+requests
+Pillow

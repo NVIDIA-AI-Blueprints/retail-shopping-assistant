@@ -1,0 +1,139 @@
+version: "3.8"
+
+services:
+  # Chain Server - using host networking
+  chain-server:
+    build:
+      context: ./chain_server
+    container_name: chain-server
+    network_mode: "host"
+    environment:
+      - LLM_API_KEY=${LLM_API_KEY}
+      - CATALOG_RETRIEVER_URL=http://localhost:8010
+      - MEMORY_RETRIEVER_URL=http://localhost:8011
+    depends_on:
+      - catalog-retriever
+      - memory-retriever
+      - rails
+
+  # Catalog Retriever
+  catalog-retriever:
+    build:
+      context: ./catalog_retriever
+    container_name: catalog-retriever
+    network_mode: "host"  
+    environment:
+      - EMBED_API_KEY=${EMBED_API_KEY}
+      - MILVUS_HOST=localhost
+      - MILVUS_PORT=19530
+    depends_on:
+      milvus:
+        condition: service_healthy
+
+  # Memory Retriever
+  memory-retriever:
+    build:
+      context: ./memory_retriever
+    container_name: memory-retriever
+    network_mode: "host"  
+    environment:
+      - MILVUS_HOST=localhost
+      - MILVUS_PORT=19530
+    depends_on:
+      milvus:
+        condition: service_healthy
+
+  # Rails
+  rails:
+    build:
+      context: ./guardrails
+    environment:
+      - NVIDIA_API_KEY=${RAIL_API_KEY}
+    container_name: rails
+    network_mode: "host"  
+
+  # Frontend
+  frontend:
+    build:
+      context: ./ui
+    container_name: shopping-frontend
+    network_mode: "host"
+    depends_on:
+      - chain-server
+
+  # etcd - now using host network
+  etcd:
+    container_name: milvus-etcd
+    image: quay.io/coreos/etcd:v3.5.5
+    network_mode: "host"
+    environment:
+      - ETCD_AUTO_COMPACTION_MODE=revision
+      - ETCD_AUTO_COMPACTION_RETENTION=1000
+      - ETCD_QUOTA_BACKEND_BYTES=4294967296
+      - ETCD_SNAPSHOT_COUNT=50000
+    volumes:
+      - ./catalog_retriever/volumes/etcd:/etcd
+    command: [
+      "etcd",
+      "--advertise-client-urls=http://localhost:2379",
+      "--listen-client-urls=http://0.0.0.0:2379",
+      "--data-dir=/etcd"
+    ]
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+
+  # Minio - now using host network
+  minio:
+    container_name: milvus-minio
+    image: minio/minio:RELEASE.2023-03-20T20-16-18Z
+    network_mode: "host"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - ./catalog_retriever/volumes/minio:/minio_data
+    command: minio server /minio_data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+
+  # Milvus - host mode, talking to etcd and minio via localhost
+  milvus:
+    container_name: milvus-standalone
+    image: milvusdb/milvus:v2.4.13-hotfix
+    command: ["milvus", "run", "standalone"]
+    security_opt:
+      - seccomp:unconfined
+    network_mode: "host"
+    environment:
+      ETCD_ENDPOINTS: http://localhost:2379
+      MINIO_ADDRESS: localhost:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      COMMON_STORAGETYPE: local
+    volumes:
+      - ./catalog_retriever/volumes/milvus:/var/lib/milvus
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+    depends_on:
+      etcd:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+
+networks:
+  shopping-network:
+    driver: bridge
+
+
+

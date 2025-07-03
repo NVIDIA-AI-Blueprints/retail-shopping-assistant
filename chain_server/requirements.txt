@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+openai
+requests
+pydantic
+python-dotenv
+pyyaml
+langgraph
+aiohttp
+langchain_nvidia_ai_endpoints
+langchain

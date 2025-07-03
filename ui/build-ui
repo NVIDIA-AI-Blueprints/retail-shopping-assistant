@@ -1,0 +1,4 @@
+#!/bin/bash
+
+docker build -t uitest:28.0 .
+#podman build -t uitest:28.0 .

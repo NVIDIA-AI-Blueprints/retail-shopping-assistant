@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+nemoguardrails==0.13.0
+pydantic
+langchain-nvidia-ai-endpoints
+aiofiles
+openai

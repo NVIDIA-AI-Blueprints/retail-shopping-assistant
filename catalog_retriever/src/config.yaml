@@ -1,0 +1,10 @@
+text_embed_port: "http://localhost:8001/v1"
+text_model_name: "nvidia/nv-embedqa-e5-v5" 
+image_embed_port: "http://localhost:8002/v1"
+image_model_name: nvidia/nvclip"
+db_port: "http://localhost:19530" 
+db_name: "shopping_advisor_db"
+sim_threshold: 0.5
+text_collection: "shopping_advisor_text_db"
+image_collection: "shopping_advisor_image_db"
+data_source: "app/data/products.csv"

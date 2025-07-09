@@ -1,230 +1,208 @@
-# 🛍️ Shopping Assistant API Documentation
+# 📚 Documentation Hub
 
-## 📄 License / Disclaimer
+Welcome to the Retail Shopping Assistant documentation! This hub provides comprehensive guides and references for users, developers, and administrators.
 
-[Add license here]
+## 📋 Quick Navigation
 
-## Overview
+### 🚀 Getting Started
+- **[Main README](../README.md)** - Project overview and quick start
+- **[User Guide](USER_GUIDE.md)** - How to use the application
+- **[Deployment Guide](DEPLOYMENT.md)** - Installation and setup instructions
 
-The Shopping Assistant API provides a comprehensive interface for an AI-powered retail shopping advisor. Built with LangGraph for agent orchestration. 
+### 🔧 Technical Documentation
+- **[API Documentation](API.md)** - Complete API reference
+- **[Architecture Overview](../README.md#architecture)** - System design and components
+- **[Configuration Guide](../README.md#configuration)** - Settings and customization
 
-## 🏗️ Architecture
+### 🛠️ Development & Operations
+- **[Troubleshooting](../README.md#troubleshooting)** - Common issues and solutions
+- **[Customization](../README.md#customization)** - Modifying the application
+- **[Contributing](../README.md#contributing)** - Development guidelines
 
-The API is built on a microservices architecture with the following components:
+## 📖 Documentation Index
 
-- **Chain Server**: Main API server using LangGraph for agent orchestration
-- **Catalog Retriever**: Product search and recommendation service
-- **Memory Retriever**: User context and shopping cart management
-- **Guardrails**: Content safety and moderation service
-- **UI**: React-based frontend for user interaction
+### For End Users
 
-## 📘 Data Models
+| Document | Description | Audience |
+|----------|-------------|----------|
+| [User Guide](USER_GUIDE.md) | Complete guide to using the shopping assistant | End users, customers |
+| [Main README](../README.md#usage-examples) | Quick usage examples and sample prompts | New users |
+| [FAQ](USER_GUIDE.md#faq) | Frequently asked questions | All users |
 
-### `QueryRequest`
+### For Developers
 
-```json
-{
-  "user_id": 123,
-  "query": "Show me red dresses under $100",
-  "image": "base64_encoded_image_data",
-  "context": "Previous conversation context",
-  "cart": {
-    "contents": [
-      {
-        "item": "blue_shirt",
-        "amount": 2
-      }
-    ]
-  },
-  "retrieved": {
-    "product1": "https://example.com/product1.jpg"
-  },
-  "guardrails": true,
-  "image_bool": false
-}
-```
+| Document | Description | Audience |
+|----------|-------------|----------|
+| [API Documentation](API.md) | Complete API reference with examples | Developers, integrators |
+| [Deployment Guide](DEPLOYMENT.md) | Installation and deployment instructions | DevOps, system administrators |
+| [Architecture Overview](../README.md#architecture) | System design and component details | Architects, developers |
+| [Configuration Guide](../README.md#configuration) | Settings and customization options | Developers, administrators |
 
-### `QueryResponse`
+### For Administrators
 
-```json
-{
-  "response": "I found several red dresses under $100 that might interest you...",
-  "images": {
-    "product1": "https://cdn.shop.com/dress1.jpg",
-    "product2": "https://cdn.shop.com/dress2.jpg"
-  },
-  "timings": {
-    "total": 3.48,
-    "planner": 0.12,
-    "retriever": 1.23,
-    "chatter": 2.13
-  }
-}
-```
+| Document | Description | Audience |
+|----------|-------------|----------|
+| [Deployment Guide](DEPLOYMENT.md) | Production deployment instructions | System administrators |
+| [Troubleshooting](../README.md#troubleshooting) | Common issues and solutions | Support teams, administrators |
+| [Monitoring](../README.md#monitoring) | Health checks and monitoring | Operations teams |
+| [Security](../README.md#security) | Security considerations | Security teams |
 
-## 🔄 API Endpoints
+## 🎯 Quick Start Paths
 
-### POST `/query/stream`
+### I'm a New User
+1. **[User Guide](USER_GUIDE.md)** - Learn how to use the application
+2. **[Main README](../README.md)** - Understand what the application does
+3. **[FAQ](USER_GUIDE.md#faq)** - Find answers to common questions
 
-Streams real-time responses back to the client as the shopping assistant generates them.
+### I'm a Developer
+1. **[Main README](../README.md)** - Project overview and architecture
+2. **[API Documentation](API.md)** - Understand the API
+3. **[Deployment Guide](DEPLOYMENT.md)** - Set up development environment
+4. **[Configuration Guide](../README.md#configuration)** - Customize the application
 
-**Request Body**: `QueryRequest`
+### I'm Deploying to Production
+1. **[Deployment Guide](DEPLOYMENT.md)** - Production deployment instructions
+2. **[Architecture Overview](../README.md#architecture)** - Understand system requirements
+3. **[Troubleshooting](../README.md#troubleshooting)** - Common deployment issues
+4. **[Monitoring](../README.md#monitoring)** - Set up monitoring and alerts
 
-**Response**: Server-Sent Events (SSE) stream
+## 🔍 Search Documentation
 
-**Example**:
-```bash
-curl -X POST "http://localhost:8000/query/stream" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "user_id": 123,
-    "query": "Show me red dresses under $100"
-  }'
-```
+### By Topic
 
-**Streaming Response**:
-```
-data: {"type": "images", "payload": {"product1": "https://..."}, "timestamp": 1716400000.0}
+#### Product Search
+- [User Guide - Product Search](USER_GUIDE.md#product-search)
+- [API - Product Search Examples](API.md#product-search)
+- [Main README - Usage Examples](../README.md#usage-examples)
 
-data: {"type": "content", "payload": "I found several red dresses...", "timestamp": 1716400001.2}
+#### Shopping Cart
+- [User Guide - Shopping Cart Management](USER_GUIDE.md#shopping-cart-management)
+- [API - Cart Operations](API.md#shopping-cart-operations)
+- [Data Models - Cart](API.md#cart)
 
-data: {"type": "content", "payload": " that might interest you...", "timestamp": 1716400001.5}
+#### Image Upload
+- [User Guide - Image Upload Feature](USER_GUIDE.md#image-upload-feature)
+- [API - Image-based Search](API.md#image-based-search)
+- [Troubleshooting - Image Issues](USER_GUIDE.md#image-upload-fails)
 
-data: [DONE]
-```
-
-### POST `/query/timing`
-
-Processes a query and returns detailed timing information for performance analysis.
-
-**Request Body**: `QueryRequest`
-
-**Response**: `QueryResponse` with detailed timing breakdown
-
-### GET `/health`
-
-Health check endpoint.
-
-**Response**:
-```json
-{
-  "status": "healthy",
-  "timestamp": 1716400000.0,
-  "version": "1.0.0"
-}
-```
-
-### GET `/`
-
-Root endpoint with API information.
-
-**Response**:
-```json
-{
-  "message": "Shopping Assistant API",
-  "version": "1.0.0",
-  "endpoints": {
-    "query": "/query",
-    "stream": "/query/stream",
-    "timing": "/query/timing",
-    "health": "/health",
-    "docs": "/docs"
-  }
-}
-```
-
-## 🎯 Agent Types
-
-The shopping assistant uses specialized agents for different tasks:
-
-### Planner Agent
-- **Purpose**: Routes user queries to appropriate specialized agents
-- **Input**: User query and context
-- **Output**: Next agent to handle the query
-
-### Cart Agent
-- **Purpose**: Manages shopping cart operations
-- **Capabilities**: Add/remove items, view cart contents
-- **Tools**: `add_to_cart`, `remove_from_cart`, `view_cart`
-
-### Retriever Agent
-- **Purpose**: Searches and retrieves product information
-- **Capabilities**: Product search, image-based search, recommendations
-- **Input**: Text queries or images
-
-### Visualizer Agent
-- **Purpose**: Generates visual content and visualizations
-- **Capabilities**: Product visualization, scene generation
-- **Use Cases**: "What would this look like in my room?"
-
-### Chatter Agent
-- **Purpose**: Generates natural language responses
-- **Capabilities**: Conversational responses, context-aware replies
-- **Features**: Streaming response generation
-
-### Summary Agent
-- **Purpose**: Summarizes and finalizes responses
-- **Capabilities**: Response refinement, context summarization
-
-## 🔒 Content Safety
-
-The API includes built-in content safety through guardrails:
-
-- **Input Safety**: Checks user queries for inappropriate content
-- **Output Safety**: Validates generated responses
-- **Fallback**: Returns safe default messages for flagged content
-
-## ⚡ Performance
-
-The API provides detailed timing information:
-
-- **Total Time**: Complete request processing time
-- **Agent Timings**: Individual agent processing times
-- **Memory Access**: Context and cart retrieval time
-- **Safety Checks**: Guardrails processing time
-
-## 🚀 Getting Started
-
-### Prerequisites
-- Python 3.12+
-- Docker and Docker Compose
-- NVIDIA AI Endpoints access (for LLM)
-
-### Quick Start
-
-#### Environment Variables
-You will need to set the nim cache directory and set a number of API keys to pull down the required NIM containers. Note that there are many keys here in case a user wants to use other OpenAI API compliant models for specific tasks, but a single NVIDIA NGC key will work if you are not using different services. In the below code block you can simply replace the NGC_API_KEY with your key, and the rest will be automatically filled in the same way.
-```bash
-# Set the NIM cache.
-export LOCAL_NIM_CACHE=~/.cache/nim
-mkdir -p "$LOCAL_NIM_CACHE"
-chmod a+w "$LOCAL_NIM_CACHE"
-
-export NGC_API_KEY=[YOUR API KEY]
-export LLM_API_KEY=$NGC_API_KEY
-export EMBED_API_KEY=$NGC_API_KEY
-export RAIL_API_KEY=$NGC_API_KEY
-```
-
-#### Launching
-```bash
-# Clone the repository
-git clone <repository-url>
-cd shopping-assistant-demo
-
-# Launch the local NIMs
-docker compose -f docker-compose-nim-local.yaml up -d
-
-# Build and launch the service-containters.
-docker compose -f docker-compose.yaml up -d --build
-```
-
-#### Accessing
-
-Once launched, you can access the solution by navigating to `http://localhost:3000`.
+#### Deployment
+- [Deployment Guide - Local Deployment](DEPLOYMENT.md#local-deployment)
+- [Deployment Guide - Cloud Deployment](DEPLOYMENT.md#cloud-deployment)
+- [Deployment Guide - Production Deployment](DEPLOYMENT.md#production-deployment)
 
 #### Configuration
+- [Main README - Configuration](../README.md#configuration)
+- [Deployment Guide - Configuration](DEPLOYMENT.md#configuration)
+- [API - Environment Variables](API.md#environment-variables)
 
-You can change many important properties such as context length, top_k for vector retrieval, and various prompts within the configuration file in `langgraph/chain_server/app/config.yaml`.
+#### Troubleshooting
+- [Main README - Troubleshooting](../README.md#troubleshooting)
+- [User Guide - Troubleshooting](USER_GUIDE.md#troubleshooting)
+- [Deployment Guide - Troubleshooting](DEPLOYMENT.md#troubleshooting)
+
+### By Issue Type
+
+#### Performance Issues
+- [Deployment Guide - Performance Tuning](DEPLOYMENT.md#performance-tuning)
+- [User Guide - Performance Issues](USER_GUIDE.md#performance-issues)
+- [Main README - Limitations](../README.md#limitations)
+
+#### Authentication Issues
+- [Deployment Guide - Authentication Issues](DEPLOYMENT.md#authentication-issues)
+- [API - Authentication](API.md#authentication)
+- [Main README - Prerequisites](../README.md#prerequisites)
+
+#### Service Failures
+- [Deployment Guide - Service Startup Failures](DEPLOYMENT.md#service-startup-failures)
+- [Main README - Troubleshooting](../README.md#troubleshooting)
+- [Deployment Guide - Recovery Procedures](DEPLOYMENT.md#recovery-procedures)
+
+## 📝 Documentation Standards
+
+### Writing Guidelines
+
+- **Clear and concise** - Use simple, direct language
+- **Step-by-step instructions** - Break complex processes into numbered steps
+- **Examples** - Include practical examples for all features
+- **Cross-references** - Link related documentation sections
+- **Consistent formatting** - Use consistent headers, code blocks, and tables
+
+### Code Examples
+
+- **Multiple languages** - Provide examples in relevant languages (bash, Python, TypeScript)
+- **Complete examples** - Include full, runnable code snippets
+- **Error handling** - Show proper error handling in examples
+- **Best practices** - Follow language-specific best practices
+
+### Visual Elements
+
+- **Diagrams** - Use Mermaid diagrams for architecture and flows
+- **Screenshots** - Include relevant screenshots for UI features
+- **Tables** - Use tables for structured information
+- **Icons** - Use emojis and icons for visual organization
+
+## 🔄 Keeping Documentation Updated
+
+### Documentation Maintenance
+
+- **Regular reviews** - Review documentation monthly
+- **Version updates** - Update docs when features change
+- **User feedback** - Incorporate user questions and feedback
+- **Link validation** - Check and fix broken links regularly
+
+### Contributing to Documentation
+
+1. **Fork the repository**
+2. **Create a feature branch**
+3. **Make your changes**
+4. **Update related documentation**
+5. **Submit a pull request**
+
+### Documentation Structure
+
+```
+docs/
+├── README.md           # This documentation hub
+├── API.md             # API reference
+├── DEPLOYMENT.md      # Deployment guide
+├── USER_GUIDE.md      # User guide
+└── assets/            # Images and diagrams
+```
+
+## 🆘 Getting Help
+
+### Documentation Issues
+
+If you find issues with the documentation:
+
+1. **Check for updates** - The documentation may have been updated
+2. **Search existing issues** - Look for similar issues in the repository
+3. **Create an issue** - Report documentation problems with specific details
+4. **Suggest improvements** - Propose better explanations or examples
+
+### Technical Support
+
+For technical issues not covered in the documentation:
+
+- **GitHub Issues** - Report bugs and feature requests
+- **GitHub Discussions** - Ask questions and share ideas
+- **Community** - Connect with other users and developers
+
+### Feedback
+
+We welcome feedback on the documentation:
+
+- **Clarity** - Is the documentation clear and easy to understand?
+- **Completeness** - Are all features and use cases covered?
+- **Accuracy** - Is the information correct and up-to-date?
+- **Organization** - Is the documentation well-structured and easy to navigate?
+
+---
+
+**Last Updated**: January 2024  
+**Version**: 1.0.0  
+**Maintainer**: NVIDIA AI Blueprints Team
+
+For the latest updates, check the [GitHub repository](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant).
 
 

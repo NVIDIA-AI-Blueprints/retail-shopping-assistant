@@ -1,240 +1,134 @@
-<h2><img align="center" src="https://github.com/user-attachments/assets/cbe0d62f-c856-4e0b-b3ee-6184b7c4d96f">NVIDIA Developer Example: Retail Shopping Assistant</h2>
+# 🛍️ NVIDIA AI Blueprint: Retail Shopping Assistant
 
-## 📄 License / Disclaimer
+<div align="center">
 
-[Add license here]
+![NVIDIA Logo](https://github.com/user-attachments/assets/cbe0d62f-c856-4e0b-b3ee-6184b7c4d96f)
+
+**AI-powered retail shopping assistant with multi-agent architecture**
+
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.12+-blue.svg)](https://www.python.org/)
+[![Docker](https://img.shields.io/badge/Docker-Required-blue.svg)](https://www.docker.com/)
+
+</div>
 
 ## Overview
 
-The Shopping Assistant API provides a comprehensive interface for an AI-powered retail shopping advisor. Built with LangGraph for agent orchestration. 
+The Retail Shopping Assistant is an AI-powered blueprint that provides a comprehensive interface for an intelligent retail shopping advisor. Built with LangGraph for agent orchestration, it features multi-agent architecture, real-time streaming responses, image-based search, and intelligent shopping cart management.
 
-## 🏗️ Architecture
+### Key Features
 
-The API is built on a microservices architecture with the following components:
+- 🤖 **Intelligent Product Search**: Find products using natural language or images
+- 🛒 **Smart Cart Management**: Add, remove, and manage shopping cart items
+- 🖼️ **Visual Search**: Upload images to find similar products
+- 💬 **Conversational AI**: Natural language interactions
+- 🔒 **Content Safety**: Built-in moderation and safety checks
+- ⚡ **Real-time Streaming**: Live response generation
+- 📱 **Responsive UI**: Modern, mobile-friendly interface
 
-- **Chain Server**: Main API server using LangGraph for agent orchestration
-- **Catalog Retriever**: Product search and recommendation service
-- **Memory Retriever**: User context and shopping cart management
-- **Guardrails**: Content safety and moderation service
-- **UI**: React-based frontend for user interaction
+### Architecture
 
-### Software Components
-- [Llama 3.1 70B Instruct NIM](https://catalog.ngc.nvidia.com/orgs/nim/teams/meta/containers/llama-3.1-70b-instruct)
-- [Llama 3.1 NemoGuard 8B - Content Safety](https://catalog.ngc.nvidia.com/orgs/nim/teams/nvidia/containers/llama-3.1-nemoguard-8b-content-safety)
-- [Llama 3.1 NemoGuard 8B - Topic Control](https://catalog.ngc.nvidia.com/orgs/nim/teams/nvidia/containers/llama-3.1-nemoguard-8b-topic-control)
-- [NVIDIA Retrieval QA E5 Embedding v5 ](https://catalog.ngc.nvidia.com/orgs/nim/teams/nvidia/containers/nv-embedqa-e5-v5)
-- [NV-CLIP](https://catalog.ngc.nvidia.com/orgs/nim/teams/nvidia/containers/nvclip)
+The application follows a microservices architecture with specialized agents for different tasks:
+- **Chain Server**: Main API with LangGraph orchestration
+- **Catalog Retriever**: Product search and recommendations
+- **Memory Retriever**: User context and cart management
+- **Guardrails**: Content safety and moderation
+- **UI**: React-based frontend interface
 
-#### Hardware Requirements
-- 4xH100
+For detailed architecture information, see [Architecture Overview](docs/README.md#architecture-overview).
 
-## 📘 Data Models
-
-### `QueryRequest`
-
-```json
-{
-  "user_id": 123,
-  "query": "Show me red dresses under $100",
-  "image": "base64_encoded_image_data",
-  "context": "Previous conversation context",
-  "cart": {
-    "contents": [
-      {
-        "item": "blue_shirt",
-        "amount": 2
-      }
-    ]
-  },
-  "retrieved": {
-    "product1": "https://example.com/product1.jpg"
-  },
-  "guardrails": true,
-  "image_bool": false
-}
-```
-
-### `QueryResponse`
-
-```json
-{
-  "response": "I found several red dresses under $100 that might interest you...",
-  "images": {
-    "product1": "https://cdn.shop.com/dress1.jpg",
-    "product2": "https://cdn.shop.com/dress2.jpg"
-  },
-  "timings": {
-    "total": 3.48,
-    "planner": 0.12,
-    "retriever": 1.23,
-    "chatter": 2.13
-  }
-}
-```
-
-## 🔄 API Endpoints
-
-### POST `/query/stream`
-
-Streams real-time responses back to the client as the shopping assistant generates them.
-
-**Request Body**: `QueryRequest`
-
-**Response**: Server-Sent Events (SSE) stream
-
-**Example**:
-```bash
-curl -X POST "http://localhost:8000/query/stream" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "user_id": 123,
-    "query": "Show me red dresses under $100"
-  }'
-```
-
-**Streaming Response**:
-```
-data: {"type": "images", "payload": {"product1": "https://..."}, "timestamp": 1716400000.0}
-
-data: {"type": "content", "payload": "I found several red dresses...", "timestamp": 1716400001.2}
-
-data: {"type": "content", "payload": " that might interest you...", "timestamp": 1716400001.5}
-
-data: [DONE]
-```
-
-### POST `/query/timing`
-
-Processes a query and returns detailed timing information for performance analysis.
-
-**Request Body**: `QueryRequest`
-
-**Response**: `QueryResponse` with detailed timing breakdown
-
-### GET `/health`
-
-Health check endpoint.
-
-**Response**:
-```json
-{
-  "status": "healthy",
-  "timestamp": 1716400000.0,
-  "version": "1.0.0"
-}
-```
-
-### GET `/`
-
-Root endpoint with API information.
-
-**Response**:
-```json
-{
-  "message": "Shopping Assistant API",
-  "version": "1.0.0",
-  "endpoints": {
-    "query": "/query",
-    "stream": "/query/stream",
-    "timing": "/query/timing",
-    "health": "/health",
-    "docs": "/docs"
-  }
-}
-```
-
-## 🎯 Agent Types
-
-The shopping assistant uses specialized agents for different tasks:
-
-### Planner Agent
-- **Purpose**: Routes user queries to appropriate specialized agents
-- **Input**: User query and context
-- **Output**: Next agent to handle the query
-
-### Cart Agent
-- **Purpose**: Manages shopping cart operations
-- **Capabilities**: Add/remove items, view cart contents
-- **Tools**: `add_to_cart`, `remove_from_cart`, `view_cart`
-
-### Retriever Agent
-- **Purpose**: Searches and retrieves product information
-- **Capabilities**: Product search, image-based search, recommendations
-- **Input**: Text queries or images
-
-### Visualizer Agent
-- **Purpose**: Generates visual content and visualizations
-- **Capabilities**: Product visualization, scene generation
-- **Use Cases**: "What would this look like in my room?"
-
-### Chatter Agent
-- **Purpose**: Generates natural language responses
-- **Capabilities**: Conversational responses, context-aware replies
-- **Features**: Streaming response generation
-
-### Summary Agent
-- **Purpose**: Summarizes and finalizes responses
-- **Capabilities**: Response refinement, context summarization
-
-## 🔒 Content Safety
-
-The API includes built-in content safety through guardrails:
-
-- **Input Safety**: Checks user queries for inappropriate content
-- **Output Safety**: Validates generated responses
-- **Fallback**: Returns safe default messages for flagged content
-
-## ⚡ Performance
-
-The API provides detailed timing information:
-
-- **Total Time**: Complete request processing time
-- **Agent Timings**: Individual agent processing times
-- **Memory Access**: Context and cart retrieval time
-- **Safety Checks**: Guardrails processing time
-
-## 🚀 Getting Started
+## Get Started
 
 ### Prerequisites
-- Python 3.12+
-- Docker and Docker Compose
-- NVIDIA AI Endpoints access (for LLM)
+
+- **Docker**: Version 20.10+ with Docker Compose plugin
+- **NVIDIA NGC Account**: For API access ([Get API Key](https://ngc.nvidia.com/))
+- **Hardware**: 4x H100 GPUs (for local deployment) or cloud access
 
 ### Quick Start
 
-#### Environment Variables
-You will need to set the nim cache directory and set a number of API keys to pull down the required NIM containers. Note that there are many keys here in case a user wants to use other OpenAI API compliant models for specific tasks, but a single NVIDIA NGC key will work if you are not using different services. In the below code block you can simply replace the NGC_API_KEY with your key, and the rest will be automatically filled in the same way.
-```bash
-# Set the NIM cache.
-export LOCAL_NIM_CACHE=~/.cache/nim
-mkdir -p "$LOCAL_NIM_CACHE"
-chmod a+w "$LOCAL_NIM_CACHE"
+1. **Clone the repository**:
+   ```bash
+   git clone https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant.git
+   cd retail-shopping-assistant
+   ```
 
-export NGC_API_KEY=[YOUR API KEY]
-export LLM_API_KEY=$NGC_API_KEY
-export EMBED_API_KEY=$NGC_API_KEY
-export RAIL_API_KEY=$NGC_API_KEY
-```
+2. **Set up environment**:
+   ```bash
+   export NGC_API_KEY=your_nvapi_key_here
+   export LLM_API_KEY=$NGC_API_KEY
+   export EMBED_API_KEY=$NGC_API_KEY
+   export RAIL_API_KEY=$NGC_API_KEY
+   export LOCAL_NIM_CACHE=~/.cache/nim
+   mkdir -p "$LOCAL_NIM_CACHE"
+   chmod a+w "$LOCAL_NIM_CACHE"
+   ```
 
-#### Launching
-```bash
-# Clone the repository (SSH is assumed here)
-git clone git@github.com:NVIDIA-AI-Blueprints/retail-shopping-assistant.git
-cd retail-shopping-assistant
+3. **Launch the application**:
+   ```bash
+   # Start local NIMs (requires 4x H100 GPUs)
+   docker compose -f docker-compose-nim-local.yaml up -d
+   
+   # Build and launch the application
+   docker compose -f docker-compose.yaml up -d --build
+   ```
 
-# Launch the local NIMs
-docker compose -f docker-compose-nim-local.yaml up -d
+4. **Access the application**: Open your browser to `http://localhost:3000`
 
-# Build and launch the service-containters.
-docker compose -f docker-compose.yaml up -d --build
-```
+For detailed installation instructions, see [Deployment Guide](docs/DEPLOYMENT.md).
 
-#### Accessing
+## Documentation
 
-Once launched, you can access the solution by navigating to `http://localhost:3000`.
+- **[User Guide](docs/USER_GUIDE.md)**: How to use the application
+- **[API Documentation](docs/API.md)**: Complete API reference
+- **[Deployment Guide](docs/DEPLOYMENT.md)**: Installation and setup instructions
+- **[Documentation Hub](docs/README.md)**: Complete documentation index
 
-#### Configuration
+## Contribution Guidelines
 
-You can change many important properties such as context length, top_k for vector retrieval, and various prompts within the configuration file in `chain_server/app/config.yaml`.
+We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details on:
+
+- Development setup and environment configuration
+- Coding standards and best practices
+- Testing guidelines and examples
+- Pull request process and code review guidelines
+
+## Community
+
+- **GitHub Issues**: [Report bugs and feature requests](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/issues)
+- **GitHub Discussions**: [Ask questions and share ideas](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/discussions)
+- **Documentation**: [Comprehensive guides and references](docs/README.md)
+
+## References
+
+### NVIDIA AI Blueprints
+- [NVIDIA AI Blueprints](https://github.com/NVIDIA-AI-Blueprints): Collection of AI application blueprints
+- [NVIDIA NIM](https://catalog.ngc.nvidia.com/orgs/nim): Containerized AI models
+- [NVIDIA NGC](https://ngc.nvidia.com/): AI platform and container registry
+
+### Technologies Used
+- [LangGraph](https://github.com/langchain-ai/langgraph): Agent orchestration framework
+- [FastAPI](https://fastapi.tiangolo.com/): Modern Python web framework
+- [React](https://reactjs.org/): JavaScript library for building user interfaces
+- [Milvus](https://milvus.io/): Vector database for similarity search
+
+### Related Projects
+- [NVIDIA Retrieval QA](https://catalog.ngc.nvidia.com/orgs/nim/teams/nvidia/containers/nv-embedqa-e5-v5): Embedding model for semantic search
+- [NV-CLIP](https://catalog.ngc.nvidia.com/orgs/nim/teams/nvidia/containers/nvclip): Visual understanding model
+- [Llama 3.1](https://catalog.ngc.nvidia.com/orgs/nim/teams/meta/containers/llama-3.1-70b-instruct): Large language model
+
+## License
+
+This project is licensed under the Apache 2.0 License - see the [LICENSE](LICENSE) file for details.
+
+---
+
+<div align="center">
+
+**Built with ❤️ by NVIDIA AI Blueprints**
+
+[Back to Top](#nvidia-ai-blueprint-retail-shopping-assistant)
+
+</div>
 
 

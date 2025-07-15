@@ -342,7 +342,7 @@ class Retriever:
 
             all_results = await asyncio.to_thread(self.text_db.similarity_search_with_relevance_scores, local_query, k=k)
 
-        final_texts = [res[0].page_content for res in all_results]
+        final_texts = [res[0].page_content+f"\nPRICE: {res[0].metadata['price']}" for res in all_results]
         final_ids = [str(res[0].metadata["pk"]) for res in all_results]
         final_sims = [res[1] for res in all_results]
         final_names = [res[0].metadata['name'] for res in all_results]

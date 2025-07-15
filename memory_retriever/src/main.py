@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from sqlalchemy import Column, Integer, String, create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
+import time
 
 DATABASE_URL = "sqlite:///./context.db"
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
@@ -40,7 +41,7 @@ def get_db():
         db.close()
 
 @app.get("/user/{user_id}")
-def get_user(user_id: int):
+async def get_user(user_id: int):
     db = SessionLocal()
     user = db.query(User).filter(User.id == user_id).first()
     cart_items = db.query(CartItem).filter(CartItem.id == user_id).all()
@@ -49,7 +50,7 @@ def get_user(user_id: int):
     return {"id": user.id, "context": user.context, "cart": [{"item": item.item, "amount": item.amount} for item in cart_items]}
 
 @app.get("/user/{user_id}/cart")
-def report_cart(user_id: int):
+async def report_cart(user_id: int):
     db = SessionLocal()
     cart_items = db.query(CartItem).filter(CartItem.user_id == user_id).all()
     if not cart_items:
@@ -64,7 +65,7 @@ def report_cart(user_id: int):
         }
   
 @app.get("/user/{user_id}/context")
-def get_context(user_id: int):
+async def get_context(user_id: int):
     db = SessionLocal()
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
@@ -79,7 +80,7 @@ def get_context(user_id: int):
         }
 
 @app.post("/user/{user_id}/cart/add")
-def add_to_cart(user_id: int, item_update: ItemUpdate):
+async def add_to_cart(user_id: int, item_update: ItemUpdate):
     db = SessionLocal()
     item = item_update.item
     amount = item_update.amount
@@ -92,11 +93,11 @@ def add_to_cart(user_id: int, item_update: ItemUpdate):
     db.commit()
     return {
         "user_id": user_id,
-        "message": f"Added {amount} of '{item}' to cart"
+        "message": f"In response to the user's request, I have dded {amount} of '{item}' to their cart."
         }
 
 @app.post("/user/{user_id}/cart/remove")
-def remove_cart(user_id: int, item_update: ItemUpdate):
+async def remove_cart(user_id: int, item_update: ItemUpdate):
     db = SessionLocal()
     item = item_update.item
     amount = item_update.amount
@@ -110,11 +111,11 @@ def remove_cart(user_id: int, item_update: ItemUpdate):
     db.commit()
     return {
         "user_id": user_id,
-        "message": f"Removed {amount} of '{item}' from cart"
+        "message": f"In response to the user's request, I have removed {amount} of '{item}' from cart."
         }
 
 @app.post("/user/{user_id}/cart/clear")
-def clear_cart(user_id: int):
+async def clear_cart(user_id: int):
     db = SessionLocal()
     cart_items = db.query(CartItem).filter(CartItem.user_id == user_id).all()
     if not cart_items:
@@ -124,11 +125,11 @@ def clear_cart(user_id: int):
     db.commit()
     return {
         "user_id": user_id,
-        "message": f"Cart for user {user_id} has been deleted."
+        "message": f"In response to the user's request, the cart for user {user_id} has been deleted."
         }
 
 @app.post("/user/{user_id}/context/add")
-def add_context(user_id: int, context_update: ContextUpdate):
+async def add_context(user_id: int, context_update: ContextUpdate):
     db = SessionLocal()
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
@@ -143,7 +144,7 @@ def add_context(user_id: int, context_update: ContextUpdate):
         }
 
 @app.post("/user/{user_id}/context/replace")
-def replace_context(user_id: int, context_update: ContextUpdate):
+async def replace_context(user_id: int, context_update: ContextUpdate):
     db = SessionLocal()
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
@@ -158,7 +159,7 @@ def replace_context(user_id: int, context_update: ContextUpdate):
         }
 
 @app.post("/user/{user_id}/context/clear")
-def clear_context(user_id: int):
+async def clear_context(user_id: int):
     db = SessionLocal()
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
@@ -167,11 +168,11 @@ def clear_context(user_id: int):
     db.commit()
     return {
         "user_id": user_id,
-        "message": f"Context for user {user_id} has been deleted."
+        "message": f"In response to the user's request, context for user {user_id} has been deleted."
         }
 
 @app.post("/user/{user_id}/clear")
-def clear_user(user_id: int):
+async def clear_user(user_id: int):
     db = SessionLocal()
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
@@ -180,5 +181,14 @@ def clear_user(user_id: int):
     db.commit()
     return {
         "user_id": user_id,
-        "message": f"Deleted cart and context for user {user_id}"
+        "message": f"In response to the user's request, deleted cart and context for user {user_id}"
         }
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint."""
+    return {
+        "status": "healthy",
+        "timestamp": time.time(),
+        "version": "1.0.0"
+    }

@@ -1,0 +1,8 @@
+models:
+  - type: content_safety
+    parameters:
+      base_url: https://api.build.nvidia.com/v1
+
+  - type: topic_control
+    parameters:
+      base_url: https://api.build.nvidia.com/v1 

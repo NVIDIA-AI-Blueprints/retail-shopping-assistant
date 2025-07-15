@@ -7,7 +7,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the application code and config
-COPY app/ /app/app/
+COPY ./src ./app
 
 # Set environment variables
 ENV PYTHONPATH=/app

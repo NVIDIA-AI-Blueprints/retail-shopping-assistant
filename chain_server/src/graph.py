@@ -4,20 +4,19 @@ LangGraph orchestration for the Shopping Assistant.
 This module defines the topology and flow of the shopping assistant using LangGraph,
 connecting various specialized agents to handle different types of user queries.
 """
-from typing import TypedDict, List, Annotated, Any
+from typing import Any
 import time
 import logging
-import yaml
-import os
 import requests
 import json
 import sys
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.config import get_stream_writer
-from langchain_core.runnables import RunnablePassthrough, RunnableLambda
+from langchain_core.runnables import RunnablePassthrough
 
 from .agenttypes import State, Cart, Rail
+
 
 # Configure logging
 logging.basicConfig(
@@ -28,15 +27,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def load_config() -> dict:
-    """Load configuration from YAML file."""
-    config_path = os.path.join("/app", "app", "config.yaml")
-    with open(config_path, "r") as f:
-        return yaml.safe_load(f)
-
-
-# Load configuration
-config = load_config()
+# Global configuration variable
+_config = None
 
 
 class GraphNodes:
@@ -51,7 +43,7 @@ class GraphNodes:
         try:
             # Retrieve memory from the memory database
             memory_response = requests.get(
-                f"{config['memory_port']}/user/{state.user_id}/context",
+                f"{_config.memory_port}/user/{state.user_id}/context",
                 timeout=10
             )
             memory_response.raise_for_status()
@@ -59,7 +51,7 @@ class GraphNodes:
             
             # Retrieve cart from the memory database
             cart_response = requests.get(
-                f"{config['memory_port']}/user/{state.user_id}/cart",
+                f"{_config.memory_port}/user/{state.user_id}/cart",
                 timeout=10
             )
             cart_response.raise_for_status()
@@ -94,7 +86,7 @@ class GraphNodes:
         
         try:
             response = requests.post(
-                f"{config['rails_port']}/rail/input/check",
+                f"{_config.rails_port}/rail/input/check",
                 json={"user_id": state.user_id, "query": state.query},
                 timeout=10
             )
@@ -126,7 +118,7 @@ class GraphNodes:
         
         try:
             response = requests.post(
-                f"{config['rails_port']}/rail/output/check",
+                f"{_config.rails_port}/rail/output/check",
                 json={"user_id": state.user_id, "query": state.response},
                 timeout=10
             )
@@ -157,7 +149,7 @@ class GraphNodes:
     @staticmethod
     async def unsafe_output(rail: Rail) -> State:
         """Handle unsafe content by returning a safe message."""
-        unsafe_message = config["unsafe_message"]
+        unsafe_message = _config.unsafe_message
         writer = get_stream_writer()
         writer(f"{json.dumps({'type': 'content', 'payload': unsafe_message, 'timestamp': time.time()})}")
         return {"response": unsafe_message}
@@ -182,7 +174,8 @@ def create_graph(
     retriever_agent: Any,
     planner_agent: Any,
     chatter_agent: Any,
-    summary_agent: Any
+    summary_agent: Any,
+    config
 ) -> StateGraph:
     """
     Create the LangGraph for the shopping assistant.
@@ -207,6 +200,10 @@ def create_graph(
         Compiled LangGraph instance
     """
     logger.info("Creating shopping assistant graph")
+    
+    # Set the global config for use throughout the graph
+    global _config
+    _config = config
     
     # Create the graph
     graph = StateGraph(State)

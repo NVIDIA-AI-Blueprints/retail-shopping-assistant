@@ -11,6 +11,7 @@ services:
       - LLM_API_KEY=${LLM_API_KEY}
       - CATALOG_RETRIEVER_URL=http://localhost:8010
       - MEMORY_RETRIEVER_URL=http://localhost:8011
+      - CONFIG_OVERRIDE=${CONFIG_OVERRIDE}
     depends_on:
       - catalog-retriever
       - memory-retriever
@@ -26,6 +27,7 @@ services:
       - EMBED_API_KEY=${EMBED_API_KEY}
       - MILVUS_HOST=localhost
       - MILVUS_PORT=19530
+      - CONFIG_OVERRIDE=${CONFIG_OVERRIDE}
     depends_on:
       milvus:
         condition: service_healthy
@@ -49,6 +51,7 @@ services:
       context: ./guardrails
     environment:
       - NVIDIA_API_KEY=${RAIL_API_KEY}
+      - CONFIG_OVERRIDE=${CONFIG_OVERRIDE}
     container_name: rails
     network_mode: "host"  
 
@@ -134,6 +137,3 @@ services:
 networks:
   shopping-network:
     driver: bridge
-
-
-

@@ -199,6 +199,10 @@ docker compose -f docker-compose-nim-local.yaml ps
 git clone https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant.git
 cd retail-shopping-assistant
 
+# Authenticate with NVIDIA Container Registry
+docker login nvcr.io
+# Use oauthtoken as the username and your NGC API key as the password
+
 # Set environment variables for cloud NIMs
 export NGC_API_KEY=your_nvapi_key_here
 export LLM_API_KEY=$NGC_API_KEY
@@ -338,7 +342,7 @@ docker stack deploy -c docker-compose.prod.yaml retail-assistant
 
 ### Configuration File
 
-The main configuration is in `chain_server/app/config.yaml`:
+The main configuration is in `chain_server/config/config.yaml`:
 
 ```yaml
 # NIM Endpoints
@@ -369,6 +373,200 @@ routing_prompt: |
 
 chatter_prompt: |
   You are a helpful shopping assistant specializing in...
+
+### Configuration Override System
+
+The application supports a flexible configuration override system that allows you to switch between different deployment scenarios without modifying the base configuration files.
+
+#### How It Works
+
+1. **Base Configuration**: The application loads the base `config.yaml` file from each service's `config/` folder
+2. **Override Detection**: If the `CONFIG_OVERRIDE` environment variable is set, the system looks for an override file
+3. **Merge Process**: The override file values are merged into the base configuration, with override values taking precedence
+
+#### Environment Variable
+
+| Variable | Description | Example Values |
+|----------|-------------|----------------|
+| `CONFIG_OVERRIDE` | Specifies the override config file name | `config-build.yaml`, `config-custom.yaml` |
+
+#### Default Configuration (Local NIMs)
+
+By default, the application uses local NIM endpoints. No environment variable is needed:
+
+```bash
+# Deploy with local NIMs (default)
+docker compose -f docker-compose-nim-local.yaml up -d
+docker compose -f docker-compose.yaml up -d --build
+```
+
+**Chain Server Default** (`chain_server/config/config.yaml`):
+```yaml
+# LLM endpoint for local NIM deployment
+llm_port: "http://localhost:8000/v1"
+llm_name: "meta/llama-3.1-70b-instruct"
+```
+
+**Catalog Retriever Default** (`catalog_retriever/config/config.yaml`):
+```yaml
+# Text embedding endpoint for local NIM deployment
+text_embed_port: "http://localhost:8001/v1"
+text_model_name: "nvidia/nv-embedqa-e5-v5"
+
+# Image embedding endpoint for local NIM deployment
+image_embed_port: "http://localhost:8002/v1"
+image_model_name: "nvidia/nvclip"
+```
+
+**Guardrails Default** (`guardrails/config/config.yml`):
+```yaml
+models:
+  - type: content_safety
+    engine: nim
+    model: nvidia/llama-3.1-nemoguard-8b-content-safety
+    parameters:
+      base_url: http://localhost:8003/v1
+
+  - type: topic_control
+    engine: nim
+    model: nvidia/llama-3.1-nemoguard-8b-topic-control
+    parameters:
+      base_url: http://localhost:8004/v1
+```
+
+#### Cloud NIM Deployment (`config-build.yaml`)
+
+Use this when using NVIDIA API Catalog hosted endpoints:
+
+```bash
+# Set environment variable
+export CONFIG_OVERRIDE=config-build.yaml
+
+# Deploy without local NIMs
+docker compose -f docker-compose.yaml up -d --build
+```
+
+**Chain Server Override** (`chain_server/config/config-build.yaml`):
+```yaml
+# LLM endpoint for build.nvidia.com
+llm_port: "https://api.build.nvidia.com/v1"
+llm_name: "meta/llama-3.1-70b-instruct"
+```
+
+**Catalog Retriever Override** (`catalog_retriever/config/config-build.yaml`):
+```yaml
+# Text embedding endpoint for build.nvidia.com
+text_embed_port: "https://api.build.nvidia.com/v1"
+text_model_name: "nvidia/nv-embedqa-e5-v5"
+
+# Image embedding endpoint for build.nvidia.com
+image_embed_port: "https://api.build.nvidia.com/v1"
+image_model_name: "nvidia/nvclip"
+```
+
+**Guardrails Override** (`guardrails/config/config-build.yml`):
+```yaml
+models:
+  - type: content_safety
+    engine: nim
+    model: nvidia/llama-3.1-nemoguard-8b-content-safety
+    parameters:
+      base_url: https://api.build.nvidia.com/v1
+
+  - type: topic_control
+    engine: nim
+    model: nvidia/llama-3.1-nemoguard-8b-topic-control
+    parameters:
+      base_url: https://api.build.nvidia.com/v1
+```
+
+#### Creating Custom Override Files
+
+You can create your own override files for custom configurations:
+
+1. **Create the override file** in the same directory as the base config:
+   ```bash
+   # For chain server
+   cp chain_server/config/config.yaml chain_server/config/config-custom.yaml
+   
+   # For catalog retriever
+   cp catalog_retriever/config/config.yaml catalog_retriever/config/config-custom.yaml
+   
+   # For guardrails
+   cp guardrails/config/config.yml guardrails/config/config-custom.yml
+   ```
+
+2. **Modify the override file** with your custom values:
+   ```yaml
+   # Example: Custom LLM endpoint
+   llm_port: "https://your-custom-endpoint.com/v1"
+   llm_name: "your-custom-model"
+   
+   # Example: Custom embedding endpoint
+   text_embed_port: "https://your-embedding-service.com/v1"
+   text_model_name: "your-embedding-model"
+   
+   # Example: Custom guardrails endpoints
+   models:
+     - type: content_safety
+       engine: nim
+       model: nvidia/llama-3.1-nemoguard-8b-content-safety
+       parameters:
+         base_url: https://your-custom-endpoint.com/v1
+   ```
+
+3. **Use the custom override**:
+   ```bash
+   export CONFIG_OVERRIDE=config-custom.yaml
+   docker compose -f docker-compose.yaml up -d --build
+   ```
+
+#### Switching Between Configurations
+
+To switch between different configurations:
+
+```bash
+# Use local NIMs (default - no environment variable needed)
+unset CONFIG_OVERRIDE
+docker compose -f docker-compose.yaml restart
+
+# Switch to cloud NIMs
+export CONFIG_OVERRIDE=config-build.yaml
+docker compose -f docker-compose.yaml restart
+
+# Use custom configuration
+export CONFIG_OVERRIDE=config-custom.yaml
+docker compose -f docker-compose.yaml restart
+```
+
+#### Docker Compose Integration
+
+You can also set the override in your docker-compose files:
+
+```yaml
+# In docker-compose.yaml
+services:
+  chain-server:
+    environment:
+      - CONFIG_OVERRIDE=${CONFIG_OVERRIDE:-config-local.yaml}
+  
+  catalog-retriever:
+    environment:
+      - CONFIG_OVERRIDE=${CONFIG_OVERRIDE:-config-local.yaml}
+  
+  rails:
+    environment:
+      - CONFIG_OVERRIDE=${CONFIG_OVERRIDE:-config-local.yml}
+```
+
+Then use it:
+```bash
+# Use local config
+CONFIG_OVERRIDE=config-local.yaml docker compose up -d
+
+# Use cloud config
+CONFIG_OVERRIDE=config-build.yaml docker compose up -d
+```
 ```
 
 ### Performance Tuning

@@ -1,4 +1,3 @@
-from typing import Dict, Any
 from openai import OpenAI
 from .agenttypes import State
 from .functions import summary_function
@@ -7,8 +6,8 @@ import json
 import os
 import logging
 import sys
-import yaml
 import time
+
 
 def setup_logging():
     logging.basicConfig(
@@ -17,26 +16,25 @@ def setup_logging():
         stream=sys.stdout
     ) 
 
-# Load configuration
-config_path = os.path.join("/app", "app", "config.yaml")
-with open(config_path, "r") as f:
-    config = yaml.safe_load(f)
-
-MEMORY_LENGTH = config["memory_length"]
+# Configuration will be loaded by the main application
 
 class SummaryAgent:
-    def __init__(self, llm_name: str, llm_port: str):
+    def __init__(self, config):
         """
         Initialize the SummaryAgent with LLM configuration.
         
         Args:
-            llm_name: Name of the LLM model to use
-            llm_port: URL of the LLM service
+            config: Configuration instance
         """
-        logging.info(f"SummaryAgent.__init__() | Initializing with llm_name={llm_name}, llm_port={llm_port}")
-        self.llm_name = llm_name
-        self.llm_port = llm_port
-        self.model = OpenAI(base_url=llm_port, api_key=os.environ["LLM_API_KEY"])
+        logging.info(f"SummaryAgent.__init__() | Initializing with llm_name={config.llm_name}, llm_port={config.llm_port}")
+        self.llm_name = config.llm_name
+        self.llm_port = config.llm_port
+        
+        # Store configuration
+        self.memory_length = config.memory_length
+        self.memory_port = config.memory_port
+        
+        self.model = OpenAI(base_url=config.llm_port, api_key=os.environ["LLM_API_KEY"])
         logging.info(f"SummaryAgent.__init__() | Initialization complete")
 
     def invoke(
@@ -56,7 +54,7 @@ class SummaryAgent:
         ]
 
         start = time.monotonic()
-        if len(state.context) > MEMORY_LENGTH:
+        if len(state.context) > self.memory_length:
             logging.info(f"SummaryAgent.invoke() | Context length is greater than memory length")
             response = self.model.chat.completions.create(
                 model=self.llm_name,
@@ -65,7 +63,7 @@ class SummaryAgent:
                 tool_choice="required",
                 stream=False,
                 temperature=0.0,
-                max_tokens=MEMORY_LENGTH
+                max_tokens=self.memory_length
             )
 
             tool_json = json.loads(response.choices[0].message.tool_calls[0].function.arguments)
@@ -74,7 +72,7 @@ class SummaryAgent:
         else:
             logging.info(f"SummaryAgent.invoke() | Context length is less than memory length -- writing to memory.")
         
-        requests.post(f"{config['memory_port']}/user/{output_state.user_id}/context/replace", json={"new_context": output_state.context})
+        requests.post(f"{self.memory_port}/user/{output_state.user_id}/context/replace", json={"new_context": output_state.context})
 
         end = time.monotonic()
         

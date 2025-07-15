@@ -1,0 +1,10 @@
+# Configuration override for build.nvidia.com endpoints
+# This file overrides the LLM and embedding endpoints to use cloud-hosted NIMs
+
+# LLM endpoint for build.nvidia.com
+llm_port: "https://api.build.nvidia.com/v1"
+llm_name: "meta/llama-3.1-70b-instruct"
+
+# Note: This override will be applied when CONFIG_OVERRIDE=config-build.yaml
+# The base config.yaml will be loaded first, then these values will override
+# the corresponding fields in the base configuration. 

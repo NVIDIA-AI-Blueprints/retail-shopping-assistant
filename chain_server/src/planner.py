@@ -5,14 +5,14 @@ This module contains the PlannerAgent that determines which specialized agent
 should handle a user's query based on the query content and context.
 """
 import os
-import yaml
 import logging
 import sys
 import time
-from typing import Any, Dict, List, Optional, TypedDict, Annotated
+from typing import Dict, List
 from openai import OpenAI
 
 from .agenttypes import State, Cart
+
 
 # Configure logging
 logging.basicConfig(
@@ -23,15 +23,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def load_config() -> dict:
-    """Load configuration from YAML file."""
-    config_path = os.path.join("/app", "app", "config.yaml")
-    with open(config_path, "r") as f:
-        return yaml.safe_load(f)
-
-
-# Load configuration
-config = load_config()
+# Configuration will be loaded by the main application
 
 
 class PlannerAgent:
@@ -44,27 +36,25 @@ class PlannerAgent:
     
     def __init__(
         self,
-        llm_name: str,
-        llm_port: str,
+        config,
     ) -> None:
         """
         Initialize the PlannerAgent.
         
         Args:
-            llm_name: Name of the LLM model to use for routing decisions
-            llm_port: URL of the LLM service
+            config: Configuration instance
         """
-        logger.info(f"PlannerAgent.__init__() | llm_name={llm_name}, llm_port={llm_port}")
+        logger.info(f"PlannerAgent.__init__() | llm_name={config.llm_name}, llm_port={config.llm_port}")
         
-        self.llm_name = llm_name
-        self.llm_port = llm_port
-        self.agent_choices = config["agent_choices"]
-        self.system_prompt = config["routing_prompt"]
+        self.llm_name = config.llm_name
+        self.llm_port = config.llm_port
+        self.agent_choices = config.agent_choices
+        self.system_prompt = config.routing_prompt
         
         # Initialize the LLM client
         try:
             self.model = OpenAI(
-                base_url=llm_port,
+                base_url=self.llm_port,
                 api_key=os.environ.get("LLM_API_KEY")
             )
             logger.info("PlannerAgent.__init__() | initialization complete")

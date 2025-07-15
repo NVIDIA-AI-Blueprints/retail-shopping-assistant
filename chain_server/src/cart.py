@@ -7,9 +7,9 @@ import json
 import logging
 import requests
 import sys
-import yaml
 import time
 from langgraph.config import get_stream_writer
+
 
 def setup_logging():
     logging.basicConfig(
@@ -18,10 +18,7 @@ def setup_logging():
         stream=sys.stdout
     )
 
-# Load configuration
-config_path = os.path.join("/app", "app", "config.yaml")
-with open(config_path, "r") as f:
-    config = yaml.safe_load(f)
+# Configuration will be loaded by the main application
 
 class CartAgent():
     """
@@ -32,14 +29,15 @@ class CartAgent():
     - view_cart : Reports what is in the cart.
     """
     def __init__(self,
-        llm_name : str,
-        llm_port: str,
+        config,
     ) -> None:
-        logging.info(f"CartAgent.__init__() | Initializing with llm_name={llm_name}, llm_port={llm_port}")
-        self.llm_name = llm_name
-        self.llm_port = llm_port
-        self.memory_retriever_url = config["memory_port"]
-        self.model = OpenAI(base_url=llm_port, api_key=os.environ["LLM_API_KEY"])
+        logging.info(f"CartAgent.__init__() | Initializing with llm_name={config.llm_name}, llm_port={config.llm_port}")
+        self.llm_name = config.llm_name
+        self.llm_port = config.llm_port
+        
+        # Store configuration
+        self.memory_retriever_url = config.memory_port
+        self.model = OpenAI(base_url=config.llm_port, api_key=os.environ["LLM_API_KEY"])
         logging.info(f"CartAgent.__init__() | Initialization complete")
         
     def _get_cart(self, user_id: int) -> Cart:

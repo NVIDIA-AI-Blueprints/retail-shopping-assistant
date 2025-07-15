@@ -1,15 +1,13 @@
-from typing import Dict, Any, AsyncGenerator
+from typing import AsyncGenerator
 from langchain_nvidia_ai_endpoints import ChatNVIDIA
 from langgraph.config import get_stream_writer
 from .agenttypes import State
-import requests
 import json
 import os
 import logging
 import sys
-import yaml
 import time
-import copy
+
 
 def setup_logging():
     logging.basicConfig(
@@ -18,33 +16,28 @@ def setup_logging():
         stream=sys.stdout
     ) 
 
-# Load configuration
-config_path = os.path.join("/app", "app", "config.yaml")
-with open(config_path, "r") as f:
-    config = yaml.safe_load(f)
-
-MEMORY_LENGTH = config["memory_length"]
-CHAT_PROMPT = config["chatter_prompt"]
+# Configuration will be loaded by the main application
 
 
 class ChatterAgent:
-    def __init__(self, llm_name: str, llm_port: str):
+    def __init__(self, config):
         """
         Initialize the ChatterAgent with LLM configuration.
         
         Args:
-            llm_name: Name of the LLM model to use
-            llm_port: URL of the LLM service
+            config: Configuration instance
         """
-        logging.info(f"ChatterAgent.__init__() | Initializing with llm_name={llm_name}, llm_port={llm_port}")
-        self.llm_name = llm_name
-        self.llm_port = llm_port
+        logging.info(f"ChatterAgent.__init__() | Initializing with llm_name={config.llm_name}, llm_port={config.llm_port}")
+        self.llm_name = config.llm_name
+        self.llm_port = config.llm_port
+        self.config = config
+        
         self.model = ChatNVIDIA(
-            url=llm_port, 
-            model=llm_name, 
+            url=config.llm_port, 
+            model=config.llm_name, 
             api_key=os.environ["LLM_API_KEY"],
             temperature=0.0,
-            max_tokens=MEMORY_LENGTH
+            max_tokens=config.memory_length
         )
         logging.info(f"ChatterAgent.__init__() | Initialization complete")
 
@@ -62,12 +55,12 @@ class ChatterAgent:
 
         if state.query:
             messages = [
-                {"role": "system", "content": CHAT_PROMPT},
+                {"role": "system", "content": self.config.chatter_prompt},
                 {"role": "user", "content": f"QUERY: {state.query}\nPREVIOUS CONTEXT: {state.context}"}
             ]
         else:
             messages = [
-                {"role": "system", "content": CHAT_PROMPT},
+                {"role": "system", "content": self.config.chatter_prompt},
                 {"role": "user", "content": f"QUERY: 'You have been sent an image, and the retrieved items are the most similar items.'\nPREVIOUS CONTEXT: {state.context}"}
             ]
 

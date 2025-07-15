@@ -53,7 +53,13 @@ For detailed architecture information, see [Architecture Overview](docs/README.m
    cd retail-shopping-assistant
    ```
 
-2. **Set up environment**:
+2. **Authenticate with NVIDIA Container Registry**:
+   ```bash
+   docker login nvcr.io
+   ```
+   Use `oauthtoken` as the username and your NGC API key as the password.
+
+3. **Set up environment**:
    ```bash
    export NGC_API_KEY=your_nvapi_key_here
    export LLM_API_KEY=$NGC_API_KEY
@@ -64,7 +70,7 @@ For detailed architecture information, see [Architecture Overview](docs/README.m
    chmod a+w "$LOCAL_NIM_CACHE"
    ```
 
-3. **Launch the application**:
+4. **Launch the application**:
    ```bash
    # Start local NIMs (requires 4x H100 GPUs)
    docker compose -f docker-compose-nim-local.yaml up -d
@@ -73,7 +79,7 @@ For detailed architecture information, see [Architecture Overview](docs/README.m
    docker compose -f docker-compose.yaml up -d --build
    ```
 
-4. **Access the application**: Open your browser to `http://localhost:3000`
+5. **Access the application**: Open your browser to `http://localhost:3000`
 
 For detailed installation instructions, see [Deployment Guide](docs/DEPLOYMENT.md).
 

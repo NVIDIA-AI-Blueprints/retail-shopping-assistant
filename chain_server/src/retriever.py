@@ -12,12 +12,12 @@ import json
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-import yaml
 import sys
-from typing import List, Dict, Any
+from typing import List, Dict
 import logging
 import time
 import ast
+
 
 def setup_logging():
     logging.basicConfig(
@@ -26,25 +26,23 @@ def setup_logging():
         stream=sys.stdout
     ) 
 
-config_path = os.path.join("/app", "app", "config.yaml")
-with open(config_path, "r") as f:
-    config = yaml.safe_load(f)
-
-CATALOG_RETRIEVER_URL = config["retriever_port"]
-K_VALUE = config["top_k_retrieve"]
-CATEGORIES = config["categories"]
+# Configuration will be loaded by the main application
 
 class RetrieverAgent():
     def __init__(
         self,
-        llm_name: str,
-        llm_port: str,
+        config,
     ) -> None:
-        logging.info(f"RetrieverAgent.__init__() | Initializing with llm_name={llm_name}, llm_port={llm_port}")
-        self.llm_name = llm_name
-        self.llm_port = llm_port
-        self.catalog_retriever_url = CATALOG_RETRIEVER_URL
-        self.model = OpenAI(base_url=llm_port, api_key=os.environ["LLM_API_KEY"])
+        logging.info(f"RetrieverAgent.__init__() | Initializing with llm_name={config.llm_name}, llm_port={config.llm_port}")
+        self.llm_name = config.llm_name
+        self.llm_port = config.llm_port
+        
+        # Store configuration
+        self.catalog_retriever_url = config.retriever_port
+        self.k_value = config.top_k_retrieve
+        self.categories = config.categories
+        
+        self.model = OpenAI(base_url=config.llm_port, api_key=os.environ["LLM_API_KEY"])
         logging.info(f"RetrieverAgent.__init__() | Initialization complete")
 
     def invoke(
@@ -58,7 +56,7 @@ class RetrieverAgent():
         logging.info(f"RetrieverAgent.invoke() | Starting with query: {state.query}")
 
         # Set our k value for retrieval.
-        k = K_VALUE
+        k = self.k_value
 
         # Get the user query and image from the state
         query = state.query
@@ -144,7 +142,7 @@ class RetrieverAgent():
         Use the LLM to determine relevant categories for the query using the search function.
         """
         logging.info(f"RetrieverAgent._get_categories() | Starting with query: {query}")
-        category_list = CATEGORIES
+        category_list = self.categories
 
         if query:
             logging.info(f"RetrieverAgent._get_categories() | Checking for categories.")

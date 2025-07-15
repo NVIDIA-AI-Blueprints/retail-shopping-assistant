@@ -8,9 +8,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Optional, Dict, AsyncGenerator
-import os
-import yaml
+from typing import Optional, Dict
 import logging
 import sys
 import time
@@ -23,6 +21,7 @@ from .cart import CartAgent
 from .chatter import ChatterAgent
 from .summarizer import SummaryAgent
 from .graph import create_graph
+from .config import load_config
 
 # Configure logging
 logging.basicConfig(
@@ -33,28 +32,14 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def load_config() -> dict:
-    """Load configuration from YAML file."""
-    config_path = os.path.join("/app", "app", "config.yaml")
-    if not os.path.exists(config_path):
-        logger.error(f"Config file not found at {config_path}")
-        raise FileNotFoundError(f"Config file not found at {config_path}")
-
-    with open(config_path, "r") as f:
-        return yaml.safe_load(f)
-
-
-def initialize_agents(config: dict) -> tuple:
+def initialize_agents(config) -> tuple:
     """Initialize all agent instances."""
-    llm_name = config["llm_name"]
-    llm_port = config["llm_port"]
-    
     agents = {
-        'planner': PlannerAgent(llm_name=llm_name, llm_port=llm_port),
-        'retriever': RetrieverAgent(llm_name=llm_name, llm_port=llm_port),
-        'cart': CartAgent(llm_name=llm_name, llm_port=llm_port),
-        'chatter': ChatterAgent(llm_name=llm_name, llm_port=llm_port),
-        'summary': SummaryAgent(llm_name=llm_name, llm_port=llm_port)
+        'planner': PlannerAgent(config=config),
+        'retriever': RetrieverAgent(config=config),
+        'cart': CartAgent(config=config),
+        'chatter': ChatterAgent(config=config),
+        'summary': SummaryAgent(config=config)
     }
     
     return agents
@@ -62,14 +47,15 @@ def initialize_agents(config: dict) -> tuple:
 
 # Load configuration and initialize agents
 try:
-    config = load_config()
+    config = load_config()  # Load and validate configuration
     agents = initialize_agents(config)
     graph = create_graph(
         cart_agent=agents['cart'],
         retriever_agent=agents['retriever'],
         planner_agent=agents['planner'],
         chatter_agent=agents['chatter'],
-        summary_agent=agents['summary']
+        summary_agent=agents['summary'],
+        config=config
     )
 except Exception as e:
     logger.error(f"Failed to initialize application: {e}")

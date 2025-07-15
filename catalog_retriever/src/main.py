@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from typing import List, Dict
 from app.retriever import Retriever, RetrieverConfig
+import time
 import os
 import yaml
 import logging
@@ -128,5 +129,14 @@ async def query_image(req: ImageQueryRequest):
         "similarities": sims,
         "names": names,
         "images": images
+    }
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint."""
+    return {
+        "status": "healthy",
+        "timestamp": time.time(),
+        "version": "1.0.0"
     }
 

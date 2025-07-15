@@ -166,7 +166,8 @@ class PlannerAgent:
             response_content = "retriever"
         else:
             # Use LLM to determine routing
-            response_content = self._call_llm_for_routing(state.query)
+            query_string = f"USER QUERY: {state.query}\n CONTEXT: {state.context}" 
+            response_content = self._call_llm_for_routing(query_string)
         
         # Normalize the agent name
         normalized_agent = self._normalize_agent_name(response_content)

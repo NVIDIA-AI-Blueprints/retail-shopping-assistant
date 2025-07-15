@@ -41,14 +41,10 @@ def apply_endpoint_overrides(config, config_dir: str = "config"):
                 
                 if base_url:
                     # Update the corresponding model in RailsConfig
-                    if hasattr(config, 'models') and config.models:
-                        for model in config.models:
-                            if hasattr(model, 'type') and model.type == model_type:
-                                if hasattr(model, 'parameters'):
-                                    model.parameters['base_url'] = base_url
-                                else:
-                                    model.parameters = {'base_url': base_url}
-                                logger.info(f"Updated {model_type} base_url to {base_url}")
-                                break
-    
+                    for model in config.models:
+                        if model.type == model_type:
+                            model.parameters['base_url'] = base_url
+                            logger.info(f"Updated {model_type} base_url to {base_url}")
+                            break
+
     logger.info("Applied endpoint overrides to guardrails configuration") 

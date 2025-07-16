@@ -12,7 +12,6 @@ RUN pip install --no-deps --upgrade nemoguardrails==0.13.0
 
 # Copy app code
 COPY ./src .
-COPY ./config ./config
 
 ENV NVIDIA_API_KEY=${NVIDIA_API_KEY}
 

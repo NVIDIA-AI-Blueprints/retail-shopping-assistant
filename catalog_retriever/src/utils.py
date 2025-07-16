@@ -12,6 +12,32 @@ logging.basicConfig(
     stream=sys.stdout
 )
 
+def image_path_to_base64(
+        image_path: str,
+        max_width : int = 256, 
+        max_height : int = 256, 
+        quality : int = 85, 
+        max_b64_length : int = 65535) -> str:
+    """
+    Converts an image to a base64 string.
+    """
+    with open("/app/shared/" + image_path, "rb") as image_file:
+        img = Image.open(image_file).convert("RGB")
+        img.thumbnail((max_width, max_height))  # Resize with aspect ratio
+
+        buffer = io.BytesIO()
+        img.save(buffer, format='JPEG', quality=quality, optimize=True)
+        base64_image = base64.b64encode(buffer.getvalue()).decode('utf-8')
+
+        base64_string = f"data:image/jpeg;base64,{base64_image}"
+
+        # Ensure length is within Milvus limits
+        if len(base64_string) > max_b64_length:
+            logging.debug(f"CATALOG RETRIEVER | utils.image_url_to_base64() | Skipping image: base64 length {len(base64_string)} exceeds limit.")
+            return None
+
+        return base64_string
+
 def image_url_to_base64(
         image_url : str, 
         max_width : int = 256, 
@@ -77,3 +103,10 @@ def is_url(string: str) -> bool:
     """
     url_pattern = re.compile(r'^https?://')
     return bool(url_pattern.match(string))
+
+def is_path(string: str) -> bool:
+    """
+    Simple check if a string is a path.
+    """
+    path_pattern = re.compile(r'^/')
+    return bool(path_pattern.match(string))

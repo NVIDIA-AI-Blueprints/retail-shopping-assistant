@@ -12,6 +12,8 @@ services:
       - CATALOG_RETRIEVER_URL=http://localhost:8010
       - MEMORY_RETRIEVER_URL=http://localhost:8011
       - CONFIG_OVERRIDE=${CONFIG_OVERRIDE}
+    volumes:
+      - ./shared:/app/shared
     depends_on:
       - catalog-retriever
       - memory-retriever
@@ -28,6 +30,8 @@ services:
       - MILVUS_HOST=localhost
       - MILVUS_PORT=19530
       - CONFIG_OVERRIDE=${CONFIG_OVERRIDE}
+    volumes:
+      - ./shared:/app/shared
     depends_on:
       milvus:
         condition: service_healthy
@@ -41,6 +45,8 @@ services:
     environment:
       - MILVUS_HOST=localhost
       - MILVUS_PORT=19530
+    volumes:
+      - ./shared:/app/shared
     depends_on:
       milvus:
         condition: service_healthy
@@ -53,7 +59,9 @@ services:
       - NVIDIA_API_KEY=${RAIL_API_KEY}
       - CONFIG_OVERRIDE=${CONFIG_OVERRIDE}
     container_name: rails
-    network_mode: "host"  
+    network_mode: "host"
+    volumes:
+      - ./shared:/app/shared
 
   # Frontend
   frontend:
@@ -61,6 +69,8 @@ services:
       context: ./ui
     container_name: shopping-frontend
     network_mode: "host"
+    volumes:
+      - ./shared:/app/shared
     depends_on:
       - chain-server
 

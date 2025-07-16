@@ -16,7 +16,7 @@ import sys
 import re
 import pandas as pd
 from numpy import mean
-from .utils import image_url_to_base64, is_url
+from .utils import image_url_to_base64, is_url, is_path, image_path_to_base64
 import logging
 import asyncio
 
@@ -113,17 +113,38 @@ class Retriever:
             collection_name=self.text_collection,
             connection_args={"uri": f"{self.db_port}"},
             auto_id=True,
-            drop_old=True,
         )
         self.image_db = Milvus(
             embedding_function=self.image_embeddings_obj,
             collection_name=self.image_collection,
             connection_args={"uri": f"{self.db_port}"},
             auto_id=True,
-            drop_old=True,
         )
 
         logging.info(f"CATALOG RETRIEVER | Retriever.__init__() | Milvus collections initialized.")
+
+    def embeddings_exist(self) -> bool:
+        """
+        Check if embeddings already exist in both text and image collections.
+        Returns True if both collections have data, False otherwise.
+        """
+        try:
+            # Check text collection
+            text_docs = self.text_db.similarity_search("test", k=1)
+            if not text_docs:
+                return False
+            
+            # Check image collection
+            image_docs = self.image_db.similarity_search("test", k=1)
+            if not image_docs:
+                return False
+            
+            logging.info("CATALOG RETRIEVER | embeddings_exist() | Embeddings found in both collections.")
+            return True
+            
+        except Exception as e:
+            logging.info(f"CATALOG RETRIEVER | embeddings_exist() | Error checking embeddings: {e}")
+            return False
 
     def embed_chunk(
         self, 
@@ -196,6 +217,10 @@ class Retriever:
                     if verbose:
                         logging.info(f"CATALOG RETRIEVER | Retriever.image_embeddings() | Detected URL, converting to base64 (First 50 chars): {text[:50]}")
                     input_data = image_url_to_base64(text)  
+                elif is_path(text):
+                    if verbose:
+                        logging.info(f"CATALOG RETRIEVER | Retriever.image_embeddings() | Detected path, converting to base64 (First 50 chars): {text[:50]}")
+                    input_data = image_path_to_base64(text)
                 else:
                     input_data = text 
 
@@ -207,9 +232,7 @@ class Retriever:
                         model=self.image_model_name,
                         encoding_format="float",
                     )
-                    logging.info(f"CATALOG RETRIEVER | Retriever.image_embeddings() | Obtained embedding.")
                     out_images.append(input_data)
-                    logging.info(f"CATALOG RETRIEVER | Retriever.image_embeddings() | Accessing embedding.")
                     embeddings.append(response.data[0].embedding)
                     logging.info(f"CATALOG RETRIEVER | Retriever.image_embeddings() | Embedding accessed.\n\t| {response.data[0].embedding[:10]}")
                 else:
@@ -229,9 +252,15 @@ class Retriever:
     def milvus_from_csv(self, csv_path: str, verbose: bool = False) -> None:
         """
         Fills the milvus database with the data from a CSV file.
+        Only populates if embeddings don't already exist.
         """ 
 
-        logging.info(f"CATALOG RETRIEVER | Retriever.milvus_from_csv() | Reading in csv from: '{csv_path}'")
+        # Check if embeddings already exist
+        if self.embeddings_exist():
+            logging.info("CATALOG RETRIEVER | Retriever.milvus_from_csv() | Embeddings already exist, skipping population.")
+            return
+
+        logging.info(f"CATALOG RETRIEVER | Retriever.milvus_from_csv() | No embeddings found, populating from: '{csv_path}'")
 
         # Get our pd dataframe
         try:
@@ -267,27 +296,6 @@ class Retriever:
         )
 
         logging.info(f"CATALOG RETRIEVER | Retriever.milvus_from_csv() | Image embeddings obtained.") 
-
-    def print_database(self) -> None:
-        """
-        Print the contents of both text and image databases.
-        """
-        print("\nText Database Contents:")
-        print("----------------------")
-        docs = self.text_db.similarity_search("items", k=1000)
-        for i, doc in enumerate(docs, 1):
-            print(f"{i}. {doc.page_content[:100]}...")  
-
-        print("\nImage Database Contents:")
-        print("----------------------")
-        try:
-            # Get all documents from the image database without similarity search
-            docs = self.image_db.get_all_documents()
-            for i, doc in enumerate(docs, 1):
-                print(f"{i}. {doc.page_content[:100]}...")
-        except Exception as e:
-            print(f"Error accessing image database: {str(e)}")
-            print("Image database might be empty or not properly initialized.")
 
     async def retrieve(
         self,
@@ -397,20 +405,3 @@ class Retriever:
 
         texts_out, ids_out, sims_out, names_out, images_out = zip(*filtered)
         return list(texts_out), list(ids_out), list(sims_out), list(names_out), list(images_out)
-
-if __name__ == "__main__":
-    config = RetrieverConfig(  
-        text_embed_port="https://integrate.api.nvidia.com/v1",
-        image_embed_port="https://integrate.api.nvidia.com/v1",
-        text_model_name="nvdev/nvidia/nv-embedqa-e5-v5",
-        image_model_name="nvdev/nvidia/nvclip",
-        db_port="http://localhost:19530", 
-        db_name="shopping_advisor_db",
-        sim_threshold=0.5,
-        text_collection="shopping_advisor_text_db",
-        image_collection="shopping_advisor_image_db"
-    )
-    retriever = Retriever(config=config)
-    retriever.milvus_from_csv(csv_path="data/products.csv", verbose=True)
-    retriever.print_database()
-    texts,ids,sims = retriever.retrieve(query="skirt", categories=["apparel","dress"], k=4, verbose=True)

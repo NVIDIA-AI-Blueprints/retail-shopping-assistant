@@ -268,27 +268,6 @@ class Retriever:
 
         logging.info(f"CATALOG RETRIEVER | Retriever.milvus_from_csv() | Image embeddings obtained.") 
 
-    def print_database(self) -> None:
-        """
-        Print the contents of both text and image databases.
-        """
-        print("\nText Database Contents:")
-        print("----------------------")
-        docs = self.text_db.similarity_search("items", k=1000)
-        for i, doc in enumerate(docs, 1):
-            print(f"{i}. {doc.page_content[:100]}...")  
-
-        print("\nImage Database Contents:")
-        print("----------------------")
-        try:
-            # Get all documents from the image database without similarity search
-            docs = self.image_db.get_all_documents()
-            for i, doc in enumerate(docs, 1):
-                print(f"{i}. {doc.page_content[:100]}...")
-        except Exception as e:
-            print(f"Error accessing image database: {str(e)}")
-            print("Image database might be empty or not properly initialized.")
-
     async def retrieve(
         self,
         query: str,

@@ -62,7 +62,7 @@ services:
       - "8003:8000"
     environment:
       - NGC_API_KEY=${NGC_API_KEY}
-      - NIM_KVCACHE_PERCENT=.5
+      - NIM_KVCACHE_PERCENT=.4
     volumes:
       - ${LOCAL_NIM_CACHE}:/opt/nim/.cache
     user: "${UID:-1000}"
@@ -81,7 +81,7 @@ services:
       - "8004:8000"
     environment:
       - NGC_API_KEY=${NGC_API_KEY}
-      - NIM_KVCACHE_PERCENT=.5
+      - NIM_KVCACHE_PERCENT=.4
     volumes:
       - ${LOCAL_NIM_CACHE}:/opt/nim/.cache
     user: "${UID:-1000}"

@@ -57,7 +57,7 @@ def load_config_with_override(base_config_path: str):
     
     return config
 
-data = load_config_with_override("app/config/config.yaml")
+data = load_config_with_override("/app/shared/configs/catalog_retriever/config.yaml")
 
 
 # Setup Retriever once when app starts
@@ -76,9 +76,9 @@ config = RetrieverConfig(
 logging.info("CATALOG RETRIEVER | startup | config.yaml ingested.")
 logging.info("CATALOG RETRIEVER | startup | Initializing Retriever object.")
 retriever = Retriever(config=config)
-logging.info("CATALOG RETRIEVER | startup | Filling Milvus database.")
+logging.info("CATALOG RETRIEVER | startup | Checking and populating Milvus database if needed.")
 retriever.milvus_from_csv(csv_path=data["data_source"], verbose=True)
-logging.info("CATALOG RETRIEVER | startup | Milvus database filled.")
+logging.info("CATALOG RETRIEVER | startup | Milvus database ready.")
 
 # Request bodies
 class TextQueryRequest(BaseModel):

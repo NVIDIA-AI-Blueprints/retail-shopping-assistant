@@ -45,7 +45,7 @@ class GuardRails(BaseRails):
         return response
     
 # Load configuration
-config_path = "config"
+config_path = "/app/shared/configs/rails"
 guardRails = GuardRails(config_path)
 
 class Rails():

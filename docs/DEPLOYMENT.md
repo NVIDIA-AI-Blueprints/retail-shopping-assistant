@@ -212,10 +212,10 @@ export RAIL_API_KEY=$NGC_API_KEY
 
 ### Step 2: Configure Cloud Endpoints
 
-Edit `chain_server/app/config.yaml`:
+Edit `shared/config/*/config*.yaml`:
 
 ```yaml
-# Cloud NIM endpoints
+# Example Cloud NIM endpoints
 llm_port: "https://api.nvcf.nvidia.com/v1/chat/completions"
 llm_name: "meta/llama-3.1-70b-instruct"
 retriever_port: "https://api.nvcf.nvidia.com/v1/embeddings"

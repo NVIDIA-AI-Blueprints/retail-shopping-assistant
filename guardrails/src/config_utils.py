@@ -6,7 +6,7 @@ from typing import Dict, Any
 logger = logging.getLogger(__name__)
 
 
-def apply_endpoint_overrides(config, config_dir: str = "config"):
+def apply_endpoint_overrides(config, config_dir: str = "/app/shared/configs"):
     """
     Apply endpoint overrides to the RailsConfig if CONFIG_OVERRIDE is set.
     

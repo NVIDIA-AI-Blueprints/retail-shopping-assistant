@@ -1,4 +1,0 @@
-#!/bin/bash
-
-docker run -d --net=host --name=uitest28 uitest:28.0
-#podman run -d --net=host --name=uitest28 uitest:28.0

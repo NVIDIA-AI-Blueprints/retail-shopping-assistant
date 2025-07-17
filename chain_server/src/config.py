@@ -136,7 +136,7 @@ def load_config(config_path: Optional[str] = None) -> ChainServerConfig:
         ValueError: If config validation fails
     """
     if config_path is None:
-        config_path = os.path.join("app", "config", "config.yaml")
+        config_path = "/app/shared/configs/chain_server/config.yaml"
     
     # Load raw config data with override support
     config_data = load_config_with_override(config_path)

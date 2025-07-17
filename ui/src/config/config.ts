@@ -65,7 +65,7 @@ const getConfig = (): AppConfig => {
     },
     ui: {
       defaultImages: {
-        fashion: "https://localhost/media/hans-isaacson-ehYEq99-psc-unsplash-lg.jpg",
+        fashion: "/images/hans-isaacson-ehYEq99-psc-unsplash-lg.jpg",
         furniture: "https://images.unsplash.com/photo-1567016376408-0226e4d0c1ea?q=80&w=1887&auto=format&f[…]3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D"
       },
       categories: {

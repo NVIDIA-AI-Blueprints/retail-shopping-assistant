@@ -93,7 +93,7 @@ async def add_to_cart(user_id: int, item_update: ItemUpdate):
     db.commit()
     return {
         "user_id": user_id,
-        "message": f"In response to the user's request, I have dded {amount} of '{item}' to their cart."
+        "message": f"In response to the user's request, I have added {amount} of '{item}' to their cart."
         }
 
 @app.post("/user/{user_id}/cart/remove")

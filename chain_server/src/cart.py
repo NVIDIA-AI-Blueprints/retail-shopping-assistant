@@ -6,6 +6,8 @@ import os
 import json
 import logging
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 import sys
 import time
 from langgraph.config import get_stream_writer
@@ -38,6 +40,14 @@ class CartAgent():
         # Store configuration
         self.memory_retriever_url = config.memory_port
         self.model = OpenAI(base_url=config.llm_port, api_key=os.environ["LLM_API_KEY"])
+        self.catalog_retriever_port = config.retriever_port
+        self.categories = config.categories
+        self.retry_strategy = Retry(
+                total=3,                    
+                status_forcelist=[422, 429, 500, 502, 503, 504],  
+                allowed_methods=["POST"],   
+                backoff_factor=1            
+            )
         logging.info(f"CartAgent.__init__() | Initialization complete")
         
     def _get_cart(self, user_id: int) -> Cart:
@@ -49,22 +59,76 @@ class CartAgent():
         return Cart(contents=[])
 
     def _add_to_cart(self, user_id: int, item_name: str, quantity: int) -> str:
-        response = requests.post(
-            f"{self.memory_retriever_url}/user/{user_id}/cart/add",
-            json={"item": item_name, "amount": quantity}
+        # First we have to perfom a retrieval to ensure that the item being looked for is in the catalog.
+        adapter = HTTPAdapter(max_retries=self.retry_strategy)
+        session = requests.Session()
+        session.mount("https://", adapter)
+        session.mount("http://", adapter)
+        logging.info(f"CartAgent.add_to_cart() | /query/text -- getting response\n\t| query: {item_name}\n\t")
+        ret_response = session.post(
+            f"{self.catalog_retriever_port}/query/text",
+            json={
+                "text": item_name,
+                "categories": self.categories,
+                "k": 1
+            }
         )
-        if response.status_code == 200:
-            return response.json()["message"]
-        return f"Failed to add {quantity} {item_name} to cart"
+        ret_response.raise_for_status()
+        res_json = ret_response.json()
+        sim = 0
+        if res_json["similarities"]:
+            sim = res_json["similarities"][0]
+            if sim > 0.8:
+                catalog_item_name = res_json["names"][0]
+                logging.info(f"CartAgent.add_to_cart() | input name: {item_name}, retrieved item: {catalog_item_name}, sim: {sim}")
+                response = requests.post(
+                    f"{self.memory_retriever_url}/user/{user_id}/cart/add",
+                    json={"item": catalog_item_name, "amount": quantity}
+                )
+                if response.status_code == 200:
+                    return response.json()["message"]
+                return f"Failed to add {quantity} {catalog_item_name} to cart."
+            else:
+                logging.info(f"CartAgent.remove_from_cart() | Nothing sufficiently similar to {item_name} in the cart.")
+                return f"No such item ({item_name}) could be found in the catalog."
+        else:
+            return f"No such item ({item_name}) could be found in the catalog."
 
     def _remove_from_cart(self, user_id: int, item_name: str, quantity: int) -> str:
-        response = requests.post(
-            f"{self.memory_retriever_url}/user/{user_id}/cart/remove",
-            json={"item": item_name, "amount": quantity}
+        # First we have to perfom a retrieval to ensure that the item being looked for is in the catalog.
+        adapter = HTTPAdapter(max_retries=self.retry_strategy)
+        session = requests.Session()
+        session.mount("https://", adapter)
+        session.mount("http://", adapter)
+        logging.info(f"CartAgent.remove_from_cart() | /query/text -- getting response\n\t| query: {item_name}\n\t")
+        ret_response = session.post(
+            f"{self.catalog_retriever_url}/query/text",
+            json={
+                "text": item_name,
+                "categories": self.categories,
+                "k": 1
+            }
         )
-        if response.status_code == 200:
-            return response.json()["message"]
-        return f"Failed to remove {quantity} {item_name} from cart"
+        ret_response.raise_for_status()
+        res_json = ret_response.json()
+        sim = 0
+        if res_json["similarities"]:
+            sim = res_json["similarities"][0]
+            if sim > 0.8:
+                catalog_item_name = res_json["names"][0]
+                logging.info(f"CartAgent.remove_from_cart() | input name: {item_name}, retrieved item: {catalog_item_name}, sim: {sim}")
+                response = requests.post(
+                    f"{self.memory_retriever_url}/user/{user_id}/cart/remove",
+                    json={"item": catalog_item_name, "amount": quantity}
+                )
+                if response.status_code == 200:
+                    return response.json()["message"]
+                return f"Failed to remove {quantity} {catalog_item_name} from cart."
+            else:
+                logging.info(f"CartAgent.remove_from_cart() | Nothing sufficiently similar to {item_name} in the cart.")
+                return f"No such item ({item_name}) could be found in the catalog."                
+        else:
+            return f"No such item ({item_name}) could be found in the catalog."
 
     def _update_context(self, user_id: int, context: str) -> None:
         response = requests.post(

@@ -28,6 +28,8 @@ The Retail Shopping Assistant is an AI-powered blueprint that provides a compreh
 
 ### Architecture
 
+![Shopping Assistant Diagram](notebook/shopping-assistant-diagram.png)
+
 The application follows a microservices architecture with specialized agents for different tasks:
 - **Chain Server**: Main API with LangGraph orchestration
 - **Catalog Retriever**: Product search and recommendations

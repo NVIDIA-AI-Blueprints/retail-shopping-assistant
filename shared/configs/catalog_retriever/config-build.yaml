@@ -2,11 +2,11 @@
 # This file overrides the embedding endpoints to use cloud-hosted NIMs
 
 # Text embedding endpoint for build.nvidia.com
-text_embed_port: "https://api.build.nvidia.com/v1"
+text_embed_port: "https://integrate.api.nvidia.com/v1"
 text_model_name: "nvidia/nv-embedqa-e5-v5"
 
 # Image embedding endpoint for build.nvidia.com
-image_embed_port: "https://api.build.nvidia.com/v1"
+image_embed_port: "https://integrate.api.nvidia.com/v1"
 image_model_name: "nvidia/nvclip"
 
 # Note: This override will be applied when CONFIG_OVERRIDE=config-build.yaml

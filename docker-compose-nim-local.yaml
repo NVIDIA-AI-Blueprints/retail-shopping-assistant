@@ -20,6 +20,8 @@ services:
               device_ids: ['0', '1']
               capabilities: [gpu]
     restart: "no"
+    networks:
+      - shopping-network
 
   nvclip:
     image: nvcr.io/nim/nvidia/nvclip:2.0.0
@@ -37,6 +39,8 @@ services:
               device_ids: ['2']
               capabilities: [gpu]
     restart: "no"
+    networks:
+      - shopping-network
 
   embedqa:
     image: nvcr.io/nim/nvidia/nv-embedqa-e5-v5:1.6
@@ -55,6 +59,8 @@ services:
               device_ids: ['2']
               capabilities: [gpu]
     restart: "no"
+    networks:
+      - shopping-network
 
   content:
     image: nvcr.io/nim/nvidia/llama-3.1-nemoguard-8b-content-safety:1.10.1
@@ -74,6 +80,8 @@ services:
               device_ids: ['2']
               capabilities: [gpu]
     restart: "no"
+    networks:
+      - shopping-network
 
   topic_control:
     image: nvcr.io/nim/nvidia/llama-3.1-nemoguard-8b-topic-control:1.0.0
@@ -93,4 +101,11 @@ services:
               device_ids: ['3']
               capabilities: [gpu]
     restart: "no"
+    networks:
+      - shopping-network
+
+networks:
+  shopping-network:
+    driver: bridge
+    name: retail-shopping-assistant_shopping-network
 

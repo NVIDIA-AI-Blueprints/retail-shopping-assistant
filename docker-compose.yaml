@@ -1,16 +1,17 @@
 version: "3.8"
 
 services:
-  # Chain Server - using host networking
+  # Chain Server - using bridge networking with port mapping
   chain-server:
     build:
       context: ./chain_server
     container_name: chain-server
-    network_mode: "host"
+    ports:
+      - "8009:8009"
     environment:
       - LLM_API_KEY=${LLM_API_KEY}
-      - CATALOG_RETRIEVER_URL=http://localhost:8010
-      - MEMORY_RETRIEVER_URL=http://localhost:8011
+      - CATALOG_RETRIEVER_URL=http://catalog-retriever:8010
+      - MEMORY_RETRIEVER_URL=http://memory-retriever:8011
       - CONFIG_OVERRIDE=${CONFIG_OVERRIDE}
     volumes:
       - ./shared:/app/shared
@@ -18,16 +19,19 @@ services:
       - catalog-retriever
       - memory-retriever
       - rails
+    networks:
+      - shopping-network
 
   # Catalog Retriever
   catalog-retriever:
     build:
       context: ./catalog_retriever
     container_name: catalog-retriever
-    network_mode: "host"  
+    ports:
+      - "8010:8010"
     environment:
       - EMBED_API_KEY=${EMBED_API_KEY}
-      - MILVUS_HOST=localhost
+      - MILVUS_HOST=milvus
       - MILVUS_PORT=19530
       - CONFIG_OVERRIDE=${CONFIG_OVERRIDE}
     volumes:
@@ -35,21 +39,26 @@ services:
     depends_on:
       milvus:
         condition: service_healthy
+    networks:
+      - shopping-network
 
   # Memory Retriever
   memory-retriever:
     build:
       context: ./memory_retriever
     container_name: memory-retriever
-    network_mode: "host"  
+    ports:
+      - "8011:8011"
     environment:
-      - MILVUS_HOST=localhost
+      - MILVUS_HOST=milvus
       - MILVUS_PORT=19530
     volumes:
       - ./shared:/app/shared
     depends_on:
       milvus:
         condition: service_healthy
+    networks:
+      - shopping-network
 
   # Rails
   rails:
@@ -59,26 +68,33 @@ services:
       - NVIDIA_API_KEY=${RAIL_API_KEY}
       - CONFIG_OVERRIDE=${CONFIG_OVERRIDE}
     container_name: rails
-    network_mode: "host"
+    ports:
+      - "8012:8012"
     volumes:
       - ./shared:/app/shared
+    networks:
+      - shopping-network
 
   # Frontend
   frontend:
     build:
       context: ./ui
     container_name: shopping-frontend
-    network_mode: "host"
+    ports:
+      - "3000:3000"
     volumes:
       - ./shared:/app/shared
     depends_on:
       - chain-server
+    networks:
+      - shopping-network
 
-  # etcd - now using host network
+  # etcd - using bridge networking
   etcd:
     container_name: milvus-etcd
     image: quay.io/coreos/etcd:v3.5.5
-    network_mode: "host"
+    ports:
+      - "2379:2379"
     environment:
       - ETCD_AUTO_COMPACTION_MODE=revision
       - ETCD_AUTO_COMPACTION_RETENTION=1000
@@ -88,7 +104,7 @@ services:
       - ./catalog_retriever/volumes/etcd:/etcd
     command: [
       "etcd",
-      "--advertise-client-urls=http://localhost:2379",
+      "--advertise-client-urls=http://etcd:2379",
       "--listen-client-urls=http://0.0.0.0:2379",
       "--data-dir=/etcd"
     ]
@@ -97,13 +113,16 @@ services:
       interval: 30s
       timeout: 20s
       retries: 3
+    networks:
+      - shopping-network
 
-
-  # Minio - now using host network
+  # Minio - using bridge networking
   minio:
     container_name: milvus-minio
     image: minio/minio:RELEASE.2023-03-20T20-16-18Z
-    network_mode: "host"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
     environment:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
@@ -115,19 +134,22 @@ services:
       interval: 30s
       timeout: 20s
       retries: 3
+    networks:
+      - shopping-network
 
-
-  # Milvus - host mode, talking to etcd and minio via localhost
+  # Milvus - bridge mode, talking to etcd and minio via service names
   milvus:
     container_name: milvus-standalone
     image: milvusdb/milvus:v2.4.13-hotfix
     command: ["milvus", "run", "standalone"]
     security_opt:
       - seccomp:unconfined
-    network_mode: "host"
+    ports:
+      - "19530:19530"
+      - "9091:9091"
     environment:
-      ETCD_ENDPOINTS: http://localhost:2379
-      MINIO_ADDRESS: localhost:9000
+      ETCD_ENDPOINTS: http://etcd:2379
+      MINIO_ADDRESS: minio:9000
       MINIO_ACCESS_KEY: minioadmin
       MINIO_SECRET_KEY: minioadmin
       COMMON_STORAGETYPE: local
@@ -143,7 +165,11 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+    networks:
+      - shopping-network
 
 networks:
   shopping-network:
     driver: bridge
+    name: retail-shopping-assistant_shopping-network
+    external: false

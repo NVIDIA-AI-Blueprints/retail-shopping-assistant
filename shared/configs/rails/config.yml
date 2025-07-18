@@ -7,13 +7,13 @@ models:
     engine: nim
     model: nvidia/llama-3.1-nemoguard-8b-content-safety
     parameters:
-      base_url: http://localhost:8003/v1
+      base_url: http://content:8000/v1
 
   - type: topic_control
     engine: nim
     model: nvidia/llama-3.1-nemoguard-8b-topic-control
     parameters:
-      base_url: http://localhost:8004/v1
+      base_url: http://topic_control:8000/v1
 
 bot_messages:
   refuse to respond: 

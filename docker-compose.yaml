@@ -171,3 +171,5 @@ services:
 networks:
   shopping-network:
     driver: bridge
+    name: retail-shopping-assistant_shopping-network
+    external: false

@@ -1,6 +1,6 @@
-text_embed_port: "http://localhost:8001/v1"
+text_embed_port: "http://embedqa:8000/v1"
 text_model_name: "nvidia/nv-embedqa-e5-v5" 
-image_embed_port: "http://localhost:8002/v1"
+image_embed_port: "http://nvclip:8000/v1"
 image_model_name: "nvidia/nvclip"
 db_port: "http://milvus:19530" 
 db_name: "shopping_advisor_db"

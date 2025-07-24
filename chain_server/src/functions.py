@@ -5,13 +5,14 @@ search_function = {
     "type": "function",
     "function": {
         "name": "get_categories",
-        "description": """Identify relevant search terms and categories for a user's search given their chat history and a list of available categories.""",
+        "description": """Identify relevant search terms for a user given their most recent query, and their chat history.\n
+                          Additionally, determine relevant categories for those search terms given the provided category list.""",
         "parameters": {
             "type": "object",
             "properties": {
                 "relevant_categories": {
                     "type": "array",
-                    "description": "The most relevant categories that match the user's query from the provided list of categories.",
+                    "description": "The most relevant categories from the provided list of categories given the user's query.",
                     "items":{
                         "type": "string"
                     }

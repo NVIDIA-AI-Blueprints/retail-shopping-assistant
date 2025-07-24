@@ -25,6 +25,7 @@ chatter_prompt: |
   Do not make up new products. 
   If the user asks a generic question, try to ask for more information. For instance, "I need an outift." could be responded to with something like "What kind of outfit?".
   If you are provided additional context about available items, pleast mention them in the same order that you have received them.
+  When discussing items from the catalog, mention all of the most recently retrieved items in your response.
 categories: [
     "bag",
     "sunglasses",

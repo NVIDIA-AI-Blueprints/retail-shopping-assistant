@@ -5,21 +5,29 @@ search_function = {
     "type": "function",
     "function": {
         "name": "get_categories",
-        "description": """Identify a copuple of the most relevant categories related to the user's query.\n
-                          Only choose categories from the list provided.\n
-                          Be very picky and only pick categories that are very related to the user's query.""",
+        "description": """Identify relevant search terms and categories for a user's search given their chat history and a list of available categories.""",
         "parameters": {
             "type": "object",
             "properties": {
                 "relevant_categories": {
                     "type": "array",
-                    "description": "The most relevant categories that match the user's query.",
+                    "description": "The most relevant categories that match the user's query from the provided list of categories.",
                     "items":{
                         "type": "string"
                     }
                 }
             },
-            "required": ["relevant_categories"]
+            "type": "object",
+            "properties": {
+                "search_entities": {
+                    "type": "array",
+                    "description": "Terms that the user is searching for.",
+                    "items":{
+                        "type": "string"
+                    }
+                }
+            },
+            "required": ["search_entities","relevant_categories"]
         }
     }
 }

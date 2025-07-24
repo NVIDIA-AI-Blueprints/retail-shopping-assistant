@@ -13,7 +13,7 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 import sys
-from typing import List, Dict
+from typing import Tuple, List, Dict
 import logging
 import time
 import ast
@@ -59,12 +59,12 @@ class RetrieverAgent():
         k = self.k_value
 
         # Get the user query and image from the state
-        query = state.query
+        query = f"The user has asked: {state.query}, given the following chat context: {state.context}" 
         image = state.image
 
         # Use the LLM to determine categories for the query
         start = time.monotonic()
-        categories = self._get_categories(query)
+        entities, categories = self._get_categories(query)
         end = time.monotonic()
         state.timings["retriever_categories"] = end - start
         
@@ -85,22 +85,22 @@ class RetrieverAgent():
             session.mount("http://", adapter)
 
             if image:
-                logging.info(f"RetrieverAgent.invoke() | /query/image -- getting response.\n\t| query: {query}\n\t| categories: {categories}")
+                logging.info(f"RetrieverAgent.invoke() | /query/image -- getting response.\n\t| entities: {entities}\n\t| categories: {categories}")
                 response = session.post(
                     f"{self.catalog_retriever_url}/query/image",
                     json={
-                        "text": query,
+                        "text": entities,
                         "image_base64": image,
                         "categories": categories,
                         "k": k
                     }
                 )
             else:
-                logging.info(f"RetrieverAgent.invoke() | /query/text -- getting response\n\t| query: {query}\n\t| categories: {categories}")
+                logging.info(f"RetrieverAgent.invoke() | /query/text -- getting response\n\t| query: {entities}\n\t| categories: {categories}")
                 response = session.post(
                     f"{self.catalog_retriever_url}/query/text",
                     json={
-                        "text": query,
+                        "text": entities,
                         "categories": categories,
                         "k": k
                     }
@@ -137,12 +137,13 @@ class RetrieverAgent():
 
         return state
 
-    def _get_categories(self, query: str) -> List[str]:
+    def _get_categories(self, query: str) -> Tuple[List[str],List[str]]:
         """
         Use the LLM to determine relevant categories for the query using the search function.
         """
         logging.info(f"RetrieverAgent._get_categories() | Starting with query: {query}")
         category_list = self.categories
+        entity_list = []
 
         if query:
             logging.info(f"RetrieverAgent._get_categories() | Checking for categories.")
@@ -163,15 +164,20 @@ class RetrieverAgent():
 
             # Extract categories from the function call
             if response.choices[0].message.tool_calls:
-                category_dict = json.loads(response.choices[0].message.tool_calls[0].function.arguments)
-                category_list = category_dict.get("relevant_categories", [])
+                response_dict = json.loads(response.choices[0].message.tool_calls[0].function.arguments)
+                category_list = response_dict.get("relevant_categories", [])
+                entity_list = response_dict.get("search_entities", [])
+                if type(entity_list) == str: 
+                    entities = ast.literal_eval(entity_list)
+                else:
+                    entities = entity_list
                 if type(category_list) == str: 
                     categories = ast.literal_eval(category_list)
                 else:
                     categories = category_list
-                return categories
+                return entities, categories
                 logging.info(f"RetrieverAgent._get_categories() | Returning empty list")
             return []
         else:
             logging.info(f"RetrieverAgent._get_categories() | No valid query.")
-            return category_list
+            return entity_list, category_list

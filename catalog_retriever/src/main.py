@@ -82,12 +82,12 @@ logging.info("CATALOG RETRIEVER | startup | Milvus database ready.")
 
 # Request bodies
 class TextQueryRequest(BaseModel):
-    text: str = ""
+    text: List[str] = []
     categories: List[str] = []
     k: int = 4
 
 class ImageQueryRequest(BaseModel):
-    text: str = ""
+    text: List[str] = []
     image_base64: str = ""
     categories: List[str] = []
     k: int = 4

@@ -299,7 +299,7 @@ class Retriever:
 
     async def retrieve(
         self,
-        query: str,
+        query: List[str],
         categories: List[str],
         image: str = "",
         k: int = 4,
@@ -311,16 +311,20 @@ class Retriever:
         """
 
         # Check if our query is blank. If it is, replace it with dummy text.
-        local_query = query
+        local_queries = query
         if not query:
-            local_query = "Can you find me something like this image?"
+            local_queries = ["Can you find me something like this image?"]
 
         if image_bool:
             if verbose:
                 logging.info("CATALOG RETRIEVER | retrieve() | Performing dual retrieval for image input.")
 
             # Use asyncio.gather for concurrency
-            t2t_task = asyncio.to_thread(self.text_db.similarity_search_with_relevance_scores, local_query, k=k)
+            t2t_tasks = []
+            for local_query in local_queries:
+                if verbose:
+                    logging.info(f"\t| retrieve() | Checking query: {local_query}.")
+                t2t_tasks.append(asyncio.to_thread(self.text_db.similarity_search_with_relevance_scores, local_query, k=k))
             if verbose:
                 logging.info("CATALOG RETRIEVER | retrieve() | Started text task.")
             base64_string = image.replace("data:application/octet-stream", "data:image/jpeg")
@@ -330,7 +334,7 @@ class Retriever:
                 logging.info(f"CATALOG RETRIEVER | retrieve() | Obtained embedding...")
             i2i_task = asyncio.to_thread(self.image_db.similarity_search_with_relevance_scores, base64_string, k=k)
 
-            t2t_results, i2i_results = await asyncio.gather(t2t_task, i2i_task)
+            t2t_results, i2i_results = await asyncio.gather(*t2t_tasks, i2i_task)
             temp_results = t2t_results + i2i_results
 
             if verbose:
@@ -346,9 +350,18 @@ class Retriever:
                     all_results.append(res)
         else:
             if verbose:
-                logging.info(f"CATALOG RETRIEVER | retrieve() | Text-only retrieval. Query: {local_query}")
+                logging.info(f"CATALOG RETRIEVER | retrieve() | Text-only retrieval. Queries: {local_queries}")
 
-            all_results = await asyncio.to_thread(self.text_db.similarity_search_with_relevance_scores, local_query, k=k)
+            results  = []
+            for local_query in local_queries:
+                if verbose:
+                    logging.info(f"\t| retrieve() | Launching text-only retrieval. Query type: {type(local_query)}, Query: {local_query}")
+                results.append(asyncio.to_thread(self.text_db.similarity_search_with_relevance_scores, local_query, k=k))
+            unformatted_results = await asyncio.gather(*results)
+            all_results = [item for sublist in unformatted_results for item in sublist]
+
+        if verbose:
+            logging.info(f"CATALOG RETRIEVER | retrieve() | All retrieved results length. {len(all_results)}\n\t| Similarities: {[res[1] for res in all_results]}")
 
         final_texts = [res[0].page_content+f"\nPRICE: {res[0].metadata['price']}" for res in all_results]
         final_ids = [str(res[0].metadata["pk"]) for res in all_results]
@@ -367,11 +380,14 @@ class Retriever:
         zipped_sorted = sorted(zipped, key=lambda x: x[0], reverse=True)
         final_sims, final_texts, final_ids, final_names, final_images = zip(*zipped_sorted)
 
-        final_sims = list(final_sims)
-        final_texts = list(final_texts)
-        final_ids = list(final_ids)
-        final_names = list(final_names)
-        final_images = list(final_images)
+        if verbose:
+            logging.info(f"CATALOG RETRIEVER | retrieve() | \n\tfinal sims before truncating: {final_sims}")
+
+        final_sims = list(final_sims)[:k]
+        final_texts = list(final_texts)[:k]
+        final_ids = list(final_ids)[:k]
+        final_names = list(final_names)[:k]
+        final_images = list(final_images)[:k]
 
         if verbose:
             logging.info(f"CATALOG RETRIEVER | retrieve() | \n\tnames: {final_names} \n\tsimilarities: {final_sims}")

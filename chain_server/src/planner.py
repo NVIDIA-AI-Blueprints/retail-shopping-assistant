@@ -8,7 +8,7 @@ import os
 import logging
 import sys
 import time
-from typing import Dict, List
+from typing import Tuple, Dict, List
 from openai import OpenAI
 
 from .agenttypes import State, Cart

@@ -141,16 +141,16 @@ class RetrieverAgent():
         """
         Use the LLM to determine relevant categories for the query using the search function.
         """
-        logging.info(f"RetrieverAgent._get_categories() | Starting with query: {query}")
+        logging.info(f"RetrieverAgent | _get_categories() | Starting with query: {query}")
         category_list = self.categories
         entity_list = []
 
         if query:
-            logging.info(f"RetrieverAgent._get_categories() | Checking for categories.")
+            logging.info(f"RetrieverAgent | _get_categories() | Checking for categories.")
             category_list_str = ", ".join(category_list)    
             messages = [
                 #{"role": "system", "content": f"Categories: {category_list_str}"},
-                {"role": "user", "content": f"User Query: '{query}'\nCategories: '{category_list_str}'"}
+                {"role": "user", "content": f"USER QUERY WITH CONTEXT:\n '{query}'\n\nAVAILABLE CATEGORIES (PICK AT LEAST ONE OF THESE): '{category_list_str}'"}
             ]
 
             response = self.model.chat.completions.create(
@@ -160,11 +160,12 @@ class RetrieverAgent():
                 tool_choice="auto"
             )
 
-            logging.info(f"RetrieverAgent._get_categories() | Response: {response}")
+            logging.info(f"RetrieverAgent | _get_categories() | Response: {response}")
 
             # Extract categories from the function call
             if response.choices[0].message.tool_calls:
                 response_dict = json.loads(response.choices[0].message.tool_calls[0].function.arguments)
+                logging.info(f"RetrieverAgent | _get_categories() | Returning empty list")
                 category_list = response_dict.get("relevant_categories", [])
                 entity_list = response_dict.get("search_entities", [])
                 if type(entity_list) == str: 
@@ -176,8 +177,8 @@ class RetrieverAgent():
                 else:
                     categories = category_list
                 return entities, categories
-                logging.info(f"RetrieverAgent._get_categories() | Returning empty list")
+                logging.info(f"RetrieverAgent | _get_categories() | Returning empty list")
             return []
         else:
-            logging.info(f"RetrieverAgent._get_categories() | No valid query.")
+            logging.info(f"RetrieverAgent | _get_categories() | No valid query.")
             return entity_list, category_list

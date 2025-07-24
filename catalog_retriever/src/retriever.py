@@ -334,16 +334,40 @@ class Retriever:
                 logging.info(f"CATALOG RETRIEVER | retrieve() | Obtained embedding...")
             i2i_task = asyncio.to_thread(self.image_db.similarity_search_with_relevance_scores, base64_string, k=k)
 
-            t2t_results, i2i_results = await asyncio.gather(*t2t_tasks, i2i_task)
-            temp_results = t2t_results + i2i_results
+            unformatted_results = await asyncio.gather(*t2t_tasks, i2i_task)
 
+            sorted_unformatted_results = []
+            for query_results in unformatted_results:
+                # Sort each list of (Document, score) tuples by the score in descending order
+                # (higher score means higher similarity/relevance)
+                sorted_query_results = sorted(query_results, key=lambda item: item[1], reverse=True)
+                sorted_unformatted_results.append(sorted_query_results)
+                
+            interleaved_results = []
+            # Create iterators for each list of results
+            # Store them in a regular list
+            active_iterators = [iter(lst) for lst in unformatted_results]
+
+            # Loop as long as there are active iterators
+            while active_iterators:
+                # Pop the first iterator from the list
+                current_it = active_iterators.pop(0) 
+                try:
+                    # Get the next item from this iterator
+                    item = next(current_it)
+                    interleaved_results.append(item)
+                    # If this iterator still has elements, put it back at the end of the list
+                    active_iterators.append(current_it)
+                except StopIteration:
+                    # This iterator is exhausted, so it's not put back into active_iterators.
+                    pass
             if verbose:
                 logging.info("CATALOG RETRIEVER | retrieve() | Gathered tasks.")
 
             # Deduplicate.
             seen_ids = set()
             all_results = []
-            for res in temp_results:
+            for res in interleaved_results:
                 id_ = str(res[0].metadata["pk"])
                 if id_ not in seen_ids:
                     seen_ids.add(id_)
@@ -358,10 +382,46 @@ class Retriever:
                     logging.info(f"\t| retrieve() | Launching text-only retrieval. Query type: {type(local_query)}, Query: {local_query}")
                 results.append(asyncio.to_thread(self.text_db.similarity_search_with_relevance_scores, local_query, k=k))
             unformatted_results = await asyncio.gather(*results)
-            all_results = [item for sublist in unformatted_results for item in sublist]
+
+            sorted_unformatted_results = []
+            for query_results in unformatted_results:
+                # Sort each list of (Document, score) tuples by the score in descending order
+                # (higher score means higher similarity/relevance)
+                sorted_query_results = sorted(query_results, key=lambda item: item[1], reverse=True)
+                sorted_unformatted_results.append(sorted_query_results)
+
+            interleaved_results = []
+            # Create iterators for each list of results
+            # Store them in a regular list
+            active_iterators = [iter(lst) for lst in unformatted_results]
+
+            # Loop as long as there are active iterators
+            while active_iterators:
+                # Pop the first iterator from the list
+                current_it = active_iterators.pop(0) 
+                try:
+                    # Get the next item from this iterator
+                    item = next(current_it)
+                    interleaved_results.append(item)
+                    # If this iterator still has elements, put it back at the end of the list
+                    active_iterators.append(current_it)
+                except StopIteration:
+                    # This iterator is exhausted, so it's not put back into active_iterators.
+                    pass
+            # Deduplicate.
+            seen_ids = set()
+            all_results = []
+            for res in interleaved_results:
+                id_ = str(res[0].metadata["pk"])
+                if id_ not in seen_ids:
+                    seen_ids.add(id_)
+                    all_results.append(res)
+            #all_results = [item for sublist in unformatted_results for item in sublist]
 
         if verbose:
-            logging.info(f"CATALOG RETRIEVER | retrieve() | All retrieved results length. {len(all_results)}\n\t| Similarities: {[res[1] for res in all_results]}")
+            logging.info(f"""CATALOG RETRIEVER | retrieve() | All retrieved results length. {len(all_results)}
+                            \n\t| Similarities: {[res[1] for res in all_results]}
+                            \n\t| Names: {[res[0].metadata['name'] for res in all_results]}""")
 
         final_texts = [res[0].page_content+f"\nPRICE: {res[0].metadata['price']}" for res in all_results]
         final_ids = [str(res[0].metadata["pk"]) for res in all_results]
@@ -376,9 +436,10 @@ class Retriever:
         final_images = [id_ for id_, sim in zip(final_images[:k], final_sims[:k]) if sim > self.sim_threshold]
         final_sims = [sim for sim in final_sims[:k] if sim > self.sim_threshold]
 
-        zipped = list(zip(final_sims, final_texts, final_ids, final_names, final_images))
-        zipped_sorted = sorted(zipped, key=lambda x: x[0], reverse=True)
-        final_sims, final_texts, final_ids, final_names, final_images = zip(*zipped_sorted)
+        #zipped_sorted = list(zip(final_sims, final_texts, final_ids, final_names, final_images))
+        #zipped_sorted = sorted(zipped, key=lambda x: x[0], reverse=True)
+        #final_sims, final_texts, final_ids, final_names, final_images = zip(*zipped_sorted)
+        zip(final_sims, final_texts, final_ids, final_names, final_images)
 
         if verbose:
             logging.info(f"CATALOG RETRIEVER | retrieve() | \n\tfinal sims before truncating: {final_sims}")

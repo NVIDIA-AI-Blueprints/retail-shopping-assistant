@@ -7,4 +7,5 @@ db_name: "shopping_advisor_db"
 sim_threshold: 0.5
 text_collection: "shopping_advisor_text_db"
 image_collection: "shopping_advisor_image_db"
-data_source: "/app/shared/data/products.csv"
+#data_source: "/app/shared/data/products.csv"
+data_source: "/app/shared/data/products_extended.csv"

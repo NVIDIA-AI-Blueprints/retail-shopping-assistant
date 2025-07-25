@@ -15,6 +15,7 @@ import os
 import sys
 import re
 import pandas as pd
+import numpy as np
 from numpy import mean
 from .utils import image_url_to_base64, is_url, is_path, image_path_to_base64
 import logging
@@ -47,12 +48,16 @@ class TextEmbeddings(Embeddings):
     def embed_query(self, text: str) -> List[float]:
         """Generate text embedding for a single text"""
         logging.info(f"TextEmbeddings | embed_query() | called.\n\t| input: {text[:50]}")
-        return self.retriever.embed_chunk(text)
+        res = self.retriever.embed_chunk(text)
+        normed = res / np.linalg.norm(res)
+        return normed
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
         """Generate text embeddings for multiple texts"""
         logging.info(f"TextEmbeddings | embed_documents() | called.")
-        return self.retriever.text_embeddings(texts)
+        res = self.retriever.text_embeddings(texts)
+        normed = [list(r/np.linalg.norm(r) for r in res)]
+        return normed
 
 # Defines a type for storing and embedding images.
 class ImageEmbeddings(Embeddings):
@@ -107,18 +112,21 @@ class Retriever:
 
         logging.info(f"CATALOG RETRIEVER | Retriever.__init__() | Initializing Milvus connections.")
 
+
         # Initialize Milvus with embedding classes
         self.text_db = Milvus(
             embedding_function=self.text_embeddings_obj,
             collection_name=self.text_collection,
             connection_args={"uri": f"{self.db_port}"},
             auto_id=True,
+            index_params={"metric_type": "COSINE"},
         )
         self.image_db = Milvus(
             embedding_function=self.image_embeddings_obj,
             collection_name=self.image_collection,
             connection_args={"uri": f"{self.db_port}"},
             auto_id=True,
+            index_params={"metric_type": "COSINE"},
         )
 
         logging.info(f"CATALOG RETRIEVER | Retriever.__init__() | Milvus collections initialized.")
@@ -299,7 +307,7 @@ class Retriever:
 
     async def retrieve(
         self,
-        query: str,
+        query: List[str],
         categories: List[str],
         image: str = "",
         k: int = 4,
@@ -311,16 +319,20 @@ class Retriever:
         """
 
         # Check if our query is blank. If it is, replace it with dummy text.
-        local_query = query
+        local_queries = query
         if not query:
-            local_query = "Can you find me something like this image?"
+            local_queries = ["Can you find me something like this image?"]
 
         if image_bool:
             if verbose:
                 logging.info("CATALOG RETRIEVER | retrieve() | Performing dual retrieval for image input.")
 
             # Use asyncio.gather for concurrency
-            t2t_task = asyncio.to_thread(self.text_db.similarity_search_with_relevance_scores, local_query, k=k)
+            t2t_tasks = []
+            for local_query in local_queries:
+                if verbose:
+                    logging.info(f"\t| retrieve() | Checking query: {local_query}.")
+                t2t_tasks.append(asyncio.to_thread(self.text_db.similarity_search_with_relevance_scores, local_query, k=k))
             if verbose:
                 logging.info("CATALOG RETRIEVER | retrieve() | Started text task.")
             base64_string = image.replace("data:application/octet-stream", "data:image/jpeg")
@@ -328,27 +340,59 @@ class Retriever:
                 logging.info(f"CATALOG RETRIEVER | retrieve() | Starting image task...\n\t| {base64_string[:100]}")
             if verbose:
                 logging.info(f"CATALOG RETRIEVER | retrieve() | Obtained embedding...")
-            i2i_task = asyncio.to_thread(self.image_db.similarity_search_with_relevance_scores, base64_string, k=k)
+            i2i_task = asyncio.to_thread(self.image_db.similarity_search_with_relevance_scores, base64_string, k=k*len(query))
 
-            t2t_results, i2i_results = await asyncio.gather(t2t_task, i2i_task)
-            temp_results = t2t_results + i2i_results
-
-            if verbose:
-                logging.info("CATALOG RETRIEVER | retrieve() | Gathered tasks.")
-
-            # Deduplicate.
-            seen_ids = set()
-            all_results = []
-            for res in temp_results:
-                id_ = str(res[0].metadata["pk"])
-                if id_ not in seen_ids:
-                    seen_ids.add(id_)
-                    all_results.append(res)
+            unformatted_results = await asyncio.gather(*t2t_tasks, i2i_task)
         else:
             if verbose:
-                logging.info(f"CATALOG RETRIEVER | retrieve() | Text-only retrieval. Query: {local_query}")
+                logging.info(f"CATALOG RETRIEVER | retrieve() | Text-only retrieval. Queries: {local_queries}")
 
-            all_results = await asyncio.to_thread(self.text_db.similarity_search_with_relevance_scores, local_query, k=k)
+            results  = []
+            for local_query in local_queries:
+                if verbose:
+                    logging.info(f"\t| retrieve() | Launching text-only retrieval. Query type: {type(local_query)}, Query: {local_query}")
+                results.append(asyncio.to_thread(self.text_db.similarity_search_with_relevance_scores, local_query, k=k*len(query)))
+            unformatted_results = await asyncio.gather(*results)
+
+        sorted_unformatted_results = []
+        for query_results in unformatted_results:
+            # Sort each list of (Document, score) tuples by the score in descending order
+            sorted_query_results = sorted(query_results, key=lambda item: item[1], reverse=True)
+            sorted_unformatted_results.append(sorted_query_results)
+
+        if verbose:
+            logging.info(f"""CATALOG RETRIEVER | retrieve() | Pre-interleaving data
+                            \n\t| Similarities: {[res[1] for sublist in sorted_unformatted_results for res in sublist]}
+                            \n\t| Names: {[res[0].metadata['name'] for sublist in sorted_unformatted_results for res in sublist]}""")
+
+        interleaved_results = []
+        # Store them in a regular list
+        active_iterators = [iter(lst) for lst in sorted_unformatted_results] 
+        while active_iterators:
+            current_it = active_iterators.pop(0)
+            try:
+                item = next(current_it)
+                interleaved_results.append(item)
+                active_iterators.append(current_it)
+            except StopIteration:
+                pass
+                
+        # Deduplicate.
+        seen_ids = set()
+        final_results = [] 
+        for res in interleaved_results:
+            pk_value = res[0].metadata.get("pk") 
+            id_ = str(pk_value) if pk_value is not None else None 
+            if id_ is not None and id_ not in seen_ids:
+                seen_ids.add(id_)
+                final_results.append(res)
+        
+        all_results = final_results
+
+        if verbose:
+            logging.info(f"""CATALOG RETRIEVER | retrieve() | All retrieved results length. {len(all_results)}
+                            \n\t| Similarities: {[res[1] for res in all_results]}
+                            \n\t| Names: {[res[0].metadata['name'] for res in all_results]}""")
 
         final_texts = [res[0].page_content+f"\nPRICE: {res[0].metadata['price']}" for res in all_results]
         final_ids = [str(res[0].metadata["pk"]) for res in all_results]
@@ -363,15 +407,19 @@ class Retriever:
         final_images = [id_ for id_, sim in zip(final_images[:k], final_sims[:k]) if sim > self.sim_threshold]
         final_sims = [sim for sim in final_sims[:k] if sim > self.sim_threshold]
 
-        zipped = list(zip(final_sims, final_texts, final_ids, final_names, final_images))
-        zipped_sorted = sorted(zipped, key=lambda x: x[0], reverse=True)
-        final_sims, final_texts, final_ids, final_names, final_images = zip(*zipped_sorted)
+        #zipped_sorted = list(zip(final_sims, final_texts, final_ids, final_names, final_images))
+        #zipped_sorted = sorted(zipped, key=lambda x: x[0], reverse=True)
+        #final_sims, final_texts, final_ids, final_names, final_images = zip(*zipped_sorted)
+        zip(final_sims, final_texts, final_ids, final_names, final_images)
 
-        final_sims = list(final_sims)
-        final_texts = list(final_texts)
-        final_ids = list(final_ids)
-        final_names = list(final_names)
-        final_images = list(final_images)
+        if verbose:
+            logging.info(f"CATALOG RETRIEVER | retrieve() | \n\tfinal sims before truncating: {final_sims}")
+
+        final_sims = list(final_sims)[:k]
+        final_texts = list(final_texts)[:k]
+        final_ids = list(final_ids)[:k]
+        final_names = list(final_names)[:k]
+        final_images = list(final_images)[:k]
 
         if verbose:
             logging.info(f"CATALOG RETRIEVER | retrieve() | \n\tnames: {final_names} \n\tsimilarities: {final_sims}")
@@ -404,4 +452,6 @@ class Retriever:
             return [], [], [], [], []
 
         texts_out, ids_out, sims_out, names_out, images_out = zip(*filtered)
+        if verbose:
+            logging.info(f"CATALOG RETRIEVER | length of output items: {len(names_out)}")
         return list(texts_out), list(ids_out), list(sims_out), list(names_out), list(images_out)

@@ -143,7 +143,6 @@ async def process_query_stream(request: QueryRequest):
         logger.error(f"Error processing streaming query: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-
 @app.post("/query/timing", response_model=QueryResponse)
 async def process_query_timing(request: QueryRequest):
     """
@@ -162,12 +161,14 @@ async def process_query_timing(request: QueryRequest):
         out_state_dict = await graph.ainvoke(state)
         end_time = time.monotonic()
         
+        logger.info(f"chain-server | /query/timing | Collected state: {out_state_dict}")
+
         total_time = end_time - start_time
 
         # Create response with timing information
         response = QueryResponse(
             response=out_state_dict["response"],
-            images=out_state_dict.get("image", {}),
+            images={},
             timings=out_state_dict["timings"]
         )
         response.timings["total"] = total_time
@@ -178,8 +179,7 @@ async def process_query_timing(request: QueryRequest):
     except Exception as e:
         logger.error(f"Error processing timing query: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
-
-
+        
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""

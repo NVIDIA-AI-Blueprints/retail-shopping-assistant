@@ -15,6 +15,7 @@ import os
 import sys
 import re
 import pandas as pd
+import numpy as np
 from numpy import mean
 from .utils import image_url_to_base64, is_url, is_path, image_path_to_base64
 import logging
@@ -47,12 +48,16 @@ class TextEmbeddings(Embeddings):
     def embed_query(self, text: str) -> List[float]:
         """Generate text embedding for a single text"""
         logging.info(f"TextEmbeddings | embed_query() | called.\n\t| input: {text[:50]}")
-        return self.retriever.embed_chunk(text)
+        res = self.retriever.embed_chunk(text)
+        normed = res / np.linalg.norm(res)
+        return normed
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
         """Generate text embeddings for multiple texts"""
         logging.info(f"TextEmbeddings | embed_documents() | called.")
-        return self.retriever.text_embeddings(texts)
+        res = self.retriever.text_embeddings(texts)
+        normed = [list(r/np.linalg.norm(r) for r in res)]
+        return normed
 
 # Defines a type for storing and embedding images.
 class ImageEmbeddings(Embeddings):
@@ -107,18 +112,21 @@ class Retriever:
 
         logging.info(f"CATALOG RETRIEVER | Retriever.__init__() | Initializing Milvus connections.")
 
+
         # Initialize Milvus with embedding classes
         self.text_db = Milvus(
             embedding_function=self.text_embeddings_obj,
             collection_name=self.text_collection,
             connection_args={"uri": f"{self.db_port}"},
             auto_id=True,
+            index_params={"metric_type": "COSINE"},
         )
         self.image_db = Milvus(
             embedding_function=self.image_embeddings_obj,
             collection_name=self.image_collection,
             connection_args={"uri": f"{self.db_port}"},
             auto_id=True,
+            index_params={"metric_type": "COSINE"},
         )
 
         logging.info(f"CATALOG RETRIEVER | Retriever.__init__() | Milvus collections initialized.")
@@ -332,46 +340,9 @@ class Retriever:
                 logging.info(f"CATALOG RETRIEVER | retrieve() | Starting image task...\n\t| {base64_string[:100]}")
             if verbose:
                 logging.info(f"CATALOG RETRIEVER | retrieve() | Obtained embedding...")
-            i2i_task = asyncio.to_thread(self.image_db.similarity_search_with_relevance_scores, base64_string, k=k)
+            i2i_task = asyncio.to_thread(self.image_db.similarity_search_with_relevance_scores, base64_string, k=k*len(query))
 
             unformatted_results = await asyncio.gather(*t2t_tasks, i2i_task)
-
-            sorted_unformatted_results = []
-            for query_results in unformatted_results:
-                # Sort each list of (Document, score) tuples by the score in descending order
-                # (higher score means higher similarity/relevance)
-                sorted_query_results = sorted(query_results, key=lambda item: item[1], reverse=True)
-                sorted_unformatted_results.append(sorted_query_results)
-                
-            interleaved_results = []
-            # Create iterators for each list of results
-            # Store them in a regular list
-            active_iterators = [iter(lst) for lst in unformatted_results]
-
-            # Loop as long as there are active iterators
-            while active_iterators:
-                # Pop the first iterator from the list
-                current_it = active_iterators.pop(0) 
-                try:
-                    # Get the next item from this iterator
-                    item = next(current_it)
-                    interleaved_results.append(item)
-                    # If this iterator still has elements, put it back at the end of the list
-                    active_iterators.append(current_it)
-                except StopIteration:
-                    # This iterator is exhausted, so it's not put back into active_iterators.
-                    pass
-            if verbose:
-                logging.info("CATALOG RETRIEVER | retrieve() | Gathered tasks.")
-
-            # Deduplicate.
-            seen_ids = set()
-            all_results = []
-            for res in interleaved_results:
-                id_ = str(res[0].metadata["pk"])
-                if id_ not in seen_ids:
-                    seen_ids.add(id_)
-                    all_results.append(res)
         else:
             if verbose:
                 logging.info(f"CATALOG RETRIEVER | retrieve() | Text-only retrieval. Queries: {local_queries}")
@@ -380,43 +351,43 @@ class Retriever:
             for local_query in local_queries:
                 if verbose:
                     logging.info(f"\t| retrieve() | Launching text-only retrieval. Query type: {type(local_query)}, Query: {local_query}")
-                results.append(asyncio.to_thread(self.text_db.similarity_search_with_relevance_scores, local_query, k=k))
+                results.append(asyncio.to_thread(self.text_db.similarity_search_with_relevance_scores, local_query, k=k*len(query)))
             unformatted_results = await asyncio.gather(*results)
 
-            sorted_unformatted_results = []
-            for query_results in unformatted_results:
-                # Sort each list of (Document, score) tuples by the score in descending order
-                # (higher score means higher similarity/relevance)
-                sorted_query_results = sorted(query_results, key=lambda item: item[1], reverse=True)
-                sorted_unformatted_results.append(sorted_query_results)
+        sorted_unformatted_results = []
+        for query_results in unformatted_results:
+            # Sort each list of (Document, score) tuples by the score in descending order
+            sorted_query_results = sorted(query_results, key=lambda item: item[1], reverse=True)
+            sorted_unformatted_results.append(sorted_query_results)
 
-            interleaved_results = []
-            # Create iterators for each list of results
-            # Store them in a regular list
-            active_iterators = [iter(lst) for lst in unformatted_results]
+        if verbose:
+            logging.info(f"""CATALOG RETRIEVER | retrieve() | Pre-interleaving data
+                            \n\t| Similarities: {[res[1] for sublist in sorted_unformatted_results for res in sublist]}
+                            \n\t| Names: {[res[0].metadata['name'] for sublist in sorted_unformatted_results for res in sublist]}""")
 
-            # Loop as long as there are active iterators
-            while active_iterators:
-                # Pop the first iterator from the list
-                current_it = active_iterators.pop(0) 
-                try:
-                    # Get the next item from this iterator
-                    item = next(current_it)
-                    interleaved_results.append(item)
-                    # If this iterator still has elements, put it back at the end of the list
-                    active_iterators.append(current_it)
-                except StopIteration:
-                    # This iterator is exhausted, so it's not put back into active_iterators.
-                    pass
-            # Deduplicate.
-            seen_ids = set()
-            all_results = []
-            for res in interleaved_results:
-                id_ = str(res[0].metadata["pk"])
-                if id_ not in seen_ids:
-                    seen_ids.add(id_)
-                    all_results.append(res)
-            #all_results = [item for sublist in unformatted_results for item in sublist]
+        interleaved_results = []
+        # Store them in a regular list
+        active_iterators = [iter(lst) for lst in sorted_unformatted_results] 
+        while active_iterators:
+            current_it = active_iterators.pop(0)
+            try:
+                item = next(current_it)
+                interleaved_results.append(item)
+                active_iterators.append(current_it)
+            except StopIteration:
+                pass
+                
+        # Deduplicate.
+        seen_ids = set()
+        final_results = [] 
+        for res in interleaved_results:
+            pk_value = res[0].metadata.get("pk") 
+            id_ = str(pk_value) if pk_value is not None else None 
+            if id_ is not None and id_ not in seen_ids:
+                seen_ids.add(id_)
+                final_results.append(res)
+        
+        all_results = final_results
 
         if verbose:
             logging.info(f"""CATALOG RETRIEVER | retrieve() | All retrieved results length. {len(all_results)}
@@ -481,4 +452,6 @@ class Retriever:
             return [], [], [], [], []
 
         texts_out, ids_out, sims_out, names_out, images_out = zip(*filtered)
+        if verbose:
+            logging.info(f"CATALOG RETRIEVER | length of output items: {len(names_out)}")
         return list(texts_out), list(ids_out), list(sims_out), list(names_out), list(images_out)

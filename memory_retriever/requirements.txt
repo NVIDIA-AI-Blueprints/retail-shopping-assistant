@@ -13,7 +13,3 @@ starlette==0.47.1
 typing-inspection==0.4.1
 typing_extensions==4.14.1
 uvicorn==0.35.0
-#fastapi
-#uvicorn
-#sqlalchemy
-#pydantic

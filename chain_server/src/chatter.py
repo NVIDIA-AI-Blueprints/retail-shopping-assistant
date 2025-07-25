@@ -94,7 +94,7 @@ class ChatterAgent:
         output_state.response = full_response
         output_state.context = f"{state.context}\n{full_response}"
             
-        logging.info(f"ChatterAgent.invoke() | Returning final state with response: {output_state.response}")
+        logging.info(f"ChatterAgent.invoke() | Returning final state with response: {output_state.response[0:50]}")
 
         end = time.monotonic()
         output_state.timings["chatter"] = end - start

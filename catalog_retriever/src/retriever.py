@@ -179,82 +179,144 @@ class Retriever:
         texts: List[str],
         query_type: str = "query",
         verbose: bool = False
-        ) -> Tuple[List[str],List[List[float]]]:
+    ) -> List[List[float] | None]:
         """
-        Generate text embeddings from a list of text strings.
+        Generate text embeddings from a list of text strings, using chunking and batching.
         """
-        out_texts = []
-        embeddings = []
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1000, chunk_overlap=200
+        )
+
+        # Break all input texts into smaller chunks.
+        all_chunks = []
+        # We track chunk counts per text to correctly reconstruct the final embeddings later.
+        # This ensures the output list of embeddings aligns 1:1 with the input list of texts.
+        text_chunk_counts = []
         for text in texts:
+            chunks = text_splitter.split_text(text)
+            all_chunks.extend(chunks)
+            text_chunk_counts.append(len(chunks))
+
+        if verbose:
+            logging.info(f"CATALOG RETRIEVER | Retriever.text_embeddings() | Created {len(all_chunks)} chunks from {len(texts)} texts.")
+
+        if not all_chunks:
+            return [None] * len(texts)
+
+        # Embed all created chunks in efficient batches
+        all_chunk_embeddings = []
+        batch_size = 32
+        # Calculate the number of batches needed to embed all chunks for logging purposes.
+        num_batches = (len(all_chunks) + batch_size - 1) // batch_size
+        for i in range(0, len(all_chunks), batch_size):
+            batch_chunks = all_chunks[i:i + batch_size]
+            if verbose:
+                logging.info(f"CATALOG RETRIEVER | Retriever.text_embeddings() | Processing text chunk batch {i//batch_size + 1}/{num_batches} with {len(batch_chunks)} chunks.")
             try:
-                text_splitter = RecursiveCharacterTextSplitter(
-                    chunk_size=1000, chunk_overlap=200
+                response = self.text_client.embeddings.create(
+                    input=batch_chunks,
+                    model=self.text_model_name,
+                    encoding_format="float",
+                    extra_body={"input_type": query_type, "truncate": "NONE"}
                 )
-                chunks = text_splitter.split_text(text)
-                chunk_embeddings = []
-                for chunk in chunks:
-                    embedding = self.embed_chunk(chunk, query_type)
-                    chunk_embeddings.append(embedding)
-                average_embedding = list(mean(chunk_embeddings, axis=0))
-                out_texts.append(text)
-                embeddings.append(average_embedding)
-                if verbose:
-                    logging.info(f"CATALOG RETRIEVER | Retriever.text_embeddings() | Added (first 50 characters): {text[:50]}")
+                all_chunk_embeddings.extend([d.embedding for d in response.data])
             except Exception as e:
                 if verbose:
-                    logging.info(f"CATALOG RETRIEVER | Retriever.text_embeddings() |\n\t| Port: {self.text_embed_port} |\n\t| Error: {e}.")
+                    logging.error(f"CATALOG RETRIEVER | Retriever.text_embeddings() | Error embedding chunk batch: {e}")
+                all_chunk_embeddings.extend([None for _ in batch_chunks])
+        
+        # Reconstruct a single embedding for each original text.
+        final_embeddings = []
+        current_chunk_idx = 0
+        # Loop through the original texts to ensure the final list of embeddings is in the same order.
+        for i, text in enumerate(texts):
+            # Get the number of chunks that were created for this specific text.
+            num_chunks = text_chunk_counts[i]
+            if num_chunks == 0:
+                final_embeddings.append(None)
+                continue
 
-        return out_texts, embeddings
+            # Slice the `all_chunk_embeddings` list to get the embeddings for the current text.
+            chunk_embeddings = all_chunk_embeddings[current_chunk_idx : current_chunk_idx + num_chunks]
+            # Move the index forward for the next iteration.
+            current_chunk_idx += num_chunks
+
+            # Filter out any chunks that may have failed to embed.
+            valid_chunk_embeddings = [emb for emb in chunk_embeddings if emb is not None]
+
+            # If there are valid chunks, average their embeddings to create a single representative vector.
+            if valid_chunk_embeddings:
+                average_embedding = list(mean(valid_chunk_embeddings, axis=0))
+                final_embeddings.append(average_embedding)
+            else:
+                # If all chunks for a text failed, mark the final embedding as None.
+                final_embeddings.append(None)
+        
+        return final_embeddings
 
     def image_embeddings(
-        self, 
+        self,
         texts: List[str],
         verbose: bool = False
-    ) -> Tuple[List[str],List[List[float]]]:
+    ) -> List[List[float] | None]:
         """
-        Generate image embeddings from a list of base64 image strings or image URLs.
-        If input is a URL, automatically download and convert to base64. 
+        Generate image embeddings from a list of base64 image strings or image URLs using batching.
+        Returns a list of embeddings, with None for failures, to maintain 1:1 mapping with input.
         """
-        if verbose:
-            logging.info(f"CATALOG RETRIEVER | Retriever.image_embeddings() | Texts: {texts}")
-        out_images = []
-        embeddings = []
-        for text in texts:
-            try:
-                # Auto-detect if input is a URL. If it is, embed it as such, otherwise continue assuming b64.
-                if is_url(text):
-                    if verbose:
-                        logging.info(f"CATALOG RETRIEVER | Retriever.image_embeddings() | Detected URL, converting to base64 (First 50 chars): {text[:50]}")
-                    input_data = image_url_to_base64(text)  
-                elif is_path(text):
-                    if verbose:
-                        logging.info(f"CATALOG RETRIEVER | Retriever.image_embeddings() | Detected path, converting to base64 (First 50 chars): {text[:50]}")
-                    input_data = image_path_to_base64(text)
-                else:
-                    input_data = text 
+        all_embeddings = []
+        batch_size = 32
+        num_batches = (len(texts) + batch_size - 1) // batch_size
 
-                # Check that the input data is small enough. 
-                MAX_VARCHAR_LENGTH = 65535
-                if len(input_data) <= MAX_VARCHAR_LENGTH:
+        for i in range(0, len(texts), batch_size):
+            batch_texts = texts[i:i + batch_size]
+
+            if verbose:
+                logging.info(f"CATALOG RETRIEVER | Retriever.image_embeddings() | Processing image batch {i//batch_size + 1}/{num_batches} with {len(batch_texts)} images.")
+            
+            input_data_list = []
+            
+            for text in batch_texts:
+                try:
+                    input_data = text
+                    if is_url(text):
+                        input_data = image_url_to_base64(text)
+                    elif is_path(text):
+                        input_data = image_path_to_base64(text)
+
+                    MAX_VARCHAR_LENGTH = 65535
+                    if len(input_data) > MAX_VARCHAR_LENGTH:
+                        if verbose:
+                            logging.warning(f"CATALOG RETRIEVER | Skipping image embedding, too large: {len(input_data)} bytes.")
+                        input_data = None 
+                except Exception as e:
+                    if verbose:
+                        logging.error(f"CATALOG RETRIEVER | Error processing image for batching: {e}")
+                    input_data = None
+                input_data_list.append(input_data)
+
+            valid_inputs = [data for data in input_data_list if data is not None]
+            
+            try:
+                if valid_inputs:
                     response = self.image_client.embeddings.create(
-                        input=input_data,
+                        input=valid_inputs,
                         model=self.image_model_name,
                         encoding_format="float",
                     )
-                    out_images.append(input_data)
-                    embeddings.append(response.data[0].embedding)
-                    logging.info(f"CATALOG RETRIEVER | Retriever.image_embeddings() | Embedding accessed.\n\t| {response.data[0].embedding[:10]}")
+                    batch_embeddings = iter([d.embedding for d in response.data])
                 else:
-                    logging.info(f"CATALOG RETRIEVER | Retriever.image_embeddings() | Encoding too large ({len(input_data)}). skipping embedding.")
-
-                if verbose:
-                    logging.info(f"CATALOG RETRIEVER | Retriever.image_embeddings() | Added (first 50 characters): {input_data[:50]}")
+                    batch_embeddings = iter([])
 
             except Exception as e:
                 if verbose:
-                    logging.info(f"CATALOG RETRIEVER | Retriever.image_embeddings() | Error: {e}")
+                    logging.error(f"CATALOG RETRIEVER | Retriever.image_embeddings() | Error embedding image batch: {e}")
+                batch_embeddings = iter([])
 
-        return out_images, embeddings
+            # Reconstruct the batch with Nones for failed embeddings
+            reconstructed_batch = [next(batch_embeddings) if data is not None else None for data in input_data_list]
+            all_embeddings.extend(reconstructed_batch)
+
+        return all_embeddings
 
 
 
@@ -287,22 +349,36 @@ class Retriever:
         combined_texts = [f"{name} | {desc} | {category},{subcategory}" for name, desc, category, subcategory in zip(df["name"].tolist(), df["description"].tolist(), df["category"].tolist(), df["subcategory"].tolist())]
         
         # Embed the combined name and description fields
-        new_texts,text_embs = self.text_embeddings(combined_texts,query_type="passage",verbose=verbose)
-        self.text_db.add_embeddings(
-            texts=new_texts,
-            embeddings=text_embs,
-            metadatas=metadatas
-        )
+        text_embs = self.text_embeddings(combined_texts,query_type="passage",verbose=verbose)
+
+        # Filter out failed embeddings and their corresponding metadata
+        successful_texts_data = [
+            (text, emb, meta) for text, emb, meta in zip(combined_texts, text_embs, metadatas) if emb is not None
+        ]
+        if successful_texts_data:
+            successful_texts, successful_text_embs, successful_text_metadatas = zip(*successful_texts_data)
+            self.text_db.add_embeddings(
+                texts=list(successful_texts),
+                embeddings=list(successful_text_embs),
+                metadatas=list(successful_text_metadatas)
+            )
 
         logging.info(f"CATALOG RETRIEVER | Retriever.milvus_from_csv() | Text embeddings obtained.")   
 
         # Embed the image field of each row
-        new_images,image_embs = self.image_embeddings(df["image"].tolist(), verbose=verbose)
-        self.image_db.add_embeddings(
-            texts=new_images,
-            embeddings=image_embs,
-            metadatas=metadatas
-        )
+        image_embs = self.image_embeddings(df["image"].tolist(), verbose=verbose)
+
+        # Filter out failed embeddings and their corresponding metadata
+        successful_images_data = [
+            (img_ref, emb, meta) for img_ref, emb, meta in zip(df["image"].tolist(), image_embs, metadatas) if emb is not None
+        ]
+        if successful_images_data:
+            successful_images, successful_image_embs, successful_image_metadatas = zip(*successful_images_data)
+            self.image_db.add_embeddings(
+                texts=list(successful_images),
+                embeddings=list(successful_image_embs),
+                metadatas=list(successful_image_metadatas)
+            )
 
         logging.info(f"CATALOG RETRIEVER | Retriever.milvus_from_csv() | Image embeddings obtained.") 
 

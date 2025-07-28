@@ -68,7 +68,7 @@ class CartAgent():
         ret_response = session.post(
             f"{self.catalog_retriever_port}/query/text",
             json={
-                "text": item_name,
+                "text": [item_name],
                 "categories": self.categories,
                 "k": 1
             }
@@ -104,7 +104,7 @@ class CartAgent():
         ret_response = session.post(
             f"{self.catalog_retriever_url}/query/text",
             json={
-                "text": item_name,
+                "text": [item_name],
                 "categories": self.categories,
                 "k": 1
             }

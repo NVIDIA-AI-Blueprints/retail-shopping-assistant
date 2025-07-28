@@ -53,10 +53,15 @@ const getConfig = (): AppConfig => {
     backendPort = 8009;
   }
 
+  // Use nginx proxy in production, direct connection in development
+  const baseUrl = isDevelopment 
+    ? `http://localhost:${backendPort}`  // Local development
+    : '/api';  // Brev deployment - nginx routes /api/* to backend
+
   return {
     api: {
-      baseUrl: `${window.location.protocol}//${window.location.hostname}:${backendPort}`,
-      port: backendPort,
+      baseUrl: baseUrl,
+      port: isDevelopment ? backendPort : 80,
       endpoints: {
         query: '/query',
         stream: '/query/stream',

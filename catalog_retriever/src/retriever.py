@@ -137,18 +137,19 @@ class Retriever:
         Returns True if both collections have data, False otherwise.
         """
         try:
-            # Check text collection
-            text_docs = self.text_db.similarity_search("test", k=1)
-            if not text_docs:
-                return False
+            self.text_db.col.flush()
+            self.image_db.col.flush()
+            text_count = self.text_db.col.num_entities
+            image_count = self.image_db.col.num_entities
             
-            # Check image collection
-            image_docs = self.image_db.similarity_search("test", k=1)
-            if not image_docs:
+            logging.info(f"CATALOG RETRIEVER | embeddings_exist() | Text collection has {text_count} entities. Image collection has {image_count} entities.")
+            # Check text and image collections
+            if text_count > 0 and image_count > 0:
+                logging.info("CATALOG RETRIEVER | embeddings_exist() | Embeddings found in both collections.")
+                return True
+            else:
+                logging.info("CATALOG RETRIEVER | embeddings_exist() | No embeddings found in either collection.")
                 return False
-            
-            logging.info("CATALOG RETRIEVER | embeddings_exist() | Embeddings found in both collections.")
-            return True
             
         except Exception as e:
             logging.info(f"CATALOG RETRIEVER | embeddings_exist() | Error checking embeddings: {e}")

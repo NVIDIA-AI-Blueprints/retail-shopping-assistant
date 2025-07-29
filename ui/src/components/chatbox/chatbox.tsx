@@ -60,6 +60,7 @@ const Chatbox: React.FC<ChatboxProps> = ({ setNewRenderImage }) => {
   const [isLoading, setIsLoading] = useState(false);
   const messageRefs = useRef<React.RefObject<HTMLDivElement>[]>([]);
   const [lastAssistantIndex, setLastAssistantIndex] = useState<number | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   // Utility functions
   const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -312,7 +313,7 @@ const Chatbox: React.FC<ChatboxProps> = ({ setNewRenderImage }) => {
   };
 
   const handleKeyUp = (event: React.KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === "Enter") {
+    if (event.key === "Enter" && !isLoading) {
       handleSendMessage();
     }
   };
@@ -335,7 +336,7 @@ const Chatbox: React.FC<ChatboxProps> = ({ setNewRenderImage }) => {
     addMessage("assistant", "", "");
     
     await sleep(1000);
-    const introduction = "Hello! 👋 I'm your dedicated Shopping Assistant created by NVIDIA, here to answer any questions you might have and help you find anything you're looking for. What can I help you with today?";
+    const introduction = "Hello! 👋 I'm your dedicated Shopping Assistant created by NVIDIA, here to answer any questions you might have and help you find anything you're looking for. What can I help you with today?\n\nHere are some questions you could ask me:\n\n• Do you have any black skirts and sandals?\n• I like the black skirt! Does it require dry cleaning?\n• Great! Add it to my cart";
     
     const words = introduction.split(" ");
     for (const word of words) {
@@ -352,7 +353,10 @@ const Chatbox: React.FC<ChatboxProps> = ({ setNewRenderImage }) => {
         messageRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
       }
     }
-  }, [messages]);
+    if (!isLoading) {
+      inputRef.current?.focus();
+    }
+  }, [messages, isLoading]);
 
   useEffect(() => {
     if (isOpen) {
@@ -423,20 +427,20 @@ const Chatbox: React.FC<ChatboxProps> = ({ setNewRenderImage }) => {
 
             {/* Input field */}
             <input
+              ref={inputRef}
               type="text"
               className="input_test"
               placeholder="Type something here..."
               value={newMessage}
               onChange={handleNewMessageChange}
               onKeyUp={handleKeyUp}
-              disabled={isLoading}
             />
 
             {/* Action buttons */}
             <div className="button-class">
               <SendIcon
-                sx={{ color: "#76B900" }}
-                onClick={handleSendMessage}
+                sx={{ color: isLoading ? "lightgray" : "#76B900", cursor: isLoading ? "not-allowed" : "pointer" }}
+                onClick={isLoading ? () => {} : handleSendMessage}
                 fontSize="large"
               />
             </div>

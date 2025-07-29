@@ -74,9 +74,19 @@ const ChatMessage = React.forwardRef<HTMLDivElement, ChatMessageProps>(
         );
       }
 
+      // Check if content contains bullet points - if so, preserve formatting
+      let processedContent = content as string;
+      if (/[•*-]|\d+\./.test(processedContent)) {
+        // Replace newlines with <br> tags for proper formatting
+        processedContent = processedContent.replace(/\n/g, '<br>');
+      } else {
+        // Otherwise, use the Markdown converter as normal
+        processedContent = converter.makeHtml(processedContent);
+      }
+
       return (
         <div className={`messages__item messages__item--${role}`} ref={ref}>
-          <SafeHTML html={converter.makeHtml(content as string)} />
+          <SafeHTML html={processedContent} />
         </div>
       );
     }

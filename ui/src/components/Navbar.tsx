@@ -103,7 +103,6 @@ const Navbar: React.FC = () => {
         >
           <a 
             className="text-[15px] font-medium hover:underline" 
-            href={getCategoryLink('homeGoods')}
             style={{ 
               color: isCategoryActive('homeGoods') ? "#000" : "#666" 
             }}

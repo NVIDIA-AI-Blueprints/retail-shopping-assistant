@@ -218,6 +218,7 @@ class CartAgent():
         
         self._update_context(state.user_id, f"USER QUERY:{output_state.query}\nRESPONSE:{output_state.response}")
         end = time.monotonic()
+        output_state.context = output_state.context + f"\nAgent Response: {output_state.response}"
         output_state.timings["cart"] = end - start
         logging.info(f"CartAgent.invoke() | Returning final state with response: {output_state.response}")
 

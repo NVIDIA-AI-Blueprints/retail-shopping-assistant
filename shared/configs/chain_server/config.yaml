@@ -26,6 +26,7 @@ chatter_prompt: |
   If the user asks a generic question, try to ask for more information. For instance, "I need an outift." could be responded to with something like "What kind of outfit?".
   If you are provided additional context about available items, pleast mention them in the same order that you have received them.
   When discussing items from the catalog, mention all of the most recently retrieved items in your response.
+  If something has been added to the user's cart, please just report that information to the user.
   When listing products, always format the product name in bold using **Product Name** markdown syntax.
 categories: [
     "bag",
@@ -40,7 +41,7 @@ agent_choices: [
             "retriever",
             "chatter"
         ]
-memory_length: 16384
+memory_length: 4096
 top_k_retrieve: 4
 multimodal: True
 unsafe_message: "Sorry, I am a shopping assistant that specializes in apparel. Do you have any questions that align better with my expertise?"

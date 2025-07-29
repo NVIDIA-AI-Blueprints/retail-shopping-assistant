@@ -60,7 +60,7 @@ class SummaryAgent:
                 model=self.llm_name,
                 messages=messages,
                 tools=[summary_function],
-                tool_choice="required",
+                tool_choice="auto",
                 stream=False,
                 temperature=0.0,
                 max_tokens=self.memory_length

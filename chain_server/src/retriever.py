@@ -180,7 +180,9 @@ class RetrieverAgent():
                 response_dict = json.loads(entity_gather.choices[0].message.tool_calls[0].function.arguments)
                 entity_list = response_dict.get("search_entities", [])
                 if type(entity_list) == str: 
-                    entities = ast.literal_eval(entity_list)
+                    logging.info(f"RetrieverAgent | _get_categories()\n\t| Entity list {entity_list}")
+                    cleaned = entity_list.strip("[]")
+                    entities = [item.strip().strip("'\"") for item in cleaned.split(',')]
                 else:
                     entities = entity_list
                 if category_gather.choices[0].message.tool_calls:
@@ -191,7 +193,9 @@ class RetrieverAgent():
                         response_dict.get("category_three", ""),
                         ]
                     if type(category_list) == str: 
-                        categories = ast.literal_eval(category_list)
+                        logging.info(f"RetrieverAgent | _get_categories()\n\t| Category list {category_list}")
+                        cleaned = category_list.strip("[]")
+                        categories = [item.strip().strip("'\"") for item in cleaned.split(',')]
                     else:
                         categories = category_list
 

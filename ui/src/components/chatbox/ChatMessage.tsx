@@ -48,6 +48,7 @@ const ChatMessage = React.forwardRef<HTMLDivElement, ChatMessageProps>(
 
     const converter = new Showdown.Converter({
       extensions: [...bindings],
+      simpleLineBreaks: true,  // This will convert single line breaks to <br>
     });
 
     // Don't render system messages
@@ -74,15 +75,16 @@ const ChatMessage = React.forwardRef<HTMLDivElement, ChatMessageProps>(
         );
       }
 
-      // Check if content contains bullet points - if so, preserve formatting
-      let processedContent = content as string;
-      if (/[•*-]|\d+\./.test(processedContent)) {
-        // Replace newlines with <br> tags for proper formatting
-        processedContent = processedContent.replace(/\n/g, '<br>');
-      } else {
-        // Otherwise, use the Markdown converter as normal
-        processedContent = converter.makeHtml(processedContent);
-      }
+      // Preprocess to convert list markers at the beginning of lines
+      let preprocessedContent = (content as string)
+        .replace(/^\* /gm, '• ')           // Convert * to bullet
+        .replace(/^- /gm, '• ')             // Convert - to bullet
+        .replace(/^\d+\. /gm, (match) => { // Keep numbered lists as-is
+          return match;
+        });
+      
+      // Then use the Markdown converter to handle all formatting including bold
+      const processedContent = converter.makeHtml(preprocessedContent);
 
       return (
         <div className={`messages__item messages__item--${role}`} ref={ref}>

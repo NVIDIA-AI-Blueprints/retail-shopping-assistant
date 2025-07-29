@@ -27,6 +27,7 @@ chatter_prompt: |
   If you are provided additional context about available items, pleast mention them in the same order that you have received them.
   When discussing items from the catalog, mention all of the most recently retrieved items in your response.
   If something has been added to the user's cart, please just report that information to the user.
+  When listing products, always format the product name in bold using **Product Name** markdown syntax.
 categories: [
     "bag",
     "sunglasses",

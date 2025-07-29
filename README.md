@@ -9,8 +9,26 @@
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.12+-blue.svg)](https://www.python.org/)
 [![Docker](https://img.shields.io/badge/Docker-Required-blue.svg)](https://www.docker.com/)
+[![GitHub Stars](https://img.shields.io/github/stars/NVIDIA-AI-Blueprints/retail-shopping-assistant?style=social)](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/stargazers)
+[![GitHub Issues](https://img.shields.io/github/issues/NVIDIA-AI-Blueprints/retail-shopping-assistant)](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/issues)
+[![GitHub last commit](https://img.shields.io/github/last-commit/NVIDIA-AI-Blueprints/retail-shopping-assistant)](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/commits)
+[![Contributors](https://img.shields.io/github/contributors/NVIDIA-AI-Blueprints/retail-shopping-assistant)](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/graphs/contributors)
 
 </div>
+
+## 📋 Table of Contents
+
+- [Overview](#overview)
+  - [Key Features](#key-features)
+  - [Architecture](#architecture)
+- [Get Started](#get-started)
+  - [Prerequisites](#prerequisites)
+  - [Quick Start](#quick-start)
+- [Documentation](#documentation)
+- [Contribution Guidelines](#contribution-guidelines)
+- [Community](#community)
+- [References](#references)
+- [License](#license)
 
 ## Overview
 
@@ -73,6 +91,8 @@ For detailed architecture information, see [Architecture Overview](docs/README.m
    ```
 
 4. **Launch the application**:
+   
+   **Option A: Local Deployment**:
    ```bash
    # Start local NIMs (requires 4x H100 GPUs)
    docker compose -f docker-compose-nim-local.yaml up -d
@@ -80,8 +100,29 @@ For detailed architecture information, see [Architecture Overview](docs/README.m
    # Build and launch the application
    docker compose -f docker-compose.yaml up -d --build
    ```
+   
+   **Option B: Cloud Deployment** (no local GPUs required):
+   ```bash
+   # Configure to use NVIDIA API Catalog endpoints
+   export CONFIG_OVERRIDE=config-build.yaml
+   
+   # Build and launch the application
+   docker compose -f docker-compose.yaml up -d --build
+   ```
 
 5. **Access the application**: Open your browser to `http://localhost:3000`
+
+6. **Stop the containers**:
+   
+   **Option A: Local Deployment**:
+   ```bash
+   docker compose -f docker-compose.yaml -f docker-compose-nim-local.yaml down
+   ```
+   
+   **Option B: Cloud Deployment**:
+   ```bash
+   docker compose -f docker-compose.yaml down
+   ```
 
 For detailed installation instructions, see [Deployment Guide](docs/DEPLOYMENT.md).
 

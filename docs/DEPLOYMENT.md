@@ -212,16 +212,8 @@ export RAIL_API_KEY=$NGC_API_KEY
 
 ### Step 2: Configure Cloud Endpoints
 
-Edit `shared/config/*/config*.yaml`:
-
-```yaml
-# Example Cloud NIM endpoints
-llm_port: "https://api.nvcf.nvidia.com/v1/chat/completions"
-llm_name: "meta/llama-3.1-70b-instruct"
-retriever_port: "https://api.nvcf.nvidia.com/v1/embeddings"
-memory_port: "http://localhost:8011"
-rails_port: "https://api.nvcf.nvidia.com/v1/chat/completions"
-```
+# Set environment variable
+export CONFIG_OVERRIDE=config-build.yaml
 
 ### Step 3: Deploy Application
 
@@ -238,10 +230,6 @@ docker compose -f docker-compose.yaml logs -f
 ```bash
 # Check service status
 docker compose -f docker-compose.yaml ps
-
-# Test API endpoints
-curl http://localhost:8000/health
-curl http://localhost:3000
 ```
 
 ## 🏭 Production Deployment
@@ -566,7 +554,6 @@ CONFIG_OVERRIDE=config-local.yaml docker compose up -d
 
 # Use cloud config
 CONFIG_OVERRIDE=config-build.yaml docker compose up -d
-```
 ```
 
 ### Performance Tuning

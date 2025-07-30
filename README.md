@@ -77,7 +77,7 @@ For detailed architecture information, see [Architecture Overview](docs/README.m
    ```bash
    docker login nvcr.io
    ```
-   Use `oauthtoken` as the username and your NGC API key as the password.
+   Use `$oauthtoken` as the username and your NGC API key as the password.
 
 3. **Set up environment**:
    ```bash

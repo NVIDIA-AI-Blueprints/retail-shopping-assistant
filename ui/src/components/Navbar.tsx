@@ -25,24 +25,15 @@ import { config, isFashionMode } from "../config/config";
 
 const Navbar: React.FC = () => {
   const categories = config.ui.categories;
-  const port = window.location.port;
 
   const getCategoryLink = (categoryKey: keyof typeof categories): string => {
-    if (categoryKey === 'fashion') {
-      return isFashionMode() ? "#" : "http://localhost:3000/";
-    } else if (categoryKey === 'homeGoods') {
-      return !isFashionMode() ? "#" : "http://localhost:13000/";
-    }
+    // Remove all mode switching logic
     return "#";
   };
 
   const isCategoryActive = (categoryKey: keyof typeof categories): boolean => {
-    if (categoryKey === 'fashion') {
-      return isFashionMode();
-    } else if (categoryKey === 'homeGoods') {
-      return !isFashionMode();
-    }
-    return false;
+    // Only fashion is active
+    return categoryKey === 'fashion';
   };
 
   return (
@@ -74,42 +65,32 @@ const Navbar: React.FC = () => {
           </p>
         </div>
 
-        {/* Fashion */}
-        <div 
-          className="flex items-center" 
-          style={{ 
-            textDecoration: isCategoryActive('fashion') ? 'underline' : 'none',
-            pointerEvents: isCategoryActive('fashion') ? 'none' : 'auto'
-          }}
-        >
-          <a 
-            className="text-[15px] font-medium hover:underline" 
-            href={getCategoryLink('fashion')}
-            style={{ 
-              color: isCategoryActive('fashion') ? "#000" : "#666" 
-            }}
-          >
+        {/* Fashion - Always Active */}
+        <div className="flex items-center">
+          <p className="text-[15px] font-medium text-[#000] underline">
             {categories.fashion}
-          </a>
+          </p>
         </div>
 
-        {/* Home Goods */}
-        <div 
-          className="flex items-center" 
-          style={{ 
-            textDecoration: isCategoryActive('homeGoods') ? 'underline' : 'none',
-            pointerEvents: isCategoryActive('homeGoods') ? 'none' : 'auto'
-          }}
-        >
-          <a 
-            className="text-[15px] font-medium hover:underline" 
-            style={{ 
-              color: isCategoryActive('homeGoods') ? "#000" : "#666" 
-            }}
-          >
-            {categories.homeGoods}
-          </a>
-        </div>
+        {/* Remove Home Goods section entirely */}
+        {/* 
+<div 
+  className="flex items-center" 
+  style={{ 
+    textDecoration: isCategoryActive('homeGoods') ? 'underline' : 'none',
+    pointerEvents: isCategoryActive('homeGoods') ? 'none' : 'auto'
+  }}
+>
+  <a 
+    className="text-[15px] font-medium hover:underline" 
+    style={{ 
+      color: isCategoryActive('homeGoods') ? "#000" : "#666" 
+    }}
+  >
+    {categories.homeGoods}
+  </a>
+</div>
+*/}
 
         {/* Grocery */}
         <div className="flex items-center hover:underline">

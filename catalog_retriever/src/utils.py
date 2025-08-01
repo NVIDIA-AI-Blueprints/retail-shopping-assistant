@@ -110,3 +110,30 @@ def is_path(string: str) -> bool:
     """
     path_pattern = re.compile(r'^/')
     return bool(path_pattern.match(string))
+
+def resize_base64_image(base64_string: str, max_width: int = 256, max_height: int = 256, quality: int = 85, max_b64_length: int = 65535) -> str:
+    """
+    Resize a base64 image to fit within the size limits.
+    """
+    try:
+        # Extract base64 data from data URI
+        if base64_string.startswith('data:'):
+            header, base64_data = base64_string.split(',', 1)
+        else:
+            base64_data = base64_string
+            header = 'data:image/jpeg;base64'
+        
+        # Decode and resize
+        image_data = base64.b64decode(base64_data)
+        img = Image.open(io.BytesIO(image_data)).convert("RGB")
+        img.thumbnail((max_width, max_height))
+        
+        # Re-encode
+        buffer = io.BytesIO()
+        img.save(buffer, format='JPEG', quality=quality, optimize=True)
+        resized_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
+        
+        return f"{header},{resized_base64}"
+    except Exception as e:
+        logging.error(f"Error resizing image: {e}")
+        return None

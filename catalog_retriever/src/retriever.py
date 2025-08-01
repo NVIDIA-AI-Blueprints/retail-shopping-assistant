@@ -17,7 +17,7 @@ import re
 import pandas as pd
 import numpy as np
 from numpy import mean
-from .utils import image_url_to_base64, is_url, is_path, image_path_to_base64
+from .utils import image_url_to_base64, is_url, is_path, image_path_to_base64, resize_base64_image
 import logging
 import asyncio
 
@@ -67,9 +67,13 @@ class ImageEmbeddings(Embeddings):
     def embed_query(self, text: str) -> List[float]:
         """Generate image embedding for a single image"""
         logging.info(f"ImageEmbeddings | embed_query() | called.\n\t| input: {text[:50]}")
-        _, embedding = self.retriever.image_embeddings([text])
-        logging.info(f"ImageEmbeddings | embed_query() | embedding output:\n\t| {embedding[0][:50]}")
-        return embedding[0]
+        embeddings = self.retriever.image_embeddings([text], verbose=True)
+        if embeddings and embeddings[0] is not None:
+            logging.info(f"ImageEmbeddings | embed_query() | embedding output:\n\t| {embeddings[0][:50]}")
+            return embeddings[0]
+        else:
+            logging.error(f"ImageEmbeddings | embed_query() | Failed to generate embedding for image")
+            raise ValueError("Failed to generate image embedding")
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
         """Generate image embeddings for multiple images"""
@@ -286,8 +290,17 @@ class Retriever:
                     MAX_VARCHAR_LENGTH = 65535
                     if len(input_data) > MAX_VARCHAR_LENGTH:
                         if verbose:
-                            logging.warning(f"CATALOG RETRIEVER | Skipping image embedding, too large: {len(input_data)} bytes.")
-                        input_data = None 
+                            logging.info(f"CATALOG RETRIEVER | Image too large ({len(input_data)} bytes), resizing...")
+                        # Try to resize the image
+                        resized = resize_base64_image(input_data)
+                        if resized and len(resized) <= MAX_VARCHAR_LENGTH:
+                            input_data = resized
+                            if verbose:
+                                logging.info(f"CATALOG RETRIEVER | Image resized successfully to {len(input_data)} bytes")
+                        else:
+                            if verbose:
+                                logging.warning(f"CATALOG RETRIEVER | Failed to resize image or still too large after resize")
+                            input_data = None 
                 except Exception as e:
                     if verbose:
                         logging.error(f"CATALOG RETRIEVER | Error processing image for batching: {e}")
@@ -501,11 +514,28 @@ class Retriever:
         if verbose:
             logging.info(f"CATALOG RETRIEVER | retrieve() | \n\tnames: {final_names} \n\tsimilarities: {final_sims}")
 
-        cat_list = [text.split("|")[-1].strip().split(",")[1].strip() for text in final_texts]
+        # Safely extract categories from texts
+        cat_list = []
+        for text in final_texts:
+            try:
+                # Split by | and get the last part, then split by comma to get category/subcategory
+                parts = text.split("|")[-1].strip().split(",")
+                if len(parts) >= 1:
+                    cat_list.append(parts[0].strip())  # Get the category (first part)
+                else:
+                    cat_list.append("")
+            except:
+                cat_list.append("")
 
         if verbose:
             logging.info(f"CATALOG RETRIEVER | pre-category filtering:\n\tCategories: {cat_list}\n\tUser input: {categories}")
 
+        # For image searches, if no categories or only generic categories provided, don't filter
+        if image_bool and (not categories or categories == ['dress', 'skirt', 'top blouse sweater']):
+            if verbose:
+                logging.info("CATALOG RETRIEVER | Image search - skipping category filtering")
+            return final_texts, final_ids, final_sims, final_names, final_images
+        
         if not categories:
             if verbose:
                 logging.info("CATALOG RETRIEVER | No categories provided, returning empty.")

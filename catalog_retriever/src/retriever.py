@@ -455,17 +455,27 @@ class Retriever:
                             \n\t| Similarities: {[res[1] for sublist in sorted_unformatted_results for res in sublist]}
                             \n\t| Names: {[res[0].metadata['name'] for sublist in sorted_unformatted_results for res in sublist]}""")
 
-        interleaved_results = []
-        # Store them in a regular list
-        active_iterators = [iter(lst) for lst in sorted_unformatted_results] 
-        while active_iterators:
-            current_it = active_iterators.pop(0)
-            try:
-                item = next(current_it)
-                interleaved_results.append(item)
-                active_iterators.append(current_it)
-            except StopIteration:
-                pass
+        # For image search, combine all results and sort by similarity instead of interleaving
+        if image_bool:
+            # Combine all results from different sources
+            all_unformatted_results = []
+            for sublist in sorted_unformatted_results:
+                all_unformatted_results.extend(sublist)
+            # Sort combined results by similarity score
+            interleaved_results = sorted(all_unformatted_results, key=lambda item: item[1], reverse=True)
+        else:
+            # For text-only search, use interleaving as before
+            interleaved_results = []
+            # Store them in a regular list
+            active_iterators = [iter(lst) for lst in sorted_unformatted_results] 
+            while active_iterators:
+                current_it = active_iterators.pop(0)
+                try:
+                    item = next(current_it)
+                    interleaved_results.append(item)
+                    active_iterators.append(current_it)
+                except StopIteration:
+                    pass
                 
         # Deduplicate.
         seen_ids = set()
@@ -497,10 +507,13 @@ class Retriever:
         final_images = [id_ for id_, sim in zip(final_images[:k], final_sims[:k]) if sim > self.sim_threshold]
         final_sims = [sim for sim in final_sims[:k] if sim > self.sim_threshold]
 
-        #zipped_sorted = list(zip(final_sims, final_texts, final_ids, final_names, final_images))
-        #zipped_sorted = sorted(zipped, key=lambda x: x[0], reverse=True)
-        #final_sims, final_texts, final_ids, final_names, final_images = zip(*zipped_sorted)
-        zip(final_sims, final_texts, final_ids, final_names, final_images)
+        # Sort all results by similarity score (highest first)
+        zipped = list(zip(final_sims, final_texts, final_ids, final_names, final_images))
+        zipped_sorted = sorted(zipped, key=lambda x: x[0], reverse=True)
+        if zipped_sorted:
+            final_sims, final_texts, final_ids, final_names, final_images = zip(*zipped_sorted)
+        else:
+            final_sims, final_texts, final_ids, final_names, final_images = [], [], [], [], []
 
         if verbose:
             logging.info(f"CATALOG RETRIEVER | retrieve() | \n\tfinal sims before truncating: {final_sims}")
@@ -518,40 +531,64 @@ class Retriever:
         cat_list = []
         for text in final_texts:
             try:
-                # Split by | and get the last part, then split by comma to get category/subcategory
-                parts = text.split("|")[-1].strip().split(",")
-                if len(parts) >= 1:
-                    cat_list.append(parts[0].strip())  # Get the category (first part)
-                else:
-                    cat_list.append("")
-            except:
-                cat_list.append("")
+                # Text format: "name | description | category,subcategory"
+                # Extract the last part after | and split by comma
+                category_part = text.split("|")[-1].strip()
+                if "PRICE:" in category_part:
+                    # Handle malformed data where price info got mixed with category
+                    category_part = category_part.split("PRICE:")[0].strip()
+                
+                # Split by comma to get [category, subcategory]
+                parts = category_part.split(",")
+                cats = []
+                for part in parts:
+                    cleaned = part.strip().lower()
+                    if cleaned and not cleaned.startswith("/"):  # Skip malformed data like "/images/..."
+                        cats.append(cleaned)
+                cat_list.append(cats)
+            except Exception as e:
+                if verbose:
+                    logging.warning(f"CATALOG RETRIEVER | Error parsing category from: {text[:50]}... Error: {e}")
+                cat_list.append([])
 
         if verbose:
             logging.info(f"CATALOG RETRIEVER | pre-category filtering:\n\tCategories: {cat_list}\n\tUser input: {categories}")
 
-        # For image searches, if no categories or only generic categories provided, don't filter
-        if image_bool and (not categories or categories == ['dress', 'skirt', 'top blouse sweater']):
+        # For image searches, ALWAYS return all results without category filtering
+        # Image similarity should determine relevance, not predefined categories
+        if image_bool:
             if verbose:
-                logging.info("CATALOG RETRIEVER | Image search - skipping category filtering")
+                logging.info("CATALOG RETRIEVER | Image search - returning all similarity-based results without category filtering")
             return final_texts, final_ids, final_sims, final_names, final_images
         
+        # For text searches, if no categories provided, return empty
         if not categories:
             if verbose:
-                logging.info("CATALOG RETRIEVER | No categories provided, returning empty.")
+                logging.info("CATALOG RETRIEVER | No categories provided for text search, returning empty.")
             return [], [], [], [], []
 
-        # Filter by category
-        filtered = [
-            (text, id_, sim, name, img)
-            for text, id_, sim, name, img, cat in zip(final_texts, 
-                                           final_ids, 
-                                           final_sims, 
-                                           final_names, 
-                                           final_images, 
-                                           cat_list)
-            if any(c in cat for c in categories)
-        ]
+        # Filter by category - check if any user category matches any product category/subcategory
+        filtered = []
+        for text, id_, sim, name, img, cats in zip(final_texts, 
+                                                   final_ids, 
+                                                   final_sims, 
+                                                   final_names, 
+                                                   final_images, 
+                                                   cat_list):
+            # Check if any user-provided category matches any product category/subcategory
+            match_found = False
+            for user_cat in categories:
+                user_cat_lower = user_cat.lower().strip()
+                for prod_cat in cats:
+                    # Check for partial match (e.g., "bag" matches "bags", "dress" matches "dresses")
+                    if user_cat_lower in prod_cat or prod_cat in user_cat_lower:
+                        match_found = True
+                        break
+                if match_found:
+                    break
+            
+            if match_found:
+                filtered.append((text, id_, sim, name, img))
 
         if not filtered:
             if verbose:

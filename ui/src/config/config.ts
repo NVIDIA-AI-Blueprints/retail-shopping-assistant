@@ -15,12 +15,10 @@ export interface AppConfig {
   ui: {
     defaultImages: {
       fashion: string;
-      furniture: string;
     };
     categories: {
       beauty: string;
       fashion: string;
-      homeGoods: string;
       grocery: string;
       office: string;
       lifestyle: string;
@@ -42,27 +40,13 @@ export interface AppConfig {
 
 // Get configuration based on environment
 const getConfig = (): AppConfig => {
-  const isDevelopment = process.env.NODE_ENV === 'development';
-  const port = window.location.port;
-  
-  // Determine backend port based on current port
-  let backendPort = 8009; // default
-  if (port === '3000' || port === '3001') {
-    backendPort = 8009;
-  } else if (port === '13000' || port === '13001') {
-    backendPort = 8009;
-  }
+  // Always use nginx proxy - it handles the routing
+  const baseUrl = '/api';
 
-  // Use nginx proxy in production, direct connection in development
-  const baseUrl = isDevelopment 
-    ? `${window.location.protocol}//${window.location.hostname}:${backendPort}`  // Local development
-    : '/api';  // Brev deployment - nginx routes /api/* to backend
-
-  //baseUrl: baseUrl,
   return {
     api: {
-      baseUrl: `${window.location.protocol}//${window.location.hostname}:${backendPort}`,
-      port: isDevelopment ? backendPort : 80,
+      baseUrl: baseUrl,
+      port: 80,
       endpoints: {
         query: '/query',
         stream: '/query/stream',
@@ -72,12 +56,10 @@ const getConfig = (): AppConfig => {
     ui: {
       defaultImages: {
         fashion: "/images/hans-isaacson-ehYEq99-psc-unsplash-lg.jpg",
-        furniture: "https://images.unsplash.com/photo-1567016376408-0226e4d0c1ea?q=80&w=1887&auto=format&f[…]3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D"
       },
       categories: {
         beauty: "BEAUTY AND WELLNESS",
         fashion: "FASHION",
-        homeGoods: "HOME GOODS",
         grocery: "GROCERY",
         office: "OFFICE",
         lifestyle: "LIFESTYLE",
@@ -106,10 +88,9 @@ export const getApiUrl = (endpoint: keyof AppConfig['api']['endpoints']): string
 };
 
 export const isFashionMode = (): boolean => {
-  const port = window.location.port;
-  return port === '3000' || port === '3001';
+  return true; // Always return true - always fashion mode
 };
 
 export const getDefaultImage = (): string => {
-  return isFashionMode() ? config.ui.defaultImages.fashion : config.ui.defaultImages.furniture;
+  return config.ui.defaultImages.fashion; // Always use fashion image
 }; 

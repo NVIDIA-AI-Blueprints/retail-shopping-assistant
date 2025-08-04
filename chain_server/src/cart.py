@@ -102,7 +102,7 @@ class CartAgent():
         session.mount("http://", adapter)
         logging.info(f"CartAgent.remove_from_cart() | /query/text -- getting response\n\t| query: {item_name}\n\t")
         ret_response = session.post(
-            f"{self.catalog_retriever_url}/query/text",
+            f"{self.catalog_retriever_port}/query/text",
             json={
                 "text": [item_name],
                 "categories": self.categories,

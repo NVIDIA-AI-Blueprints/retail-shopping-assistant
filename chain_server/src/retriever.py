@@ -115,7 +115,7 @@ class RetrieverAgent():
                 products = []
                 retrieved_dict = {}
                 for text, name, img, sim in zip(results["texts"], results["names"], results["images"], results["similarities"]):
-                    products.append(f"{text} (similarity: {sim:.2f})")
+                    products.append(text)
                     retrieved_dict[name] = img
                 state.response = f"These products are available in the catalog:\n" + "\n".join(products)
                 state.retrieved = retrieved_dict

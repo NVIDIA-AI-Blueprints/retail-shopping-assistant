@@ -156,7 +156,7 @@ export const validateImageFile = (file: File): string | null => {
   }
   
   if (!config.features.imageUpload.allowedTypes.includes(file.type)) {
-    return 'Please select a valid image file (JPEG, PNG, GIF, or WebP)';
+    return 'Please select a valid image file (JPEG or PNG only)';
   }
   
   return null;

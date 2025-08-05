@@ -322,11 +322,27 @@ class Retriever:
 
             except Exception as e:
                 if verbose:
-                    logging.error(f"CATALOG RETRIEVER | Retriever.image_embeddings() | Error embedding image batch: {e}")
+                    error_msg = str(e)
+                    if "webp" in error_msg.lower():
+                        logging.error(f"CATALOG RETRIEVER | Unsupported image format detected (WebP). Only JPEG and PNG are supported: {e}")
+                    elif "format" in error_msg.lower() or "expected" in error_msg.lower():
+                        logging.error(f"CATALOG RETRIEVER | Image format error. Only JPEG and PNG are supported: {e}")
+                    else:
+                        logging.error(f"CATALOG RETRIEVER | Retriever.image_embeddings() | Error embedding image batch: {e}")
                 batch_embeddings = iter([])
 
             # Reconstruct the batch with Nones for failed embeddings
-            reconstructed_batch = [next(batch_embeddings) if data is not None else None for data in input_data_list]
+            reconstructed_batch = []
+            for data in input_data_list:
+                if data is not None:
+                    try:
+                        embedding = next(batch_embeddings)
+                        reconstructed_batch.append(embedding)
+                    except StopIteration:
+                        # If we run out of embeddings, add None for remaining items
+                        reconstructed_batch.append(None)
+                else:
+                    reconstructed_batch.append(None)
             all_embeddings.extend(reconstructed_batch)
 
         return all_embeddings

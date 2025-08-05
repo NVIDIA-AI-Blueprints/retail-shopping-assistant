@@ -74,7 +74,7 @@ const getConfig = (): AppConfig => {
       imageUpload: {
         enabled: true,
         maxSize: 10, // 10MB
-        allowedTypes: ['image/jpeg', 'image/png', 'image/gif', 'image/webp'],
+        allowedTypes: ['image/jpeg', 'image/png'],
       },
     },
   };

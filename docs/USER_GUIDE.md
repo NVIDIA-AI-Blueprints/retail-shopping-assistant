@@ -204,7 +204,7 @@ AI: "For a wedding, I suggest starting with..."
 
 ### Supported Image Types
 
-- **Formats**: JPEG, PNG, WebP
+- **Formats**: JPEG, PNG
 - **Size**: Up to 10MB
 - **Resolution**: Any resolution (higher quality = better results)
 
@@ -345,7 +345,7 @@ AI: "Here are some black shoes that match your image..."
 
 **Solutions**:
 1. **Check file size** (should be under 10MB)
-2. **Verify file format** (JPEG, PNG, WebP only)
+2. **Verify file format** (JPEG, PNG only)
 3. **Try a different image**
 4. **Check your internet connection**
 5. **Refresh the page and try again**
@@ -432,7 +432,7 @@ A: Yes, you can ask "What's my total?" or "How much is in my cart?" to see the t
 A: Clear, well-lit photos of individual products work best. Avoid group shots or cluttered backgrounds.
 
 **Q: How large can my images be?**
-A: Images should be under 10MB. Supported formats are JPEG, PNG, and WebP.
+A: Images should be under 10MB. Supported formats are JPEG and PNG.
 
 **Q: Can I search for multiple products in one image?**
 A: It's best to upload images with single products for more accurate results.

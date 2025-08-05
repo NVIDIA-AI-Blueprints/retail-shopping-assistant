@@ -54,14 +54,20 @@ class ChatterAgent:
         logging.info(f"ChatterAgent.invoke() | State retrieved.")
 
         if state.query:
+            user_message = f"QUERY: {state.query}"
+            if state.context and state.context.strip():
+                user_message += f"\nPREVIOUS CONTEXT: {state.context}"
             messages = [
                 {"role": "system", "content": self.config.chatter_prompt},
-                {"role": "user", "content": f"QUERY: {state.query}\nPREVIOUS CONTEXT: {state.context}"}
+                {"role": "user", "content": user_message}
             ]
         else:
+            user_message = "QUERY: 'You have been sent an image, and the retrieved items are the most similar items.'"
+            if state.context and state.context.strip():
+                user_message += f"\nPREVIOUS CONTEXT: {state.context}"
             messages = [
                 {"role": "system", "content": self.config.chatter_prompt},
-                {"role": "user", "content": f"QUERY: 'You have been sent an image, and the retrieved items are the most similar items.'\nPREVIOUS CONTEXT: {state.context}"}
+                {"role": "user", "content": user_message}
             ]
 
         start = time.monotonic()

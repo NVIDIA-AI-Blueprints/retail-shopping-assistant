@@ -118,7 +118,7 @@ const Chatbox: React.FC<ChatboxProps> = ({ setNewRenderImage }) => {
     }
 
     if (!config.features.imageUpload.allowedTypes.includes(file.type)) {
-      toast.error('Please select a valid image file (JPEG, PNG, GIF, or WebP)');
+              toast.error('Please select a valid image file (JPEG or PNG only)');
       return;
     }
 

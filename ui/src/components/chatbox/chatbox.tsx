@@ -69,7 +69,7 @@ const Chatbox: React.FC<ChatboxProps> = ({ setNewRenderImage }) => {
     const storedId = sessionStorage.getItem('shopping_user_id');
     if (storedId) return parseInt(storedId, 10);
     
-    const newId = Math.floor(Math.random() * 100000);
+    const newId = Date.now() * 1000 + Math.floor(Math.random() * 1000);
     sessionStorage.setItem('shopping_user_id', String(newId));
     return newId;
   };

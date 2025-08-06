@@ -2,7 +2,7 @@
 
 <div align="center">
 
-![NVIDIA Logo](https://github.com/user-attachments/assets/cbe0d62f-c856-4e0b-b3ee-6184b7c4d96f)
+![NVIDIA Logo](https://avatars.githubusercontent.com/u/178940881?s=200&v=4)
 
 **AI-powered retail shopping assistant with multi-agent architecture**
 
@@ -145,7 +145,6 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 ## Community
 
 - **GitHub Issues**: [Report bugs and feature requests](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/issues)
-- **GitHub Discussions**: [Ask questions and share ideas](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/discussions)
 - **Documentation**: [Comprehensive guides and references](docs/README.md)
 
 ## References
@@ -176,7 +175,7 @@ This project is licensed under the Apache 2.0 License - see the [LICENSE](LICENS
 
 **Built with ❤️ by NVIDIA AI Blueprints**
 
-[Back to Top](#nvidia-ai-blueprint-retail-shopping-assistant)
+[Back to Top](#-nvidia-ai-blueprint-retail-shopping-assistant)
 
 </div>
 

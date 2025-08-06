@@ -212,6 +212,10 @@ const Chatbox: React.FC<ChatboxProps> = ({ setNewRenderImage }) => {
         image: image || "",
         image_bool: !!image
       };
+      
+      // Clear image immediately after preparing payload
+      setImage("");
+      setPreviewImage("");
 
       const url = `${config.api.baseUrl}${config.api.endpoints.stream}`;
 
@@ -296,10 +300,6 @@ const Chatbox: React.FC<ChatboxProps> = ({ setNewRenderImage }) => {
           }
         }
       }
-
-      // Clear input
-      setImage("");
-      setPreviewImage("");
       
     } catch (error) {
       console.error('Error sending message:', error);

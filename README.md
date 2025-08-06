@@ -127,6 +127,22 @@ For detailed architecture information, see [Architecture Overview](docs/README.m
 
 For detailed installation instructions, see [Deployment Guide](docs/DEPLOYMENT.md).
 
+## Deploy on NVIDIA Brev
+
+For a streamlined cloud deployment experience, you can deploy the Retail Shopping Assistant on **NVIDIA Brev** using GPU Environment Templates (Launchables):
+
+**[NVIDIA Brev Deployment Guide](docs/BREV.md)** - Complete step-by-step instructions for deploying on Brev
+
+### Why Choose NVIDIA Brev?
+
+- **One-Click Deployment**: Pre-configured GPU environments with automatic setup
+- **Managed Infrastructure**: No need to manage servers or GPU clusters
+- **Secure Access**: Built-in secure tunneling for web interface access  
+- **Flexible Resources**: Choose from H100, A100, and other GPU configurations
+- **Cost-Effective**: Pay only for actual usage time
+
+The Brev deployment guide walks you through the entire process from creating a Launchable to accessing your fully functional retail shopping assistant.
+
 ## Documentation
 
 - **[User Guide](docs/USER_GUIDE.md)**: How to use the application
@@ -173,8 +189,6 @@ This project is licensed under the Apache 2.0 License - see the [LICENSE](LICENS
 ---
 
 <div align="center">
-
-**Built with ❤️ by NVIDIA AI Blueprints**
 
 [Back to Top](#top)
 

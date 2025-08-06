@@ -90,7 +90,7 @@ If 4x H100 is unavailable or budget is a concern:
 
 3. Click **Next** to review your configuration
 
-![Step 5: Compute Resources](images/step1.pngstep5.png)
+![Step 5: Compute Resources](images/step1.png)
 
 > **Performance Note**: The retail shopping assistant is optimized for 4x H100 GPUs as specified in the main README. This ensures smooth operation of all AI models including embeddings, LLMs, and NIMs.
 
@@ -218,7 +218,7 @@ Access the retail shopping assistant through your secure tunnel.
 3. **Use Secure Tunnel**: Click the **shareable URL for port 3000** (e.g., `https://tunnel-xx.brevlab.com:3000`)
 4. **Open Application**: The retail shopping assistant web interface opens in your browser
 
-![Step 14: Access Shareable link](https://github-production-user-asset-6210df.s3.amazonaws.com/2906855/475221665-ae96b25c-78d9-4e89-a720-270ee31d886b.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAVCODYLSA53PQK4ZA%2F20250806%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20250806T205336Z&X-Amz-Expires=300&X-Amz-Signature=5d15d0ecd28c547457e0393829b41525f15fd688af7927c1eb62fcbafe57291c&X-Amz-SignedHeaders=host)
+![Step 14: Access Shareable link](images/step14.png)
 
 > **Important**: Use the Brev secure tunnel URL, not `http://localhost:3000` mentioned in the notebook.
 

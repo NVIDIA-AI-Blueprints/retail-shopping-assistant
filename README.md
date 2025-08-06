@@ -1,3 +1,4 @@
+<a id="top"></a>
 # 🛍️ NVIDIA AI Blueprint: Retail Shopping Assistant
 
 <div align="center">
@@ -175,7 +176,7 @@ This project is licensed under the Apache 2.0 License - see the [LICENSE](LICENS
 
 **Built with ❤️ by NVIDIA AI Blueprints**
 
-[Back to Top](#🛍️-nvidia-ai-blueprint-retail-shopping-assistant)
+[Back to Top](#top)
 
 </div>
 

@@ -22,7 +22,7 @@ Before starting this deployment, ensure you have:
 2. Click **Launchables** in the top navigation menu
 3. Click **Create Launchable** to begin creating your GPU environment template
 
-![Step 1: Create Launchable](https://github-production-user-asset-6210df.s3.amazonaws.com/2906855/475207726-422f65f0-35a3-487d-b945-56f710a0af67.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAVCODYLSA53PQK4ZA%2F20250806%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20250806T201856Z&X-Amz-Expires=300&X-Amz-Signature=2fff0f4d5f58f342441dc5517351e540716815894fc0d35bfd637a8a633438b6&X-Amz-SignedHeaders=host)
+![Step 1: Create Launchable](images/step1.png)
 
 ### Step 2: Configure Code Files and Runtime Environment
 
@@ -37,7 +37,7 @@ Configure how you'll provide your code files and select the runtime environment.
 
 3. Click **Next** to continue
 
-![Step 2: Configure Environment](https://github-production-user-asset-6210df.s3.amazonaws.com/2906855/475208291-2f4f0c93-7daa-49cf-95f5-66951ba6e70d.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAVCODYLSA53PQK4ZA%2F20250806%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20250806T202021Z&X-Amz-Expires=300&X-Amz-Signature=295abfbbc01dd75b6db2051bc76b6c1107b6b47f1a0f56f004fcef409494b408&X-Amz-SignedHeaders=host)
+![Step 2: Configure Environment](images/step2.png)
 
 > **Note**: We select "I don't have any code files" because we'll clone the retail shopping assistant repository directly in the VM during setup.
 
@@ -49,7 +49,7 @@ This optional step allows you to add initialization scripts that run after envir
 2. **Manual Setup Approach**: We'll configure the retail shopping assistant manually for better control
 3. Click **Next** to continue
 
-![Step 3: Script Configuration](https://github-production-user-asset-6210df.s3.amazonaws.com/2906855/475208789-a36e5951-8ddc-495c-a31e-0c34e045f472.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAVCODYLSA53PQK4ZA%2F20250806%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20250806T202159Z&X-Amz-Expires=300&X-Amz-Signature=1b0348f389a1dad2f678c3d119ffa08a496945c93aea59b70471d56c45335b4f&X-Amz-SignedHeaders=host)
+![Step 3: Script Configuration](images/step3.png)
 
 > **Note**: The script upload feature is experimental. Manual setup provides better control over the installation process.
 
@@ -68,7 +68,7 @@ Configure your development environment and network access for the retail shoppin
 
 3. Click **Next** to continue
 
-![Step 4: Jupyter and Network Configuration](https://github-production-user-asset-6210df.s3.amazonaws.com/2906855/475209222-96d1e038-a3e9-40fa-addc-2adff429c859.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAVCODYLSA53PQK4ZA%2F20250806%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20250806T202300Z&X-Amz-Expires=300&X-Amz-Signature=18c7f03d254e65d9e9ed14aaa327a9e2cdc2ab227a3626b0e055ec09e201a33f&X-Amz-SignedHeaders=host)
+![Step 4: Jupyter and Network Configuration](images/step4.png)
 
 > **Important**: Port 3000 is the default port for the retail shopping assistant's React frontend. The secure tunnel provides external access to the application.
 
@@ -90,7 +90,7 @@ If 4x H100 is unavailable or budget is a concern:
 
 3. Click **Next** to review your configuration
 
-![Step 5: Compute Resources](https://github-production-user-asset-6210df.s3.amazonaws.com/2906855/475209660-66cfde49-2c75-4019-8ddd-4f36eb026207.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAVCODYLSA53PQK4ZA%2F20250806%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20250806T202414Z&X-Amz-Expires=300&X-Amz-Signature=2c50eb9c3c2fab12981b4c185f9099a4540416dd652255c9864d2f86c0604d22&X-Amz-SignedHeaders=host)
+![Step 5: Compute Resources](images/step1.pngstep5.png)
 
 > **Performance Note**: The retail shopping assistant is optimized for 4x H100 GPUs as specified in the main README. This ensures smooth operation of all AI models including embeddings, LLMs, and NIMs.
 
@@ -107,7 +107,7 @@ Review your selected configuration and pricing information.
 2. **Verify Settings**: Ensure all configurations meet your requirements
 3. Click **Next** to proceed
 
-![Step 6: Configuration Review](https://github-production-user-asset-6210df.s3.amazonaws.com/2906855/475210130-20e70390-a558-45d4-91f0-721e9564af1f.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAVCODYLSA53PQK4ZA%2F20250806%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20250806T202525Z&X-Amz-Expires=300&X-Amz-Signature=d8c0e7b3d1f471923a895132f28d9820e40df1858c949addb85dabf8cf0a0345&X-Amz-SignedHeaders=host)
+![Step 6: Configuration Review](images/step6.png)
 
 > **Cost Warning**: Note the hourly rate. Brev instances cannot be stopped/restarted—only deleted. Plan your usage accordingly.
 
@@ -126,7 +126,7 @@ Create your GPU environment template with the configured settings.
 
 3. **Create Template**: Click **"Create Launchable"**
 
-![Step 7: Create Launchable](https://github-production-user-asset-6210df.s3.amazonaws.com/2906855/475211557-ba0d6b45-599f-48a1-a435-bca8375f0b5c.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAVCODYLSA53PQK4ZA%2F20250806%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20250806T202923Z&X-Amz-Expires=300&X-Amz-Signature=1839894757bde3a0e047a6e7d673c918dc3805fe39829e110181db1dae51478b&X-Amz-SignedHeaders=host)
+![Step 7: Create Launchable](images/step7.png)
 
 > **Important**: The configuration becomes a shareable template that others can use to deploy identical environments. Instance provisioning and billing begin immediately after creation.
 
@@ -138,7 +138,7 @@ After successful template creation, access your deployment options.
 2. **Note Deployment URL**: Save the unique Launchable URL provided
 3. **Access Deployment**: Click **"View Live Deploy Page"**
 
-![Step 8: Launchable Success](https://github-production-user-asset-6210df.s3.amazonaws.com/2906855/475211892-87d52092-a5a8-4de8-9692-cadd78e22396.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAVCODYLSA53PQK4ZA%2F20250806%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20250806T203006Z&X-Amz-Expires=300&X-Amz-Signature=aca36de6409dbb8d7778f36ffa53df33d567bb5e8887073e9e50abff1d0045fe&X-Amz-SignedHeaders=host)
+![Step 8: Launchable Success](images/step8.png)
 
 > **Next**: The live deploy page provides options to actually provision and access your instance.
 
@@ -150,7 +150,7 @@ Initiate the actual deployment of your configured environment.
 2. **Start Deployment**: Click **"Deploy Launchable"** to begin GPU resource provisioning
 3. **Monitor Progress**: Wait for the provisioning process to complete
 
-![Step 9: Deploy Launchable](https://github-production-user-asset-6210df.s3.amazonaws.com/2906855/475212221-df18b9db-807e-468b-8ae2-e463b6d3e680.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAVCODYLSA53PQK4ZA%2F20250806%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20250806T203048Z&X-Amz-Expires=300&X-Amz-Signature=c6408fb790e0ba28d992e330c605f9b66fad58bc53b8f7566e2b2b78301b3ea8&X-Amz-SignedHeaders=host)
+![Step 9: Deploy Launchable](images/step9.png)
 
 > **Billing Note**: GPU resource provisioning and billing begin at this step. The deployment process takes several minutes.
 
@@ -161,7 +161,7 @@ Access the instance management interface to monitor deployment progress.
 1. **Deployment Status**: Look for "Launchable is now deploying..." message
 2. **Access Management**: Click **"Go to Instance Page"** to view progress and access management options
 
-![Step 10: Go to Instance Page](https://github-production-user-asset-6210df.s3.amazonaws.com/2906855/475214079-f0c68846-cefc-4591-a0d8-5693674e7e41.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAVCODYLSA53PQK4ZA%2F20250806%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20250806T203423Z&X-Amz-Expires=300&X-Amz-Signature=56b74ab8a2bd899a63e028c6609ca7d7963d7a5f0270eb0d587fec21944c76a2&X-Amz-SignedHeaders=host)
+![Step 10: Go to Instance Page](images/step10.png)
 
 > **Management Features**: The instance page provides logs, connection details, and management options during provisioning.
 
@@ -174,7 +174,7 @@ Wait for instance completion and access the Jupyter environment.
 3. **Refresh if Needed**: If **"Open Notebook"** appears disabled, refresh the page
 4. **Access Jupyter**: Click **"Open Notebook"** to enter the development environment
 
-![Step 11: Instance Running](https://github-production-user-asset-6210df.s3.amazonaws.com/2906855/475214404-48451a12-6a0e-4c0f-9a6d-a191c3b4672d.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAVCODYLSA53PQK4ZA%2F20250806%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20250806T203526Z&X-Amz-Expires=300&X-Amz-Signature=1191bed84fda1d0b766c956bce085e8cbcbed9f35ec1217b81e743f7e757792b&X-Amz-SignedHeaders=host)
+![Step 11: Instance Running](images/step11.png)
 
 > **Instance Controls**: Available options include "Stop" (pause billing), "Delete" (permanently remove), and "Open Notebook" (access environment).
 
@@ -189,7 +189,7 @@ Download the retail shopping assistant source code to your instance.
    ```
 3. **Verify Download**: Confirm the repository files are downloaded successfully
 
-![Step 12: Clone Repository](https://github-production-user-asset-6210df.s3.amazonaws.com/2906855/475217248-01d34521-cce7-439b-aebc-f75b86e341b1.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAVCODYLSA53PQK4ZA%2F20250806%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20250806T204156Z&X-Amz-Expires=300&X-Amz-Signature=6ea823765a9391d35b024196551a8555f28272b3e7c09685ef75ec088f039444&X-Amz-SignedHeaders=host)
+![Step 12: Clone Repository](images/step12.png)
 
 > **Next Step**: With the source code available, proceed to configure and deploy the application.
 
@@ -205,7 +205,7 @@ Use the included deployment notebook to automate the setup process.
    - Start Docker services
    - Verify deployment status
 
-![Step 13: Deploy Notebook](https://github-production-user-asset-6210df.s3.amazonaws.com/2906855/475221164-c73c4ccf-4fff-4812-985e-17f19b38918a.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAVCODYLSA53PQK4ZA%2F20250806%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20250806T205204Z&X-Amz-Expires=300&X-Amz-Signature=228f68f9ed1de05081eb9023190f43d80167c37beb816ff398dabcf2089d24d4&X-Amz-SignedHeaders=host)
+![Step 13: Deploy Notebook](images/step12.png)
 
 > **Critical**: Execute each notebook cell sequentially to ensure proper setup. The notebook contains all necessary commands and explanations.
 
@@ -234,7 +234,7 @@ Allow the system to complete initialization before use.
    - "Milvus database ready" (vector database initialization)
    - "Uvicorn running" (web server ready)
 
-![Step 15: System Initialization](https://github-production-user-asset-6210df.s3.amazonaws.com/2906855/475222365-0ee83aad-75b6-46cd-a309-264d800dd944.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAVCODYLSA53PQK4ZA%2F20250806%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20250806T205539Z&X-Amz-Expires=300&X-Amz-Signature=50fd2077b37d52bf8e51275a9f9dea60c9d4198a70fa7b2c19d3a2a339e9fbc5&X-Amz-SignedHeaders=host)
+![Step 15: System Initialization](images/step15.png)
 
 > **Critical**: Wait for complete initialization before interacting with the assistant. Premature interaction may cause errors or incomplete responses.
 
@@ -250,7 +250,7 @@ Allow the system to complete initialization before use.
 - **Smart Cart**: Add and manage items in your shopping cart
 - **Multi-Agent System**: Experience the full AI-powered retail assistant
 
-![Retail Shopping Assistant](https://github-production-user-asset-6210df.s3.amazonaws.com/2906855/475222617-64dd19ad-71e4-4079-84a2-5e22126c2be4.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAVCODYLSA53PQK4ZA%2F20250806%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20250806T205629Z&X-Amz-Expires=300&X-Amz-Signature=88107a6621d23d4f36090545cd46e0705d4babf739e65c1da570aaf58da68a15&X-Amz-SignedHeaders=host)
+![Retail Shopping Assistant](images/step16.jpg)
 
 ## Additional Resources
 

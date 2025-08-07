@@ -20,7 +20,7 @@ const App: React.FC = () => {
       <Apparel newRenderImage={newRenderImage} />
       <Chatbox setNewRenderImage={setNewRenderImage} />
       <Footer />
-      <ToastContainer />
+      <ToastContainer position="top-right" />
     </div>
   );
 };

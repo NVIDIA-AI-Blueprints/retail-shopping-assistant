@@ -174,4 +174,85 @@ export const formatFileSize = (bytes: number): string => {
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+};
+
+export interface CartOperation {
+  type: 'add' | 'remove';
+  item: string;
+}
+
+/**
+ * Clean item name by removing markdown formatting and extra whitespace
+ */
+const cleanItemName = (item: string): string => {
+  return item
+    .replace(/\*\*/g, '') // Remove markdown bold markers
+    .trim(); // Remove extra whitespace
+};
+
+/**
+ * Detect cart operations from response messages - simplified to focus only on product names
+ */
+export const detectCartOperation = (message: string): CartOperation | null => {
+  // Pattern for add operations - captures item name from either format
+  const addPattern = /(?:added.*?(?:of\s+)?['"]?([^'"]+?)['"]?\s+to.*cart|added.*?\*\*([^*]+)\*\*.*to.*cart)/i;
+  
+  // Pattern for remove operations - captures item name from either format  
+  const removePattern = /(?:removed.*?(?:of\s+)?['"]?([^'"]+?)['"]?\s+from.*cart|removed.*?\*\*([^*]+)\*\*.*from.*cart)/i;
+  
+  // Check for add operations
+  let match = message.match(addPattern);
+  if (match) {
+    const item = match[1] || match[2]; // Get whichever group matched
+    if (item) {
+      return {
+        type: 'add',
+        item: cleanItemName(item)
+      };
+    }
+  }
+  
+  // Check for remove operations
+  match = message.match(removePattern);
+  if (match) {
+    const item = match[1] || match[2]; // Get whichever group matched
+    if (item) {
+      return {
+        type: 'remove',
+        item: cleanItemName(item)
+      };
+    }
+  }
+  
+  return null;
+};
+
+/**
+ * Show cart operation notification using the existing toast system
+ */
+export const showCartNotification = (
+  fullResponse: string, 
+  shownOperations: Set<string>,
+  toast: any
+): void => {
+  const cartOperation = detectCartOperation(fullResponse);
+  
+  if (cartOperation) {
+    const operationKey = `${cartOperation.type}-${cartOperation.item}`;
+    
+    if (!shownOperations.has(operationKey)) {
+      shownOperations.add(operationKey);
+      
+      const message = cartOperation.type === 'add'
+        ? `Added ${cartOperation.item} to cart`
+        : `🗑️ Removed ${cartOperation.item} from cart`;
+      
+      // Use the same simple approach as file upload notifications
+      if (cartOperation.type === 'add') {
+        toast.success(message);
+      } else {
+        toast.info(message);
+      }
+    }
+  }
 }; 

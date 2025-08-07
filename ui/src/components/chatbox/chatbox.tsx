@@ -30,6 +30,7 @@ import { faTimesCircle } from '@fortawesome/free-solid-svg-icons';
 import ChatMessage from "./ChatMessage";
 import { ChatboxProps } from "../../types";
 import { config } from "../../config/config";
+import { showCartNotification } from "../../utils";
 import logo from "../../assets/nvidia-logo.png";
 
 /**
@@ -61,6 +62,7 @@ const Chatbox: React.FC<ChatboxProps> = ({ setNewRenderImage }) => {
   const messageRefs = useRef<React.RefObject<HTMLDivElement>[]>([]);
   const [lastAssistantIndex, setLastAssistantIndex] = useState<number | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const shownCartOperations = useRef<Set<string>>(new Set());
 
   // Utility functions
   const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -188,6 +190,9 @@ const Chatbox: React.FC<ChatboxProps> = ({ setNewRenderImage }) => {
   const handleSendMessage = async () => {
     if (!newMessage.trim() && !image) return;
 
+    // Clear previous cart operation notifications for new message
+    shownCartOperations.current.clear();
+
     const userId = getOrCreateUserId();
     setIsLoading(true);
 
@@ -257,6 +262,9 @@ const Chatbox: React.FC<ChatboxProps> = ({ setNewRenderImage }) => {
             
             if (type === 'content') {
               fullResponse += payload;
+              
+              // Check for cart operations and show notifications
+              showCartNotification(fullResponse, shownCartOperations.current, toast);
             } else if (type === 'images') {
               const images = Object.entries(payload).map(([productName, productUrl]) => ({ 
                 productUrl, 

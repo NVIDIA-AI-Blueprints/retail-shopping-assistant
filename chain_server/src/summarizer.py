@@ -49,8 +49,29 @@ class SummaryAgent:
         output_state = state
 
         messages = [
-            {"role": "system", "content": "It is your job to summarize the context and cart of the user."},
-            {"role": "user", "content": f"CONTEXT:{state.context}"}
+            {"role": "system", "content": """You are a conversation summarizer for a shopping assistant. 
+
+                CRITICAL RULES:
+                1. You MUST preserve ALL product information, including:
+                - Complete product names with all descriptors
+                - ALL care instructions (washing, drying, ironing, dry cleaning instructions)
+                - Materials and fabric composition
+                - Prices
+                - Colors, sizes, and any other specifications
+
+                2. For ANY product the user has shown interest in or asked about:
+                - Keep the ENTIRE product description including all details
+                - Preserve any attributes mentioned (care instructions, materials, features)
+
+                3. You may condense only:
+                - General conversation flow and greetings
+                - Redundant phrases that don't contain product information
+                - User's general preferences (but keep specific requirements)
+
+                4. NEVER remove or shorten product specifications, even to save space.
+
+                The goal is to maintain all factual product information while reducing conversational overhead."""},
+                            {"role": "user", "content": f"CONTEXT TO SUMMARIZE:\n{state.context}"}
         ]
 
         start = time.monotonic()
@@ -77,3 +98,4 @@ class SummaryAgent:
         end = time.monotonic()
         
         logging.info(f"SummaryAgent.invoke() | Completed summarization in {end - start} seconds.")
+        return output_state

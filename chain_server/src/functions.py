@@ -5,9 +5,12 @@ search_function = {
     "type": "function",
     "function": {
         "name": "search_entities",
-        "description": """Identify relevant search terms for a user given their most recent query, and their chat history.\n
-                          If a term has an adjective, e.g. 'black shoes' include the adjective in the search term.\n
-                          Do not just pass the entire query in as an entity to search for.""",
+        "description": """Extract search terms for product catalog search.
+                          
+                          IMPORTANT: 
+                          - For NEW product searches, extract only the new product type being requested
+                          - For questions about PREVIOUSLY mentioned products, extract the specific product name from context
+                          - NEVER combine or merge context products with new search terms""",
         "parameters": {
             "type": "object",
             "properties": {
@@ -100,7 +103,7 @@ summary_function = {
             "properties" : {
                 "summary" : {
                     "type" : "string",
-                    "description" : "A short, but detailed summary of the provided context, including chat roles and item names."
+                    "description" : "A concise summary that MUST preserve: all product names, product specifications (materials, colors, care instructions, prices), products the user asked about, and cart contents. Summarize only the general conversation flow and user preferences."
                 },
             },
             "required" : ["summary"]

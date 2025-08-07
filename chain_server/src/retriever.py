@@ -65,7 +65,7 @@ class RetrieverAgent():
 
         # Use the LLM to determine categories for the query
         start = time.monotonic()
-        entities, categories = await self._get_categories(query)
+        entities, categories = await self._get_categories(query, state)
         end = time.monotonic()
         state.timings["retriever_categories"] = end - start
         
@@ -118,7 +118,16 @@ class RetrieverAgent():
                     products.append(text)
                     retrieved_dict[name] = img
                 state.response = f"These products are available in the catalog:\n" + "\n".join(products)
-                state.retrieved = retrieved_dict
+                 # Keep all previously retrieved products that might still be relevant
+                if not state.retrieved:
+                    state.retrieved = {}
+                # Add new products to existing ones
+                state.retrieved.update(retrieved_dict)
+                # Limit total products to prevent memory issues (keep most recent 20)
+                if len(state.retrieved) > 20:
+                    # Keep only the most recent products
+                    items = list(state.retrieved.items())
+                    state.retrieved = dict(items[-20:])
             else:
                 state.response = "Unfortunately there are no products closely matching the user's query."
             
@@ -138,7 +147,7 @@ class RetrieverAgent():
 
         return state
 
-    async def _get_categories(self, query: str) -> Tuple[List[str],List[str]]:
+    async def _get_categories(self, query: str, state: State) -> Tuple[List[str],List[str]]:
         """
         Use the LLM to determine relevant categories for the query using the search function.
         """
@@ -154,25 +163,58 @@ class RetrieverAgent():
                                             \nAVAILABLE CATEGORIES\n '{category_list_str}'
                                             \nPROCESS THIS USER QUERY WITH CONTEXT:\n '{query}'"""}
             ]
+            # Split the query into user question and context for clarity
+            user_question = state.query
+            conversation_context = state.context
+            
             entity_messages = [
-                {"role": "user", "content": f"""\nUSER QUERY WITH CONTEXT:\n '{query}'"""}
+                {"role": "system", "content": """You are a search entity extractor. Your task is to identify the specific product the user is asking about based on the conversation history.
+
+    CRITICAL RULES:
+    1.  **Analyze Intent:** Determine if the user's "Current question" is a follow-up about a previously discussed product or a request for a new product.
+    2.  **Follow-up Clues:** Questions about attributes (e.g., "other colors", "different sizes") or using pronouns (e.g., "it", "that", "those") strongly suggest a follow-up.
+    3.  **For Follow-ups, Use Context:** If the question is a follow-up, you MUST extract the full, specific product name from the "Previous conversation context".
+    4.  **For New Searches, Use Query:** If the user is asking for a new type of item, you MUST extract the search term directly from the "Current question".
+    5.  **Strict Separation:** Never merge or combine terms from the context with terms from the current query.
+
+    **Decision Logic:**
+
+    -   **IF** the `Current question` refers to an existing item (e.g., "does it come in blue?")
+        **AND** the `Previous conversation context` contains a specific `[Product Name]`,
+        **THEN** you must extract that `[Product Name]`.
+
+    -   **IF** the `Current question` introduces a new item (e.g., "show me some hats"),
+        **THEN** you must extract `hats`.
+
+    Your goal is to use the context to understand *references*, not to interfere with *new searches*.
+    """},
+                                {"role": "user", "content": f"""Current question: {user_question}
+
+                Previous conversation context: {conversation_context}
+
+                Apply the decision logic. What is the user searching for?"""}
             ]
 
             entity_response = asyncio.to_thread(self.model.chat.completions.create, 
                                                 model=self.llm_name,
                                                 messages=entity_messages,
                                                 tools=[search_function],
-                                                tool_choice="auto"
+                                                tool_choice="auto",
+                                                temperature=0.0
                                                 )
             category_response = asyncio.to_thread(self.model.chat.completions.create, 
                                                 model=self.llm_name,
                                                 messages=category_messages,
                                                 tools=[category_function],
-                                                tool_choice="auto"
+                                                tool_choice="auto",
+                                                temperature=0.0
                                                 )
             entity_gather, category_gather = await asyncio.gather(entity_response,category_response) 
 
             logging.info(f"RetrieverAgent | _get_categories()\n\t| Entity Response: {entity_gather}\n\t| Category Response: {category_gather}")
+            
+            # Add debug logging to see what query was sent
+            logging.info(f"RetrieverAgent | _get_categories() | Query sent to entity extractor: {query[:200]}...")
 
             entities = [query]
             categories = category_list

@@ -80,7 +80,7 @@ You should force repopulation when:
 - You want to ensure fresh embeddings
 - Database corruption is suspected
 
-## 📦 Custom Data Source
+## Custom Data Source
 
 The application comes with sample product data (`products_extended.csv`), but you can easily replace it with your own product catalog. This section explains how to use a custom CSV file for your retail data.
 

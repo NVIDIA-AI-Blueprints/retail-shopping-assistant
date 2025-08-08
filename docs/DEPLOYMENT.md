@@ -2,15 +2,15 @@
 
 ## 📋 Table of Contents
 
-- [Overview](#overview)
-- [Prerequisites](#prerequisites)
-- [Deployment Options](#deployment-options)
-- [Local Deployment](#local-deployment)
-- [Cloud Deployment](#cloud-deployment)
-- [Production Deployment](#production-deployment)
-- [Configuration](#configuration)
-- [Monitoring](#monitoring)
-- [Troubleshooting](#troubleshooting)
+- [Overview](#-overview)
+- [Prerequisites](#-prerequisites)
+- [Deployment Options](#-deployment-options)
+- [Local Deployment](#-local-deployment)
+- [Cloud Deployment](#-cloud-deployment)
+- [Production Deployment](#-production-deployment)
+- [Configuration](#-configuration)
+- [Monitoring](#-monitoring)
+- [Troubleshooting](#-troubleshooting)
 
 ## 🎯 Overview
 

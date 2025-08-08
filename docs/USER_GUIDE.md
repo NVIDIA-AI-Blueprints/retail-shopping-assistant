@@ -2,15 +2,15 @@
 
 ## 📋 Table of Contents
 
-- [Getting Started](#getting-started)
-- [Features Overview](#features-overview)
-- [Using the Chat Interface](#using-the-chat-interface)
-- [Product Search](#product-search)
-- [Shopping Cart Management](#shopping-cart-management)
-- [Image Upload Feature](#image-upload-feature)
-- [Best Practices](#best-practices)
-- [Troubleshooting](#troubleshooting)
-- [FAQ](#faq)
+- [Getting Started](#-getting-started)
+- [Features Overview](#-features-overview)
+- [Using the Chat Interface](#-using-the-chat-interface)
+- [Product Search](#-product-search)
+- [Shopping Cart Management](#-shopping-cart-management)
+- [Image Upload Feature](#%EF%B8%8F-image-upload-feature)
+- [Best Practices](#-best-practices)
+- [Troubleshooting](#%EF%B8%8F-troubleshooting)
+- [FAQ](#-faq)
 
 ## 🚀 Getting Started
 

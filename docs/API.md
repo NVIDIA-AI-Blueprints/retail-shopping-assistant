@@ -2,14 +2,16 @@
 
 ## 📋 Table of Contents
 
-- [Overview](#overview)
-- [Base URL](#base-url)
-- [Authentication](#authentication)
-- [Data Models](#data-models)
-- [Endpoints](#endpoints)
-- [Error Handling](#error-handling)
-- [Rate Limiting](#rate-limiting)
-- [Examples](#examples)
+- [Overview](#🎯-overview)
+- [Base URL](#🌐-base-url)
+- [Authentication](#🔐-authentication)
+- [Data Models](#📊-data-models)
+- [Endpoints](#🔄-endpoints)
+- [Error Handling](#❌-error-handling)
+- [Rate Limiting](#⚡-rate-limiting)
+- [Examples](#💡-examples)
+- [Client Integration](#🔧-client-integration)
+- [Notes](#📝-notes)
 
 ## 🎯 Overview
 

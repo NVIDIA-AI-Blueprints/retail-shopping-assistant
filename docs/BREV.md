@@ -260,7 +260,7 @@ Allow the system to complete initialization before use.
 - [Deployment Guide](DEPLOYMENT.md) - Alternative deployment methods
 
 ### Support
-- [NVIDIA Brev Documentation](https://docs.brev.nvidia.com) - Platform-specific help
+- [NVIDIA Brev Documentation](https://docs.nvidia.com/brev/latest/index.html) - Platform-specific help
 - [Project Issues](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/issues) - Report bugs or request features
 
 ---

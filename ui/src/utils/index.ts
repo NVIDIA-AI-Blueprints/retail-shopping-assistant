@@ -191,9 +191,29 @@ const cleanItemName = (item: string): string => {
 };
 
 /**
+ * Heuristic: ignore second-person narrations (e.g., "you've added", "you added")
+ * to avoid false-positive toasts when the model is just describing prior state.
+ * Keep it intentionally narrow to minimize side effects.
+ */
+const isSecondPersonCartNarration = (message: string): boolean => {
+  const lower = message.toLowerCase();
+  return (
+    /\byou(?:'ve| have)?\s+added\b/.test(lower) ||
+    /\byou\s+added\b/.test(lower) ||
+    /\byou(?:'ve| have)?\s+removed\b/.test(lower) ||
+    /\byou\s+removed\b/.test(lower)
+  );
+};
+
+/**
  * Detect cart operations from response messages - simplified to focus only on product names
  */
 export const detectCartOperation = (message: string): CartOperation | null => {
+  // Early exit on second-person narration to reduce false positives
+  if (isSecondPersonCartNarration(message)) {
+    return null;
+  }
+
   // Pattern for add operations - captures item name from either format
   const addPattern = /(?:added.*?(?:of\s+)?['"]?([^'"]+?)['"]?\s+to.*cart|added.*?\*\*([^*]+)\*\*.*to.*cart)/i;
   

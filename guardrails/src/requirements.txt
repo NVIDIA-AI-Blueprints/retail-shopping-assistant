@@ -1,7 +1,7 @@
-fastapi
-uvicorn
+fastapi==0.116.1
+uvicorn==0.35.0
 nemoguardrails==0.13.0
-pydantic
-langchain-nvidia-ai-endpoints
-aiofiles
-openai
+pydantic==2.11.7
+langchain-nvidia-ai-endpoints==0.3.11
+aiofiles==24.1.0
+openai==1.97.0

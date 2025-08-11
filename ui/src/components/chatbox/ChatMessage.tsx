@@ -25,6 +25,7 @@ import SafeHTML from "./SafeHTML";
 import Loader from "./Loader";
 import { ChatMessageProps, MessageRole, ImageContent, ImageRowContent } from "../../types";
 import { isFashionMode } from "../../config/config";
+import nvinfo from "../../assets/nvinfo.jpg";
 
 const ChatMessage = React.forwardRef<HTMLDivElement, ChatMessageProps>(
   ({ role, content, productName }, ref) => {
@@ -69,8 +70,11 @@ const ChatMessage = React.forwardRef<HTMLDivElement, ChatMessageProps>(
     if (role === "assistant") {
       if (content === "loader") {
         return (
-          <div className={`messages__item messages__item--${role}`} ref={ref}>
-            <Loader />
+          <div ref={ref} style={{ display: "inline-flex", alignItems: "flex-start", gap: 8, marginTop: 10 }}>
+            <img src={nvinfo} alt="Assistant" style={{ width: 28, height: 28, borderRadius: "50%", objectFit: "cover" }} />
+            <div className={`messages__item messages__item--${role}`}>
+              <Loader />
+            </div>
           </div>
         );
       }
@@ -87,8 +91,11 @@ const ChatMessage = React.forwardRef<HTMLDivElement, ChatMessageProps>(
       const processedContent = converter.makeHtml(preprocessedContent);
 
       return (
-        <div className={`messages__item messages__item--${role}`} ref={ref}>
-          <SafeHTML html={processedContent} />
+        <div ref={ref} style={{ display: "inline-flex", alignItems: "flex-start", gap: 8, marginTop: 10 }}>
+          <img src={nvinfo} alt="Assistant" style={{ width: 28, height: 28, borderRadius: "50%", objectFit: "cover" }} />
+          <div className={`messages__item messages__item--${role}`}>
+            <SafeHTML html={processedContent} />
+          </div>
         </div>
       );
     }

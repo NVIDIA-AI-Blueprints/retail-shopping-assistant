@@ -46,8 +46,7 @@ Configure how you'll provide your code files and select the runtime environment.
 This optional step allows you to add initialization scripts that run after environment creation.
 
 1. **Skip Script Upload**: Leave this section blank for this deployment
-2. **Manual Setup Approach**: We'll configure the retail shopping assistant manually for better control
-3. Click **Next** to continue
+2. Click **Next** to continue
 
 ![Step 3: Script Configuration](images/step3.png)
 

@@ -196,7 +196,21 @@ const Chatbox: React.FC<ChatboxProps> = ({ setNewRenderImage }) => {
     const userId = getOrCreateUserId();
     setIsLoading(true);
 
+    // Will be used to enable submit shortly after the last token
+    let enableSubmitTimer: number | undefined;
+
     try {
+      // Enable-submit helper: if no tokens arrive for a short window, consider the stream done
+      const scheduleEnableSubmit = () => {
+        if (enableSubmitTimer !== undefined) {
+          window.clearTimeout(enableSubmitTimer);
+        }
+        // Short idle threshold so the button enables promptly after the last token
+        enableSubmitTimer = window.setTimeout(() => {
+          setIsLoading(false);
+        }, 400);
+      };
+
       // Add user message
       if (newMessage) {
         addMessage("user", newMessage, "");
@@ -254,6 +268,8 @@ const Chatbox: React.FC<ChatboxProps> = ({ setNewRenderImage }) => {
           const raw = line.replace(/^data:\s*/, '');
           
           if (raw === '[DONE]') {
+            // Stream closed by server; enable submit immediately
+            setIsLoading(false);
             return;
           }
           
@@ -265,6 +281,9 @@ const Chatbox: React.FC<ChatboxProps> = ({ setNewRenderImage }) => {
               
               // Check for cart operations and show notifications
               showCartNotification(fullResponse, shownCartOperations.current, toast);
+
+              // Tokens are flowing; schedule enable when they stop
+              scheduleEnableSubmit();
             } else if (type === 'images') {
               const images = Object.entries(payload).map(([productName, productUrl]) => ({ 
                 productUrl, 
@@ -316,6 +335,8 @@ const Chatbox: React.FC<ChatboxProps> = ({ setNewRenderImage }) => {
       // Remove loading message on error
       setMessages(prev => prev.filter(msg => msg.content !== 'loader'));
     } finally {
+      // Clear any pending enable timer and ensure loading is false
+      if (enableSubmitTimer !== undefined) window.clearTimeout(enableSubmitTimer);
       setIsLoading(false);
     }
   };

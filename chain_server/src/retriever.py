@@ -118,16 +118,7 @@ class RetrieverAgent():
                     products.append(text)
                     retrieved_dict[name] = img
                 state.response = f"These products are available in the catalog:\n" + "\n".join(products)
-                 # Keep all previously retrieved products that might still be relevant
-                if not state.retrieved:
-                    state.retrieved = {}
-                # Add new products to existing ones
-                state.retrieved.update(retrieved_dict)
-                # Limit total products to prevent memory issues (keep most recent 20)
-                if len(state.retrieved) > 20:
-                    # Keep only the most recent products
-                    items = list(state.retrieved.items())
-                    state.retrieved = dict(items[-20:])
+                state.retrieved = retrieved_dict
             else:
                 state.response = "Unfortunately there are no products closely matching the user's query."
             

@@ -7,14 +7,37 @@ routing_prompt: |
   You are a retail store assistant that routes customer queries to the appropriate specialist.
 
   Available specialists:
-  1. Cart Manager (cart_node): Handles adding/removing items from the cart. Use for queries about purchasing, adding to cart, or removing items.
-  2. Product Finder (search): Searches for products in the store. Use for queries about finding products, availability, or product information.
-  3. General Assistant (chatter): Handles general questions and conversation. Use for queries that don't fit the other categories.
+  1. Cart Manager (cart_node): Handles adding/removing items from the cart
+  2. Product Finder (search): Discovers NEW products in the store catalog
+  3. General Assistant (chatter): Answers questions about SPECIFIC products and handles general conversation
 
   Routing Rules:
-  - If the query is about adding/removing items e.g. 'grab the first skirt for me' or 'Remove the red pair of shoes to my cart' -> cart_node
-  - If the query is about finding or searching for products, e.g. 'show me what shirts are available' -> search
-  - For general questions or conversation -> chatter
+
+  CART OPERATIONS -> cart_node:
+  - Adding/removing items: "add this to my cart", "remove the dress", "grab the first item"
+  - Cart management: "what's in my cart", "clear my cart"
+
+  NEW PRODUCT DISCOVERY -> search:
+  - Browsing categories: "show me dresses", "what bags do you have", "find blue shirts"
+  - General availability: "do you have summer clothes", "what's available in size medium"
+  - Open-ended searches: "I need something for a party", "show me accessories"
+
+  SPECIFIC PRODUCT QUESTIONS -> chatter:
+  - Questions about named products: "what material is the [product name]", "how much does the [product name] cost", "is the [product name] available in other colors"
+  - Product details: "tell me more about this item", "what sizes does it come in", "what are the dimensions"
+  - Care instructions: "how do I care for this", "what are the washing instructions", "how should I store this"
+  - Product properties: "is this waterproof", "is this suitable for winter", "does this run large or small"
+  - Availability questions: "do you have this in stock", "when will this be available", "is this on sale"
+  - Comparisons: "which is better between these two items", "how does this compare to that one"
+
+  GENERAL CONVERSATION -> chatter:
+  - Greetings: "hello", "hi there", "good morning"
+  - Thanks: "thank you", "thanks for your help"
+  - General questions: "can you help me", "what do you recommend"
+  - General inventory: "what items do you have", "what do you sell", "show me everything"
+  - Vague requests: "I need help", "what's available", "help me find something"
+
+  Key Distinction: If asking about a SPECIFIC NAMED product (already known), use chatter. If searching for NEW products to discover, use search.
 
   Always respond with exactly one of these choices: cart_node, search, or chatter.
 chatter_prompt: |

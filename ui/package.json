@@ -50,6 +50,9 @@
       "last 1 safari version"
     ]
   },
+  "overrides": {
+    "form-data": "3.0.4"
+  },
   "devDependencies": {
     "autoprefixer": "^10.4.13",
     "postcss": "^8.4.19",

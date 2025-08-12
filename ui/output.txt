@@ -572,7 +572,7 @@ follow-redirects 1.15.9
 for-each 0.3.3
 foreground-child 3.3.0
 fork-ts-checker-webpack-plugin 6.5.3
-form-data 3.0.2
+form-data 3.0.4
 forwarded 0.2.0
 fraction.js 4.3.7
 fresh 0.5.2

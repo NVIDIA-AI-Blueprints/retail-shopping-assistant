@@ -55,41 +55,7 @@ category_function = {
         }
     }
 }
-'''
-search_function = {
-    "type": "function",
-    "function": {
-        "name": "get_categories",
-        "description": """Identify relevant search terms for a user given their most recent query, and their chat history.\n
-                          If a term has an adjective, e.g. 'black shoes' include the adjective in the search term.\n 
-                          Additionally, determine which are the relevant categories given the provided category list.\n
-                          Only choose categories from the provided list.""",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "relevant_categories": {
-                    "type": "array",
-                    "description": "The most relevant categories from the provided list of categories given the user's query.",
-                    "items":{
-                        "type": "string"
-                    }
-                }
-            },
-            "type": "object",
-            "properties": {
-                "search_entities": {
-                    "type": "array",
-                    "description": "Terms that the user is searching for.",
-                    "items":{
-                        "type": "string"
-                    }
-                }
-            },
-            "required": ["search_entities","relevant_categories"]
-        }
-    }
-}
-'''
+
 """
 A function that responds to the user and summarizes the context.
 """

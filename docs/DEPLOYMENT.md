@@ -340,27 +340,54 @@ retriever_port: "http://localhost:8010"
 memory_port: "http://localhost:8011"
 rails_port: "http://localhost:8012"
 
-# Agent Configuration
-memory_length: 16384
-top_k_retrieve: 4
-multimodal: true
-
-# Product Categories
-categories: [
-    "bag",
-    "sunglasses", 
-    "dress",
-    "skirt",
-    "top blouse sweater",
-    "shoes"
-]
-
 # Agent Prompts
 routing_prompt: |
   You are a retail store assistant that routes customer queries...
 
 chatter_prompt: |
   You are a helpful shopping assistant specializing in...
+```
+
+### Updating Categories
+
+The system uses a static list of product categories for classification and retrieval. These categories are defined in the configuration file and should be updated when new product types are added to the system.
+
+#### Current Categories
+
+The following categories are currently supported:
+- **Bags**: Handbags, purses, clutches
+- **Sunglasses**: Eyewear and sun protection
+- **Dresses**: Various dress styles and lengths
+- **Skirts**: Different skirt types and lengths
+- **Top/Blouse/Sweater**: Upper body garments
+- **Shoes**: Footwear including heels, flats, and sandals
+- **Earrings**: Jewelry worn on the lobe or edge of the ear
+- **Bracelets**: Jewelry worn on the wrist or arm
+- **Necklaces**: Jawelry wrong around the neck
+
+#### How to Update Categories
+
+1. **Edit Configuration Files**: Update the categories list in `shared/configs/chain_server/config.yaml`
+2. **Restart Services**: After updating categories, restart the chain server and catalog retriever services
+3. **Update Product Data**: Ensure new products in your catalog are tagged with the appropriate categories
+4. **Test Classification**: Verify that the LLM can properly classify queries into the new categories
+
+#### Configuration File Location
+
+```yaml
+# shared/configs/chain_server/config.yaml
+categories: [
+    "bag",
+    "sunglasses", 
+    "dress",
+    "skirt",
+    "top blouse sweater",
+    "shoes",
+    "earrings",
+    "bracelet",
+    "necklace"
+]
+```
 
 ### Configuration Override System
 

@@ -58,7 +58,10 @@ categories: [
     "dress",
     "skirt",
     "top blouse sweater",
-    "shoes"
+    "shoes",
+    "earrings",
+    "bracelet",
+    "necklace"
 ]
 agent_choices: [
             "cart", 

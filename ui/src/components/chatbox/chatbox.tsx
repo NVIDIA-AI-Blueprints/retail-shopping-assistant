@@ -80,7 +80,7 @@ const Chatbox: React.FC<ChatboxProps> = ({ setNewRenderImage }) => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => resolve(reader.result as string);
-      reader.onerror = (error) => reject(error);
+      reader.onerror = (error) => reject(new Error("Failed to read the file."));
       reader.readAsDataURL(file);
     });
   };
@@ -448,6 +448,14 @@ const Chatbox: React.FC<ChatboxProps> = ({ setNewRenderImage }) => {
                     cursor: 'pointer'
                   }} 
                   onClick={clearImage}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      clearImage();
+                    }
+                  }}
+                  role="button"
+                  tabIndex={0}
+                  aria-label="Clear image"
                 >
                   <FontAwesomeIcon icon={faTimesCircle} />
                 </div>

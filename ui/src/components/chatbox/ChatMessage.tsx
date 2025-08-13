@@ -159,7 +159,7 @@ const ChatMessage = React.forwardRef<HTMLDivElement, ChatMessageProps>(
           <img 
             className="messages__item--image-img" 
             src={content as string} 
-            alt="User uploaded image"
+            alt="User upload"
             style={{ borderRadius: "20px" }} 
           />
         </div>

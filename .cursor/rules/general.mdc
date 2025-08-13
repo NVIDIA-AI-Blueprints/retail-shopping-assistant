@@ -1,0 +1,20 @@
+---
+description: Follow these rules whenever you are asked to modify existing code, add a feature, fix a bug, refactor, change configuration, or update tests.
+alwaysApply: false
+---
+### General
+Follow these rules whenever you are asked to modify existing code, add a feature, fix a bug, refactor, change configuration, or update tests. 
+
+### Important
+Stay within the exact scope of what is asked. Make the only changes that solves the problem. Avoid unnecessary refactoring or additional code.
+
+### Planning and Understanding
+1. **Understand the goal**: Before writing any code, make sure you completely understand the user's request. If the request is ambiguous, ask clarifying questions.
+2. **Analyze the context**: Before making any changes, analyze the surrounding code, review related modules, and identify any potential ripple effects.
+3. **Check existing conventions**: Review the `codebase.mdc` file to understand the architecture, workflow, components, and details of the system.
+
+### Making Changes
+1. **Be consistent**: Write code that is consistent with the style and patterns of the surrounding code.
+2. **Don't Repeat Yourself (DRY)**: Avoid duplicating code. If you find yourself writing the same code in multiple places, consider creating a new function or module.
+3. **Think about edge cases**: When adding a new feature or fixing a bug, consider all possible edge cases and ensure your code handles them gracefully.
+4. **Update documentation**: If you add a new feature or change the behavior of an existing one, update the documentation to reflect the changes.

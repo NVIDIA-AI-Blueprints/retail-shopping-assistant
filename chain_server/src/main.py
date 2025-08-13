@@ -35,17 +35,15 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def initialize_agents(config) -> tuple:
+def initialize_agents(config) -> Dict:
     """Initialize all agent instances."""
-    agents = {
-        'planner': PlannerAgent(config=config),
-        'retriever': RetrieverAgent(config=config),
-        'cart': CartAgent(config=config),
-        'chatter': ChatterAgent(config=config),
-        'summary': SummaryAgent(config=config)
+    return {
+        'planner_agent': PlannerAgent(config=config),
+        'retriever_agent': RetrieverAgent(config=config),
+        'cart_agent': CartAgent(config=config),
+        'chatter_agent': ChatterAgent(config=config),
+        'summary_agent': SummaryAgent(config=config)
     }
-    
-    return agents
 
 
 # Load configuration and initialize agents
@@ -53,11 +51,7 @@ try:
     config = load_config()  # Load and validate configuration
     agents = initialize_agents(config)
     graph = create_graph(
-        cart_agent=agents['cart'],
-        retriever_agent=agents['retriever'],
-        planner_agent=agents['planner'],
-        chatter_agent=agents['chatter'],
-        summary_agent=agents['summary'],
+        **agents,
         config=config
     )
 except Exception as e:

@@ -1,0 +1,523 @@
+---
+description: Follow this document to understand the architecture, workflow, components and details of the system
+alwaysApply: false
+---
+# NVIDIA Retail Shopping Assistant - Codebase Analysis
+
+## Table of Contents
+
+1. [System Overview](#system-overview)
+2. [Architecture](#architecture)
+3. [Core Components](#core-components)
+4. [Data Flow & Workflows](#data-flow--workflows)
+5. [API Endpoints](#api-endpoints)
+6. [Configuration System](#configuration-system)
+7. [Frontend Implementation](#frontend-implementation)
+8. [Database & Storage](#database--storage)
+9. [Deployment](#deployment)
+10. [Key Files Reference](#key-files-reference)
+
+## System Overview
+
+The NVIDIA Retail Shopping Assistant is an AI-powered microservices application that provides intelligent shopping assistance through:
+
+- **Multi-agent AI architecture** using LangGraph for orchestration
+- **Natural language queries** and **image-based search**
+- **Smart cart management** with persistent storage
+- **Content safety** via guardrails
+- **Real-time streaming responses**
+- **Modern React-based UI**
+
+### Key Technologies
+- **LangGraph**: Agent orchestration framework
+- **FastAPI**: Python web framework for all backend services
+- **React + TypeScript**: Frontend
+- **Milvus**: Vector database for similarity search
+- **SQLite**: User context and cart storage
+- **Docker**: Containerized deployment
+- **NVIDIA NIM**: LLM and embedding models
+
+## Architecture
+
+### High-Level Architecture
+
+```
+┌─────────────┐    ┌──────────────┐    ┌─────────────────┐
+│   Frontend  │────│    Nginx     │    │  External APIs  │
+│  (React)    │    │   Proxy      │    │  (NVIDIA NIM)   │
+└─────────────┘    └──────────────┘    └─────────────────┘
+                           │
+                   ┌──────────────┐
+                   │ Chain Server │ ← Main Orchestrator
+                   │ (LangGraph)  │
+                   └──────────────┘
+                           │
+       ┌───────────────────┼───────────────────┐
+       │                   │                   │
+┌─────────────┐    ┌──────────────┐    ┌─────────────┐
+│ Catalog     │    │   Memory     │    │ Guardrails  │
+│ Retriever   │    │ Retriever    │    │   (Rails)   │
+└─────────────┘    └──────────────┘    └─────────────┘
+       │                   │
+┌─────────────┐    ┌──────────────┐
+│   Milvus    │    │   SQLite     │
+│  (Vector)   │    │ (Context/    │
+│             │    │  Cart)       │
+└─────────────┘    └──────────────┘
+```
+
+### Service Communication
+
+All services communicate via HTTP REST APIs:
+- **Port 3000**: Frontend (via Nginx)
+- **Port 8009**: Chain Server (main orchestrator)
+- **Port 8010**: Catalog Retriever
+- **Port 8011**: Memory Retriever  
+- **Port 8012**: Guardrails
+- **Port 19530**: Milvus Database
+- **Port 9000/9001**: Minio (object storage)
+- **Port 2379**: etcd (coordination)
+
+## Core Components
+
+### 1. Chain Server (`/chain_server/`)
+
+**Purpose**: Main orchestrator using LangGraph to coordinate specialized agents
+
+**Key Files**:
+- `main.py`: FastAPI application with streaming endpoints
+- `graph.py`: LangGraph definition and node orchestration
+- `planner.py`: Query routing agent
+- `cart.py`: Shopping cart management agent
+- `retriever.py`: Product search agent
+- `chatter.py`: Natural language response generation
+- `summarizer.py`: Response summarization
+
+**Agent Types**:
+- **PlannerAgent**: Routes queries to appropriate specialized agents
+- **CartAgent**: Handles add/remove/view cart operations
+- **RetrieverAgent**: Searches product catalog using text/image
+- **ChatterAgent**: Generates conversational responses
+- **SummaryAgent**: Summarizes final responses
+
+### 2. Catalog Retriever (`/catalog_retriever/`)
+
+**Purpose**: Vector-based product search using embeddings
+
+**Key Functionality**:
+- Text embedding using NVIDIA NIM models
+- Image embedding using NVCLIP
+- Milvus vector database queries
+- Product similarity matching
+- Category-based filtering
+
+**API Endpoints**:
+- `POST /query/text`: Text-based product search
+- `POST /query/image`: Image + text search
+
+### 3. Memory Retriever (`/memory_retriever/`)
+
+**Purpose**: User context and shopping cart persistence
+
+**Data Storage**:
+- **Users Table**: `id`, `context` (conversation history)
+- **CartItems Table**: `user_id`, `item`, `amount`
+
+**API Endpoints**:
+- `GET /user/{user_id}/context`: Retrieve user context
+- `POST /user/{user_id}/context/add`: Add to context
+- `GET /user/{user_id}/cart`: Get cart contents
+- `POST /user/{user_id}/cart/add`: Add items to cart
+- `POST /user/{user_id}/cart/remove`: Remove items from cart
+
+### 4. Guardrails (`/guardrails/`)
+
+**Purpose**: Content safety and moderation
+
+**Functionality**:
+- Input content filtering
+- Output content filtering
+- NVIDIA NIM-based safety checks
+- Configurable safety prompts
+
+### 5. Frontend (`/ui/`)
+
+**Purpose**: React-based user interface
+
+**Key Components**:
+- `App.tsx`: Main application container
+- `chatbox/`: Chat interface with streaming support
+- `Navbar.tsx`: Navigation header
+- `Apparel.tsx`: Product image display
+- `hooks/useChat.ts`: Chat state management
+
+**Features**:
+- Real-time streaming chat
+- Image upload and preview
+- Product image rendering
+- Guardrails toggle
+- Message download
+- Chat reset functionality
+
+## Data Flow & Workflows
+
+### Primary User Query Flow
+
+```
+1. User Input (Text/Image)
+   ↓
+2. Frontend (useChat.ts)
+   ↓ HTTP POST /query/stream
+3. Chain Server (main.py)
+   ↓
+4. LangGraph Orchestration (graph.py)
+   ↓
+5. Parallel Execution:
+   ├─ Memory Retrieval (get_memory)
+   ├─ Input Safety Check (check_input_safety)
+   └─ Query Routing (planner_node)
+   ↓
+6. Specialized Agent Processing:
+   ├─ Cart Operations (cart_node)
+   ├─ Product Search (retriever_node)
+   └─ General Chat (passthrough_node)
+   ↓
+7. Response Generation (chatter_node)
+   ↓
+8. Output Safety Check (check_output_safety)
+   ↓
+9. Response Summarization (summarize_node)
+   ↓
+10. Streaming Response to Frontend
+```
+
+### Agent Routing Logic
+
+The **PlannerAgent** routes queries based on intent:
+
+```python
+# From config.yaml routing_prompt
+if query about "adding/removing items" → cart_node
+if query about "finding/searching products" → search (retriever)
+if query is "general conversation" → chatter
+```
+
+### Product Search Workflow
+
+```
+1. RetrieverAgent receives query
+   ↓
+2. LLM extracts search entities and categories
+   ↓
+3. HTTP request to Catalog Retriever
+   ├─ Text Search: /query/text
+   └─ Image Search: /query/image  
+   ↓
+4. Milvus vector similarity search
+   ↓
+5. Return top-k products with metadata
+   ↓
+6. Format results for ChatterAgent
+```
+
+### Cart Management Workflow
+
+```
+1. CartAgent receives cart operation request
+   ↓
+2. LLM function calling determines action:
+   ├─ add_to_cart_function
+   ├─ remove_from_cart_function
+   └─ view_cart_function
+   ↓
+3. Product validation via Catalog Retriever
+   ↓
+4. Cart update via Memory Retriever API
+   ↓
+5. Return confirmation message
+```
+
+## API Endpoints
+
+### Chain Server (Port 8009)
+- `POST /query/stream`: Streaming query processing
+- `POST /query/timing`: Query with timing information
+- `GET /health`: Health check
+
+### Catalog Retriever (Port 8010)
+- `POST /query/text`: Text-based search
+- `POST /query/image`: Image + text search
+- `GET /health`: Health check
+
+### Memory Retriever (Port 8011)
+- `GET /user/{user_id}`: Get user data
+- `GET /user/{user_id}/context`: Get conversation context
+- `POST /user/{user_id}/context/add`: Add to context
+- `GET /user/{user_id}/cart`: Get cart contents
+- `POST /user/{user_id}/cart/add`: Add cart item
+- `POST /user/{user_id}/cart/remove`: Remove cart item
+- `POST /user/{user_id}/cart/clear`: Clear cart
+- `GET /health`: Health check
+
+### Guardrails (Port 8012)
+- `POST /rail/input/check`: Check input safety
+- `POST /rail/output/check`: Check output safety
+- `POST /rail/input/timing`: Input check with timing
+- `POST /rail/output/timing`: Output check with timing
+
+## Configuration System
+
+### Configuration Structure
+
+Each service has YAML configurations in `/shared/configs/`:
+
+**Chain Server** (`chain_server/config.yaml`):
+```yaml
+llm_port: "http://llama:8000/v1"
+llm_name: "meta/llama-3.1-70b-instruct"
+retriever_port: "http://catalog-retriever:8010"
+memory_port: "http://memory-retriever:8011"
+rails_port: "http://rails:8012"
+routing_prompt: |
+  [Detailed routing instructions]
+chatter_prompt: |
+  [Conversational assistant instructions]
+categories: ["bag", "sunglasses", "dress", "skirt", "top blouse sweater", "shoes"]
+agent_choices: ["cart", "retriever", "chatter"]
+```
+
+**Catalog Retriever** (`catalog_retriever/config.yaml`):
+```yaml
+text_embed_port: "http://text-embedder:8000/v1"
+image_embed_port: "http://image-embedder:8000/v1"
+text_model_name: "nvidia/nv-embedqa-e5-v5"
+image_model_name: "nvidia/nvclip"
+db_port: "milvus:19530"
+data_source: "/app/shared/data/products.csv"
+```
+
+### Environment Override Support
+
+All services support configuration overrides via `CONFIG_OVERRIDE` environment variable for different deployment modes (local vs cloud).
+
+## Frontend Implementation
+
+### State Management
+
+The frontend uses React hooks for state management:
+
+**useChat Hook** (`hooks/useChat.ts`):
+- Message history management
+- Streaming response handling
+- Image upload processing
+- Cart state synchronization
+- Error handling and recovery
+
+### Streaming Implementation
+
+Real-time chat streaming via Server-Sent Events (SSE):
+
+```typescript
+// Streaming response processing
+const response = await fetch(url, { method: "POST", body: JSON.stringify(payload) });
+const reader = response.body.getReader();
+const decoder = new TextDecoder('utf-8');
+
+while (true) {
+  const { value, done } = await reader.read();
+  if (done) break;
+  
+  const chunk = decoder.decode(value, { stream: true });
+  const lines = chunk.split('\n').filter(line => line.startsWith('data:'));
+  
+  for (let line of lines) {
+    const parsedChunk = parseStreamingChunk(line);
+    // Handle different chunk types: content, images, error
+  }
+}
+```
+
+### Message Types
+
+The frontend handles multiple message types:
+- `user`: User text messages
+- `user_image`: User uploaded images
+- `assistant`: AI responses
+- `image_row`: Product image grids
+- `system`: System messages
+
+## Database & Storage
+
+### Milvus Vector Database
+
+**Collections**:
+- **Text Collection**: Product text embeddings
+- **Image Collection**: Product image embeddings
+
+**Schema**:
+```python
+# Text embeddings
+{
+  "id": int,
+  "embedding": vector(1024),  # Text embedding
+  "text": str,               # Product description
+  "name": str,               # Product name
+  "image": str,              # Image path
+  "category": str            # Product category
+}
+
+# Image embeddings  
+{
+  "id": int,
+  "embedding": vector(1024),  # Image embedding
+  "name": str,               # Product name
+  "image": str,              # Image path
+  "category": str            # Product category
+}
+```
+
+### SQLite Storage (Memory Retriever)
+
+**Users Table**:
+```sql
+CREATE TABLE users (
+    id INTEGER PRIMARY KEY,
+    context TEXT DEFAULT ""
+);
+```
+
+**CartItems Table**:
+```sql
+CREATE TABLE cart_items (
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER,
+    item TEXT,
+    amount INTEGER
+);
+```
+
+### Product Catalog
+
+Products are stored in CSV format (`/shared/data/products.csv`):
+```csv
+category,subcategory,name,description,url,price,image
+accessories,bag,Classic Black Patent Leather Purse,"Description...",/images/...,49.9,/images/...
+```
+
+**Categories**: bag, sunglasses, dress, skirt, top blouse sweater, shoes
+
+## Deployment
+
+### Docker Compose Architecture
+
+The system uses multi-container Docker deployment:
+
+**Core Services**:
+- `chain-server`: Main orchestrator
+- `catalog-retriever`: Product search
+- `memory-retriever`: User data
+- `rails`: Content safety
+- `frontend`: React UI
+- `nginx`: Reverse proxy
+
+**Infrastructure**:
+- `milvus`: Vector database
+- `etcd`: Coordination service
+- `minio`: Object storage
+
+### Environment Variables
+
+**Required**:
+```bash
+NGC_API_KEY=your_nvapi_key_here
+LLM_API_KEY=$NGC_API_KEY
+EMBED_API_KEY=$NGC_API_KEY
+RAIL_API_KEY=$NGC_API_KEY
+```
+
+**Optional**:
+```bash
+CONFIG_OVERRIDE=config-build.yaml  # For cloud deployment
+LOCAL_NIM_CACHE=~/.cache/nim       # For local NIM caching
+```
+
+### Deployment Options
+
+**Option A: Local Deployment** (requires 4x H100 GPUs):
+```bash
+docker compose -f docker-compose-nim-local.yaml up -d
+docker compose -f docker-compose.yaml up -d --build
+```
+
+**Option B: Cloud Deployment** (uses NVIDIA API Catalog):
+```bash
+export CONFIG_OVERRIDE=config-build.yaml
+docker compose -f docker-compose.yaml up -d --build
+```
+
+## Key Files Reference
+
+### Critical Files for Understanding
+
+**Architecture & Orchestration**:
+- `chain_server/src/graph.py`: LangGraph definition
+- `chain_server/src/main.py`: Main API application
+- `docker-compose.yaml`: Service orchestration
+
+**Agent Implementations**:
+- `chain_server/src/planner.py`: Query routing logic
+- `chain_server/src/cart.py`: Cart management agent
+- `chain_server/src/retriever.py`: Product search agent
+- `chain_server/src/chatter.py`: Response generation
+
+**Data Models**:
+- `chain_server/src/agenttypes.py`: Core data structures
+- `chain_server/src/functions.py`: LLM function definitions
+
+**Service Implementations**:
+- `catalog_retriever/src/main.py`: Vector search API
+- `memory_retriever/src/main.py`: User data persistence
+- `guardrails/src/main.py`: Content safety
+
+**Frontend Core**:
+- `ui/src/App.tsx`: Main React application
+- `ui/src/hooks/useChat.ts`: Chat state management
+- `ui/src/components/chatbox/chatbox.tsx`: Chat interface
+
+**Configuration**:
+- `shared/configs/chain_server/config.yaml`: Main config
+- `shared/configs/catalog_retriever/config.yaml`: Search config
+- `shared/data/products.csv`: Product catalog
+
+### File Organization
+
+```
+retail-shopping-assistant/
+├── chain_server/           # Main orchestrator
+├── catalog_retriever/      # Product search service
+├── memory_retriever/       # User data service
+├── guardrails/            # Content safety service
+├── ui/                    # React frontend
+├── shared/                # Shared configurations and data
+│   ├── configs/           # YAML configurations
+│   ├── data/              # Product catalog
+│   └── images/            # Product images
+├── docs/                  # Documentation
+└── docker-compose*.yaml   # Deployment configs
+```
+
+## Summary
+
+This NVIDIA Retail Shopping Assistant demonstrates sophisticated AI application architecture combining:
+
+- **Multi-agent coordination** via LangGraph
+- **Vector similarity search** for intelligent product discovery
+- **Real-time streaming** for responsive user experience
+- **Microservices design** for scalability and maintainability
+- **Content safety** through integrated guardrails
+- **Modern UI/UX** with React and TypeScript
+
+The system is well-architected for both development and production deployment, with clear separation of concerns and comprehensive configuration management.
+
+
+

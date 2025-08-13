@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 """
 A Retriever class that uses two NVIDIA NIM models to retriever relevant products from a database.
 The first model uses image embeddings to retrieve the most relevant products.

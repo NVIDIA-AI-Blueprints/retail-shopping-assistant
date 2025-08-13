@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 from typing import AsyncGenerator
 from langchain_nvidia_ai_endpoints import ChatNVIDIA
 from langgraph.config import get_stream_writer

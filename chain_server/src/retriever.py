@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 """
 RetrieverAgent is an agent which retrieves relevant products based on user queries.
 It uses a search tool to determine the category of the query and then queries the catalog retriever

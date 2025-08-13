@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 from .agenttypes import Cart, State
 from .functions import add_to_cart_function, remove_from_cart_function, view_cart_function
 from openai import OpenAI

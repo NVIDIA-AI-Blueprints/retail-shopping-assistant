@@ -365,7 +365,7 @@ const Chatbox: React.FC<ChatboxProps> = ({ setNewRenderImage }) => {
     addMessage("assistant", "", "");
     
     await sleep(1000);
-    const introduction = "Hello! 👋 I'm your dedicated Shopping Assistant created by NVIDIA, here to answer any questions you might have and help you find anything you're looking for. What can I help you with today?\n\nHere are some questions you could ask me:\n\n• Do you have any black skirts and sandals?\n• I like the black skirt! Does it require dry cleaning?\n• Great! Add it to my cart";
+    const introduction = "Hello! 👋 I'm your dedicated Shopping Assistant created by NVIDIA, here to answer any questions you might have and help you find anything you're looking for. What can I help you with today?\n\nHere are some questions you could ask me:\n\n• Do you have any summer dresses?\n• Does the [product name] require dry cleaning?\n• Great! Add it to my cart";
     
     const words = introduction.split(" ");
     for (const word of words) {
@@ -425,40 +425,27 @@ const Chatbox: React.FC<ChatboxProps> = ({ setNewRenderImage }) => {
 
           {/* Footer */}
           <div className="chatbox__footer">
-            {/* Image preview */}
-            {previewImage && (
-              <div 
-                style={{ 
-                  backgroundImage: `url(${previewImage})`, 
-                  backgroundSize: "cover", 
-                  backgroundPosition: "center", 
-                  backgroundRepeat: "no-repeat", 
-                  display: "inline-flex", 
-                  height: "100px", 
-                  width: "100px", 
-                  position: "relative" 
-                }}
-              >
-                <div 
+             {/* Image preview */}
+             {previewImage && (
+              <div style={{ position: 'relative', display: 'inline-block' }}>
+                <img src={previewImage} alt="Preview" style={{ width: '50px', height: '50px' }} />
+                <button
+                  type="button"
                   style={{
-                    display: "inline-flex", 
-                    position: "absolute", 
-                    right: "-5px", 
-                    top: "-5px",
-                    cursor: 'pointer'
-                  }} 
-                  onClick={clearImage}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      clearImage();
-                    }
+                    display: 'inline-flex',
+                    position: 'absolute',
+                    right: '-5px',
+                    top: '-5px',
+                    cursor: 'pointer',
+                    background: 'transparent',
+                    border: 'none',
+                    padding: 0,
                   }}
-                  role="button"
-                  tabIndex={0}
+                  onClick={clearImage}
                   aria-label="Clear image"
                 >
                   <FontAwesomeIcon icon={faTimesCircle} />
-                </div>
+                </button>
               </div>
             )}
 

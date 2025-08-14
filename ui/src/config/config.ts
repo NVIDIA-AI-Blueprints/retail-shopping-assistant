@@ -58,7 +58,7 @@ const getConfig = (): AppConfig => {
     },
     ui: {
       defaultImages: {
-        fashion: "/images/hans-isaacson-ehYEq99-psc-unsplash-lg.jpg",
+        fashion: "/images/splash.jpg",
       },
       categories: {
         beauty: "BEAUTY AND WELLNESS",

@@ -144,10 +144,15 @@ class Retriever:
         Returns True if both collections have data, False otherwise.
         """
         try:
-            self.text_db.col.flush()
-            self.image_db.col.flush()
-            text_count = self.text_db.col.num_entities
-            image_count = self.image_db.col.num_entities
+            text_count = 0
+            if self.text_db.col:
+                self.text_db.col.flush()
+                text_count = self.text_db.col.num_entities
+
+            image_count = 0
+            if self.image_db.col:
+                self.image_db.col.flush()
+                image_count = self.image_db.col.num_entities
             
             logging.info(f"CATALOG RETRIEVER | embeddings_exist() | Text collection has {text_count} entities. Image collection has {image_count} entities.")
             # Check text and image collections
@@ -182,7 +187,7 @@ class Retriever:
         return response.data[0].embedding   
 
     def text_embeddings(
-        self, 
+        self,
         texts: List[str],
         query_type: str = "query",
         verbose: bool = False
@@ -190,30 +195,45 @@ class Retriever:
         """
         Generate text embeddings from a list of text strings, using chunking and batching.
         """
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000, chunk_overlap=200
-        )
+        if not texts:
+            return []
 
-        # Break all input texts into smaller chunks.
+        all_chunks, text_chunk_counts = self._create_text_chunks(texts, verbose)
+        if not all_chunks:
+            return [None] * len(texts)
+
+        all_chunk_embeddings = self._embed_chunks_in_batches(all_chunks, query_type, verbose)
+        
+        final_embeddings = self._reconstruct_embeddings(texts, all_chunk_embeddings, text_chunk_counts)
+        
+        return final_embeddings
+
+    def _create_text_chunks(self, texts: List[str], verbose: bool = False) -> Tuple[List[str], List[int]]:
+        """
+        Break all input texts into smaller chunks and return the chunks and their counts.
+        """
+        text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
         all_chunks = []
-        # We track chunk counts per text to correctly reconstruct the final embeddings later.
-        # This ensures the output list of embeddings aligns 1:1 with the input list of texts.
         text_chunk_counts = []
         for text in texts:
             chunks = text_splitter.split_text(text)
             all_chunks.extend(chunks)
             text_chunk_counts.append(len(chunks))
-
         if verbose:
             logging.info(f"CATALOG RETRIEVER | Retriever.text_embeddings() | Created {len(all_chunks)} chunks from {len(texts)} texts.")
+        return all_chunks, text_chunk_counts
 
-        if not all_chunks:
-            return [None] * len(texts)
-
-        # Embed all created chunks in efficient batches
+    def _embed_chunks_in_batches(
+        self,
+        all_chunks: List[str],
+        query_type: str,
+        verbose: bool = False,
+        batch_size: int = 32
+    ) -> List[List[float] | None]:
+        """
+        Embed all created chunks in efficient batches.
+        """
         all_chunk_embeddings = []
-        batch_size = 32
-        # Calculate the number of batches needed to embed all chunks for logging purposes.
         num_batches = (len(all_chunks) + batch_size - 1) // batch_size
         for i in range(0, len(all_chunks), batch_size):
             batch_chunks = all_chunks[i:i + batch_size]
@@ -231,32 +251,34 @@ class Retriever:
                 if verbose:
                     logging.error(f"CATALOG RETRIEVER | Retriever.text_embeddings() | Error embedding chunk batch: {e}")
                 all_chunk_embeddings.extend([None for _ in batch_chunks])
-        
-        # Reconstruct a single embedding for each original text.
+        return all_chunk_embeddings
+
+    def _reconstruct_embeddings(
+        self,
+        texts: List[str],
+        all_chunk_embeddings: List[List[float] | None],
+        text_chunk_counts: List[int]
+    ) -> List[List[float] | None]:
+        """
+        Reconstruct a single embedding for each original text from chunk embeddings.
+        """
         final_embeddings = []
         current_chunk_idx = 0
-        # Loop through the original texts to ensure the final list of embeddings is in the same order.
         for i, text in enumerate(texts):
-            # Get the number of chunks that were created for this specific text.
             num_chunks = text_chunk_counts[i]
             if num_chunks == 0:
                 final_embeddings.append(None)
                 continue
 
-            # Slice the `all_chunk_embeddings` list to get the embeddings for the current text.
             chunk_embeddings = all_chunk_embeddings[current_chunk_idx : current_chunk_idx + num_chunks]
-            # Move the index forward for the next iteration.
             current_chunk_idx += num_chunks
 
-            # Filter out any chunks that may have failed to embed.
             valid_chunk_embeddings = [emb for emb in chunk_embeddings if emb is not None]
 
-            # If there are valid chunks, average their embeddings to create a single representative vector.
             if valid_chunk_embeddings:
                 average_embedding = list(mean(valid_chunk_embeddings, axis=0))
                 final_embeddings.append(average_embedding)
             else:
-                # If all chunks for a text failed, mark the final embedding as None.
                 final_embeddings.append(None)
         
         return final_embeddings
@@ -399,6 +421,11 @@ class Retriever:
 
         # Embed the image field of each row
         image_embs = self.image_embeddings(df["image"].tolist(), verbose=verbose)
+
+        # Log the number of total and failed image embeddings
+        total_images = len(df["image"].tolist())
+        failed_image_embeddings = total_images - len([e for e in image_embs if e is not None])
+        logging.info(f"CATALOG RETRIEVER | Retriever.milvus_from_csv() | Total images: {total_images}, Failed embeddings: {failed_image_embeddings}")
 
         # Filter out failed embeddings and their corresponding metadata
         successful_images_data = [

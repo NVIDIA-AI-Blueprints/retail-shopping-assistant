@@ -3,7 +3,7 @@
 **/config-local.yaml
 
 catalog_retriever/volumes
-
+tests/conversations
 
 # Python
 __pycache__/

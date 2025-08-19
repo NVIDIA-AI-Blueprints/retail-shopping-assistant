@@ -188,6 +188,8 @@ This project will download and install additional third-party open source softwa
 
 This project is licensed under the Apache 2.0 License - see the [LICENSE](LICENSE) file for details.
 
+Use of the product catalog data in the retail shopping assistant is governed by the terms of the [NVIDIA Data License for Retail Shopping Assistant](/LICENSE-assets.txt) (15Aug2025).
+
 ---
 
 <div align="center">

@@ -163,12 +163,12 @@ class PlannerAgent:
         
         output_state = state
         
-        # Handle image-only queries
-        if state.has_image() and state.is_empty_query():
-            logger.info("PlannetAgent.invoke() | Image-only query detected, routing to retriever")
+        # Handle image queries (both image-only and image+text)
+        if state.has_image():
+            logger.info("PlannerAgent.invoke() | Image query detected, routing to retriever for CLIP-based search")
             response_content = "retriever"
         else:
-            # Use LLM to determine routing
+            # Use LLM to determine routing for text-only queries
             # Note: We only pass the query, not the context, to avoid routing bias
             query_string = f"USER QUERY: {state.query}" 
             response_content = self._call_llm_for_routing(query_string)

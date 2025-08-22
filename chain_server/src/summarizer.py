@@ -57,10 +57,10 @@ class SummaryAgent:
                 CRITICAL RULES:
                 1. You MUST preserve ALL product information, including:
                 - Complete product names with all descriptors
-                - ALL care instructions (washing, drying, ironing, dry cleaning instructions)
-                - Materials and fabric composition
+                - ALL care instructions (cleaning, maintenance, assembly instructions)
+                - Materials and construction details
                 - Prices
-                - Colors, sizes, and any other specifications
+                - Dimensions, weight capacity, and any other specifications
 
                 2. For ANY product the user has shown interest in or asked about:
                 - Keep the ENTIRE product description including all details

@@ -177,8 +177,8 @@ class RetrieverAgent():
         **AND** the `Previous conversation context` contains a specific `[Product Name]`,
         **THEN** you must extract that `[Product Name]`.
 
-    -   **IF** the `Current question` introduces a new item (e.g., "show me some hats"),
-        **THEN** you must extract `hats`.
+    -   **IF** the `Current question` introduces a new item (e.g., "show me some chairs"),
+        **THEN** you must extract `chairs`.
 
     Your goal is to use the context to understand *references*, not to interfere with *new searches*.
     """},

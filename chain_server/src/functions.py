@@ -93,7 +93,7 @@ add_to_cart_function = {
             "properties": {
                 "item_name": {
                     "type": "string",
-                    "description": "The name of the item. Must be from the chat history, or most recent user query.",
+                    "description": "The COMPLETE product name exactly as it appears in our catalog. If user says partial names like 'LEAFBROOK table', you must extract the full product name 'LEAFBROOK coffee table'. Always include descriptive words like 'coffee table', 'floor lamp', 'dining chair', etc. Examples: 'LEAFBROOK coffee table', 'FOTO floor lamp', 'BIRCHWOOD dining chair'.",
                 },
                 "quantity": {
                     "type": "integer",

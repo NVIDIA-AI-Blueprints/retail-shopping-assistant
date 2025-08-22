@@ -81,7 +81,7 @@ class CartAgent():
         sim = 0
         if res_json["similarities"]:
             sim = res_json["similarities"][0]
-            if sim > 0.8:
+            if sim > 0.7:
                 catalog_item_name = res_json["names"][0]
                 logging.info(f"CartAgent.add_to_cart() | input name: {item_name}, retrieved item: {catalog_item_name}, sim: {sim}")
                 response = requests.post(
@@ -92,7 +92,7 @@ class CartAgent():
                     return response.json()["message"]
                 return f"Failed to add {quantity} {catalog_item_name} to cart."
             else:
-                logging.info(f"CartAgent.remove_from_cart() | Nothing sufficiently similar to {item_name} in the cart.")
+                logging.info(f"CartAgent.add_to_cart() | Similarity {sim:.3f} below threshold 0.7 for item: {item_name}")
                 return f"No such item ({item_name}) could be found in the catalog."
         else:
             return f"No such item ({item_name}) could be found in the catalog."
@@ -117,7 +117,7 @@ class CartAgent():
         sim = 0
         if res_json["similarities"]:
             sim = res_json["similarities"][0]
-            if sim > 0.8:
+            if sim > 0.7:
                 catalog_item_name = res_json["names"][0]
                 logging.info(f"CartAgent.remove_from_cart() | input name: {item_name}, retrieved item: {catalog_item_name}, sim: {sim}")
                 response = requests.post(

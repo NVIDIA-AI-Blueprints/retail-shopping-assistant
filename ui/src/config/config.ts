@@ -62,7 +62,7 @@ const getConfig = (): AppConfig => {
       },
       categories: {
         beauty: "BEAUTY AND WELLNESS",
-        fashion: "FASHION",
+        fashion: "FURNITURE",
         grocery: "GROCERY",
         office: "OFFICE",
         lifestyle: "LIFESTYLE",

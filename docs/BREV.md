@@ -83,9 +83,9 @@ Configure the GPU compute resources for optimal performance.
    - **Storage**: Flexible storage options
 
 #### Alternative Configurations
-If 4x H100 is unavailable or budget is a concern:
-- **2x NVIDIA H100**: Reduced performance, suitable for smaller workloads
-- **2x NVIDIA A100**: Balanced performance and cost
+If 4x H100 is unavailable:
+- **8x NVIDIA H100**: Reduced performance, suitable for smaller workloads
+- **8x NVIDIA A100**: Balanced performance and cost
 
 3. Click **Next** to review your configuration
 

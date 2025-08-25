@@ -64,7 +64,7 @@ For detailed architecture information, see [Architecture Overview](docs/README.m
 
 - **Docker**: Version 20.10+ with Docker Compose plugin
 - **NVIDIA NGC Account**: For API access ([Get API Key](https://ngc.nvidia.com/))
-- **Hardware**: 4x H100 GPUs (for local deployment) or cloud access
+- **Hardware**: 4x H100 GPUs (preferred) or 4x A100 GPUs (minimum) for local deployment, or cloud access
 
 ### Quick Start
 

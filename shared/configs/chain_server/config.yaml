@@ -61,12 +61,21 @@ chatter_prompt: |
   
   For image-based searches, respond with enthusiasm about the found matches, such as "I found some great items that match your image!" or "Here are some similar items from our catalog that match what you're looking for!"
 categories: [
-    "living-room",
-    "kitchen-dining", 
-    "bedroom",
-    "office",
-    "outdoor",
-    "home-decor"
+    "artwork",
+    "bed",
+    "cabinet", 
+    "candles",
+    "chair",
+    "decor",
+    "desk",
+    "floor-lamp",    
+    "lighting",
+    "pendant-lamp",
+    "sofa",
+    "storage",
+    "table",
+    "table-lamp",
+    "vase"
 ]
 agent_choices: [
             "cart", 

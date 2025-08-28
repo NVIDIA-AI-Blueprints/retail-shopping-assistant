@@ -68,13 +68,17 @@ categories: [
     "chair",
     "decor",
     "desk",
+    "fireplace",
     "floor-lamp",    
     "lighting",
+    "mirror",
     "pendant-lamp",
+    "rug",
     "sofa",
     "storage",
     "table",
     "table-lamp",
+    "textiles",
     "vase"
 ]
 agent_choices: [

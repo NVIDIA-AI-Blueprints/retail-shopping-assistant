@@ -365,7 +365,7 @@ const Chatbox: React.FC<ChatboxProps> = ({ setNewRenderImage }) => {
     addMessage("assistant", "", "");
     
     await sleep(1000);
-    const introduction = "Hello! 👋 I'm your dedicated Shopping Assistant created by NVIDIA, here to answer any questions you might have and help you find anything you're looking for. What can I help you with today?\n\nHere are some questions you could ask me:\n\n• Do you have any summer dresses?\n• Does the [product name] require dry cleaning?\n• Great! Add it to my cart";
+    const introduction = "Hello! 👋 I'm your dedicated Shopping Assistant created by NVIDIA. You can ask me anything—from finding the perfect item to learning more about product care.\n\nHere are some questions you could ask me:\n\n• Do you have any summer skirts?\n• Does the [product name] require dry cleaning?\n• Do you have any shoes like this? (upload an image)\n• Great! Add it to my cart";
     
     const words = introduction.split(" ");
     for (const word of words) {

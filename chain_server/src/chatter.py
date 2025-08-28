@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from typing import AsyncGenerator
-from langchain_nvidia_ai_endpoints import ChatNVIDIA
+from openai import AsyncOpenAI
 from langgraph.config import get_stream_writer
 from .agenttypes import State
 import json
@@ -35,12 +35,9 @@ class ChatterAgent:
         self.llm_port = config.llm_port
         self.config = config
         
-        self.model = ChatNVIDIA(
-            url=config.llm_port, 
-            model=config.llm_name, 
-            api_key=os.environ["LLM_API_KEY"],
-            temperature=0.0,
-            max_tokens=config.memory_length
+        self.model = AsyncOpenAI(
+            base_url=config.llm_port,
+            api_key=os.environ.get("LLM_API_KEY")
         )
         logging.info(f"ChatterAgent.__init__() | Initialization complete")
 
@@ -85,10 +82,17 @@ class ChatterAgent:
         # Send our 'retrieved' dictionary.
         writer(f"{json.dumps({'type' : 'images' , 'payload' : state.retrieved, 'timestamp' : time.time()})}")
 
-        async for chunk in self.model.astream(messages):
-
-            if chunk.content:
-                content = chunk.content
+        stream = await self.model.chat.completions.create(
+            model=self.config.llm_name,
+            messages=messages,
+            temperature=0.0,
+            max_tokens=self.config.memory_length,
+            stream=True
+        )
+        
+        async for chunk in stream:
+            if chunk.choices[0].delta.content:
+                content = chunk.choices[0].delta.content
                 full_response += content
                 output_state.response = full_response
 
@@ -98,7 +102,7 @@ class ChatterAgent:
                     logging.info(f"ChatterAgent.invoke() | First token time: {ftt}")
                     output_state.timings["first_token"] = ftt
 
-                writer(f"{json.dumps({'type' : 'content', 'payload' : chunk.content, 'timestamp' : time.time()})}")
+                writer(f"{json.dumps({'type' : 'content', 'payload' : content, 'timestamp' : time.time()})}")
 
         output_state.response = full_response
         output_state.context = f"{state.context}\n{full_response}"

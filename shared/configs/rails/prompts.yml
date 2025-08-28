@@ -3,11 +3,21 @@ prompts:
     content: |
       Task: Check if there is unsafe content in the user or agent messages in the below conversation in accordance with our safety policy with the below categories. Provide a 'safe' or 'unsafe' rating for both the user message and the agent response. If there is unsafe content, please also provide a list of violated categories according to our safety policy below.
 
+      CONTEXT: This is a furniture and home decor shopping assistant. Users may legitimately ask about outdoor furniture items, heating appliances, home safety equipment, and product specifications.
+
+      LEGITIMATE FURNITURE TOPICS (ALWAYS SAFE):
+      - Questions about outdoor heating furniture (fire tables, fire pits, patio heaters)
+      - Product specifications (dimensions, capacity, weight limits, materials)
+      - Care instructions and maintenance
+      - Assembly requirements
+      - Safety features of furniture items
+      - Home decor and furniture shopping
+
       <BEGIN UNSAFE CONTENT CATEGORIES>
       S1: Violence.
       S2: Sexual.
       S3: Criminal Planning/Confessions.
-      S4: Guns and Illegal Weapons.
+      S4: Guns and Illegal Weapons (NOTE: Does NOT apply to furniture heating elements or outdoor heating appliances).
       S5: Controlled/Regulated Substances.
       S6: Suicide and Self Harm.
       S7: Sexual (minor).
@@ -47,11 +57,21 @@ prompts:
     content: |
       Task: Check if there is unsafe content in the user or agent messages in the below conversation in accordance with our safety policy with the below categories. Provide a 'safe' or 'unsafe' rating for both the user message and the agent response. If there is unsafe content, please also provide a list of violated categories according to our safety policy below.
 
+      CONTEXT: This is a furniture and home decor shopping assistant. Users may legitimately ask about outdoor furniture items, heating appliances, home safety equipment, and product specifications.
+
+      LEGITIMATE FURNITURE TOPICS (ALWAYS SAFE):
+      - Questions about outdoor heating furniture (fire tables, fire pits, patio heaters)
+      - Product specifications (dimensions, capacity, weight limits, materials)
+      - Care instructions and maintenance
+      - Assembly requirements
+      - Safety features of furniture items
+      - Home decor and furniture shopping
+
       <BEGIN UNSAFE CONTENT CATEGORIES>
       S1: Violence.
       S2: Sexual.
       S3: Criminal Planning/Confessions.
-      S4: Guns and Illegal Weapons.
+      S4: Guns and Illegal Weapons (NOTE: Does NOT apply to furniture heating elements or outdoor heating appliances).
       S5: Controlled/Regulated Substances.
       S6: Suicide and Self Harm.
       S7: Sexual (minor).
@@ -91,8 +111,25 @@ prompts:
 
   - task: topic_safety_check_input $model=topic_control
     content: |
-      You are a furniture store assistant. Your primary function is to accurately route customer queries to the appropriate specialist and provide helpful responses. Customers may ask about specific products, request to update their shopping cart, or ask for product recommendations. Please allow for conversational context to better assist them.
+      You are a furniture and home decor store assistant. Your primary function is to help customers with furniture shopping, product questions, and cart management.
 
-      Available Specialists and their functions are as follows. Cart Manager (cart_node): Use for any queries about purchasing, adding items to the cart, or removing items from the cart. Product Finder (search): Use for all searches regarding product availability, specific product information, or finding new items. General Assistant (chatter): Use for general conversation, small talk, and any queries that do not fall into the above categories.
+      ALWAYS ALLOW these topics:
+      - Questions about furniture products, specifications, dimensions, materials, assembly
+      - Questions about outdoor furniture including heating elements (fire tables, fire pits, patio heaters)
+      - Product care instructions, maintenance, and safety features
+      - Shopping cart operations (add, remove, view items)
+      - Product availability, pricing, and comparisons
+      - General furniture and home decor shopping assistance
+      - Room furnishing advice and recommendations
+      - Image uploads and visual product searches (finding similar items from uploaded images)
+      - Any queries about finding products that appear similar to submitted images
 
-      For content guidelines, you must engage with customer questions about our products, services, and general small talk. Do not answer questions related to your personal opinions or beliefs, non-company products or services, personal details about yourself or your creators, or sensitive subjects like politics or religion.
+      REJECT only these topics:
+      - Personal opinions or beliefs unrelated to furniture
+      - Non-furniture products or services outside our catalog
+      - Personal details about yourself or your creators
+      - Sensitive subjects like politics, religion, or inappropriate content
+
+      Remember: 
+      - Legitimate product questions about outdoor heating furniture, capacity specifications, and safety features are ALWAYS appropriate for a furniture store assistant
+      - Image-based product searches where users upload images to find similar items are core shopping functionality and should ALWAYS be allowed

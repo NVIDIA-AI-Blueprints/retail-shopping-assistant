@@ -44,7 +44,7 @@ const Navbar: React.FC = () => {
         <div className="flex items-center shrink-0">
           <MenuIcon sx={{ color: "#5E5E5E" }} fontSize="small" />
           <p className="text-[22px] ml-[20px] font-bold text-[#202020]">
-            Avanzare
+            AIHandel
           </p>
         </div>
         

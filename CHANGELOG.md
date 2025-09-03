@@ -36,23 +36,6 @@ This is the initial release of the NVIDIA AI Blueprint: Retail Shopping Assistan
 - Update url path by @antoniomtz in [#66](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/66)
 - Update notebook paths by @antoniomtz in [#64](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/64)
 
-### Foundation Development
-- UI cart notification improvements by @antoniomtz in [#43](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/43)
-- Fix image path by @antoniomtz in [#42](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/42)
-- Add image support by @antoniomtz in [#41](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/41)
-- Update architecture image by @antoniomtz in [#40](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/40)
-- UI cart messages by @antoniomtz in [#39](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/39)
-- General improvements by @antoniomtz in [#38](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/38)
-- Fix URLs by @antoniomtz in [#37](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/37)
-- Fix image URL by @antoniomtz in [#36](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/36)
-- Brev documentation by @antoniomtz in [#35](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/35)
-- Fix top link by @antoniomtz in [#34](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/34)
-- Fix link by @antoniomtz in [#33](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/33)
-- README fixes by @antoniomtz in [#32](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/32)
-- Generate new user ID by @antoniomtz in [#31](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/31)
-- Remove extra instructions by @antoniomtz in [#30](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/30)
-- Testing improvements by @jahubba in [#61](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/61)
-
 ## 👥 Contributors
 
 - **@nvidiacbrissette** ([Christopher Brissette](https://github.com/nvidiacbrissette))

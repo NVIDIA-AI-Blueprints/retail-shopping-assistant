@@ -52,7 +52,7 @@ class SummaryAgent:
         output_state = state
 
         messages = [
-            {"role": "system", "content": """You are a conversation summarizer for a shopping assistant. 
+            {"role": "system", "content": """/no_think You are a conversation summarizer for a shopping assistant. 
 
                 CRITICAL RULES:
                 1. You MUST preserve ALL product information, including:

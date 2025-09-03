@@ -30,7 +30,7 @@ def judge_test(
     if verbose:
         print("judge_test() | Starting judgement.")
 
-    prompt = f"""
+    prompt = f"""/no_think
 You are an expert answer quality evaluator. Your task is to rate how well the RAG-generated answer answers the given question, compared to the ideal (reference) answer. 
 Note that these responses may sometimes vary. For instance, if two answers list different, but similar products, that is fine. 
 
@@ -80,7 +80,7 @@ RAG Answer: {answer}
     response = LLM_CLIENT.chat.completions.create(
         model=LLM_NAME,
         messages=[
-            {"role": "system", "content": "You are a helpful assistant trained to judge QA quality."},
+            {"role": "system", "content": "/no_think You are a helpful assistant trained to judge QA quality."},
             {"role": "user", "content": prompt}
         ],
         temperature=0.0,

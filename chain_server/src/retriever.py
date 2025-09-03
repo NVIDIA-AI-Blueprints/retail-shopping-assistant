@@ -162,7 +162,7 @@ class RetrieverAgent():
             conversation_context = state.context
             
             entity_messages = [
-                {"role": "system", "content": """You are a search entity extractor. Your task is to identify the specific product the user is asking about based on the conversation history.
+                {"role": "system", "content": """/no_think You are a search entity extractor. Your task is to identify the specific product the user is asking about based on the conversation history.
 
     CRITICAL RULES:
     1.  **Analyze Intent:** Determine if the user's "Current question" is a follow-up about a previously discussed product or a request for a new product.

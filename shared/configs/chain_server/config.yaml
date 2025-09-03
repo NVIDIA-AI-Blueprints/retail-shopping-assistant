@@ -1,5 +1,5 @@
 llm_port: "http://llama:8000/v1"
-llm_name: "meta/llama-3.1-70b-instruct"
+llm_name: "nvidia/nvidia-nemotron-nano-9b-v2"
 retriever_port: "http://catalog-retriever:8010"
 memory_port: "http://memory-retriever:8011"
 rails_port: "http://rails:8012"

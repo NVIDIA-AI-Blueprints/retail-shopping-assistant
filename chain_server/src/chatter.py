@@ -58,7 +58,7 @@ class ChatterAgent:
             if state.context and state.context.strip():
                 user_message += f"\nPREVIOUS CONTEXT: {state.context}"
             messages = [
-                {"role": "system", "content": self.config.chatter_prompt},
+                {"role": "system", "content": f"/no_think {self.config.chatter_prompt}"},
                 {"role": "user", "content": user_message}
             ]
         else:
@@ -66,7 +66,7 @@ class ChatterAgent:
             if state.context and state.context.strip():
                 user_message += f"\nPREVIOUS CONTEXT: {state.context}"
             messages = [
-                {"role": "system", "content": self.config.chatter_prompt},
+                {"role": "system", "content": f"/no_think {self.config.chatter_prompt}"},
                 {"role": "user", "content": user_message}
             ]
 

@@ -157,7 +157,7 @@ class CartAgent():
         messages: list[ChatCompletionMessageParam] = [
             {
                 "role": "system", 
-                "content": "You are a retail agent that assists shoppers with their cart.\nOnly use the tools provided to help them."
+                "content": "/no_think You are a retail agent that assists shoppers with their cart.\nOnly use the tools provided to help them."
             },
             {
                 "role": "user", 

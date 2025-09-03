@@ -78,7 +78,7 @@ class PlannerAgent:
         return [
             {
                 "role": "system",
-                "content": self.system_prompt
+                "content": f"/no_think {self.system_prompt}"
             },
             {
                 "role": "user",

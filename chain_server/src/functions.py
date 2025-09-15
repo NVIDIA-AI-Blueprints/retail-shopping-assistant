@@ -34,27 +34,20 @@ category_function = {
     "type": "function",
     "function": {
         "name": "get_categories",
-        "description": """Identify a few of the most relevant categories related to the user's query.\n
-                          Only choose categories from the list provided.\n
-                          You may choose the same category more than once."""
+        "description": """Identify exactly 3 relevant categories for the user's query from the provided list."""
                           ,
         "parameters": {
             "type": "object",
             "properties": {
-                "category_one": {
-                    "type": "string",
-                    "description": "The most relevant category given the user's query.",
-                },
-                "category_two": {
-                    "type": "string",
-                    "description": "The second most relevant category given the user's query.",
-                },
-                "category_three": {
-                    "type": "string",
-                    "description": "The third most relevant category given the user's query.",
-                },
+                "categories": {
+                    "type": "array",
+                    "description": "Most relevant categories from the provided list.",
+                    "items": {
+                        "type": "string"
+                    }
+                }
             },
-            "required": ["category_one","category_two","category_three"]
+            "required": ["categories"]
         }
     }
 }
@@ -87,13 +80,13 @@ add_to_cart_function = {
     "type": "function",
     "function": {
         "name": "add_to_cart",
-        "description": "Tool to add items to the user's cart. These items must be proper nouns from the provided context.",
+        "description": "Tool to add items to the user's cart. When the user refers to 'it', 'this', 'that', or other pronouns, extract the specific product name from the provided context.",
         "parameters": {
             "type": "object",
             "properties": {
                 "item_name": {
                     "type": "string",
-                    "description": "The name of the item. Must be from the chat history, or most recent user query.",
+                    "description": "The exact name of the item to add. If the user query contains pronouns like 'it', 'this', 'that', extract the specific product name from the context. Example: if context mentions 'Ginger Lace Trim Gown' and user says 'add it to cart', use 'Ginger Lace Trim Gown' as the item_name.",
                 },
                 "quantity": {
                     "type": "integer",

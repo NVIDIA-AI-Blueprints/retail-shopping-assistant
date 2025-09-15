@@ -81,7 +81,8 @@ class CartAgent():
         sim = 0
         if res_json["similarities"]:
             sim = res_json["similarities"][0]
-            if sim > 0.8:
+            logging.info(f"CartAgent.add_to_cart() | similarity score: {sim} for item: {item_name}")
+            if sim > 0.6:
                 catalog_item_name = res_json["names"][0]
                 logging.info(f"CartAgent.add_to_cart() | input name: {item_name}, retrieved item: {catalog_item_name}, sim: {sim}")
                 response = requests.post(
@@ -117,7 +118,8 @@ class CartAgent():
         sim = 0
         if res_json["similarities"]:
             sim = res_json["similarities"][0]
-            if sim > 0.8:
+            logging.info(f"CartAgent.remove_from_cart() | similarity score: {sim} for item: {item_name}")
+            if sim > 0.6:
                 catalog_item_name = res_json["names"][0]
                 logging.info(f"CartAgent.remove_from_cart() | input name: {item_name}, retrieved item: {catalog_item_name}, sim: {sim}")
                 response = requests.post(
@@ -157,7 +159,13 @@ class CartAgent():
         messages: list[ChatCompletionMessageParam] = [
             {
                 "role": "system", 
-                "content": "/no_think You are a retail agent that assists shoppers with their cart.\nOnly use the tools provided to help them."
+                "content": "/no_think You are a retail agent that assists shoppers with their cart.\n" +
+                          "When adding items to cart:\n" +
+                          "- If the user mentions a specific product name, use that exact name\n" +
+                          "- If the user says 'it', 'this', 'that', or similar pronouns, look in the CONTEXT to find the most recently mentioned product name\n" +
+                          "- Always extract the complete product name from the context when resolving pronouns\n" +
+                          "- If you cannot clearly identify what product the user is referring to, ask for clarification\n" +
+                          "Only use the tools provided to help them."
             },
             {
                 "role": "user", 
@@ -177,6 +185,11 @@ class CartAgent():
         )
 
         # Parse our function call.
+        if not response.choices[0].message.tool_calls:
+            logging.error(f"CartAgent.invoke() | No tool calls generated for query: {state.query}")
+            output_state.response = "I'm having trouble understanding what you'd like to add to your cart. Could you please be more specific about the item name?"
+            return output_state
+            
         called_tool = response.choices[0].message.tool_calls[0]
         tool_name = called_tool.function.name
         tool_args = json.loads(called_tool.function.arguments)  

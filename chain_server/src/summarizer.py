@@ -90,8 +90,12 @@ class SummaryAgent:
                 max_tokens=self.memory_length
             )
 
-            tool_json = json.loads(response.choices[0].message.tool_calls[0].function.arguments)
-            output_state.context = tool_json["summary"]
+            if not response.choices[0].message.tool_calls:
+                logging.error(f"SummaryAgent.invoke() | No tool calls generated for summarization")
+                output_state.context = output_state.context  # Keep existing context if summarization fails
+            else:
+                tool_json = json.loads(response.choices[0].message.tool_calls[0].function.arguments)
+                output_state.context = tool_json["summary"]
             logging.info(f"SummaryAgent.invoke() | Returning final state with response: {output_state.context}")
         else:
             logging.info(f"SummaryAgent.invoke() | Context length is less than memory length -- writing to memory.")

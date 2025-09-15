@@ -153,9 +153,14 @@ class RetrieverAgent():
             logging.info(f"RetrieverAgent | _get_categories() | Checking for categories.")
             category_list_str = ", ".join(category_list)    
             category_messages = [
-                {"role": "user", "content": f"""
-                                            \nAVAILABLE CATEGORIES\n '{category_list_str}'
-                                            \nPROCESS THIS USER QUERY WITH CONTEXT:\n '{query}'"""}
+                {"role": "system", "content": f"""/no_think You are a category classifier. Your task is to identify exactly 3 relevant product categories for a user's query.
+
+Available categories: {category_list_str}
+
+Select exactly 3 categories from the available list."""},
+                {"role": "user", "content": f"""User query: {query}
+
+Select exactly 3 most relevant categories."""}
             ]
             # Split the query into user question and context for clarity
             user_question = state.query
@@ -205,13 +210,11 @@ class RetrieverAgent():
                                                 )
             entity_gather, category_gather = await asyncio.gather(entity_response,category_response) 
 
-            logging.info(f"RetrieverAgent | _get_categories()\n\t| Entity Response: {entity_gather}\n\t| Category Response: {category_gather}")
-            
-            # Add debug logging to see what query was sent
-            logging.info(f"RetrieverAgent | _get_categories() | Query sent to entity extractor: {query[:200]}...")
 
             entities = [query]
             categories = category_list
+            
+            # Parse entity function call response
             if entity_gather.choices[0].message.tool_calls:
                 response_dict = json.loads(entity_gather.choices[0].message.tool_calls[0].function.arguments)
                 entity_list = response_dict.get("search_entities", [])
@@ -221,19 +224,17 @@ class RetrieverAgent():
                     entities = [item.strip().strip("'\"") for item in cleaned.split(',')]
                 else:
                     entities = entity_list
-                if category_gather.choices[0].message.tool_calls:
-                    response_dict = json.loads(category_gather.choices[0].message.tool_calls[0].function.arguments)
-                    category_list = [
-                        response_dict.get("category_one", ""),
-                        response_dict.get("category_two", ""),
-                        response_dict.get("category_three", ""),
-                        ]
-                    if type(category_list) == str: 
-                        logging.info(f"RetrieverAgent | _get_categories()\n\t| Category list {category_list}")
-                        cleaned = category_list.strip("[]")
-                        categories = [item.strip().strip("'\"") for item in cleaned.split(',')]
-                    else:
-                        categories = category_list
+            
+            # Parse category function call response (independent of entity parsing)
+            if category_gather.choices[0].message.tool_calls:
+                response_dict = json.loads(category_gather.choices[0].message.tool_calls[0].function.arguments)
+                category_list = response_dict.get("categories", [])
+                if type(category_list) == str: 
+                    logging.info(f"RetrieverAgent | _get_categories()\n\t| Category list {category_list}")
+                    cleaned = category_list.strip("[]")
+                    categories = [item.strip().strip("'\"") for item in cleaned.split(',')]
+                else:
+                    categories = category_list
 
             logging.info(f"RetrieverAgent | _get_categories() | entities: {entities}\n\t| categories: {categories}")
             return entities, categories

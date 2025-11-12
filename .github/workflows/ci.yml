@@ -1,0 +1,238 @@
+name: Run notebooks and validate the results
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  run-nim-notebooks:
+    runs-on: arc-runners-org-nvidia-ai-bp-4-gpu
+    env:
+      PYTHON_VERSION: 3.12
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+    steps:  
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          
+      - name: Check Container Status
+        run: |
+          echo "===================== Container Status ====================="
+          docker ps -a
+
+      - name: Install dependencies
+        run: |          
+          echo "Installing dependencies ..."
+          python -m pip install --upgrade pip
+          pip install ipykernel nbformat
+          echo "Installing Python kernel..."
+          python -m ipykernel install --user --name python3 --display-name "Python 3"
+          
+          echo "Verifying kernel installation..."
+          jupyter kernelspec list
+
+      - name: Run Notebooks
+        run: |
+          # Function to skip specified cells in a notebook
+          # Supports individual cells and ranges: skip_cells notebook.ipynb 47-48 78-79
+          skip_cells() {
+            local NOTEBOOK_PATH="$1"
+            shift
+            local CELLS_TO_SKIP=("$@")
+            
+            if [ ${#CELLS_TO_SKIP[@]} -eq 0 ]; then
+              return 0
+            fi
+            
+            echo "⏭️  Skipping cells: ${CELLS_TO_SKIP[*]}"
+            
+            # Expand ranges and build Python list
+            local EXPANDED_CELLS=()
+            for item in "${CELLS_TO_SKIP[@]}"; do
+              if [[ "$item" =~ ^([0-9]+)-([0-9]+)$ ]]; then
+                # Range format: start-end
+                local start="${BASH_REMATCH[1]}"
+                local end="${BASH_REMATCH[2]}"
+                for ((i=start; i<=end; i++)); do
+                  EXPANDED_CELLS+=("$i")
+                done
+              else
+                # Single cell number
+                EXPANDED_CELLS+=("$item")
+              fi
+            done
+            
+            local CELLS_LIST=$(printf '%s,' "${EXPANDED_CELLS[@]}")
+            CELLS_LIST="[${CELLS_LIST%,}]"
+            
+            python3 -c "import nbformat; nb = nbformat.read('$NOTEBOOK_PATH', as_version=4); cells = $CELLS_LIST; exec('for i in cells:\\n  if i < len(nb.cells):\\n    nb.cells[i].source = \"# Skipped cell \" + str(i) if nb.cells[i].cell_type == \"code\" else \"<!-- Skipped cell \" + str(i) + \" -->\"'); nbformat.write(nb, '$NOTEBOOK_PATH'); print('✅ Skipped ' + str(len(cells)) + ' cell(s)')"
+          }
+          
+          # Function to run a single notebook
+          run_notebook() {
+            local NOTEBOOK_PATH="$1"
+            local FIX_TRTLLM_PATH="${2:-}"
+            
+            local NOTEBOOK_DIR=$(dirname "$NOTEBOOK_PATH")
+            local NOTEBOOK_NAME=$(basename "$NOTEBOOK_PATH" .ipynb)
+            local OUTPUT_NOTEBOOK="${NOTEBOOK_DIR}/${NOTEBOOK_NAME}_result.ipynb"
+            
+            # Create a temporary copy of the notebook for modification
+            local TEMP_NOTEBOOK="${NOTEBOOK_DIR}/${NOTEBOOK_NAME}_temp.ipynb"
+            cp "$NOTEBOOK_PATH" "$TEMP_NOTEBOOK"
+            
+            echo "================================"
+            echo "Running: $NOTEBOOK_NAME"
+            echo "================================"
+            
+            # Skip cloud NIM config and container teardown cells for 1_Deploy_Retail_Shopping_Assistant.ipynb
+            if [[ "$NOTEBOOK_NAME" == "1_Deploy_Retail_Shopping_Assistant" ]]; then
+              skip_cells "$TEMP_NOTEBOOK" 47-48 78-79
+              
+              echo "Modifying notebook for CI environment..."
+              
+              # Modification 1: Change cache directory to local path
+              echo "  - Changing cache directory to local path..."
+              sed -i 's|"local_nim_cache = os.path.expanduser(\\"~/.cache/nim\\")\\n"|"local_nim_cache = os.path.join(os.getcwd(), \\".cache\\", \\"nim\\")\\n"|g' "$TEMP_NOTEBOOK"
+              echo "    ✅ Modified cache directory path"
+              
+              # Modification 2: Add sleep before docker logs command
+              echo "  - Adding sleep before docker logs command..."
+              sed -i '/"# Monitor application startup\\n",/a\    "!sleep 60\\n",' "$TEMP_NOTEBOOK"
+              echo "    ✅ Added sleep 60 before docker logs command"
+              
+              echo "✅ All notebook modifications complete"
+            fi
+            
+            # Run notebook with papermill
+            papermill "$TEMP_NOTEBOOK" "$OUTPUT_NOTEBOOK" -k python3 --log-output --log-level DEBUG
+            local EXIT_CODE=$?
+            
+            # Check results
+            if [ $EXIT_CODE -ne 0 ]; then
+              echo "❌ Notebook execution failed"
+              rm -f "$TEMP_NOTEBOOK"
+              return 1
+            fi
+            
+            if [ ! -f "$OUTPUT_NOTEBOOK" ]; then
+              echo "❌ Output notebook not created"
+              rm -f "$TEMP_NOTEBOOK"
+              return 1
+            fi
+            
+            # Clean up temporary notebook
+            rm -f "$TEMP_NOTEBOOK"
+            
+            echo "✅ Completed: $NOTEBOOK_NAME"
+            echo ""
+            return 0
+          }
+          
+          # Run all notebooks
+          run_notebook "notebook/1_Deploy_Retail_Shopping_Assistant.ipynb" || exit 1
+
+      - name: Convert results to HTML format
+        if: always()
+        run: |
+          echo "Converting notebooks to HTML..."
+          for notebook in notebook/*_result.ipynb; do
+            if [ -f "$notebook" ]; then
+              jupyter nbconvert --to html "$notebook"
+              echo "✅ Converted $(basename $notebook)"
+            fi
+          done
+
+      - name: Run Test Code
+        if: always()
+        run: |   
+          # Wait for services to stabilize
+          echo "Waiting 5 minutes for services to fully stabilize..."
+          sleep 600
+          echo "✅ Wait completed"
+          
+          # Check if the HTML files exist before running tests
+          if [ ! -f "./notebook/1_Deploy_Retail_Shopping_Assistant_result.html" ]; then
+            echo "Warning: 1_Deploy_Retail_Shopping_Assistant_result.html not found"
+          fi
+          
+          # Wait for the application to be ready
+          echo "Waiting for application to be ready..."
+          max_retries=30
+          retry_count=0
+          until curl -f http://127.0.0.1:3000 > /dev/null 2>&1; do
+            retry_count=$((retry_count + 1))
+            if [ $retry_count -ge $max_retries ]; then
+              echo "❌ Application failed to start after $max_retries attempts"
+              exit 1
+            fi
+            echo "Waiting for application... attempt $retry_count/$max_retries"
+            sleep 10
+          done
+          echo "✅ Application is ready"
+              
+          # Run the test and capture the exit code
+          # Use --net=host to allow test container to access services on host
+          docker run --rm \
+            --net=host \
+            -v "$(pwd)/notebook/1_Deploy_Retail_Shopping_Assistant_result.html:/app/input/1_Deploy_Retail_Shopping_Assistant.html" \
+            -v "$(pwd):/workspace" \
+            nvcr.io/rw983xdqtcdp/auto_test_team/blueprint-github-test-image:latest \
+            pytest -m retail_shopping_assistant \
+            --disable-warnings \
+            --html=/workspace/retail-shopping-assistant_test.html \
+            --self-contained-html
+
+      - name: Upload notebook and test results as artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nim-notebooks-results
+          path: |
+             notebook/1_Deploy_Retail_Shopping_Assistant_result.html
+             retail-shopping-assistant_test.html
+          retention-days: 14 
+
+      - name: Cleanup Docker resources
+        if: always()
+        run: |
+          echo "🧹 Cleaning up workflow resources..."
+          
+          # Stop and remove Docker Compose services and their images
+          echo "Stopping Docker Compose services and removing images..."
+          cd retail-shopping-assistant
+          docker compose -f docker-compose.yaml down --rmi all 2>/dev/null || true
+          docker compose -f docker-compose-nim-local.yaml down --rmi all 2>/dev/null || true
+          cd ..
+          echo "✅ Docker Compose services and images removed"
+          
+          sleep 120 # Wait for 2 minutes to ensure all containers are stopped
+
+          # Check remaining containers
+          echo "Remaining containers:"
+          docker ps -a
+          
+          # Remove test image
+          echo "Removing test image..."
+          docker rmi nvcr.io/rw983xdqtcdp/auto_test_team/blueprint-github-test-image:latest 2>/dev/null || true
+          
+          # Remove any dangling images that might have been created during notebook execution
+          echo "Removing dangling images..."
+          docker image prune -f
+          
+          # Show remaining images
+          echo "Remaining images:"
+          docker images
+
+          echo "✅ Workflow cleanup completed"
+

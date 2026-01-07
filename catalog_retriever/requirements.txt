@@ -5,6 +5,7 @@ charset-normalizer==3.4.2
 click==8.2.1
 distro==1.9.0
 fastapi==0.116.1
+fonttools>=4.55.2
 greenlet==3.2.3
 grpcio==1.67.1
 h11==0.16.0
@@ -14,11 +15,11 @@ idna==3.10
 jiter==0.10.0
 jsonpatch==1.33
 jsonpointer==3.0.0
-langchain==0.3.27
-langchain-core==0.3.74
-langchain-milvus==0.2.1
-langchain-text-splitters==0.3.9
-langsmith==0.4.6
+langchain==1.2.1
+langchain-core==1.2.6
+langchain-milvus==0.3.3
+langchain-text-splitters==1.1.0
+langsmith==0.6.1
 milvus-lite==2.5.1
 numpy==2.3.1
 openai==1.97.0
@@ -29,7 +30,7 @@ pillow==11.3.0
 protobuf==6.31.1
 pydantic==2.11.7
 pydantic_core==2.33.2
-pymilvus==2.5.12
+pymilvus==2.6.0
 python-dateutil==2.9.0.post0
 python-dotenv==1.1.1
 pytz==2025.2

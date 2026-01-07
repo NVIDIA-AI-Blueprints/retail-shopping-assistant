@@ -23,14 +23,14 @@ langchain==1.2.1
 langchain-core==1.2.6
 langchain-text-splitters==1.1.0
 langgraph==1.0.5
-langgraph-checkpoint==3.0.1
+langgraph-checkpoint==2.1.0
 langgraph-prebuilt==1.0.5
 langgraph-sdk==0.3.1
 langsmith==0.6.1
 multidict==4.5
 openai==1.97.0
 orjson==3.11.0
-ormsgpack==1.12.0
+ormsgpack==1.10.0
 packaging==25.0
 propcache==0.3.2
 pydantic==2.11.7

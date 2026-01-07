@@ -11,7 +11,7 @@ Performs both of these in parallel and then re-ranks the results from bothmodels
 from openai import OpenAI
 from pydantic import BaseModel
 from typing import List, Tuple
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.embeddings import Embeddings
 from langchain_milvus import Milvus
 import os

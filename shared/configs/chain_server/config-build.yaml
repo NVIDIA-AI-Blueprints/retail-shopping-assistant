@@ -4,7 +4,6 @@
 # LLM endpoint for build.nvidia.com
 llm_port: "https://integrate.api.nvidia.com/v1"
 llm_name: "meta/llama-3.1-70b-instruct"
-#llm_name: "nvidia/nemotron-3-nano-30b-a3b"
 
 # Note: This override will be applied when CONFIG_OVERRIDE=config-build.yaml
 # The base config.yaml will be loaded first, then these values will override

@@ -24,6 +24,7 @@ class BaseRails():
 # Define the GuardRails class
 class GuardRails(BaseRails):
     def __init__(self, config_path: str):
+
         # Load the base configuration
         self.config = RailsConfig.from_path(config_path)
         

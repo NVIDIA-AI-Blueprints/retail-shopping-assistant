@@ -21,6 +21,7 @@ routing_prompt: |
   - Browsing categories: "show me dresses", "what bags do you have", "find blue shirts"
   - General availability: "do you have summer clothes", "what's available in size medium"
   - Open-ended searches: "I need something for a party", "show me accessories"
+  - Searching for suggestions: "What tops would you recommend to go with this outfit?"
 
   SPECIFIC PRODUCT QUESTIONS -> chatter:
   - Questions about named products: "what material is the [product name]", "how much does the [product name] cost", "is the [product name] available in other colors"

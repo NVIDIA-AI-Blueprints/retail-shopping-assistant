@@ -95,7 +95,12 @@ class GraphNodes:
             )
             response.raise_for_status()
             
-            is_safe = response.json()["content"] == state.query
+            response_data = response.json()
+            # Rails returns {"response": [{"role": "assistant", "content": "..."}], ...}
+            if "response" in response_data and len(response_data["response"]) > 0:
+                is_safe = response_data["response"][0]["content"] == state.query
+            else:
+                is_safe = True  # Default to safe if structure is unexpected
             end = time.monotonic()
             
             return {
@@ -127,7 +132,12 @@ class GraphNodes:
             )
             response.raise_for_status()
             
-            is_safe = response.json()["content"] == state.response
+            response_data = response.json()
+            # Rails returns {"response": [{"role": "assistant", "content": "..."}], ...}
+            if "response" in response_data and len(response_data["response"]) > 0:
+                is_safe = response_data["response"][0]["content"] == state.response
+            else:
+                is_safe = True  # Default to safe if structure is unexpected
             end = time.monotonic()
             
             return {

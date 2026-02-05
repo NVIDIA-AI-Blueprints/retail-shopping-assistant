@@ -32,6 +32,21 @@ spec:
       {{- include "retail-shopping-assistant.imagePullSecrets" . | nindent 6 }}
       serviceAccountName: {{ include "retail-shopping-assistant.serviceAccountName" . }}
       {{- include "retail-shopping-assistant.podSecurityContext" . | nindent 6 }}
+      initContainers:
+        - name: wait-for-catalog-retriever
+          image: busybox:1.36
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Waiting for Catalog Retriever to be ready..."
+              until nc -z {{ include "retail-shopping-assistant.catalogRetriever.name" . }} {{ .Values.catalogRetriever.service.port }}; do
+                echo "Catalog Retriever not ready yet, waiting..."
+                sleep 5
+              done
+              echo "Catalog Retriever is ready!"
+          {{- include "retail-shopping-assistant.containerSecurityContext" . | nindent 10 }}
       containers:
         - name: chain-server
           image: "{{ .Values.chainServer.image.repository }}:{{ .Values.chainServer.image.tag }}"

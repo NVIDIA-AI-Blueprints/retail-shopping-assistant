@@ -3,9 +3,10 @@ SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES.
 SPDX-License-Identifier: Apache-2.0
 */}}
 
+{{/*
+Shared Data PVC
+*/}}
 {{- if .Values.persistence.sharedData.enabled }}
----
-# Shared Data PVC (ReadWriteMany for product data, images, configs)
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -23,9 +24,11 @@ spec:
   storageClassName: {{ include "retail-shopping-assistant.storageClassRWX" . }}
   {{- end }}
 {{- end }}
+{{/*
+Milvus Data PVC
+*/}}
 {{- if and .Values.milvus.enabled (not .Values.milvus.useOperator) (not .Values.milvus.external.enabled) .Values.milvus.persistence.enabled }}
 ---
-# Milvus Data PVC
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -44,9 +47,11 @@ spec:
   storageClassName: {{ include "retail-shopping-assistant.storageClass" . }}
   {{- end }}
 {{- end }}
+{{/*
+etcd Data PVC
+*/}}
 {{- if and .Values.etcd.enabled .Values.etcd.persistence.enabled }}
 ---
-# etcd Data PVC
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -65,9 +70,11 @@ spec:
   storageClassName: {{ include "retail-shopping-assistant.storageClass" . }}
   {{- end }}
 {{- end }}
+{{/*
+MinIO Data PVC
+*/}}
 {{- if and .Values.minio.enabled .Values.minio.persistence.enabled }}
 ---
-# MinIO Data PVC
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -86,9 +93,11 @@ spec:
   storageClassName: {{ include "retail-shopping-assistant.storageClass" . }}
   {{- end }}
 {{- end }}
+{{/*
+PostgreSQL Data PVC
+*/}}
 {{- if and .Values.postgresql.enabled .Values.postgresql.persistence.enabled }}
 ---
-# PostgreSQL Data PVC
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:

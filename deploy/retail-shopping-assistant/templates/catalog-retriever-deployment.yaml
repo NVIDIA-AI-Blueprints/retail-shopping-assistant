@@ -32,6 +32,21 @@ spec:
       {{- include "retail-shopping-assistant.imagePullSecrets" . | nindent 6 }}
       serviceAccountName: {{ include "retail-shopping-assistant.serviceAccountName" . }}
       {{- include "retail-shopping-assistant.podSecurityContext" . | nindent 6 }}
+      initContainers:
+        - name: wait-for-milvus
+          image: busybox:1.36
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Waiting for Milvus to be ready at {{ include "retail-shopping-assistant.milvus.name" . }}:{{ .Values.milvus.service.port }}..."
+              until nc -z {{ include "retail-shopping-assistant.milvus.name" . }} {{ .Values.milvus.service.port }}; do
+                echo "Milvus not ready yet, waiting..."
+                sleep 5
+              done
+              echo "Milvus is ready!"
+          {{- include "retail-shopping-assistant.containerSecurityContext" . | nindent 10 }}
       containers:
         - name: catalog-retriever
           image: "{{ .Values.catalogRetriever.image.repository }}:{{ .Values.catalogRetriever.image.tag }}"

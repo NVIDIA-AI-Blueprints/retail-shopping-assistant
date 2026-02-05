@@ -27,7 +27,7 @@ nim:
   imageEmbedModel: "nvidia/nvclip"
 
 customLLM:
-  enabled: true
+  enabled: false
   endpoint: "https://llama-4-scout-17b-16e-w4a16-maas-apicast-production.apps.prod.rhoai.rh-aiservices-bu.com:443/v1"
   model: ""
   apiKey: ""

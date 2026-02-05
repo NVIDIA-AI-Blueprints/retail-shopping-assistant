@@ -1,0 +1,92 @@
+{{/*
+SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+*/}}
+
+{{- if .Values.networkPolicy.enabled }}
+# Allow ingress from OpenShift router to nginx
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "retail-shopping-assistant.fullname" . }}-allow-ingress
+  namespace: {{ include "retail-shopping-assistant.namespace" . }}
+  labels:
+    {{- include "retail-shopping-assistant.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "retail-shopping-assistant.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: nginx
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              network.openshift.io/policy-group: ingress
+      ports:
+        - protocol: TCP
+          port: {{ .Values.nginx.service.port }}
+---
+# Allow internal communication between application pods
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "retail-shopping-assistant.fullname" . }}-internal
+  namespace: {{ include "retail-shopping-assistant.namespace" . }}
+  labels:
+    {{- include "retail-shopping-assistant.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: retail-shopping
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow traffic from pods in the same namespace with the same app label
+    - from:
+        - podSelector:
+            matchLabels:
+              app: retail-shopping
+  egress:
+    # Allow traffic to pods in the same namespace
+    - to:
+        - podSelector:
+            matchLabels:
+              app: retail-shopping
+    # Allow DNS resolution (permissive rule for both Kubernetes and OpenShift)
+    # OpenShift uses CoreDNS in openshift-dns namespace on port 5353
+    # Standard Kubernetes uses kube-dns in kube-system on port 53
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+        - protocol: UDP
+          port: 5353
+        - protocol: TCP
+          port: 5353
+    # Allow external HTTPS traffic (for NVIDIA API Catalog)
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 443
+---
+# Deny all other traffic by default (optional - remove if too restrictive)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "retail-shopping-assistant.fullname" . }}-default-deny
+  namespace: {{ include "retail-shopping-assistant.namespace" . }}
+  labels:
+    {{- include "retail-shopping-assistant.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: retail-shopping
+  policyTypes:
+    - Ingress
+{{- end }}

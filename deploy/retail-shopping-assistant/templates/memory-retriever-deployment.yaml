@@ -1,0 +1,111 @@
+{{/*
+SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+*/}}
+
+{{- if .Values.memoryRetriever.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "retail-shopping-assistant.memoryRetriever.name" . }}
+  namespace: {{ include "retail-shopping-assistant.namespace" . }}
+  labels:
+    {{- include "retail-shopping-assistant.labels" . | nindent 4 }}
+    app.kubernetes.io/component: memory-retriever
+spec:
+  replicas: {{ .Values.memoryRetriever.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "retail-shopping-assistant.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: memory-retriever
+  template:
+    metadata:
+      labels:
+        {{- include "retail-shopping-assistant.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: memory-retriever
+        {{- include "retail-shopping-assistant.componentLabels" . | nindent 8 }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      {{- include "retail-shopping-assistant.imagePullSecrets" . | nindent 6 }}
+      serviceAccountName: {{ include "retail-shopping-assistant.serviceAccountName" . }}
+      {{- include "retail-shopping-assistant.podSecurityContext" . | nindent 6 }}
+      containers:
+        - name: memory-retriever
+          image: "{{ .Values.memoryRetriever.image.repository }}:{{ .Values.memoryRetriever.image.tag }}"
+          imagePullPolicy: {{ .Values.memoryRetriever.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.memoryRetriever.service.port }}
+              protocol: TCP
+          {{- if .Values.memoryRetriever.database.usePostgres }}
+          env:
+            - name: DATABASE_URL
+              value: {{ .Values.memoryRetriever.database.postgresUrl | quote }}
+          {{- end }}
+          volumeMounts:
+            - name: shared-config
+              mountPath: /app/shared/configs
+            # SQLite storage (warning: not recommended for production)
+            - name: sqlite-data
+              mountPath: /app/data
+          resources:
+            {{- toYaml .Values.memoryRetriever.resources | nindent 12 }}
+          {{- include "retail-shopping-assistant.containerSecurityContext" . | nindent 10 }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.memoryRetriever.healthCheck.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.memoryRetriever.healthCheck.initialDelaySeconds }}
+            periodSeconds: {{ .Values.memoryRetriever.healthCheck.periodSeconds }}
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.memoryRetriever.healthCheck.path }}
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+      volumes:
+        - name: shared-config
+          emptyDir: {}
+        - name: sqlite-data
+          {{- if .Values.persistence.sharedData.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "retail-shopping-assistant.sharedDataPvc.name" . }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- /* Pod affinity for RWO shared volume - forces pods to same node */ -}}
+      {{- include "retail-shopping-assistant.sharedVolumeAffinity" . | nindent 6 }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "retail-shopping-assistant.memoryRetriever.name" . }}
+  namespace: {{ include "retail-shopping-assistant.namespace" . }}
+  labels:
+    {{- include "retail-shopping-assistant.labels" . | nindent 4 }}
+    app.kubernetes.io/component: memory-retriever
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: {{ .Values.memoryRetriever.service.port }}
+      targetPort: {{ .Values.memoryRetriever.service.port }}
+      protocol: TCP
+  selector:
+    {{- include "retail-shopping-assistant.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: memory-retriever
+{{- end }}

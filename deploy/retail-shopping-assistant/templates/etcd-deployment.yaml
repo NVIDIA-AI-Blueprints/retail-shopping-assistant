@@ -1,0 +1,117 @@
+{{/*
+SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+*/}}
+
+{{- if .Values.etcd.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "retail-shopping-assistant.etcd.name" . }}
+  namespace: {{ include "retail-shopping-assistant.namespace" . }}
+  labels:
+    {{- include "retail-shopping-assistant.labels" . | nindent 4 }}
+    app.kubernetes.io/component: etcd
+spec:
+  replicas: {{ .Values.etcd.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "retail-shopping-assistant.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: etcd
+  template:
+    metadata:
+      labels:
+        {{- include "retail-shopping-assistant.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: etcd
+        {{- include "retail-shopping-assistant.componentLabels" . | nindent 8 }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      {{- include "retail-shopping-assistant.imagePullSecrets" . | nindent 6 }}
+      serviceAccountName: {{ include "retail-shopping-assistant.serviceAccountName" . }}
+      {{- include "retail-shopping-assistant.podSecurityContext" . | nindent 6 }}
+      containers:
+        - name: etcd
+          image: "{{ .Values.etcd.image.repository }}:{{ .Values.etcd.image.tag }}"
+          imagePullPolicy: {{ .Values.etcd.image.pullPolicy }}
+          command:
+            - etcd
+            - --advertise-client-urls=http://{{ include "retail-shopping-assistant.etcd.name" . }}:{{ .Values.etcd.service.port }}
+            - --listen-client-urls=http://0.0.0.0:{{ .Values.etcd.service.port }}
+            - --data-dir=/etcd
+          env:
+            - name: ETCD_AUTO_COMPACTION_MODE
+              value: "revision"
+            - name: ETCD_AUTO_COMPACTION_RETENTION
+              value: "1000"
+            - name: ETCD_QUOTA_BACKEND_BYTES
+              value: "4294967296"
+          ports:
+            - name: client
+              containerPort: {{ .Values.etcd.service.port }}
+              protocol: TCP
+          {{- if .Values.etcd.persistence.enabled }}
+          volumeMounts:
+            - name: etcd-data
+              mountPath: /etcd
+          {{- end }}
+          resources:
+            {{- toYaml .Values.etcd.resources | nindent 12 }}
+          livenessProbe:
+            exec:
+              command:
+                - etcdctl
+                - endpoint
+                - health
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+          readinessProbe:
+            exec:
+              command:
+                - etcdctl
+                - endpoint
+                - health
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+      {{- if .Values.etcd.persistence.enabled }}
+      volumes:
+        - name: etcd-data
+          persistentVolumeClaim:
+            claimName: {{ include "retail-shopping-assistant.etcd.name" . }}-data
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "retail-shopping-assistant.etcd.name" . }}
+  namespace: {{ include "retail-shopping-assistant.namespace" . }}
+  labels:
+    {{- include "retail-shopping-assistant.labels" . | nindent 4 }}
+    app.kubernetes.io/component: etcd
+spec:
+  type: ClusterIP
+  ports:
+    - name: client
+      port: {{ .Values.etcd.service.port }}
+      targetPort: {{ .Values.etcd.service.port }}
+      protocol: TCP
+  selector:
+    {{- include "retail-shopping-assistant.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: etcd
+{{- end }}

@@ -1,0 +1,23 @@
+# Patterns to ignore when building packages.
+.DS_Store
+# VCS
+.git/
+.gitignore
+.bzr/
+.hg/
+.svn/
+# Backup files
+*.swp
+*.bak
+*.tmp
+*~
+# IDEs
+.idea/
+.vscode/
+# CI/CD
+.github/
+.gitlab-ci.yml
+.travis.yml
+# Local development
+.env
+*.local

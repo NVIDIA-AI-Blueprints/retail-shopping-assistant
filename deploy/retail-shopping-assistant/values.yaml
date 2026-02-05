@@ -1,0 +1,301 @@
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+global:
+  namespace: ""
+  imagePullSecrets: []
+  storageClass: ""
+  storageClassRWX: ""
+
+# -- API Keys and Secrets
+secrets:
+  create: true
+  ngcApiKey: ""
+  minioAccessKey: "minioadmin"
+  minioSecretKey: "minioadmin"
+  postgres:
+    enabled: false
+    username: "memoryuser"
+    password: ""
+
+# -- NIM Configuration
+nim:
+  useCloudNims: true
+  cloudEndpoint: "https://integrate.api.nvidia.com/v1"
+  llmModel: "meta/llama-3.1-70b-instruct"
+  textEmbedModel: "nvidia/nv-embedqa-e5-v5"
+  imageEmbedModel: "nvidia/nvclip"
+
+customLLM:
+  enabled: true
+  endpoint: "https://llama-4-scout-17b-16e-w4a16-maas-apicast-production.apps.prod.rhoai.rh-aiservices-bu.com:443/v1"
+  model: ""
+  apiKey: ""
+
+chainServer:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: image-registry.openshift-image-registry.svc:5000/retail-shopping/chain-server
+    tag: latest
+    pullPolicy: Always
+  service:
+    port: 8009
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "500m"
+    limits:
+      memory: "2Gi"
+      cpu: "2000m"
+  healthCheck:
+    path: /health
+    initialDelaySeconds: 30
+    periodSeconds: 10
+  env:
+    CONFIG_OVERRIDE: "config-build.yaml"
+
+catalogRetriever:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: image-registry.openshift-image-registry.svc:5000/retail-shopping/catalog-retriever
+    tag: latest
+    pullPolicy: Always
+  service:
+    port: 8010
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "2Gi"
+      cpu: "1000m"
+  healthCheck:
+    path: /health
+    initialDelaySeconds: 60
+    periodSeconds: 10
+  milvus:
+    port: "19530"
+  env:
+    CONFIG_OVERRIDE: "config-build.yaml"
+
+# -- Memory Retriever configuration
+memoryRetriever:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: image-registry.openshift-image-registry.svc:5000/retail-shopping/memory-retriever
+    tag: latest
+    pullPolicy: Always
+  service:
+    port: 8011
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+  healthCheck:
+    path: /health
+    initialDelaySeconds: 10
+    periodSeconds: 10
+  database:
+    usePostgres: false
+    postgresUrl: "postgresql://memoryuser:password@postgres:5432/memorydb"
+
+# -- Guardrails (Rails) configuration
+rails:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: image-registry.openshift-image-registry.svc:5000/retail-shopping/rails
+    tag: latest
+    pullPolicy: Always
+  service:
+    port: 8012
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "2Gi"
+      cpu: "1000m"
+  healthCheck:
+    # Rails doesn't have a health endpoint, use TCP check
+    tcpSocket: true
+    initialDelaySeconds: 30
+    periodSeconds: 10
+  env:
+    CONFIG_OVERRIDE: "config-build.yaml"
+
+# -- Frontend (React UI) configuration
+frontend:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: image-registry.openshift-image-registry.svc:5000/retail-shopping/frontend
+    tag: latest
+    pullPolicy: Always
+  service:
+    port: 8080
+  resources:
+    requests:
+      memory: "64Mi"
+      cpu: "50m"
+    limits:
+      memory: "128Mi"
+      cpu: "200m"
+  healthCheck:
+    path: /health
+    initialDelaySeconds: 10
+    periodSeconds: 10
+
+# -- Nginx Reverse Proxy configuration
+nginx:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: nginxinc/nginx-unprivileged
+    tag: 1.25.3-alpine
+    pullPolicy: IfNotPresent
+  service:
+    port: 8080
+  resources:
+    requests:
+      memory: "64Mi"
+      cpu: "50m"
+    limits:
+      memory: "128Mi"
+      cpu: "200m"
+
+etcd:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: quay.io/coreos/etcd
+    tag: v3.5.5
+    pullPolicy: IfNotPresent
+  service:
+    port: 2379
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+  persistence:
+    enabled: true
+    size: 5Gi
+
+minio:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: minio/minio
+    tag: RELEASE.2023-03-20T20-16-18Z
+    pullPolicy: IfNotPresent
+  service:
+    apiPort: 9000
+    consolePort: 9001
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "1Gi"
+      cpu: "500m"
+  persistence:
+    enabled: true
+    size: 10Gi
+
+milvus:
+  enabled: true
+  useOperator: false
+  external:
+    enabled: false
+    endpoint: ""
+  standalone:
+    image:
+      repository: milvusdb/milvus
+      tag: v2.4.13-hotfix
+      pullPolicy: IfNotPresent
+    resources:
+      requests:
+        memory: "2Gi"
+        cpu: "500m"
+      limits:
+        memory: "4Gi"
+        cpu: "2000m"
+  service:
+    port: 19530
+    metricsPort: 9091
+  persistence:
+    enabled: true
+    size: 20Gi
+
+postgresql:
+  enabled: false
+  image:
+    repository: postgres
+    tag: "15"
+    pullPolicy: IfNotPresent
+  service:
+    port: 5432
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "1Gi"
+      cpu: "500m"
+  persistence:
+    enabled: true
+    size: 10Gi
+
+persistence:
+  sharedData:
+    enabled: true
+    size: 10Gi
+    accessMode: ReadWriteOnce
+
+route:
+  enabled: true
+  host: ""
+  tls:
+    enabled: true
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+  timeout: 5m
+  annotations: {}
+
+networkPolicy:
+  enabled: true
+
+securityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+podAnnotations: {}
+
+nodeSelector: {}
+
+# -- Tolerations for all pods
+tolerations: []
+
+# -- Affinity rules for all pods
+affinity: {}

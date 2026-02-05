@@ -1,0 +1,124 @@
+{{/*
+SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+*/}}
+
+{{- if .Values.chainServer.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "retail-shopping-assistant.chainServer.name" . }}
+  namespace: {{ include "retail-shopping-assistant.namespace" . }}
+  labels:
+    {{- include "retail-shopping-assistant.labels" . | nindent 4 }}
+    app.kubernetes.io/component: chain-server
+spec:
+  replicas: {{ .Values.chainServer.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "retail-shopping-assistant.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: chain-server
+  template:
+    metadata:
+      labels:
+        {{- include "retail-shopping-assistant.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: chain-server
+        {{- include "retail-shopping-assistant.componentLabels" . | nindent 8 }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      {{- include "retail-shopping-assistant.imagePullSecrets" . | nindent 6 }}
+      serviceAccountName: {{ include "retail-shopping-assistant.serviceAccountName" . }}
+      {{- include "retail-shopping-assistant.podSecurityContext" . | nindent 6 }}
+      containers:
+        - name: chain-server
+          image: "{{ .Values.chainServer.image.repository }}:{{ .Values.chainServer.image.tag }}"
+          imagePullPolicy: {{ .Values.chainServer.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.chainServer.service.port }}
+              protocol: TCP
+          env:
+            - name: LLM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "retail-shopping-assistant.nvidiaApiKeys.name" . }}
+                  key: llm-api-key
+            - name: CONFIG_OVERRIDE
+              value: {{ .Values.chainServer.env.CONFIG_OVERRIDE | quote }}
+            - name: CATALOG_RETRIEVER_URL
+              value: "http://{{ include "retail-shopping-assistant.catalogRetriever.name" . }}:{{ .Values.catalogRetriever.service.port }}"
+            - name: MEMORY_RETRIEVER_URL
+              value: "http://{{ include "retail-shopping-assistant.memoryRetriever.name" . }}:{{ .Values.memoryRetriever.service.port }}"
+            - name: RAILS_URL
+              value: "http://{{ include "retail-shopping-assistant.rails.name" . }}:{{ .Values.rails.service.port }}"
+          volumeMounts:
+            - name: shared-config
+              mountPath: /app/shared/configs/chain_server
+            - name: shared-volume
+              mountPath: /app/shared/data
+              subPath: data
+            - name: shared-volume
+              mountPath: /app/shared/images
+              subPath: images
+          resources:
+            {{- toYaml .Values.chainServer.resources | nindent 12 }}
+          {{- include "retail-shopping-assistant.containerSecurityContext" . | nindent 10 }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.chainServer.healthCheck.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.chainServer.healthCheck.initialDelaySeconds }}
+            periodSeconds: {{ .Values.chainServer.healthCheck.periodSeconds }}
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.chainServer.healthCheck.path }}
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+      volumes:
+        - name: shared-config
+          configMap:
+            name: {{ include "retail-shopping-assistant.chainServer.name" . }}-config
+        - name: shared-volume
+          {{- if .Values.persistence.sharedData.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "retail-shopping-assistant.sharedDataPvc.name" . }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- /* Pod affinity for RWO shared volume - forces pods to same node */ -}}
+      {{- include "retail-shopping-assistant.sharedVolumeAffinity" . | nindent 6 }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "retail-shopping-assistant.chainServer.name" . }}
+  namespace: {{ include "retail-shopping-assistant.namespace" . }}
+  labels:
+    {{- include "retail-shopping-assistant.labels" . | nindent 4 }}
+    app.kubernetes.io/component: chain-server
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: {{ .Values.chainServer.service.port }}
+      targetPort: {{ .Values.chainServer.service.port }}
+      protocol: TCP
+  selector:
+    {{- include "retail-shopping-assistant.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: chain-server
+{{- end }}

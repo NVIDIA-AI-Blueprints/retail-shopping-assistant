@@ -1,0 +1,35 @@
+# Alert Recommender Pipeline Container Image
+# Based on the pattern from ai-architecture-charts/ingestion-pipeline
+#
+# Build from ml-pipeline directory (parent of alert-recommender-pipeline):
+#   podman build -t alert-recommender-pipeline -f alert-recommender-pipeline/Containerfile .
+#
+# Or from repository root:
+#   podman build -t alert-recommender-pipeline -f ml-pipeline/alert-recommender-pipeline/Containerfile ml-pipeline/
+
+FROM registry.access.redhat.com/ubi9/python-311:latest
+
+# Set working directory
+WORKDIR /app
+
+# Copy requirements first for better caching
+COPY alert-recommender-pipeline/src/requirements.txt .
+
+# Install dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application code
+COPY alert-recommender-pipeline/src/alert_recommender_pipeline/ /app/alert_recommender_pipeline/
+
+# Copy sample data for fallback (if MinIO data not available)
+COPY data/ /app/data/
+
+# Set Python path
+ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
+
+# Expose the FastAPI port
+EXPOSE 8000
+
+# Run the FastAPI service
+CMD ["uvicorn", "alert_recommender_pipeline.main:app", "--host", "0.0.0.0", "--port", "8000"]

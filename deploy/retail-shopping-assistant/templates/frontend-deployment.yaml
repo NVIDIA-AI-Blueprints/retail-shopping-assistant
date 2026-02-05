@@ -1,0 +1,102 @@
+{{/*
+SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+*/}}
+
+{{- if .Values.frontend.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "retail-shopping-assistant.frontend.name" . }}
+  namespace: {{ include "retail-shopping-assistant.namespace" . }}
+  labels:
+    {{- include "retail-shopping-assistant.labels" . | nindent 4 }}
+    app.kubernetes.io/component: frontend
+spec:
+  replicas: {{ .Values.frontend.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "retail-shopping-assistant.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: frontend
+  template:
+    metadata:
+      labels:
+        {{- include "retail-shopping-assistant.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: frontend
+        {{- include "retail-shopping-assistant.componentLabels" . | nindent 8 }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      {{- include "retail-shopping-assistant.imagePullSecrets" . | nindent 6 }}
+      serviceAccountName: {{ include "retail-shopping-assistant.serviceAccountName" . }}
+      {{- include "retail-shopping-assistant.podSecurityContext" . | nindent 6 }}
+      containers:
+        - name: frontend
+          image: "{{ .Values.frontend.image.repository }}:{{ .Values.frontend.image.tag }}"
+          imagePullPolicy: {{ .Values.frontend.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.frontend.service.port }}
+              protocol: TCP
+          volumeMounts:
+            - name: shared-data
+              mountPath: /app/shared
+              readOnly: true
+          resources:
+            {{- toYaml .Values.frontend.resources | nindent 12 }}
+          {{- include "retail-shopping-assistant.containerSecurityContext" . | nindent 10 }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.frontend.healthCheck.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.frontend.healthCheck.initialDelaySeconds }}
+            periodSeconds: {{ .Values.frontend.healthCheck.periodSeconds }}
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.frontend.healthCheck.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.frontend.healthCheck.initialDelaySeconds }}
+            periodSeconds: {{ .Values.frontend.healthCheck.periodSeconds }}
+            timeoutSeconds: 5
+      volumes:
+        - name: shared-data
+          {{- if .Values.persistence.sharedData.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "retail-shopping-assistant.sharedDataPvc.name" . }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- /* Pod affinity for RWO shared volume - forces pods to same node */ -}}
+      {{- include "retail-shopping-assistant.sharedVolumeAffinity" . | nindent 6 }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "retail-shopping-assistant.frontend.name" . }}
+  namespace: {{ include "retail-shopping-assistant.namespace" . }}
+  labels:
+    {{- include "retail-shopping-assistant.labels" . | nindent 4 }}
+    app.kubernetes.io/component: frontend
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: {{ .Values.frontend.service.port }}
+      targetPort: {{ .Values.frontend.service.port }}
+      protocol: TCP
+  selector:
+    {{- include "retail-shopping-assistant.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: frontend
+{{- end }}

@@ -1,0 +1,122 @@
+{{/*
+SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+*/}}
+
+{{- if .Values.catalogRetriever.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "retail-shopping-assistant.catalogRetriever.name" . }}
+  namespace: {{ include "retail-shopping-assistant.namespace" . }}
+  labels:
+    {{- include "retail-shopping-assistant.labels" . | nindent 4 }}
+    app.kubernetes.io/component: catalog-retriever
+spec:
+  replicas: {{ .Values.catalogRetriever.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "retail-shopping-assistant.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: catalog-retriever
+  template:
+    metadata:
+      labels:
+        {{- include "retail-shopping-assistant.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: catalog-retriever
+        {{- include "retail-shopping-assistant.componentLabels" . | nindent 8 }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      {{- include "retail-shopping-assistant.imagePullSecrets" . | nindent 6 }}
+      serviceAccountName: {{ include "retail-shopping-assistant.serviceAccountName" . }}
+      {{- include "retail-shopping-assistant.podSecurityContext" . | nindent 6 }}
+      containers:
+        - name: catalog-retriever
+          image: "{{ .Values.catalogRetriever.image.repository }}:{{ .Values.catalogRetriever.image.tag }}"
+          imagePullPolicy: {{ .Values.catalogRetriever.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.catalogRetriever.service.port }}
+              protocol: TCP
+          env:
+            - name: EMBED_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "retail-shopping-assistant.nvidiaApiKeys.name" . }}
+                  key: embed-api-key
+            - name: MILVUS_HOST
+              value: {{ include "retail-shopping-assistant.milvus.name" . }}
+            - name: MILVUS_PORT
+              value: {{ .Values.catalogRetriever.milvus.port | quote }}
+            - name: CONFIG_OVERRIDE
+              value: {{ .Values.catalogRetriever.env.CONFIG_OVERRIDE | quote }}
+          volumeMounts:
+            - name: shared-config
+              mountPath: /app/shared/configs/catalog_retriever
+            - name: shared-volume
+              mountPath: /app/shared/data
+              subPath: data
+            - name: shared-volume
+              mountPath: /app/shared/images
+              subPath: images
+          resources:
+            {{- toYaml .Values.catalogRetriever.resources | nindent 12 }}
+          {{- include "retail-shopping-assistant.containerSecurityContext" . | nindent 10 }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.catalogRetriever.healthCheck.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.catalogRetriever.healthCheck.initialDelaySeconds }}
+            periodSeconds: {{ .Values.catalogRetriever.healthCheck.periodSeconds }}
+            timeoutSeconds: 10
+            failureThreshold: 6
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.catalogRetriever.healthCheck.path }}
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+      volumes:
+        - name: shared-config
+          configMap:
+            name: {{ include "retail-shopping-assistant.catalogRetriever.name" . }}-config
+        - name: shared-volume
+          {{- if .Values.persistence.sharedData.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "retail-shopping-assistant.sharedDataPvc.name" . }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- /* Pod affinity for RWO shared volume - forces pods to same node */ -}}
+      {{- include "retail-shopping-assistant.sharedVolumeAffinity" . | nindent 6 }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "retail-shopping-assistant.catalogRetriever.name" . }}
+  namespace: {{ include "retail-shopping-assistant.namespace" . }}
+  labels:
+    {{- include "retail-shopping-assistant.labels" . | nindent 4 }}
+    app.kubernetes.io/component: catalog-retriever
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: {{ .Values.catalogRetriever.service.port }}
+      targetPort: {{ .Values.catalogRetriever.service.port }}
+      protocol: TCP
+  selector:
+    {{- include "retail-shopping-assistant.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: catalog-retriever
+{{- end }}

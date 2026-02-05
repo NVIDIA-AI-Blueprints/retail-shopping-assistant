@@ -1,0 +1,31 @@
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+apiVersion: v2
+name: retail-shopping-assistant
+description: |
+  A Helm chart for deploying the NVIDIA Retail Shopping Assistant on OpenShift.
+  This AI-powered multi-agent application provides intelligent product search,
+  shopping cart management, visual search capabilities, and conversational AI interactions.
+
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+
+keywords:
+  - nvidia
+  - ai
+  - retail
+  - shopping
+  - langchain
+  - langgraph
+  - milvus
+  - openshift
+
+home: https://github.com/NVIDIA/retail-shopping-assistant
+sources:
+  - https://github.com/NVIDIA/retail-shopping-assistant
+
+maintainers:
+  - name: NVIDIA
+    url: https://nvidia.com

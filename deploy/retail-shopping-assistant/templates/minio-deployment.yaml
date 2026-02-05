@@ -1,0 +1,125 @@
+{{/*
+SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+*/}}
+
+{{- if .Values.minio.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "retail-shopping-assistant.minio.name" . }}
+  namespace: {{ include "retail-shopping-assistant.namespace" . }}
+  labels:
+    {{- include "retail-shopping-assistant.labels" . | nindent 4 }}
+    app.kubernetes.io/component: minio
+spec:
+  replicas: {{ .Values.minio.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "retail-shopping-assistant.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: minio
+  template:
+    metadata:
+      labels:
+        {{- include "retail-shopping-assistant.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: minio
+        {{- include "retail-shopping-assistant.componentLabels" . | nindent 8 }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      {{- include "retail-shopping-assistant.imagePullSecrets" . | nindent 6 }}
+      serviceAccountName: {{ include "retail-shopping-assistant.serviceAccountName" . }}
+      {{- include "retail-shopping-assistant.podSecurityContext" . | nindent 6 }}
+      containers:
+        - name: minio
+          image: "{{ .Values.minio.image.repository }}:{{ .Values.minio.image.tag }}"
+          imagePullPolicy: {{ .Values.minio.image.pullPolicy }}
+          command:
+            - minio
+            - server
+            - /minio_data
+            - --console-address
+            - ":{{ .Values.minio.service.consolePort }}"
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "retail-shopping-assistant.minioCredentials.name" . }}
+                  key: access-key
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "retail-shopping-assistant.minioCredentials.name" . }}
+                  key: secret-key
+          ports:
+            - name: api
+              containerPort: {{ .Values.minio.service.apiPort }}
+              protocol: TCP
+            - name: console
+              containerPort: {{ .Values.minio.service.consolePort }}
+              protocol: TCP
+          {{- if .Values.minio.persistence.enabled }}
+          volumeMounts:
+            - name: minio-data
+              mountPath: /minio_data
+          {{- end }}
+          resources:
+            {{- toYaml .Values.minio.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /minio/health/live
+              port: api
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /minio/health/ready
+              port: api
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+      {{- if .Values.minio.persistence.enabled }}
+      volumes:
+        - name: minio-data
+          persistentVolumeClaim:
+            claimName: {{ include "retail-shopping-assistant.minio.name" . }}-data
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "retail-shopping-assistant.minio.name" . }}
+  namespace: {{ include "retail-shopping-assistant.namespace" . }}
+  labels:
+    {{- include "retail-shopping-assistant.labels" . | nindent 4 }}
+    app.kubernetes.io/component: minio
+spec:
+  type: ClusterIP
+  ports:
+    - name: api
+      port: {{ .Values.minio.service.apiPort }}
+      targetPort: {{ .Values.minio.service.apiPort }}
+      protocol: TCP
+    - name: console
+      port: {{ .Values.minio.service.consolePort }}
+      targetPort: {{ .Values.minio.service.consolePort }}
+      protocol: TCP
+  selector:
+    {{- include "retail-shopping-assistant.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: minio
+{{- end }}

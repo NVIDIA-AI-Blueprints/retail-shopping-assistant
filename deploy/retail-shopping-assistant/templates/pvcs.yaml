@@ -1,0 +1,109 @@
+{{/*
+SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+*/}}
+
+{{- if .Values.persistence.sharedData.enabled }}
+---
+# Shared Data PVC (ReadWriteMany for product data, images, configs)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "retail-shopping-assistant.sharedDataPvc.name" . }}
+  namespace: {{ include "retail-shopping-assistant.namespace" . }}
+  labels:
+    {{- include "retail-shopping-assistant.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - {{ .Values.persistence.sharedData.accessMode }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.sharedData.size }}
+  {{- if (include "retail-shopping-assistant.storageClassRWX" .) }}
+  storageClassName: {{ include "retail-shopping-assistant.storageClassRWX" . }}
+  {{- end }}
+{{- end }}
+{{- if and .Values.milvus.enabled (not .Values.milvus.useOperator) (not .Values.milvus.external.enabled) .Values.milvus.persistence.enabled }}
+---
+# Milvus Data PVC
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "retail-shopping-assistant.milvus.name" . }}-data
+  namespace: {{ include "retail-shopping-assistant.namespace" . }}
+  labels:
+    {{- include "retail-shopping-assistant.labels" . | nindent 4 }}
+    app.kubernetes.io/component: milvus
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.milvus.persistence.size }}
+  {{- if (include "retail-shopping-assistant.storageClass" .) }}
+  storageClassName: {{ include "retail-shopping-assistant.storageClass" . }}
+  {{- end }}
+{{- end }}
+{{- if and .Values.etcd.enabled .Values.etcd.persistence.enabled }}
+---
+# etcd Data PVC
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "retail-shopping-assistant.etcd.name" . }}-data
+  namespace: {{ include "retail-shopping-assistant.namespace" . }}
+  labels:
+    {{- include "retail-shopping-assistant.labels" . | nindent 4 }}
+    app.kubernetes.io/component: etcd
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.etcd.persistence.size }}
+  {{- if (include "retail-shopping-assistant.storageClass" .) }}
+  storageClassName: {{ include "retail-shopping-assistant.storageClass" . }}
+  {{- end }}
+{{- end }}
+{{- if and .Values.minio.enabled .Values.minio.persistence.enabled }}
+---
+# MinIO Data PVC
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "retail-shopping-assistant.minio.name" . }}-data
+  namespace: {{ include "retail-shopping-assistant.namespace" . }}
+  labels:
+    {{- include "retail-shopping-assistant.labels" . | nindent 4 }}
+    app.kubernetes.io/component: minio
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.minio.persistence.size }}
+  {{- if (include "retail-shopping-assistant.storageClass" .) }}
+  storageClassName: {{ include "retail-shopping-assistant.storageClass" . }}
+  {{- end }}
+{{- end }}
+{{- if and .Values.postgresql.enabled .Values.postgresql.persistence.enabled }}
+---
+# PostgreSQL Data PVC
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "retail-shopping-assistant.postgresql.name" . }}-data
+  namespace: {{ include "retail-shopping-assistant.namespace" . }}
+  labels:
+    {{- include "retail-shopping-assistant.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgresql
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.postgresql.persistence.size }}
+  {{- if (include "retail-shopping-assistant.storageClass" .) }}
+  storageClassName: {{ include "retail-shopping-assistant.storageClass" . }}
+  {{- end }}
+{{- end }}

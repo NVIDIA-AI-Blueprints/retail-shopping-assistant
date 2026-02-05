@@ -1,0 +1,105 @@
+{{/*
+SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+*/}}
+
+{{- if .Values.rails.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "retail-shopping-assistant.rails.name" . }}
+  namespace: {{ include "retail-shopping-assistant.namespace" . }}
+  labels:
+    {{- include "retail-shopping-assistant.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rails
+spec:
+  replicas: {{ .Values.rails.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "retail-shopping-assistant.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: rails
+  template:
+    metadata:
+      labels:
+        {{- include "retail-shopping-assistant.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: rails
+        {{- include "retail-shopping-assistant.componentLabels" . | nindent 8 }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      {{- include "retail-shopping-assistant.imagePullSecrets" . | nindent 6 }}
+      serviceAccountName: {{ include "retail-shopping-assistant.serviceAccountName" . }}
+      {{- include "retail-shopping-assistant.podSecurityContext" . | nindent 6 }}
+      containers:
+        - name: rails
+          image: "{{ .Values.rails.image.repository }}:{{ .Values.rails.image.tag }}"
+          imagePullPolicy: {{ .Values.rails.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.rails.service.port }}
+              protocol: TCP
+          env:
+            - name: NVIDIA_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "retail-shopping-assistant.nvidiaApiKeys.name" . }}
+                  key: nvidia-api-key
+          volumeMounts:
+            - name: shared-config
+              mountPath: /app/shared/configs/rails
+          resources:
+            {{- toYaml .Values.rails.resources | nindent 12 }}
+          {{- include "retail-shopping-assistant.containerSecurityContext" . | nindent 10 }}
+          {{- if .Values.rails.healthCheck.tcpSocket }}
+          livenessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: {{ .Values.rails.healthCheck.initialDelaySeconds }}
+            periodSeconds: {{ .Values.rails.healthCheck.periodSeconds }}
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+          {{- end }}
+      volumes:
+        - name: shared-config
+          configMap:
+            name: {{ include "retail-shopping-assistant.rails.name" . }}-config
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "retail-shopping-assistant.rails.name" . }}
+  namespace: {{ include "retail-shopping-assistant.namespace" . }}
+  labels:
+    {{- include "retail-shopping-assistant.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rails
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: {{ .Values.rails.service.port }}
+      targetPort: {{ .Values.rails.service.port }}
+      protocol: TCP
+  selector:
+    {{- include "retail-shopping-assistant.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: rails
+{{- end }}

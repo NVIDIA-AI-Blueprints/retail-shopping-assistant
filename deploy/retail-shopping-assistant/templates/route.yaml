@@ -1,0 +1,36 @@
+{{/*
+SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+*/}}
+
+{{- if .Values.route.enabled }}
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: {{ include "retail-shopping-assistant.fullname" . }}
+  namespace: {{ include "retail-shopping-assistant.namespace" . }}
+  labels:
+    {{- include "retail-shopping-assistant.labels" . | nindent 4 }}
+  annotations:
+    # Extend timeout for streaming responses
+    haproxy.router.openshift.io/timeout: {{ .Values.route.timeout | quote }}
+    {{- with .Values.route.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  {{- if .Values.route.host }}
+  host: {{ .Values.route.host }}
+  {{- end }}
+  to:
+    kind: Service
+    name: {{ include "retail-shopping-assistant.nginx.name" . }}
+    weight: 100
+  port:
+    targetPort: http
+  {{- if .Values.route.tls.enabled }}
+  tls:
+    termination: {{ .Values.route.tls.termination }}
+    insecureEdgeTerminationPolicy: {{ .Values.route.tls.insecureEdgeTerminationPolicy }}
+  {{- end }}
+  wildcardPolicy: None
+{{- end }}

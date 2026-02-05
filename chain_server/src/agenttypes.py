@@ -9,7 +9,7 @@ including the main State object that flows through the LangGraph and supporting 
 """
 from operator import ior
 from pydantic import BaseModel, Field
-from typing import Annotated, TypedDict, Dict, List, Any, Optional
+from typing import Annotated, Dict, List, Any
 
 
 class Cart(BaseModel):

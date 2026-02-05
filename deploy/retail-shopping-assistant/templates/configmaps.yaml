@@ -1,0 +1,382 @@
+{{/*
+SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+*/}}
+
+{{- if .Values.chainServer.enabled }}
+---
+# Chain Server Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "retail-shopping-assistant.chainServer.name" . }}-config
+  namespace: {{ include "retail-shopping-assistant.namespace" . }}
+  labels:
+    {{- include "retail-shopping-assistant.labels" . | nindent 4 }}
+    app.kubernetes.io/component: chain-server
+data:
+  config.yaml: |
+    {{- if .Values.customLLM.enabled }}
+    llm_port: "{{ .Values.customLLM.endpoint }}"
+    llm_name: "{{ .Values.customLLM.model }}"
+    {{- else if .Values.nim.useCloudNims }}
+    llm_port: "{{ .Values.nim.cloudEndpoint }}"
+    llm_name: "{{ .Values.nim.llmModel }}"
+    {{- else }}
+    llm_port: "http://llama:8000/v1"
+    llm_name: "{{ .Values.nim.llmModel }}"
+    {{- end }}
+    retriever_port: "http://{{ include "retail-shopping-assistant.catalogRetriever.name" . }}:{{ .Values.catalogRetriever.service.port }}"
+    memory_port: "http://{{ include "retail-shopping-assistant.memoryRetriever.name" . }}:{{ .Values.memoryRetriever.service.port }}"
+    rails_port: "http://{{ include "retail-shopping-assistant.rails.name" . }}:{{ .Values.rails.service.port }}"
+    routing_prompt: |
+      You are a retail store assistant that routes customer queries to the appropriate specialist.
+
+      Available specialists:
+      1. Cart Manager (cart_node): Handles adding/removing items from the cart
+      2. Product Finder (search): Discovers NEW products in the store catalog
+      3. General Assistant (chatter): Answers questions about SPECIFIC products and handles general conversation
+
+      Routing Rules:
+
+      CART OPERATIONS -> cart_node:
+      - Adding/removing items: "add this to my cart", "remove the dress", "grab the first item"
+      - Cart management: "what's in my cart", "clear my cart"
+
+      NEW PRODUCT DISCOVERY -> search:
+      - Browsing categories: "show me dresses", "what bags do you have", "find blue shirts"
+      - General availability: "do you have summer clothes", "what's available in size medium"
+      - Open-ended searches: "I need something for a party", "show me accessories"
+      - Searching for suggestions: "What tops would you recommend to go with this outfit?"
+
+      SPECIFIC PRODUCT QUESTIONS -> chatter:
+      - Questions about named products: "what material is the [product name]", "how much does the [product name] cost", "is the [product name] available in other colors"
+      - Product details: "tell me more about this item", "what sizes does it come in", "what are the dimensions"
+      - Care instructions: "how do I care for this", "what are the washing instructions", "how should I store this"
+      - Product properties: "is this waterproof", "is this suitable for winter", "does this run large or small"
+      - Availability questions: "do you have this in stock", "when will this be available", "is this on sale"
+      - Comparisons: "which is better between these two items", "how does this compare to that one"
+
+      GENERAL CONVERSATION -> chatter:
+      - Greetings: "hello", "hi there", "good morning"
+      - Thanks: "thank you", "thanks for your help"
+      - General questions: "can you help me", "what do you recommend"
+      - General inventory: "what items do you have", "what do you sell", "show me everything"
+      - Vague requests: "I need help", "what's available", "help me find something"
+
+      Key Distinction: If asking about a SPECIFIC NAMED product (already known), use chatter. If searching for NEW products to discover, use search.
+
+      Always respond with exactly one of these choices: cart_node, search, or chatter.
+    chatter_prompt: |
+      You are a helpful shopping assistant specializing in clothing and accessories. 
+      Your job is to respond to users in relevant and useful ways given the context provided. 
+
+      There are a number of things a user may ask for:
+      If the user is searching for products and there are no relevant results within the provided context, you should inform the user as such.
+      Do not make up new products. 
+      If the user asks a generic question, try to ask for more information. For instance, "I need an outfit." could be responded to with something like "What kind of outfit?".
+      If you are provided additional context about available items, please mention them in the same order that you have received them.
+      When discussing items from the catalog, mention all of the most recently retrieved items in your response.
+      If something has been added to the user's cart, please just report that information to the user.
+      When listing products, always format the product name in bold using **Product Name** markdown syntax.
+    categories:
+      - bag
+      - sunglasses
+      - dress
+      - skirt
+      - top blouse sweater
+      - shoes
+      - earrings
+      - bracelet
+      - necklace
+    agent_choices:
+      - cart
+      - retriever
+      - chatter
+    memory_length: 16384
+    top_k_retrieve: 4
+    multimodal: true
+    unsafe_message: "Sorry, I am a shopping assistant that specializes in apparel. Do you have any questions that align better with my expertise?"
+  config-build.yaml: |
+    # Configuration override for build.nvidia.com endpoints or custom LLM
+    {{- if .Values.customLLM.enabled }}
+    llm_port: "{{ .Values.customLLM.endpoint }}"
+    llm_name: "{{ .Values.customLLM.model }}"
+    {{- else }}
+    llm_port: "{{ .Values.nim.cloudEndpoint }}"
+    llm_name: "{{ .Values.nim.llmModel }}"
+    {{- end }}
+{{- end }}
+{{- if .Values.catalogRetriever.enabled }}
+---
+# Catalog Retriever Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "retail-shopping-assistant.catalogRetriever.name" . }}-config
+  namespace: {{ include "retail-shopping-assistant.namespace" . }}
+  labels:
+    {{- include "retail-shopping-assistant.labels" . | nindent 4 }}
+    app.kubernetes.io/component: catalog-retriever
+data:
+  config.yaml: |
+    text_embed_port: {{ if .Values.nim.useCloudNims }}"{{ .Values.nim.cloudEndpoint }}"{{ else }}"http://embedqa:8000/v1"{{ end }}
+    text_model_name: "{{ .Values.nim.textEmbedModel }}"
+    image_embed_port: {{ if .Values.nim.useCloudNims }}"{{ .Values.nim.cloudEndpoint }}"{{ else }}"http://nvclip:8000/v1"{{ end }}
+    image_model_name: "{{ .Values.nim.imageEmbedModel }}"
+    {{- if .Values.milvus.external.enabled }}
+    db_port: "{{ .Values.milvus.external.endpoint }}"
+    {{- else }}
+    db_port: "http://{{ include "retail-shopping-assistant.milvus.name" . }}:{{ .Values.milvus.service.port }}"
+    {{- end }}
+    db_name: "shopping_advisor_db"
+    sim_threshold: 0.5
+    text_collection: "shopping_advisor_text_db"
+    image_collection: "shopping_advisor_image_db"
+    data_source: "/app/shared/data/products_extended.csv"
+  config-build.yaml: |
+    # Configuration override for build.nvidia.com endpoints
+    text_embed_port: "{{ .Values.nim.cloudEndpoint }}"
+    text_model_name: "{{ .Values.nim.textEmbedModel }}"
+    image_embed_port: "{{ .Values.nim.cloudEndpoint }}"
+    image_model_name: "{{ .Values.nim.imageEmbedModel }}"
+{{- end }}
+{{- if .Values.rails.enabled }}
+---
+# Guardrails (Rails) Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "retail-shopping-assistant.rails.name" . }}-config
+  namespace: {{ include "retail-shopping-assistant.namespace" . }}
+  labels:
+    {{- include "retail-shopping-assistant.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rails
+data:
+  config.yml: |
+    models:
+      - type: main
+        engine: nim
+        model: {{ .Values.nim.llmModel }}
+        
+      - type: content_safety
+        engine: nim
+        model: nvidia/llama-3.1-nemoguard-8b-content-safety
+        parameters:
+          base_url: {{ .Values.nim.cloudEndpoint }}
+
+      - type: topic_control
+        engine: nim
+        model: nvidia/llama-3.1-nemoguard-8b-topic-control
+        parameters:
+          base_url: {{ .Values.nim.cloudEndpoint }}
+
+    bot_messages:
+      refuse to respond: 
+        - "Sorry, I am a shopping assistant and can only help you with your shopping needs."
+
+    rails:
+      input:
+        flows:
+          - content safety check input $model=content_safety
+          - topic safety check input $model=topic_control
+      output:
+        flows:
+          - content safety check output $model=content_safety
+        streaming:
+          chunk_size: 200
+          context_size: 50
+
+    tracing:
+      enabled: False
+  prompts.yml: |
+    prompts:
+      - task: content_safety_check_input $model=content_safety
+        content: |
+          Task: Check if there is unsafe content in the user or agent messages in the below conversation in accordance with our safety policy with the below categories. Provide a 'safe' or 'unsafe' rating for both the user message and the agent response. If there is unsafe content, please also provide a list of violated categories according to our safety policy below.
+
+          <BEGIN UNSAFE CONTENT CATEGORIES>
+          S1: Violence.
+          S2: Sexual.
+          S3: Criminal Planning/Confessions.
+          S4: Guns and Illegal Weapons.
+          S5: Controlled/Regulated Substances.
+          S6: Suicide and Self Harm.
+          S7: Sexual (minor).
+          S8: Hate/Identity Hate.
+          S9: PII/Privacy.
+          S10: Harassment.
+          S11: Threat.
+          S12: Profanity.
+          S13: Needs Caution.
+          S14: Other.
+          S15: Manipulation.
+          S16: Fraud/Deception.
+          S17: Malware.
+          S18: High Risk Gov Decision Making.
+          S19: Political/Misinformation/Conspiracy.
+          S20: Copyright/Trademark/Plagiarism.
+          S21: Unauthorized Advice.
+          S22: Illegal Activity.
+          S23: Immoral/Unethical.
+          <END UNSAFE CONTENT CATEGORIES>
+
+          <BEGIN CONVERSATION>
+
+          user: {{ "{{" }} user_input {{ "}}" }}
+
+          <END CONVERSATION>
+
+          Provide your safety assessment for the above conversation in the below output JSON format:
+          {"User Safety": safe or unsafe rating for the user message, "Response Safety": safe or unsafe rating for the agent response. Omit if no agent response present. "Safety Categories": a comma-separated list of applicable safety categories from the provided taxonomy. Omit if all safe.}
+
+          Do not include anything other than the output JSON in your response.
+          Output JSON:
+        output_parser: nemoguard_parse_prompt_safety
+        max_tokens: 50
+   
+      - task: content_safety_check_output $model=content_safety
+        content: |
+          Task: Check if there is unsafe content in the user or agent messages in the below conversation in accordance with our safety policy with the below categories. Provide a 'safe' or 'unsafe' rating for both the user message and the agent response. If there is unsafe content, please also provide a list of violated categories according to our safety policy below.
+
+          <BEGIN UNSAFE CONTENT CATEGORIES>
+          S1: Violence.
+          S2: Sexual.
+          S3: Criminal Planning/Confessions.
+          S4: Guns and Illegal Weapons.
+          S5: Controlled/Regulated Substances.
+          S6: Suicide and Self Harm.
+          S7: Sexual (minor).
+          S8: Hate/Identity Hate.
+          S9: PII/Privacy.
+          S10: Harassment.
+          S11: Threat.
+          S12: Profanity.
+          S13: Needs Caution.
+          S14: Other.
+          S15: Manipulation.
+          S16: Fraud/Deception.
+          S17: Malware.
+          S18: High Risk Gov Decision Making.
+          S19: Political/Misinformation/Conspiracy.
+          S20: Copyright/Trademark/Plagiarism.
+          S21: Unauthorized Advice.
+          S22: Illegal Activity.
+          S23: Immoral/Unethical.
+          <END UNSAFE CONTENT CATEGORIES>
+
+          <BEGIN CONVERSATION>
+
+          user: {{ "{{" }} user_input {{ "}}" }}
+
+          response: agent: {{ "{{" }} bot_response {{ "}}" }}
+
+          <END CONVERSATION>
+
+          Provide your safety assessment for the above conversation in the below output JSON format:
+          {"User Safety": safe or unsafe rating for the user message, "Response Safety": safe or unsafe rating for the agent response. Omit if no agent response present. "Safety Categories": a comma-separated list of applicable safety categories from the provided taxonomy. Omit if all safe.}
+
+          Do not include anything other than the output JSON in your response.
+          Output JSON:
+        output_parser: nemoguard_parse_response_safety
+        max_tokens: 50
+
+      - task: topic_safety_check_input $model=topic_control
+        content: |
+          You are a retail apparel store assistant. Your primary function is to accurately route customer queries to the appropriate specialist and provide helpful responses. Customers may ask about specific products, request to update their shopping cart, or ask for product recommendations. Please allow for conversational context to better assist them.
+
+          Available Specialists and their functions are as follows. Visualizer (visualizer): Use for customer requests related to trying on products or visualizing items in a scene. Cart Manager (cart_node): Use for any queries about purchasing, adding items to the cart, or removing items from the cart. Product Finder (search): Use for all searches regarding product availability, specific product information, or finding new items. General Assistant (chatter): Use for general conversation, small talk, and any queries that do not fall into the above categories.
+
+          For content guidelines, you must engage with customer questions about our products, services, and general small talk. Do not answer questions related to your personal opinions or beliefs, non-company products or services, personal details about yourself or your creators, or sensitive subjects like politics or religion.
+{{- end }}
+{{- if .Values.nginx.enabled }}
+---
+# Nginx Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "retail-shopping-assistant.nginx.name" . }}-config
+  namespace: {{ include "retail-shopping-assistant.namespace" . }}
+  labels:
+    {{- include "retail-shopping-assistant.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nginx
+data:
+  nginx.conf: |
+    # PID file location writable by non-root user
+    pid /tmp/nginx.pid;
+
+    events {
+        worker_connections 1024;
+    }
+
+    http {
+        # Include MIME types for proper content-type headers
+        include /etc/nginx/mime.types;
+        default_type application/octet-stream;
+
+        # Temp file locations writable by non-root user
+        client_body_temp_path /tmp/client_temp;
+        proxy_temp_path /tmp/proxy_temp;
+        fastcgi_temp_path /tmp/fastcgi_temp;
+        uwsgi_temp_path /tmp/uwsgi_temp;
+        scgi_temp_path /tmp/scgi_temp;
+
+        upstream frontend {
+            server {{ include "retail-shopping-assistant.frontend.name" . }}:{{ .Values.frontend.service.port }};
+        }
+        
+        upstream backend {
+            server {{ include "retail-shopping-assistant.chainServer.name" . }}:{{ .Values.chainServer.service.port }};
+        }
+        
+        server {
+            # Use port 8080 for non-root compatibility (ports < 1024 require root)
+            listen 8080;
+            
+            # Health check endpoint - returns 200 directly without proxying
+            location /health {
+                access_log off;
+                return 200 'OK';
+                add_header Content-Type text/plain;
+            }
+
+            # Serve product images directly from shared volume
+            location /images/ {
+                alias /app/shared/images/;
+                expires 1d;
+                add_header Cache-Control "public";
+            }
+            
+            # Frontend (includes WebSocket directives)
+            location / {
+                proxy_pass http://frontend;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+                
+                # WS handling
+                proxy_http_version 1.1;
+                proxy_set_header Upgrade $http_upgrade;
+                proxy_set_header Connection "upgrade";
+            }
+            
+            # Backend API
+            location /api/ {
+                proxy_pass http://backend/;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+                
+                proxy_buffering off;
+                proxy_cache off;
+
+                # WS Handling
+                proxy_http_version 1.1;
+                proxy_set_header Upgrade $http_upgrade;
+                proxy_set_header Connection "upgrade";
+            }
+        }
+    }
+{{- end }}

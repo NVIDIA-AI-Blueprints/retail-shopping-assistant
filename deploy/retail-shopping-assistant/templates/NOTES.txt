@@ -1,0 +1,140 @@
+SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+
+================================================================================
+  NVIDIA Retail Shopping Assistant
+================================================================================
+
+Thank you for installing {{ .Chart.Name }}!
+
+Your release is named: {{ .Release.Name }}
+Namespace: {{ include "retail-shopping-assistant.namespace" . }}
+
+--------------------------------------------------------------------------------
+IMPORTANT: Prerequisites
+--------------------------------------------------------------------------------
+
+Before the application can function properly, ensure you have:
+
+1. Created the NVIDIA API key secret (if not using values.yaml):
+   
+   oc create secret generic {{ include "retail-shopping-assistant.nvidiaApiKeys.name" . }} \
+     --from-literal=ngc-api-key='<YOUR_NGC_API_KEY>' \
+     --from-literal=llm-api-key='<YOUR_NGC_API_KEY>' \
+     --from-literal=embed-api-key='<YOUR_NGC_API_KEY>' \
+     --from-literal=nvidia-api-key='<YOUR_NGC_API_KEY>'
+
+2. Built and pushed the application images to your registry:
+
+   # Chain Server
+   oc start-build chain-server --from-dir=./chain_server --follow
+
+   # Catalog Retriever (IMPORTANT: Build from repo root to include product data)
+   oc start-build catalog-retriever --from-dir=. --follow
+
+   # Memory Retriever
+   oc start-build memory-retriever --from-dir=./memory_retriever --follow
+
+   # Guardrails
+   oc start-build rails --from-dir=./guardrails --follow
+
+   # Frontend
+   oc start-build frontend --from-dir=./ui --follow
+
+   NOTE: The catalog-retriever image bundles product data and will automatically
+   populate the shared volume on first startup. No manual data copy is required.
+
+--------------------------------------------------------------------------------
+Accessing the Application
+--------------------------------------------------------------------------------
+
+{{- if .Values.route.enabled }}
+
+The application is exposed via an OpenShift Route:
+
+{{- if .Values.route.host }}
+  URL: https://{{ .Values.route.host }}
+{{- else }}
+  Get the URL with:
+  echo "https://$(oc get route {{ include "retail-shopping-assistant.fullname" . }} -o jsonpath='{.spec.host}')"
+{{- end }}
+
+{{- else }}
+
+No Route is configured. To access the application:
+
+1. Port-forward the nginx service:
+   oc port-forward svc/{{ include "retail-shopping-assistant.nginx.name" . }} 8080:{{ .Values.nginx.service.port }}
+
+2. Access at: http://localhost:8080
+
+{{- end }}
+
+--------------------------------------------------------------------------------
+Verifying the Deployment
+--------------------------------------------------------------------------------
+
+Check all pods are running:
+  oc get pods -l app.kubernetes.io/instance={{ .Release.Name }}
+
+Check service health:
+  # Chain Server
+  oc exec -it $(oc get pod -l app.kubernetes.io/component=chain-server -o name | head -1) -- curl localhost:{{ .Values.chainServer.service.port }}/health
+
+  # Catalog Retriever
+  oc exec -it $(oc get pod -l app.kubernetes.io/component=catalog-retriever -o name | head -1) -- curl localhost:{{ .Values.catalogRetriever.service.port }}/health
+
+  # Memory Retriever
+  oc exec -it $(oc get pod -l app.kubernetes.io/component=memory-retriever -o name | head -1) -- curl localhost:{{ .Values.memoryRetriever.service.port }}/health
+
+View logs:
+  oc logs -f deployment/{{ include "retail-shopping-assistant.chainServer.name" . }}
+
+--------------------------------------------------------------------------------
+Configuration
+--------------------------------------------------------------------------------
+
+{{- if .Values.nim.useCloudNims }}
+NIM Mode: Cloud (NVIDIA API Catalog)
+  - Endpoint: {{ .Values.nim.cloudEndpoint }}
+  - LLM Model: {{ .Values.nim.llmModel }}
+  - Text Embedding: {{ .Values.nim.textEmbedModel }}
+  - Image Embedding: {{ .Values.nim.imageEmbedModel }}
+{{- else }}
+NIM Mode: Local
+  - Ensure NVIDIA GPU Operator is installed
+  - Ensure GPU nodes are available
+{{- end }}
+
+{{- if .Values.milvus.external.enabled }}
+Milvus: External ({{ .Values.milvus.external.endpoint }})
+{{- else if .Values.milvus.useOperator }}
+Milvus: Deployed via Milvus Operator
+{{- else }}
+Milvus: Standalone deployment
+{{- end }}
+
+{{- if .Values.postgresql.enabled }}
+Database: PostgreSQL
+{{- else }}
+Database: SQLite (Warning: Not recommended for production - data may be lost on pod restart)
+{{- end }}
+
+--------------------------------------------------------------------------------
+Troubleshooting
+--------------------------------------------------------------------------------
+
+If pods are failing:
+  oc describe pod <pod-name>
+  oc logs <pod-name>
+
+If images can't be pulled:
+  # Ensure ImagePullSecret is configured
+  oc get secret nvidia-registry
+  oc secrets link default nvidia-registry --for=pull
+
+For more information, see:
+  - deploy/README.md in the repository
+  - https://github.com/NVIDIA/retail-shopping-assistant
+
+================================================================================

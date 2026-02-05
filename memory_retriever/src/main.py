@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import os
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import Column, Integer, String, create_engine
@@ -8,7 +9,8 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 import time
 
-DATABASE_URL = "sqlite:///./context.db"
+# Use /app/data for writable storage in containerized environments
+DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:////app/data/context.db")
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(bind=engine)
 Base = declarative_base()

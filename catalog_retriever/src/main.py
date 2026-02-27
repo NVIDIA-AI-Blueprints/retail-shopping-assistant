@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from fastapi import FastAPI
-from pydantic import BaseModel
-from typing import List, Dict
+from pydantic import BaseModel, Field
+from typing import List, Dict, Any
 from app.retriever import Retriever, RetrieverConfig
 import time
 import os
@@ -87,12 +87,14 @@ logging.info("CATALOG RETRIEVER | startup | Milvus database ready.")
 class TextQueryRequest(BaseModel):
     text: List[str] = []
     categories: List[str] = []
+    filters: Dict[str, Any] = Field(default_factory=dict)
     k: int = 4
 
 class ImageQueryRequest(BaseModel):
     text: List[str] = []
     image_base64: str = ""
     categories: List[str] = []
+    filters: Dict[str, Any] = Field(default_factory=dict)
     k: int = 4
 
 # Handles queries only containing text.
@@ -102,6 +104,7 @@ async def query_text(req: TextQueryRequest):
     texts, ids, sims, names, images = await retriever.retrieve(
         query=req.text,
         categories=req.categories,
+        filters=req.filters,
         k=req.k,
         image_bool=False,
         verbose=True
@@ -122,6 +125,7 @@ async def query_image(req: ImageQueryRequest):
         query=req.text,
         image=req.image_base64,
         categories=req.categories,
+        filters=req.filters,
         k=req.k,
         image_bool=True,
         verbose=True
@@ -142,4 +146,3 @@ async def health_check():
         "timestamp": time.time(),
         "version": "1.0.0"
     }
-

@@ -10,7 +10,7 @@ Performs both of these in parallel and then re-ranks the results from bothmodels
 
 from openai import OpenAI
 from pydantic import BaseModel
-from typing import List, Tuple
+from typing import List, Tuple, Dict, Any
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.embeddings import Embeddings
 from langchain_milvus import Milvus
@@ -445,6 +445,7 @@ class Retriever:
         self,
         query: List[str],
         categories: List[str],
+        filters: Dict[str, Any] | None = None,
         image: str = "",
         k: int = 4,
         image_bool: bool = False,
@@ -540,35 +541,28 @@ class Retriever:
                             \n\t| Similarities: {[res[1] for res in all_results]}
                             \n\t| Names: {[res[0].metadata['name'] for res in all_results]}""")
 
-        final_texts = [res[0].page_content+f"\nPRICE: {res[0].metadata['price']}" for res in all_results]
-        final_ids = [str(res[0].metadata["pk"]) for res in all_results]
-        final_sims = [res[1] for res in all_results]
-        final_names = [res[0].metadata['name'] for res in all_results]
-        final_images = [res[0].metadata['image'] for res in all_results]
-
-        # Filter by threshold and top k
-        final_texts = [text for text, sim in zip(final_texts[:k], final_sims[:k]) if sim > self.sim_threshold]
-        final_ids = [id_ for id_, sim in zip(final_ids[:k], final_sims[:k]) if sim > self.sim_threshold]
-        final_names = [id_ for id_, sim in zip(final_names[:k], final_sims[:k]) if sim > self.sim_threshold]
-        final_images = [id_ for id_, sim in zip(final_images[:k], final_sims[:k]) if sim > self.sim_threshold]
-        final_sims = [sim for sim in final_sims[:k] if sim > self.sim_threshold]
-
-        # Sort all results by similarity score (highest first)
-        zipped = list(zip(final_sims, final_texts, final_ids, final_names, final_images))
-        zipped_sorted = sorted(zipped, key=lambda x: x[0], reverse=True)
-        if zipped_sorted:
-            final_sims, final_texts, final_ids, final_names, final_images = zip(*zipped_sorted)
-        else:
-            final_sims, final_texts, final_ids, final_names, final_images = [], [], [], [], []
+        # Keep the highest-ranked top-k first, then apply explicit filters to that window.
+        ranked_results = all_results[:k]
+        ranked_results = [res for res in ranked_results if res[1] > self.sim_threshold]
+        ranked_results = sorted(ranked_results, key=lambda item: item[1], reverse=True)
+        ranked_results = self._apply_structured_filters(
+            ranked_results,
+            filters=filters,
+            verbose=verbose
+        )
+        ranked_results = ranked_results[:k]
 
         if verbose:
-            logging.info(f"CATALOG RETRIEVER | retrieve() | \n\tfinal sims before truncating: {final_sims}")
+            logging.info(
+                "CATALOG RETRIEVER | retrieve() | "
+                f"Ranked window after threshold+filters: {len(ranked_results)}"
+            )
 
-        final_sims = list(final_sims)[:k]
-        final_texts = list(final_texts)[:k]
-        final_ids = list(final_ids)[:k]
-        final_names = list(final_names)[:k]
-        final_images = list(final_images)[:k]
+        final_texts = [res[0].page_content + f"\nPRICE: {res[0].metadata['price']}" for res in ranked_results]
+        final_ids = [str(res[0].metadata["pk"]) for res in ranked_results]
+        final_sims = [res[1] for res in ranked_results]
+        final_names = [res[0].metadata['name'] for res in ranked_results]
+        final_images = [res[0].metadata['image'] for res in ranked_results]
 
         if verbose:
             logging.info(f"CATALOG RETRIEVER | retrieve() | \n\tnames: {final_names} \n\tsimilarities: {final_sims}")
@@ -645,3 +639,56 @@ class Retriever:
         if verbose:
             logging.info(f"CATALOG RETRIEVER | length of output items: {len(names_out)}")
         return list(texts_out), list(ids_out), list(sims_out), list(names_out), list(images_out)
+
+    @staticmethod
+    def _coerce_float(value: Any) -> float | None:
+        """Best-effort conversion to float for numeric filter/metadata values."""
+        if value is None:
+            return None
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            cleaned = value.strip().replace("$", "").replace(",", "")
+            try:
+                return float(cleaned)
+            except ValueError:
+                return None
+        return None
+
+    def _apply_structured_filters(
+        self,
+        results: List[Tuple[Any, float]],
+        filters: Dict[str, Any] | None,
+        verbose: bool = False
+    ) -> List[Tuple[Any, float]]:
+        """
+        Apply structured metadata filters before assembling final response payloads.
+        """
+        if not filters:
+            return results
+
+        min_price = self._coerce_float(filters.get("min_price"))
+        max_price = self._coerce_float(filters.get("max_price"))
+
+        if min_price is None and max_price is None:
+            return results
+
+        filtered_results: List[Tuple[Any, float]] = []
+        for result in results:
+            doc = result[0]
+            price = self._coerce_float(doc.metadata.get("price"))
+            if price is None:
+                continue
+            if min_price is not None and price < min_price:
+                continue
+            if max_price is not None and price > max_price:
+                continue
+            filtered_results.append(result)
+
+        if verbose:
+            logging.info(
+                "CATALOG RETRIEVER | _apply_structured_filters() | "
+                f"filters={filters} | input={len(results)} | output={len(filtered_results)}"
+            )
+
+        return filtered_results

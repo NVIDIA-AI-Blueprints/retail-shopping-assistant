@@ -3,12 +3,12 @@
 
 """
 RetrieverAgent is an agent which retrieves relevant products based on user queries.
-It uses a search tool to determine the category of the query and then queries the catalog retriever
-service to find relevant products.
+It extracts structured retrieval inputs (entities, categories, filters) and then queries
+the catalog retriever service to find relevant products.
 """
 
 from .agenttypes import State
-from .functions import search_function, category_function
+from .functions import retrieval_extraction_function
 from openai import OpenAI
 import os
 import json
@@ -16,11 +16,10 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 import sys
-from typing import Tuple, List, Dict
+from typing import Tuple, List, Dict, Any
 import asyncio
 import logging
 import time
-import ast
 
 
 def setup_logging():
@@ -63,12 +62,11 @@ class RetrieverAgent():
         k = self.k_value
 
         # Get the user query and image from the state
-        query = f"The user has asked: '{state.query}'. With the following context: '{state.context}'.\n" 
         image = state.image
 
-        # Use the LLM to determine categories for the query
+        # Use the LLM to determine entities/categories/filters for retrieval
         start = time.monotonic()
-        entities, categories = await self._get_categories(query, state)
+        entities, categories, filters = await self._extract_retrieval_inputs(state)
         end = time.monotonic()
         state.timings["retriever_categories"] = end - start
         
@@ -89,23 +87,35 @@ class RetrieverAgent():
             session.mount("http://", adapter)
 
             if image:
-                logging.info(f"RetrieverAgent.invoke() | /query/image -- getting response.\n\t| entities: {entities}\n\t| categories: {categories}")
+                logging.info(
+                    "RetrieverAgent.invoke() | /query/image -- getting response.\n"
+                    f"\t| entities: {entities}\n"
+                    f"\t| categories: {categories}\n"
+                    f"\t| filters: {filters}"
+                )
                 response = session.post(
                     f"{self.catalog_retriever_url}/query/image",
                     json={
                         "text": entities,
                         "image_base64": image,
                         "categories": categories,
+                        "filters": filters,
                         "k": k
                     }
                 )
             else:
-                logging.info(f"RetrieverAgent.invoke() | /query/text -- getting response\n\t| query: {entities}\n\t| categories: {categories}")
+                logging.info(
+                    "RetrieverAgent.invoke() | /query/text -- getting response\n"
+                    f"\t| query: {entities}\n"
+                    f"\t| categories: {categories}\n"
+                    f"\t| filters: {filters}"
+                )
                 response = session.post(
                     f"{self.catalog_retriever_url}/query/text",
                     json={
                         "text": entities,
                         "categories": categories,
+                        "filters": filters,
                         "k": k
                     }
                 )
@@ -141,28 +151,27 @@ class RetrieverAgent():
 
         return state
 
-    async def _get_categories(self, query: str, state: State) -> Tuple[List[str],List[str]]:
+    async def _extract_retrieval_inputs(self, state: State) -> Tuple[List[str], List[str], Dict[str, float]]:
         """
-        Use the LLM to determine relevant categories for the query using the search function.
+        Extract retrieval entities, categories, and structured filters from the user request.
         """
-        logging.info(f"RetrieverAgent | _get_categories() | Starting with query (first 50 characters): {query[:50]}")
+        query_text = state.query or ""
+        logging.info(f"RetrieverAgent | _extract_retrieval_inputs() | Starting with query (first 50 characters): {query_text[:50]}")
         category_list = self.categories
         entity_list = []
+        filters: Dict[str, float] = {}
+        entities: List[str] = [query_text] if query_text else []
+        categories = category_list
 
-        if query:
-            logging.info(f"RetrieverAgent | _get_categories() | Checking for categories.")
-            category_list_str = ", ".join(category_list)    
-            category_messages = [
-                {"role": "user", "content": f"""
-                                            \nAVAILABLE CATEGORIES\n '{category_list_str}'
-                                            \nPROCESS THIS USER QUERY WITH CONTEXT:\n '{query}'"""}
-            ]
+        if query_text:
+            logging.info("RetrieverAgent | _extract_retrieval_inputs() | Extracting retrieval inputs.")
+            category_list_str = ", ".join(category_list)
             # Split the query into user question and context for clarity
-            user_question = state.query
+            user_question = query_text
             conversation_context = state.context
             
-            entity_messages = [
-                {"role": "system", "content": """You are a search entity extractor. Your task is to identify the specific product the user is asking about based on the conversation history.
+            extraction_messages = [
+                {"role": "system", "content": """You are a retrieval input extractor. Your task is to identify the specific product the user is asking about based on the conversation history.
 
     CRITICAL RULES:
     1.  **Analyze Intent:** Determine if the user's "Current question" is a follow-up about a previously discussed product or a request for a new product.
@@ -180,63 +189,95 @@ class RetrieverAgent():
     -   **IF** the `Current question` introduces a new item (e.g., "show me some hats"),
         **THEN** you must extract `hats`.
 
+    -   For categories, only choose from the provided available categories.
+        You may reuse the same category if only one is relevant.
+
+    -   For filters, return only explicit constraints.
+        If price bounds are present, return numeric values without currency symbols.
+
     Your goal is to use the context to understand *references*, not to interfere with *new searches*.
     """},
-                                {"role": "user", "content": f"""Current question: {user_question}
+                {"role": "user", "content": f"""Current question: {user_question}
 
-                Previous conversation context: {conversation_context}
+Previous conversation context: {conversation_context}
+Available categories: {category_list_str}
 
-                Apply the decision logic. What is the user searching for?"""}
+Apply the decision logic and extract retrieval inputs."""}
             ]
 
-            entity_response = asyncio.to_thread(self.model.chat.completions.create, 
-                                                model=self.llm_name,
-                                                messages=entity_messages,
-                                                tools=[search_function],
-                                                tool_choice="auto",
-                                                temperature=0.0
-                                                )
-            category_response = asyncio.to_thread(self.model.chat.completions.create, 
-                                                model=self.llm_name,
-                                                messages=category_messages,
-                                                tools=[category_function],
-                                                tool_choice="auto",
-                                                temperature=0.0
-                                                )
-            entity_gather, category_gather = await asyncio.gather(entity_response,category_response) 
+            extraction_response = await asyncio.to_thread(
+                self.model.chat.completions.create,
+                model=self.llm_name,
+                messages=extraction_messages,
+                tools=[retrieval_extraction_function],
+                tool_choice="auto",
+                temperature=0.0
+            )
 
-            logging.info(f"RetrieverAgent | _get_categories()\n\t| Entity Response: {entity_gather}\n\t| Category Response: {category_gather}")
+            logging.info(
+                "RetrieverAgent | _extract_retrieval_inputs()\n"
+                f"\t| Combined Extraction Response: {extraction_response}"
+            )
             
             # Add debug logging to see what query was sent
-            logging.info(f"RetrieverAgent | _get_categories() | Query sent to entity extractor: {query[:200]}...")
+            logging.info(f"RetrieverAgent | _extract_retrieval_inputs() | Query sent to retrieval extractor: {user_question[:200]}...")
 
-            entities = [query]
-            categories = category_list
-            if entity_gather.choices[0].message.tool_calls:
-                response_dict = json.loads(entity_gather.choices[0].message.tool_calls[0].function.arguments)
+            if extraction_response.choices[0].message.tool_calls:
+                response_dict = json.loads(extraction_response.choices[0].message.tool_calls[0].function.arguments)
                 entity_list = response_dict.get("search_entities", [])
-                if type(entity_list) == str: 
-                    logging.info(f"RetrieverAgent | _get_categories()\n\t| Entity list {entity_list}")
+                if isinstance(entity_list, str):
+                    logging.info(f"RetrieverAgent | _extract_retrieval_inputs()\n\t| Entity list {entity_list}")
                     cleaned = entity_list.strip("[]")
                     entities = [item.strip().strip("'\"") for item in cleaned.split(',')]
                 else:
                     entities = entity_list
-                if category_gather.choices[0].message.tool_calls:
-                    response_dict = json.loads(category_gather.choices[0].message.tool_calls[0].function.arguments)
-                    category_list = [
-                        response_dict.get("category_one", ""),
-                        response_dict.get("category_two", ""),
-                        response_dict.get("category_three", ""),
-                        ]
-                    if type(category_list) == str: 
-                        logging.info(f"RetrieverAgent | _get_categories()\n\t| Category list {category_list}")
-                        cleaned = category_list.strip("[]")
-                        categories = [item.strip().strip("'\"") for item in cleaned.split(',')]
-                    else:
-                        categories = category_list
+                category_list = [
+                    response_dict.get("category_one", ""),
+                    response_dict.get("category_two", ""),
+                    response_dict.get("category_three", ""),
+                    ]
+                if isinstance(category_list, str):
+                    logging.info(f"RetrieverAgent | _extract_retrieval_inputs()\n\t| Category list {category_list}")
+                    cleaned = category_list.strip("[]")
+                    categories = [item.strip().strip("'\"") for item in cleaned.split(',')]
+                else:
+                    categories = category_list
 
-            logging.info(f"RetrieverAgent | _get_categories() | entities: {entities}\n\t| categories: {categories}")
-            return entities, categories
+                filters = self._normalize_filters(response_dict)
+
+            logging.info(
+                "RetrieverAgent | _extract_retrieval_inputs() | "
+                f"entities: {entities}\n\t| categories: {categories}\n\t| filters: {filters}"
+            )
+            return entities, categories, filters
         else:
-            logging.info(f"RetrieverAgent | _get_categories() | No valid query.")
-            return entity_list, category_list
+            logging.info("RetrieverAgent | _extract_retrieval_inputs() | No valid query.")
+            return entity_list, categories, filters
+
+    @staticmethod
+    def _normalize_numeric_filter(value: Any) -> float | None:
+        """Convert potentially string-based numeric filters into floats."""
+        if value is None:
+            return None
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            cleaned = value.strip().replace("$", "").replace(",", "")
+            try:
+                return float(cleaned)
+            except ValueError:
+                return None
+        return None
+
+    def _normalize_filters(self, raw_filters: Dict[str, Any]) -> Dict[str, float]:
+        """Normalize extracted filters to a minimal numeric contract."""
+        normalized: Dict[str, float] = {}
+        min_price = self._normalize_numeric_filter(raw_filters.get("min_price"))
+        max_price = self._normalize_numeric_filter(raw_filters.get("max_price"))
+
+        if min_price is not None:
+            normalized["min_price"] = min_price
+        if max_price is not None:
+            normalized["max_price"] = max_price
+
+        return normalized

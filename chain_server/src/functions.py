@@ -1,16 +1,18 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""
-A function that interprets relevant categories based on the user's query.
-"""
-search_function = {
+retrieval_extraction_function = {
     "type": "function",
     "function": {
-        "name": "search_entities",
-        "description": """Extract search terms for product catalog search.
-                          
-                          IMPORTANT: 
+        "name": "extract_retrieval_inputs",
+        "description": """Extract structured retrieval inputs from the user request.
+                          Return:
+                          - search_entities for retrieval queries
+                          - up to three relevant categories from the provided category list
+                          - explicit numeric price filters when provided by the user
+                          Do not infer missing constraints.
+
+                          IMPORTANT:
                           - For NEW product searches, extract only the new product type being requested
                           - For questions about PREVIOUSLY mentioned products, extract the specific product name from context
                           - NEVER combine or merge context products with new search terms""",
@@ -20,41 +22,30 @@ search_function = {
                 "search_entities": {
                     "type": "array",
                     "description": "Individual terms that the user is searching for.",
-                    "items":{
-                        "type": "string"
-                    }
-                }
-            },
-            "required": ["search_entities"]
-        }
-    }
-}
-
-category_function = {
-    "type": "function",
-    "function": {
-        "name": "get_categories",
-        "description": """Identify a few of the most relevant categories related to the user's query.\n
-                          Only choose categories from the list provided.\n
-                          You may choose the same category more than once."""
-                          ,
-        "parameters": {
-            "type": "object",
-            "properties": {
+                    "items": {"type": "string"}
+                },
                 "category_one": {
                     "type": "string",
-                    "description": "The most relevant category given the user's query.",
+                    "description": "Most relevant category from available categories."
                 },
                 "category_two": {
                     "type": "string",
-                    "description": "The second most relevant category given the user's query.",
+                    "description": "Second most relevant category from available categories."
                 },
                 "category_three": {
                     "type": "string",
-                    "description": "The third most relevant category given the user's query.",
+                    "description": "Third most relevant category from available categories."
                 },
+                "min_price": {
+                    "type": "number",
+                    "description": "Minimum price requested by the user, if explicitly provided."
+                },
+                "max_price": {
+                    "type": "number",
+                    "description": "Maximum price requested by the user, if explicitly provided."
+                }
             },
-            "required": ["category_one","category_two","category_three"]
+            "required": ["search_entities", "category_one", "category_two", "category_three"]
         }
     }
 }

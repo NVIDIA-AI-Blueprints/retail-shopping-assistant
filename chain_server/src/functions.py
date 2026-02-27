@@ -10,7 +10,12 @@ retrieval_extraction_function = {
                           - search_entities for retrieval queries
                           - up to three relevant categories from the provided category list
                           - explicit numeric price filters when provided by the user
-                          Do not infer missing constraints.""",
+                          Do not infer missing constraints.
+
+                          IMPORTANT:
+                          - For NEW product searches, extract only the new product type being requested
+                          - For questions about PREVIOUSLY mentioned products, extract the specific product name from context
+                          - NEVER combine or merge context products with new search terms""",
         "parameters": {
             "type": "object",
             "properties": {

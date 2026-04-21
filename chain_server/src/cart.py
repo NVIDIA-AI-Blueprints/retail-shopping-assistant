@@ -351,19 +351,8 @@ class CartAgent():
         """
         return bool(_PRONOUN_REFERENCE_RE.search(query or ""))
 
-    # Filler words users commonly wrap around a product name in add/remove
-    # requests. Kept narrow so any non-filler token counts as distinctive.
-    _QUERY_STOPWORDS = frozenset({
-        "a", "add", "an", "and", "any", "are", "as", "at", "be", "buy",
-        "can", "cart", "do", "for", "from", "get", "give", "have", "i",
-        "in", "include", "is", "it", "like", "me", "more", "my", "now",
-        "of", "on", "one", "or", "order", "please", "put", "remove", "show",
-        "take", "that", "the", "them", "this", "to", "view", "want", "we",
-        "with", "you", "your",
-    })
-
-    @classmethod
-    def _find_named_product(cls, query: str, known: list[str]) -> Optional[str]:
+    @staticmethod
+    def _find_named_product(query: str, known: list[str]) -> Optional[str]:
         """Return the known product the query most specifically names.
 
         Users abbreviate catalog names, so strict substring matching is
@@ -374,27 +363,42 @@ class CartAgent():
 
         which keeps long and short queries on equal footing. A candidate
         is chosen only if it (1) scores >= 0.5, (2) beats the runner-up
-        by >= 0.2, and (3) shares a non-stopword token with the query.
-        The dominance guard (2) returns None for genuinely ambiguous
-        queries so the LLM / pronoun fallback can disambiguate.
+        by >= 0.2, and (3) shares a signal token with the query.
+
+        Signal tokens are derived from the catalog itself: only tokens
+        that appear in at least one ``known`` product name count. Any
+        query word outside that vocabulary ("please", "add", "the",
+        and their equivalents in any other language) is treated as
+        filler. This avoids a curated stopword list and stays correct
+        as the catalog (or its language) evolves.
         """
         q_norm = _normalize_name(query)
         if not q_norm:
             return None
-        q_tokens = set(q_norm.split()) - cls._QUERY_STOPWORDS
-        if not q_tokens:
-            return None
 
-        scored: list[tuple[float, str]] = []
+        candidates: list[tuple[str, str, set[str]]] = []
+        catalog_vocab: set[str] = set()
         for name in known:
             n_norm = _normalize_name(name)
             if not n_norm:
                 continue
-            if n_norm in q_norm:
-                return name
             n_tokens = set(n_norm.split())
             if not n_tokens:
                 continue
+            candidates.append((name, n_norm, n_tokens))
+            catalog_vocab |= n_tokens
+
+        if not candidates:
+            return None
+
+        q_tokens = set(q_norm.split()) & catalog_vocab
+        if not q_tokens:
+            return None
+
+        scored: list[tuple[float, str]] = []
+        for name, n_norm, n_tokens in candidates:
+            if n_norm in q_norm:
+                return name
             shared = q_tokens & n_tokens
             if not shared:
                 continue

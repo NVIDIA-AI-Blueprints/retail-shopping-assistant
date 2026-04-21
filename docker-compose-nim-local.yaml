@@ -5,12 +5,13 @@ version: '3.8'
 
 services:
 
-  llama:
-    image: nvcr.io/nim/meta/llama-3.1-70b-instruct:1.10.1
+  nemotron:
+    image: nvcr.io/nim/nvidia/nemotron-3-super-120b-a12b:latest
     ports:
       - "8000:8000"
     environment:
       - NGC_API_KEY=${NGC_API_KEY}
+      - NIM_PASSTHROUGH_ARGS=--enable-auto-tool-choice --tool-call-parser llama3_json
     volumes:
       - ${LOCAL_NIM_CACHE}:/opt/nim/.cache
     user: "${UID:-1000}"
@@ -20,7 +21,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ['0', '1']
+              device_ids: ['0','1']
               capabilities: [gpu]
     restart: "no"
     networks:

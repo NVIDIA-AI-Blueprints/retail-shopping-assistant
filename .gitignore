@@ -5,6 +5,9 @@
 catalog_retriever/volumes
 tests/conversations
 
+# Memory retriever runtime SQLite database (created at module import time)
+**/context.db
+
 # Python
 __pycache__/
 *.py[cod]

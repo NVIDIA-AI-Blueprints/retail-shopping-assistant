@@ -19,32 +19,32 @@ Top-level orchestration is via `docker-compose.yaml`; optional local NIM model c
 1. UI posts to `/api/query/stream` (nginx proxy on port `3000`).
 2. Nginx routes `/api/*` to `chain-server:8009`.
 3. Chain server graph flow:
-   - `memory_node` pulls context/cart from memory service.
-   - `planner_node` selects `cart`, `retriever`, or `chatter`.
+   - `memory_node` pulls context/cart (with prices) from memory service.
+   - `planner_node` selects `cart`, `retriever`, or `chatter`. The user query is prefixed with `IMAGE ATTACHED: yes/no` so deictic image queries route to `retriever`.
    - `rails_input_node` runs guardrails input check in parallel.
-   - Selected agent runs, then chatter produces streamed response.
+   - Selected agent runs, then chatter produces streamed response. Chatter sees structured grounding fields (`PRECEDING AGENT`, `PRECEDING AGENT RESULT`, `CURRENT CART`, `AVAILABLE CATALOG`, `RECENT DISCUSSION`) and must not invent cart actions.
    - `rails_output_node` checks final response safety.
    - `summary_node` persists summarized context back to memory service.
 4. For product discovery, chain server calls catalog retriever:
    - `/query/text` for text-only.
-   - `/query/image` for text + image.
+   - `/query/image` for text + image. With an image attached, the extractor returns empty `search_entities` for filter-only refinements but still emits price filters.
 
 ## 3) Source Map (Where to Change What)
 
 - Agent orchestration: `chain_server/src/graph.py`
 - API contract and SSE endpoint: `chain_server/src/main.py`
-- Routing logic: `chain_server/src/planner.py`
-- Catalog query logic from chain side: `chain_server/src/retriever.py`
-- Cart tool behavior: `chain_server/src/cart.py`
-- Streamed generation: `chain_server/src/chatter.py`
+- Routing logic + image-attached signal: `chain_server/src/planner.py`
+- Catalog extraction (image-aware rules, filter sanitization): `chain_server/src/retriever.py`
+- Cart tools (`add_to_cart`, `remove_from_cart`, `view_cart_total`) + deterministic name/pronoun resolver: `chain_server/src/cart.py`
+- Streamed generation with structured grounding: `chain_server/src/chatter.py`
 - Context summarization/persistence: `chain_server/src/summarizer.py`
-- Shared chain models/tools: `chain_server/src/agenttypes.py`, `chain_server/src/functions.py`
+- Shared chain models/tools + XML/JSON tool-call fallback parser: `chain_server/src/agenttypes.py`, `chain_server/src/functions.py`
 
 - Catalog API entrypoints: `catalog_retriever/src/main.py`
 - Embedding/retrieval/reranking/category filtering: `catalog_retriever/src/retriever.py`
 - Image/base64 helpers: `catalog_retriever/src/utils.py`
 
-- Memory API and SQLite schema: `memory_retriever/src/main.py`
+- Memory API and SQLite schema (`CartItem` includes `price`, with idempotent migration): `memory_retriever/src/main.py`
 
 - Guardrails API: `guardrails/src/main.py`
 - Guardrails engine/wiring: `guardrails/src/rails.py`
@@ -74,6 +74,8 @@ docker compose -f docker-compose.yaml up -d --build
 
 ### Local NIM mode (requires multi-GPU setup)
 
+Brings up the local LLM (`nemotron` service, image `nvcr.io/nim/nvidia/nemotron-3-super-120b-a12b`), `nvclip`, `embedqa`, and the two NemoGuard guardrail containers.
+
 ```bash
 export NGC_API_KEY=<your_key>
 export LLM_API_KEY=$NGC_API_KEY
@@ -84,6 +86,8 @@ mkdir -p "$LOCAL_NIM_CACHE" && chmod a+w "$LOCAL_NIM_CACHE"
 docker compose -f docker-compose-nim-local.yaml up -d
 docker compose -f docker-compose.yaml up -d --build
 ```
+
+The `nemotron` service is launched with `NIM_PASSTHROUGH_ARGS=--enable-auto-tool-choice --tool-call-parser llama3_json` so vLLM accepts `tool_choice="auto"`. Reasoning output is suppressed via `extra_body={"chat_template_kwargs": {"enable_thinking": False}}` on the chain-server side so streamed tokens flow eagerly.
 
 ### Health checks
 
@@ -127,8 +131,15 @@ Key env vars:
   - External app entrypoint is usually `http://localhost:3000` through nginx.
 - UI API base URL is hard-coded to `/api` (nginx path), not direct service URLs.
 - Memory store is SQLite in-container (`context.db`); data lifecycle depends on container persistence.
-- Cart add/remove uses catalog similarity checks before memory mutation.
-- For image search, catalog retriever bypasses category filtering and relies on similarity ranking.
+- `CartItem` rows carry a `price` column; the deterministic `view_cart_total` tool uses these prices instead of letting the LLM do arithmetic. Older DBs are auto-migrated by `_ensure_price_column`.
+- Cart add/remove uses catalog name matching (with normalization + Jaccard fallback) before memory mutation; pure semantic similarity on descriptions is no longer used.
+- The cart agent deterministically resolves pronouns (`it`, `this`) against the most recent product in `RECENT DISCUSSION` and overrides the LLM's `item_name` if they disagree.
+- For image search, catalog retriever bypasses category filtering and relies on similarity ranking. Top-k is applied before price filters, so a tight budget on a high-priced image-similarity cluster can legitimately return zero matches.
+- Local LLM service is named `nemotron` (was `llama`); chain-server reaches it at `http://nemotron:8000/v1` per `shared/configs/chain_server/config.yaml`. Cloud override `config-build.yaml` still uses `meta/llama-3.1-70b-instruct` on `build.nvidia.com`.
+- Tool calling against the local NIM requires `--enable-auto-tool-choice --tool-call-parser llama3_json` passthrough args. Without them, requests with `tool_choice="auto"` 400.
+- Nemotron sometimes returns tool calls as XML/JSON inside the assistant `content` field instead of `message.tool_calls`. `chain_server/src/functions.py::parse_tool_call_fallback` handles both shapes; `_coerce_value` parses stringified Python literals (`"[]"`, `"{'k':'v'}"`) so list/dict args don't reach downstream code as strings.
+- Planner LLM input is prefixed with `IMAGE ATTACHED: yes/no`. With an image attached, deictic queries ("do you have this under $X", "find similar") route to `retriever`, not `chatter`. Only explicit cart operations (`add this`, `buy this`) still go to `cart_node`.
+- Chatter is strictly grounded in `CURRENT CART` + `AVAILABLE CATALOG` + `PRECEDING AGENT RESULT`; it must not claim a cart mutation unless the cart agent ran this turn, and it must not invent product names absent from those fields.
 
 ## 8) Contribution and Commit Notes
 

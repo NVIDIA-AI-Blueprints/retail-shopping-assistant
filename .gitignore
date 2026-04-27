@@ -4,6 +4,11 @@
 
 catalog_retriever/volumes
 tests/conversations
+.local-run/
+node_modules/
+**/node_modules/
+guardrails/traces/
+ui/public/images
 
 # Memory retriever runtime SQLite database (created at module import time)
 **/context.db

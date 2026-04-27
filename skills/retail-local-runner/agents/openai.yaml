@@ -1,0 +1,6 @@
+interface:
+  display_name: "Retail Local Runner"
+  short_description: "Start and stop the local retail app stack"
+  default_prompt: "Use $retail-local-runner to start, stop, or inspect the Retail Shopping Assistant local stack."
+policy:
+  allow_implicit_invocation: true

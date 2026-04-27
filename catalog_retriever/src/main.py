@@ -4,12 +4,16 @@
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
 from typing import List, Dict, Any
-from app.retriever import Retriever, RetrieverConfig
 import time
 import os
 import yaml
 import logging
 import sys
+
+try:
+    from app.retriever import Retriever, RetrieverConfig
+except ModuleNotFoundError:
+    from .retriever import Retriever, RetrieverConfig
 
 # Set up logging 
 logging.basicConfig(
@@ -60,7 +64,8 @@ def load_config_with_override(base_config_path: str):
     
     return config
 
-data = load_config_with_override("/app/shared/configs/catalog_retriever/config.yaml")
+shared_config_root = os.environ.get("SHARED_CONFIG_ROOT", "/app/shared/configs")
+data = load_config_with_override(os.path.join(shared_config_root, "catalog_retriever", "config.yaml"))
 
 
 # Setup Retriever once when app starts

@@ -9,6 +9,7 @@ configuration from YAML files with optional override support.
 """
 
 import os
+from pathlib import Path
 import yaml
 import logging
 from typing import List, Optional, Dict, Any
@@ -139,7 +140,8 @@ def load_config(config_path: Optional[str] = None) -> ChainServerConfig:
         ValueError: If config validation fails
     """
     if config_path is None:
-        config_path = "/app/shared/configs/chain_server/config.yaml"
+        config_root = Path(os.environ.get("SHARED_CONFIG_ROOT", "/app/shared/configs"))
+        config_path = str(config_root / "chain_server" / "config.yaml")
     
     # Load raw config data with override support
     config_data = load_config_with_override(config_path)
@@ -148,4 +150,4 @@ def load_config(config_path: Optional[str] = None) -> ChainServerConfig:
     try:
         return ChainServerConfig(**config_data)
     except Exception as e:
-        raise ValueError(f"Configuration validation failed: {e}") 
+        raise ValueError(f"Configuration validation failed: {e}")

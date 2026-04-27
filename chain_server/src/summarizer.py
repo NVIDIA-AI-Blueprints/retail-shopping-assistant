@@ -3,7 +3,7 @@
 
 from openai import OpenAI
 from .agenttypes import State
-from .functions import summary_function
+from .functions import summary_function, parse_tool_call_fallback
 import requests
 import json
 import os
@@ -87,12 +87,24 @@ class SummaryAgent:
                 tool_choice="auto",
                 stream=False,
                 temperature=0.0,
-                max_tokens=self.memory_length
+                max_tokens=self.memory_length,
+                extra_body={"chat_template_kwargs": {"enable_thinking": False}}
             )
 
-            tool_json = json.loads(response.choices[0].message.tool_calls[0].function.arguments)
-            output_state.context = tool_json["summary"]
-            logging.info(f"SummaryAgent.invoke() | Returning final state with response: {output_state.context}")
+            message = response.choices[0].message
+            if message.tool_calls:
+                tool_json = json.loads(message.tool_calls[0].function.arguments)
+                output_state.context = tool_json.get("summary", output_state.context)
+            elif message.content:
+                logging.warning("SummaryAgent.invoke() | No structured tool_calls returned, attempting fallback parse.")
+                tool_name, tool_args = parse_tool_call_fallback(message.content)
+                if tool_name == "summarizer" and "summary" in tool_args:
+                    output_state.context = tool_args["summary"]
+                else:
+                    logging.warning("SummaryAgent.invoke() | Fallback parse failed; keeping existing context rather than storing raw content.")
+            else:
+                logging.error("SummaryAgent.invoke() | No tool_calls or content in response, keeping existing context.")
+            logging.info(f"SummaryAgent.invoke() | Returning final state with response: {output_state.context[:100]}")
         else:
             logging.info(f"SummaryAgent.invoke() | Context length is less than memory length -- writing to memory.")
         

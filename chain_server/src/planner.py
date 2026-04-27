@@ -65,16 +65,22 @@ class PlannerAgent:
             logger.error(f"Failed to initialize PlannerAgent: {e}")
             raise
 
-    def _create_routing_messages(self, query: str) -> List[Dict[str, str]]:
+    def _create_routing_messages(self, query: str, has_image: bool = False) -> List[Dict[str, str]]:
         """
         Create the messages for the routing decision.
-        
+
         Args:
             query: The user's query to route
-            
+            has_image: Whether the current turn includes an attached image.
+                The router needs this signal so that deictic queries like
+                "do you have this under $100" can be resolved against the
+                image instead of being treated as a question about a named
+                product that doesn't exist in context.
+
         Returns:
             List of messages for the LLM
         """
+        user_content = f"IMAGE ATTACHED: {'yes' if has_image else 'no'}\nCustomer Query: {query}"
         return [
             {
                 "role": "system",
@@ -82,28 +88,30 @@ class PlannerAgent:
             },
             {
                 "role": "user",
-                "content": f"Customer Query: {query}"
+                "content": user_content
             }
         ]
 
-    def _call_llm_for_routing(self, query: str) -> str:
+    def _call_llm_for_routing(self, query: str, has_image: bool = False) -> str:
         """
         Call the LLM to determine the appropriate agent for the query.
         
         Args:
             query: The user's query
-            
+            has_image: Whether the current turn includes an attached image.
+
         Returns:
             The name of the agent to route to
         """
         try:
-            messages = self._create_routing_messages(query)
+            messages = self._create_routing_messages(query, has_image=has_image)
             
             response = self.model.chat.completions.create(
                 model=self.llm_name,
                 messages=messages,
                 temperature=0.0,
-                max_tokens=100
+                max_tokens=100,
+                extra_body={"chat_template_kwargs": {"enable_thinking": False}}
             )
             
             response_content = response.choices[0].message.content.strip().lower()
@@ -165,13 +173,19 @@ class PlannerAgent:
         
         # Handle image-only queries
         if state.has_image() and state.is_empty_query():
-            logger.info("PlannetAgent.invoke() | Image-only query detected, routing to retriever")
+            logger.info("PlannerAgent.invoke() | Image-only query detected, routing to retriever")
             response_content = "retriever"
         else:
-            # Use LLM to determine routing
-            # Note: We only pass the query, not the context, to avoid routing bias
-            query_string = f"USER QUERY: {state.query}" 
-            response_content = self._call_llm_for_routing(query_string)
+            # Use LLM to determine routing.
+            # Note: We only pass the query, not the context, to avoid routing bias.
+            # When an image is attached we also pass that signal so the router can
+            # treat deictic references ("this product", "this item") as referring
+            # to the image instead of mis-routing to chatter as a named-product
+            # question.
+            query_string = f"USER QUERY: {state.query}"
+            response_content = self._call_llm_for_routing(
+                query_string, has_image=state.has_image()
+            )
         
         # Normalize the agent name
         normalized_agent = self._normalize_agent_name(response_content)

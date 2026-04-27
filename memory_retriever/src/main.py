@@ -3,9 +3,11 @@
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import Column, Integer, String, create_engine
+from sqlalchemy import Column, Float, Integer, String, create_engine, text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
+from typing import Optional
+import logging
 import time
 
 DATABASE_URL = "sqlite:///./context.db"
@@ -24,8 +26,26 @@ class CartItem(Base):
     user_id = Column(Integer, index=True)
     item = Column(String)
     amount = Column(Integer)
+    price = Column(Float, nullable=True)
 
 Base.metadata.create_all(bind=engine)
+
+
+def _ensure_price_column() -> None:
+    """Idempotently add the price column for databases created before it existed."""
+    with engine.connect() as conn:
+        columns = conn.execute(text("PRAGMA table_info(cart_items)")).fetchall()
+        if not any(col[1] == "price" for col in columns):
+            try:
+                conn.execute(text("ALTER TABLE cart_items ADD COLUMN price REAL"))
+                conn.commit()
+                logging.info("memory-retriever | added price column to cart_items")
+            except Exception as exc:
+                logging.warning(f"memory-retriever | could not add price column: {exc}")
+
+
+_ensure_price_column()
+
 
 class ContextUpdate(BaseModel):
     new_context: str
@@ -33,6 +53,7 @@ class ContextUpdate(BaseModel):
 class ItemUpdate(BaseModel):
     item: str
     amount: int
+    price: Optional[float] = None
 
 app = FastAPI()
 
@@ -43,6 +64,10 @@ def get_db():
     finally:
         db.close()
 
+def _cart_item_dict(item: CartItem) -> dict:
+    return {"item": item.item, "amount": item.amount, "price": item.price}
+
+
 @app.get("/user/{user_id}")
 async def get_user(user_id: int):
     db = SessionLocal()
@@ -50,7 +75,7 @@ async def get_user(user_id: int):
     cart_items = db.query(CartItem).filter(CartItem.id == user_id).all()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    return {"id": user.id, "context": user.context, "cart": [{"item": item.item, "amount": item.amount} for item in cart_items]}
+    return {"id": user.id, "context": user.context, "cart": [_cart_item_dict(item) for item in cart_items]}
 
 @app.get("/user/{user_id}/cart")
 async def report_cart(user_id: int):
@@ -64,7 +89,7 @@ async def report_cart(user_id: int):
     else:
         return {
             "user_id": user_id,
-            "cart": [{"item": item.item, "amount": item.amount} for item in cart_items]
+            "cart": [_cart_item_dict(item) for item in cart_items]
         }
   
 @app.get("/user/{user_id}/context")
@@ -87,11 +112,15 @@ async def add_to_cart(user_id: int, item_update: ItemUpdate):
     db = SessionLocal()
     item = item_update.item
     amount = item_update.amount
+    price = item_update.price
     cart_item = db.query(CartItem).filter(CartItem.user_id == user_id, CartItem.item == item).first()
     if cart_item:
         cart_item.amount += amount
+        # Refresh price if the caller provides a newer value; keep existing otherwise.
+        if price is not None:
+            cart_item.price = price
     else:
-        cart_item = CartItem(user_id=user_id, item=item, amount=amount)
+        cart_item = CartItem(user_id=user_id, item=item, amount=amount, price=price)
         db.add(cart_item)
     db.commit()
     return {

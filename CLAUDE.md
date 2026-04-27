@@ -1,0 +1,1 @@
+Refer to [AGENTS.md](AGENTS.md) for all project guidelines, coding standards, and AI assistant instructions. 

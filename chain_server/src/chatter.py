@@ -41,6 +41,57 @@ class ChatterAgent:
         )
         logging.info(f"ChatterAgent.__init__() | Initialization complete")
 
+    @staticmethod
+    def _format_cart(state: State) -> str:
+        """Render the authoritative cart as a bullet list.
+
+        The only source the chatter may cite for cart claims. ``state.cart``
+        is refreshed by the memory service each turn and by the cart agent
+        on every mutation.
+        """
+        if not state.cart or not state.cart.contents:
+            return "(empty)"
+        lines = []
+        for entry in state.cart.contents:
+            amount = entry.get("amount", 1)
+            name = entry.get("item", "")
+            price = entry.get("price")
+            if price is not None:
+                try:
+                    lines.append(f"- {amount} x {name} @ ${float(price):.2f}")
+                except (TypeError, ValueError):
+                    lines.append(f"- {amount} x {name}")
+            else:
+                lines.append(f"- {amount} x {name}")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _format_available_catalog(state: State) -> str:
+        """Render products retrieved this turn as an explicit allowlist.
+
+        Only fresh retrievals populate ``state.retrieved``; past results
+        live in the running context as prose and are excluded so the
+        chatter does not re-claim out-of-scope items.
+        """
+        if not state.retrieved:
+            return "(no fresh catalog results this turn)"
+        return "\n".join(f"- {name}" for name in state.retrieved.keys())
+
+    @staticmethod
+    def _describe_preceding_agent(state: State) -> str:
+        """Report which specialist ran this turn.
+
+        The chatter runs regardless of routing; passing the upstream
+        agent lets it gate cart-mutation language on the current turn
+        instead of extrapolating from past turns in context.
+        """
+        agent = (state.next_agent or "").strip().lower()
+        if agent == "cart":
+            return "cart"
+        if agent == "retriever":
+            return "retriever"
+        return "none"
+
     async def invoke(
         self, 
         state: State,
@@ -53,28 +104,41 @@ class ChatterAgent:
         output_state = state
         logging.info(f"ChatterAgent.invoke() | State retrieved.")
 
-        if state.query:
-            user_message = f"QUERY: {state.query}"
-            if state.context and state.context.strip():
-                user_message += f"\nPREVIOUS CONTEXT: {state.context}"
-            messages = [
-                {"role": "system", "content": self.config.chatter_prompt},
-                {"role": "user", "content": user_message}
-            ]
-        else:
-            user_message = "QUERY: 'You have been sent an image, and the retrieved items are the most similar items.'"
-            if state.context and state.context.strip():
-                user_message += f"\nPREVIOUS CONTEXT: {state.context}"
-            messages = [
-                {"role": "system", "content": self.config.chatter_prompt},
-                {"role": "user", "content": user_message}
-            ]
+        query_text = state.query or (
+            "The user has submitted an image and is looking for items that appear similar."
+        )
+        preceding_agent = self._describe_preceding_agent(state)
+        agent_result = (state.response or "").strip() or "(none)"
+        cart_block = self._format_cart(state)
+        catalog_block = self._format_available_catalog(state)
+        recent_context = (state.context or "").strip() or "(none)"
+
+        user_message = (
+            f"USER QUERY: {query_text}\n\n"
+            f"PRECEDING AGENT (ran this turn before you): {preceding_agent}\n"
+            f"PRECEDING AGENT RESULT (verbatim, authoritative for this turn): {agent_result}\n\n"
+            f"CURRENT CART (authoritative):\n{cart_block}\n\n"
+            f"AVAILABLE CATALOG (fresh retrieval for this turn; the only NEW products you may introduce):\n"
+            f"{catalog_block}\n\n"
+            f"RECENT DISCUSSION (reference only; paraphrased past turns, NOT authoritative for cart state):\n"
+            f"{recent_context}"
+        )
+
+        messages = [
+            {"role": "system", "content": self.config.chatter_prompt},
+            {"role": "user", "content": user_message},
+        ]
+
+        logging.info(
+            f"ChatterAgent.invoke() | preceding_agent={preceding_agent} "
+            f"cart_items={len(state.cart.contents) if state.cart else 0} "
+            f"retrieved_count={len(state.retrieved)} context_len={len(state.context or '')}"
+        )
 
         start = time.monotonic()
 
         logging.info(f"ChatterAgent.invoke() | Context length is less than memory length")
         full_response = ""
-        
         ftr = False
 
         writer = get_stream_writer()
@@ -87,7 +151,8 @@ class ChatterAgent:
             messages=messages,
             stream=True,
             temperature=0.0,
-            max_tokens=self.config.memory_length
+            max_tokens=self.config.memory_length,
+            extra_body={"chat_template_kwargs": {"enable_thinking": False}}
         )
 
         async for chunk in stream:

@@ -4,6 +4,14 @@
 
 catalog_retriever/volumes
 tests/conversations
+.local-run/
+node_modules/
+**/node_modules/
+guardrails/traces/
+ui/public/images
+
+# Memory retriever runtime SQLite database (created at module import time)
+**/context.db
 
 # Python
 __pycache__/
@@ -44,6 +52,16 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Test artifacts
+.coverage
+htmlcov/
+.pytest_cache/
+tests/.coverage
+tests/htmlcov/
+tests/.pytest_cache/
+tests/integration/conversations/**/results/
+tests/integration/conversations/**/judge/
 
 # Environment variables
 .env

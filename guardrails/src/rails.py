@@ -3,6 +3,7 @@
 
 from nemoguardrails import RailsConfig, LLMRails
 import logging
+import os
 from config_utils import apply_endpoint_overrides
 
 # Set up logging
@@ -49,7 +50,7 @@ class GuardRails(BaseRails):
         return response
     
 # Load configuration
-config_path = "/app/shared/configs/rails"
+config_path = os.path.join(os.environ.get("SHARED_CONFIG_ROOT", "/app/shared/configs"), "rails")
 guardRails = GuardRails(config_path)
 
 class Rails():

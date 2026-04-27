@@ -1,0 +1,40 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Dependencies required to run the offline unit test suite under tests/unit/.
+# These intentionally mirror the minimum set of runtime deps the services
+# import at module load time, plus standard testing utilities. No live
+# service (LLM, Milvus, memory DB, guardrails) is required.
+
+pytest>=8.0
+pytest-asyncio>=0.23
+pytest-cov>=5.0
+
+# Pydantic models are used pervasively and we validate their behavior.
+pydantic>=2.7
+
+# FastAPI TestClient is used for memory_retriever HTTP tests.
+fastapi>=0.110
+httpx>=0.27
+
+# HTTP client mocked in chain_server tests.
+requests>=2.31
+
+# YAML parsing used by config loaders under test.
+PyYAML>=6.0
+
+# OpenAI types are referenced when mocking chat completion responses.
+openai>=1.40
+
+# Needed by memory_retriever, catalog_retriever, and chain_server imports.
+SQLAlchemy>=2.0
+numpy>=1.26
+Pillow>=10.0
+
+# Needed by chain_server.graph / chain_server.chatter on import.
+langgraph>=0.2
+langchain-core>=0.2
+
+# Needed by catalog_retriever.retriever on import.
+langchain-milvus>=0.1
+langchain-text-splitters>=0.2

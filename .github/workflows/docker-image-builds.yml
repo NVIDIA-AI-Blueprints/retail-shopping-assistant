@@ -1,0 +1,108 @@
+name: Docker image builds
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/docker-image-builds.yml"
+      - "docker-compose.yaml"
+      - "catalog_retriever/**"
+      - "chain_server/**"
+      - "guardrails/**"
+      - "memory_retriever/**"
+      - "ui/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-modified-service-images:
+    name: Build modified service images
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      DOCKER_BUILDKIT: "1"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build changed service images
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          changed_files="$(mktemp)"
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git diff --name-only \
+              "${{ github.event.pull_request.base.sha }}" \
+              "${{ github.event.pull_request.head.sha }}" > "${changed_files}"
+          else
+            printf '%s\n' ".github/workflows/docker-image-builds.yml" > "${changed_files}"
+          fi
+
+          echo "Changed files:"
+          sed 's/^/  /' "${changed_files}"
+
+          services=(
+            "chain-server"
+            "catalog-retriever"
+            "memory-retriever"
+            "rails"
+            "frontend"
+          )
+
+          declare -A contexts=(
+            ["chain-server"]="chain_server"
+            ["catalog-retriever"]="catalog_retriever"
+            ["memory-retriever"]="memory_retriever"
+            ["rails"]="guardrails"
+            ["frontend"]="ui"
+          )
+
+          declare -A image_names=(
+            ["chain-server"]="retail-shopping-assistant/chain-server"
+            ["catalog-retriever"]="retail-shopping-assistant/catalog-retriever"
+            ["memory-retriever"]="retail-shopping-assistant/memory-retriever"
+            ["rails"]="retail-shopping-assistant/guardrails"
+            ["frontend"]="retail-shopping-assistant/frontend"
+          )
+
+          build_all=false
+          if grep -Eq '^(\.github/workflows/docker-image-builds\.yml|docker-compose\.yaml)$' "${changed_files}"; then
+            build_all=true
+          fi
+
+          selected=()
+          for service in "${services[@]}"; do
+            context="${contexts[$service]}"
+            if [ "${build_all}" = true ] || grep -Eq "^${context}/" "${changed_files}"; then
+              selected+=("${service}")
+            fi
+          done
+
+          if [ "${#selected[@]}" -eq 0 ]; then
+            echo "No service image contexts changed; nothing to build."
+            exit 0
+          fi
+
+          echo "Service images selected for build: ${selected[*]}"
+
+          for service in "${selected[@]}"; do
+            context="${contexts[$service]}"
+            image_name="${image_names[$service]}"
+            image_tag="ci-${GITHUB_SHA}"
+
+            echo "::group::Build ${service}"
+            docker build \
+              --pull \
+              --tag "${image_name}:${image_tag}" \
+              "${context}"
+            echo "::endgroup::"
+          done

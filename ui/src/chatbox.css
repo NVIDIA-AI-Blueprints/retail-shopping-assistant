@@ -104,16 +104,17 @@ html {
   position: fixed;
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
+  justify-content: flex-start;
 /* border:solid blue; */
-  bottom: 0px;
+  top: 106px;
+  bottom: 64px;
   right: 0px;
   z-index: 9999999;
   font-family: "NVIDIA sans", sans-serif;
   font-weight: 400;
   /* border:solid red; */
   
-  height: 100%;
+  height: auto;
   width: 60vw;
 }
 
@@ -128,8 +129,9 @@ html {
   z-index: -9999999;
   opacity: 0;
   transition: all 0.5s ease-in-out;
-  margin-top:106px;
-  margin-bottom: 7px;
+  margin-top: 0;
+  margin-bottom: 0;
+  min-height: 0;
 }
 
 /* CONTENT ISOPEN */
@@ -137,11 +139,12 @@ html {
   /* transform: translateY(-40px); */
   z-index: 9999999;
   opacity: 1;
-  height: 70%
+  height: 100%;
 }
 
 /* BUTTON */
 .chatbox__button {
+  display: none;
   text-align: right;
 
 }
@@ -271,7 +274,9 @@ html {
   color: black;
   overflow-y: scroll;
   scrollbar-color: red;
-  height: 100%;
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 0;
 }
 
 .messages__item {

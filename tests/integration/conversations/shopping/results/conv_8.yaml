@@ -1,0 +1,102 @@
+set_name: conv_8.yaml
+results:
+- query: Looking for a sporty, casual look.
+  content: No response collected.
+  response: "I'm sorry, but I couldn't find any products that match your request for\
+    \ a sporty, casual look. Would you like to refine your search\u2014for example,\
+    \ by specifying a type of clothing (like joggers, hoodies, or sneakers), a brand,\
+    \ or a color? That way I can help you find something that fits your style."
+  timing:
+    memory: 0.013137497007846832
+    planner: 0.09305355325341225
+    retriever_categories: 0.6746451845392585
+    retriever_retrieval: 0.08298356458544731
+    rails_input_check: 0.25649420637637377
+    first_token: 0.09289755579084158
+    chatter: 0.6149475518614054
+    rails_output_check: 0.20848157163709402
+    total: 1.8780902996659279
+- query: Show me track-style bottoms.
+  content: No response collected.
+  response: 'I''m sorry, but I couldn''t find any track-style bottoms in the current
+    catalog. The available products are all footwear: Bow Trim Heeled Shoes in White,
+    Sophisticated Silk Satin Sandals in Silver, Flat Strappy Black Sandals with Buckle
+    Embellishment, and Soft Ballet Flats in Blush Pink Leather.
+
+
+    Would you like to refine your search for track-style bottoms, perhaps by specifying
+    a brand, material, or color? Alternatively, I can help you browse other clothing
+    categories if you''re interested in something different.'
+  timing:
+    memory: 0.013126462697982788
+    planner: 0.09401247091591358
+    retriever_categories: 0.6626468589529395
+    retriever_retrieval: 0.061407837085425854
+    rails_input_check: 0.25652187317609787
+    first_token: 0.22535235900431871
+    chatter: 1.0544557198882103
+    rails_output_check: 0.20819889288395643
+    total: 2.284327896311879
+- query: Any relaxed-fit tops?
+  content: No response collected.
+  response: "Here are the relaxed-fit tops currently available:\n\n- **Ruffled Silk\
+    \ Blend Top** \u2013 A silk-blend top with delicate ruffles at the neckline and\
+    \ cuffs, offering a relaxed fit for comfort and versatility. Price: $149.99  \n\
+    - **Plush Pomeranian Sweater Top** \u2013 A cozy sweater top with a playful pomeranian\
+    \ print, featuring a relaxed fit and soft acrylic-wool blend. Price: $139.99 \
+    \ \n- **Green Meadow Sweater Top** \u2013 A 100% cotton cable-knit top in green,\
+    \ designed with a relaxed fit for everyday wear. Price: $49.99  \n\nAll three\
+    \ tops are described as having a relaxed fit in their catalog details. Let me\
+    \ know if you'd like more information on any of them!"
+  timing:
+    memory: 0.014314350672066212
+    planner: 0.09598553366959095
+    retriever_categories: 0.7634276375174522
+    retriever_retrieval: 0.05192290619015694
+    rails_input_check: 0.26004734355956316
+    first_token: 0.24398857075721025
+    chatter: 1.5347328931093216
+    rails_output_check: 0.2150765247642994
+    total: 2.8684137566015124
+- query: What casual sneakers do you have?
+  content: No response collected.
+  response: "I'm sorry, but I couldn't find any casual sneakers in the current catalog.\
+    \ The available products are all heeled shoes or sandals: Closed Toe Pumps in\
+    \ Red, Buckled Heeled Shoes, Bow Trim Heeled Shoes in White, and Flat Strappy\
+    \ Black Sandals with Buckle Embellishment.\n\nWould you like to refine your search\u2014\
+    for example, by specifying a different style, brand, or color? That way I can\
+    \ help you find something that fits your request for casual sneakers."
+  timing:
+    memory: 0.014275094494223595
+    planner: 0.101157003082335
+    retriever_categories: 0.7749163536354899
+    retriever_retrieval: 0.0618953462690115
+    rails_input_check: 0.2556154550984502
+    first_token: 0.3501451490446925
+    chatter: 1.1253238003700972
+    rails_output_check: 0.20997836906462908
+    total: 2.4778437186032534
+- query: Do you have sporty bags or backpacks?
+  content: No response collected.
+  response: "I found several bags and backpacks in the catalog. Here are the available\
+    \ options:\n\n- **Elegant Embroidered Crossbody Bag** \u2013 A stylish leather\
+    \ crossbody bag with intricate embroidery, spacious interior, and adjustable strap.\
+    \ Price: $79.99  \n- **Qwen Crossbody Bag** \u2013 A premium leather crossbody\
+    \ bag with multiple compartments, secure zippered pocket, and adjustable shoulder\
+    \ strap. Price: $39.99  \n- **Kaleidoscope Crossbody Bag** \u2013 A vibrant synthetic\
+    \ leather crossbody bag with bold colors, two zippered compartments, and adjustable\
+    \ strap. Price: $69.99  \n- **Ratan Basket Shoulder Bag** \u2013 A rustic-chic\
+    \ shoulder bag made from straw and cotton, featuring a spacious interior and contrasting\
+    \ ratan strap. Price: $89.90  \n\nAll of these are crossbody or shoulder bags.\
+    \ If you're looking specifically for sporty backpacks or more athletic styles,\
+    \ let me know and I can refine the search further."
+  timing:
+    memory: 0.014924933202564716
+    planner: 0.0974760064855218
+    retriever_categories: 0.8430287446826696
+    retriever_retrieval: 0.08280212618410587
+    rails_input_check: 0.27785654179751873
+    first_token: 0.40803540125489235
+    chatter: 2.0261833174154162
+    rails_output_check: 0.21618659421801567
+    total: 5.333033125847578

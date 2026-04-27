@@ -4,6 +4,8 @@
 from .agenttypes import Cart, State
 from .functions import (
     add_to_cart_function,
+    bulk_add_to_cart_function,
+    bulk_remove_from_cart_function,
     remove_from_cart_function,
     view_cart_function,
     view_cart_total_function,
@@ -20,7 +22,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 import sys
 import time
-from typing import Optional
+from typing import Any, Optional
 from langgraph.config import get_stream_writer
 
 
@@ -465,6 +467,68 @@ class CartAgent():
 
         return None
 
+    def _override_bulk_item_names(
+        self, items: list, state: State
+    ) -> list:
+        """Apply the deterministic resolver to each entry in a bulk tool call.
+
+        For ``bulk_add_to_cart`` / ``bulk_remove_from_cart`` the LLM provides
+        per-item names, so pronoun resolution (which operates over the full
+        query) is not useful. Instead we re-anchor each name against the set
+        of products actually present in cart + context. This catches the same
+        class of mistake the single-item override does (LLM paraphrasing a
+        catalog name) without affecting cases where the LLM got it right.
+
+        Mutates and returns ``items`` for convenience.
+        """
+        if not items:
+            return items
+        known = self._collect_known_products(state)
+        if not known:
+            return items
+
+        for entry in items:
+            if not isinstance(entry, dict):
+                continue
+            llm_pick = entry.get("item_name") or ""
+            resolved = self._find_named_product(llm_pick, known)
+            if (
+                resolved
+                and _normalize_name(llm_pick) != _normalize_name(resolved)
+            ):
+                logging.warning(
+                    f"CartAgent.invoke() | overriding bulk item_name "
+                    f"llm={llm_pick!r} -> deterministic={resolved!r}"
+                )
+                entry["item_name"] = resolved
+        return items
+
+    @staticmethod
+    def _coerce_bulk_items(raw: Any) -> list:
+        """Accept the ``items`` argument in its various possible shapes.
+
+        Nemotron's XML fallback surfaces ``items`` as a string repr that has
+        already been parsed to a list by ``_coerce_value`` in almost all
+        cases. A defensive re-parse here makes the code tolerant of any
+        edge-case model output without special casing it upstream.
+        """
+        if isinstance(raw, list):
+            return raw
+        if isinstance(raw, str):
+            stripped = raw.strip()
+            if not stripped:
+                return []
+            try:
+                import ast
+                parsed = ast.literal_eval(stripped)
+            except (ValueError, SyntaxError):
+                try:
+                    parsed = json.loads(stripped)
+                except (ValueError, TypeError):
+                    return []
+            return parsed if isinstance(parsed, list) else []
+        return []
+
     @staticmethod
     def _extract_recent_discussion(context: str, max_chars: int = 2000) -> str:
         """Return the tail of the conversation context to focus pronoun resolution.
@@ -506,6 +570,8 @@ class CartAgent():
         tools = [
             add_to_cart_function,
             remove_from_cart_function,
+            bulk_add_to_cart_function,
+            bulk_remove_from_cart_function,
             view_cart_function,
             view_cart_total_function,
         ]
@@ -514,10 +580,17 @@ class CartAgent():
             "You are a retail cart manager. Your ONLY job is to execute exactly one cart "
             "tool call that fulfils the user's CURRENT QUERY. Do not return plain text.\n\n"
             "TOOL SELECTION (choose exactly one):\n"
-            "- add_to_cart: user wants to put an item IN the cart. Triggers: 'add', "
+            "- add_to_cart: user wants to put ONE item IN the cart. Triggers: 'add', "
             "'put in cart', \"I'll take\", 'buy', 'get me', 'include'.\n"
-            "- remove_from_cart: user wants to take an item OUT. Triggers: 'remove', "
+            "- bulk_add_to_cart: user wants to put TWO OR MORE distinct items IN the cart "
+            "in the same request. Prefer this over multiple add_to_cart calls whenever the "
+            "user enumerates several products (separated by commas, 'and', 'also', 'plus', "
+            "'as well as', etc.). Populate 'items' with one entry per named product.\n"
+            "- remove_from_cart: user wants to take ONE item OUT. Triggers: 'remove', "
             "'take out', 'delete', 'drop'.\n"
+            "- bulk_remove_from_cart: user wants to take TWO OR MORE distinct items OUT in "
+            "the same request. Prefer this over multiple remove_from_cart calls whenever "
+            "the user enumerates several products to remove.\n"
             "- view_cart: user wants to SEE cart contents. Triggers: \"what's in my cart\", "
             "'show my cart', 'view cart', 'check my cart'. Do NOT use view_cart when the "
             "user is asking to add or remove an item.\n"
@@ -530,7 +603,8 @@ class CartAgent():
             "the pronoun to the MOST RECENT specific product in RECENT DISCUSSION. Give the "
             "MOST RECENT ASSISTANT MESSAGE the highest weight, then the user's last query, "
             "then older context. Do NOT default to items already in the cart.\n\n"
-            "ITEM NAME RULES:\n"
+            "ITEM NAME RULES (apply to item_name for single tools AND to every items[].item_name "
+            "for bulk tools):\n"
             "- Copy the full product name VERBATIM from RECENT DISCUSSION. Do not "
             "shorten it, do not substitute a category word, do not paraphrase.\n"
             "- Examples of the same rule applied across product types (these names "
@@ -546,6 +620,12 @@ class CartAgent():
             "'blazer'.\n"
             "    * Discussed: 'Bamboo Slim-Fit Chinos'. User says 'add those' -> "
             "item_name = 'Bamboo Slim-Fit Chinos'. NOT 'those' or 'chinos'.\n"
+            "    * Discussed: 'Honey Floral Print Midi Skirt', 'Lace and Silk Blouse', "
+            "'Pearl Bracelet'. User says 'please add the Honey Floral Print Midi Skirt, "
+            "the Lace and Silk Blouse, and the Pearl Bracelet to my cart' -> call "
+            "bulk_add_to_cart with items=[{item_name: 'Honey Floral Print Midi Skirt', "
+            "quantity: 1}, {item_name: 'Lace and Silk Blouse', quantity: 1}, "
+            "{item_name: 'Pearl Bracelet', quantity: 1}].\n"
             "- If the user specifies a quantity use it; otherwise default to 1.\n"
             "- Ignore minor typos in the user's query.\n"
         )
@@ -617,6 +697,13 @@ class CartAgent():
                         f"llm={llm_pick!r} -> deterministic={resolved!r}"
                     )
                     tool_args["item_name"] = resolved
+        elif tool_name in ("bulk_add_to_cart", "bulk_remove_from_cart"):
+            # Normalize ``items`` shape and fix up any per-entry names the
+            # model paraphrased. Quantity defaults live here too so the
+            # dispatch branches don't need to repeat the coercion.
+            items = self._coerce_bulk_items(tool_args.get("items"))
+            items = self._override_bulk_item_names(items, state)
+            tool_args["items"] = items
 
         output_state = state 
         if verbose:
@@ -636,7 +723,57 @@ class CartAgent():
             quantity = tool_args["quantity"]    
             output_state.response = self._remove_from_cart(state.user_id, item_name, quantity)
             output_state.cart = self._get_cart(state.user_id)
-            
+
+        elif tool_name == "bulk_add_to_cart":
+            items = tool_args.get("items") or []
+            logging.info(
+                f"CartAgent.invoke() | Bulk adding {len(items)} item(s) to cart"
+            )
+            lines = []
+            for entry in items:
+                if not isinstance(entry, dict):
+                    continue
+                name = (entry.get("item_name") or "").strip()
+                if not name:
+                    continue
+                try:
+                    quantity = int(entry.get("quantity", 1) or 1)
+                except (TypeError, ValueError):
+                    quantity = 1
+                lines.append(self._add_to_cart(state.user_id, name, quantity))
+            if lines:
+                output_state.response = "\n".join(lines)
+            else:
+                output_state.response = (
+                    "No items were specified to add to the cart."
+                )
+            output_state.cart = self._get_cart(state.user_id)
+
+        elif tool_name == "bulk_remove_from_cart":
+            items = tool_args.get("items") or []
+            logging.info(
+                f"CartAgent.invoke() | Bulk removing {len(items)} item(s) from cart"
+            )
+            lines = []
+            for entry in items:
+                if not isinstance(entry, dict):
+                    continue
+                name = (entry.get("item_name") or "").strip()
+                if not name:
+                    continue
+                try:
+                    quantity = int(entry.get("quantity", 1) or 1)
+                except (TypeError, ValueError):
+                    quantity = 1
+                lines.append(self._remove_from_cart(state.user_id, name, quantity))
+            if lines:
+                output_state.response = "\n".join(lines)
+            else:
+                output_state.response = (
+                    "No items were specified to remove from the cart."
+                )
+            output_state.cart = self._get_cart(state.user_id)
+
         elif tool_name == "view_cart":
             cart = self._get_cart(state.user_id)
             logging.info(f"CartAgent.invoke() | Viewing cart.\n\t| Cart: {cart}")

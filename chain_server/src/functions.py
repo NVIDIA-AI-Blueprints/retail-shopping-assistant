@@ -229,6 +229,98 @@ remove_from_cart_function = {
 }
 
 """
+Adds multiple items to the cart in a single tool call.
+
+Preferred over repeated ``add_to_cart`` calls whenever the user names two or
+more distinct products in the same request (e.g. "add the skirt, the blouse,
+and the bracelet"). The cart agent iterates ``items`` and runs the existing
+per-item catalog match + memory write for each entry, so atomicity is best-
+effort: a catalog miss on one line does not prevent the others from being
+added and is surfaced explicitly in the response.
+"""
+bulk_add_to_cart_function = {
+    "type": "function",
+    "function": {
+        "name": "bulk_add_to_cart",
+        "description": (
+            "Tool to add MULTIPLE items to the user's cart in a single call. "
+            "Use whenever the user names two or more distinct products to add "
+            "in the same request. Do not emit parallel add_to_cart calls."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "description": (
+                        "List of items to add. Each entry carries the full product "
+                        "name (copied verbatim from recent discussion) and the quantity."
+                    ),
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "item_name": {
+                                "type": "string",
+                                "description": "The full product name from the chat history or most recent user query.",
+                            },
+                            "quantity": {
+                                "type": "integer",
+                                "description": "The number of units of this item to add. Defaults to 1 if unspecified.",
+                            },
+                        },
+                        "required": ["item_name", "quantity"],
+                    },
+                },
+            },
+            "required": ["items"],
+        },
+    },
+}
+
+"""
+Removes multiple items from the cart in a single tool call. Mirrors
+``bulk_add_to_cart`` for removals.
+"""
+bulk_remove_from_cart_function = {
+    "type": "function",
+    "function": {
+        "name": "bulk_remove_from_cart",
+        "description": (
+            "Tool to remove MULTIPLE items from the user's cart in a single call. "
+            "Use whenever the user names two or more distinct products to remove "
+            "in the same request. Do not emit parallel remove_from_cart calls."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "description": (
+                        "List of items to remove. Each entry carries the full product "
+                        "name (copied verbatim from recent discussion) and the quantity."
+                    ),
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "item_name": {
+                                "type": "string",
+                                "description": "The full product name from the chat history or most recent user query.",
+                            },
+                            "quantity": {
+                                "type": "integer",
+                                "description": "The number of units of this item to remove. Defaults to 1 if unspecified.",
+                            },
+                        },
+                        "required": ["item_name", "quantity"],
+                    },
+                },
+            },
+            "required": ["items"],
+        },
+    },
+}
+
+"""
 Views items in the user's cart.
 """
 view_cart_function = {

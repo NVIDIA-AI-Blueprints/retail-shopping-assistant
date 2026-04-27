@@ -1,0 +1,82 @@
+set_name: conv_4.yaml
+results:
+- query: I need to stay under $100 total.
+  content: No response collected.
+  response: I encountered an error while searching for products. Please try again.
+  timing:
+    memory: 0.013306408189237118
+    planner: 0.0972358575090766
+    retriever_categories: 0.6900649154558778
+    retriever_retrieval: 6.15548075735569
+    rails_input_check: 0.259648771956563
+    first_token: 0.11372597794979811
+    chatter: 0.20816913712769747
+    rails_output_check: 0.20846478454768658
+    total: 7.563948106952012
+- query: Show me affordable tops first.
+  content: No response collected.
+  response: "Here are the tops sorted by price (most affordable first):\n\n- **Floral\
+    \ Camisole in White** \u2013 $39.90  \n- **Green Meadow Sweater Top** \u2013 $49.99\
+    \  \n- **Opulent Lace Sweater Top** \u2013 $99.99  \n- **Ruffled Silk Blend Top**\
+    \ \u2013 $149.99  \n\nLet me know if you'd like to add any of these to your cart\
+    \ or see more details!"
+  timing:
+    memory: 0.013780925422906876
+    planner: 0.09416594356298447
+    retriever_categories: 0.6839447999373078
+    retriever_retrieval: 0.06244545988738537
+    rails_input_check: 0.2552229231223464
+    first_token: 0.19050760101526976
+    chatter: 0.9773570159450173
+    rails_output_check: 0.20764499716460705
+    total: 2.2288323445245624
+- query: What bottoms are under $30?
+  content: No response collected.
+  response: I found the Floral Camisole in White, but it's priced at $39.90, which
+    is above your $30 budget for bottoms. Additionally, this item is a camisole top,
+    not bottoms. Currently, there are no bottoms under $30 available in the catalog.
+    Would you like me to search for bottoms in a different price range or adjust your
+    search criteria?
+  timing:
+    memory: 0.013829409144818783
+    planner: 0.10089388024061918
+    retriever_categories: 0.6961455922573805
+    retriever_retrieval: 0.06829312071204185
+    rails_input_check: 0.2564238039776683
+    first_token: 0.18007663916796446
+    chatter: 0.8035886660218239
+    rails_output_check: 0.20862130634486675
+    total: 2.076313284225762
+- query: Any sales on shoes?
+  content: No response collected.
+  response: "Here are the shoes currently available:\n\n- **Closed Toe Pumps in Red**\
+    \ \u2013 $49.90  \n- **Wine Red Heeled Pumps** \u2013 $179.99  \n- **Bow Trim\
+    \ Heeled Shoes in White** \u2013 $59.90  \n- **Soft Ballet Flats in Blush Pink\
+    \ Leather** \u2013 $49.90  \n\nNone of these items are marked as on sale in the\
+    \ catalog. Would you like me to check for any promotions or look for shoes in\
+    \ a specific price range?"
+  timing:
+    memory: 0.013798560947179794
+    planner: 0.09762952942401171
+    retriever_categories: 0.7272555492818356
+    retriever_retrieval: 0.05127285700291395
+    rails_input_check: 0.25598466489464045
+    first_token: 0.28684982284903526
+    chatter: 1.1756274923682213
+    rails_output_check: 0.21047044917941093
+    total: 2.46279941406101
+- query: Find me a bag for under $25.
+  content: No response collected.
+  response: "I'm sorry, but I couldn't find any bags under $25 in the current catalog.\
+    \ Would you like to adjust your search\u2014perhaps look for bags in a different\
+    \ price range or browse other accessory categories?"
+  timing:
+    memory: 0.013893569819629192
+    planner: 0.0951988436281681
+    retriever_categories: 0.8211651360616088
+    retriever_retrieval: 0.05136233102530241
+    rails_input_check: 0.26018916722387075
+    first_token: 0.23375545721501112
+    chatter: 0.5466959495097399
+    rails_output_check: 0.20728220976889133
+    total: 1.9287210572510958

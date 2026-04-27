@@ -1,0 +1,117 @@
+set_name: conv_6.yaml
+results:
+- query: I'm looking for a rainy day outfit.
+  content: No response collected.
+  response: "I found a **Floral Camisole in White** that could be part of a rainy\
+    \ day outfit. It's made of 100% polyester and polyamide, has adjustable straps,\
+    \ and features a tonal textured floral applique. It's priced at $39.90.\n\nSince\
+    \ you're looking for a full outfit, would you like me to search for other pieces\
+    \ to go with it\u2014like water-resistant jackets, pants, or shoes suitable for\
+    \ rainy weather?"
+  timing:
+    memory: 0.013711867853999138
+    planner: 0.09333298727869987
+    retriever_categories: 0.6519397953525186
+    retriever_retrieval: 0.06225625053048134
+    rails_input_check: 0.25595947355031967
+    first_token: 0.12702011689543724
+    chatter: 0.8564334353432059
+    rails_output_check: 0.21149840485304594
+    total: 2.0828291438519955
+- query: Any closed shoes or boots?
+  content: No response collected.
+  response: "Here are the closed shoes and boots currently available:\n\n- **Closed\
+    \ Toe Pumps in Red** \u2013 $49.90  \n  Closed-toe heeled pumps with a 2.5-inch\
+    \ sole height, SBS sole for cushioning, open-back slip-on design, and 100% polyurethane\
+    \ lining. Made from high-quality fabric with a vibrant red hue.\n\n- **Buckled\
+    \ Heeled Shoes** \u2013 $49.90  \n  Creamy white slingback heels with patent leather\
+    \ finish, buckle detailing, and a 2.8-inch heel. Features a polyurethane thermoplastic\
+    \ sole and cushioned insole for all-day comfort.\n\n- **Bow Trim Heeled Shoes\
+    \ in White** \u2013 $59.90  \n  White heeled sandals with a delicate bow detail,\
+    \ crossed fabric front, and rounded toe. 2.5-inch heel, polyurethane sole, and\
+    \ cushioned support for extended wear.\n\n- **Zestful Lace-Up Ankle Boots** \u2013\
+    \ $189.99  \n  Ankle-length lace-up boots made from high-quality leather with\
+    \ a leather lining, cushioned insole, and durable rubber sole. 1-inch heel height\
+    \ for comfort and versatility.\n\nAll items are in stock and ready to be added\
+    \ to your cart. Let me know if you'd like more details on any of these or help\
+    \ selecting a pair!"
+  timing:
+    memory: 0.014108611270785332
+    planner: 0.09706085920333862
+    retriever_categories: 0.6962535828351974
+    retriever_retrieval: 0.08918524254113436
+    rails_input_check: 0.2569349789991975
+    first_token: 0.2453593872487545
+    chatter: 2.3821986000984907
+    rails_output_check: 0.21757629048079252
+    total: 3.6864224383607507
+- query: Do you have water-resistant bags?
+  content: No response collected.
+  response: I don't see any water-resistant bags in the current selection. The available
+    bags are made from materials like straw, leather, polyester, and patent leather,
+    but none are described as water-resistant. Would you like me to search again with
+    a focus on water-resistant materials, or would you prefer to look at one of these
+    bags for more details?
+  timing:
+    memory: 0.013892012648284435
+    planner: 0.09561975486576557
+    retriever_categories: 0.710349059663713
+    retriever_retrieval: 0.06331210024654865
+    rails_input_check: 0.2554092323407531
+    first_token: 0.3170006209984422
+    chatter: 0.8200727077201009
+    rails_output_check: 0.207329872995615
+    total: 2.098690228536725
+- query: What tops go well with dark pants?
+  content: No response collected.
+  response: "Based on the available tops, here are some options that would pair well\
+    \ with dark pants:\n\n**Floral Camisole in White** \u2013 A versatile white camisole\
+    \ with delicate floral applique and adjustable straps. Its light color creates\
+    \ a clean contrast with dark pants, and it can be dressed up or down.\n\n**Green\
+    \ Meadow Sweater Top** \u2013 A soft, cable-knit green sweater top made of 100%\
+    \ cotton. The relaxed fit and classic round neckline offer a comfortable, chic\
+    \ look that complements dark pants for casual or polished ensembles.\n\n**Plush\
+    \ Pomeranian Sweater Top** \u2013 A cozy top with a playful pomeranian print,\
+    \ made from a blend of acrylic and wool. Features a crew neckline and long sleeves,\
+    \ ideal for layering and adding a whimsical touch to dark pants.\n\n**Opulent\
+    \ Lace Sweater Top** \u2013 A luxurious top with intricate lace detailing on the\
+    \ shoulders and cuffs, crafted from cashmere and silk. The semi-fitted silhouette\
+    \ and elegant design make it suitable for pairing with dark pants for a professional\
+    \ or formal look.\n\nAll of these tops are designed to be versatile and can be\
+    \ styled with dark pants for various occasions. Let me know if you'd like more\
+    \ details on any of them!"
+  timing:
+    memory: 0.014523645862936974
+    planner: 0.0998666388913989
+    retriever_categories: 0.8347034594044089
+    retriever_retrieval: 0.06203159410506487
+    rails_input_check: 0.25654883962124586
+    first_token: 0.36040173191577196
+    chatter: 2.2449781270697713
+    rails_output_check: 0.2168489508330822
+    total: 7.600588221102953
+- query: Show me a whole outfit I can wear in wet weather.
+  content: No response collected.
+  response: "I found the **Vivacious Velvet Dress** in the catalog, but it\u2019s\
+    \ not ideal for wet weather\u2014velvet absorbs water and can be damaged by moisture.\
+    \  \n\nFor a rainy-day outfit, I\u2019d recommend water-resistant pieces like\
+    \ a jacket, pants, or shoes. Based on our recent discussion, here are some options\
+    \ that could work together:  \n\n- **Zestful Lace-Up Ankle Boots** (leather, rubber\
+    \ sole, $189.99) \u2013 durable and water-friendly  \n- **Closed Toe Pumps in\
+    \ Red** (polyurethane lining, wipe clean, $49.90) \u2013 easier to maintain in\
+    \ damp conditions  \n- **Buckled Heeled Shoes** (patent leather, wipe clean, $49.90)\
+    \ or **Bow Trim Heeled Shoes in White** (polyurethane sole, wipe clean, $59.90)\
+    \  \n\nPair any of these shoes with dark pants (as you mentioned earlier) and\
+    \ a lightweight top for a practical wet-weather look.  \n\nWould you like me to\
+    \ show more details on any of these items, or search for specific water-resistant\
+    \ jackets or pants to complete the outfit?"
+  timing:
+    memory: 0.01392090879380703
+    planner: 0.09727796353399754
+    retriever_categories: 0.6639010664075613
+    retriever_retrieval: 0.05272009316831827
+    rails_input_check: 0.2588377920910716
+    first_token: 0.13887152448296547
+    chatter: 2.0248188320547342
+    rails_output_check: 0.21901475451886654
+    total: 3.2646753899753094

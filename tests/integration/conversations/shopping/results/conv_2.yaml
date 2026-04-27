@@ -1,0 +1,137 @@
+set_name: conv_2.yaml
+results:
+- query: I'm going back to the office, need a few outfits.
+  content: No response collected.
+  response: "Here are some great options for office-appropriate outfits from our current\
+    \ selection:\n\n**Ginger Lace Trim Gown** \u2013 Elegant satin dress with lace\
+    \ trim, empire waist, and A-line skirt. Versatile for both formal and casual office\
+    \ settings. $179.99\n\n**Vivacious Velvet Dress** \u2013 Sophisticated V-neck\
+    \ velvet dress with a semi-fitted silhouette. Comfortable and stylish for casual\
+    \ or formal office days. $129.99\n\n**Gardenia Silk Maxi Dress** \u2013 Luxurious\
+    \ 100% silk maxi dress with floral print, V-neck, and spaghetti straps. Flattering\
+    \ A-line silhouette for garden parties or evening events. $179.99\n\n**Luminous\
+    \ Lace-Up Dress** \u2013 Modern lace-up dress in silk-cotton blend with A-line\
+    \ silhouette and subtle lace detailing. Polished for office events or relaxed\
+    \ with sneakers for casual days. $139.99\n\nAll dresses are designed to flatter\
+    \ various body types and transition well between occasions. Would you like more\
+    \ details on any of these, or help narrowing down based on specific office dress\
+    \ code preferences?"
+  timing:
+    memory: 0.013280496001243591
+    planner: 0.09491501469165087
+    retriever_categories: 0.6387031441554427
+    retriever_retrieval: 0.05215248931199312
+    rails_input_check: 0.2559888903051615
+    first_token: 0.19396499916911125
+    chatter: 2.0220767743885517
+    rails_output_check: 0.21738719567656517
+    total: 3.227916982024908
+- query: Do you have formal tops?
+  content: No response collected.
+  response: "Yes, we have several formal tops available:\n\n- **Floral Camisole in\
+    \ White** \u2013 A versatile camisole with adjustable straps and floral applique\
+    \ detail, suitable for formal occasions when paired with a skirt and heels. $39.90\
+    \  \n- **Opulent Lace Sweater Top** \u2013 Features intricate lace detailing on\
+    \ shoulders and cuffs, made from a luxurious cashmere-silk blend. Ideal for professional\
+    \ or formal events. $99.99  \n- **Ruffled Silk Blend Top** \u2013 Elegant top\
+    \ with delicate ruffles along the neckline and cuffs, crafted from a silk blend.\
+    \ Can be dressed up for formal looks. $149.99  \n- **Plush Pomeranian Sweater\
+    \ Top** \u2013 Cozy yet stylish with a playful print; can be dressed up or down\
+    \ for casual or formal events. $139.99  \n\nAll are currently in stock and ready\
+    \ to add to your cart. Would you like more details on any of these, or help selecting\
+    \ one for a specific occasion?"
+  timing:
+    memory: 0.014629600569605827
+    planner: 0.10398703347891569
+    retriever_categories: 0.7156486809253693
+    retriever_retrieval: 0.06300366763025522
+    rails_input_check: 0.25852481834590435
+    first_token: 0.26106653455644846
+    chatter: 1.9118534987792373
+    rails_output_check: 0.21967247314751148
+    total: 3.2147538224235177
+- query: What bottoms pair well with button-ups?
+  content: No response collected.
+  response: "For pairing with button-up shirts, consider these bottom options from\
+    \ our catalog:\n\n- **Tailored trousers** \u2013 A classic, polished choice that\
+    \ works well with button-ups for both professional and smart-casual looks.\n-\
+    \ **Pencil skirts** \u2013 Offer a sleek, feminine silhouette that complements\
+    \ the structure of a button-up.\n- **A-line skirts** \u2013 Provide a balanced,\
+    \ flattering fit that pairs nicely with tucked-in button-ups.\n- **Dark wash jeans**\
+    \ \u2013 Ideal for a relaxed yet put-together vibe when worn with a button-up\
+    \ (tucked or untucked).\n- **Chinos** \u2013 A versatile alternative to jeans,\
+    \ offering a refined casual look with button-ups.\n\nThese styles are commonly\
+    \ recommended for creating balanced outfits with button-up shirts. Would you like\
+    \ me to check if any specific bottoms like these are currently available in our\
+    \ inventory?"
+  timing:
+    memory: 0.01486663892865181
+    planner: 0.10351173393428326
+    rails_input_check: 0.2588306041434407
+    first_token: 0.22101706359535456
+    chatter: 1.546426197513938
+    rails_output_check: 0.22189265117049217
+    total: 2.072959746234119
+- query: "I like neutral tones\u2014any beige skirts?"
+  content: No response collected.
+  response: "Here are the skirts currently available:\n\n- **Honey Floral Print Midi\
+    \ Skirt** \u2013 Vibrant floral print on cotton, A-line silhouette, midi length.\
+    \ $69.99  \n- **Zephyr Linen Skirt** \u2013 Premium linen, breathable, A-line\
+    \ with concealed elastic waistband. $39.99  \n- **Zestful Zebra Print Midi Skirt**\
+    \ \u2013 Bold zebra print on polyester, high-waisted A-line. $79.99  \n- **Satin\
+    \ Effect Midi Skirt in Blush Pink** \u2013 Neutral blush pink, high-rise with\
+    \ elastic waistband, satin effect, made from recycled polyester. Also available\
+    \ in classic black. $45.90  \n\nThe **Satin Effect Midi Skirt in Blush Pink**\
+    \ is the closest to a neutral beige tone among these options. Would you like more\
+    \ details on any of these skirts, or shall I check for other neutral-colored options?"
+  timing:
+    memory: 0.014267056249082088
+    planner: 0.0944497287273407
+    retriever_categories: 0.7765687191858888
+    retriever_retrieval: 0.0584316560998559
+    rails_input_check: 0.2590782307088375
+    first_token: 0.35940376948565245
+    chatter: 1.8677699053660035
+    rails_output_check: 0.21800288930535316
+    total: 3.22347854077816
+- query: Show me low-heeled shoes in black.
+  content: No response collected.
+  response: "Here are the low-heeled black shoes I found:\n\n- **Flat Strappy Black\
+    \ Sandals with Buckle Embellishment** \u2013 0.6-inch sole height, black straps\
+    \ with buckle closure, $49.90  \n- **Black Velvet Ankle Boots** \u2013 1.5-inch\
+    \ block heel, plush lining, rubber sole, $119.99  \n\nBoth are in black and have\
+    \ low heels. Would you like more details on either, or help adding one to your\
+    \ cart?"
+  timing:
+    memory: 0.01549041923135519
+    planner: 0.09724225662648678
+    retriever_categories: 0.8854569597169757
+    retriever_retrieval: 0.06370418984442949
+    rails_input_check: 0.2577689914032817
+    first_token: 0.4374409280717373
+    chatter: 1.2336879270151258
+    rails_output_check: 0.21052797138690948
+    total: 5.402425352483988
+- query: Any structured bags to match?
+  content: No response collected.
+  response: "Here are the structured bags available:\n\n- **Kaleidoscope Crossbody\
+    \ Bag** \u2013 Vibrant synthetic leather, 18\" L \xD7 12\" H \xD7 4\" W, two zippered\
+    \ compartments + open pocket, $69.99  \n- **Elegant Embroidered Crossbody Bag**\
+    \ \u2013 Leather with intricate embroidery, 13\" H \xD7 10\" W \xD7 2\" D, separate\
+    \ zippered compartment + two open pockets, $79.99  \n- **Qwen Crossbody Bag**\
+    \ \u2013 Premium leather, 15\" H \xD7 10\" W \xD7 3\" D, two main compartments\
+    \ + multiple pockets including secure zippered, $39.99  \n- **Sleek Leather Satchel\
+    \ Bag** \u2013 High-quality leather, 14\" H \xD7 16\" L \xD7 4\" W, main compartment\
+    \ + two slip pockets, magnetic snap closure, detachable/adjustable strap, $49.99\
+    \  \n\nLet me know if you'd like more details on any of these or help selecting\
+    \ one to match your outfit!"
+  timing:
+    memory: 0.013750863261520863
+    planner: 0.10080477595329285
+    retriever_categories: 0.6199774136766791
+    retriever_retrieval: 0.06334393564611673
+    rails_input_check: 0.2583503369241953
+    first_token: 0.2229648781940341
+    chatter: 1.9987147627398372
+    rails_output_check: 0.2197035290300846
+    total: 3.205056671053171

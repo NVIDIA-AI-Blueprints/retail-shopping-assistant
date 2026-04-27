@@ -1,0 +1,128 @@
+set_name: conv_0.yaml
+results:
+- query: I'm looking for a light summer outfit.
+  content: No response collected.
+  response: "Here are some light summer outfit options from our catalog:\n\n**Luminous\
+    \ Lace-Up Dress** \u2013 A blend of 60% silk and 40% cotton with an A-line silhouette\
+    \ and lace-up design. Versatile for casual or evening wear. Price: $139.99.\n\n\
+    **Ginger Lace Trim Gown** \u2013 Luxurious satin with deep V-neckline, delicate\
+    \ lace trim, and empire waist. Flowy A-line skirt. Price: $179.99.\n\n**Gardenia\
+    \ Silk Maxi Dress** \u2013 100% silk with fitted bodice, V-neckline, spaghetti\
+    \ straps, and delicate floral print. Flowy maxi skirt. Price: $179.99.\n\nAll\
+    \ are lightweight and suitable for summer. Would you like more details on any\
+    \ of these?"
+  timing:
+    memory: 0.014206333085894585
+    planner: 0.0977107435464859
+    retriever_categories: 0.6451879944652319
+    retriever_retrieval: 0.06146948132663965
+    rails_input_check: 0.24647456873208284
+    first_token: 0.17703416384756565
+    chatter: 1.4809505688026547
+    rails_output_check: 0.21440211217850447
+    total: 2.693055145442486
+- query: Do you have white skirts?
+  content: No response collected.
+  response: "I found several skirts in our catalog, but none are specifically white.\
+    \ Here are the available skirts:\n\n- **Zestful Zebra Print Midi Skirt** \u2013\
+    \ Zebra print, 100% polyester, midi length, high-waisted A-line. Price: $79.99\n\
+    - **Honey Floral Print Midi Skirt** \u2013 Floral print on cotton, midi length,\
+    \ A-line silhouette. Price: $69.99\n- **Zephyr Linen Skirt** \u2013 Premium linen,\
+    \ A-line silhouette, concealed elastic waistband. Price: $39.99\n- **Satin Effect\
+    \ Midi Skirt in Blush Pink** \u2013 Satin effect in blush pink (also available\
+    \ in black), high-rise, elastic waistband, made from recycled polyester. Price:\
+    \ $45.90\n\nThe Satin Effect Midi Skirt does mention a \"satin effect in white\"\
+    \ in its description, but the product itself is listed as available in blush pink\
+    \ and black. If you'd like, I can check if there are other white skirts not currently\
+    \ shown, or you could consider the blush pink or black options of the satin skirt.\
+    \ Would you like more details on any of these?"
+  timing:
+    memory: 0.013399660587310791
+    planner: 0.09507530461996794
+    retriever_categories: 0.6983768325299025
+    retriever_retrieval: 0.06388744153082371
+    rails_input_check: 0.2559547461569309
+    first_token: 0.2724999375641346
+    chatter: 2.173661721870303
+    rails_output_check: 0.21659964323043823
+    total: 3.4494708022102714
+- query: Do you have pink skirts?
+  content: No response collected.
+  response: "Yes, we have a pink skirt available: **Satin Effect Midi Skirt in Blush\
+    \ Pink**. It's a high-rise midi skirt with an elastic waistband, made from 100%\
+    \ RCS-certified recycled polyester, and can be dressed up or down. It's also available\
+    \ in classic black. Price: $45.90.\n\nWe also have other skirts in the catalog:\n\
+    - **Honey Floral Print Midi Skirt** \u2013 $69.99\n- **Zestful Zebra Print Midi\
+    \ Skirt** \u2013 $79.99  \n- **Feminine Floral Maxi Skirt** \u2013 $59.99\n\n\
+    Would you like more details on any of these, or would you like to add the blush\
+    \ pink skirt to your cart?"
+  timing:
+    memory: 0.01392909325659275
+    planner: 0.10034690983593464
+    retriever_categories: 0.7487943265587091
+    retriever_retrieval: 0.051293060183525085
+    rails_input_check: 0.2571104886010289
+    first_token: 0.34740696381777525
+    chatter: 1.5835102098062634
+    rails_output_check: 0.22361811529845
+    total: 2.9104891354218125
+- query: Show me sleeveless tops that go with those.
+  content: No response collected.
+  response: "Here are the sleeveless tops available in our catalog:\n\n- **Green Meadow\
+    \ Sweater Top** \u2013 A soft, cable knit design in green, made from 100% cotton.\
+    \ Features a round neckline and long sleeves. Price: $49.99  \n- **Opulent Lace\
+    \ Sweater Top** \u2013 Features intricate lace detailing on shoulders and cuffs,\
+    \ made from 70% cashmere and 30% silk. Semi-fitted silhouette. Price: $99.99 \
+    \ \n- **Plush Pomeranian Sweater Top** \u2013 Crew neckline and long sleeves,\
+    \ made from 80% acrylic and 20% wool with a playful pomeranian print. Relaxed\
+    \ fit. Price: $139.99  \n- **Ruffled Silk Blend Top** \u2013 Delicate ruffles\
+    \ along neckline and cuffs, crafted from a luxurious silk blend. A-line silhouette.\
+    \ Price: $149.99  \n\nNote: All of the tops listed above have long sleeves. If\
+    \ you're looking for truly sleeveless options (e.g., tank tops, camisoles), none\
+    \ are currently available in the fresh catalog results. Would you like me to check\
+    \ for sleeveless styles, or would you like to see more details on any of these\
+    \ long-sleeve tops?"
+  timing:
+    memory: 0.015099440701305866
+    planner: 0.09737781435251236
+    retriever_categories: 0.8862400036305189
+    retriever_retrieval: 0.06290704850107431
+    rails_input_check: 0.25835078675299883
+    first_token: 0.3817983418703079
+    chatter: 2.4745530504733324
+    rails_output_check: 0.21715400647372007
+    total: 5.614795762114227
+- query: What shoes would match?
+  content: No response collected.
+  response: "I don't have any specific shoes in the current catalog to suggest, and\
+    \ your cart is empty. To recommend shoes that would match, I'd need to know what\
+    \ outfit you're considering\u2014such as a particular dress, skirt, or top you\
+    \ have in mind. Could you share which item you're thinking of pairing with shoes?\
+    \ For example, are you looking for shoes to go with the Satin Effect Midi Skirt\
+    \ in Blush Pink, or one of the other items you've been browsing?"
+  timing:
+    memory: 0.013727877289056778
+    planner: 0.10496516991406679
+    rails_input_check: 0.2593664135783911
+    first_token: 0.1062091626226902
+    chatter: 0.8419042006134987
+    rails_output_check: 0.20806862134486437
+    total: 1.3535856613889337
+- query: Can you show me a bag under $50 that matches the vibe?
+  content: No response collected.
+  response: "Here\u2019s a bag under $50 that matches a versatile, everyday vibe:\n\
+    \n**Qwen Crossbody Bag** \u2013 $39.99  \nCrafted from premium leather with a\
+    \ sleek, sophisticated look. Features a spacious interior, two main compartments,\
+    \ multiple pockets (including a secure zippered one), and an adjustable shoulder\
+    \ strap. Dimensions: 15\" H \xD7 10\" W \xD7 3\" D. Pairs well with both casual\
+    \ and formal outfits\u2014think jeans and a blouse or a dress and heels."
+  timing:
+    memory: 0.013289793394505978
+    planner: 0.09492674004286528
+    retriever_categories: 0.7001024559140205
+    retriever_retrieval: 0.06381769850850105
+    rails_input_check: 0.25827382877469063
+    first_token: 0.14620587788522243
+    chatter: 0.982201723381877
+    rails_output_check: 0.21167977526783943
+    total: 2.257319708354771

@@ -1,0 +1,106 @@
+set_name: conv_5.yaml
+results:
+- query: I want to build a matching outfit.
+  content: No response collected.
+  response: 'I''d be happy to help you build a matching outfit! To get started, could
+    you tell me a bit more about what you''re looking for? For example:
+
+
+    - What occasion is this outfit for (casual, work, special event)?
+
+    - Do you have any preferred colors or styles in mind?
+
+    - Are you looking for specific pieces like a top and bottom, or a complete set?
+
+
+    This will help me find the right matching pieces for you!'
+  timing:
+    memory: 0.01323799416422844
+    planner: 0.1059152353554964
+    rails_input_check: 0.3690237822011113
+    first_token: 0.09448314364999533
+    chatter: 0.7697954270988703
+    rails_output_check: 0.2071470869705081
+    total: 1.3870317675173283
+- query: Start with a beige top.
+  content: No response collected.
+  response: 'I don''t see any beige tops in the current catalog. The available options
+    are:
+
+
+    - **Green Meadow Sweater Top** (green, $49.99)
+
+    - **Plush Pomeranian Sweater Top** (with pomeranian print, $139.99)
+
+    - **Opulent Lace Sweater Top** (lace detailing, $99.99)
+
+    - **Ruffled Silk Blend Top** (ruffled neckline/cuffs, $149.99)
+
+
+    Would you like me to search for beige tops specifically, or would you consider
+    one of these colors instead?'
+  timing:
+    memory: 0.013383021578192711
+    planner: 0.09292877186089754
+    retriever_categories: 0.6864829668775201
+    retriever_retrieval: 0.06849757209420204
+    rails_input_check: 0.25440227147191763
+    first_token: 0.19105082750320435
+    chatter: 1.140490117482841
+    rails_output_check: 0.22089280933141708
+    total: 2.4125586915761232
+- query: What bottoms go well with that?
+  content: No response collected.
+  response: "I'd be happy to help you find bottoms that go well with a top! However,\
+    \ I need to know which specific top you're referring to in order to suggest matching\
+    \ bottoms. \n\nFrom our recent discussion, I see several tops were mentioned:\n\
+    - Green Meadow Sweater Top (green)\n- Plush Pomeranian Sweater Top (with pomeranian\
+    \ print)\n- Opulent Lace Sweater Top (lace detailing)\n- Ruffled Silk Blend Top\
+    \ (ruffled neckline/cuffs)\n\nCould you please tell me which of these tops you're\
+    \ interested in, or if you had a different top in mind? Once I know which top\
+    \ you're pairing with, I can suggest complementary bottoms like jeans, trousers,\
+    \ skirts, or other options that would work well for your outfit."
+  timing:
+    memory: 0.01392056792974472
+    planner: 0.10119900293648243
+    rails_input_check: 0.25657047517597675
+    first_token: 0.14620526414364576
+    chatter: 1.3485140511766076
+    rails_output_check: 0.21878882590681314
+    total: 1.8681909516453743
+- query: Any matching shoes?
+  content: No response collected.
+  response: "Here are the matching shoes available:\n\n- **Closed Toe Pumps in Red**\
+    \ \u2013 $49.9  \n- **Wine Red Heeled Pumps** \u2013 $179.99  \n- **Bow Trim Heeled\
+    \ Shoes in White** \u2013 $59.9  \n- **Soft Ballet Flats in Blush Pink Leather**\
+    \ \u2013 $49.9  \n\nAll are in stock and ready to pair with your outfit. Let me\
+    \ know if you'd like details on any specific style!"
+  timing:
+    memory: 0.014679348096251488
+    planner: 0.09394153393805027
+    retriever_categories: 0.7183959344401956
+    retriever_retrieval: 0.06887605134397745
+    rails_input_check: 0.26037860941141844
+    first_token: 0.27629781793802977
+    chatter: 1.0907760644331574
+    rails_output_check: 0.20950248837471008
+    total: 2.3928620414808393
+- query: Find a bag in the same color palette.
+  content: No response collected.
+  response: "Here are the bags available in the catalog:\n\n- **Qwen Crossbody Bag**\
+    \ \u2013 $39.99  \n- **Kaleidoscope Crossbody Bag** \u2013 $69.99  \n- **Ratan\
+    \ Basket Shoulder Bag** \u2013 $89.90  \n- **Elegant Embroidered Crossbody Bag**\
+    \ \u2013 $79.99  \n\nTo help you find a bag in the same color palette, could you\
+    \ let me know which color or colors you're aiming to match? For example, are you\
+    \ looking for something neutral, bold, or a specific shade? Once I know your preferred\
+    \ palette, I can suggest the best match from these options."
+  timing:
+    memory: 0.013949252665042877
+    planner: 0.0927214389666915
+    retriever_categories: 0.7211758689954877
+    retriever_retrieval: 0.051763261668384075
+    rails_input_check: 0.2562323026359081
+    first_token: 0.3385076876729727
+    chatter: 1.4107089703902602
+    rails_output_check: 0.21505521796643734
+    total: 2.697113996371627

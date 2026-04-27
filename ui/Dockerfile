@@ -29,7 +29,7 @@ RUN apt install -y nodejs
 WORKDIR /app
 
 COPY . .
-RUN ln -s /app/shared/images /app/public/images
+RUN rm -rf /app/public/images && ln -s /app/shared/images /app/public/images
 
 RUN npm install
 

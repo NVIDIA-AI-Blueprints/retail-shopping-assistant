@@ -8,6 +8,7 @@ import re
 from PIL import Image
 import logging
 import sys
+import os
 
 logging.basicConfig(
     level=logging.INFO,
@@ -24,7 +25,8 @@ def image_path_to_base64(
     """
     Converts an image to a base64 string.
     """
-    with open("/app/shared/" + image_path, "rb") as image_file:
+    shared_root = os.environ.get("SHARED_ROOT", "/app/shared")
+    with open(os.path.join(shared_root, image_path.lstrip("/")), "rb") as image_file:
         img = Image.open(image_file).convert("RGB")
         img.thumbnail((max_width, max_height))  # Resize with aspect ratio
 

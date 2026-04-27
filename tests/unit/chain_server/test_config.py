@@ -23,6 +23,8 @@ from chain_server.src.config import (
     load_config_with_override,
 )
 
+REPO_ROOT = Path(__file__).resolve().parents[3]
+
 
 @pytest.fixture
 def write_yaml(tmp_path: Path):
@@ -208,3 +210,34 @@ class TestLoadConfig:
 
         with pytest.raises(ValueError):
             load_config(str(path))
+
+
+class TestRepoPromptContracts:
+    def test_budget_only_browse_routes_to_chatter_for_clarification(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("CONFIG_OVERRIDE", raising=False)
+        config = load_config_with_override(
+            str(REPO_ROOT / "shared/configs/chain_server/config.yaml")
+        )
+
+        routing_prompt = config["routing_prompt"]
+
+        assert "UNDERSPECIFIED SHOPPING CONSTRAINTS -> chatter" in routing_prompt
+        assert "show me anything under $100" in routing_prompt
+        assert "show me dresses under $100" in routing_prompt
+        assert "IMAGE ATTACHED is yes" in routing_prompt
+
+    def test_chatter_asks_clarification_before_no_results(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("CONFIG_OVERRIDE", raising=False)
+        config = load_config_with_override(
+            str(REPO_ROOT / "shared/configs/chain_server/config.yaml")
+        )
+
+        chatter_prompt = config["chatter_prompt"]
+
+        assert "AMBIGUITY BEFORE RESULTS" in chatter_prompt
+        assert "NO RESULTS AFTER RETRIEVAL" in chatter_prompt
+        assert "ask one concise clarifying question" in chatter_prompt

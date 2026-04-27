@@ -1,0 +1,6 @@
+interface:
+  display_name: "Retail Test Runner"
+  short_description: "Run retail unit and integration tests"
+  default_prompt: "Use $retail-test-runner to run the Retail Shopping Assistant unit and integration tests."
+policy:
+  allow_implicit_invocation: true

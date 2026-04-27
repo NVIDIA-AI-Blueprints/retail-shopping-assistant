@@ -48,6 +48,16 @@ Thumbs.db
 # Logs
 *.log
 
+# Test artifacts
+.coverage
+htmlcov/
+.pytest_cache/
+tests/.coverage
+tests/htmlcov/
+tests/.pytest_cache/
+tests/integration/conversations/**/results/
+tests/integration/conversations/**/judge/
+
 # Environment variables
 .env
 .env.local 

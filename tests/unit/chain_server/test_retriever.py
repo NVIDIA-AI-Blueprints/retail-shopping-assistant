@@ -174,6 +174,54 @@ class TestExtractRetrievalInputs:
         assert categories == ["dress"]  # dedup + allowlist
         assert filters == {"max_price": 100.0}
 
+    async def test_extractor_prompt_rejects_generic_anything_entities(
+        self, retriever_agent: RetrieverAgent
+    ) -> None:
+        captured: Dict[str, Any] = {}
+        response = SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content=None,
+                        tool_calls=[
+                            SimpleNamespace(
+                                function=SimpleNamespace(
+                                    name="extract_retrieval_inputs",
+                                    arguments=json.dumps(
+                                        {
+                                            "search_entities": [],
+                                            "category_one": "dress",
+                                            "category_two": "bag",
+                                            "category_three": "shoes",
+                                            "max_price": 100,
+                                        }
+                                    ),
+                                )
+                            )
+                        ],
+                    )
+                )
+            ]
+        )
+
+        def _create(**kwargs: Any) -> Any:
+            captured.update(kwargs)
+            return response
+
+        retriever_agent.model = SimpleNamespace(
+            chat=SimpleNamespace(completions=SimpleNamespace(create=_create))
+        )
+
+        entities, _categories, filters = await retriever_agent._extract_retrieval_inputs(
+            State(user_id=1, query="show me anything under $100")
+        )
+
+        prompt = captured["messages"][0]["content"]
+        assert "Do NOT use generic browse words" in prompt
+        assert "show me anything under $100" in prompt
+        assert entities == []
+        assert filters == {"max_price": 100.0}
+
     async def test_invalid_categories_fall_back_to_allowlist(
         self, retriever_agent: RetrieverAgent
     ) -> None:

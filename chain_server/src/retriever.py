@@ -197,8 +197,12 @@ DECISION LOGIC (apply in order, stop at the first match):
       "do you have a bag for this outfit?"      -> search_entities: ["bag"]
 
 3. OPEN-ENDED BROWSE (no specific referent).
-   -> Extract the product type(s) verbatim from the current question.
-   -> Example: "I need a summer top" -> search_entities: ["summer top"]
+   Triggers: the question includes a product type, category, occasion, style, outfit goal, or image referent that can anchor catalog retrieval.
+   -> Extract the product target(s) verbatim from the current question.
+   -> Examples:
+      "I need a summer top"                  -> search_entities: ["summer top"]
+      "I need something for a party"         -> search_entities: ["party outfit"]
+   -> Do NOT use generic browse words such as "anything", "everything", "something", "items", "products", or "stuff" as search_entities when they are the only catalog target. For constraint-only requests like "show me anything under $100" or "what do you have on sale", return an empty search_entities list and preserve any explicit filters.
 
 CATEGORIES:
 - Choose up to three from the provided Available categories list ONLY.

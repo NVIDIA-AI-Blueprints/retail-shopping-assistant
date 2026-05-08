@@ -6,12 +6,12 @@ version: '3.8'
 services:
 
   nemotron:
-    image: nvcr.io/nim/nvidia/nemotron-3-super-120b-a12b:latest
+    image: nvcr.io/nim/nvidia/nemotron-3-super-120b-a12b:2.0.4
     ports:
       - "8000:8000"
     environment:
       - NGC_API_KEY=${NGC_API_KEY}
-      - NIM_PASSTHROUGH_ARGS=--enable-auto-tool-choice --tool-call-parser llama3_json
+      - NIM_PASSTHROUGH_ARGS=--enable-auto-tool-choice --tool-call-parser pythonic
     volumes:
       - ${LOCAL_NIM_CACHE}:/opt/nim/.cache
     user: "${UID:-1000}"
@@ -45,6 +45,12 @@ services:
     restart: "no"
     networks:
       - shopping-network
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/v1/health/ready').read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+      start_period: 60s
 
   embedqa:
     image: nvcr.io/nim/nvidia/nv-embedqa-e5-v5:1.6
@@ -65,6 +71,9 @@ services:
     restart: "no"
     networks:
       - shopping-network
+    depends_on:
+      nvclip:
+        condition: service_healthy
 
   content:
     image: nvcr.io/nim/nvidia/llama-3.1-nemoguard-8b-content-safety:1.10.1

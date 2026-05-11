@@ -11,7 +11,7 @@ services:
       - "8000:8000"
     environment:
       - NGC_API_KEY=${NGC_API_KEY}
-      - NIM_PASSTHROUGH_ARGS=--enable-auto-tool-choice --tool-call-parser pythonic
+      - NIM_PASSTHROUGH_ARGS=--enable-auto-tool-choice --tool-call-parser pythonic --max-num-seqs 256
     volumes:
       - ${LOCAL_NIM_CACHE}:/opt/nim/.cache
     user: "${UID:-1000}"

@@ -4,7 +4,7 @@ certifi==2026.5.20
 charset-normalizer==3.4.7
 click==8.2.1
 distro==1.9.0
-fastapi==0.136.3
+fastapi==0.136.1
 fonttools==4.63.0
 greenlet==3.2.3
 grpcio==1.67.1

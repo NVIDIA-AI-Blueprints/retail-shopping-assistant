@@ -1,0 +1,14 @@
+/chain_server/venv/
+/catalog_retriever/venv/
+/guardrails/venv/
+/memory_retriever/venv/
+/ui/node_modules/
+/ui/build/
+/catalog_retriever/volumes/
+/.local-run/
+/tests/.pytest_cache/
+/tests/htmlcov/
+/tests/integration/conversations/shopping/results/
+/tests/integration/conversations/shopping/judge/
+/tests/integration/conversations/rails/results/
+/tests/integration/conversations/rails/judge/

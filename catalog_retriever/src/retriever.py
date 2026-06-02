@@ -89,7 +89,7 @@ class Milvus:
     """
     Minimal Milvus adapter for the catalog retriever.
 
-    This keeps the small langchain-milvus API surface used by the retriever
+    This keeps the small vector-store API surface used by the retriever
     while relying directly on pymilvus so the vulnerable wrapper dependency is
     not required at runtime.
     """

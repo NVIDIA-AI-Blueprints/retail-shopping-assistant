@@ -21,6 +21,7 @@ import pytest
 from catalog_retriever.src import retriever as retriever_mod
 from catalog_retriever.src.retriever import (
     ImageEmbeddings,
+    Milvus,
     Retriever,
     RetrieverConfig,
     TextEmbeddings,
@@ -92,6 +93,101 @@ def _doc(
             "image": f"{name.lower().replace(' ', '_')}.jpg",
         },
     )
+
+
+# --------------------------------------------------------------------------->
+# Milvus adapter
+# --------------------------------------------------------------------------->
+
+
+class TestMilvusAdapter:
+    def test_add_and_search_uses_pymilvus_boundary(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: Dict[str, Any] = {}
+
+        class _Embeddings:
+            def embed_query(self, text: str) -> List[float]:
+                calls["query"] = text
+                return [1.0, 0.0]
+
+        class _Hit:
+            id = 42
+            score = 0.99
+            fields = {
+                "text": "Red Dress | bright | dress,day",
+                "name": "Red Dress",
+                "price": 12.5,
+                "vector": [1.0, 0.0],
+            }
+
+        class _FakeCollection:
+            def __init__(self, name: str, schema=None, using: str | None = None) -> None:
+                calls["collection"] = {"name": name, "schema": schema, "using": using}
+                self.records: List[Dict[str, Any]] = []
+
+            def create_index(self, **kwargs) -> None:
+                calls["index"] = kwargs
+
+            def load(self) -> None:
+                calls["loaded"] = True
+
+            def insert(self, records: List[Dict[str, Any]]) -> None:
+                self.records.extend(records)
+                calls["records"] = records
+
+            def flush(self) -> None:
+                calls["flushed"] = True
+
+            def search(self, **kwargs):
+                calls["search"] = kwargs
+                return [[_Hit()]]
+
+        monkeypatch.setattr(
+            retriever_mod.connections,
+            "connect",
+            lambda **kwargs: calls.setdefault("connect", kwargs),
+        )
+        monkeypatch.setattr(
+            retriever_mod.utility,
+            "has_collection",
+            lambda *_, **__: False,
+        )
+        monkeypatch.setattr(retriever_mod, "Collection", _FakeCollection)
+
+        db = Milvus(
+            embedding_function=_Embeddings(),  # type: ignore[arg-type]
+            collection_name="products",
+            connection_args={"uri": "http://milvus:19530"},
+            auto_id=True,
+            index_params={"metric_type": "COSINE"},
+        )
+        db.add_embeddings(
+            texts=["Red Dress | bright | dress,day"],
+            embeddings=[[1.0, 0.0]],
+            metadatas=[{"name": "Red Dress", "price": 12.5, "pk": "ignored"}],
+        )
+
+        results = db.similarity_search_with_relevance_scores("red", k=1)
+
+        assert calls["connect"]["uri"] == "http://milvus:19530"
+        assert calls["records"] == [
+            {
+                "text": "Red Dress | bright | dress,day",
+                "vector": [1.0, 0.0],
+                "name": "Red Dress",
+                "price": 12.5,
+            }
+        ]
+        assert calls["search"]["data"] == [[1.0, 0.0]]
+        assert calls["search"]["param"]["metric_type"] == "COSINE"
+        assert results[0][0].page_content == "Red Dress | bright | dress,day"
+        assert results[0][0].metadata == {
+            "name": "Red Dress",
+            "price": 12.5,
+            "pk": 42,
+        }
+        assert results[0][1] == pytest.approx(0.99)
 
 
 # --------------------------------------------------------------------------->

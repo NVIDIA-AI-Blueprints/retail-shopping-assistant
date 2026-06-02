@@ -55,6 +55,7 @@
     "form-data": "3.0.4",
     "nth-check": "2.1.1",
     "serialize-javascript": "7.0.5",
+    "shell-quote": "1.8.4",
     "underscore": "1.13.8",
     "workbox-webpack-plugin": "7.4.1"
   },

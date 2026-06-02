@@ -15,7 +15,7 @@
     "@types/react": "^18.2.48",
     "@types/react-dom": "^18.2.18",
     "@types/showdown": "^2.0.6",
-    "dompurify": "^3.0.8",
+    "dompurify": "^3.4.7",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-scripts": "^5.0.1",
@@ -51,9 +51,12 @@
     ]
   },
   "overrides": {
+    "@tootallnate/once": "2.0.1",
     "form-data": "3.0.4",
-    "serialize-javascript": "6.0.2",
-    "workbox-webpack-plugin": "7.3.0"
+    "nth-check": "2.1.1",
+    "serialize-javascript": "7.0.5",
+    "underscore": "1.13.8",
+    "workbox-webpack-plugin": "7.4.1"
   },
   "devDependencies": {
     "autoprefixer": "^10.4.13",

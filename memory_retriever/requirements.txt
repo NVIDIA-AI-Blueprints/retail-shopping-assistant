@@ -1,7 +1,7 @@
 annotated-types==0.7.0
 anyio==4.13.0
 click==8.2.1
-fastapi==0.136.3
+fastapi==0.136.1
 greenlet==3.2.3
 h11==0.16.0
 idna==3.17

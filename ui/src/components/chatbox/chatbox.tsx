@@ -256,21 +256,6 @@ const Chatbox: React.FC<ChatboxProps> = ({ setNewRenderImage }) => {
       const reader = response.body.getReader();
       const decoder = new TextDecoder('utf-8');
       let fullResponse = "";
-      const showStreamError = (payload: unknown) => {
-        const errorMessage = typeof payload === "string" 
-          ? payload 
-          : "The assistant could not complete the request.";
-
-        setMessages(prev => {
-          const updated = prev.filter(msg => msg.content !== 'loader');
-          return [...updated, {
-            role: 'assistant',
-            content: `Error: ${errorMessage}`,
-            productName: ""
-          }];
-        });
-        toast.error(errorMessage);
-      };
 
       while (true) {
         const { value, done } = await reader.read();
@@ -314,10 +299,6 @@ const Chatbox: React.FC<ChatboxProps> = ({ setNewRenderImage }) => {
                 };
                 return updated;
               });
-            } else if (type === 'error') {
-              showStreamError(payload);
-              setIsLoading(false);
-              return;
             }
 
             // Update assistant message

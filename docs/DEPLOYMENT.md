@@ -97,6 +97,8 @@ This guide covers deploying the Retail Shopping Assistant in various environment
 - Data privacy considerations
 - API rate limits
 
+> **⚠️ `nvclip` is deprecated.** Its hosted endpoint on the NVIDIA API Catalog (`api.build.nvidia.com`) is no longer available, so image (visual) search does **not** work under Cloud NIM Deployment as-is. **Workaround:** run `nvclip` as a local NIM (from `docker-compose-nim-local.yaml`) and point `image_embed_port` at the local container, even when other endpoints stay on the cloud.
+
 ### Option 3: Hybrid Deployment
 
 **Best for**: Production with mixed requirements
@@ -478,6 +480,8 @@ text_model_name: "nvidia/nv-embedqa-e5-v5"
 image_embed_port: "https://api.build.nvidia.com/v1"
 image_model_name: "nvidia/nvclip"
 ```
+
+> **⚠️ `nvclip` is deprecated.** The hosted `api.build.nvidia.com` endpoint for `nvclip` is no longer available, so the cloud image-embedding config above will not work as-is. **Workaround:** deploy `nvclip` as a local NIM (from `docker-compose-nim-local.yaml`) and set `image_embed_port` to the local container (e.g. `http://nvclip:8000/v1`).
 
 **Guardrails Override** (`guardrails/config/config-build.yml`):
 ```yaml

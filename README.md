@@ -111,6 +111,8 @@ For detailed architecture information, see [Architecture Overview](docs/README.m
    docker compose -f docker-compose.yaml up -d --build
    ```
 
+   > **⚠️ `nvclip` is deprecated.** Its hosted endpoint on the NVIDIA API Catalog (`api.build.nvidia.com`) is no longer available, so image (visual) search does **not** work under Option B as-is. **Workaround:** deploy `nvclip` as a local NIM (from `docker-compose-nim-local.yaml`) and point `image_embed_port` at it — see the [Deployment Guide](docs/DEPLOYMENT.md).
+
 5. **Access the application**: Open your browser to `http://localhost:3000`
 
 6. **Stop the containers**:
@@ -179,7 +181,7 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 
 ### Related Projects
 - [NVIDIA Retrieval QA](https://catalog.ngc.nvidia.com/orgs/nim/teams/nvidia/containers/nv-embedqa-e5-v5): Embedding model for semantic search
-- [NV-CLIP](https://catalog.ngc.nvidia.com/orgs/nim/teams/nvidia/containers/nvclip): Visual understanding model
+- [NV-CLIP](https://catalog.ngc.nvidia.com/orgs/nim/teams/nvidia/containers/nvclip): Visual understanding model _(deprecated — hosted/cloud endpoint no longer available; run as a local NIM)_
 - [Nemotron 3 Super](https://catalog.ngc.nvidia.com/orgs/nim/teams/nvidia/containers/nemotron-3-super-120b-a12b): Large language model
 
 ## License

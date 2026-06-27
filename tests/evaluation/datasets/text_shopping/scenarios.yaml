@@ -1,2 +1,161 @@
 version: 1
-scenarios: []
+scenarios:
+  - id: text_budget_work_bag
+    target_turns: 8
+    brief: "Shopper wants a work-appropriate bag under a firm budget and will compare options before deciding whether to add one to cart."
+    shopper_goal: "Find a polished bag under $60 that works for office use and errands."
+    constraints:
+      - "Firm budget: $60 maximum."
+      - "Do not upsell over budget."
+      - "Prefer practical daily-use details over purely formal styling."
+    shopper_behavior:
+      type: miserly_strict
+      notes: "Rejects over-budget options immediately and asks for the cheapest acceptable polished choice."
+    language_cues:
+      - "I really mean under $60."
+      - "Do not show me anything above that."
+      - "Which one is the best value, not just the prettiest?"
+
+  - id: text_wedding_guest_shoes
+    target_turns: 8
+    brief: "Shopper is choosing shoes for a dressy event and will refine by comfort, color, and heel height."
+    shopper_goal: "Find dressy shoes suitable for a wedding guest outfit."
+    constraints:
+      - "Prioritize comfort and stable heels."
+      - "Avoid casual sandals unless the shopper asks for them."
+      - "Keep recommendations grounded in available catalog details."
+    shopper_behavior:
+      type: picky_strict
+      notes: "Pushes on comfort, heel height, and occasion fit before accepting a recommendation."
+    language_cues:
+      - "I need these to look dressy but not punish my feet."
+      - "Be honest about the heel."
+      - "If they are too casual, skip them."
+
+  - id: text_summer_outfit_under_150
+    target_turns: 8
+    brief: "Shopper wants a complete summer outfit and will ask for substitutions to stay within budget."
+    shopper_goal: "Build an outfit with a top or dress, shoes, and one accessory for no more than $150."
+    constraints:
+      - "Total budget: $150 maximum."
+      - "Must include at least two product categories."
+      - "Avoid recommending unavailable or uncataloged items."
+    shopper_behavior:
+      type: greedy_value_maximizer
+      notes: "Tries to squeeze the most complete outfit possible into the budget and asks for substitutions when totals are close."
+    language_cues:
+      - "Can we fit one more piece under the total?"
+      - "Give me the most outfit for the money."
+      - "Swap something if it breaks $150."
+
+  - id: text_black_camisole_styling
+    target_turns: 8
+    brief: "Shopper asks about a named top, then explores styling and cart intent across several follow-ups."
+    shopper_goal: "Learn whether the Classic Silk Camisole in Black fits a polished office-to-evening wardrobe."
+    constraints:
+      - "Answer product-detail questions from catalog facts only."
+      - "Recommend pairings only from available catalog products."
+      - "Do not add to cart until explicitly requested."
+    shopper_behavior:
+      type: detail_oriented
+      notes: "Asks follow-up questions about material, styling range, and whether the item is worth adding."
+    language_cues:
+      - "Tell me what you actually know about it."
+      - "Would this work under a blazer?"
+      - "Do not add it yet; I am still deciding."
+
+  - id: text_find_anything_under_50_clarify
+    target_turns: 8
+    brief: "Shopper starts with an underspecified browse request and expects the assistant to narrow the search before recommending products."
+    shopper_goal: "Find something under $50 after the assistant asks what category or occasion matters."
+    constraints:
+      - "Initial request gives only a budget."
+      - "Assistant should not guess a random category."
+      - "Final recommendations must stay under $50."
+    shopper_behavior:
+      type: miserly_underspecified
+      notes: "Starts vague and cheap, then narrows only after being asked a concise clarification."
+    language_cues:
+      - "Show me anything cheap."
+      - "Under $50, no exceptions."
+      - "Fine, make it shoes or accessories."
+
+  - id: text_cart_pronoun_resolution
+    target_turns: 8
+    brief: "Shopper discusses two products, then uses pronouns while asking to add, remove, and total the cart."
+    shopper_goal: "Add the intended product to cart, verify the cart, then remove the correct item if the shopper changes their mind."
+    constraints:
+      - "Pronouns refer to the most recently discussed product unless the shopper clarifies otherwise."
+      - "Cart total must use catalog prices."
+      - "No cart mutation should be claimed without tool success."
+    shopper_behavior:
+      type: impatient_decisive
+      notes: "Uses shorthand and pronouns after product comparisons, then changes their mind about cart contents."
+    language_cues:
+      - "Add that one."
+      - "Actually remove it."
+      - "What is my total now?"
+
+  - id: text_no_results_recovery
+    target_turns: 8
+    brief: "Shopper asks for a constrained item that may not exist, then relaxes one constraint after a no-results response."
+    shopper_goal: "Find the closest available alternative after an initial no-results case."
+    constraints:
+      - "Acknowledge no matching products clearly."
+      - "Do not fabricate nonexistent catalog items."
+      - "Offer a practical refinement path."
+    shopper_behavior:
+      type: strict_then_flexible
+      notes: "Begins with a narrow must-have request, then relaxes one condition if no match exists."
+    language_cues:
+      - "I only want that exact kind of thing."
+      - "If nothing matches, say so."
+      - "Okay, what is the closest option if I relax that?"
+
+  - id: text_material_and_care_questions
+    target_turns: 8
+    brief: "Shopper asks detailed material and care questions for apparel before deciding whether it suits frequent wear."
+    shopper_goal: "Compare apparel options by material, care burden, and versatility."
+    constraints:
+      - "Answer only with catalog-supported material and care facts."
+      - "If a requested fact is absent, say so."
+      - "Avoid unsupported durability claims."
+    shopper_behavior:
+      type: skeptical_researcher
+      notes: "Probes for material, care burden, and repeated-wear practicality before choosing."
+    language_cues:
+      - "What is it made of?"
+      - "How annoying is it to care for?"
+      - "If the catalog does not say, tell me that."
+
+  - id: text_accessory_for_existing_outfit
+    target_turns: 8
+    brief: "Shopper describes an outfit they already own and asks for an accessory that fits budget, occasion, and practicality."
+    shopper_goal: "Pick one accessory for a weekend brunch outfit."
+    constraints:
+      - "Budget: $80 maximum."
+      - "Prefer practical everyday use over one-time occasion styling."
+      - "Explain why the final choice fits the stated outfit."
+    shopper_behavior:
+      type: practical_value_seeker
+      notes: "Wants a useful accessory that works beyond one outfit and resists impractical picks."
+    language_cues:
+      - "I want something I can use again."
+      - "Keep it under $80."
+      - "Why does that work with what I already own?"
+
+  - id: text_compare_value_between_similar_items
+    target_turns: 8
+    brief: "Shopper compares similar products and asks which is the better value for repeated use."
+    shopper_goal: "Choose between two similar catalog items based on price, versatility, and care."
+    constraints:
+      - "Do not choose solely by lowest price."
+      - "Use catalog facts for material, care, dimensions, and price."
+      - "Be explicit about tradeoffs."
+    shopper_behavior:
+      type: value_comparator
+      notes: "Challenges the assistant to justify which option is worth buying for repeated use."
+    language_cues:
+      - "Which one is actually the better value?"
+      - "Do not just pick the cheapest."
+      - "What am I giving up with each one?"

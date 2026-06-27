@@ -105,8 +105,8 @@ against a deployed stack.
 
 The `evaluation/` folder contains the first Challenger/Judge scaffold. It is
 not executable yet; it captures the planned directory shape, model
-configuration references, judge rules, starter text/image shopping datasets,
-and ignored generated-results location.
+configuration references, judge rules, text/image shopping scenario briefs,
+generated image-shopping assets, and ignored generated-results location.
 
 Start with:
 
@@ -114,7 +114,12 @@ Start with:
 - `evaluation/eval_config.yaml`: non-secret environment variable references
   for Challenger and Judge models.
 - `evaluation/judge_rules.md`: optional qualitative scoring rubric.
-- `evaluation/datasets/`: starter scenario files for future Challenger runs.
+- `evaluation/datasets/text_shopping/scenarios.yaml`: text-only scenario
+  briefs with shopper behavior and language cues.
+- `evaluation/datasets/image_shopping/scenarios.yaml`: image-driven scenario
+  briefs that reference asset sidecar ids.
+- `evaluation/datasets/image_shopping/assets/`: generated product images and
+  YAML sidecars for image-shopping evaluation.
 
 Generated outputs should go under `evaluation/results/` and are ignored except
 for `evaluation/results/.gitkeep`.

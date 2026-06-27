@@ -1,2 +1,171 @@
 version: 1
-scenarios: []
+scenarios:
+  - id: image_find_similar_under_budget
+    target_turns: 8
+    image_id: classic_black_patent_leather_purse
+    brief: "Shopper uploads an image and asks for this or a very similar item under a firm budget."
+    shopper_goal: "Find a catalog item similar to the uploaded image for no more than $60."
+    constraints:
+      - "Use the attached image as the main reference."
+      - "Firm budget: $60 maximum."
+      - "Do not send the sidecar description to the shopping agent."
+    shopper_behavior:
+      type: miserly_strict
+      notes: "Uses the image as proof of what they want and rejects anything over budget."
+    language_cues:
+      - "I want this look, but under $60."
+      - "Do not show me anything more expensive."
+      - "Use the image, not a random bag search."
+
+  - id: image_special_occasion_option
+    target_turns: 8
+    image_id: embroidered_cream_purse_with_gold_detail
+    brief: "Shopper uploads an image and asks whether the store has this or something suitable for a special occasion."
+    shopper_goal: "Find a relevant catalog option for a dressy event based on the uploaded image."
+    constraints:
+      - "Use only `image_id` to reference the image asset."
+      - "Keep recommendations grounded in returned catalog items."
+      - "Do not duplicate image-sidecar descriptions in the scenario."
+    shopper_behavior:
+      type: occasion_focused
+      notes: "Cares more about dressy fit and occasion appropriateness than finding the absolute cheapest item."
+    language_cues:
+      - "Does the store have something like this for a formal event?"
+      - "I need it to feel special-occasion, not everyday."
+      - "If there is a cheaper similar option, tell me."
+
+  - id: image_casual_weekend_alternative
+    target_turns: 8
+    image_id: ratan_basket_shoulder_bag
+    brief: "Shopper uploads an image and asks for a casual weekend option like it, then asks about practicality."
+    shopper_goal: "Find a practical casual accessory based on the uploaded image."
+    constraints:
+      - "Use the attached image as the reference."
+      - "Prioritize practical details when available."
+      - "Avoid unsupported claims about capacity or durability."
+    shopper_behavior:
+      type: practical_skeptic
+      notes: "Likes the image but pushes on whether the similar item is useful for casual everyday plans."
+    language_cues:
+      - "I like this vibe, but is it practical?"
+      - "Could I use it for a weekend market or brunch?"
+      - "Do not oversell it if the details are not listed."
+
+  - id: image_find_dress_and_style
+    target_turns: 8
+    image_id: black_polka_dotted_slip_dress
+    brief: "Shopper uploads an image, asks for this style, and then asks how to complete the outfit."
+    shopper_goal: "Find the closest catalog match to the image and suggest compatible catalog items."
+    constraints:
+      - "The initial product search must use the attached image."
+      - "Outfit suggestions must use available catalog products."
+      - "Do not claim image details beyond what retrieval/catalog results support."
+    shopper_behavior:
+      type: greedy_outfit_builder
+      notes: "Starts with the image match, then tries to build as much of a complete outfit as possible from the catalog."
+    language_cues:
+      - "Find this style first."
+      - "Now build the rest of the outfit around it."
+      - "Keep the add-ons reasonable, not luxury picks."
+
+  - id: image_compare_two_price_points
+    target_turns: 8
+    image_id: satin_effect_midi_skirt_in_black
+    brief: "Shopper uploads an image, asks for matching or similar catalog results, and then compares price and versatility."
+    shopper_goal: "Decide whether the closest match is a good value for repeated wear."
+    constraints:
+      - "Use the uploaded image for the initial retrieval."
+      - "Compare only catalog-grounded items."
+      - "Be clear about tradeoffs."
+    shopper_behavior:
+      type: value_comparator
+      notes: "Uses the uploaded item as the anchor and asks whether similar products justify their price."
+    language_cues:
+      - "Find the closest thing to this."
+      - "Is that actually worth the price?"
+      - "Would I wear it enough to justify it?"
+
+  - id: image_footwear_comfort_filter
+    target_turns: 8
+    image_id: flat_strappy_black_sandals_with_buckle_embellishment
+    brief: "Shopper uploads an image, asks for similar footwear, then filters by comfort and casual use."
+    shopper_goal: "Find a similar catalog footwear option that fits casual wear and comfort constraints."
+    constraints:
+      - "Use the image as the search reference."
+      - "Do not overstate comfort beyond catalog facts."
+      - "Respect any later budget constraint."
+    shopper_behavior:
+      type: comfort_strict
+      notes: "Wants the visual style from the image but repeatedly filters on comfort and casual usability."
+    language_cues:
+      - "I want something like this, but comfortable."
+      - "Would I regret walking around in these?"
+      - "Skip anything that sounds too fussy."
+
+  - id: image_dressy_shoe_budget
+    target_turns: 8
+    image_id: bow_trim_heeled_shoes_in_white
+    brief: "Shopper uploads an image and asks for this or a similar dressy item under budget."
+    shopper_goal: "Find an image-relevant dressy footwear option under $60."
+    constraints:
+      - "Firm budget: $60 maximum."
+      - "Use catalog prices only."
+      - "Do not recommend over-budget options as matches."
+    shopper_behavior:
+      type: miserly_dressy
+      notes: "Wants the dressy image style but treats the budget as non-negotiable."
+    language_cues:
+      - "This style, but under $60."
+      - "If it costs more, it is not an option."
+      - "Give me the dressiest thing that still fits the budget."
+
+  - id: image_bold_accessory_check
+    target_turns: 8
+    image_id: acetate_oval_sunglasses_in_red
+    brief: "Shopper uploads an image and asks whether the store carries something with the same overall vibe."
+    shopper_goal: "Find an image-relevant accessory and decide whether to add it to a summer outfit."
+    constraints:
+      - "Use only catalog-grounded facts."
+      - "If the shopper asks for outfit pairings, use catalog products."
+      - "Do not add to cart before explicit request."
+    shopper_behavior:
+      type: expressive_impulse_shopper
+      notes: "Responds to bold visual style, asks for outfit validation, and may quickly shift into cart intent."
+    language_cues:
+      - "I want this same kind of bold vibe."
+      - "Would this make a summer outfit more fun?"
+      - "Okay, maybe add it, but tell me the price first."
+
+  - id: image_top_layering_question
+    target_turns: 8
+    image_id: classic_silk_camisole_in_black
+    brief: "Shopper uploads an image and asks if there is a comparable item that can be layered for work."
+    shopper_goal: "Find a relevant top and understand how it could fit a work outfit."
+    constraints:
+      - "Use the attached image for retrieval."
+      - "Layering advice must stay grounded in available catalog items."
+      - "Say when a requested detail is not in catalog data."
+    shopper_behavior:
+      type: strict_workwear_filter
+      notes: "Uses the image as style reference but rejects options that do not sound office-appropriate."
+    language_cues:
+      - "Could I wear something like this to work?"
+      - "I need it to layer cleanly."
+      - "If you do not know the fit detail, say that."
+
+  - id: image_cart_followup_with_pronouns
+    target_turns: 8
+    image_id: soft_ballet_flats_in_blush_pink_leather
+    brief: "Shopper uploads an image, asks for the closest match, then uses pronouns while asking about price and cart actions."
+    shopper_goal: "Find the image-relevant product, verify price, and add the intended item only after explicit intent."
+    constraints:
+      - "Use the image for initial discovery."
+      - "Resolve pronouns against the current image-grounded product discussion."
+      - "Cart actions require explicit shopper intent and successful mutation."
+    shopper_behavior:
+      type: impatient_pronoun_user
+      notes: "After the image match is discussed, uses pronouns and short commands while checking price and cart state."
+    language_cues:
+      - "How much is that one?"
+      - "Add it if it is the closest match."
+      - "Actually, what is in my cart now?"

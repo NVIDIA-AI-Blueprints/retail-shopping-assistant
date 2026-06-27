@@ -23,6 +23,11 @@ tests/
 │   ├── time_breakdown.py
 │   ├── quality_plots.py
 │   └── run_tests.sh
+├── evaluation/             # Challenger/Judge planning scaffold
+│   ├── PLAN.md
+│   ├── eval_config.yaml
+│   ├── judge_rules.md
+│   └── datasets/
 └── examples/               # YAML conversation scenarios consumed by integration scripts
 ```
 
@@ -95,3 +100,21 @@ bash integration/run_tests.sh
 These are *not* part of the unit suite and are not collected by `pytest`
 by default. They are intended for periodic quality/performance evaluation
 against a deployed stack.
+
+## Evaluation scaffold
+
+The `evaluation/` folder contains the first Challenger/Judge scaffold. It is
+not executable yet; it captures the planned directory shape, model
+configuration references, judge rules, starter text/image shopping datasets,
+and ignored generated-results location.
+
+Start with:
+
+- `evaluation/PLAN.md`: design and first implementation slice.
+- `evaluation/eval_config.yaml`: non-secret environment variable references
+  for Challenger and Judge models.
+- `evaluation/judge_rules.md`: optional qualitative scoring rubric.
+- `evaluation/datasets/`: starter scenario files for future Challenger runs.
+
+Generated outputs should go under `evaluation/results/` and are ignored except
+for `evaluation/results/.gitkeep`.

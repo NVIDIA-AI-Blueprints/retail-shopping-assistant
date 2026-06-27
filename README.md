@@ -150,6 +150,7 @@ The Brev deployment guide walks you through the entire process from creating a L
 - **[User Guide](docs/USER_GUIDE.md)**: How to use the application
 - **[API Documentation](docs/API.md)**: Complete API reference
 - **[Deployment Guide](docs/DEPLOYMENT.md)**: Installation and setup instructions
+- **[Testing and Evaluation](tests/README.md)**: Unit, integration, and Challenger evaluation scaffold
 - **[Documentation Hub](docs/README.md)**: Complete documentation index
 
 ## Contribution Guidelines
@@ -201,5 +202,4 @@ Use of the product catalog data in the retail shopping assistant is governed by 
 [Back to Top](#top)
 
 </div>
-
 

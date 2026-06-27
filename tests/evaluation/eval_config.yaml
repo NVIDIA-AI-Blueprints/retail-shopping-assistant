@@ -1,0 +1,40 @@
+version: 1
+
+challenger_model:
+  provider: openai_compatible
+  base_url_env: "CHALLENGER_MODEL_BASE_URL"
+  model_env: "CHALLENGER_MODEL_NAME"
+  api_key_env: "CHALLENGER_MODEL_API_KEY"
+  temperature: 0.7
+  max_tokens: 512
+
+judge_model:
+  enabled: false
+  provider: openai_compatible
+  base_url_env: "JUDGE_MODEL_BASE_URL"
+  model_env: "JUDGE_MODEL_NAME"
+  api_key_env: "JUDGE_MODEL_API_KEY"
+  temperature: 0.0
+  max_tokens: 768
+  rules_file: "judge_rules.md"
+
+target_agent:
+  base_url: "http://localhost:8009"
+  endpoint: "/query/timing"
+  timeout_seconds: 60
+
+run:
+  datasets:
+    - text_shopping
+    - image_shopping
+  scenario_limit_per_dataset: 10
+  random_seed: 7
+  save_returned_images: true
+  send_asset_descriptions_to_agent: false
+  compare_to: null
+
+conversation:
+  default_turns: 8
+  min_turns: 6
+  max_turns: 10
+  stop_when_goal_complete: true

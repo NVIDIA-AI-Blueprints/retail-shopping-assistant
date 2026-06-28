@@ -1,13 +1,13 @@
 ---
 name: retail-local-runner
-description: Start, stop, configure, inspect, and troubleshoot the Retail Shopping Assistant locally with backend Python and React code outside containers, local Milvus infra containers, and remote NIM endpoints from docker-compose-nim-local.yaml.
+description: Start, stop, configure, inspect, redeploy, and troubleshoot the Retail Shopping Assistant locally or through the Docker Compose cloud blueprint, including /home/ubuntu/Personal deploy files, local app processes, local Milvus infra containers, and remote NIM endpoints from docker-compose-nim-local.yaml.
 metadata:
   short-description: Run Retail Shopping Assistant locally
 ---
 
 # Retail Local Runner
 
-Use this skill when the user wants to run, stop, configure, inspect, or troubleshoot the Retail Shopping Assistant from this repository with app code running locally.
+Use this skill when the user wants to run, stop, configure, inspect, redeploy, or troubleshoot the Retail Shopping Assistant from this repository.
 
 ## Core Workflow
 
@@ -25,6 +25,52 @@ Available commands:
 - `stop`: stop only tracked local app/UI processes and local Milvus infra containers. Never stop remote NIMs.
 - `status`: show tracked process, port, health, and Milvus infra status.
 - `logs`: print recent logs from `.local-run/logs`.
+
+## Personal Cloud Blueprint Redeploy
+
+When the user asks to redeploy the blueprint, redeploy from `/home/ubuntu/Personal`
+instead of rediscovering env files or creating a repo-root `.env`.
+
+Required Personal files:
+
+- `/home/ubuntu/Personal/retail-shopping-assistant-cloud.env`
+- `/home/ubuntu/Personal/deploy-retail-shopping-assistant-cloud.sh`
+- `/home/ubuntu/Personal/test-retail-shopping-assistant-health.sh`
+
+Use this exact workflow:
+
+```bash
+bash /home/ubuntu/Personal/deploy-retail-shopping-assistant-cloud.sh
+```
+
+The helper sources the Personal env file, writes ignored override files under
+`shared/configs/*/$CONFIG_OVERRIDE`, runs:
+
+```bash
+docker compose -f docker-compose.yaml up -d --build --force-recreate --remove-orphans
+```
+
+and then runs health smoke tests.
+
+Do not print raw env values. If validation is needed before deployment, print
+only variable names with values redacted. Do not create or copy a repo-root
+`.env`; the Personal env file is the source of truth for this workflow.
+
+After the helper exits, verify with:
+
+```bash
+set -a && source /home/ubuntu/Personal/retail-shopping-assistant-cloud.env && set +a
+docker compose -f docker-compose.yaml ps
+curl -fsS --max-time 5 http://localhost:8009/health
+curl -fsS --max-time 5 http://localhost:8010/health
+curl -fsS --max-time 5 http://localhost:8011/health
+curl -fsS --max-time 5 http://localhost:3000 >/dev/null && echo ui_ok
+```
+
+If the helper or env file is missing, inspect
+`/home/ubuntu/Personal/retail-shopping-assistant-cloud-deploy.md` for the
+current runbook and report the missing file. Do not invent private endpoint
+values.
 
 ## Stop Workflow
 

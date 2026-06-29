@@ -1,0 +1,81 @@
+version: 1
+
+local_nims:
+  required_env:
+    - NGC_API_KEY
+    - LOCAL_NIM_CACHE
+
+  services:
+    nemotron:
+      compose_file: docker-compose-nim-local.yaml
+      compose_service: nemotron
+      base_url: "http://nemotron:8000/v1"
+      model: "nvidia/nemotron-3-super-120b-a12b"
+
+    embedqa:
+      compose_file: docker-compose-nim-local.yaml
+      compose_service: embedqa
+      base_url: "http://embedqa:8000/v1"
+      model: "nvidia/nv-embedqa-e5-v5"
+
+    nvclip:
+      compose_file: docker-compose-nim-local.yaml
+      compose_service: nvclip
+      base_url: "http://nvclip:8000/v1"
+      model: "nvidia/nvclip"
+
+    content_safety_nim:
+      compose_file: docker-compose-nim-local.yaml
+      compose_service: content
+      base_url: "http://content:8000/v1"
+      model: "nvidia/llama-3.1-nemoguard-8b-content-safety"
+
+    topic_control_nim:
+      compose_file: docker-compose-nim-local.yaml
+      compose_service: topic_control
+      base_url: "http://topic_control:8000/v1"
+      model: "nvidia/llama-3.1-nemoguard-8b-topic-control"
+
+models:
+  app_llm:
+    source: endpoint
+    provider: openai_compatible
+    base_url_env: LLM_BASE_URL
+    base_url: "https://integrate.api.nvidia.com/v1"
+    model_env: LLM_MODEL
+    model: "nvidia/nemotron-3-super-120b-a12b"
+    api_key_env: LLM_API_KEY
+
+  text_embedding:
+    source: endpoint
+    provider: openai_compatible
+    base_url_env: TEXT_EMBED_BASE_URL
+    base_url: "https://integrate.api.nvidia.com/v1"
+    model_env: TEXT_EMBED_MODEL
+    model: "nvidia/llama-nemotron-embed-1b-v2"
+    api_key_env: EMBED_API_KEY
+
+  image_embedding:
+    source: endpoint
+    provider: openai_compatible
+    base_url_env: IMAGE_EMBED_BASE_URL
+    base_url: "https://integrate.api.nvidia.com/v1"
+    model_env: IMAGE_EMBED_MODEL
+    model: "nvidia/nvclip"
+    api_key_env: EMBED_API_KEY
+
+  content_safety:
+    source: endpoint
+    provider: nim_guardrails
+    base_url_env: RAILS_CONTENT_BASE_URL
+    base_url: "https://integrate.api.nvidia.com/v1"
+    model: "nvidia/llama-3.1-nemoguard-8b-content-safety"
+    api_key_env: RAIL_API_KEY
+
+  topic_control:
+    source: endpoint
+    provider: nim_guardrails
+    base_url_env: RAILS_TOPIC_BASE_URL
+    base_url: "https://integrate.api.nvidia.com/v1"
+    model: "nvidia/llama-3.1-nemoguard-8b-topic-control"
+    api_key_env: RAIL_API_KEY

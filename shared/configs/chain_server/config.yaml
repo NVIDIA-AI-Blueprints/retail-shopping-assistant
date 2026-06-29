@@ -1,5 +1,3 @@
-llm_port: "http://nemotron:8000/v1"
-llm_name: "nvidia/nemotron-3-super-120b-a12b"
 retriever_port: "http://catalog-retriever:8010"
 memory_port: "http://memory-retriever:8011"
 rails_port: "http://rails:8012"

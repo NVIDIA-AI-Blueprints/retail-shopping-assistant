@@ -18,6 +18,7 @@ testable as a library we:
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -49,7 +50,7 @@ def _install_fake_nemoguardrails(
         def __init__(self, config_path: str) -> None:
             self.config_path = config_path
             # Mirror the real type's ``.models`` structure so
-            # ``apply_endpoint_overrides`` could operate on it if invoked.
+            # ``apply_model_config`` could operate on it if invoked.
             self.models = []
 
         @classmethod
@@ -139,12 +140,12 @@ class TestModuleImportWiring:
         rails = rails_module.Rails().getGuardRails()
         assert rails is rails_module.guardRails
 
-    def test_rails_config_from_path_called_with_container_path(
+    def test_rails_config_from_path_called_with_selected_config_root(
         self, rails_module
     ) -> None:
         created = rails_module._test_created
-        # Singleton is built in the module body with this hardcoded path.
-        assert created["from_path_arg"] == "/app/shared/configs/rails"
+        config_root = os.environ.get("SHARED_CONFIG_ROOT", "/app/shared/configs")
+        assert created["from_path_arg"] == str(Path(config_root) / "rails")
 
 
 class TestBaseRails:

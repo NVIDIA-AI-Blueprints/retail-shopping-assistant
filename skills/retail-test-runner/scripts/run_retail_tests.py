@@ -89,18 +89,19 @@ def preflight_integration(args: argparse.Namespace) -> int:
         return 2
 
     url = f"http://{args.host}:{args.port}"
+    health_url = f"{url}/health"
     try:
-        with urlopen(url, timeout=3) as response:
+        with urlopen(health_url, timeout=3) as response:
             if response.status >= 500:
-                print(f"Service preflight returned HTTP {response.status}: {url}", file=sys.stderr)
+                print(f"Service preflight returned HTTP {response.status}: {health_url}", file=sys.stderr)
                 return 2
     except HTTPError as exc:
         if exc.code >= 500:
-            print(f"Service preflight returned HTTP {exc.code}: {url}", file=sys.stderr)
+            print(f"Service preflight returned HTTP {exc.code}: {health_url}", file=sys.stderr)
             return 2
-    except URLError as exc:
+    except (TimeoutError, URLError) as exc:
         print(
-            f"Could not reach {url}: {exc.reason}\n"
+            f"Could not reach {health_url}: {getattr(exc, 'reason', exc)}\n"
             "Start the app stack before running integration tests, or use --no-preflight.",
             file=sys.stderr,
         )
@@ -123,8 +124,8 @@ def preflight_integration(args: argparse.Namespace) -> int:
         if exc.code >= 500:
             print(f"Endpoint preflight returned HTTP {exc.code}: {endpoint_url}", file=sys.stderr)
             return 2
-    except URLError as exc:
-        print(f"Could not reach {endpoint_url}: {exc.reason}", file=sys.stderr)
+    except (TimeoutError, URLError) as exc:
+        print(f"Could not reach {endpoint_url}: {getattr(exc, 'reason', exc)}", file=sys.stderr)
         return 2
 
     return 0
@@ -143,6 +144,7 @@ def run_integration(args: argparse.Namespace, python_bin: str, env: dict[str, st
 
     integration_env = env.copy()
     integration_env["TEST_PATH"] = args.test_path
+    integration_env["RESULT_DIRECTORY"] = args.result_directory
 
     stages: list[list[str]] = [
         [
@@ -156,7 +158,10 @@ def run_integration(args: argparse.Namespace, python_bin: str, env: dict[str, st
             args.uri,
             "--result_directory",
             args.result_directory,
-        ],
+            "--request-timeout",
+            str(args.request_timeout),
+        ]
+        + (["--disable-guardrails"] if args.disable_guardrails else []),
         [python_bin, "time_breakdown.py"],
     ]
 
@@ -200,6 +205,17 @@ def parse_args() -> argparse.Namespace:
         "--skip-quality",
         action="store_true",
         help="Skip LLM-as-judge response quality and quality plot stages.",
+    )
+    parser.add_argument(
+        "--disable-guardrails",
+        action="store_true",
+        help="Send guardrails=false during integration conversations.",
+    )
+    parser.add_argument(
+        "--request-timeout",
+        type=float,
+        default=120,
+        help="Seconds to wait for each integration API request.",
     )
     parser.add_argument(
         "--no-preflight",

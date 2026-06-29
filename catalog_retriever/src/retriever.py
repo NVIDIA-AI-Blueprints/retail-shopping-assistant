@@ -35,9 +35,12 @@ logging.basicConfig(
 # Defines a type for configuring the Retriever.
 class RetrieverConfig(BaseModel):
     text_embed_port: str
-    image_embed_port: str
+    image_embed_port: str | None = None
     text_model_name: str
-    image_model_name: str
+    image_model_name: str | None = None
+    text_api_key_env: str | None = "EMBED_API_KEY"
+    image_api_key_env: str | None = None
+    image_enabled: bool = True
     db_port: str
     db_name: str
     sim_threshold: float
@@ -260,27 +263,38 @@ class Retriever:
         self.image_embed_port = config.image_embed_port
         self.text_model_name = config.text_model_name
         self.image_model_name = config.image_model_name
+        self.text_api_key_env = config.text_api_key_env
+        self.image_api_key_env = config.image_api_key_env
+        self.image_enabled = config.image_enabled
         self.db_port = config.db_port
         self.db_name = config.db_name
         self.sim_threshold = config.sim_threshold
         self.text_collection = config.text_collection
         self.image_collection = config.image_collection
 
-        # Keys.
-        embed_key = os.environ["EMBED_API_KEY"]
+        text_key = os.environ.get(self.text_api_key_env, "") if self.text_api_key_env else ""
+        image_key = os.environ.get(self.image_api_key_env, "") if self.image_api_key_env else ""
+        if self.text_api_key_env and not text_key:
+            raise RuntimeError(f"Missing required text embedding key: {self.text_api_key_env}")
+        if self.image_enabled and self.image_api_key_env and not image_key:
+            raise RuntimeError(f"Missing required image embedding key: {self.image_api_key_env}")
+        if self.image_enabled and (not self.image_embed_port or not self.image_model_name):
+            raise RuntimeError("Image embeddings are enabled but image endpoint/model is missing.")
 
         self.text_client = OpenAI(
-            api_key=embed_key,
+            api_key=text_key or "not-needed",
             base_url=self.text_embed_port
         )
-        self.image_client = OpenAI(
-            api_key=embed_key,
-            base_url=self.image_embed_port
-        )
+        self.image_client = None
+        if self.image_enabled:
+            self.image_client = OpenAI(
+                api_key=image_key or "not-needed",
+                base_url=self.image_embed_port
+            )
 
         # Create embedding classes
         self.text_embeddings_obj = TextEmbeddings(self)
-        self.image_embeddings_obj = ImageEmbeddings(self)
+        self.image_embeddings_obj = ImageEmbeddings(self) if self.image_enabled else None
 
         logging.info(f"CATALOG RETRIEVER | Retriever.__init__() | Initializing Milvus connections.")
 
@@ -293,15 +307,31 @@ class Retriever:
             auto_id=True,
             index_params={"metric_type": "COSINE"},
         )
-        self.image_db = Milvus(
-            embedding_function=self.image_embeddings_obj,
-            collection_name=self.image_collection,
-            connection_args={"uri": f"{self.db_port}"},
-            auto_id=True,
-            index_params={"metric_type": "COSINE"},
-        )
+        self.image_db = None
+        if self.image_enabled and self.image_embeddings_obj is not None:
+            self.image_db = Milvus(
+                embedding_function=self.image_embeddings_obj,
+                collection_name=self.image_collection,
+                connection_args={"uri": f"{self.db_port}"},
+                auto_id=True,
+                index_params={"metric_type": "COSINE"},
+            )
 
         logging.info(f"CATALOG RETRIEVER | Retriever.__init__() | Milvus collections initialized.")
+
+    def _embedding_counts(self) -> Tuple[int, int]:
+        """Return current text and image collection entity counts."""
+        text_count = 0
+        if self.text_db.col:
+            self.text_db.col.flush()
+            text_count = self.text_db.col.num_entities
+
+        image_count = -1 if not self.image_enabled else 0
+        if self.image_db and self.image_db.col:
+            self.image_db.col.flush()
+            image_count = self.image_db.col.num_entities
+
+        return text_count, image_count
 
     def embeddings_exist(self) -> bool:
         """
@@ -309,20 +339,13 @@ class Retriever:
         Returns True if both collections have data, False otherwise.
         """
         try:
-            text_count = 0
-            if self.text_db.col:
-                self.text_db.col.flush()
-                text_count = self.text_db.col.num_entities
-
-            image_count = 0
-            if self.image_db.col:
-                self.image_db.col.flush()
-                image_count = self.image_db.col.num_entities
+            text_count, image_count = self._embedding_counts()
             
             logging.info(f"CATALOG RETRIEVER | embeddings_exist() | Text collection has {text_count} entities. Image collection has {image_count} entities.")
             # Check text and image collections
-            if text_count > 0 and image_count > 0:
-                logging.info("CATALOG RETRIEVER | embeddings_exist() | Embeddings found in both collections.")
+            image_ready = (not self.image_enabled) or image_count > 0
+            if text_count > 0 and image_ready:
+                logging.info("CATALOG RETRIEVER | embeddings_exist() | Required embeddings found.")
                 return True
             else:
                 logging.info("CATALOG RETRIEVER | embeddings_exist() | No embeddings found in either collection.")
@@ -457,6 +480,10 @@ class Retriever:
         Generate image embeddings from a list of base64 image strings or image URLs using batching.
         Returns a list of embeddings, with None for failures, to maintain 1:1 mapping with input.
         """
+        if not self.image_enabled or self.image_client is None or not self.image_model_name:
+            logging.info("CATALOG RETRIEVER | Retriever.image_embeddings() | Image embeddings are disabled.")
+            return [None for _ in texts]
+
         all_embeddings = []
         batch_size = 32
         num_batches = (len(texts) + batch_size - 1) // batch_size
@@ -541,16 +568,20 @@ class Retriever:
 
     def milvus_from_csv(self, csv_path: str, verbose: bool = False) -> None:
         """
-        Fills the milvus database with the data from a CSV file.
-        Only populates if embeddings don't already exist.
+        Fill missing Milvus collections with data from a CSV file.
         """ 
 
-        # Check if embeddings already exist
-        if self.embeddings_exist():
+        text_count, image_count = self._embedding_counts()
+        image_ready = (not self.image_enabled) or image_count > 0
+        if text_count > 0 and image_ready:
             logging.info("CATALOG RETRIEVER | Retriever.milvus_from_csv() | Embeddings already exist, skipping population.")
             return
 
-        logging.info(f"CATALOG RETRIEVER | Retriever.milvus_from_csv() | No embeddings found, populating from: '{csv_path}'")
+        logging.info(
+            "CATALOG RETRIEVER | Retriever.milvus_from_csv() | "
+            f"Populating missing embeddings from: '{csv_path}' "
+            f"(text_count={text_count}, image_count={image_count})"
+        )
 
         # Get our pd dataframe
         try:
@@ -563,48 +594,51 @@ class Retriever:
                 dir_contents.append(entry)
             logging.info(f"CATALOG RETRIEVER | Retriever.milvus_from_csv() | Directory contents at failure: {dir_contents}")
 
-        # Create combined name and description strings
         metadatas = df.to_dict(orient="records")
-        combined_texts = [f"{name} | {desc} | {category},{subcategory}" for name, desc, category, subcategory in zip(df["name"].tolist(), df["description"].tolist(), df["category"].tolist(), df["subcategory"].tolist())]
-        
-        # Embed the combined name and description fields
-        text_embs = self.text_embeddings(combined_texts,query_type="passage",verbose=verbose)
 
-        # Filter out failed embeddings and their corresponding metadata
-        successful_texts_data = [
-            (text, emb, meta) for text, emb, meta in zip(combined_texts, text_embs, metadatas) if emb is not None
-        ]
-        if successful_texts_data:
-            successful_texts, successful_text_embs, successful_text_metadatas = zip(*successful_texts_data)
-            self.text_db.add_embeddings(
-                texts=list(successful_texts),
-                embeddings=list(successful_text_embs),
-                metadatas=list(successful_text_metadatas)
-            )
+        if text_count == 0:
+            combined_texts = [f"{name} | {desc} | {category},{subcategory}" for name, desc, category, subcategory in zip(df["name"].tolist(), df["description"].tolist(), df["category"].tolist(), df["subcategory"].tolist())]
+            text_embs = self.text_embeddings(combined_texts,query_type="passage",verbose=verbose)
 
-        logging.info(f"CATALOG RETRIEVER | Retriever.milvus_from_csv() | Text embeddings obtained.")   
+            successful_texts_data = [
+                (text, emb, meta) for text, emb, meta in zip(combined_texts, text_embs, metadatas) if emb is not None
+            ]
+            if successful_texts_data:
+                successful_texts, successful_text_embs, successful_text_metadatas = zip(*successful_texts_data)
+                self.text_db.add_embeddings(
+                    texts=list(successful_texts),
+                    embeddings=list(successful_text_embs),
+                    metadatas=list(successful_text_metadatas)
+                )
 
-        # Embed the image field of each row
-        image_embs = self.image_embeddings(df["image"].tolist(), verbose=verbose)
+            logging.info(f"CATALOG RETRIEVER | Retriever.milvus_from_csv() | Text embeddings obtained.")
+        else:
+            logging.info("CATALOG RETRIEVER | Retriever.milvus_from_csv() | Text embeddings already exist, skipping text population.")
 
-        # Log the number of total and failed image embeddings
-        total_images = len(df["image"].tolist())
-        failed_image_embeddings = total_images - len([e for e in image_embs if e is not None])
-        logging.info(f"CATALOG RETRIEVER | Retriever.milvus_from_csv() | Total images: {total_images}, Failed embeddings: {failed_image_embeddings}")
+        if not self.image_enabled:
+            logging.info("CATALOG RETRIEVER | Retriever.milvus_from_csv() | Image embeddings disabled, skipping image population.")
+        elif image_count == 0:
+            image_embs = self.image_embeddings(df["image"].tolist(), verbose=verbose)
 
-        # Filter out failed embeddings and their corresponding metadata
-        successful_images_data = [
-            (img_ref, emb, meta) for img_ref, emb, meta in zip(df["image"].tolist(), image_embs, metadatas) if emb is not None
-        ]
-        if successful_images_data:
-            successful_images, successful_image_embs, successful_image_metadatas = zip(*successful_images_data)
-            self.image_db.add_embeddings(
-                texts=list(successful_images),
-                embeddings=list(successful_image_embs),
-                metadatas=list(successful_image_metadatas)
-            )
+            total_images = len(df["image"].tolist())
+            failed_image_embeddings = total_images - len([e for e in image_embs if e is not None])
+            logging.info(f"CATALOG RETRIEVER | Retriever.milvus_from_csv() | Total images: {total_images}, Failed embeddings: {failed_image_embeddings}")
 
-        logging.info(f"CATALOG RETRIEVER | Retriever.milvus_from_csv() | Image embeddings obtained.") 
+            successful_images_data = [
+                (img_ref, emb, meta) for img_ref, emb, meta in zip(df["image"].tolist(), image_embs, metadatas) if emb is not None
+            ]
+            if successful_images_data:
+                successful_images, successful_image_embs, successful_image_metadatas = zip(*successful_images_data)
+                assert self.image_db is not None
+                self.image_db.add_embeddings(
+                    texts=list(successful_images),
+                    embeddings=list(successful_image_embs),
+                    metadatas=list(successful_image_metadatas)
+                )
+
+            logging.info(f"CATALOG RETRIEVER | Retriever.milvus_from_csv() | Image embeddings obtained.")
+        else:
+            logging.info("CATALOG RETRIEVER | Retriever.milvus_from_csv() | Image embeddings already exist, skipping image population.")
 
     async def retrieve(
         self,
@@ -626,6 +660,10 @@ class Retriever:
             local_queries = ["Can you find me something like this image?"]
 
         if image_bool:
+            if not self.image_enabled or self.image_db is None:
+                logging.info("CATALOG RETRIEVER | retrieve() | Image retrieval requested but image embeddings are disabled.")
+                return [], [], [], [], []
+
             if verbose:
                 logging.info("CATALOG RETRIEVER | retrieve() | Performing dual retrieval for image input.")
 
@@ -689,12 +727,17 @@ class Retriever:
                 except StopIteration:
                     pass
                 
-        # Deduplicate.
+        # Deduplicate. Older deployments may have duplicate rows with different
+        # Milvus primary keys after repeated partial population attempts, so
+        # prefer a stable product-name key when available.
         seen_ids = set()
         final_results = [] 
         for res in interleaved_results:
             pk_value = res[0].metadata.get("pk") 
-            id_ = str(pk_value) if pk_value is not None else None 
+            name_value = res[0].metadata.get("name")
+            id_ = str(name_value).strip().lower() if name_value else (
+                str(pk_value) if pk_value is not None else None
+            )
             if id_ is not None and id_ not in seen_ids:
                 seen_ids.add(id_)
                 final_results.append(res)

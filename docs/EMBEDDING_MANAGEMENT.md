@@ -173,18 +173,18 @@ If your products have images:
 
 ### Configuration for Different Environments
 
-For different environments, you can create override configs:
+For different model endpoints, edit the relevant role in
+`shared/configs/models.yaml`:
 
 ```bash
-# Create custom override
-cp shared/configs/catalog_retriever/config.yaml shared/configs/catalog_retriever/config-custom.yaml
-
-# Edit the custom config with your custom data source
+python scripts/model_config.py show --validate
 ```
 
-Then use it:
+For a custom product CSV location, set `CATALOG_DATA_SOURCE` and restart the
+catalog service:
+
 ```bash
-export CONFIG_OVERRIDE=config-custom.yaml
+export CATALOG_DATA_SOURCE=/app/shared/data/products.csv
 docker compose -f docker-compose.yaml up -d --build
 ```
 

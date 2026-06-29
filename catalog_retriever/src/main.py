@@ -10,6 +10,8 @@ import yaml
 import logging
 import sys
 
+from shared.model_config import resolve_model_config, validate_model_config
+
 try:
     from app.retriever import Retriever, RetrieverConfig
 except ModuleNotFoundError:
@@ -31,41 +33,47 @@ for entry in os.listdir("."):
     dir_contents.append(entry)
 logging.info(f"CATALOG RETRIEVER | startup | Directory contents: {dir_contents}")
 
-# Get our configuration from config.yaml with optional override support
-def load_config_with_override(base_config_path: str):
-    """Load configuration from YAML file with optional override support."""
-    # Load base config
+# Get service behavior from config.yaml. Model endpoints come from models.yaml.
+def load_config(base_config_path: str):
+    """Load service configuration from YAML file."""
+
     if not os.path.exists(base_config_path):
         logging.error(f"Base config file not found at {base_config_path}")
         raise FileNotFoundError(f"Base config file not found at {base_config_path}")
 
     with open(base_config_path, "r") as f:
         config = yaml.safe_load(f)
-    
-    # Check for override config
-    override_file = os.environ.get("CONFIG_OVERRIDE")
-    if override_file:
-        # Construct override path (same directory as base config)
-        base_dir = os.path.dirname(base_config_path)
-        override_path = os.path.join(base_dir, override_file)
-        
-        if os.path.exists(override_path):
-            logging.info(f"Loading override config from {override_path}")
-            with open(override_path, "r") as f:
-                override_config = yaml.safe_load(f)
-            
-            # Merge override config into base config
-            config.update(override_config)
-            logging.info(f"Config override applied from {override_file}")
-        else:
-            logging.warning(f"Override config file not found at {override_path}")
-    else:
-        logging.info("No config override specified, using base config only")
-    
+
     return config
 
 shared_config_root = os.environ.get("SHARED_CONFIG_ROOT", "/app/shared/configs")
-data = load_config_with_override(os.path.join(shared_config_root, "catalog_retriever", "config.yaml"))
+data = load_config(os.path.join(shared_config_root, "catalog_retriever", "config.yaml"))
+data.update(
+    {
+        key: value
+        for key, value in {
+            "db_port": os.environ.get("CATALOG_DB_PORT"),
+            "data_source": os.environ.get("CATALOG_DATA_SOURCE"),
+        }.items()
+        if value
+    }
+)
+model_config = resolve_model_config(config_root=shared_config_root)
+validate_model_config(model_config, roles=("text_embedding",))
+text_embedding = model_config.require("text_embedding")
+image_embedding = model_config.get("image_embedding")
+image_enabled = bool(image_embedding and not image_embedding.disabled)
+data.update(
+    {
+        "text_embed_port": text_embedding.base_url,
+        "text_model_name": text_embedding.model,
+        "text_api_key_env": text_embedding.api_key_env,
+        "image_enabled": image_enabled,
+        "image_embed_port": image_embedding.base_url if image_enabled else None,
+        "image_model_name": image_embedding.model if image_enabled else None,
+        "image_api_key_env": image_embedding.api_key_env if image_enabled else None,
+    }
+)
 
 
 # Setup Retriever once when app starts
@@ -74,6 +82,9 @@ config = RetrieverConfig(
     image_embed_port=data["image_embed_port"],
     text_model_name=data["text_model_name"],
     image_model_name=data["image_model_name"],
+    text_api_key_env=data["text_api_key_env"],
+    image_api_key_env=data["image_api_key_env"],
+    image_enabled=data["image_enabled"],
     db_port=data["db_port"],
     db_name=data["db_name"],
     sim_threshold=data["sim_threshold"],

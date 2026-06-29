@@ -103,8 +103,9 @@ RAG Answer: {answer}
 if __name__ == "__main__":
 
     CONVERSATION = os.environ["TEST_PATH"]
+    RESULT_DIRECTORY = os.environ.get("RESULT_DIRECTORY", "results")
     QUERY_DIR = f'conversations/{CONVERSATION}'
-    RES_DIR = f'conversations/{CONVERSATION}/results'
+    RES_DIR = f'conversations/{CONVERSATION}/{RESULT_DIRECTORY}'
     OUTPUT_PATH = f'conversations/{CONVERSATION}/judge'
 
     os.makedirs(OUTPUT_PATH, exist_ok=True)
@@ -150,4 +151,3 @@ if __name__ == "__main__":
         # Write YAML output per file
         with open(f"{OUTPUT_PATH}/{filename}", 'w') as out_file:
             yaml.dump(results_per_file, out_file, sort_keys=False, allow_unicode=True)
-

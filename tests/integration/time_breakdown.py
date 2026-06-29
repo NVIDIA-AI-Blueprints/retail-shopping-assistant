@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
 
 CONVERSATION_DIRECTORY = os.environ["TEST_PATH"]
+RESULT_DIRECTORY = os.environ.get("RESULT_DIRECTORY", "results")
 
 def read_all_timings(directory):
     all_data = {}
@@ -127,11 +128,10 @@ def plot_all_averages(data, save_directory):
 
 # 🔧 Usage
 if __name__ == "__main__":
-    yaml_directory = f"conversations/{CONVERSATION_DIRECTORY}/results"  
+    yaml_directory = f"conversations/{CONVERSATION_DIRECTORY}/{RESULT_DIRECTORY}"
 
     all_timings = read_all_timings(yaml_directory)
     if all_timings:
         plot_all_averages(all_timings, save_directory=yaml_directory)
     else:
-        print("No valid YAML timing data found.")
-
+        raise SystemExit("No valid YAML timing data found.")

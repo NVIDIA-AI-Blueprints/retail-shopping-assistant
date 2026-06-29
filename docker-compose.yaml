@@ -1,8 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-version: "3.8"
-
 services:
   # Chain Server - using bridge networking with port mapping
   chain-server:
@@ -12,10 +10,11 @@ services:
     ports:
       - "8009:8009"
     environment:
-      - LLM_API_KEY=${LLM_API_KEY:-${NVIDIA_API_KEY}}
+      - LLM_API_KEY=${LLM_API_KEY:-}
+      - LLM_BASE_URL=${LLM_BASE_URL:-}
+      - LLM_MODEL=${LLM_MODEL:-}
       - CATALOG_RETRIEVER_URL=http://catalog-retriever:8010
       - MEMORY_RETRIEVER_URL=http://memory-retriever:8011
-      - CONFIG_OVERRIDE=${CONFIG_OVERRIDE}
     volumes:
       - ./shared:/app/shared
     depends_on:
@@ -33,10 +32,13 @@ services:
     ports:
       - "8010:8010"
     environment:
-      - EMBED_API_KEY=${EMBED_API_KEY:-${NVIDIA_API_KEY}}
+      - EMBED_API_KEY=${EMBED_API_KEY:-}
+      - TEXT_EMBED_BASE_URL=${TEXT_EMBED_BASE_URL:-}
+      - TEXT_EMBED_MODEL=${TEXT_EMBED_MODEL:-}
+      - IMAGE_EMBED_BASE_URL=${IMAGE_EMBED_BASE_URL:-}
+      - IMAGE_EMBED_MODEL=${IMAGE_EMBED_MODEL:-}
       - MILVUS_HOST=milvus
       - MILVUS_PORT=19530
-      - CONFIG_OVERRIDE=${CONFIG_OVERRIDE}
     volumes:
       - ./shared:/app/shared
     depends_on:
@@ -68,8 +70,14 @@ services:
     build:
       context: ./guardrails
     environment:
-      - NVIDIA_API_KEY=${RAIL_API_KEY:-${NVIDIA_API_KEY}}
-      - CONFIG_OVERRIDE=${CONFIG_OVERRIDE}
+      - NVIDIA_API_KEY=${NVIDIA_API_KEY:-}
+      - RAIL_API_KEY=${RAIL_API_KEY:-}
+      - LLM_API_KEY=${LLM_API_KEY:-}
+      - LLM_BASE_URL=${LLM_BASE_URL:-}
+      - LLM_MODEL=${LLM_MODEL:-}
+      - RAILS_BASE_URL=${RAILS_BASE_URL:-}
+      - RAILS_CONTENT_BASE_URL=${RAILS_CONTENT_BASE_URL:-}
+      - RAILS_TOPIC_BASE_URL=${RAILS_TOPIC_BASE_URL:-}
     container_name: rails
     ports:
       - "8012:8012"

@@ -1,12 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""
-Centralized configuration management for the chain server.
-
-This module provides a Pydantic-based configuration class that loads
-configuration from YAML files with optional override support.
-"""
+"""Centralized configuration management for the chain server."""
 
 import os
 from pathlib import Path
@@ -15,51 +10,21 @@ import logging
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field, validator
 
+from shared.model_config import resolve_model_config, validate_model_config
+
 logger = logging.getLogger(__name__)
 
 
-def load_config_with_override(base_config_path: str) -> Dict[str, Any]:
-    """
-    Load configuration from YAML file with optional override support.
-    
-    Args:
-        base_config_path: Path to the base configuration file
-        
-    Returns:
-        Dictionary containing the merged configuration
-        
-    Environment Variables:
-        CONFIG_OVERRIDE: If set, specifies the override config file name
-                        (e.g., "config-local.yaml" or "config-build.yaml")
-    """
-    # Load base config
+def load_config_data(base_config_path: str) -> Dict[str, Any]:
+    """Load a service config YAML file."""
+
     if not os.path.exists(base_config_path):
         logger.error(f"Base config file not found at {base_config_path}")
         raise FileNotFoundError(f"Base config file not found at {base_config_path}")
 
     with open(base_config_path, "r") as f:
         config = yaml.safe_load(f)
-    
-    # Check for override config
-    override_file = os.environ.get("CONFIG_OVERRIDE")
-    if override_file:
-        # Construct override path (same directory as base config)
-        base_dir = os.path.dirname(base_config_path)
-        override_path = os.path.join(base_dir, override_file)
-        
-        if os.path.exists(override_path):
-            logger.info(f"Loading override config from {override_path}")
-            with open(override_path, "r") as f:
-                override_config = yaml.safe_load(f)
-            
-            # Merge override config into base config
-            config.update(override_config)
-            logger.info(f"Config override applied from {override_file}")
-        else:
-            logger.warning(f"Override config file not found at {override_path}")
-    else:
-        logger.info("No config override specified, using base config only")
-    
+
     return config
 
 
@@ -69,6 +34,8 @@ class ChainServerConfig(BaseModel):
     # LLM Configuration
     llm_port: str = Field(..., description="LLM service endpoint URL")
     llm_name: str = Field(..., description="LLM model name")
+    llm_api_key_env: Optional[str] = Field(default="LLM_API_KEY", description="LLM API key environment variable")
+    llm_api_key_required: bool = Field(default=True, description="Whether the LLM key must be present")
     
     # Service Endpoints
     retriever_port: str = Field(..., description="Catalog retriever service endpoint")
@@ -127,7 +94,7 @@ class ChainServerConfig(BaseModel):
 
 def load_config(config_path: Optional[str] = None) -> ChainServerConfig:
     """
-    Load configuration from YAML file with optional override support.
+    Load service configuration and inject the configured app LLM endpoint.
     
     Args:
         config_path: Optional path to config file. If None, uses default path.
@@ -143,8 +110,26 @@ def load_config(config_path: Optional[str] = None) -> ChainServerConfig:
         config_root = Path(os.environ.get("SHARED_CONFIG_ROOT", "/app/shared/configs"))
         config_path = str(config_root / "chain_server" / "config.yaml")
     
-    # Load raw config data with override support
-    config_data = load_config_with_override(config_path)
+    config_data = load_config_data(config_path)
+    env_overrides = {
+        "retriever_port": os.environ.get("CATALOG_RETRIEVER_URL"),
+        "memory_port": os.environ.get("MEMORY_RETRIEVER_URL"),
+        "rails_port": os.environ.get("RAILS_URL"),
+    }
+    config_data.update({key: value for key, value in env_overrides.items() if value})
+
+    config_root = Path(os.environ.get("SHARED_CONFIG_ROOT", str(Path(config_path).parents[1])))
+    model_config = resolve_model_config(config_root=config_root)
+    validate_model_config(model_config, roles=("app_llm",))
+    app_llm = model_config.require("app_llm")
+    config_data.update(
+        {
+            "llm_port": app_llm.base_url,
+            "llm_name": app_llm.model,
+            "llm_api_key_env": app_llm.api_key_env,
+            "llm_api_key_required": app_llm.api_key_required,
+        }
+    )
     
     # Create Pydantic config instance
     try:

@@ -19,7 +19,7 @@ python skills/retail-local-runner/scripts/local_runner.py <command>
 
 Available commands:
 
-- `configure`: create ignored `config-local.yaml` files that point app services to a remote NIM host.
+- `configure`: create ignored `.local-run/model-endpoints.env` values that point app services to a remote NIM host.
 - `install-dev`: create `.local-run/dev-venv` and install Python dev/test packages there.
 - `start`: start local Milvus infra containers, then local memory, guardrails, catalog, chain-server, and UI processes.
 - `stop`: stop only tracked local app/UI processes and local Milvus infra containers. Never stop remote NIMs.
@@ -43,8 +43,7 @@ Use this exact workflow:
 bash /home/ubuntu/Personal/deploy-retail-shopping-assistant-cloud.sh
 ```
 
-The helper sources the Personal env file, writes ignored override files under
-`shared/configs/*/$CONFIG_OVERRIDE`, runs:
+The helper sources the Personal env file and runs:
 
 ```bash
 docker compose -f docker-compose.yaml up -d --build --force-recreate --remove-orphans
@@ -74,7 +73,7 @@ values.
 
 ## Stop Workflow
 
-When the user asks to stop, shut down, tear down, or restart the local Retail Shopping Assistant, run `stop` first. Do not ask for the NIM host and do not check or create `config-local.yaml` files for stop-only requests.
+When the user asks to stop, shut down, tear down, or restart the local Retail Shopping Assistant, run `stop` first. Do not ask for the NIM host and do not check or create model endpoint files for stop-only requests.
 
 ```bash
 python skills/retail-local-runner/scripts/local_runner.py stop
@@ -90,13 +89,13 @@ It must not stop or modify the remote NIM machine from `docker-compose-nim-local
 
 ## Remote NIM Host
 
-Before running `configure` or `start`, check whether all three local override files exist:
+Before running `configure` or `start`, check whether the ignored local model endpoint env exists:
 
 ```bash
-find shared/configs -name config-local.yaml -print
+test -f .local-run/model-endpoints.env && sed -n 's/=.*/=<redacted>/p' .local-run/model-endpoints.env
 ```
 
-If any override file is missing, ask the user in chat for the remote NIM host URL before running the script. Do not treat the runner's missing-host error as the final answer. Ask exactly:
+If the model endpoint env is missing and the user wants to point app services at a remote NIM host, ask for the remote NIM host URL before running the script. Do not treat the runner's missing-host error as the final answer. Ask exactly:
 
 ```text
 What is the remote NIM host URL? Use the base host without per-model ports, for example http://NIM_HOST.
@@ -150,7 +149,9 @@ If another local Milvus is already healthy at `localhost:19530` with health on `
 - Use `.local-run/dev-venv/bin/python -m pytest ...` for local unit tests after `install-dev`.
 - UI dependencies are installed into `ui/node_modules` when missing.
 - The runner creates `ui/public/images -> shared/images` so React dev mode can serve catalog images from `/images/...`, matching the UI Dockerfile behavior.
-- The runner sets `CONFIG_OVERRIDE=config-local.yaml`, `SHARED_ROOT`, `SHARED_CONFIG_ROOT`, `REACT_APP_API_BASE_URL=http://localhost:8009`, and `BROWSER=none`.
+- The runner sets `SHARED_ROOT`, `SHARED_CONFIG_ROOT`, `REACT_APP_API_BASE_URL=http://localhost:8009`, and `BROWSER=none`.
+- `configure --nim-host` writes `.local-run/model-endpoints.env` with the per-role base URLs and model names.
+- When `NVIDIA_API_KEY` or `NGC_API_KEY` is present, the runner uses it as the default for `LLM_API_KEY`, `EMBED_API_KEY`, and `RAIL_API_KEY`; generated local endpoint envs use `local-nim` as a no-auth placeholder when no key is set.
 - Use `status` before deciding whether to start or stop.
 - Use `logs --service catalog-retriever --lines 120` when catalog startup is slow; first startup may populate Milvus embeddings through the remote NIMs.
 

@@ -22,6 +22,7 @@ Common invocations:
 ```bash
 python skills/retail-test-runner/scripts/run_retail_tests.py unit
 python skills/retail-test-runner/scripts/run_retail_tests.py integration --test-path shopping
+python skills/retail-test-runner/scripts/run_retail_tests.py integration --test-path shopping --disable-guardrails --request-timeout 60
 python skills/retail-test-runner/scripts/run_retail_tests.py integration --test-path rails --skip-quality
 ```
 
@@ -33,6 +34,9 @@ The runner:
 - Runs integration scripts from `tests/integration/` so their relative `conversations/<TEST_PATH>` paths resolve correctly.
 - Targets the chain-server timing endpoint at `http://localhost:8009/query/timing` by default.
 - Sets `TEST_PATH` for integration runs.
+- Can send `guardrails=false` on live integration requests with `--disable-guardrails`.
+- Bounds each live request with `--request-timeout <seconds>`.
+- Uses `--result-directory <name>` consistently across collection, timing plots, and response-quality judging.
 
 ## Unit Tests
 

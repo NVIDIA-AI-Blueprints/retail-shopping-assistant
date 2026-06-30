@@ -52,7 +52,7 @@ models:
     base_url_env: TEXT_EMBED_BASE_URL
     base_url: "https://integrate.api.nvidia.com/v1"
     model_env: TEXT_EMBED_MODEL
-    model: "nvidia/llama-nemotron-embed-1b-v2"
+    model: "nvidia/nv-embedqa-e5-v5"
     api_key_env: EMBED_API_KEY
 
   image_embedding:

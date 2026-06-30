@@ -45,6 +45,11 @@ use an external endpoint, a local NIM container, or be disabled.
 - **NVIDIA Container Toolkit**: For GPU acceleration
 - **NVIDIA Drivers**: Latest compatible drivers
 - **Git**: For repository cloning
+- **Python deploy helper dependencies**: From the cloned repo, install on the
+  host with the same Python interpreter used to run `scripts/model_config.py`:
+  ```bash
+  python -m pip install --user -r requirements-deploy.txt
+  ```
 
 #### Optional Software
 - **Kubernetes**: For production orchestration
@@ -78,6 +83,8 @@ cd retail-shopping-assistant
 docker login nvcr.io
 # Username: $oauthtoken
 # Password: your NVIDIA API key
+
+python -m pip install --user -r requirements-deploy.txt
 
 export NVIDIA_API_KEY=your_nvapi_key_here
 set -a
@@ -404,6 +411,7 @@ container startup credentials are separate and are listed once under
 
 ```bash
 export NVIDIA_API_KEY=your_nvapi_key_here
+python -m pip install --user -r requirements-deploy.txt
 set -a
 source .env.example
 set +a

@@ -63,6 +63,11 @@ For detailed architecture information, see [Architecture Overview](docs/README.m
 ### Prerequisites
 
 - **Docker**: Version 20.10+ with Docker Compose plugin
+- **Python**: Host Python for deployment helpers. From the cloned repo, install
+  deploy-helper dependencies with:
+  ```bash
+  python -m pip install --user -r requirements-deploy.txt
+  ```
 - **NVIDIA NGC Account**: For API access ([Get API Key](https://ngc.nvidia.com/))
 - **Hardware**: 4x H100 GPUs (preferred) or 4x A100 GPUs (minimum) for local deployment, or cloud access
 
@@ -80,7 +85,12 @@ For detailed architecture information, see [Architecture Overview](docs/README.m
    ```
    Use `$oauthtoken` as the username and your NGC API key as the password.
 
-3. **Set up hosted endpoint environment**:
+3. **Install host deploy-helper dependencies**:
+   ```bash
+   python -m pip install --user -r requirements-deploy.txt
+   ```
+
+4. **Set up hosted endpoint environment**:
    ```bash
    export NVIDIA_API_KEY=your_nvapi_key_here
    set -a
@@ -88,7 +98,7 @@ For detailed architecture information, see [Architecture Overview](docs/README.m
    set +a
    ```
 
-4. **Validate and deploy**:
+5. **Validate and deploy**:
    ```bash
    python scripts/model_config.py show --validate
    python scripts/model_config.py deploy --build
@@ -110,9 +120,9 @@ For detailed architecture information, see [Architecture Overview](docs/README.m
 
    Model routing lives in `shared/configs/models.yaml`.
 
-5. **Access the application**: Open your browser to `http://localhost:3000`
+6. **Access the application**: Open your browser to `http://localhost:3000`
 
-6. **Stop the containers**:
+7. **Stop the containers**:
 
    **Application services**:
    ```bash

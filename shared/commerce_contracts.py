@@ -154,6 +154,9 @@ class AddCartItemInput(CommerceModel):
     quantity: int = Field(..., ge=1)
     idempotency_key: str = Field(..., min_length=1)
     variant_id: str | None = None
+    display_name: str | None = None
+    unit_price: Money | None = None
+    image_url: str | None = None
 
 
 class UpdateCartItemInput(CommerceModel):
@@ -167,6 +170,9 @@ class RemoveCartItemInput(CommerceModel):
     user_id: str = Field(..., min_length=1)
     cart_line_id: str = Field(..., min_length=1)
     idempotency_key: str = Field(..., min_length=1)
+    quantity: int = Field(default=1, ge=1)
+    product_id: str | None = None
+    display_name: str | None = None
 
 
 class CartMutationResult(CommerceModel):
@@ -174,4 +180,5 @@ class CartMutationResult(CommerceModel):
     cart: Cart | None = None
     changed_line: CartLine | None = None
     error: CommerceError | None = None
+    message: str = ""
     meta: ToolMeta = Field(default_factory=ToolMeta)

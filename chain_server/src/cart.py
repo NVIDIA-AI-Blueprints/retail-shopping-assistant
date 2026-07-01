@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from .agenttypes import Cart, State
+from .commerce_tools import add_cart_item, get_cart, remove_cart_item, search_catalog
 from .functions import (
     add_to_cart_function,
     bulk_add_to_cart_function,
@@ -11,6 +12,12 @@ from .functions import (
     view_cart_total_function,
     parse_tool_call_fallback,
 )
+from shared.commerce_contracts import (
+    AddCartItemInput,
+    GetCartInput,
+    RemoveCartItemInput,
+    SearchCatalogInput,
+)
 from openai import OpenAI
 from openai.types.chat import ChatCompletionMessageParam
 import os
@@ -18,10 +25,9 @@ import json
 import logging
 import re
 import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
 import sys
 import time
+import uuid
 from typing import Any, Optional
 from langgraph.config import get_stream_writer
 
@@ -170,20 +176,25 @@ class CartAgent():
         self.model = OpenAI(base_url=config.llm_port, api_key=self.llm_api_key)
         self.catalog_retriever_port = config.retriever_port
         self.categories = config.categories
-        self.retry_strategy = Retry(
-                total=3,                    
-                status_forcelist=[422, 429, 500, 502, 503, 504],  
-                allowed_methods=["POST"],   
-                backoff_factor=1            
-            )
         logging.info(f"CartAgent.__init__() | Initialization complete")
         
     def _get_cart(self, user_id: int) -> Cart:
-        response = requests.get(f"{self.memory_retriever_url}/user/{user_id}/cart")
-        logging.info(f"CartAgent._get_cart() | Response text: {response.text}.")
-        if response.status_code == 200:
-            cart_data = json.loads(response.text)["cart"]
+        result = get_cart(
+            GetCartInput(user_id=str(user_id)),
+            self.memory_retriever_url,
+        )
+        if result.ok and result.cart:
+            cart_data = [
+                {
+                    "item": line.display_name,
+                    "amount": line.quantity,
+                    "price": line.unit_price.amount if line.unit_price else None,
+                }
+                for line in result.cart.lines
+            ]
             return Cart(contents=cart_data)
+        if result.error:
+            logging.error(f"CartAgent._get_cart() | {result.error.message}")
         return Cart(contents=[])
 
     _CATALOG_LOOKUP_K = 5
@@ -196,25 +207,25 @@ class CartAgent():
         record is present even when embedding similarity ranks it below
         the top hit.
         """
-        adapter = HTTPAdapter(max_retries=self.retry_strategy)
-        session = requests.Session()
-        session.mount("https://", adapter)
-        session.mount("http://", adapter)
-        logging.info(f"CartAgent._lookup_in_catalog() | /query/text -- query: {item_name}")
-        ret_response = session.post(
-            f"{self.catalog_retriever_port}/query/text",
-            json={
-                "text": [item_name],
-                "categories": self.categories,
-                "k": self._CATALOG_LOOKUP_K,
-            },
+        logging.info(f"CartAgent._lookup_in_catalog() | search_catalog -- query: {item_name}")
+        result = search_catalog(
+            SearchCatalogInput(
+                query=item_name,
+                categories=self.categories,
+                top_k=self._CATALOG_LOOKUP_K,
+            ),
+            self.catalog_retriever_port,
         )
-        ret_response.raise_for_status()
-        res_json = ret_response.json()
-        names = res_json.get("names") or []
-        similarities = res_json.get("similarities") or []
-        texts = res_json.get("texts") or []
+        if not result.ok:
+            if result.error:
+                logging.error(f"CartAgent._lookup_in_catalog() | {result.error.message}")
+            return None
 
+        names = [product.display_name for product in result.products]
+        similarities = [
+            float(product.attributes.get("similarity") or 0.0)
+            for product in result.products
+        ]
         match_idx = _resolve_catalog_match(item_name, names, similarities)
         if match_idx is None:
             logging.info(
@@ -223,13 +234,19 @@ class CartAgent():
             )
             return None
 
+        product = result.products[match_idx]
         similarity = similarities[match_idx] if match_idx < len(similarities) else 0.0
-        text = texts[match_idx] if match_idx < len(texts) else None
+        text = product.attributes.get("catalog_text") or product.description
         logging.info(
             f"CartAgent._lookup_in_catalog() | query='{item_name}' -> "
-            f"matched='{names[match_idx]}' sim={similarity}"
+            f"matched='{product.display_name}' sim={similarity}"
         )
-        return {"name": names[match_idx], "text": text, "similarity": similarity}
+        return {
+            "name": product.display_name,
+            "product": product,
+            "text": text,
+            "similarity": similarity,
+        }
 
     def _add_to_cart(self, user_id: int, item_name: str, quantity: int) -> str:
         match = self._lookup_in_catalog(item_name)
@@ -237,16 +254,23 @@ class CartAgent():
             return f"No such item ({item_name}) could be found in the catalog."
 
         catalog_item_name = match["name"]
-        price = _extract_price(match.get("text"))
-        payload = {"item": catalog_item_name, "amount": quantity}
-        if price is not None:
-            payload["price"] = price
-        response = requests.post(
-            f"{self.memory_retriever_url}/user/{user_id}/cart/add",
-            json=payload,
+        product = match["product"]
+        result = add_cart_item(
+            AddCartItemInput(
+                user_id=str(user_id),
+                product_id=product.product_id,
+                display_name=catalog_item_name,
+                quantity=quantity,
+                idempotency_key=str(uuid.uuid4()),
+                unit_price=product.price,
+                image_url=product.image_url,
+            ),
+            self.memory_retriever_url,
         )
-        if response.status_code == 200:
-            return response.json()["message"]
+        if result.ok:
+            return result.message
+        if result.error:
+            return result.error.message
         return f"Failed to add {quantity} {catalog_item_name} to cart."
 
     def _view_cart_total(self, user_id: int) -> str:
@@ -293,12 +317,22 @@ class CartAgent():
             return f"No such item ({item_name}) could be found in the catalog."
 
         catalog_item_name = match["name"]
-        response = requests.post(
-            f"{self.memory_retriever_url}/user/{user_id}/cart/remove",
-            json={"item": catalog_item_name, "amount": quantity},
+        product = match["product"]
+        result = remove_cart_item(
+            RemoveCartItemInput(
+                user_id=str(user_id),
+                cart_line_id=catalog_item_name,
+                product_id=product.product_id,
+                display_name=catalog_item_name,
+                quantity=quantity,
+                idempotency_key=str(uuid.uuid4()),
+            ),
+            self.memory_retriever_url,
         )
-        if response.status_code == 200:
-            return response.json()["message"]
+        if result.ok:
+            return result.message
+        if result.error:
+            return result.error.message
         return f"Failed to remove {quantity} {catalog_item_name} from cart."
 
     @staticmethod

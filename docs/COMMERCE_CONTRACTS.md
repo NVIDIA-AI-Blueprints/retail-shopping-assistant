@@ -15,10 +15,10 @@ protocols should map into these app-owned contracts through thin adapters later.
 
 ## Purpose Of This PR
 
-This PR establishes the internal commerce language that later tools will use. It
-does not make the current assistant more capable by itself; it gives the next
-PRs a small, reviewed target for product identity, cart identity, tool metadata,
-and structured errors.
+This PR establishes the internal commerce language and starts routing current
+runtime behavior through it. It gives product search and cart operations a small,
+reviewed target for product identity, cart identity, tool metadata, and
+structured errors while preserving the existing public API.
 
 The main design decision is separation:
 
@@ -29,14 +29,19 @@ The main design decision is separation:
 
 ## Current Phase
 
-Phase 1 is contract-only. The models live in `shared/commerce_contracts.py` and
-are not wired into the chain server runtime yet.
+The stacked commerce-tool work now has runtime wiring for the current LangGraph
+path:
 
-This means:
+- `RetrieverAgent` calls the internal `search_catalog` tool wrapper for product
+  discovery.
+- `CartAgent` calls internal cart tool wrappers for cart reads, adds, and
+  removes.
+- Catalog search remains stateless: no user, cart, memory, session, or
+  conversation-history fields are passed to `search_catalog`.
+- Cart tools are stateful and adapt the current memory service API without
+  changing the public service schema.
 
-- No user-facing behavior changes.
-- No cart or catalog service schema changes yet.
-- Existing LangGraph agents continue to run as they do today.
+No ACP/UCP adapter layer has been added yet.
 
 ## Core Models
 
@@ -83,11 +88,11 @@ results to shopper session state.
 
 ## Migration Direction
 
-The next phases should wrap existing behavior behind these contracts without
-changing the public API first:
+The migration wraps existing behavior behind these contracts without changing
+the public API first:
 
-1. Make `RetrieverAgent` call an internal `search_catalog` tool wrapper.
-2. Make `CartAgent` call internal cart tool wrappers.
+1. `RetrieverAgent` calls an internal `search_catalog` tool wrapper.
+2. `CartAgent` calls internal cart tool wrappers.
 3. Preserve catalog IDs in chain-server state and cart memory rows.
 4. Add Deep Agents skills and subagents on top of the same tool layer.
 

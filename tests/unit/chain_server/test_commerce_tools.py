@@ -7,8 +7,19 @@ from pathlib import Path
 
 import requests
 
-from chain_server.src.commerce_tools import search_catalog
-from shared.commerce_contracts import SearchCatalogInput
+from chain_server.src.commerce_tools import (
+    add_cart_item,
+    get_cart,
+    remove_cart_item,
+    search_catalog,
+)
+from shared.commerce_contracts import (
+    AddCartItemInput,
+    GetCartInput,
+    Money,
+    RemoveCartItemInput,
+    SearchCatalogInput,
+)
 
 
 class FakeSession:
@@ -19,6 +30,12 @@ class FakeSession:
 
     def post(self, url, json, timeout):
         self.calls.append({"url": url, "json": json, "timeout": timeout})
+        if self.exc:
+            raise self.exc
+        return self.response
+
+    def get(self, url, timeout):
+        self.calls.append({"url": url, "timeout": timeout})
         if self.exc:
             raise self.exc
         return self.response
@@ -157,6 +174,83 @@ def test_search_catalog_returns_structured_request_error() -> None:
     assert result.error.retryable is True
 
 
+def test_get_cart_maps_memory_rows_to_contract_cart() -> None:
+    session = FakeSession(
+        FakeResponse(
+            {
+                "user_id": 42,
+                "cart": [
+                    {"item": "Silk Dress", "amount": 2, "price": 49.99},
+                    {"item": "Leather Bag", "amount": 1, "price": 199.0},
+                ],
+            }
+        )
+    )
+
+    result = get_cart(
+        GetCartInput(user_id="42"),
+        "http://memory-retriever:8011",
+        session=session,
+    )
+
+    assert result.ok is True
+    assert session.calls[0]["url"] == "http://memory-retriever:8011/user/42/cart"
+    assert result.cart.user_id == "42"
+    assert result.cart.lines[0].display_name == "Silk Dress"
+    assert result.cart.lines[0].unit_price.amount == 49.99
+    assert result.cart.subtotal.amount == 298.98
+
+
+def test_add_cart_item_posts_memory_payload_and_returns_message() -> None:
+    session = FakeSession(FakeResponse({"message": "added 2 Silk Dress"}))
+
+    result = add_cart_item(
+        AddCartItemInput(
+            user_id="42",
+            product_id="prod_123",
+            display_name="Silk Dress",
+            quantity=2,
+            unit_price=Money(amount=49.99),
+            idempotency_key="cart-add-1",
+        ),
+        "http://memory-retriever:8011",
+        session=session,
+    )
+
+    assert result.ok is True
+    assert session.calls[0]["url"] == "http://memory-retriever:8011/user/42/cart/add"
+    assert session.calls[0]["json"] == {
+        "item": "Silk Dress",
+        "amount": 2,
+        "price": 49.99,
+    }
+    assert result.changed_line.product_id == "prod_123"
+    assert result.message == "added 2 Silk Dress"
+
+
+def test_remove_cart_item_posts_memory_payload_and_returns_message() -> None:
+    session = FakeSession(FakeResponse({"message": "removed 1 Silk Dress"}))
+
+    result = remove_cart_item(
+        RemoveCartItemInput(
+            user_id="42",
+            cart_line_id="Silk Dress",
+            product_id="prod_123",
+            display_name="Silk Dress",
+            quantity=1,
+            idempotency_key="cart-remove-1",
+        ),
+        "http://memory-retriever:8011",
+        session=session,
+    )
+
+    assert result.ok is True
+    assert session.calls[0]["url"] == "http://memory-retriever:8011/user/42/cart/remove"
+    assert session.calls[0]["json"] == {"item": "Silk Dress", "amount": 1}
+    assert result.changed_line.product_id == "prod_123"
+    assert result.message == "removed 1 Silk Dress"
+
+
 def test_commerce_tools_do_not_import_current_agents() -> None:
     repo_root = Path(__file__).resolve().parents[3]
     source = (repo_root / "chain_server/src/commerce_tools.py").read_text()
@@ -168,12 +262,12 @@ def test_commerce_tools_do_not_import_current_agents() -> None:
         "ChatterAgent",
         "SummaryAgent",
         "create_graph",
-        ".planner",
-        ".retriever",
-        ".cart",
-        ".chatter",
-        ".summarizer",
-        ".graph",
+        "from .planner",
+        "from .retriever",
+        "from .cart",
+        "from .chatter",
+        "from .summarizer",
+        "from .graph",
     ]
 
     for reference in forbidden_references:

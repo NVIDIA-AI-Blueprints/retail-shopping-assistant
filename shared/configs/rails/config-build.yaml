@@ -1,8 +1,0 @@
-models:
-  - type: content_safety
-    parameters:
-      base_url: https://integrate.api.nvidia.com/v1
-
-  - type: topic_control
-    parameters:
-      base_url: https://integrate.api.nvidia.com/v1

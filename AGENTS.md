@@ -48,7 +48,7 @@ Top-level orchestration is via `docker-compose.yaml`; optional local NIM model c
 
 - Guardrails API: `guardrails/src/main.py`
 - Guardrails engine/wiring: `guardrails/src/rails.py`
-- Guardrails config override helper: `guardrails/src/config_utils.py`
+- Guardrails model config helper: `guardrails/src/config_utils.py`
 
 - UI streaming behavior: `ui/src/components/chatbox/chatbox.tsx`
 - UI API config and feature flags: `ui/src/config/config.ts`
@@ -69,12 +69,12 @@ Top-level orchestration is via `docker-compose.yaml`; optional local NIM model c
 ### Cloud endpoint mode (no local NIM containers)
 
 ```bash
-export NGC_API_KEY=<your_key>
-export LLM_API_KEY=$NGC_API_KEY
-export EMBED_API_KEY=$NGC_API_KEY
-export RAIL_API_KEY=$NGC_API_KEY
-export CONFIG_OVERRIDE=config-build.yaml
-docker compose -f docker-compose.yaml up -d --build
+export NVIDIA_API_KEY=<your_key>
+set -a
+source .env.example
+set +a
+python scripts/model_config.py show --validate
+python scripts/model_config.py deploy --build
 ```
 
 ### Local NIM mode (requires multi-GPU setup)
@@ -82,17 +82,22 @@ docker compose -f docker-compose.yaml up -d --build
 Brings up the local LLM (`nemotron` service, image `nvcr.io/nim/nvidia/nemotron-3-super-120b-a12b`), `nvclip`, `embedqa`, and the two NemoGuard guardrail containers.
 
 ```bash
-export NGC_API_KEY=<your_key>
-export LLM_API_KEY=$NGC_API_KEY
-export EMBED_API_KEY=$NGC_API_KEY
-export RAIL_API_KEY=$NGC_API_KEY
+export NVIDIA_API_KEY=<your_key>
+set -a
+source .env.example
+set +a
 export LOCAL_NIM_CACHE=~/.cache/nim
 mkdir -p "$LOCAL_NIM_CACHE" && chmod a+w "$LOCAL_NIM_CACHE"
-docker compose -f docker-compose-nim-local.yaml up -d
-docker compose -f docker-compose.yaml up -d --build
+python scripts/model_config.py show --validate
+python scripts/model_config.py deploy --build
 ```
 
-The `nemotron` service is launched with `NIM_PASSTHROUGH_ARGS=--enable-auto-tool-choice --tool-call-parser llama3_json` so vLLM accepts `tool_choice="auto"`. Reasoning output is suppressed via `extra_body={"chat_template_kwargs": {"enable_thinking": False}}` on the chain-server side so streamed tokens flow eagerly.
+Before running full local NIM mode, edit the relevant roles in
+`shared/configs/models.yaml` to `source: local_nim`. The `nemotron` service is
+launched with `NIM_PASSTHROUGH_ARGS=--enable-auto-tool-choice --tool-call-parser
+llama3_json` so vLLM accepts `tool_choice="auto"`. Reasoning output is
+suppressed via `extra_body={"chat_template_kwargs": {"enable_thinking": False}}`
+on the chain-server side so streamed tokens flow eagerly.
 
 ### Local app-code mode (recommended for iterative development)
 
@@ -106,11 +111,12 @@ python skills/retail-local-runner/scripts/local_runner.py stop
 
 The local runner:
 - Starts app services as local processes and uses Docker only for Milvus infra (`etcd`, `minio`, `milvus`).
-- Uses ignored `config-local.yaml` overrides under `shared/configs/*/`.
-- Sets `CONFIG_OVERRIDE=config-local.yaml`, `SHARED_ROOT`, `SHARED_CONFIG_ROOT`, `REACT_APP_API_BASE_URL=http://localhost:8009`, and `BROWSER=none`.
+- Uses `shared/configs/models.yaml` plus environment overrides.
+- `configure --nim-host http://HOST` writes ignored `.local-run/model-endpoints.env` with remote NIM URLs.
+- Sets `SHARED_ROOT`, `SHARED_CONFIG_ROOT`, `REACT_APP_API_BASE_URL=http://localhost:8009`, and `BROWSER=none`.
 - Creates runtime files under ignored `.local-run/` and links ignored `ui/public/images -> shared/images`.
 
-If `config-local.yaml` files are missing, ask for the remote NIM host URL and run `configure`; do not hard-code private hosts in committed files.
+If a remote NIM host is needed, ask for the base host URL and run `configure`; do not hard-code private hosts in committed files.
 
 ### Health checks
 
@@ -146,18 +152,21 @@ Integration outputs are generated under `tests/integration/conversations/<TEST_P
 ## 6) Configuration Rules
 
 - Services load configs from `SHARED_CONFIG_ROOT` when set, otherwise `/app/shared/configs`.
-- Chain server loads `chain_server/config.yaml` and optionally merges `CONFIG_OVERRIDE` from the same directory.
-- Catalog retriever and guardrails use the same override pattern.
+- Service behavior lives in `chain_server/config.yaml`, `catalog_retriever/config.yaml`, and `rails/config.yml`.
+- Model endpoints live in `models.yaml`; each role independently uses `source: endpoint`, `source: local_nim`, or `source: disabled`.
 - Catalog image helpers read assets from `SHARED_ROOT` when set, otherwise `/app/shared`.
 - UI API base URL defaults to `/api` for nginx, but local development can set `REACT_APP_API_BASE_URL` to the chain-server URL.
-- Override files are shallow-merged (top-level keys); nested structures are not deep-merged.
+- Use `python scripts/model_config.py show --validate` to inspect resolved endpoints without printing secrets.
 
 Key env vars:
 - `LLM_API_KEY`
 - `EMBED_API_KEY`
 - `RAIL_API_KEY` / `NVIDIA_API_KEY` (guardrails container)
-- `CONFIG_OVERRIDE`
 - `NGC_API_KEY` (for local NIM containers)
+- `LLM_BASE_URL`, `LLM_MODEL`
+- `TEXT_EMBED_BASE_URL`, `TEXT_EMBED_MODEL`
+- `IMAGE_EMBED_BASE_URL`, `IMAGE_EMBED_MODEL`
+- `RAILS_BASE_URL`, `RAILS_CONTENT_BASE_URL`, `RAILS_TOPIC_BASE_URL`
 - `SHARED_CONFIG_ROOT` (local runner / non-container config root)
 - `SHARED_ROOT` (local runner / non-container shared asset root)
 - `REACT_APP_API_BASE_URL` (local React dev server API target)
@@ -173,7 +182,7 @@ Key env vars:
 - Cart add/remove uses catalog name matching (with normalization + Jaccard fallback) before memory mutation; pure semantic similarity on descriptions is no longer used.
 - The cart agent deterministically resolves pronouns (`it`, `this`) against the most recent product in `RECENT DISCUSSION` and overrides the LLM's `item_name` if they disagree.
 - For image search, catalog retriever bypasses category filtering and relies on similarity ranking. Top-k is applied before price filters, so a tight budget on a high-priced image-similarity cluster can legitimately return zero matches.
-- Local LLM service is named `nemotron` (was `llama`); chain-server reaches it at `http://nemotron:8000/v1` per `shared/configs/chain_server/config.yaml`. Cloud override `config-build.yaml` still uses `meta/llama-3.1-70b-instruct` on `build.nvidia.com`.
+- Local LLM service is named `nemotron` (was `llama`); chain-server reaches it through `shared/configs/models.yaml` when the app LLM role uses `source: local_nim`.
 - Tool calling against the local NIM requires `--enable-auto-tool-choice --tool-call-parser llama3_json` passthrough args. Without them, requests with `tool_choice="auto"` 400.
 - Nemotron sometimes returns tool calls as XML/JSON inside the assistant `content` field instead of `message.tool_calls`. `chain_server/src/functions.py::parse_tool_call_fallback` handles both shapes; `_coerce_value` parses stringified Python literals (`"[]"`, `"{'k':'v'}"`) so list/dict args don't reach downstream code as strings.
 - Planner LLM input is prefixed with `IMAGE ATTACHED: yes/no`. With an image attached, deictic queries ("do you have this under $X", "find similar") route to `retriever`, not `chatter`. Only explicit cart operations (`add this`, `buy this`) still go to `cart_node`.
@@ -186,7 +195,7 @@ Key env vars:
 - Follow `CONTRIBUTING.md` requirements.
 - Use signed commits (`git commit -s`) for contributions.
 - Keep changes scoped by service; avoid cross-service behavior changes without updating related config/docs.
-- Before committing, check staged changes for `.env`, `config-local.yaml`, private hostnames, API keys, local absolute paths, `.local-run/`, `node_modules/`, `ui/public/images`, and generated integration `results/` / `judge/` artifacts.
+- Before committing, check staged changes for `.env`, `.local-run/model-endpoints.env`, private hostnames, API keys, local absolute paths, `.local-run/`, `node_modules/`, `ui/public/images`, and generated integration `results` / `judge` artifacts.
 
 ## 9) Recommended Change Workflow for Agents
 

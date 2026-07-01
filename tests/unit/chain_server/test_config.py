@@ -4,8 +4,8 @@
 """Unit tests for ``chain_server.src.config``.
 
 The config module drives every downstream agent's construction. These tests
-exercise both the on-disk YAML override flow and the pydantic validation
-contract directly, without touching the real container layout.
+exercise service YAML loading, model endpoint resolution, and the pydantic
+validation contract directly, without touching the real container layout.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from pydantic import ValidationError
 from chain_server.src.config import (
     ChainServerConfig,
     load_config,
-    load_config_with_override,
+    load_config_data,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -38,70 +38,18 @@ def write_yaml(tmp_path: Path):
     return _write
 
 
-class TestLoadConfigWithOverride:
-    def test_returns_base_config_when_no_override_set(
-        self, monkeypatch: pytest.MonkeyPatch, write_yaml, valid_config_dict: dict
-    ) -> None:
-        monkeypatch.delenv("CONFIG_OVERRIDE", raising=False)
+class TestLoadConfigData:
+    def test_returns_service_config(self, write_yaml, valid_config_dict: dict) -> None:
         base_path = write_yaml("config.yaml", valid_config_dict)
 
-        result = load_config_with_override(str(base_path))
+        result = load_config_data(str(base_path))
 
         assert result == valid_config_dict
 
     def test_raises_file_not_found_for_missing_base_config(self, tmp_path: Path) -> None:
         missing = tmp_path / "does_not_exist.yaml"
         with pytest.raises(FileNotFoundError):
-            load_config_with_override(str(missing))
-
-    def test_applies_top_level_override(
-        self, monkeypatch: pytest.MonkeyPatch, write_yaml, valid_config_dict: dict
-    ) -> None:
-        base_path = write_yaml("config.yaml", valid_config_dict)
-        write_yaml(
-            "config-build.yaml",
-            {
-                "llm_port": "https://integrate.api.nvidia.com/v1",
-                "llm_name": "overridden-model",
-            },
-        )
-        monkeypatch.setenv("CONFIG_OVERRIDE", "config-build.yaml")
-
-        merged = load_config_with_override(str(base_path))
-
-        assert merged["llm_port"] == "https://integrate.api.nvidia.com/v1"
-        assert merged["llm_name"] == "overridden-model"
-        # Base-only fields survive the shallow merge.
-        assert merged["memory_port"] == valid_config_dict["memory_port"]
-        assert merged["categories"] == valid_config_dict["categories"]
-
-    def test_override_is_shallow_not_deep_merge(
-        self, monkeypatch: pytest.MonkeyPatch, write_yaml, valid_config_dict: dict
-    ) -> None:
-        # Document that nested keys under a shared top-level key are replaced
-        # wholesale (not merged). A regression to deep-merge would change
-        # deployment behaviour and should surface in CI.
-        base = {**valid_config_dict, "categories": ["bag", "shoes", "dress"]}
-        base_path = write_yaml("config.yaml", base)
-        write_yaml(
-            "config-build.yaml",
-            {"categories": ["sunglasses"]},
-        )
-        monkeypatch.setenv("CONFIG_OVERRIDE", "config-build.yaml")
-
-        merged = load_config_with_override(str(base_path))
-
-        assert merged["categories"] == ["sunglasses"]
-
-    def test_missing_override_file_is_tolerated(
-        self, monkeypatch: pytest.MonkeyPatch, write_yaml, valid_config_dict: dict
-    ) -> None:
-        base_path = write_yaml("config.yaml", valid_config_dict)
-        monkeypatch.setenv("CONFIG_OVERRIDE", "missing-override.yaml")
-
-        merged = load_config_with_override(str(base_path))
-
-        assert merged == valid_config_dict
+            load_config_data(str(missing))
 
 
 class TestChainServerConfigValidation:
@@ -192,20 +140,23 @@ class TestLoadConfig:
     def test_returns_typed_chain_server_config(
         self, write_yaml, valid_config_dict: dict, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.delenv("CONFIG_OVERRIDE", raising=False)
+        monkeypatch.setenv("SHARED_CONFIG_ROOT", str(REPO_ROOT / "shared/configs"))
+        monkeypatch.setenv("LLM_API_KEY", "test-key")
         path = write_yaml("config.yaml", valid_config_dict)
 
         config = load_config(str(path))
 
         assert isinstance(config, ChainServerConfig)
         assert config.memory_length == valid_config_dict["memory_length"]
+        assert config.llm_name == "nvidia/nemotron-3-super-120b-a12b"
 
     def test_invalid_yaml_surface_as_value_error(
         self, write_yaml, valid_config_dict: dict, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.delenv("CONFIG_OVERRIDE", raising=False)
+        monkeypatch.setenv("SHARED_CONFIG_ROOT", str(REPO_ROOT / "shared/configs"))
+        monkeypatch.setenv("LLM_API_KEY", "test-key")
         bad = dict(valid_config_dict)
-        bad["llm_port"] = "not-a-url"
+        bad["memory_port"] = "not-a-url"
         path = write_yaml("config.yaml", bad)
 
         with pytest.raises(ValueError):
@@ -216,8 +167,7 @@ class TestRepoPromptContracts:
     def test_budget_only_browse_routes_to_chatter_for_clarification(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.delenv("CONFIG_OVERRIDE", raising=False)
-        config = load_config_with_override(
+        config = load_config_data(
             str(REPO_ROOT / "shared/configs/chain_server/config.yaml")
         )
 
@@ -231,8 +181,7 @@ class TestRepoPromptContracts:
     def test_chatter_asks_clarification_before_no_results(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.delenv("CONFIG_OVERRIDE", raising=False)
-        config = load_config_with_override(
+        config = load_config_data(
             str(REPO_ROOT / "shared/configs/chain_server/config.yaml")
         )
 

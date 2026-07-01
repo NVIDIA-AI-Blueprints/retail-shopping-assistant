@@ -23,6 +23,11 @@ tests/
 │   ├── time_breakdown.py
 │   ├── quality_plots.py
 │   └── run_tests.sh
+├── evaluation/             # Challenger/Judge evaluation workflows
+│   ├── PLAN.md
+│   ├── eval_config.yaml
+│   ├── judge_rules.md
+│   └── datasets/
 └── examples/               # YAML conversation scenarios consumed by integration scripts
 ```
 
@@ -95,3 +100,42 @@ bash integration/run_tests.sh
 These are *not* part of the unit suite and are not collected by `pytest`
 by default. They are intended for periodic quality/performance evaluation
 against a deployed stack.
+
+## Evaluation scaffold
+
+The `evaluation/` folder contains the Challenger/Judge evaluation workflows. It captures
+the planned directory shape, model configuration references, judge rules,
+text/image shopping scenario briefs, generated image-shopping assets, runnable
+Challenger/Judge helpers, and ignored generated-results location.
+
+Start with:
+
+- `evaluation/PLAN.md`: design and first implementation slice.
+- `evaluation/eval_config.yaml`: non-secret environment variable references
+  for Challenger and Judge models.
+- `evaluation/judge_rules.md`: optional qualitative scoring rubric.
+- `evaluation/datasets/text_shopping/scenarios.yaml`: text-only scenario
+  briefs with shopper behavior and language cues.
+- `evaluation/datasets/image_shopping/scenarios.yaml`: image-driven scenario
+  briefs that reference asset sidecar ids.
+- `evaluation/datasets/image_shopping/assets/`: generated product images and
+  YAML sidecars for image-shopping evaluation.
+- `evaluation/src/challenger.py`: scenario-driven live conversation runner.
+- `evaluation/src/judge.py`: optional saved-run Judge phase.
+- `evaluation/src/report.py`: simple HTML/text report generation.
+
+Typical validation and run commands from the repo root. Source
+`tests/evaluation/.env` first for live Challenger/Judge model calls:
+
+```bash
+PYTHONPATH=tests/evaluation python -m src.challenger --dry-run
+PYTHONPATH=tests/evaluation python -m src.challenger
+PYTHONPATH=tests/evaluation python -m src.challenger --scenario-id text_budget_work_bag
+PYTHONPATH=tests/evaluation python -m src.challenger --all-scenarios
+PYTHONPATH=tests/evaluation python -m src.challenger --all-scenarios --dataset text_shopping --dataset image_shopping
+PYTHONPATH=tests/evaluation python -m src.judge --latest --enable-judge
+PYTHONPATH=tests/evaluation python -m src.judge tests/evaluation/results/runs/<run_id>/run.yaml
+```
+
+Generated outputs should go under `evaluation/results/` and are ignored except
+for `evaluation/results/.gitkeep`.

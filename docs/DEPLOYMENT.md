@@ -4,6 +4,7 @@
 
 - [Overview](#-overview)
 - [Prerequisites](#-prerequisites)
+- [Fresh Deployment](#-fresh-deployment)
 - [Deployment Options](#%EF%B8%8F-deployment-options)
 - [Local Deployment](#-local-deployment)
 - [Cloud Deployment](#%EF%B8%8F-cloud-deployment)
@@ -14,7 +15,9 @@
 
 ## 🎯 Overview
 
-This guide covers deploying the Retail Shopping Assistant in various environments, from local development to production. The application supports multiple deployment strategies to accommodate different hardware configurations and use cases.
+This guide covers deploying the Retail Shopping Assistant. Model routing lives
+in one file, `shared/configs/models.yaml`. Each model role can independently
+use an external endpoint, a local NIM container, or be disabled.
 
 ## 📋 Prerequisites
 
@@ -42,6 +45,11 @@ This guide covers deploying the Retail Shopping Assistant in various environment
 - **NVIDIA Container Toolkit**: For GPU acceleration
 - **NVIDIA Drivers**: Latest compatible drivers
 - **Git**: For repository cloning
+- **Python deploy helper dependencies**: From the cloned repo, install on the
+  host with the same Python interpreter used to run `scripts/model_config.py`:
+  ```bash
+  python -m pip install --user -r requirements-deploy.txt
+  ```
 
 #### Optional Software
 - **Kubernetes**: For production orchestration
@@ -64,74 +72,76 @@ This guide covers deploying the Retail Shopping Assistant in various environment
    - Accept the terms of service for required NIM containers
    - Ensure you have access to the NVIDIA Container Registry
 
+## 🚀 Fresh Deployment
+
+This is the shortest path for a new environment with hosted NVIDIA endpoints.
+
+```bash
+git clone https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant.git
+cd retail-shopping-assistant
+
+docker login nvcr.io
+# Username: $oauthtoken
+# Password: your NVIDIA API key
+
+python -m pip install --user -r requirements-deploy.txt
+
+export NVIDIA_API_KEY=your_nvapi_key_here
+set -a
+source .env.example
+set +a
+
+python scripts/model_config.py show --validate
+python scripts/model_config.py deploy --build
+```
+
+Open `http://localhost:3000`.
+
+The deploy helper resolves models from `shared/configs/models.yaml`, starts
+only local NIM containers referenced by roles with `source: local_nim`, and then
+starts the app stack from `docker-compose.yaml`.
+
+For an existing deployment, rebuild the Milvus catalog embeddings when changing
+the text/image embedding model or catalog data source. The catalog service skips
+collections that are already populated, so stale vectors can otherwise remain
+from the previous model configuration.
+
 ## 🎛️ Deployment Options
 
-### Option 1: Local NIM Deployment (Recommended)
+Model routing is per role:
 
-**Best for**: Development, testing, production with GPU resources
+| `source` | Meaning | Local NIMs started |
+|----------|---------|--------------------|
+| `endpoint` | Use the role's `base_url`/`model` or env overrides | none |
+| `local_nim` | Start and use the referenced local NIM service | that service only |
+| `disabled` | Capability is intentionally unavailable | none |
 
-**Pros**:
-- Maximum performance and low latency
-- Complete privacy and data control
-- No ongoing cloud costs
-- Full customization capabilities
-
-**Cons**:
-- Requires significant GPU resources (4x H100)
-- Higher initial hardware investment
-- More complex setup and maintenance
-
-### Option 2: Cloud NIM Deployment
-
-**Best for**: Development, testing, production without local GPUs
-
-**Pros**:
-- No local GPU requirements
-- Faster initial setup
-- Pay-per-use pricing
-- Managed infrastructure
-
-**Cons**:
-- Ongoing cloud costs
-- Network latency
-- Data privacy considerations
-- API rate limits
-
-> **⚠️ `nvclip` is deprecated.** Its hosted endpoint on the NVIDIA API Catalog (`api.build.nvidia.com`) is no longer available, so image (visual) search does **not** work under Cloud NIM Deployment as-is. **Workaround:** run `nvclip` as a local NIM (from `docker-compose-nim-local.yaml`) and point `image_embed_port` at the local container, even when other endpoints stay on the cloud.
-
-### Option 3: Hybrid Deployment
-
-**Best for**: Production with mixed requirements
-
-**Pros**:
-- Flexibility in resource allocation
-- Cost optimization
-- Scalability options
-
-**Cons**:
-- More complex configuration
-- Network management overhead
+Use `shared/configs/models.yaml` to choose the source for each role. Use
+`.env.example` or your private shell env for keys, endpoint URLs, and model
+name overrides.
 
 ## 🏠 Local Deployment
+
+Use this only when this machine will run local NIM containers.
 
 ### Step 1: Environment Setup
 
 ```bash
-# Clone the repository
 git clone https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant.git
 cd retail-shopping-assistant
 
-# Create NIM cache directory
+export NVIDIA_API_KEY=your_nvapi_key_here
+export NGC_API_KEY=$NVIDIA_API_KEY
+set -a
+source .env.example
+set +a
 export LOCAL_NIM_CACHE=~/.cache/nim
 mkdir -p "$LOCAL_NIM_CACHE"
 chmod a+w "$LOCAL_NIM_CACHE"
-
-# Set environment variables
-export NGC_API_KEY=your_nvapi_key_here
-export LLM_API_KEY=$NGC_API_KEY
-export EMBED_API_KEY=$NGC_API_KEY
-export RAIL_API_KEY=$NGC_API_KEY
 ```
+
+Then edit `shared/configs/models.yaml` and set each local role to
+`source: local_nim` with the matching `local_service`.
 
 ### Step 2: Verify GPU Setup
 
@@ -156,40 +166,24 @@ docker login nvcr.io
 # Password: your_nvapi_key_here
 ```
 
-### Step 4: Deploy NIMs
+### Step 4: Validate and Deploy
 
 ```bash
-# Start local NIMs
-docker compose -f docker-compose-nim-local.yaml up -d
-
-# Monitor NIM startup
-docker compose -f docker-compose-nim-local.yaml logs -f
-
-# Wait for all NIMs to be ready (check logs for "ready" messages)
-```
-
-### Step 5: Deploy Application
-
-```bash
-# Build and start application services
-docker compose -f docker-compose.yaml up -d --build
-
-# Monitor application startup
+python scripts/model_config.py show --validate
+python scripts/model_config.py deploy --build
 docker compose -f docker-compose.yaml logs -f
 ```
 
-### Step 6: Verify Deployment
+The helper starts only the NIM services referenced by roles with
+`source: local_nim`, then starts the application services.
+
+### Step 5: Verify Deployment
 
 ```bash
-# Check service status
 docker compose -f docker-compose.yaml ps
-
-# Test API endpoints
-curl http://localhost:8000/health
-curl http://localhost:3000
-
-# Check NIM status
 docker compose -f docker-compose-nim-local.yaml ps
+curl http://localhost:8009/health
+curl http://localhost:3000
 ```
 
 ## ☁️ Cloud Deployment
@@ -205,23 +199,24 @@ cd retail-shopping-assistant
 docker login nvcr.io
 # Use oauthtoken as the username and your NGC API key as the password
 
-# Set environment variables for cloud NIMs
-export NGC_API_KEY=your_nvapi_key_here
-export LLM_API_KEY=$NGC_API_KEY
-export EMBED_API_KEY=$NGC_API_KEY
-export RAIL_API_KEY=$NGC_API_KEY
+# Set environment variables for hosted endpoints
+export NVIDIA_API_KEY=your_nvapi_key_here
+set -a
+source .env.example
+set +a
 ```
 
-### Step 2: Configure Cloud Endpoints
+### Step 2: Validate Model Routing
 
-# Set environment variable
-export CONFIG_OVERRIDE=config-build.yaml
+```bash
+python scripts/model_config.py show --validate
+```
 
 ### Step 3: Deploy Application
 
 ```bash
 # Start application services only
-docker compose -f docker-compose.yaml up -d --build
+python scripts/model_config.py deploy --build
 
 # Monitor startup
 docker compose -f docker-compose.yaml logs -f
@@ -391,201 +386,103 @@ categories: [
 ]
 ```
 
-### Configuration Override System
+### Model Routing
 
-The application supports a flexible configuration override system that allows you to switch between different deployment scenarios without modifying the base configuration files.
+Model endpoints are selected from one file: `shared/configs/models.yaml`.
+Service behavior stays in each service's normal config file, while model base
+URLs, model names, API-key environment variables, and local NIM service metadata
+live in `models.yaml`.
 
-#### How It Works
+Each role has a `source`:
 
-1. **Base Configuration**: The application loads the base `config.yaml` file from each service's `config/` folder
-2. **Override Detection**: If the `CONFIG_OVERRIDE` environment variable is set, the system looks for an override file
-3. **Merge Process**: The override file values are merged into the base configuration, with override values taking precedence
+| Source | Use case |
+|--------|----------|
+| `endpoint` | Hosted NVIDIA endpoint, remote NIM endpoint, or any OpenAI-compatible HTTP endpoint |
+| `local_nim` | A NIM service started from `docker-compose-nim-local.yaml` by the deploy helper |
+| `disabled` | Optional capability intentionally turned off for a deployment |
 
-#### Environment Variable
+If `api_key_env` is set, `show --validate` requires that environment variable
+to be present and the runtime sends it to the model endpoint. For local NIM
+roles that do not need request-time auth, use `api_key_env: null`. Local NIM
+container startup credentials are separate and are listed once under
+`local_nims.required_env`.
 
-| Variable | Description | Example Values |
-|----------|-------------|----------------|
-| `CONFIG_OVERRIDE` | Specifies the override config file name | `config-build.yaml`, `config-custom.yaml` |
-
-#### Default Configuration (Local NIMs)
-
-By default, the application uses local NIM endpoints. No environment variable is needed:
+#### Standard Deployment Flow
 
 ```bash
-# Deploy with local NIMs (default)
-docker compose -f docker-compose-nim-local.yaml up -d
-docker compose -f docker-compose.yaml up -d --build
+export NVIDIA_API_KEY=your_nvapi_key_here
+python -m pip install --user -r requirements-deploy.txt
+set -a
+source .env.example
+set +a
+
+python scripts/model_config.py show --validate
+python scripts/model_config.py deploy --build
 ```
 
-**Chain Server Default** (`chain_server/config/config.yaml`):
-```yaml
-# LLM endpoint for local NIM deployment
-llm_port: "http://localhost:8000/v1"
-llm_name: "meta/llama-3.1-70b-instruct"
+`show --validate` prints the resolved model routing without printing key values.
+It fails if a required API-key variable or endpoint variable is missing.
+
+For fully local NIMs:
+
+```bash
+export LOCAL_NIM_CACHE=~/.cache/nim
+mkdir -p "$LOCAL_NIM_CACHE" && chmod a+w "$LOCAL_NIM_CACHE"
+python scripts/model_config.py show --validate
+python scripts/model_config.py deploy --build
 ```
 
-**Catalog Retriever Default** (`catalog_retriever/config/config.yaml`):
-```yaml
-# Text embedding endpoint for local NIM deployment
-text_embed_port: "http://localhost:8001/v1"
-text_model_name: "nvidia/nv-embedqa-e5-v5"
+Before running that command, edit each desired role in
+`shared/configs/models.yaml` to use `source: local_nim`.
 
-# Image embedding endpoint for local NIM deployment
-image_embed_port: "http://localhost:8002/v1"
-image_model_name: "nvidia/nvclip"
+For a single remote NIM host in local app-code mode:
+
+```bash
+python skills/retail-local-runner/scripts/local_runner.py configure --nim-host http://HOST
+python skills/retail-local-runner/scripts/local_runner.py start
 ```
 
-**Guardrails Default** (`guardrails/config/config.yml`):
+The local runner writes ignored `.local-run/model-endpoints.env` with the
+derived per-role base URLs.
+
+#### Adding or Changing Models
+
+Edit `shared/configs/models.yaml` and update one role entry:
+
 ```yaml
 models:
-  - type: content_safety
-    engine: nim
-    model: nvidia/llama-3.1-nemoguard-8b-content-safety
-    parameters:
-      base_url: http://localhost:8003/v1
-
-  - type: topic_control
-    engine: nim
-    model: nvidia/llama-3.1-nemoguard-8b-topic-control
-    parameters:
-      base_url: http://localhost:8004/v1
+  app_llm:
+    source: endpoint
+    provider: openai_compatible
+    base_url_env: LLM_BASE_URL
+    model_env: LLM_MODEL
+    api_key_env: LLM_API_KEY
 ```
 
-#### Cloud NIM Deployment (`config-build.yaml`)
+For a Compose-managed local NIM, use `source: local_nim` and reference a local
+service:
 
-Use this when using NVIDIA API Catalog hosted endpoints:
-
-```bash
-# Set environment variable
-export CONFIG_OVERRIDE=config-build.yaml
-
-# Deploy without local NIMs
-docker compose -f docker-compose.yaml up -d --build
-```
-
-**Chain Server Override** (`chain_server/config/config-build.yaml`):
-```yaml
-# LLM endpoint for build.nvidia.com
-llm_port: "https://api.build.nvidia.com/v1"
-llm_name: "meta/llama-3.1-70b-instruct"
-```
-
-**Catalog Retriever Override** (`catalog_retriever/config/config-build.yaml`):
-```yaml
-# Text embedding endpoint for build.nvidia.com
-text_embed_port: "https://api.build.nvidia.com/v1"
-text_model_name: "nvidia/nv-embedqa-e5-v5"
-
-# Image embedding endpoint for build.nvidia.com
-image_embed_port: "https://api.build.nvidia.com/v1"
-image_model_name: "nvidia/nvclip"
-```
-
-> **⚠️ `nvclip` is deprecated.** The hosted `api.build.nvidia.com` endpoint for `nvclip` is no longer available, so the cloud image-embedding config above will not work as-is. **Workaround:** deploy `nvclip` as a local NIM (from `docker-compose-nim-local.yaml`) and set `image_embed_port` to the local container (e.g. `http://nvclip:8000/v1`).
-
-**Guardrails Override** (`guardrails/config/config-build.yml`):
 ```yaml
 models:
-  - type: content_safety
-    engine: nim
-    model: nvidia/llama-3.1-nemoguard-8b-content-safety
-    parameters:
-      base_url: https://api.build.nvidia.com/v1
-
-  - type: topic_control
-    engine: nim
-    model: nvidia/llama-3.1-nemoguard-8b-topic-control
-    parameters:
-      base_url: https://api.build.nvidia.com/v1
+  image_embedding:
+    source: local_nim
+    provider: openai_compatible
+    local_service: nvclip
+    api_key_env: null
 ```
 
-#### Creating Custom Override Files
-
-You can create your own override files for custom configurations:
-
-1. **Create the override file** in the same directory as the base config:
-   ```bash
-   # For chain server
-   cp chain_server/config/config.yaml chain_server/config/config-custom.yaml
-   
-   # For catalog retriever
-   cp catalog_retriever/config/config.yaml catalog_retriever/config/config-custom.yaml
-   
-   # For guardrails
-   cp guardrails/config/config.yml guardrails/config/config-custom.yml
-   ```
-
-2. **Modify the override file** with your custom values:
-   ```yaml
-   # Example: Custom LLM endpoint
-   llm_port: "https://your-custom-endpoint.com/v1"
-   llm_name: "your-custom-model"
-   
-   # Example: Custom embedding endpoint
-   text_embed_port: "https://your-embedding-service.com/v1"
-   text_model_name: "your-embedding-model"
-   
-   # Example: Custom guardrails endpoints
-   models:
-     - type: content_safety
-       engine: nim
-       model: nvidia/llama-3.1-nemoguard-8b-content-safety
-       parameters:
-         base_url: https://your-custom-endpoint.com/v1
-   ```
-
-3. **Use the custom override**:
-   ```bash
-   export CONFIG_OVERRIDE=config-custom.yaml
-   docker compose -f docker-compose.yaml up -d --build
-   ```
-
-#### Switching Between Configurations
-
-To switch between different configurations:
+Then deploy with:
 
 ```bash
-# Use local NIMs (default - no environment variable needed)
-unset CONFIG_OVERRIDE
-docker compose -f docker-compose.yaml restart
-
-# Switch to cloud NIMs
-export CONFIG_OVERRIDE=config-build.yaml
-docker compose -f docker-compose.yaml restart
-
-# Use custom configuration
-export CONFIG_OVERRIDE=config-custom.yaml
-docker compose -f docker-compose.yaml restart
+export LLM_BASE_URL=https://your-endpoint/v1
+export LLM_MODEL=your-model-name
+export LLM_API_KEY=...
+python scripts/model_config.py show --validate
+python scripts/model_config.py deploy --build
 ```
 
-#### Docker Compose Integration
-
-You can also set the override in your docker-compose files:
-
-```yaml
-# In docker-compose.yaml
-services:
-  chain-server:
-    environment:
-      - CONFIG_OVERRIDE=${CONFIG_OVERRIDE:-config-local.yaml}
-  
-  catalog-retriever:
-    environment:
-      - CONFIG_OVERRIDE=${CONFIG_OVERRIDE:-config-local.yaml}
-  
-  rails:
-    environment:
-      - CONFIG_OVERRIDE=${CONFIG_OVERRIDE:-config-local.yml}
-```
-
-Then use it:
-```bash
-# Use local config
-CONFIG_OVERRIDE=config-local.yaml docker compose up -d
-
-# Use cloud config
-CONFIG_OVERRIDE=config-build.yaml docker compose up -d
-```
+For locally deployed roles, reference a `local_service` in `models.yaml`. The
+deploy helper starts only those local NIM services.
 
 ### Performance Tuning
 
@@ -617,13 +514,12 @@ deploy:
 ### Health Checks
 
 ```bash
-# Check service health
-curl http://localhost:8000/health
-
 # Check individual services
+curl http://localhost:8009/health  # Chain server
 curl http://localhost:8010/health  # Catalog retriever
 curl http://localhost:8011/health  # Memory retriever
 curl http://localhost:8012/health  # Guardrails
+curl http://localhost:3000         # UI
 ```
 
 ### Logging

@@ -1,5 +1,4 @@
 import argparse
-import argparse
 import yaml
 import requests
 import time
@@ -14,6 +13,17 @@ parser.add_argument('-p', '--port', default=3000, type=int)
 parser.add_argument('-H', '--host', default='localhost', type=str)
 parser.add_argument('-d', '--result_directory', default='results')
 parser.add_argument('-u', '--uri', default='api/query/timing')
+parser.add_argument(
+    '--disable-guardrails',
+    action='store_true',
+    help='Send guardrails=false in every query payload.',
+)
+parser.add_argument(
+    '--request-timeout',
+    default=120,
+    type=float,
+    help='Seconds to wait for each API request before recording an error.',
+)
 
 args = parser.parse_args()
 
@@ -54,17 +64,18 @@ for filename in yaml_files:
     for query in queries:
         payload = {
             "user_id" : user_id,
-            "query": query
+            "query": query,
+            "guardrails": not args.disable_guardrails,
             }
         try:
-            response = requests.post(API_ENDPOINT, json=payload)
+            response = requests.post(API_ENDPOINT, json=payload, timeout=args.request_timeout)
             response.raise_for_status()
             data = response.json()
+            response_text = data.get("response", "No response collected.")
             results.append({
                 "query": query,
-                "content": data.get("content", "No response collected."),
-                "content": data.get("content", "No response collected."),
-                "response": data.get("response", "No response collected."),
+                "content": response_text,
+                "response": response_text,
                 "timing": data.get("timings", "No timing collected." )
             })
         except Exception as e:

@@ -32,12 +32,16 @@ class SummaryAgent:
         logging.info(f"SummaryAgent.__init__() | Initializing with llm_name={config.llm_name}, llm_port={config.llm_port}")
         self.llm_name = config.llm_name
         self.llm_port = config.llm_port
+        llm_api_key_env = getattr(config, "llm_api_key_env", None)
+        self.llm_api_key = (
+            os.environ.get(llm_api_key_env, "") if llm_api_key_env else "not-needed"
+        ) or "not-needed"
         
         # Store configuration
         self.memory_length = config.memory_length
         self.memory_port = config.memory_port
         
-        self.model = OpenAI(base_url=config.llm_port, api_key=os.environ["LLM_API_KEY"])
+        self.model = OpenAI(base_url=config.llm_port, api_key=self.llm_api_key)
         logging.info(f"SummaryAgent.__init__() | Initialization complete")
 
     def invoke(

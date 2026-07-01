@@ -288,17 +288,16 @@ agent_choices: ["cart", "retriever", "chatter"]
 
 **Catalog Retriever** (`catalog_retriever/config.yaml`):
 ```yaml
-text_embed_port: "http://text-embedder:8000/v1"
-image_embed_port: "http://image-embedder:8000/v1"
-text_model_name: "nvidia/nv-embedqa-e5-v5"
-image_model_name: "nvidia/nvclip"
 db_port: "milvus:19530"
 data_source: "/app/shared/data/products.csv"
 ```
 
-### Environment Override Support
+### Model Routing Support
 
-All services support configuration overrides via `CONFIG_OVERRIDE` environment variable for different deployment modes (local vs cloud).
+Model endpoints are selected from `shared/configs/models.yaml`. Service configs
+keep service behavior; `models.yaml` owns base URLs, model names, API-key env
+vars, and local NIM service selection. Each role independently uses
+`source: endpoint`, `source: local_nim`, or `source: disabled`.
 
 ## Frontend Implementation
 
@@ -429,15 +428,14 @@ The system uses multi-container Docker deployment:
 
 **Required**:
 ```bash
-NGC_API_KEY=your_nvapi_key_here
-LLM_API_KEY=$NGC_API_KEY
-EMBED_API_KEY=$NGC_API_KEY
-RAIL_API_KEY=$NGC_API_KEY
+NVIDIA_API_KEY=your_nvapi_key_here
+LLM_API_KEY=$NVIDIA_API_KEY
+EMBED_API_KEY=$NVIDIA_API_KEY
+RAIL_API_KEY=$NVIDIA_API_KEY
 ```
 
 **Optional**:
 ```bash
-CONFIG_OVERRIDE=config-build.yaml  # For cloud deployment
 LOCAL_NIM_CACHE=~/.cache/nim       # For local NIM caching
 ```
 
@@ -445,14 +443,13 @@ LOCAL_NIM_CACHE=~/.cache/nim       # For local NIM caching
 
 **Option A: Local Deployment** (requires 4x H100 GPUs):
 ```bash
-docker compose -f docker-compose-nim-local.yaml up -d
-docker compose -f docker-compose.yaml up -d --build
+# First set desired roles in shared/configs/models.yaml to source: local_nim.
+python scripts/model_config.py deploy --build
 ```
 
 **Option B: Cloud Deployment** (uses NVIDIA API Catalog):
 ```bash
-export CONFIG_OVERRIDE=config-build.yaml
-docker compose -f docker-compose.yaml up -d --build
+python scripts/model_config.py deploy --build
 ```
 
 ## Key Files Reference
@@ -518,6 +515,4 @@ This NVIDIA Retail Shopping Assistant demonstrates sophisticated AI application 
 - **Modern UI/UX** with React and TypeScript
 
 The system is well-architected for both development and production deployment, with clear separation of concerns and comprehensive configuration management.
-
-
 

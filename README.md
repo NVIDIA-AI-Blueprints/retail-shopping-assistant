@@ -63,6 +63,11 @@ For detailed architecture information, see [Architecture Overview](docs/README.m
 ### Prerequisites
 
 - **Docker**: Version 20.10+ with Docker Compose plugin
+- **Python**: Host Python for deployment helpers. From the cloned repo, install
+  deploy-helper dependencies with:
+  ```bash
+  python -m pip install --user -r requirements-deploy.txt
+  ```
 - **NVIDIA NGC Account**: For API access ([Get API Key](https://ngc.nvidia.com/))
 - **Hardware**: 4x H100 GPUs (preferred) or 4x A100 GPUs (minimum) for local deployment, or cloud access
 
@@ -80,51 +85,53 @@ For detailed architecture information, see [Architecture Overview](docs/README.m
    ```
    Use `$oauthtoken` as the username and your NGC API key as the password.
 
-3. **Set up environment**:
+3. **Install host deploy-helper dependencies**:
    ```bash
-   export NGC_API_KEY=your_nvapi_key_here
-   export LLM_API_KEY=$NGC_API_KEY
-   export EMBED_API_KEY=$NGC_API_KEY
-   export RAIL_API_KEY=$NGC_API_KEY
+   python -m pip install --user -r requirements-deploy.txt
+   ```
+
+4. **Set up hosted endpoint environment**:
+   ```bash
+   export NVIDIA_API_KEY=your_nvapi_key_here
+   set -a
+   source .env.example
+   set +a
+   ```
+
+5. **Validate and deploy**:
+   ```bash
+   python scripts/model_config.py show --validate
+   python scripts/model_config.py deploy --build
+   ```
+
+   The helper prints resolved endpoints without printing API keys. By default,
+   `shared/configs/models.yaml` uses NVIDIA Build hosted endpoints for the
+   app LLM, text embeddings, image embeddings, and guardrails, and starts no
+   local NIM containers.
+
+   For local NIMs, edit the desired model roles in
+   `shared/configs/models.yaml` to `source: local_nim`, then run:
+   ```bash
    export LOCAL_NIM_CACHE=~/.cache/nim
-   mkdir -p "$LOCAL_NIM_CACHE"
-   chmod a+w "$LOCAL_NIM_CACHE"
+   mkdir -p "$LOCAL_NIM_CACHE" && chmod a+w "$LOCAL_NIM_CACHE"
+   python scripts/model_config.py show --validate
+   python scripts/model_config.py deploy --build
    ```
 
-4. **Launch the application**:
-   
-   **Option A: Local Deployment**:
-   ```bash
-   # Start local NIMs (requires 4x H100 GPUs)
-   docker compose -f docker-compose-nim-local.yaml up -d
-   
-   # Build and launch the application
-   docker compose -f docker-compose.yaml up -d --build
-   ```
-   
-   **Option B: Cloud Deployment** (no local GPUs required):
-   ```bash
-   # Configure to use NVIDIA API Catalog endpoints
-   export CONFIG_OVERRIDE=config-build.yaml
-   
-   # Build and launch the application
-   docker compose -f docker-compose.yaml up -d --build
-   ```
+   Model routing lives in `shared/configs/models.yaml`.
 
-   > **⚠️ `nvclip` is deprecated.** Its hosted endpoint on the NVIDIA API Catalog (`api.build.nvidia.com`) is no longer available, so image (visual) search does **not** work under Option B as-is. **Workaround:** deploy `nvclip` as a local NIM (from `docker-compose-nim-local.yaml`) and point `image_embed_port` at it — see the [Deployment Guide](docs/DEPLOYMENT.md).
+6. **Access the application**: Open your browser to `http://localhost:3000`
 
-5. **Access the application**: Open your browser to `http://localhost:3000`
+7. **Stop the containers**:
 
-6. **Stop the containers**:
-   
-   **Option A: Local Deployment**:
-   ```bash
-   docker compose -f docker-compose.yaml -f docker-compose-nim-local.yaml down
-   ```
-   
-   **Option B: Cloud Deployment**:
+   **Application services**:
    ```bash
    docker compose -f docker-compose.yaml down
+   ```
+
+   **Local NIM services, if `models.yaml` started any**:
+   ```bash
+   docker compose -f docker-compose-nim-local.yaml down
    ```
 
 For detailed installation instructions, see [Deployment Guide](docs/DEPLOYMENT.md).
@@ -150,6 +157,7 @@ The Brev deployment guide walks you through the entire process from creating a L
 - **[User Guide](docs/USER_GUIDE.md)**: How to use the application
 - **[API Documentation](docs/API.md)**: Complete API reference
 - **[Deployment Guide](docs/DEPLOYMENT.md)**: Installation and setup instructions
+- **[Testing and Evaluation](tests/README.md)**: Unit, integration, and Challenger/Judge evaluation workflows
 - **[Documentation Hub](docs/README.md)**: Complete documentation index
 
 ## Contribution Guidelines
@@ -181,7 +189,7 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 
 ### Related Projects
 - [NVIDIA Retrieval QA](https://catalog.ngc.nvidia.com/orgs/nim/teams/nvidia/containers/nv-embedqa-e5-v5): Embedding model for semantic search
-- [NV-CLIP](https://catalog.ngc.nvidia.com/orgs/nim/teams/nvidia/containers/nvclip): Visual understanding model _(deprecated — hosted/cloud endpoint no longer available; run as a local NIM)_
+- [NV-CLIP](https://catalog.ngc.nvidia.com/orgs/nim/teams/nvidia/containers/nvclip): Visual understanding model for image retrieval
 - [Nemotron 3 Super](https://catalog.ngc.nvidia.com/orgs/nim/teams/nvidia/containers/nemotron-3-super-120b-a12b): Large language model
 
 ## License
@@ -201,5 +209,3 @@ Use of the product catalog data in the retail shopping assistant is governed by 
 [Back to Top](#top)
 
 </div>
-
-

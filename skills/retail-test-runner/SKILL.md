@@ -1,13 +1,13 @@
 ---
 name: retail-test-runner
-description: Run the Retail Shopping Assistant test suites under tests/, including offline pytest unit tests in tests/unit and live integration scripts in tests/integration for conversation, quality, timing, and plots.
+description: Run the Retail Shopping Assistant test suites and evaluation workflows under tests/, including offline pytest unit tests, live integration scripts, and tests/evaluation Challenger/Judge runs with one-scenario, all-scenario, latest-run, and report-result workflows.
 metadata:
   short-description: Run retail unit and integration tests
 ---
 
 # Retail Test Runner
 
-Use this skill when the user asks to run, validate, debug, or explain the Retail Shopping Assistant tests under this repository's `tests/` directory.
+Use this skill when the user asks to run, validate, debug, or explain the Retail Shopping Assistant tests or evaluator workflows under this repository's `tests/` directory.
 
 ## Default Runner
 
@@ -22,6 +22,7 @@ Common invocations:
 ```bash
 python skills/retail-test-runner/scripts/run_retail_tests.py unit
 python skills/retail-test-runner/scripts/run_retail_tests.py integration --test-path shopping
+python skills/retail-test-runner/scripts/run_retail_tests.py integration --test-path shopping --disable-guardrails --request-timeout 60
 python skills/retail-test-runner/scripts/run_retail_tests.py integration --test-path rails --skip-quality
 ```
 
@@ -33,6 +34,9 @@ The runner:
 - Runs integration scripts from `tests/integration/` so their relative `conversations/<TEST_PATH>` paths resolve correctly.
 - Targets the chain-server timing endpoint at `http://localhost:8009/query/timing` by default.
 - Sets `TEST_PATH` for integration runs.
+- Can send `guardrails=false` on live integration requests with `--disable-guardrails`.
+- Bounds each live request with `--request-timeout <seconds>`.
+- Uses `--result-directory <name>` consistently across collection, timing plots, and response-quality judging.
 
 ## Unit Tests
 
@@ -69,6 +73,36 @@ Integration outputs are written under:
 - `tests/integration/conversations/<TEST_PATH>/judge/`
 
 Do not delete or overwrite these outputs unless the user asks for a clean run.
+
+## Evaluation Challenger and Judge
+
+For live evaluation under `tests/evaluation`, source the evaluation env file
+without printing values:
+
+```bash
+set -a && source tests/evaluation/.env && set +a
+```
+
+Run one live Challenger scenario:
+
+```bash
+PYTHONPATH=tests/evaluation python -m src.challenger --scenario-id text_budget_work_bag
+```
+
+Run all selected evaluation scenarios:
+
+```bash
+PYTHONPATH=tests/evaluation python -m src.challenger --all-scenarios
+```
+
+Judge the latest saved run while keeping `judge_model.enabled: false` in config:
+
+```bash
+PYTHONPATH=tests/evaluation python -m src.judge --latest --enable-judge
+```
+
+The Judge appends scores to `results/runs/<run_id>/run.yaml` and regenerates
+`results/latest.html`.
 
 ## Validation
 

@@ -50,10 +50,11 @@ for filename in yaml_files:
             response = requests.post(API_ENDPOINT, json=payload)
             response.raise_for_status()
             data = response.json()
+            response_text = data.get("response", data.get("content", "No response collected."))
             results.append({
                 "query": query["response"],
-                "content": data.get("content", "No response collected."),
-                "response": data.get("response", "No response collected."),
+                "content": response_text,
+                "response": response_text,
                 "timing": data.get("timings", "No timing collected." )
             })
         except Exception as e:

@@ -51,6 +51,10 @@ class PlannerAgent:
         
         self.llm_name = config.llm_name
         self.llm_port = config.llm_port
+        llm_api_key_env = getattr(config, "llm_api_key_env", None)
+        self.llm_api_key = (
+            os.environ.get(llm_api_key_env, "") if llm_api_key_env else "not-needed"
+        ) or "not-needed"
         self.agent_choices = config.agent_choices
         self.system_prompt = config.routing_prompt
         
@@ -58,7 +62,7 @@ class PlannerAgent:
         try:
             self.model = OpenAI(
                 base_url=self.llm_port,
-                api_key=os.environ.get("LLM_API_KEY")
+                api_key=self.llm_api_key,
             )
             logger.info("PlannerAgent.__init__() | initialization complete")
         except Exception as e:

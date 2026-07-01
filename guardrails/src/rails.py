@@ -4,7 +4,7 @@
 from nemoguardrails import RailsConfig, LLMRails
 import logging
 import os
-from config_utils import apply_endpoint_overrides
+from config_utils import apply_model_config
 
 # Set up logging
 logging.basicConfig(
@@ -29,8 +29,8 @@ class GuardRails(BaseRails):
         # Load the base configuration
         self.config = RailsConfig.from_path(config_path)
         
-        # Apply endpoint overrides if CONFIG_OVERRIDE is set
-        apply_endpoint_overrides(self.config, config_path)
+        # Apply shared model endpoint config before constructing LLMRails.
+        apply_model_config(self.config, config_path)
         
         # Initialize the LLM Rails with the modified configuration
         self.app = LLMRails(self.config)

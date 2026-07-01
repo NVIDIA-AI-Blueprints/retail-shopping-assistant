@@ -1,13 +1,13 @@
 ---
 name: retail-local-runner
-description: Start, stop, configure, inspect, and troubleshoot the Retail Shopping Assistant locally with backend Python and React code outside containers, local Milvus infra containers, and remote NIM endpoints from docker-compose-nim-local.yaml.
+description: Start, stop, configure, inspect, redeploy, and troubleshoot the Retail Shopping Assistant locally or through the Docker Compose cloud blueprint, including /home/ubuntu/Personal deploy files, local app processes, local Milvus infra containers, and remote NIM endpoints from docker-compose-nim-local.yaml.
 metadata:
   short-description: Run Retail Shopping Assistant locally
 ---
 
 # Retail Local Runner
 
-Use this skill when the user wants to run, stop, configure, inspect, or troubleshoot the Retail Shopping Assistant from this repository with app code running locally.
+Use this skill when the user wants to run, stop, configure, inspect, redeploy, or troubleshoot the Retail Shopping Assistant from this repository.
 
 ## Core Workflow
 
@@ -19,16 +19,61 @@ python skills/retail-local-runner/scripts/local_runner.py <command>
 
 Available commands:
 
-- `configure`: create ignored `config-local.yaml` files that point app services to a remote NIM host.
+- `configure`: create ignored `.local-run/model-endpoints.env` values that point app services to a remote NIM host.
 - `install-dev`: create `.local-run/dev-venv` and install Python dev/test packages there.
 - `start`: start local Milvus infra containers, then local memory, guardrails, catalog, chain-server, and UI processes.
 - `stop`: stop only tracked local app/UI processes and local Milvus infra containers. Never stop remote NIMs.
 - `status`: show tracked process, port, health, and Milvus infra status.
 - `logs`: print recent logs from `.local-run/logs`.
 
+## Personal Cloud Blueprint Redeploy
+
+When the user asks to redeploy the blueprint, redeploy from `/home/ubuntu/Personal`
+instead of rediscovering env files or creating a repo-root `.env`.
+
+Required Personal files:
+
+- `/home/ubuntu/Personal/retail-shopping-assistant-cloud.env`
+- `/home/ubuntu/Personal/deploy-retail-shopping-assistant-cloud.sh`
+- `/home/ubuntu/Personal/test-retail-shopping-assistant-health.sh`
+
+Use this exact workflow:
+
+```bash
+bash /home/ubuntu/Personal/deploy-retail-shopping-assistant-cloud.sh
+```
+
+The helper sources the Personal env file and runs:
+
+```bash
+docker compose -f docker-compose.yaml up -d --build --force-recreate --remove-orphans
+```
+
+and then runs health smoke tests.
+
+Do not print raw env values. If validation is needed before deployment, print
+only variable names with values redacted. Do not create or copy a repo-root
+`.env`; the Personal env file is the source of truth for this workflow.
+
+After the helper exits, verify with:
+
+```bash
+set -a && source /home/ubuntu/Personal/retail-shopping-assistant-cloud.env && set +a
+docker compose -f docker-compose.yaml ps
+curl -fsS --max-time 5 http://localhost:8009/health
+curl -fsS --max-time 5 http://localhost:8010/health
+curl -fsS --max-time 5 http://localhost:8011/health
+curl -fsS --max-time 5 http://localhost:3000 >/dev/null && echo ui_ok
+```
+
+If the helper or env file is missing, inspect
+`/home/ubuntu/Personal/retail-shopping-assistant-cloud-deploy.md` for the
+current runbook and report the missing file. Do not invent private endpoint
+values.
+
 ## Stop Workflow
 
-When the user asks to stop, shut down, tear down, or restart the local Retail Shopping Assistant, run `stop` first. Do not ask for the NIM host and do not check or create `config-local.yaml` files for stop-only requests.
+When the user asks to stop, shut down, tear down, or restart the local Retail Shopping Assistant, run `stop` first. Do not ask for the NIM host and do not check or create model endpoint files for stop-only requests.
 
 ```bash
 python skills/retail-local-runner/scripts/local_runner.py stop
@@ -44,13 +89,13 @@ It must not stop or modify the remote NIM machine from `docker-compose-nim-local
 
 ## Remote NIM Host
 
-Before running `configure` or `start`, check whether all three local override files exist:
+Before running `configure` or `start`, check whether the ignored local model endpoint env exists:
 
 ```bash
-find shared/configs -name config-local.yaml -print
+test -f .local-run/model-endpoints.env && sed -n 's/=.*/=<redacted>/p' .local-run/model-endpoints.env
 ```
 
-If any override file is missing, ask the user in chat for the remote NIM host URL before running the script. Do not treat the runner's missing-host error as the final answer. Ask exactly:
+If the model endpoint env is missing and the user wants to point app services at a remote NIM host, ask for the remote NIM host URL before running the script. Do not treat the runner's missing-host error as the final answer. Ask exactly:
 
 ```text
 What is the remote NIM host URL? Use the base host without per-model ports, for example http://NIM_HOST.
@@ -104,7 +149,9 @@ If another local Milvus is already healthy at `localhost:19530` with health on `
 - Use `.local-run/dev-venv/bin/python -m pytest ...` for local unit tests after `install-dev`.
 - UI dependencies are installed into `ui/node_modules` when missing.
 - The runner creates `ui/public/images -> shared/images` so React dev mode can serve catalog images from `/images/...`, matching the UI Dockerfile behavior.
-- The runner sets `CONFIG_OVERRIDE=config-local.yaml`, `SHARED_ROOT`, `SHARED_CONFIG_ROOT`, `REACT_APP_API_BASE_URL=http://localhost:8009`, and `BROWSER=none`.
+- The runner sets `SHARED_ROOT`, `SHARED_CONFIG_ROOT`, `REACT_APP_API_BASE_URL=http://localhost:8009`, and `BROWSER=none`.
+- `configure --nim-host` writes `.local-run/model-endpoints.env` with the per-role base URLs and model names.
+- When `NVIDIA_API_KEY` or `NGC_API_KEY` is present, the runner uses it as the default for `LLM_API_KEY`, `EMBED_API_KEY`, and `RAIL_API_KEY`; generated local endpoint envs use `local-nim` as a no-auth placeholder when no key is set.
 - Use `status` before deciding whether to start or stop.
 - Use `logs --service catalog-retriever --lines 120` when catalog startup is slow; first startup may populate Milvus embeddings through the remote NIMs.
 

@@ -1,53 +1,45 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import os
-import yaml
 import logging
-from typing import Dict, Any
+import os
+
+from shared.model_config import resolve_model_config, validate_model_config
 
 logger = logging.getLogger(__name__)
 
 
-def apply_endpoint_overrides(config, config_dir: str = "/app/shared/configs"):
-    """
-    Apply endpoint overrides to the RailsConfig if CONFIG_OVERRIDE is set.
-    
-    Args:
-        config: RailsConfig object to modify
-        config_dir: Directory containing config files
-    """
-    override_file = os.environ.get("CONFIG_OVERRIDE")
-    
-    if not override_file:
-        logger.info("Using local endpoints for guardrails configuration")
-        return
-    
-    # Load the override config file to get the base_url values
-    override_path = os.path.join(config_dir, override_file)
-    
-    if not os.path.exists(override_path):
-        logger.warning(f"Guardrails override config file not found at {override_path}")
-        return
-    
-    logger.info(f"Loading guardrails override config from {override_path}")
-    
-    with open(override_path, 'r') as f:
-        override_config = yaml.safe_load(f)
-    
-    # Extract base_url values from the override config
-    if 'models' in override_config:
-        for model_config in override_config['models']:
-            if 'type' in model_config and 'parameters' in model_config:
-                model_type = model_config['type']
-                base_url = model_config['parameters'].get('base_url')
-                
-                if base_url:
-                    # Update the corresponding model in RailsConfig
-                    for model in config.models:
-                        if model.type == model_type:
-                            model.parameters['base_url'] = base_url
-                            logger.info(f"Updated {model_type} base_url to {base_url}")
-                            break
+def apply_model_config(config, config_dir: str = "/app/shared/configs/rails"):
+    """Apply shared model endpoint config to a RailsConfig object."""
 
-    logger.info("Applied endpoint overrides to guardrails configuration") 
+    config_root = os.environ.get("SHARED_CONFIG_ROOT") or os.path.dirname(config_dir.rstrip("/"))
+    model_config = resolve_model_config(config_root=config_root)
+    validate_model_config(model_config, roles=("app_llm", "content_safety", "topic_control"))
+
+    role_by_type = {
+        "main": model_config.require("app_llm"),
+        "content_safety": model_config.require("content_safety"),
+        "topic_control": model_config.require("topic_control"),
+    }
+
+    for model in config.models:
+        endpoint = role_by_type.get(model.type)
+        if not endpoint:
+            continue
+
+        model.model = endpoint.model
+        if getattr(model, "parameters", None) is None:
+            model.parameters = {}
+        model.parameters["base_url"] = endpoint.base_url
+
+        api_key = os.environ.get(endpoint.api_key_env, "") if endpoint.api_key_env else ""
+        if api_key:
+            os.environ["NVIDIA_API_KEY"] = api_key
+        elif not endpoint.api_key_env:
+            os.environ.setdefault("NVIDIA_API_KEY", "not-needed")
+
+        logger.info(
+            "Applied model config role %s to guardrails model type %s",
+            endpoint.role,
+            model.type,
+        )

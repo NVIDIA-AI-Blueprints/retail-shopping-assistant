@@ -1,4 +1,4 @@
-# Local NVIDIA configuration overrides
+# Local/private configuration files
 **/config-nvidia-local.yaml
 **/config-local.yaml
 
@@ -63,8 +63,10 @@ htmlcov/
 tests/.coverage
 tests/htmlcov/
 tests/.pytest_cache/
-tests/integration/conversations/**/results/
+tests/integration/conversations/**/results*/
 tests/integration/conversations/**/judge/
+tests/evaluation/results/*
+!tests/evaluation/results/.gitkeep
 
 # Environment variables
 .env

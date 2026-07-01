@@ -1,19 +1,21 @@
 models:
   - type: main
     engine: nim
-    model: meta/llama-3.1-70b-instruct
+    model: model-config-managed-main
+    parameters:
+      base_url: http://model-config-managed/v1
     
   - type: content_safety
     engine: nim
-    model: nvidia/llama-3.1-nemoguard-8b-content-safety
+    model: model-config-managed-content-safety
     parameters:
-      base_url: http://content:8000/v1
+      base_url: http://model-config-managed/v1
 
   - type: topic_control
     engine: nim
-    model: nvidia/llama-3.1-nemoguard-8b-topic-control
+    model: model-config-managed-topic-control
     parameters:
-      base_url: http://topic_control:8000/v1
+      base_url: http://model-config-managed/v1
 
 bot_messages:
   refuse to respond: 

@@ -33,11 +33,15 @@ class ChatterAgent:
         logging.info(f"ChatterAgent.__init__() | Initializing with llm_name={config.llm_name}, llm_port={config.llm_port}")
         self.llm_name = config.llm_name
         self.llm_port = config.llm_port
+        llm_api_key_env = getattr(config, "llm_api_key_env", None)
+        self.llm_api_key = (
+            os.environ.get(llm_api_key_env, "") if llm_api_key_env else "not-needed"
+        ) or "not-needed"
         self.config = config
         
         self.model = AsyncOpenAI(
             base_url=config.llm_port, 
-            api_key=os.environ["LLM_API_KEY"]
+            api_key=self.llm_api_key,
         )
         logging.info(f"ChatterAgent.__init__() | Initialization complete")
 

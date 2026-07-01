@@ -633,7 +633,8 @@ class TestMilvusFromCsv:
     def test_skips_when_embeddings_already_exist(
         self, retriever: Retriever, tmp_path
     ) -> None:
-        retriever.embeddings_exist = lambda: True  # type: ignore[assignment]
+        retriever.text_db.col = SimpleNamespace(flush=lambda: None, num_entities=5)
+        retriever.image_db.col = SimpleNamespace(flush=lambda: None, num_entities=5)
         retriever.text_db.add_embeddings = MagicMock()
         retriever.image_db.add_embeddings = MagicMock()
 
@@ -645,7 +646,8 @@ class TestMilvusFromCsv:
     def test_populates_collections_when_empty(
         self, retriever: Retriever, tmp_path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        retriever.embeddings_exist = lambda: False  # type: ignore[assignment]
+        retriever.text_db.col = None
+        retriever.image_db.col = None
 
         # Minimal CSV with the columns read by milvus_from_csv.
         csv_path = tmp_path / "products.csv"
@@ -668,7 +670,8 @@ class TestMilvusFromCsv:
     def test_skips_failed_embeddings_when_populating(
         self, retriever: Retriever, tmp_path
     ) -> None:
-        retriever.embeddings_exist = lambda: False  # type: ignore[assignment]
+        retriever.text_db.col = None
+        retriever.image_db.col = None
 
         csv_path = tmp_path / "p.csv"
         csv_path.write_text(
@@ -692,6 +695,30 @@ class TestMilvusFromCsv:
 
         image_call = retriever.image_db.add_embeddings.call_args.kwargs
         assert image_call["embeddings"] == [[0.4]]
+
+    def test_missing_image_embeddings_do_not_repopulate_text(
+        self, retriever: Retriever, tmp_path
+    ) -> None:
+        retriever.text_db.col = SimpleNamespace(flush=lambda: None, num_entities=5)
+        retriever.image_db.col = SimpleNamespace(flush=lambda: None, num_entities=0)
+
+        csv_path = tmp_path / "p.csv"
+        csv_path.write_text(
+            "name,description,category,subcategory,image\n"
+            "A,x,cat,sub,a.jpg\n"
+        )
+
+        retriever.text_embeddings = MagicMock(return_value=[[0.1]])
+        retriever.image_embeddings = MagicMock(return_value=[None])
+        retriever.text_db.add_embeddings = MagicMock()
+        retriever.image_db.add_embeddings = MagicMock()
+
+        retriever.milvus_from_csv(csv_path=str(csv_path))
+
+        retriever.text_embeddings.assert_not_called()
+        retriever.text_db.add_embeddings.assert_not_called()
+        retriever.image_embeddings.assert_called_once()
+        retriever.image_db.add_embeddings.assert_not_called()
 
 
 class TestRetrieve:
@@ -841,4 +868,25 @@ class TestRetrieve:
         )
 
         assert len(names) == 1
+        assert len(ids) == 1
+
+    async def test_deduplicates_by_name_when_pk_differs(
+        self, retriever: Retriever
+    ) -> None:
+        first = _doc("Same Product", category="dress")
+        second = _doc("Same Product", category="dress")
+        second.metadata["pk"] = first.metadata["pk"] + 1
+        retriever.text_db.similarity_search_with_relevance_scores = MagicMock(
+            return_value=[(first, 0.9), (second, 0.85)]
+        )
+
+        _texts, ids, _sims, names, _images = await retriever.retrieve(
+            query=["q"],
+            categories=["dress"],
+            k=5,
+            image_bool=False,
+            verbose=False,
+        )
+
+        assert names == ["Same Product"]
         assert len(ids) == 1

@@ -34,6 +34,7 @@ if str(REPO_ROOT) not in sys.path:
 # before any test imports them so we never trip on KeyError during collection.
 for _key in ("LLM_API_KEY", "EMBED_API_KEY", "RAIL_API_KEY", "NVIDIA_API_KEY"):
     os.environ.setdefault(_key, f"test-{_key.lower()}")
+os.environ.setdefault("SHARED_CONFIG_ROOT", str(REPO_ROOT / "shared" / "configs"))
 
 
 @pytest.fixture
@@ -48,6 +49,8 @@ def base_config() -> SimpleNamespace:
     return SimpleNamespace(
         llm_port="http://localhost:8000/v1",
         llm_name="test-model",
+        llm_api_key_env="LLM_API_KEY",
+        llm_api_key_required=False,
         retriever_port="http://localhost:8010",
         memory_port="http://localhost:8011",
         rails_port="http://localhost:8012",
@@ -74,6 +77,8 @@ def valid_config_dict() -> Dict[str, Any]:
     return {
         "llm_port": "http://localhost:8000/v1",
         "llm_name": "test-model",
+        "llm_api_key_env": "LLM_API_KEY",
+        "llm_api_key_required": False,
         "retriever_port": "http://localhost:8010",
         "memory_port": "http://localhost:8011",
         "rails_port": "http://localhost:8012",

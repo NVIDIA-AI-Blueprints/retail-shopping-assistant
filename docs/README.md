@@ -37,6 +37,7 @@ Welcome to the Retail Shopping Assistant documentation! This hub provides compre
 | [Deployment Guide](DEPLOYMENT.md) | Installation and deployment instructions | DevOps, system administrators |
 | [Architecture Overview](../README.md#architecture) | System design and component details | Architects, developers |
 | [Configuration Guide](../README.md#configuration) | Settings and customization options | Developers, administrators |
+| [Testing and Evaluation](../tests/README.md) | Unit, integration, and Challenger/Judge evaluation workflows | Developers, evaluators |
 
 ### For Administrators
 
@@ -58,7 +59,8 @@ Welcome to the Retail Shopping Assistant documentation! This hub provides compre
 1. **[Main README](../README.md)** - Project overview and architecture
 2. **[API Documentation](API.md)** - Understand the API
 3. **[Deployment Guide](DEPLOYMENT.md)** - Set up development environment
-4. **[Configuration Guide](../README.md#configuration)** - Customize the application
+4. **[Testing and Evaluation](../tests/README.md)** - Run tests and evaluator workflows
+5. **[Configuration Guide](../README.md#configuration)** - Customize the application
 
 ### I'm Deploying to Production
 1. **[Deployment Guide](DEPLOYMENT.md)** - Production deployment instructions
@@ -204,5 +206,3 @@ We welcome feedback on the documentation:
 **Maintainer**: NVIDIA AI Blueprints Team
 
 For the latest updates, check the [GitHub repository](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant).
-
-

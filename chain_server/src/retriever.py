@@ -39,13 +39,17 @@ class RetrieverAgent():
         logging.info(f"RetrieverAgent.__init__() | Initializing with llm_name={config.llm_name}, llm_port={config.llm_port}")
         self.llm_name = config.llm_name
         self.llm_port = config.llm_port
+        llm_api_key_env = getattr(config, "llm_api_key_env", None)
+        self.llm_api_key = (
+            os.environ.get(llm_api_key_env, "") if llm_api_key_env else "not-needed"
+        ) or "not-needed"
         
         # Store configuration
         self.catalog_retriever_url = config.retriever_port
         self.k_value = config.top_k_retrieve
         self.categories = config.categories
         
-        self.model = OpenAI(base_url=config.llm_port, api_key=os.environ["LLM_API_KEY"])
+        self.model = OpenAI(base_url=config.llm_port, api_key=self.llm_api_key)
         logging.info(f"RetrieverAgent.__init__() | Initialization complete")
 
     async def invoke(
@@ -122,6 +126,32 @@ class RetrieverAgent():
 
             response.raise_for_status()
             results = response.json()
+            fallback_used = False
+
+            if not image and not results.get("texts") and categories:
+                fallback_entities = [
+                    category for category in categories
+                    if category in self.categories
+                ]
+                if fallback_entities:
+                    logging.info(
+                        "RetrieverAgent.invoke() | No exact text results; "
+                        f"retrying with category fallback: {fallback_entities}"
+                    )
+                    fallback_response = session.post(
+                        f"{self.catalog_retriever_url}/query/text",
+                        json={
+                            "text": fallback_entities,
+                            "categories": categories,
+                            "filters": filters,
+                            "k": k
+                        }
+                    )
+                    fallback_response.raise_for_status()
+                    fallback_results = fallback_response.json()
+                    if fallback_results.get("texts"):
+                        results = fallback_results
+                        fallback_used = True
             
             # Format the response with product details
             if results["texts"]:
@@ -130,7 +160,14 @@ class RetrieverAgent():
                 for text, name, img, sim in zip(results["texts"], results["names"], results["images"], results["similarities"]):
                     products.append(text)
                     retrieved_dict[name] = img
-                state.response = f"These products are available in the catalog:\n" + "\n".join(products)
+                if fallback_used:
+                    state.response = (
+                        "No exact products closely matched the user's query. "
+                        "These nearby catalog alternatives are available:\n"
+                        + "\n".join(products)
+                    )
+                else:
+                    state.response = f"These products are available in the catalog:\n" + "\n".join(products)
                 state.retrieved = retrieved_dict
             else:
                 state.response = "Unfortunately there are no products closely matching the user's query."

@@ -14,6 +14,8 @@ import re
 from typing import Any
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 from shared.commerce_contracts import (
     CommerceError,
@@ -41,9 +43,9 @@ def search_catalog(
     does not accept ``user_id``, cart state, or memory context.
     """
 
-    query = request.query.strip()
+    query_terms = _query_terms(request)
     image = request.image_base64.strip()
-    if not query and not image:
+    if not query_terms and not image:
         return SearchCatalogResult(
             ok=False,
             error=CommerceError(
@@ -54,7 +56,7 @@ def search_catalog(
 
     endpoint = "query/image" if image else "query/text"
     payload: dict[str, Any] = {
-        "text": [query] if query else [],
+        "text": query_terms,
         "categories": request.categories,
         "filters": request.filters,
         "k": request.top_k,
@@ -62,7 +64,7 @@ def search_catalog(
     if image:
         payload["image_base64"] = image
 
-    http = session or requests.Session()
+    http = session or _catalog_session()
     try:
         response = http.post(
             f"{catalog_retriever_url.rstrip('/')}/{endpoint}",
@@ -94,6 +96,27 @@ def search_catalog(
     return SearchCatalogResult(ok=True, products=_products_from_catalog_response(data))
 
 
+def _query_terms(request: SearchCatalogInput) -> list[str]:
+    if request.queries:
+        return [query.strip() for query in request.queries if query.strip()]
+    query = request.query.strip()
+    return [query] if query else []
+
+
+def _catalog_session() -> requests.Session:
+    retry_strategy = Retry(
+        total=3,
+        status_forcelist=[422, 429, 500, 502, 503, 504],
+        allowed_methods=["POST"],
+        backoff_factor=1,
+    )
+    adapter = HTTPAdapter(max_retries=retry_strategy)
+    session = requests.Session()
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    return session
+
+
 def _products_from_catalog_response(data: dict[str, Any]) -> list[ProductSummary]:
     texts = data.get("texts") or []
     ids = data.get("ids") or []
@@ -115,7 +138,10 @@ def _products_from_catalog_response(data: dict[str, Any]) -> list[ProductSummary
                 category=_category_from_text(str(text or "")),
                 price=_price_from_text(str(text or "")),
                 image_url=str(image_url) if image_url else None,
-                attributes={"similarity": float(similarity)},
+                attributes={
+                    "catalog_text": str(text or ""),
+                    "similarity": float(similarity),
+                },
             )
         )
     return products

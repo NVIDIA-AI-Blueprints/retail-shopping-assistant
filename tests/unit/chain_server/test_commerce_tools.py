@@ -109,6 +109,28 @@ def test_search_catalog_posts_image_payload_when_image_is_present() -> None:
     assert result.products[0].product_id == "prod_456"
 
 
+def test_search_catalog_preserves_multiple_query_terms() -> None:
+    session = FakeSession(
+        FakeResponse(
+            {
+                "texts": [],
+                "ids": [],
+                "similarities": [],
+                "names": [],
+                "images": [],
+            }
+        )
+    )
+
+    search_catalog(
+        SearchCatalogInput(queries=["earrings", "necklace"]),
+        "http://catalog-retriever:8010",
+        session=session,
+    )
+
+    assert session.calls[0]["json"]["text"] == ["earrings", "necklace"]
+
+
 def test_search_catalog_rejects_empty_query_without_image() -> None:
     session = FakeSession(FakeResponse({}))
 
@@ -136,7 +158,8 @@ def test_search_catalog_returns_structured_request_error() -> None:
 
 
 def test_commerce_tools_do_not_import_current_agents() -> None:
-    source = Path("chain_server/src/commerce_tools.py").read_text()
+    repo_root = Path(__file__).resolve().parents[3]
+    source = (repo_root / "chain_server/src/commerce_tools.py").read_text()
 
     forbidden_references = [
         "PlannerAgent",

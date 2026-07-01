@@ -11,6 +11,7 @@ Welcome to the Retail Shopping Assistant documentation! This hub provides compre
 
 ### 🔧 Technical Documentation
 - **[API Documentation](API.md)** - Complete API reference
+- **[Commerce Contracts](COMMERCE_CONTRACTS.md)** - Internal product, cart, and commerce tool contracts
 - **[Architecture Overview](../README.md#architecture)** - System design and components
 - **[Configuration Guide](../README.md#configuration)** - Settings and customization
 
@@ -34,6 +35,7 @@ Welcome to the Retail Shopping Assistant documentation! This hub provides compre
 | Document | Description | Audience |
 |----------|-------------|----------|
 | [API Documentation](API.md) | Complete API reference with examples | Developers, integrators |
+| [Commerce Contracts](COMMERCE_CONTRACTS.md) | Internal product, cart, and commerce tool contracts | Developers, architects |
 | [Deployment Guide](DEPLOYMENT.md) | Installation and deployment instructions | DevOps, system administrators |
 | [Architecture Overview](../README.md#architecture) | System design and component details | Architects, developers |
 | [Configuration Guide](../README.md#configuration) | Settings and customization options | Developers, administrators |

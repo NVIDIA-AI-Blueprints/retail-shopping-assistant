@@ -73,8 +73,9 @@ adapters can avoid duplicate cart changes.
 
 `SearchCatalogInput` intentionally has no `user_id`, cart, memory, session, or
 conversation-history fields. The agent layer can use conversation context to
-decide what query, categories, and filters to send, but `search_catalog` itself
-should remain a pure read against the catalog for the supplied request.
+decide what query, optional image, categories, and filters to send, but
+`search_catalog` itself should remain a pure read against the catalog for the
+supplied request.
 
 This keeps product search reusable by the current LangGraph retriever, future
 Deep Agents subagents, and later protocol adapters without coupling catalog

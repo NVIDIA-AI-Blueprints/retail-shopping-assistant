@@ -101,6 +101,7 @@ class SearchCatalogInput(CommerceModel):
     """
 
     query: str = ""
+    image_base64: str = ""
     categories: list[str] = Field(default_factory=list)
     filters: dict[str, Any] = Field(default_factory=dict)
     top_k: int = Field(default=4, ge=1, le=50)

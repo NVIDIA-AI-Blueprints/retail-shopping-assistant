@@ -103,8 +103,9 @@ the public API first:
 
 1. `RetrieverAgent` calls an internal `search_catalog` tool wrapper.
 2. `CartAgent` calls internal cart tool wrappers.
-3. Preserve current catalog result IDs in chain-server state and cart memory
-   rows, while treating them as transient until durable catalog IDs are added.
+3. Treat current catalog result IDs as transient `ProductSummary` and mutation
+   result fields only; durable ID persistence in chain-server state and cart
+   memory rows is future work.
 4. Add Deep Agents skills and subagents on top of the same tool layer.
 
 The important rule is that ACP/UCP compatibility should be added as adapters

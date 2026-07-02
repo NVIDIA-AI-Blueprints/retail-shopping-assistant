@@ -45,6 +45,9 @@ class RetrieverAgent():
         
         # Store configuration
         self.catalog_retriever_url = config.retriever_port
+        self.catalog_search_timeout_seconds = getattr(
+            config, "catalog_search_timeout_seconds", None
+        )
         self.k_value = config.top_k_retrieve
         self.categories = config.categories
         
@@ -94,6 +97,7 @@ class RetrieverAgent():
                     top_k=k,
                 ),
                 self.catalog_retriever_url,
+                timeout_seconds=self.catalog_search_timeout_seconds,
             )
             fallback_used = False
 
@@ -116,6 +120,7 @@ class RetrieverAgent():
                             top_k=k,
                         ),
                         self.catalog_retriever_url,
+                        timeout_seconds=self.catalog_search_timeout_seconds,
                     )
                     if fallback_result.products:
                         result = fallback_result

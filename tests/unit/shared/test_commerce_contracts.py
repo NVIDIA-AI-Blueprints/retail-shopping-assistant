@@ -16,7 +16,7 @@ from shared.commerce_contracts import (
 )
 
 
-def test_product_summary_requires_stable_product_id() -> None:
+def test_product_summary_requires_product_id() -> None:
     product = ProductSummary(
         product_id="prod_123",
         display_name="Classic Black Patent Leather Purse",

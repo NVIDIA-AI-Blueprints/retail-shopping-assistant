@@ -91,9 +91,33 @@ def test_search_catalog_posts_stateless_text_payload() -> None:
     assert "user_id" not in session.calls[0]["json"]
     assert "cart" not in session.calls[0]["json"]
     assert "context" not in session.calls[0]["json"]
+    assert session.calls[0]["timeout"] is None
     assert result.products[0].product_id == "prod_123"
     assert result.products[0].price.amount == 89.99
     assert result.products[0].category == "bag"
+
+
+def test_search_catalog_uses_configured_timeout_when_provided() -> None:
+    session = FakeSession(
+        FakeResponse(
+            {
+                "texts": [],
+                "ids": [],
+                "similarities": [],
+                "names": [],
+                "images": [],
+            }
+        )
+    )
+
+    search_catalog(
+        SearchCatalogInput(query="black purse"),
+        "http://catalog-retriever:8010",
+        timeout_seconds=120,
+        session=session,
+    )
+
+    assert session.calls[0]["timeout"] == 120
 
 
 def test_search_catalog_posts_image_payload_when_image_is_present() -> None:
@@ -226,6 +250,7 @@ def test_add_cart_item_posts_memory_payload_and_returns_message() -> None:
     }
     assert result.changed_line.product_id == "prod_123"
     assert result.message == "added 2 Silk Dress"
+    assert result.meta.idempotency_key == "cart-add-1"
 
 
 def test_remove_cart_item_posts_memory_payload_and_returns_message() -> None:
@@ -249,6 +274,7 @@ def test_remove_cart_item_posts_memory_payload_and_returns_message() -> None:
     assert session.calls[0]["json"] == {"item": "Silk Dress", "amount": 1}
     assert result.changed_line.product_id == "prod_123"
     assert result.message == "removed 1 Silk Dress"
+    assert result.meta.idempotency_key == "cart-remove-1"
 
 
 def test_commerce_tools_do_not_import_current_agents() -> None:

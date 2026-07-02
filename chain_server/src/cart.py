@@ -175,6 +175,9 @@ class CartAgent():
         self.memory_retriever_url = config.memory_port
         self.model = OpenAI(base_url=config.llm_port, api_key=self.llm_api_key)
         self.catalog_retriever_port = config.retriever_port
+        self.catalog_search_timeout_seconds = getattr(
+            config, "catalog_search_timeout_seconds", None
+        )
         self.categories = config.categories
         logging.info(f"CartAgent.__init__() | Initialization complete")
         
@@ -215,6 +218,7 @@ class CartAgent():
                 top_k=self._CATALOG_LOOKUP_K,
             ),
             self.catalog_retriever_port,
+            timeout_seconds=self.catalog_search_timeout_seconds,
         )
         if not result.ok:
             if result.error:

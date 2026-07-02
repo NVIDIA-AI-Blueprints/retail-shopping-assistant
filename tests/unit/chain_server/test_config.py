@@ -124,6 +124,24 @@ class TestChainServerConfigValidation:
         with pytest.raises(ValidationError):
             ChainServerConfig(**{**valid_config_dict, "top_k_retrieve": value})
 
+    @pytest.mark.parametrize("value", [None, 30, 120.5])
+    def test_catalog_search_timeout_accepts_none_or_positive_values(
+        self, valid_config_dict: dict, value: float | None
+    ) -> None:
+        cfg = ChainServerConfig(
+            **{**valid_config_dict, "catalog_search_timeout_seconds": value}
+        )
+        assert cfg.catalog_search_timeout_seconds == value
+
+    @pytest.mark.parametrize("value", [0, -1])
+    def test_catalog_search_timeout_rejects_non_positive_values(
+        self, valid_config_dict: dict, value: float
+    ) -> None:
+        with pytest.raises(ValidationError):
+            ChainServerConfig(
+                **{**valid_config_dict, "catalog_search_timeout_seconds": value}
+            )
+
     @pytest.mark.parametrize("field", ["categories", "agent_choices"])
     def test_empty_list_fields_are_rejected(
         self, valid_config_dict: dict, field: str

@@ -102,5 +102,6 @@ agent_choices: [
         ]
 memory_length: 16384
 top_k_retrieve: 4
+catalog_search_timeout_seconds: null
 multimodal: True
 unsafe_message: "Sorry, I am a shopping assistant that specializes in apparel. Do you have any questions that align better with my expertise?"

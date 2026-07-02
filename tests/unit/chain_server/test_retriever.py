@@ -311,9 +311,10 @@ def _install_search_catalog(
     """Stub the commerce search tool used inside RetrieverAgent.invoke."""
     captured: Dict[str, Any] = {}
 
-    def _search_catalog(request, catalog_retriever_url):
+    def _search_catalog(request, catalog_retriever_url, *, timeout_seconds=None):
         captured["request"] = request
         captured["catalog_retriever_url"] = catalog_retriever_url
+        captured["timeout_seconds"] = timeout_seconds
         if raise_exc is not None:
             raise raise_exc
         return result or SearchCatalogResult(ok=True)
@@ -363,6 +364,7 @@ class TestRetrieverInvoke:
         assert captured["request"].queries == ["summer dress"]
         assert captured["request"].image_base64 == ""
         assert captured["request"].top_k == retriever_agent.k_value
+        assert captured["timeout_seconds"] is None
         assert "Summer Dress" in out.response
         assert "Summer Dress" in out.retrieved
         assert out.retrieved["Summer Dress"] == "img1.jpg"

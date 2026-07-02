@@ -6,8 +6,8 @@ protocols should map into these app-owned contracts through thin adapters later.
 
 ## Goals
 
-- Give agents, tools, tests, and future protocol adapters one stable shape for
-  products, carts, and tool results.
+- Give agents, tools, tests, and future protocol adapters one consistent shape
+  for products, carts, and tool results.
 - Move commerce behavior toward deterministic tools instead of agent-specific
   prose parsing.
 - Preserve the current runtime behavior while creating a safe path toward a
@@ -38,6 +38,9 @@ path:
   removes.
 - Catalog search remains stateless: no user, cart, memory, session, or
   conversation-history fields are passed to `search_catalog`.
+- Catalog search timeout is configurable through
+  `catalog_search_timeout_seconds`. The default is `null`, preserving the
+  previous no-timeout catalog POST behavior for slower remote embedding calls.
 - Cart tools are stateful and adapt the current memory service API without
   changing the public service schema.
 
@@ -48,7 +51,7 @@ No ACP/UCP adapter layer has been added yet.
 | Model | Purpose |
 | --- | --- |
 | `Money` | Currency amount with a default `USD` currency. |
-| `ProductSummary` | Search-result-safe product identity and display fields. |
+| `ProductSummary` | Search-result-safe product display fields and current product identifier. |
 | `ProductDetail` | Full product shape with variants and optional source URI. |
 | `ProductVariant` | Variant identity, options, price, and availability. |
 | `StorePolicy` | Controlled store-policy content such as returns or shipping. |
@@ -64,7 +67,7 @@ The first tool contract set is:
 | Contract | Type | Purpose |
 | --- | --- | --- |
 | `SearchCatalogInput` / `SearchCatalogResult` | Read-only | Find products by query, category, filters, and `top_k`. |
-| `GetProductDetailsInput` / `GetProductDetailsResult` | Read-only | Fetch one product by stable `product_id`. |
+| `GetProductDetailsInput` / `GetProductDetailsResult` | Read-only | Reserved for fetching one product by durable `product_id` once the catalog exposes one. |
 | `GetCartInput` / `GetCartResult` | Read-only | Read the authoritative cart for a user. |
 | `GetStorePolicyInput` / `GetStorePolicyResult` | Read-only | Fetch controlled store-policy text by topic. |
 | `AddCartItemInput` / `CartMutationResult` | Mutating | Add a product or variant to the cart. |
@@ -72,7 +75,9 @@ The first tool contract set is:
 | `RemoveCartItemInput` / `CartMutationResult` | Mutating | Remove a cart line. |
 
 Mutating inputs require `idempotency_key` so future agent retries and protocol
-adapters can avoid duplicate cart changes.
+adapters have a stable key to enforce safe retries. In the current memory
+service adapter, the key is echoed in tool metadata but is not stored or used to
+deduplicate mutations yet.
 
 ### Stateless Catalog Search
 
@@ -86,6 +91,11 @@ This keeps product search reusable by the current LangGraph retriever, future
 Deep Agents subagents, and later protocol adapters without coupling catalog
 results to shopper session state.
 
+Current catalog search results map the retriever's returned `ids` field into
+`ProductSummary.product_id`. Those IDs are Milvus retriever primary keys and can
+change after reindexing. Treat them as transient catalog result IDs until the
+catalog import provides a durable product ID or SKU.
+
 ## Migration Direction
 
 The migration wraps existing behavior behind these contracts without changing
@@ -93,7 +103,8 @@ the public API first:
 
 1. `RetrieverAgent` calls an internal `search_catalog` tool wrapper.
 2. `CartAgent` calls internal cart tool wrappers.
-3. Preserve catalog IDs in chain-server state and cart memory rows.
+3. Preserve current catalog result IDs in chain-server state and cart memory
+   rows, while treating them as transient until durable catalog IDs are added.
 4. Add Deep Agents skills and subagents on top of the same tool layer.
 
 The important rule is that ACP/UCP compatibility should be added as adapters

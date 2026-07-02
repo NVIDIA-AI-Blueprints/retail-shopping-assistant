@@ -30,6 +30,7 @@ from shared.commerce_contracts import (
     RemoveCartItemInput,
     SearchCatalogInput,
     SearchCatalogResult,
+    ToolMeta,
 )
 
 
@@ -40,7 +41,7 @@ def search_catalog(
     request: SearchCatalogInput,
     catalog_retriever_url: str,
     *,
-    timeout_seconds: float = 10,
+    timeout_seconds: float | None = None,
     session: requests.Session | None = None,
 ) -> SearchCatalogResult:
     """Search the product catalog without using shopper session state.
@@ -177,6 +178,7 @@ def add_cart_item(
                 message=f"Failed to add {request.quantity} {display_name} to cart.",
                 details={"error": str(exc)},
             ),
+            meta=ToolMeta(idempotency_key=request.idempotency_key),
         )
     except ValueError as exc:
         return CartMutationResult(
@@ -186,6 +188,7 @@ def add_cart_item(
                 message="Cart add returned an invalid response.",
                 details={"error": str(exc)},
             ),
+            meta=ToolMeta(idempotency_key=request.idempotency_key),
         )
 
     return CartMutationResult(
@@ -200,6 +203,7 @@ def add_cart_item(
             image_url=request.image_url,
         ),
         message=str(data.get("message") or ""),
+        meta=ToolMeta(idempotency_key=request.idempotency_key),
     )
 
 
@@ -230,6 +234,7 @@ def remove_cart_item(
                 message=f"Failed to remove {request.quantity} {display_name} from cart.",
                 details={"error": str(exc)},
             ),
+            meta=ToolMeta(idempotency_key=request.idempotency_key),
         )
     except ValueError as exc:
         return CartMutationResult(
@@ -239,6 +244,7 @@ def remove_cart_item(
                 message="Cart remove returned an invalid response.",
                 details={"error": str(exc)},
             ),
+            meta=ToolMeta(idempotency_key=request.idempotency_key),
         )
 
     return CartMutationResult(
@@ -250,6 +256,7 @@ def remove_cart_item(
             quantity=request.quantity,
         ),
         message=str(data.get("message") or ""),
+        meta=ToolMeta(idempotency_key=request.idempotency_key),
     )
 
 

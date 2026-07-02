@@ -3,9 +3,11 @@
 
 """Internal commerce contracts for agent-facing tools.
 
-These models define the app's stable product, cart, and tool result shapes.
-They intentionally avoid protocol-specific ACP/UCP fields so those protocols
-can be added later as adapter layers instead of driving the core design.
+These models define the app's product, cart, and tool result shapes. The
+contracts are stable, but current adapters may still map legacy service fields
+such as transient catalog retriever IDs until durable product IDs are available.
+They intentionally avoid protocol-specific ACP/UCP fields so those protocols can
+be added later as adapter layers instead of driving the core design.
 """
 
 from __future__ import annotations
@@ -39,7 +41,14 @@ class ProductVariant(CommerceModel):
 
 
 class ProductSummary(CommerceModel):
-    product_id: str = Field(..., min_length=1)
+    product_id: str = Field(
+        ...,
+        min_length=1,
+        description=(
+            "Product identifier. Current catalog search results may use a "
+            "transient retriever ID until the catalog supplies durable IDs."
+        ),
+    )
     display_name: str = Field(..., min_length=1)
     description: str = ""
     category: str | None = None

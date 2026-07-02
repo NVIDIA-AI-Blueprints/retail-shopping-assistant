@@ -66,6 +66,7 @@ def base_config() -> SimpleNamespace:
         agent_choices=["cart", "retriever", "chatter"],
         memory_length=16384,
         top_k_retrieve=4,
+        catalog_search_timeout_seconds=None,
         multimodal=True,
         unsafe_message="Sorry, I can only help with shopping questions.",
     )
@@ -88,6 +89,7 @@ def valid_config_dict() -> Dict[str, Any]:
         "agent_choices": ["cart", "retriever", "chatter"],
         "memory_length": 16384,
         "top_k_retrieve": 4,
+        "catalog_search_timeout_seconds": None,
         "multimodal": True,
         "unsafe_message": "Sorry, I can only help with shopping questions.",
     }

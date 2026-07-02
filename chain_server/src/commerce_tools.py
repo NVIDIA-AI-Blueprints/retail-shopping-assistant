@@ -1,0 +1,393 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+"""Internal commerce tool wrappers used by agent runtimes.
+
+These functions are deliberately small adapters around existing services. They
+return shared commerce contracts so current LangGraph agents, future Deep
+Agents tools, and later protocol adapters can share the same typed boundary.
+"""
+
+from __future__ import annotations
+
+import re
+from typing import Any
+
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
+from shared.commerce_contracts import (
+    AddCartItemInput,
+    Cart,
+    CartLine,
+    CartMutationResult,
+    CommerceError,
+    GetCartInput,
+    GetCartResult,
+    Money,
+    ProductSummary,
+    RemoveCartItemInput,
+    SearchCatalogInput,
+    SearchCatalogResult,
+    ToolMeta,
+)
+
+
+_PRICE_RE = re.compile(r"\bPRICE:\s*\$?([0-9][0-9,]*(?:\.[0-9]+)?)", re.IGNORECASE)
+
+
+def search_catalog(
+    request: SearchCatalogInput,
+    catalog_retriever_url: str,
+    *,
+    timeout_seconds: float | None = None,
+    session: requests.Session | None = None,
+) -> SearchCatalogResult:
+    """Search the product catalog without using shopper session state.
+
+    The caller may use conversation context to build ``request``, but this tool
+    only reads the catalog for the supplied query/image/categories/filters. It
+    does not accept ``user_id``, cart state, or memory context.
+    """
+
+    query_terms = _query_terms(request)
+    image = request.image_base64.strip()
+    if not query_terms and not image:
+        return SearchCatalogResult(
+            ok=False,
+            error=CommerceError(
+                code="invalid_search_request",
+                message="Catalog search requires a query or image.",
+            ),
+        )
+
+    endpoint = "query/image" if image else "query/text"
+    payload: dict[str, Any] = {
+        "text": query_terms,
+        "categories": request.categories,
+        "filters": request.filters,
+        "k": request.top_k,
+    }
+    if image:
+        payload["image_base64"] = image
+
+    http = session or _catalog_session()
+    try:
+        response = http.post(
+            f"{catalog_retriever_url.rstrip('/')}/{endpoint}",
+            json=payload,
+            timeout=timeout_seconds,
+        )
+        response.raise_for_status()
+        data = response.json()
+    except requests.RequestException as exc:
+        return SearchCatalogResult(
+            ok=False,
+            error=CommerceError(
+                code="catalog_request_failed",
+                message="Catalog search request failed.",
+                retryable=True,
+                details={"error": str(exc)},
+            ),
+        )
+    except ValueError as exc:
+        return SearchCatalogResult(
+            ok=False,
+            error=CommerceError(
+                code="catalog_response_invalid",
+                message="Catalog search returned an invalid response.",
+                details={"error": str(exc)},
+            ),
+        )
+
+    return SearchCatalogResult(ok=True, products=_products_from_catalog_response(data))
+
+
+def get_cart(
+    request: GetCartInput,
+    memory_retriever_url: str,
+    *,
+    timeout_seconds: float = 10,
+    session: Any | None = None,
+) -> GetCartResult:
+    """Read the authoritative cart for a shopper from the memory service."""
+
+    http = session or requests
+    try:
+        response = http.get(
+            f"{memory_retriever_url.rstrip('/')}/user/{request.user_id}/cart",
+            timeout=timeout_seconds,
+        )
+        response.raise_for_status()
+        data = response.json()
+    except requests.RequestException as exc:
+        return GetCartResult(
+            ok=False,
+            error=CommerceError(
+                code="cart_read_failed",
+                message="Cart read request failed.",
+                retryable=True,
+                details={"error": str(exc)},
+            ),
+        )
+    except ValueError as exc:
+        return GetCartResult(
+            ok=False,
+            error=CommerceError(
+                code="cart_response_invalid",
+                message="Cart read returned an invalid response.",
+                details={"error": str(exc)},
+            ),
+        )
+
+    return GetCartResult(
+        ok=True,
+        cart=_cart_from_memory_items(str(request.user_id), data.get("cart") or []),
+    )
+
+
+def add_cart_item(
+    request: AddCartItemInput,
+    memory_retriever_url: str,
+    *,
+    timeout_seconds: float = 10,
+    session: Any | None = None,
+) -> CartMutationResult:
+    """Add one item to the shopper cart through the memory service adapter."""
+
+    display_name = request.display_name or request.product_id
+    payload: dict[str, Any] = {"item": display_name, "amount": request.quantity}
+    if request.unit_price is not None:
+        payload["price"] = request.unit_price.amount
+
+    http = session or requests
+    try:
+        response = http.post(
+            f"{memory_retriever_url.rstrip('/')}/user/{request.user_id}/cart/add",
+            json=payload,
+            timeout=timeout_seconds,
+        )
+        response.raise_for_status()
+        data = response.json()
+    except requests.RequestException as exc:
+        return CartMutationResult(
+            ok=False,
+            error=CommerceError(
+                code="cart_add_failed",
+                message=f"Failed to add {request.quantity} {display_name} to cart.",
+                details={"error": str(exc)},
+            ),
+            meta=ToolMeta(idempotency_key=request.idempotency_key),
+        )
+    except ValueError as exc:
+        return CartMutationResult(
+            ok=False,
+            error=CommerceError(
+                code="cart_response_invalid",
+                message="Cart add returned an invalid response.",
+                details={"error": str(exc)},
+            ),
+            meta=ToolMeta(idempotency_key=request.idempotency_key),
+        )
+
+    return CartMutationResult(
+        ok=True,
+        changed_line=CartLine(
+            cart_line_id=display_name,
+            product_id=request.product_id,
+            display_name=display_name,
+            quantity=request.quantity,
+            variant_id=request.variant_id,
+            unit_price=request.unit_price,
+            image_url=request.image_url,
+        ),
+        message=str(data.get("message") or ""),
+        meta=ToolMeta(idempotency_key=request.idempotency_key),
+    )
+
+
+def remove_cart_item(
+    request: RemoveCartItemInput,
+    memory_retriever_url: str,
+    *,
+    timeout_seconds: float = 10,
+    session: Any | None = None,
+) -> CartMutationResult:
+    """Remove quantity from a cart line through the memory service adapter."""
+
+    display_name = request.display_name or request.cart_line_id
+    http = session or requests
+    try:
+        response = http.post(
+            f"{memory_retriever_url.rstrip('/')}/user/{request.user_id}/cart/remove",
+            json={"item": display_name, "amount": request.quantity},
+            timeout=timeout_seconds,
+        )
+        response.raise_for_status()
+        data = response.json()
+    except requests.RequestException as exc:
+        return CartMutationResult(
+            ok=False,
+            error=CommerceError(
+                code="cart_remove_failed",
+                message=f"Failed to remove {request.quantity} {display_name} from cart.",
+                details={"error": str(exc)},
+            ),
+            meta=ToolMeta(idempotency_key=request.idempotency_key),
+        )
+    except ValueError as exc:
+        return CartMutationResult(
+            ok=False,
+            error=CommerceError(
+                code="cart_response_invalid",
+                message="Cart remove returned an invalid response.",
+                details={"error": str(exc)},
+            ),
+            meta=ToolMeta(idempotency_key=request.idempotency_key),
+        )
+
+    return CartMutationResult(
+        ok=True,
+        changed_line=CartLine(
+            cart_line_id=request.cart_line_id,
+            product_id=request.product_id or display_name,
+            display_name=display_name,
+            quantity=request.quantity,
+        ),
+        message=str(data.get("message") or ""),
+        meta=ToolMeta(idempotency_key=request.idempotency_key),
+    )
+
+
+def _query_terms(request: SearchCatalogInput) -> list[str]:
+    if request.queries:
+        return [query.strip() for query in request.queries if query.strip()]
+    query = request.query.strip()
+    return [query] if query else []
+
+
+def _catalog_session() -> requests.Session:
+    retry_strategy = Retry(
+        total=3,
+        status_forcelist=[422, 429, 500, 502, 503, 504],
+        allowed_methods=["POST"],
+        backoff_factor=1,
+    )
+    adapter = HTTPAdapter(max_retries=retry_strategy)
+    session = requests.Session()
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    return session
+
+
+def _products_from_catalog_response(data: dict[str, Any]) -> list[ProductSummary]:
+    texts = data.get("texts") or []
+    ids = data.get("ids") or []
+    names = data.get("names") or []
+    images = data.get("images") or []
+    similarities = data.get("similarities") or []
+
+    products: list[ProductSummary] = []
+    item_count = max(len(texts), len(ids), len(names), len(images), len(similarities))
+    for idx in range(item_count):
+        text = _list_get(texts, idx, "")
+        name = _list_get(names, idx, "")
+        product_id = _list_get(ids, idx, name)
+        image_url = _list_get(images, idx, None)
+        similarity = _float_or_default(_list_get(similarities, idx, 0.0), 0.0)
+        if not product_id or not name:
+            continue
+        products.append(
+            ProductSummary(
+                product_id=str(product_id),
+                display_name=str(name),
+                description=_strip_price(str(text or "")),
+                category=_category_from_text(str(text or "")),
+                price=_price_from_text(str(text or "")),
+                image_url=str(image_url) if image_url else None,
+                attributes={
+                    "catalog_text": str(text or ""),
+                    "similarity": similarity,
+                },
+            )
+        )
+    return products
+
+
+def _cart_from_memory_items(user_id: str, items: list[dict[str, Any]]) -> Cart:
+    lines = [_cart_line_from_memory_item(item) for item in items]
+    lines = [line for line in lines if line is not None]
+
+    subtotal: Money | None = None
+    if lines and all(line.unit_price is not None for line in lines):
+        subtotal = Money(
+            amount=sum(
+                line.unit_price.amount * line.quantity
+                for line in lines
+                if line.unit_price is not None
+            )
+        )
+
+    return Cart(user_id=user_id, lines=lines, subtotal=subtotal)
+
+
+def _cart_line_from_memory_item(item: dict[str, Any]) -> CartLine | None:
+    display_name = str(item.get("item") or "").strip()
+    if not display_name:
+        return None
+    quantity = _int_or_default(item.get("amount"), 0)
+    if quantity <= 0:
+        return None
+
+    price = _float_or_default(item.get("price"), None)
+    return CartLine(
+        cart_line_id=display_name,
+        product_id=str(item.get("product_id") or display_name),
+        display_name=display_name,
+        quantity=quantity,
+        unit_price=Money(amount=price) if price is not None else None,
+    )
+
+
+def _list_get(values: list[Any], idx: int, default: Any) -> Any:
+    return values[idx] if idx < len(values) else default
+
+
+def _int_or_default(value: Any, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _float_or_default(value: Any, default: float | None) -> float | None:
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _price_from_text(text: str) -> Money | None:
+    match = _PRICE_RE.search(text)
+    if not match:
+        return None
+    try:
+        return Money(amount=float(match.group(1).replace(",", "")))
+    except ValueError:
+        return None
+
+
+def _strip_price(text: str) -> str:
+    return _PRICE_RE.sub("", text).strip()
+
+
+def _category_from_text(text: str) -> str | None:
+    before_price = text.split("PRICE:", 1)[0]
+    parts = [part.strip() for part in before_price.split("|")]
+    if len(parts) < 3:
+        return None
+    category = parts[-1].split(",", 1)[0].strip()
+    return category or None

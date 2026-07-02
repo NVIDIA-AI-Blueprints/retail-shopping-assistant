@@ -156,6 +156,7 @@ The Brev deployment guide walks you through the entire process from creating a L
 
 - **[User Guide](docs/USER_GUIDE.md)**: How to use the application
 - **[API Documentation](docs/API.md)**: Complete API reference
+- **[Commerce Contracts](docs/COMMERCE_CONTRACTS.md)**: Internal product, cart, and commerce tool contracts
 - **[Deployment Guide](docs/DEPLOYMENT.md)**: Installation and setup instructions
 - **[Testing and Evaluation](tests/README.md)**: Unit, integration, and Challenger/Judge evaluation workflows
 - **[Documentation Hub](docs/README.md)**: Complete documentation index

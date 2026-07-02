@@ -8,13 +8,12 @@ the catalog retriever service to find relevant products.
 """
 
 from .agenttypes import State
+from .commerce_tools import search_catalog
 from .functions import retrieval_extraction_function, parse_tool_call_fallback
+from shared.commerce_contracts import SearchCatalogInput
 from openai import OpenAI
 import os
 import json
-import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
 import sys
 from typing import Tuple, List, Dict, Any
 import asyncio
@@ -46,6 +45,9 @@ class RetrieverAgent():
         
         # Store configuration
         self.catalog_retriever_url = config.retriever_port
+        self.catalog_search_timeout_seconds = getattr(
+            config, "catalog_search_timeout_seconds", None
+        )
         self.k_value = config.top_k_retrieve
         self.categories = config.categories
         
@@ -74,61 +76,32 @@ class RetrieverAgent():
         end = time.monotonic()
         state.timings["retriever_categories"] = end - start
         
-        # Query the catalog retriever service
+        # Query the catalog through the internal commerce tool boundary.
         start = time.monotonic()
         try:
-
-            retry_strategy = Retry(
-                total=3,                    
-                status_forcelist=[422, 429, 500, 502, 503, 504],  
-                allowed_methods=["POST"],   
-                backoff_factor=1            
+            search_query = " ".join(entities)
+            logging.info(
+                "RetrieverAgent.invoke() | search_catalog -- getting response\n"
+                f"\t| query: {search_query}\n"
+                f"\t| image: {'yes' if image else 'no'}\n"
+                f"\t| categories: {categories}\n"
+                f"\t| filters: {filters}"
             )
-            
-            adapter = HTTPAdapter(max_retries=retry_strategy)
-            session = requests.Session()
-            session.mount("https://", adapter)
-            session.mount("http://", adapter)
-
-            if image:
-                logging.info(
-                    "RetrieverAgent.invoke() | /query/image -- getting response.\n"
-                    f"\t| entities: {entities}\n"
-                    f"\t| categories: {categories}\n"
-                    f"\t| filters: {filters}"
-                )
-                response = session.post(
-                    f"{self.catalog_retriever_url}/query/image",
-                    json={
-                        "text": entities,
-                        "image_base64": image,
-                        "categories": categories,
-                        "filters": filters,
-                        "k": k
-                    }
-                )
-            else:
-                logging.info(
-                    "RetrieverAgent.invoke() | /query/text -- getting response\n"
-                    f"\t| query: {entities}\n"
-                    f"\t| categories: {categories}\n"
-                    f"\t| filters: {filters}"
-                )
-                response = session.post(
-                    f"{self.catalog_retriever_url}/query/text",
-                    json={
-                        "text": entities,
-                        "categories": categories,
-                        "filters": filters,
-                        "k": k
-                    }
-                )
-
-            response.raise_for_status()
-            results = response.json()
+            result = search_catalog(
+                SearchCatalogInput(
+                    query=search_query,
+                    queries=entities,
+                    image_base64=image,
+                    categories=categories,
+                    filters=filters,
+                    top_k=k,
+                ),
+                self.catalog_retriever_url,
+                timeout_seconds=self.catalog_search_timeout_seconds,
+            )
             fallback_used = False
 
-            if not image and not results.get("texts") and categories:
+            if not image and not result.products and categories:
                 fallback_entities = [
                     category for category in categories
                     if category in self.categories
@@ -138,28 +111,31 @@ class RetrieverAgent():
                         "RetrieverAgent.invoke() | No exact text results; "
                         f"retrying with category fallback: {fallback_entities}"
                     )
-                    fallback_response = session.post(
-                        f"{self.catalog_retriever_url}/query/text",
-                        json={
-                            "text": fallback_entities,
-                            "categories": categories,
-                            "filters": filters,
-                            "k": k
-                        }
+                    fallback_result = search_catalog(
+                        SearchCatalogInput(
+                            query=" ".join(fallback_entities),
+                            queries=fallback_entities,
+                            categories=categories,
+                            filters=filters,
+                            top_k=k,
+                        ),
+                        self.catalog_retriever_url,
+                        timeout_seconds=self.catalog_search_timeout_seconds,
                     )
-                    fallback_response.raise_for_status()
-                    fallback_results = fallback_response.json()
-                    if fallback_results.get("texts"):
-                        results = fallback_results
+                    if fallback_result.products:
+                        result = fallback_result
                         fallback_used = True
-            
-            # Format the response with product details
-            if results["texts"]:
-                products = []
+
+            if not result.ok:
+                state.response = "I encountered an error while searching for products. Please try again."
+            elif result.products:
+                # Format the response with product details
                 retrieved_dict = {}
-                for text, name, img, sim in zip(results["texts"], results["names"], results["images"], results["similarities"]):
-                    products.append(text)
-                    retrieved_dict[name] = img
+                products = []
+                for product in result.products:
+                    products.append(self._format_product_context(product))
+                    if product.image_url:
+                        retrieved_dict[product.display_name] = product.image_url
                 if fallback_used:
                     state.response = (
                         "No exact products closely matched the user's query. "
@@ -177,9 +153,9 @@ class RetrieverAgent():
             # Update context
             state.context = f"{state.context}\n{state.response}"
             
-        except requests.exceptions.RequestException as e:
+        except Exception as e:
             if verbose:
-                logging.error(f"RetrieverAgent.invoke() | Error querying catalog retriever service: {str(e)}")
+                logging.error(f"RetrieverAgent.invoke() | Error searching catalog: {str(e)}")
             state.response = "I encountered an error while searching for products. Please try again."
         end = time.monotonic()
         state.timings["retriever_retrieval"] = end - start
@@ -187,6 +163,17 @@ class RetrieverAgent():
         logging.info(f"RetrieverAgent.invoke() | Returning final state with response.")
 
         return state
+
+    @staticmethod
+    def _format_product_context(product) -> str:
+        catalog_text = product.attributes.get("catalog_text")
+        if isinstance(catalog_text, str) and catalog_text.strip():
+            return catalog_text
+
+        text = product.description or product.display_name
+        if product.price:
+            text = f"{text}\nPRICE: {product.price.amount}"
+        return text
 
     async def _extract_retrieval_inputs(self, state: State) -> Tuple[List[str], List[str], Dict[str, float]]:
         """

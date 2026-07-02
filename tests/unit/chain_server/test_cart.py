@@ -395,7 +395,7 @@ def _install_http_stubs(
         def mount(self, prefix: str, _adapter: Any) -> None:
             self.mounts.append(prefix)
 
-        def post(self, url: str, json: Dict[str, Any]):
+        def post(self, url: str, json: Dict[str, Any], timeout: int = 10):  # noqa: ARG002
             recorder.calls.append(("POST", url, json))
             return cart_mod.requests.Response  # unused; replaced below
 
@@ -420,7 +420,9 @@ def _install_http_stubs(
     def _fake_session_ctor() -> _FakeSession:
         return _FakeSession()
 
-    def _fake_session_post(self: _FakeSession, url: str, json: Dict[str, Any]):
+    def _fake_session_post(
+        self: _FakeSession, url: str, json: Dict[str, Any], timeout: int = 10  # noqa: ARG002
+    ):
         recorder.calls.append(("POST", url, json))
         # The catalog retriever's /query/text is the only session.post target.
         return _FakeResponse(catalog_response)
@@ -804,7 +806,7 @@ def _install_bulk_http_stubs(
         def mount(self, prefix: str, _adapter: Any) -> None:
             pass
 
-        def post(self, url: str, json: Dict[str, Any]):
+        def post(self, url: str, json: Dict[str, Any], timeout: int = 10):  # noqa: ARG002
             recorder.calls.append(("POST", url, json))
             query_list = json.get("text") or []
             query = query_list[0] if query_list else ""

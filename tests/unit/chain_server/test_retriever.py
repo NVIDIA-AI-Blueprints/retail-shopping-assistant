@@ -18,11 +18,11 @@ from types import SimpleNamespace
 from typing import Any, Dict
 
 import pytest
-import requests
 
 from chain_server.src import retriever as retriever_mod
 from chain_server.src.agenttypes import State
 from chain_server.src.retriever import RetrieverAgent
+from shared.commerce_contracts import ProductSummary, SearchCatalogResult
 
 
 @pytest.fixture
@@ -302,40 +302,24 @@ class TestExtractRetrievalInputs:
 # ---------------------------------------------------------------------------
 
 
-class _FakeCatalogResponse:
-    def __init__(self, payload: Dict[str, Any], status: int = 200) -> None:
-        self._payload = payload
-        self.status_code = status
-
-    def json(self) -> Dict[str, Any]:
-        return self._payload
-
-    def raise_for_status(self) -> None:
-        if self.status_code >= 400:
-            raise requests.exceptions.HTTPError(f"HTTP {self.status_code}")
-
-
-def _install_session_post(
+def _install_search_catalog(
     monkeypatch: pytest.MonkeyPatch,
-    payload: Dict[str, Any] | None = None,
+    result: SearchCatalogResult | None = None,
     *,
     raise_exc: Exception | None = None,
 ):
-    """Stub ``requests.Session.post`` used inside RetrieverAgent.invoke."""
+    """Stub the commerce search tool used inside RetrieverAgent.invoke."""
     captured: Dict[str, Any] = {}
 
-    class _FakeSession:
-        def mount(self, *_args, **_kwargs) -> None:
-            return None
+    def _search_catalog(request, catalog_retriever_url, *, timeout_seconds=None):
+        captured["request"] = request
+        captured["catalog_retriever_url"] = catalog_retriever_url
+        captured["timeout_seconds"] = timeout_seconds
+        if raise_exc is not None:
+            raise raise_exc
+        return result or SearchCatalogResult(ok=True)
 
-        def post(self, url: str, json: Dict[str, Any]):
-            captured["url"] = url
-            captured["json"] = json
-            if raise_exc is not None:
-                raise raise_exc
-            return _FakeCatalogResponse(payload or {})
-
-    monkeypatch.setattr(retriever_mod.requests, "Session", lambda: _FakeSession())
+    monkeypatch.setattr(retriever_mod, "search_catalog", _search_catalog)
     return captured
 
 
@@ -354,23 +338,33 @@ class TestRetrieverInvoke:
                 "category_three": "dress",
             },
         )
-        captured = _install_session_post(
+        captured = _install_search_catalog(
             monkeypatch,
-            payload={
-                "texts": ["Summer Dress | breezy | dress"],
-                "names": ["Summer Dress"],
-                "images": ["img1.jpg"],
-                "similarities": [0.9],
-            },
+            result=SearchCatalogResult(
+                ok=True,
+                products=[
+                    ProductSummary(
+                        product_id="prod_1",
+                        display_name="Summer Dress",
+                        image_url="img1.jpg",
+                        attributes={
+                            "catalog_text": "Summer Dress | breezy | dress",
+                            "similarity": 0.9,
+                        },
+                    )
+                ],
+            ),
         )
 
         state = State(user_id=1, query="show me a summer dress")
         out = await retriever_agent.invoke(state, verbose=False)
 
-        assert captured["url"].endswith("/query/text")
-        # Filters omitted when none are requested.
-        assert captured["json"]["text"] == ["summer dress"]
-        assert captured["json"]["k"] == retriever_agent.k_value
+        assert captured["catalog_retriever_url"] == retriever_agent.catalog_retriever_url
+        assert captured["request"].query == "summer dress"
+        assert captured["request"].queries == ["summer dress"]
+        assert captured["request"].image_base64 == ""
+        assert captured["request"].top_k == retriever_agent.k_value
+        assert captured["timeout_seconds"] is None
         assert "Summer Dress" in out.response
         assert "Summer Dress" in out.retrieved
         assert out.retrieved["Summer Dress"] == "img1.jpg"
@@ -391,14 +385,22 @@ class TestRetrieverInvoke:
                 "category_three": "bag",
             },
         )
-        captured = _install_session_post(
+        captured = _install_search_catalog(
             monkeypatch,
-            payload={
-                "texts": ["Leather Bag | elegant | bag"],
-                "names": ["Leather Bag"],
-                "images": ["bag.jpg"],
-                "similarities": [0.7],
-            },
+            result=SearchCatalogResult(
+                ok=True,
+                products=[
+                    ProductSummary(
+                        product_id="prod_2",
+                        display_name="Leather Bag",
+                        image_url="bag.jpg",
+                        attributes={
+                            "catalog_text": "Leather Bag | elegant | bag",
+                            "similarity": 0.7,
+                        },
+                    )
+                ],
+            ),
         )
 
         state = State(
@@ -408,8 +410,7 @@ class TestRetrieverInvoke:
         )
         out = await retriever_agent.invoke(state, verbose=False)
 
-        assert captured["url"].endswith("/query/image")
-        assert captured["json"]["image_base64"] == "data:image/jpeg;base64,AAAA"
+        assert captured["request"].image_base64 == "data:image/jpeg;base64,AAAA"
         assert "Leather Bag" in out.response
 
     async def test_no_results_produces_polite_message(
@@ -426,14 +427,9 @@ class TestRetrieverInvoke:
                 "category_three": "bag",
             },
         )
-        _install_session_post(
+        _install_search_catalog(
             monkeypatch,
-            payload={
-                "texts": [],
-                "names": [],
-                "images": [],
-                "similarities": [],
-            },
+            result=SearchCatalogResult(ok=True, products=[]),
         )
 
         state = State(user_id=1, query="looking for a watch")
@@ -455,9 +451,9 @@ class TestRetrieverInvoke:
                 "category_three": "bag",
             },
         )
-        _install_session_post(
+        _install_search_catalog(
             monkeypatch,
-            raise_exc=requests.exceptions.ConnectionError("boom"),
+            raise_exc=RuntimeError("boom"),
         )
 
         state = State(user_id=1, query="any bag")

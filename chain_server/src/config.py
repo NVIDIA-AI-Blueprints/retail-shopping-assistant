@@ -53,6 +53,13 @@ class ChainServerConfig(BaseModel):
     # Performance Configuration
     memory_length: int = Field(..., description="Maximum memory length for context")
     top_k_retrieve: int = Field(..., description="Number of top results to retrieve")
+    catalog_search_timeout_seconds: Optional[float] = Field(
+        default=None,
+        description=(
+            "Optional HTTP timeout for catalog search requests. None preserves "
+            "the previous no-timeout behavior for slower remote embedding calls."
+        ),
+    )
     multimodal: bool = Field(..., description="Whether multimodal features are enabled")
     
     # Safety Configuration
@@ -77,6 +84,13 @@ class ChainServerConfig(BaseModel):
         """Validate top_k_retrieve is positive."""
         if v <= 0:
             raise ValueError("top_k_retrieve must be positive")
+        return v
+
+    @validator('catalog_search_timeout_seconds')
+    def validate_catalog_search_timeout(cls, v):
+        """Validate optional catalog search timeout."""
+        if v is not None and v <= 0:
+            raise ValueError("catalog_search_timeout_seconds must be positive")
         return v
     
     @validator('categories', 'agent_choices')
@@ -115,6 +129,7 @@ def load_config(config_path: Optional[str] = None) -> ChainServerConfig:
         "retriever_port": os.environ.get("CATALOG_RETRIEVER_URL"),
         "memory_port": os.environ.get("MEMORY_RETRIEVER_URL"),
         "rails_port": os.environ.get("RAILS_URL"),
+        "catalog_search_timeout_seconds": os.environ.get("CATALOG_SEARCH_TIMEOUT_SECONDS"),
     }
     config_data.update({key: value for key, value in env_overrides.items() if value})
 

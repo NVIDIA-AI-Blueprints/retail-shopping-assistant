@@ -90,13 +90,16 @@ For detailed architecture information, see [Architecture Overview](docs/README.m
    python -m pip install --user -r requirements-deploy.txt
    ```
 
-4. **Set up hosted endpoint environment**:
+4. **Create and source an environment profile**:
    ```bash
-   export NVIDIA_API_KEY=your_nvapi_key_here
-   set -a
-   source .env.example
-   set +a
+   cp .env.example .env
+   $EDITOR .env
+   source .env
    ```
+
+   Set `NVIDIA_API_KEY` in the file. The env file is a sourceable shell file;
+   sourcing it also sets `COMPOSE_DISABLE_ENV_FILE=1` so Docker Compose uses
+   the exported shell environment instead of auto-parsing repo-root `.env`.
 
 5. **Validate and deploy**:
    ```bash
@@ -112,7 +115,7 @@ For detailed architecture information, see [Architecture Overview](docs/README.m
    For local NIMs, edit the desired model roles in
    `shared/configs/models.yaml` to `source: local_nim`, then run:
    ```bash
-   export LOCAL_NIM_CACHE=~/.cache/nim
+   # Set LOCAL_NIM_CACHE in the sourced env profile first.
    mkdir -p "$LOCAL_NIM_CACHE" && chmod a+w "$LOCAL_NIM_CACHE"
    python scripts/model_config.py show --validate
    python scripts/model_config.py deploy --build

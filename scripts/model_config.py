@@ -28,7 +28,9 @@ from shared.model_config import (  # noqa: E402
 
 def _run(command: Sequence[str]) -> None:
     print("$ " + " ".join(command), flush=True)
-    subprocess.run(command, cwd=REPO_ROOT, env=os.environ.copy(), check=True)
+    env = os.environ.copy()
+    env["COMPOSE_DISABLE_ENV_FILE"] = "1"
+    subprocess.run(command, cwd=REPO_ROOT, env=env, check=True)
 
 
 def _print_human(snapshot: dict) -> None:

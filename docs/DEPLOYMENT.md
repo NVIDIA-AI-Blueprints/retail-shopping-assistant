@@ -86,10 +86,9 @@ docker login nvcr.io
 
 python -m pip install --user -r requirements-deploy.txt
 
-export NVIDIA_API_KEY=your_nvapi_key_here
-set -a
-source .env.example
-set +a
+cp .env.example .env
+$EDITOR .env
+source .env
 
 python scripts/model_config.py show --validate
 python scripts/model_config.py deploy --build
@@ -100,6 +99,10 @@ Open `http://localhost:3000`.
 The deploy helper resolves models from `shared/configs/models.yaml`, starts
 only local NIM containers referenced by roles with `source: local_nim`, and then
 starts the app stack from `docker-compose.yaml`.
+
+The env file is a sourceable shell profile. Source the profile you want before
+validation or deployment; `COMPOSE_DISABLE_ENV_FILE=1` keeps Docker Compose
+from auto-parsing repo-root `.env` as dotenv and mixing environments.
 
 For an existing deployment, rebuild the Milvus catalog embeddings when changing
 the text/image embedding model or catalog data source. The catalog service skips
@@ -116,9 +119,14 @@ Model routing is per role:
 | `local_nim` | Start and use the referenced local NIM service | that service only |
 | `disabled` | Capability is intentionally unavailable | none |
 
-Use `shared/configs/models.yaml` to choose the source for each role. Use
-`.env.example` or your private shell env for keys, endpoint URLs, and model
-name overrides.
+Use `shared/configs/models.yaml` to choose the source for each role. Copy
+`.env.example` to a private env profile such as `.env`, `.env.hosted`, or
+`.env.local-nim`, edit it, then `source` the profile before running validation,
+deployment, or raw Docker Compose commands.
+
+Set `CATALOG_IMAGE_EMBEDDING_ENABLED=false` in the sourced profile when a
+deployment should skip image embedding clients and image collection population.
+Text retrieval remains enabled.
 
 ## 🏠 Local Deployment
 
@@ -130,12 +138,9 @@ Use this only when this machine will run local NIM containers.
 git clone https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant.git
 cd retail-shopping-assistant
 
-export NVIDIA_API_KEY=your_nvapi_key_here
-export NGC_API_KEY=$NVIDIA_API_KEY
-set -a
-source .env.example
-set +a
-export LOCAL_NIM_CACHE=~/.cache/nim
+cp .env.example .env.local-nim
+$EDITOR .env.local-nim
+source .env.local-nim
 mkdir -p "$LOCAL_NIM_CACHE"
 chmod a+w "$LOCAL_NIM_CACHE"
 ```
@@ -199,11 +204,10 @@ cd retail-shopping-assistant
 docker login nvcr.io
 # Use oauthtoken as the username and your NGC API key as the password
 
-# Set environment variables for hosted endpoints
-export NVIDIA_API_KEY=your_nvapi_key_here
-set -a
-source .env.example
-set +a
+# Create and source an environment profile for hosted endpoints
+cp .env.example .env.hosted
+$EDITOR .env.hosted
+source .env.hosted
 ```
 
 ### Step 2: Validate Model Routing
@@ -411,11 +415,10 @@ container startup credentials are separate and are listed once under
 #### Standard Deployment Flow
 
 ```bash
-export NVIDIA_API_KEY=your_nvapi_key_here
 python -m pip install --user -r requirements-deploy.txt
-set -a
-source .env.example
-set +a
+cp .env.example .env
+$EDITOR .env
+source .env
 
 python scripts/model_config.py show --validate
 python scripts/model_config.py deploy --build

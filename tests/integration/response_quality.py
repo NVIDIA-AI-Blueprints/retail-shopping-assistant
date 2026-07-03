@@ -3,22 +3,115 @@ Performs quality testing given QA pairs, using an LLM.
 """
 from openai import OpenAI
 from typing import Dict
+from collections import Counter
+from datetime import datetime, timezone
 import os
 import json
 import yaml
 
+
+def _required_env(name: str) -> str:
+    value = os.environ.get(name)
+    if not value:
+        raise RuntimeError(f"{name} is required for response_quality.py")
+    return value
+
+
 # Configuration
-LLM_NAME = "nvdev/meta/llama-3.1-70b-instruct"
-#LLM_NAME = "nvdev/nv-mistralai/mistral-nemo-12b-instruct"
-EMBED_NAME = "nvdev/nvidia/nv-embedqa-e5-v5"
+LLM_NAME = _required_env("JUDGE_MODEL")
+BASE_URL = _required_env("JUDGE_BASE_URL")
+API_KEY_ENV = _required_env("JUDGE_API_KEY_ENV")
 LLM_CLIENT = OpenAI(
-    base_url= "https://integrate.api.nvidia.com/v1", #"http://pdx-tme-018:8000/v1", #"https://integrate.api.nvidia.com/v1",
-    api_key=os.environ["NVIDIA_API_KEY"]
+    base_url=BASE_URL,
+    api_key=_required_env(API_KEY_ENV)
 )
-EMBED_CLIENT = OpenAI(
-    base_url="https://integrate.api.nvidia.com/v1",
-    api_key=os.environ["NVIDIA_API_KEY"]
-)
+
+
+def _quality_output_dir(conversation: str, result_directory: str) -> str:
+    return f"conversations/{conversation}/quality/{result_directory}"
+
+
+def _write_quality_summary(output_path: str, result_directory: str) -> None:
+    summary_entries = []
+    scores = []
+    per_file = {}
+
+    for filename in sorted(f for f in os.listdir(output_path) if f.endswith(".yaml")):
+        with open(os.path.join(output_path, filename), "r") as result_file:
+            entries = yaml.safe_load(result_file) or []
+        file_scores = [int(entry["score"]) for entry in entries]
+        if not file_scores:
+            continue
+        scores.extend(file_scores)
+        per_file[filename] = {
+            "count": len(file_scores),
+            "average_score": sum(file_scores) / len(file_scores),
+            "min_score": min(file_scores),
+            "max_score": max(file_scores),
+        }
+        for entry in entries:
+            summary_entries.append(
+                {
+                    "filename": filename,
+                    "index": entry["index"],
+                    "query": entry["query"],
+                    "score": int(entry["score"]),
+                    "justification": entry["justification"],
+                }
+            )
+
+    if not scores:
+        raise RuntimeError(f"No judge scores found in {output_path}")
+
+    distribution = {str(score): count for score, count in sorted(Counter(scores).items())}
+    overall_average = sum(scores) / len(scores)
+    summary = {
+        "result_directory": result_directory,
+        "commit": os.environ.get("GITHUB_SHA", ""),
+        "ref": os.environ.get("GITHUB_REF", ""),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "judge_model": LLM_NAME,
+        "judge_base_url": BASE_URL,
+        "count": len(scores),
+        "overall_average": overall_average,
+        "score_distribution": distribution,
+        "per_file": per_file,
+        "lowest_scoring_turns": sorted(
+            summary_entries, key=lambda entry: (entry["score"], entry["filename"], entry["index"])
+        )[:10],
+    }
+
+    with open(os.path.join(output_path, "quality_summary.json"), "w") as summary_file:
+        json.dump(summary, summary_file, indent=2)
+
+    markdown_lines = [
+        f"# Quality Summary: {result_directory}",
+        "",
+        f"- Commit: `{summary['commit'] or 'local'}`",
+        f"- Judge model: `{LLM_NAME}`",
+        f"- Turns judged: {summary['count']}",
+        f"- Overall average: {overall_average:.2f}/5",
+        f"- Score distribution: {distribution}",
+        "",
+        "## Per Scenario",
+        "",
+    ]
+    for filename, file_summary in per_file.items():
+        markdown_lines.append(
+            f"- `{filename}`: {file_summary['average_score']:.2f}/5 "
+            f"({file_summary['count']} turns, min {file_summary['min_score']}, "
+            f"max {file_summary['max_score']})"
+        )
+    markdown_lines.extend(["", "## Lowest Scoring Turns", ""])
+    for entry in summary["lowest_scoring_turns"]:
+        markdown_lines.append(
+            f"- `{entry['filename']}` turn {entry['index']} score {entry['score']}: "
+            f"{entry['query']}"
+        )
+
+    with open(os.path.join(output_path, "quality_summary.md"), "w") as summary_file:
+        summary_file.write("\n".join(markdown_lines) + "\n")
+
 
 def judge_test(
         query: str, 
@@ -106,7 +199,7 @@ if __name__ == "__main__":
     RESULT_DIRECTORY = os.environ.get("RESULT_DIRECTORY", "results")
     QUERY_DIR = f'conversations/{CONVERSATION}'
     RES_DIR = f'conversations/{CONVERSATION}/{RESULT_DIRECTORY}'
-    OUTPUT_PATH = f'conversations/{CONVERSATION}/judge'
+    OUTPUT_PATH = _quality_output_dir(CONVERSATION, RESULT_DIRECTORY)
 
     os.makedirs(OUTPUT_PATH, exist_ok=True)
 
@@ -151,3 +244,5 @@ if __name__ == "__main__":
         # Write YAML output per file
         with open(f"{OUTPUT_PATH}/{filename}", 'w') as out_file:
             yaml.dump(results_per_file, out_file, sort_keys=False, allow_unicode=True)
+
+    _write_quality_summary(OUTPUT_PATH, RESULT_DIRECTORY)

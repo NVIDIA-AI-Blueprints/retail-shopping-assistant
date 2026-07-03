@@ -1,0 +1,301 @@
+# Deep Agents SDK Migration Plan
+
+This plan captures the intended migration from the current bespoke LangGraph
+shopping-agent orchestration to a simpler Deep Agents SDK harness.
+
+Deep Agents is still built on LangGraph internally. The goal is not to remove
+LangGraph as a transitive runtime. The goal is to stop maintaining a custom
+planner/cart/retriever/chatter graph in application code and let the Deep
+Agents SDK own the agent harness, tool selection, skills, context management,
+and streaming surface.
+
+Reference docs:
+- Deep Agents overview: https://docs.langchain.com/oss/python/deepagents/overview
+- Deep Agents customization: https://docs.langchain.com/oss/python/deepagents/customization
+
+## Current Implementation Notes
+
+The first implementation slice uses `chain_server/src/deepagents_runtime.py`
+as the Deep Agents SDK adapter and routes `/query/stream` and `/query/timing`
+through that adapter. The older bespoke LangGraph graph files still exist in
+the repository for reference and tests, but they are no longer the chain-server
+entrypoint.
+
+Current constraints:
+
+- Existing commerce tool implementations are not modified in this slice.
+- The Deep Agents adapter exposes thin request-scoped wrapper tools over the
+  existing commerce functions.
+- No skills are added yet; the first goal is a readable SDK harness.
+- The public request body remains backward compatible.
+- Optional `session_id`, `conversation_id`, and `cart_id` fields are accepted,
+  but legacy callers that send only `user_id` are mapped to deterministic
+  compatibility identifiers.
+- The compatibility mapping is not the final production identity design. A
+  high-scale website should move to server-created session and conversation
+  identifiers before broad rollout.
+- The runtime caps Deep Agents recursion per turn and instructs the model to
+  use one catalog search per user turn unless the shopper explicitly asks for
+  alternatives. This keeps broad shopping prompts from turning into unbounded
+  exploratory search loops.
+- Commerce wrapper tools return directly to the caller in this slice. That
+  trades some conversational polish for predictable latency, simpler control
+  flow, and fewer repeated model calls.
+
+Filesystem and built-in Deep Agents tools:
+
+- Deep Agents includes filesystem, todo, shell, and subagent tools by default.
+- This shopping runtime registers a harness profile that excludes the built-in
+  filesystem, todo, and shell tools and disables the default general-purpose
+  subagent.
+- Customer profile, cart, price, inventory, order, and payment truth must not
+  live in local files or the Deep Agents virtual filesystem.
+- If future skills use filesystem-backed instructions, those files must be
+  static application assets or store-backed per-conversation state, never a
+  shared writable customer namespace.
+
+## Goals
+
+- Use the Deep Agents SDK as the shopping assistant harness.
+- Keep application code small, readable, and conventional.
+- Remove bespoke planner and cart-agent orchestration from our code path.
+- Prepare for adding more shopping tools over time.
+- Prepare for Deep Agents skills without moving business rules into prompts.
+- Prevent customer, session, conversation, cart, or persona context bleeding.
+- Keep the public website API stable during the first migration.
+- Support future high-scale retail traffic where many customers are active at
+  the same time.
+
+## Non-Goals
+
+- Do not implement a full production cart lifecycle in the first migration.
+- Do not rewrite catalog, memory, guardrails, or UI services as part of the
+  first slice.
+- Do not use the agent runtime as the source of truth for carts, customer
+  profiles, prices, inventory, or orders.
+- Do not add broad keyword routing or category-specific hacks to replace
+  planner behavior.
+
+## Design Rules
+
+1. No two customers may share agent context.
+2. No two active conversations may share a Deep Agents thread unless explicitly
+   chosen by the backend.
+3. Never use `customer_id` alone as the Deep Agents `thread_id`.
+4. The server creates and owns session identity first; public API changes can
+   come later when the website needs explicit thread management.
+5. The Deep Agent may choose tools and skills, but deterministic tools own
+   validation, state mutation, idempotency, and authorization.
+6. Persona data is loaded as a read-only snapshot for the turn unless a later
+   feature explicitly supports profile updates.
+7. Carts are scoped by `cart_id`, not by conversation memory.
+8. Conversation memory is scoped by `conversation_id`, not by customer alone.
+9. Skills describe shopping behavior and domain knowledge. Tools perform
+   reads, writes, and external service calls.
+
+## Target Request Flow
+
+```text
+POST /query/stream
+  -> resolve or create server-owned identity
+  -> load session, conversation, cart, and optional persona snapshot
+  -> invoke Deep Agents SDK with thread_id = conversation_id
+  -> Deep Agent selects skills and calls deterministic shopping tools
+  -> tools call catalog, memory, cart, policy, or persona services
+  -> stream assistant response back to the UI
+  -> persist conversation summary and tool results under the correct scope
+```
+
+The first migration should preserve the existing endpoint shape. The server can
+derive internal `session_id`, `conversation_id`, `cart_id`, and `request_id`
+without requiring the frontend to send them yet.
+
+## Identity Model
+
+| Identifier | Meaning | Persistence | May Be Shared? |
+| --- | --- | --- | --- |
+| `customer_id` | Logged-in shopper identity. Optional for anonymous users. | Durable | Across that customer's sessions only |
+| `session_id` | Website/browser session. | TTL-bound | Never across customers |
+| `conversation_id` | One chat thread and Deep Agents `thread_id`. | TTL-bound or user-visible thread | Never across unrelated sessions |
+| `cart_id` | Active cart being mutated. | Cart lifecycle policy | May follow a customer across sessions |
+| `persona_id` | Optional persona/profile source. | Durable or scenario-bound | Never across unrelated customers |
+| `request_id` | One submitted turn. | Short-lived | Unique per turn |
+
+Server-side generation is the first step. Later, explicit session and
+conversation APIs can expose these identifiers for multi-thread website
+features.
+
+## Session Isolation Requirements
+
+- A request without a valid server session gets a new `session_id`.
+- A request without a valid conversation gets a new `conversation_id`.
+- Deep Agents checkpointing, memory, and filesystem state use
+  `conversation_id` as the thread key.
+- Customer profile lookup uses `customer_id`, but profile lookup must not merge
+  conversation state across sessions.
+- Anonymous sessions must not be addressable by guessable numeric IDs.
+- Resetting the chat creates a new conversation. It should not automatically
+  clear the customer's durable cart unless the user explicitly clears cart.
+- Same customer in two active browser sessions gets separate conversation
+  memory unless the product explicitly opens the same conversation thread.
+
+## Persona Handling
+
+Personas are useful, but they are not chat memory and they are not cart state.
+
+Persona precedence:
+
+1. Current user request.
+2. Explicit session preferences.
+3. Loaded customer persona/profile snapshot.
+4. Store policy and catalog facts.
+5. Model assumptions are not allowed as facts.
+
+The target app should load one persona snapshot near the start of a turn and
+pass that snapshot to the Deep Agent. Individual skills should not independently
+fetch mutable persona state, because that creates inconsistent context and
+hard-to-debug race conditions.
+
+## Tools
+
+Initial tools should be small, typed, and deterministic:
+
+- `search_catalog`: read-only, stateless product discovery.
+- `get_product_details`: read-only product facts for one product.
+- `get_cart`: read-only cart state for a `cart_id`.
+- `add_cart_item`: mutating cart write with idempotency.
+- `remove_cart_item`: mutating cart write with idempotency.
+- `view_cart_total`: deterministic arithmetic over cart line prices.
+- `get_store_policy`: read-only controlled policy content.
+- `load_customer_persona`: read-only persona/profile snapshot.
+
+The Deep Agent decides when to call a tool. The tool decides whether the call is
+valid and what state changes are allowed.
+
+## Skills
+
+Initial skills should be domain instructions and examples, not hidden business
+logic:
+
+- `product_discovery`
+- `image_shopping`
+- `cart_management`
+- `budget_sensitive_recommendation`
+- `persona_aware_recommendation`
+- `store_policy_answers`
+
+Skills may guide tool use, explain constraints, and provide examples. They
+should not own cart mutation, pricing, inventory, profile persistence, or order
+creation.
+
+## Filesystem And Context
+
+Deep Agents supports virtual filesystem backends for skills, memory, and
+context management. That is different from a regular single-loop agent, where
+all relevant context is often stuffed into the prompt.
+
+For this retail assistant:
+
+- Use filesystem-backed or store-backed skills for static domain behavior,
+  instructions, and examples.
+- Use Deep Agents conversation state for per-thread working context.
+- Do not use local files as the production source of truth for customer
+  profiles, carts, prices, inventory, orders, or payment state.
+- Do not share a writable filesystem namespace across customers.
+- If virtual files are used for conversation context, namespace them by
+  `conversation_id` and ensure lifecycle cleanup.
+- At high scale, prefer store-backed or database-backed context over local disk.
+  Local disk state does not scale cleanly across replicas.
+
+The rule is: Deep Agents context is useful for reasoning and skill discovery;
+commerce truth belongs in application services and databases.
+
+## Scaling Assumptions
+
+This system should be able to grow toward a high-traffic retail site, including
+peak events such as Black Friday.
+
+Implications:
+
+- App servers should remain horizontally scalable and mostly stateless.
+- Session, cart, persona, and conversation state must live in shared durable
+  stores, not process memory or local files.
+- Deep Agents checkpointing must use a production store keyed by
+  `conversation_id`.
+- Mutating tools must use idempotency keys so retries do not double-add items.
+- Tool calls need timeouts, retry policy, and clear structured failures.
+- Agent turns need strict step limits so one broad request cannot monopolize
+  model capacity during traffic spikes.
+- Catalog search should remain stateless and cacheable where possible.
+- Cart writes need ownership checks, optimistic concurrency or transactions,
+  and request idempotency.
+- Returned tool payloads should be compact. Large result sets should be
+  summarized or offloaded instead of injected wholesale into context.
+- Observability must include `request_id`, `session_id`, `conversation_id`,
+  `cart_id`, tool name, latency, and error class.
+- Backpressure is required for model calls and slow downstream services.
+
+## Migration Slices
+
+### Slice 1: Deep Agents Adapter
+
+- Add a small adapter that creates and invokes the Deep Agents SDK harness.
+- Keep `/query/stream` as the public entrypoint.
+- Add config for `agent_runtime: legacy_langgraph | deepagents`.
+- Keep legacy behavior as the default until parity is proven.
+
+### Slice 2: Server-Owned Identity
+
+- Resolve internal `session_id`, `conversation_id`, `cart_id`, and `request_id`
+  server-side.
+- Map `conversation_id` to the Deep Agents `thread_id`.
+- Keep the current request body compatible while the UI is unchanged.
+- Add isolation tests before relying on this in production.
+
+### Slice 3: Shopping Tools
+
+- Expose current catalog and cart capabilities as typed tools.
+- Keep product search stateless.
+- Keep cart operations deterministic and idempotent.
+- Do not create standalone planner or cart-agent classes.
+
+### Slice 4: Skills
+
+- Add initial shopping skills for product discovery, image shopping, budget
+  guidance, persona-aware recommendation, and cart management.
+- Keep skills as guidance. Keep state changes in tools.
+
+### Slice 5: Deep Agents Runtime Parity
+
+- Run existing unit tests.
+- Run targeted Challenger scenarios.
+- Verify product search, image search, cart mutation claims, and grounded
+  responses.
+- Compare Deep Agents output against the legacy path before cutover.
+
+### Slice 6: Cutover And Cleanup
+
+- Switch default runtime to Deep Agents after parity.
+- Remove bespoke planner/cart/retriever/chatter graph code only after the new
+  path is stable.
+- Keep deterministic tools and service contracts.
+
+## Required Tests
+
+- Two customers ask similar questions; context does not bleed.
+- Same customer has two sessions; conversation context does not bleed.
+- Same session has multiple turns; context is preserved.
+- Persona A and Persona B do not cross-contaminate.
+- Cart writes affect only the intended `cart_id`.
+- Retried cart mutation with the same idempotency key applies once.
+- Search remains stateless and does not receive customer/session/cart context.
+- Chatter does not claim cart changes unless a tool reports success.
+
+## Open Decisions
+
+- Which production store should back Deep Agents checkpointing and memory?
+- Should anonymous sessions use cookies, headers, or both?
+- What is the cart TTL for anonymous and logged-in users?
+- Which persona fields are allowed into the model context?
+- Which tools require human approval or confirmation before mutation?
+- What is the first Deep Agents skill directory structure?

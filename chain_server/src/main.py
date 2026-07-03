@@ -18,13 +18,8 @@ import time
 import json
 
 from .agenttypes import State, Cart
-from .planner import PlannerAgent
-from .retriever import RetrieverAgent
-from .cart import CartAgent
-from .chatter import ChatterAgent
-from .summarizer import SummaryAgent
-from .graph import create_graph
 from .config import load_config
+from .deepagents_runtime import DeepAgentsRuntime, create_request_identity
 
 # Configure logging
 logging.basicConfig(
@@ -34,26 +29,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-
-def initialize_agents(config) -> Dict:
-    """Initialize all agent instances."""
-    return {
-        'planner_agent': PlannerAgent(config=config),
-        'retriever_agent': RetrieverAgent(config=config),
-        'cart_agent': CartAgent(config=config),
-        'chatter_agent': ChatterAgent(config=config),
-        'summary_agent': SummaryAgent(config=config)
-    }
-
-
-# Load configuration and initialize agents
+# Load configuration and initialize runtime.
 try:
     config = load_config()  # Load and validate configuration
-    agents = initialize_agents(config)
-    graph = create_graph(
-        **agents,
-        config=config
-    )
+    assistant_runtime = DeepAgentsRuntime(config)
 except Exception as e:
     logger.error(f"Failed to initialize application: {e}")
     raise
@@ -61,7 +40,7 @@ except Exception as e:
 # Initialize FastAPI app
 app = FastAPI(
     title="Shopping Assistant API",
-    description="AI-powered shopping assistant with multi-agent architecture",
+    description="AI-powered shopping assistant with Deep Agents SDK orchestration",
     version="1.0.0"
 )
 
@@ -81,6 +60,9 @@ class QueryRequest(BaseModel):
     user_id: int
     query: str
     image: str = ""
+    session_id: Optional[str] = None
+    conversation_id: Optional[str] = None
+    cart_id: Optional[str] = None
     context: Optional[str] = ""
     cart: Optional[Cart] = None
     retrieved: Optional[Dict[str, str]] = {}
@@ -123,11 +105,17 @@ async def process_query_stream(request: QueryRequest):
         
         # Create initial state
         state = create_initial_state(request)
+        identity = create_request_identity(
+            legacy_user_id=request.user_id,
+            session_id=request.session_id,
+            conversation_id=request.conversation_id,
+            cart_id=request.cart_id,
+        )
         
         async def send_updates():
             """Generator function for streaming updates."""
             try:
-                async for chunk in graph.astream(state, stream_mode="custom"):
+                async for chunk in assistant_runtime.astream(state, identity):
                     yield f"data: {chunk}\n\n"
                 yield "data: [DONE]\n\n"
             except Exception as e:
@@ -152,10 +140,16 @@ async def process_query_timing(request: QueryRequest):
         
         # Create initial state
         state = create_initial_state(request)
+        identity = create_request_identity(
+            legacy_user_id=request.user_id,
+            session_id=request.session_id,
+            conversation_id=request.conversation_id,
+            cart_id=request.cart_id,
+        )
         
         # Process query and collect timing data
         start_time = time.monotonic()
-        out_state_dict = await graph.ainvoke(state)
+        out_state_dict = await assistant_runtime.ainvoke(state, identity)
         end_time = time.monotonic()
         
         logger.info(f"chain-server | /query/timing | Collected state: {out_state_dict}")
@@ -165,7 +159,7 @@ async def process_query_timing(request: QueryRequest):
         # Create response with timing information
         response = QueryResponse(
             response=out_state_dict["response"],
-            images={},
+            images=out_state_dict.get("images", {}),
             timings=out_state_dict["timings"]
         )
         response.timings["total"] = total_time
@@ -200,4 +194,4 @@ async def root():
             "health": "/health",
             "docs": "/docs"
         }
-    } 
+    }

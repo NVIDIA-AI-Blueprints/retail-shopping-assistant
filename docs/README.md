@@ -12,6 +12,7 @@ Welcome to the Retail Shopping Assistant documentation! This hub provides compre
 ### 🔧 Technical Documentation
 - **[API Documentation](API.md)** - Complete API reference
 - **[Commerce Contracts](COMMERCE_CONTRACTS.md)** - Internal product, cart, and commerce tool contracts
+- **[Deep Agents Migration Plan](DEEP_AGENTS_MIGRATION_PLAN.md)** - SDK migration, session isolation, tools, skills, and scaling notes
 - **[Architecture Overview](../README.md#architecture)** - System design and components
 - **[Configuration Guide](../README.md#configuration)** - Settings and customization
 
@@ -36,6 +37,7 @@ Welcome to the Retail Shopping Assistant documentation! This hub provides compre
 |----------|-------------|----------|
 | [API Documentation](API.md) | Complete API reference with examples | Developers, integrators |
 | [Commerce Contracts](COMMERCE_CONTRACTS.md) | Internal product, cart, and commerce tool contracts | Developers, architects |
+| [Deep Agents Migration Plan](DEEP_AGENTS_MIGRATION_PLAN.md) | SDK migration, session isolation, tools, skills, and scaling notes | Developers, architects |
 | [Deployment Guide](DEPLOYMENT.md) | Installation and deployment instructions | DevOps, system administrators |
 | [Architecture Overview](../README.md#architecture) | System design and component details | Architects, developers |
 | [Configuration Guide](../README.md#configuration) | Settings and customization options | Developers, administrators |

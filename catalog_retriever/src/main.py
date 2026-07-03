@@ -46,6 +46,20 @@ def load_config(base_config_path: str):
 
     return config
 
+
+def env_flag(name: str, default: bool = True) -> bool:
+    """Read a boolean environment flag."""
+
+    value = os.environ.get(name)
+    if value is None or not value.strip():
+        return default
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"{name} must be true or false.")
+
 shared_config_root = os.environ.get("SHARED_CONFIG_ROOT", "/app/shared/configs")
 data = load_config(os.path.join(shared_config_root, "catalog_retriever", "config.yaml"))
 data.update(
@@ -62,7 +76,11 @@ model_config = resolve_model_config(config_root=shared_config_root)
 validate_model_config(model_config, roles=("text_embedding",))
 text_embedding = model_config.require("text_embedding")
 image_embedding = model_config.get("image_embedding")
-image_enabled = bool(image_embedding and not image_embedding.disabled)
+image_enabled = bool(
+    image_embedding
+    and not image_embedding.disabled
+    and env_flag("CATALOG_IMAGE_EMBEDDING_ENABLED", default=True)
+)
 data.update(
     {
         "text_embed_port": text_embedding.base_url,

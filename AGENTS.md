@@ -69,10 +69,9 @@ Top-level orchestration is via `docker-compose.yaml`; optional local NIM model c
 ### Cloud endpoint mode (no local NIM containers)
 
 ```bash
-export NVIDIA_API_KEY=<your_key>
-set -a
-source .env.example
-set +a
+cp .env.example .env
+$EDITOR .env
+source .env
 python scripts/model_config.py show --validate
 python scripts/model_config.py deploy --build
 ```
@@ -82,11 +81,9 @@ python scripts/model_config.py deploy --build
 Brings up the local LLM (`nemotron` service, image `nvcr.io/nim/nvidia/nemotron-3-super-120b-a12b`), `nvclip`, `embedqa`, and the two NemoGuard guardrail containers.
 
 ```bash
-export NVIDIA_API_KEY=<your_key>
-set -a
-source .env.example
-set +a
-export LOCAL_NIM_CACHE=~/.cache/nim
+cp .env.example .env.local-nim
+$EDITOR .env.local-nim
+source .env.local-nim
 mkdir -p "$LOCAL_NIM_CACHE" && chmod a+w "$LOCAL_NIM_CACHE"
 python scripts/model_config.py show --validate
 python scripts/model_config.py deploy --build

@@ -125,6 +125,12 @@ Server-side generation is the first step. Later, explicit session and
 conversation APIs can expose these identifiers for multi-thread website
 features.
 
+Current bridge implementation keeps the memory service schema unchanged. It
+uses the legacy numeric `user_id` when explicit IDs are absent, derives a
+stable internal key from `conversation_id` for conversation memory when present,
+and derives a separate stable internal key from `cart_id` for cart reads/writes
+when present.
+
 ## Session Isolation Requirements
 
 - A request without a valid server session gets a new `session_id`.

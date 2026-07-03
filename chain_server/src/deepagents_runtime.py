@@ -47,12 +47,13 @@ class RequestIdentity:
     session_id: str
     conversation_id: str
     cart_id: str
+    context_user_id: int
+    cart_user_id: int
     request_id: str
 
     @property
     def legacy_user_id(self) -> int:
-        digest = hashlib.sha256(self.conversation_id.encode("utf-8")).hexdigest()
-        return int(digest[:8], 16) % 900000000 + 100000
+        return self.context_user_id
 
 
 class DeepAgentsRuntime:
@@ -89,10 +90,10 @@ class DeepAgentsRuntime:
 
     async def _run_turn(self, state: State, identity: RequestIdentity) -> State:
         start = time.monotonic()
-        state.user_id = identity.legacy_user_id
-        self._load_memory(state)
+        state.user_id = identity.context_user_id
+        self._load_memory(state, identity)
 
-        if state.guardrails and not self._check_safety("input", state.user_id, state.query):
+        if state.guardrails and not self._check_safety("input", identity.context_user_id, state.query):
             state.response = self.config.unsafe_message
             state.timings["deepagents"] = time.monotonic() - start
             return state
@@ -117,11 +118,11 @@ class DeepAgentsRuntime:
             state.timings["deepagents_error"] = time.monotonic() - start
             return state
 
-        if state.guardrails and not self._check_safety("output", state.user_id, state.response):
+        if state.guardrails and not self._check_safety("output", identity.context_user_id, state.response):
             state.response = self.config.unsafe_message
 
         state.context = self._updated_context(state.context, state.query, state.response)
-        self._persist_context(state)
+        self._persist_context(state, identity)
         state.timings["deepagents"] = time.monotonic() - start
         return state
 
@@ -190,7 +191,7 @@ class DeepAgentsRuntime:
         def get_cart_tool() -> str:
             """Read the current cart contents."""
 
-            cart = self._read_cart(state.user_id)
+            cart = self._read_cart(identity.cart_user_id)
             state.cart = cart
             return _format_cart(cart)
 
@@ -204,7 +205,7 @@ class DeepAgentsRuntime:
                 return f"No catalog product named '{item_name}' could be found."
             result = add_cart_item(
                 AddCartItemInput(
-                    user_id=str(state.user_id),
+                    user_id=str(identity.cart_user_id),
                     product_id=product.product_id,
                     display_name=product.display_name,
                     quantity=quantity,
@@ -214,7 +215,7 @@ class DeepAgentsRuntime:
                 ),
                 self.config.memory_port,
             )
-            state.cart = self._read_cart(state.user_id)
+            state.cart = self._read_cart(identity.cart_user_id)
             if result.ok:
                 return result.message or f"Added {quantity} {product.display_name} to cart."
             return result.error.message if result.error else "Cart add failed."
@@ -224,13 +225,13 @@ class DeepAgentsRuntime:
             """Remove an item from the current cart by matching against cart contents."""
 
             quantity = max(1, int(quantity or 1))
-            cart = self._read_cart(state.user_id)
+            cart = self._read_cart(identity.cart_user_id)
             line = _find_cart_line(item_name, cart)
             if line is None:
                 return f"No cart item named '{item_name}' could be found."
             result = remove_cart_item(
                 RemoveCartItemInput(
-                    user_id=str(state.user_id),
+                    user_id=str(identity.cart_user_id),
                     cart_line_id=line["item"],
                     display_name=line["item"],
                     quantity=quantity,
@@ -238,7 +239,7 @@ class DeepAgentsRuntime:
                 ),
                 self.config.memory_port,
             )
-            state.cart = self._read_cart(state.user_id)
+            state.cart = self._read_cart(identity.cart_user_id)
             if result.ok:
                 return result.message or f"Removed {quantity} {line['item']} from cart."
             return result.error.message if result.error else "Cart remove failed."
@@ -247,7 +248,7 @@ class DeepAgentsRuntime:
         def view_cart_total_tool() -> str:
             """Compute the current cart total from cached cart line prices."""
 
-            cart = self._read_cart(state.user_id)
+            cart = self._read_cart(identity.cart_user_id)
             state.cart = cart
             return _format_cart_total(cart)
 
@@ -354,15 +355,15 @@ Rules:
             ]
         )
 
-    def _load_memory(self, state: State) -> None:
+    def _load_memory(self, state: State, identity: RequestIdentity) -> None:
         start = time.monotonic()
         try:
             memory_response = requests.get(
-                f"{self.config.memory_port}/user/{state.user_id}/context",
+                f"{self.config.memory_port}/user/{identity.context_user_id}/context",
                 timeout=10,
             )
             memory_response.raise_for_status()
-            cart = self._read_cart(state.user_id)
+            cart = self._read_cart(identity.cart_user_id)
             state.context = memory_response.json().get("context") or ""
             state.cart = cart
         except requests.RequestException as exc:
@@ -371,10 +372,10 @@ Rules:
             state.cart = Cart()
         state.timings["memory"] = time.monotonic() - start
 
-    def _persist_context(self, state: State) -> None:
+    def _persist_context(self, state: State, identity: RequestIdentity) -> None:
         try:
             requests.post(
-                f"{self.config.memory_port}/user/{state.user_id}/context/replace",
+                f"{self.config.memory_port}/user/{identity.context_user_id}/context/replace",
                 json={"new_context": state.context},
                 timeout=10,
             )
@@ -422,8 +423,19 @@ def create_request_identity(
         session_id=session,
         conversation_id=conversation,
         cart_id=cart,
+        context_user_id=(
+            _stable_numeric_id("conversation", conversation_id)
+            if conversation_id
+            else legacy_user_id
+        ),
+        cart_user_id=_stable_numeric_id("cart", cart_id) if cart_id else legacy_user_id,
         request_id=str(uuid.uuid4()),
     )
+
+
+def _stable_numeric_id(namespace: str, value: str) -> int:
+    digest = hashlib.sha256(f"{namespace}:{value}".encode("utf-8")).hexdigest()
+    return int(digest[:15], 16)
 
 
 def _extract_final_text(result: Any) -> str:

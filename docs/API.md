@@ -85,10 +85,11 @@ interface QueryRequest {
 
 `session_id`, `conversation_id`, and `cart_id` are optional for backward
 compatibility. When they are omitted, the server maps the legacy `user_id` to
-internal compatibility identifiers. When supplied, `conversation_id` scopes the
-Deep Agents thread and conversation memory, while `cart_id` scopes cart
-reads/writes. Production website integrations should use server-created session,
-conversation, and cart identifiers before broad rollout so customer context and
+internal compatibility identifiers. The bundled UI creates browser-session
+identifiers and sends them on every turn. When supplied, `conversation_id`
+scopes the Deep Agents thread and conversation memory, while `cart_id` scopes
+cart reads/writes. Production website integrations should move these IDs to a
+server-owned session/thread service before broad rollout so customer context and
 cart state cannot bleed across sessions.
 
 ### QueryResponse

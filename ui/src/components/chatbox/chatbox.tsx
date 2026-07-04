@@ -30,7 +30,12 @@ import { faTimesCircle } from '@fortawesome/free-solid-svg-icons';
 import ChatMessage from "./ChatMessage";
 import { ChatboxProps } from "../../types";
 import { config } from "../../config/config";
-import { showCartNotification } from "../../utils";
+import {
+  clearUserSession,
+  createApiRequest,
+  getOrCreateUserSession,
+  showCartNotification,
+} from "../../utils";
 import logo from "../../assets/nvidia-logo.png";
 
 /**
@@ -66,15 +71,6 @@ const Chatbox: React.FC<ChatboxProps> = ({ setNewRenderImage }) => {
 
   // Utility functions
   const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-  const getOrCreateUserId = () => {
-    const storedId = sessionStorage.getItem('shopping_user_id');
-    if (storedId) return parseInt(storedId, 10);
-    
-    const newId = Date.now() * 1000 + Math.floor(Math.random() * 1000);
-    sessionStorage.setItem('shopping_user_id', String(newId));
-    return newId;
-  };
 
   const convertToBase64 = (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
@@ -193,7 +189,7 @@ const Chatbox: React.FC<ChatboxProps> = ({ setNewRenderImage }) => {
     // Clear previous cart operation notifications for new message
     shownCartOperations.current.clear();
 
-    const userId = getOrCreateUserId();
+    const userSession = getOrCreateUserSession();
     setIsLoading(true);
 
     // Will be used to enable submit shortly after the last token
@@ -224,13 +220,12 @@ const Chatbox: React.FC<ChatboxProps> = ({ setNewRenderImage }) => {
       setNewMessage("");
 
       // Prepare API request
-      const payload = {
-        user_id: userId,
-        query: newMessage,
-        guardrails: isGuardrailsOn,
-        image: image || "",
-        image_bool: !!image
-      };
+      const payload = createApiRequest(
+        userSession,
+        newMessage,
+        image || "",
+        isGuardrailsOn
+      );
       
       // Clear image immediately after preparing payload
       setImage("");
@@ -352,7 +347,7 @@ const Chatbox: React.FC<ChatboxProps> = ({ setNewRenderImage }) => {
     setImage("");
     setPreviewImage("");
     setNewRenderImage("");
-    sessionStorage.removeItem('shopping_user_id');
+    clearUserSession();
 
     // Add welcome messages
     addMessage(

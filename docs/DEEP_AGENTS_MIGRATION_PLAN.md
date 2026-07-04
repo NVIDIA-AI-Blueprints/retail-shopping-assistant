@@ -29,11 +29,12 @@ Current constraints:
 - No skills are added yet; the first goal is a readable SDK harness.
 - The public request body remains backward compatible.
 - Optional `session_id`, `conversation_id`, and `cart_id` fields are accepted,
-  but legacy callers that send only `user_id` are mapped to deterministic
+  and the bundled UI now sends browser-session identifiers on every turn.
+  Legacy callers that send only `user_id` are still mapped to deterministic
   compatibility identifiers.
 - The compatibility mapping is not the final production identity design. A
-  high-scale website should move to server-created session and conversation
-  identifiers before broad rollout.
+  high-scale website should move to server-created session, conversation, and
+  cart identifiers before broad rollout.
 - The runtime caps Deep Agents recursion per turn and instructs the model to
   use one catalog search per user turn unless the shopper explicitly asks for
   alternatives. This keeps broad shopping prompts from turning into unbounded
@@ -106,9 +107,10 @@ POST /query/stream
   -> persist conversation summary and tool results under the correct scope
 ```
 
-The first migration should preserve the existing endpoint shape. The server can
-derive internal `session_id`, `conversation_id`, `cart_id`, and `request_id`
-without requiring the frontend to send them yet.
+The first migration preserves the existing endpoint shape. The bundled UI sends
+explicit browser-session identifiers, and the server can still derive internal
+`session_id`, `conversation_id`, `cart_id`, and `request_id` for legacy callers
+that do not send them.
 
 ## Identity Model
 
@@ -258,12 +260,14 @@ Implications:
   token-level model chunks. Token-level Deep Agents streaming is a follow-up
   after the harness migration is stable.
 
-### Slice 2: Server-Owned Identity
+### Slice 2: Stable Conversation Identity
 
-- Resolve internal `session_id`, `conversation_id`, `cart_id`, and `request_id`
-  server-side.
+- Accept explicit `session_id`, `conversation_id`, and `cart_id` from clients
+  that have a stable browser/session identity.
+- Keep deriving `request_id` server-side per turn.
 - Map `conversation_id` to the Deep Agents `thread_id`.
-- Keep the current request body compatible while the UI is unchanged.
+- Keep the current request body compatible for legacy callers.
+- The bundled UI now creates session-scoped IDs and sends them on every turn.
 - Add isolation tests before relying on this in production.
 
 ### Slice 3: Shopping Tools

@@ -8,6 +8,9 @@
 import { FileUploadResult, UserSession, StreamingChunk, ApiRequest } from '../types';
 import { config } from '../config/config';
 
+const SESSION_STORAGE_KEY = 'shopping_session_identity';
+const LEGACY_USER_ID_KEY = 'shopping_user_id';
+
 /**
  * Convert a file to base64 string
  */
@@ -36,23 +39,38 @@ export const base64ToBlob = (base64: string): Blob => {
 };
 
 /**
- * Get or create a user ID from session storage
+ * Get or create a user ID from session storage.
  */
 export const getOrCreateUserId = (): number => {
-  const storedId = sessionStorage.getItem('shopping_user_id');
-  if (storedId) return parseInt(storedId, 10);
-  
-  // Use timestamp + random component to avoid collisions
-  const newId = Date.now() * 1000 + Math.floor(Math.random() * 1000);
-  sessionStorage.setItem('shopping_user_id', String(newId));
-  return newId;
+  return getOrCreateUserSession().userId;
+};
+
+/**
+ * Get or create the browser-scoped assistant identity sent to the API.
+ */
+export const getOrCreateUserSession = (): UserSession => {
+  const storedSession = readStoredUserSession();
+  if (storedSession) return storedSession;
+
+  const userId = getStoredUserId() || createUserId();
+  const session = {
+    userId,
+    sessionId: createScopedId('session'),
+    conversationId: createScopedId('conversation'),
+    cartId: createScopedId('cart'),
+    isActive: true,
+    createdAt: new Date(),
+  };
+  storeUserSession(session);
+  return session;
 };
 
 /**
  * Clear user session data
  */
 export const clearUserSession = (): void => {
-  sessionStorage.removeItem('shopping_user_id');
+  sessionStorage.removeItem(SESSION_STORAGE_KEY);
+  sessionStorage.removeItem(LEGACY_USER_ID_KEY);
 };
 
 /**
@@ -104,18 +122,89 @@ export const parseStreamingChunk = (rawData: string): StreamingChunk | null => {
  * Create API request payload
  */
 export const createApiRequest = (
-  userId: number,
+  userSession: UserSession,
   query: string,
   image: string = '',
   guardrails: boolean = true
 ): ApiRequest => {
   return {
-    user_id: userId,
+    user_id: userSession.userId,
+    session_id: userSession.sessionId,
+    conversation_id: userSession.conversationId,
+    cart_id: userSession.cartId,
     query,
     guardrails,
     image,
     image_bool: !!image,
   };
+};
+
+const getStoredUserId = (): number | null => {
+  const storedId = sessionStorage.getItem(LEGACY_USER_ID_KEY);
+  if (!storedId) return null;
+
+  const parsed = parseInt(storedId, 10);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const createUserId = (): number => {
+  const userId = Date.now() * 1000 + Math.floor(Math.random() * 1000);
+  sessionStorage.setItem(LEGACY_USER_ID_KEY, String(userId));
+  return userId;
+};
+
+const createScopedId = (prefix: string): string => {
+  const browserCrypto =
+    typeof crypto !== 'undefined'
+      ? (crypto as Crypto & { randomUUID?: () => string })
+      : undefined;
+  const randomId =
+    browserCrypto && typeof browserCrypto.randomUUID === 'function'
+      ? browserCrypto.randomUUID()
+      : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  return `${prefix}-${randomId}`;
+};
+
+const readStoredUserSession = (): UserSession | null => {
+  const storedSession = sessionStorage.getItem(SESSION_STORAGE_KEY);
+  if (!storedSession) return null;
+
+  try {
+    const parsed = JSON.parse(storedSession);
+    if (
+      typeof parsed.userId === 'number' &&
+      typeof parsed.sessionId === 'string' &&
+      typeof parsed.conversationId === 'string' &&
+      typeof parsed.cartId === 'string'
+    ) {
+      return {
+        userId: parsed.userId,
+        sessionId: parsed.sessionId,
+        conversationId: parsed.conversationId,
+        cartId: parsed.cartId,
+        isActive: true,
+        createdAt: parsed.createdAt ? new Date(parsed.createdAt) : new Date(),
+      };
+    }
+  } catch (error) {
+    sessionStorage.removeItem(SESSION_STORAGE_KEY);
+  }
+
+  return null;
+};
+
+const storeUserSession = (session: UserSession): void => {
+  sessionStorage.setItem(LEGACY_USER_ID_KEY, String(session.userId));
+  sessionStorage.setItem(
+    SESSION_STORAGE_KEY,
+    JSON.stringify({
+      userId: session.userId,
+      sessionId: session.sessionId,
+      conversationId: session.conversationId,
+      cartId: session.cartId,
+      createdAt: session.createdAt.toISOString(),
+    })
+  );
 };
 
 /**
@@ -133,7 +222,7 @@ export const downloadMessages = (messages: any[], filename?: string): void => {
   const blob = new Blob([jsonStr], { type: 'application/json' });
   
   const date = new Date();
-  const timestamp = date.toISOString().replace(/[:\-]|\.\d{3}/g, '');
+  const timestamp = date.toISOString().replace(/[:-]|\.\d{3}/g, '');
   const defaultFilename = `messages_${timestamp}.json`;
   
   const url = URL.createObjectURL(blob);
@@ -278,4 +367,4 @@ export const showCartNotification = (
       }
     }
   }
-}; 
+};

@@ -29,13 +29,14 @@ The main design decision is separation:
 
 ## Current Phase
 
-The stacked commerce-tool work now has runtime wiring for the current LangGraph
-path:
+The stacked commerce-tool work now has runtime wiring through the Deep Agents
+SDK adapter:
 
-- `RetrieverAgent` calls the internal `search_catalog` tool wrapper for product
-  discovery.
-- `CartAgent` calls internal cart tool wrappers for cart reads, adds, and
-  removes.
+- `DeepAgentsRuntime` exposes request-scoped wrapper tools over the internal
+  `search_catalog`, `get_cart`, `add_cart_item`, and `remove_cart_item`
+  wrappers.
+- The legacy `RetrieverAgent` and `CartAgent` files still exist in the repo for
+  reference and tests, but they are not the chain-server entrypoint.
 - Catalog search remains stateless: no user, cart, memory, session, or
   conversation-history fields are passed to `search_catalog`.
 - Catalog search timeout is configurable through
@@ -87,9 +88,9 @@ decide what query or query terms, optional image, categories, and filters to
 send, but `search_catalog` itself should remain a pure read against the catalog
 for the supplied request.
 
-This keeps product search reusable by the current LangGraph retriever, future
-Deep Agents subagents, and later protocol adapters without coupling catalog
-results to shopper session state.
+This keeps product search reusable by the Deep Agents adapter, future skills or
+subagents, and later protocol adapters without coupling catalog results to
+shopper session state.
 
 Current catalog search results map the retriever's returned `ids` field into
 `ProductSummary.product_id`. Those IDs are Milvus retriever primary keys and can
@@ -106,7 +107,8 @@ the public API first:
 3. Treat current catalog result IDs as transient `ProductSummary` and mutation
    result fields only; durable ID persistence in chain-server state and cart
    memory rows is future work.
-4. Add Deep Agents skills and subagents on top of the same tool layer.
+4. Deep Agents SDK wrapper tools now reuse the same internal commerce wrappers.
+5. Add Deep Agents skills and subagents on top of the same tool layer.
 
 The important rule is that ACP/UCP compatibility should be added as adapters
 around these contracts, not as fields or naming choices inside the core models.

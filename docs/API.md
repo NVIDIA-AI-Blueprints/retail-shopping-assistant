@@ -15,7 +15,7 @@
 
 ## 🎯 Overview
 
-The Retail Shopping Assistant API provides a comprehensive interface for an AI-powered retail shopping advisor. The API is built on a microservices architecture using LangGraph for agent orchestration and supports both streaming and non-streaming responses.
+The Retail Shopping Assistant API provides a comprehensive interface for an AI-powered retail shopping advisor. The API is built on a microservices architecture and currently uses the Deep Agents SDK as the chain-server assistant harness.
 
 ### Key Features
 
@@ -46,6 +46,9 @@ interface QueryRequest {
   user_id: number;                    // Unique user identifier
   query: string;                      // User's text query
   image?: string;                     // Base64 encoded image (optional)
+  session_id?: string;                // Optional website/browser session identifier
+  conversation_id?: string;           // Optional chat thread identifier
+  cart_id?: string;                   // Optional cart identifier
   context?: string;                   // Previous conversation context
   cart?: Cart;                        // Current shopping cart state
   retrieved?: Record<string, string>; // Previously retrieved products
@@ -60,6 +63,9 @@ interface QueryRequest {
   "user_id": 123,
   "query": "Show me red dresses under $100",
   "image": "",
+  "session_id": "session_abc",
+  "conversation_id": "conversation_abc",
+  "cart_id": "cart_abc",
   "context": "Previous conversation about summer clothing",
   "cart": {
     "contents": [
@@ -76,6 +82,14 @@ interface QueryRequest {
   "image_bool": false
 }
 ```
+
+`session_id`, `conversation_id`, and `cart_id` are optional for backward
+compatibility. When they are omitted, the server maps the legacy `user_id` to
+internal compatibility identifiers. When supplied, `conversation_id` scopes the
+Deep Agents thread and conversation memory, while `cart_id` scopes cart
+reads/writes. Production website integrations should use server-created session,
+conversation, and cart identifiers before broad rollout so customer context and
+cart state cannot bleed across sessions.
 
 ### QueryResponse
 
@@ -99,9 +113,8 @@ interface QueryResponse {
   },
   "timings": {
     "total": 3.48,
-    "planner": 0.12,
-    "retriever": 1.23,
-    "chatter": 2.13
+    "memory": 0.12,
+    "deepagents": 3.36
   }
 }
 ```
@@ -137,7 +150,14 @@ interface StreamingChunk {
 
 ### POST `/query/stream`
 
-Streams real-time responses back to the client as the shopping assistant generates them.
+Returns a Server-Sent Events (SSE) response stream for shopping assistant
+responses. In the current Deep Agents harness migration slice, the stream is
+SSE-framed but does not yet emit token-level model chunks while the agent is
+running. The endpoint currently emits the completed turn response and image
+payloads after the Deep Agents turn finishes.
+
+Token-level Deep Agents streaming is a known limitation for this PR and is
+planned as a follow-up after the harness migration is stable.
 
 **Request Body:** `QueryRequest`
 
@@ -199,10 +219,8 @@ curl -X POST "http://localhost:8000/query/timing" \
   },
   "timings": {
     "total": 3.48,
-    "planner": 0.12,
-    "retriever": 1.23,
-    "chatter": 2.13,
-    "guardrails": 0.05
+    "memory": 0.12,
+    "deepagents": 3.36
   }
 }
 ```
@@ -241,14 +259,7 @@ Root endpoint with API information.
     "timing": "/query/timing",
     "health": "/health",
     "docs": "/docs"
-  },
-  "agents": [
-    "planner",
-    "retriever",
-    "cart",
-    "chatter",
-    "summary"
-  ]
+  }
 }
 ```
 
@@ -554,7 +565,9 @@ print(f"Timing: {response['timings']}")
 - Image data should be base64 encoded without the data URL prefix
 - The API supports both local and cloud-based NIM deployments
 - Content safety is enabled by default but can be disabled per request
-- Streaming responses provide real-time feedback for better user experience
+- `/query/stream` uses SSE framing. Token-level Deep Agents streaming is a
+  known follow-up after the harness migration; this slice emits completed turn
+  events rather than live model chunks.
 
 ---
 

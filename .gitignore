@@ -64,6 +64,8 @@ tests/.coverage
 tests/htmlcov/
 tests/.pytest_cache/
 tests/integration/conversations/**/results*/
+tests/integration/conversations/**/quality/
+tests/integration/conversations/**/quality_progress/
 tests/integration/conversations/**/judge/
 tests/evaluation/results/*
 !tests/evaluation/results/.gitkeep

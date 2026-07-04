@@ -23,8 +23,8 @@ requests>=2.33
 # YAML parsing used by config loaders under test.
 PyYAML>=6.0
 
-# OpenAI types are referenced when mocking chat completion responses.
-openai>=1.40
+# OpenAI-compatible model clients are used by chain_server imports.
+openai>=2.26
 
 # Needed by memory_retriever, catalog_retriever, and chain_server imports.
 SQLAlchemy>=2.0
@@ -32,11 +32,14 @@ numpy>=1.26
 Pillow>=12.2
 
 # Needed by chain_server.graph / chain_server.chatter on import.
-langgraph==1.2.4
+deepagents==0.6.12
+langchain==1.3.11
+langchain-openai==1.3.3
+langgraph==1.2.7
 langgraph-checkpoint==4.1.1
 langgraph-prebuilt==1.1.0
 langgraph-sdk==0.4.2
-langchain-core==1.4.0
+langchain-core==1.4.8
 
 # Needed by catalog_retriever.retriever on import.
 langchain-text-splitters>=1.1.2

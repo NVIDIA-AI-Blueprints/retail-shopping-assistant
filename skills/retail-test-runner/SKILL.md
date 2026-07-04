@@ -63,16 +63,73 @@ The integration suite lives under `tests/integration` and drives live HTTP endpo
 
 - Ensure the chain server is running and reachable at `http://localhost:8009`.
 - Choose an existing scenario directory under `tests/integration/conversations/`, usually `shopping` or `rails`.
-- Put `NVIDIA_API_KEY` in the repo-root `.env` or export it in the launching shell, unless using `--skip-quality`; `response_quality.py` requires it for LLM-as-judge scoring.
+- For LLM-as-judge scoring, set explicit judge configuration in the repo-root
+  `.env` or launching shell: `JUDGE_BASE_URL`, `JUDGE_MODEL`,
+  `JUDGE_API_KEY_ENV`, and the API key variable named by `JUDGE_API_KEY_ENV`.
+  Use `--skip-quality` to run endpoint integration without the judge stage.
 
 The runner preflights the selected conversation directory and service URL. Use `--no-preflight` only when intentionally testing a nonstandard setup.
 
 Integration outputs are written under:
 
-- `tests/integration/conversations/<TEST_PATH>/results/`
-- `tests/integration/conversations/<TEST_PATH>/judge/`
+- `tests/integration/conversations/<TEST_PATH>/<RESULT_DIRECTORY>/`
+- `tests/integration/conversations/<TEST_PATH>/quality/<RESULT_DIRECTORY>/`
 
-Do not delete or overwrite these outputs unless the user asks for a clean run.
+The committed scenario files under
+`tests/integration/conversations/<TEST_PATH>/conv_*.yaml` are the golden
+reference: each file contains fixed queries plus expected answers. Generated
+run output is ignored and should not be committed unless explicitly requested.
+
+By default, integration runs are also archived under the ignored local archive
+root `tests/integration/conversations/<TEST_PATH>/quality_progress/`. Set
+`RETAIL_TEST_ARCHIVE_ROOT` or pass `--archive-root` to choose a different local
+location. The archive contains:
+
+- `golden/`: snapshot of the committed scenario YAML used for the run.
+- `results/`: actual response YAML plus `timing_summary.png` when generated.
+- `quality/`: judge YAML, `quality_summary.json`, `quality_summary.md`, and
+  `response_quality.png` when the judge stage runs.
+- `timing_summary.json`: computed timing averages from the result YAML.
+- `metadata.json` and `summary.md`.
+
+For the default `results` directory, the runner automatically preserves the
+existing `results/` output as `quality_progress/runs/previous/` before a new
+integration run starts. After the run succeeds, the new output is archived as
+`quality_progress/runs/latest/`, and a comparison report is written under
+`quality_progress/comparisons/`.
+
+To capture a previous-commit baseline with an explicit label, run integration
+from that commit or a clean checkout and use a stable label such as the short
+SHA:
+
+```bash
+BASELINE_SHA="$(git rev-parse --short HEAD)"
+python skills/retail-test-runner/scripts/run_retail_tests.py integration \
+  --test-path shopping \
+  --result-directory "$BASELINE_SHA" \
+  --archive-label "$BASELINE_SHA"
+```
+
+To capture the latest working-tree run and compare it with that baseline:
+
+```bash
+python skills/retail-test-runner/scripts/run_retail_tests.py integration \
+  --test-path shopping \
+  --result-directory results \
+  --archive-label latest \
+  --compare-with "$BASELINE_SHA"
+```
+
+The comparison report is written under
+`<archive-root>/comparisons/`. Timing is included for both the previous and
+latest runs through `timing_summary.json` and copied `timing_summary.png` files.
+Quality progress is appended to `<archive-root>/progress.jsonl` and summarized
+in `<archive-root>/progress.md`. Use `--no-local-archive` only when you
+intentionally do not want the ignored local quality/timing trail.
+
+Do not delete stable baseline archives unless the user asks for a clean run.
+The `latest` archive label is intentionally reusable and may be overwritten by
+the newest working-tree run.
 
 ## Evaluation Challenger and Judge
 

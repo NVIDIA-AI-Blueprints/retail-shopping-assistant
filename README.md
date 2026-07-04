@@ -5,7 +5,7 @@
 
 ![NVIDIA Logo](https://avatars.githubusercontent.com/u/178940881?s=200&v=4)
 
-**AI-powered retail shopping assistant with multi-agent architecture**
+**AI-powered retail shopping assistant with Deep Agents SDK orchestration**
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.12+-blue.svg)](https://www.python.org/)
@@ -33,7 +33,7 @@
 
 ## Overview
 
-The Retail Shopping Assistant is an AI-powered blueprint that provides a comprehensive interface for an intelligent retail shopping advisor. Built with LangGraph for agent orchestration, it features multi-agent architecture, real-time streaming responses, image-based search, and intelligent shopping cart management.
+The Retail Shopping Assistant is an AI-powered blueprint that provides a comprehensive interface for an intelligent retail shopping advisor. The chain server uses the Deep Agents SDK as the assistant harness over deterministic shopping tools, with SSE-framed responses, image-based search, and intelligent shopping cart management.
 
 ### Key Features
 
@@ -42,15 +42,15 @@ The Retail Shopping Assistant is an AI-powered blueprint that provides a compreh
 - 🖼️ **Visual Search**: Upload images to find similar products
 - 💬 **Conversational AI**: Natural language interactions
 - 🔒 **Content Safety**: Built-in moderation and safety checks
-- ⚡ **Real-time Streaming**: Live response generation
+- ⚡ **SSE Response Stream**: Event-stream response framing for chat clients; token-level Deep Agents streaming is a follow-up after the harness migration
 - 📱 **Responsive UI**: Modern, mobile-friendly interface
 
 ### Architecture
 
 ![Shopping Assistant Diagram](notebook/shopping-assistant-diagram.jpg)
 
-The application follows a microservices architecture with specialized agents for different tasks:
-- **Chain Server**: Main API with LangGraph orchestration
+The application follows a microservices architecture:
+- **Chain Server**: Main API with Deep Agents SDK orchestration
 - **Catalog Retriever**: Product search and recommendations
 - **Memory Retriever**: User context and cart management
 - **Guardrails**: Content safety and moderation
@@ -160,6 +160,7 @@ The Brev deployment guide walks you through the entire process from creating a L
 - **[User Guide](docs/USER_GUIDE.md)**: How to use the application
 - **[API Documentation](docs/API.md)**: Complete API reference
 - **[Commerce Contracts](docs/COMMERCE_CONTRACTS.md)**: Internal product, cart, and commerce tool contracts
+- **[Deep Agents Migration Plan](docs/DEEP_AGENTS_MIGRATION_PLAN.md)**: SDK migration, session isolation, tools, skills, and scaling notes
 - **[Deployment Guide](docs/DEPLOYMENT.md)**: Installation and setup instructions
 - **[Testing and Evaluation](tests/README.md)**: Unit, integration, and Challenger/Judge evaluation workflows
 - **[Documentation Hub](docs/README.md)**: Complete documentation index
@@ -186,7 +187,8 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 - [NVIDIA NGC](https://ngc.nvidia.com/): AI platform and container registry
 
 ### Technologies Used
-- [LangGraph](https://github.com/langchain-ai/langgraph): Agent orchestration framework
+- [Deep Agents](https://docs.langchain.com/oss/python/deepagents/overview): Agent harness for tool and skill orchestration
+- [LangGraph](https://github.com/langchain-ai/langgraph): Runtime used underneath Deep Agents
 - [FastAPI](https://fastapi.tiangolo.com/): Modern Python web framework
 - [React](https://reactjs.org/): JavaScript library for building user interfaces
 - [Milvus](https://milvus.io/): Vector database for similarity search

@@ -97,6 +97,67 @@ export TEST_PATH="2025_08_16"
 bash integration/run_tests.sh
 ```
 
+The files under `integration/conversations/<TEST_PATH>/conv_*.yaml` are the
+committed golden reference for integration quality checks. Each file contains
+fixed queries plus expected answers. Generated response output, judge output,
+plots, timing summaries, and comparisons are ignored artifacts and should not
+be committed unless that is an explicit project decision.
+
+For commit-scoped quality and timing tracking, run the deterministic retail
+test runner with an explicit result directory. To capture a previous-commit
+baseline, run from that commit or a clean checkout and use a stable label such
+as the short SHA:
+
+```bash
+BASELINE_SHA="$(git rev-parse --short HEAD)"
+python skills/retail-test-runner/scripts/run_retail_tests.py integration \
+  --test-path shopping \
+  --result-directory "$BASELINE_SHA" \
+  --archive-label "$BASELINE_SHA"
+```
+
+To capture the latest working-tree run and generate a local comparison:
+
+```bash
+python skills/retail-test-runner/scripts/run_retail_tests.py integration \
+  --test-path shopping \
+  --result-directory results \
+  --archive-label latest \
+  --compare-with "$BASELINE_SHA"
+```
+
+Endpoint results are written to the ignored directory
+`integration/conversations/<TEST_PATH>/<RESULT_DIRECTORY>/`. LLM-as-judge
+outputs are written to the ignored directory
+`integration/conversations/<TEST_PATH>/quality/<RESULT_DIRECTORY>/`.
+
+The runner also archives each integration run under the ignored local archive
+root `integration/conversations/<TEST_PATH>/quality_progress/`. Set
+`RETAIL_TEST_ARCHIVE_ROOT` or pass `--archive-root` to choose a different local
+location. The archive contains the golden YAML snapshot, actual result YAML,
+copied `timing_summary.png`, computed `timing_summary.json`, judge summaries
+when quality runs, metadata, and a short `summary.md`.
+
+For the default `results` directory, the runner automatically preserves the
+existing `results/` output as `quality_progress/runs/previous/` before a new
+integration run starts. After the run succeeds, the new output is archived as
+`quality_progress/runs/latest/`, and a comparison report is written under
+`quality_progress/comparisons/`. Quality progress is appended to
+`quality_progress/progress.jsonl` and summarized in
+`quality_progress/progress.md`.
+
+Use `--no-local-archive` only when intentionally skipping the ignored local
+quality/timing trail.
+
+The judge stage requires explicit environment configuration:
+
+```bash
+export JUDGE_BASE_URL="<openai-compatible-base-url>"
+export JUDGE_MODEL="<judge-model-name>"
+export JUDGE_API_KEY_ENV="JUDGE_API_KEY"
+export JUDGE_API_KEY="<judge-api-key>"
+```
+
 These are *not* part of the unit suite and are not collected by `pytest`
 by default. They are intended for periodic quality/performance evaluation
 against a deployed stack.

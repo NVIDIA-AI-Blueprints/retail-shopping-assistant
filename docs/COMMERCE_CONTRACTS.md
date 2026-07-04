@@ -35,6 +35,13 @@ SDK adapter:
 - `DeepAgentsRuntime` exposes request-scoped wrapper tools over the internal
   `search_catalog`, `get_cart`, `add_cart_item`, and `remove_cart_item`
   wrappers.
+- Deep Agents cart mutation tools use explicit refs: `PRODUCT_REF` values
+  returned by catalog search for add operations, and `CART_LINE_ID` values
+  returned by cart reads for remove operations. They do not perform hidden
+  product-name lookup or fuzzy cart-line matching.
+- Catalog search and cart-read wrapper tools return results to the agent loop
+  so explicit cart-mutation requests can search/read and then mutate in one
+  turn. Mutation tools still return the authoritative cart result directly.
 - The legacy `RetrieverAgent` and `CartAgent` files still exist in the repo for
   reference and tests, but they are not the chain-server entrypoint.
 - Catalog search remains stateless: no user, cart, memory, session, or
@@ -71,9 +78,9 @@ The first tool contract set is:
 | `GetProductDetailsInput` / `GetProductDetailsResult` | Read-only | Reserved for fetching one product by durable `product_id` once the catalog exposes one. |
 | `GetCartInput` / `GetCartResult` | Read-only | Read the authoritative cart for a user. |
 | `GetStorePolicyInput` / `GetStorePolicyResult` | Read-only | Fetch controlled store-policy text by topic. |
-| `AddCartItemInput` / `CartMutationResult` | Mutating | Add a product or variant to the cart. |
+| `AddCartItemInput` / `CartMutationResult` | Mutating | Add a product or variant to the cart from an explicit product ref. |
 | `UpdateCartItemInput` / `CartMutationResult` | Mutating | Change cart-line quantity. Quantity `0` means remove. |
-| `RemoveCartItemInput` / `CartMutationResult` | Mutating | Remove a cart line. |
+| `RemoveCartItemInput` / `CartMutationResult` | Mutating | Remove an explicit cart line by `cart_line_id`. |
 
 Mutating inputs require `idempotency_key` so future agent retries and protocol
 adapters have a stable key to enforce safe retries. In the current memory
@@ -107,7 +114,8 @@ the public API first:
 3. Treat current catalog result IDs as transient `ProductSummary` and mutation
    result fields only; durable ID persistence in chain-server state and cart
    memory rows is future work.
-4. Deep Agents SDK wrapper tools now reuse the same internal commerce wrappers.
+4. Deep Agents SDK wrapper tools now reuse the same internal commerce wrappers
+   and require explicit product/cart-line refs for cart mutations.
 5. Add Deep Agents skills and subagents on top of the same tool layer.
 
 The important rule is that ACP/UCP compatibility should be added as adapters

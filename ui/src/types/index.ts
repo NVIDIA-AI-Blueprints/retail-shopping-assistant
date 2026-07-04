@@ -50,6 +50,9 @@ export interface ApiRequest {
   guardrails: boolean;
   image: string;
   image_bool: boolean;
+  session_id?: string;
+  conversation_id?: string;
+  cart_id?: string;
   context?: string;
   cart?: CartData;
   retrieved?: Record<string, string>;
@@ -78,6 +81,9 @@ export interface StreamingChunk {
 
 export interface UserSession {
   userId: number;
+  sessionId: string;
+  conversationId: string;
+  cartId: string;
   isActive: boolean;
   createdAt: Date;
 }
@@ -92,4 +98,4 @@ export interface ErrorState {
   hasError: boolean;
   message: string;
   code?: string;
-} 
+}

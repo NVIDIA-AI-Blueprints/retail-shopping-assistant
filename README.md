@@ -161,6 +161,7 @@ The Brev deployment guide walks you through the entire process from creating a L
 - **[API Documentation](docs/API.md)**: Complete API reference
 - **[Commerce Contracts](docs/COMMERCE_CONTRACTS.md)**: Internal product, cart, and commerce tool contracts
 - **[Deep Agents Migration Plan](docs/DEEP_AGENTS_MIGRATION_PLAN.md)**: SDK migration, session isolation, tools, skills, and scaling notes
+- **[Deep Agents Cart Tool Goal](docs/DEEP_AGENTS_CART_TOOL_GOAL.md)**: Minimal cart-tool smoke gate and constraints
 - **[Deployment Guide](docs/DEPLOYMENT.md)**: Installation and setup instructions
 - **[Testing and Evaluation](tests/README.md)**: Unit, integration, and Challenger/Judge evaluation workflows
 - **[Documentation Hub](docs/README.md)**: Complete documentation index

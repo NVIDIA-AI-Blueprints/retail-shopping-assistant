@@ -12,13 +12,15 @@ from __future__ import annotations
 
 import importlib
 import sys
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from typing import Any, Dict, Iterator, List
 
 import pytest
 from fastapi.testclient import TestClient
 
 from chain_server.src.agenttypes import Cart, State
+from shared.commerce_contracts import Cart as CommerceCart
+from shared.commerce_contracts import CartLine, Money, ProductSummary
 
 
 class _StubRuntime:
@@ -304,6 +306,190 @@ class TestDeepAgentsRuntimeScopes:
         assert cart_user_ids == [222]
         assert state.context == "prior context"
         assert state.cart.contents == [{"item": "Bag", "amount": 1, "price": 20.0}]
+
+
+class TestDeepAgentsRuntimeRefs:
+    def test_search_and_cart_read_tools_are_chainable(
+        self,
+        base_config,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        captured: Dict[str, Any] = {}
+        deepagents_mod = ModuleType("deepagents")
+        tools_mod = ModuleType("langchain_core.tools")
+        openai_mod = ModuleType("langchain_openai")
+
+        class FakeProfile:
+            def __init__(self, *args, **kwargs) -> None:
+                pass
+
+        class FakeChatOpenAI:
+            def __init__(self, *args, **kwargs) -> None:
+                pass
+
+        def fake_tool(*, return_direct: bool = False):
+            def decorate(fn):
+                fn.return_direct = return_direct
+                return fn
+
+            return decorate
+
+        def fake_create_deep_agent(**kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace()
+
+        deepagents_mod.GeneralPurposeSubagentProfile = FakeProfile
+        deepagents_mod.HarnessProfile = FakeProfile
+        deepagents_mod.create_deep_agent = fake_create_deep_agent
+        deepagents_mod.register_harness_profile = lambda *args, **kwargs: None
+        tools_mod.tool = fake_tool
+        openai_mod.ChatOpenAI = FakeChatOpenAI
+
+        monkeypatch.setitem(sys.modules, "deepagents", deepagents_mod)
+        monkeypatch.setitem(sys.modules, "langchain_core.tools", tools_mod)
+        monkeypatch.setitem(sys.modules, "langchain_openai", openai_mod)
+
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+        identity = runtime_mod.RequestIdentity(
+            session_id="session-a",
+            conversation_id="conversation-a",
+            cart_id="cart-a",
+            context_user_id=111,
+            cart_user_id=222,
+            request_id="request-a",
+        )
+
+        runtime._create_agent(State(user_id=111, query="hello"), identity)
+
+        tools_by_name = {fn.__name__: fn for fn in captured["tools"]}
+        assert tools_by_name["search_catalog_tool"].return_direct is False
+        assert tools_by_name["get_cart_tool"].return_direct is False
+        assert tools_by_name["add_cart_item_tool"].return_direct is True
+        assert tools_by_name["remove_cart_item_tool"].return_direct is True
+        assert tools_by_name["view_cart_total_tool"].return_direct is True
+
+    def test_product_refs_are_cached_by_conversation(
+        self,
+        base_config,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+        identity_a = runtime_mod.RequestIdentity(
+            session_id="session-a",
+            conversation_id="conversation-a",
+            cart_id="cart-a",
+            context_user_id=111,
+            cart_user_id=222,
+            request_id="request-a",
+        )
+        identity_b = runtime_mod.RequestIdentity(
+            session_id="session-b",
+            conversation_id="conversation-b",
+            cart_id="cart-b",
+            context_user_id=333,
+            cart_user_id=444,
+            request_id="request-b",
+        )
+        product = ProductSummary(
+            product_id="prod_123",
+            display_name="Silk Dress",
+            price=Money(amount=49.99),
+        )
+
+        runtime._remember_products(identity_a, [product])
+
+        assert runtime._product_from_ref(identity_a, "prod_123") == product
+        assert runtime._product_from_ref(identity_b, "prod_123") is None
+
+    def test_format_product_exposes_product_ref(self) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        product = ProductSummary(
+            product_id="prod_456",
+            display_name="Leather Bag",
+            description="structured tote",
+            price=Money(amount=129.0),
+        )
+
+        formatted = runtime_mod._format_product(product)
+
+        assert "PRODUCT_REF: prod_456" in formatted
+        assert "Leather Bag" in formatted
+
+    def test_format_cart_exposes_cart_line_id(self) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        cart = Cart(
+            contents=[
+                {
+                    "cart_line_id": "line_1",
+                    "product_id": "prod_123",
+                    "item": "Silk Dress",
+                    "amount": 2,
+                    "price": 49.99,
+                }
+            ]
+        )
+
+        formatted = runtime_mod._format_cart(cart)
+
+        assert "CART_LINE_ID: line_1" in formatted
+        assert "2 x Silk Dress" in formatted
+
+    def test_read_cart_preserves_cart_line_and_product_refs(
+        self,
+        base_config,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+        contract_cart = CommerceCart(
+            user_id="222",
+            lines=[
+                CartLine(
+                    cart_line_id="line_1",
+                    product_id="prod_123",
+                    display_name="Silk Dress",
+                    quantity=2,
+                    unit_price=Money(amount=49.99),
+                )
+            ],
+        )
+
+        monkeypatch.setattr(
+            runtime_mod,
+            "get_cart",
+            lambda request, memory_port: SimpleNamespace(ok=True, cart=contract_cart),
+        )
+
+        cart = runtime._read_cart(222)
+
+        assert cart.contents == [
+            {
+                "cart_line_id": "line_1",
+                "product_id": "prod_123",
+                "item": "Silk Dress",
+                "amount": 2,
+                "price": 49.99,
+            }
+        ]
+
+    def test_cart_line_lookup_uses_exact_cart_line_id(self) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        cart = Cart(
+            contents=[
+                {"cart_line_id": "line_1", "item": "Silk Dress", "amount": 1},
+                {"cart_line_id": "line_2", "item": "Silk Dress", "amount": 1},
+            ]
+        )
+
+        assert runtime_mod._cart_line_by_id("line_2", cart) == cart.contents[1]
+        assert runtime_mod._cart_line_by_id("Silk Dress", cart) is None
 
 
 class TestValidation:

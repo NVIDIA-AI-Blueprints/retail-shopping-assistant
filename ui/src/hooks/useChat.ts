@@ -10,7 +10,7 @@ import { toast } from 'react-toastify';
 import { MessageData, ApiRequest, StreamingChunk, MessageRole } from '../types';
 import { config } from '../config/config';
 import { 
-  getOrCreateUserId, 
+  getOrCreateUserSession,
   createApiRequest, 
   parseStreamingChunk,
   sleep,
@@ -37,7 +37,8 @@ interface UseChatReturn {
 }
 
 export const useChat = (setNewRenderImage: (value: string) => void): UseChatReturn => {
-  const [userId, setUserId] = useState(getOrCreateUserId());
+  const [userSession, setUserSession] = useState(getOrCreateUserSession());
+  const [userId, setUserId] = useState(userSession.userId);
   const [messages, setMessages] = useState<MessageData[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isGuardrailsOn, setIsGuardrailsOn] = useState(config.features.guardrails.defaultState);
@@ -127,7 +128,7 @@ export const useChat = (setNewRenderImage: (value: string) => void): UseChatRetu
       addMessage("assistant" as MessageRole, "loader", "");
 
       // Prepare API request
-      const payload = createApiRequest(userId, query, imageData || image, isGuardrailsOn);
+      const payload = createApiRequest(userSession, query, imageData || image, isGuardrailsOn);
       const url = `${config.api.baseUrl}${config.api.endpoints.stream}`;
 
       // Send request
@@ -239,7 +240,7 @@ export const useChat = (setNewRenderImage: (value: string) => void): UseChatRetu
     } finally {
       setIsLoading(false);
     }
-  }, [userId, isGuardrailsOn, image, previewImage, addMessage]);
+  }, [userSession, isGuardrailsOn, image, previewImage, addMessage]);
 
   const resetChat = useCallback(async () => {
     setMessages([]);
@@ -247,7 +248,9 @@ export const useChat = (setNewRenderImage: (value: string) => void): UseChatRetu
     setPreviewImage("");
     setNewRenderImage("");
     clearUserSession();
-    setUserId(getOrCreateUserId());
+    const nextSession = getOrCreateUserSession();
+    setUserId(nextSession.userId);
+    setUserSession(nextSession);
 
     // Add welcome messages
     addMessage(
@@ -289,4 +292,4 @@ export const useChat = (setNewRenderImage: (value: string) => void): UseChatRetu
     resetChat,
     downloadMessages,
   };
-}; 
+};

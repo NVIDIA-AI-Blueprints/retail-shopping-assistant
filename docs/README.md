@@ -13,6 +13,7 @@ Welcome to the Retail Shopping Assistant documentation! This hub provides compre
 - **[API Documentation](API.md)** - Complete API reference
 - **[Commerce Contracts](COMMERCE_CONTRACTS.md)** - Internal product, cart, and commerce tool contracts
 - **[Deep Agents Migration Plan](DEEP_AGENTS_MIGRATION_PLAN.md)** - SDK migration, session isolation, tools, skills, and scaling notes
+- **[Deep Agents Cart Tool Goal](DEEP_AGENTS_CART_TOOL_GOAL.md)** - Minimal cart-tool smoke gate and constraints
 - **[Architecture Overview](../README.md#architecture)** - System design and components
 - **[Configuration Guide](../README.md#configuration)** - Settings and customization
 
@@ -38,6 +39,7 @@ Welcome to the Retail Shopping Assistant documentation! This hub provides compre
 | [API Documentation](API.md) | Complete API reference with examples | Developers, integrators |
 | [Commerce Contracts](COMMERCE_CONTRACTS.md) | Internal product, cart, and commerce tool contracts | Developers, architects |
 | [Deep Agents Migration Plan](DEEP_AGENTS_MIGRATION_PLAN.md) | SDK migration, session isolation, tools, skills, and scaling notes | Developers, architects |
+| [Deep Agents Cart Tool Goal](DEEP_AGENTS_CART_TOOL_GOAL.md) | Minimal cart-tool smoke gate and constraints | Developers, evaluators |
 | [Deployment Guide](DEPLOYMENT.md) | Installation and deployment instructions | DevOps, system administrators |
 | [Architecture Overview](../README.md#architecture) | System design and component details | Architects, developers |
 | [Configuration Guide](../README.md#configuration) | Settings and customization options | Developers, administrators |
@@ -170,6 +172,9 @@ Welcome to the Retail Shopping Assistant documentation! This hub provides compre
 docs/
 ├── README.md           # This documentation hub
 ├── API.md             # API reference
+├── COMMERCE_CONTRACTS.md
+├── DEEP_AGENTS_MIGRATION_PLAN.md
+├── DEEP_AGENTS_CART_TOOL_GOAL.md
 ├── DEPLOYMENT.md      # Deployment guide
 ├── USER_GUIDE.md      # User guide
 └── assets/            # Images and diagrams

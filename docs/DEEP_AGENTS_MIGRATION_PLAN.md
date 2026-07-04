@@ -29,18 +29,19 @@ Current constraints:
 - No skills are added yet; the first goal is a readable SDK harness.
 - The public request body remains backward compatible.
 - Optional `session_id`, `conversation_id`, and `cart_id` fields are accepted,
-  but legacy callers that send only `user_id` are mapped to deterministic
+  and the bundled UI now sends browser-session identifiers on every turn.
+  Legacy callers that send only `user_id` are still mapped to deterministic
   compatibility identifiers.
 - The compatibility mapping is not the final production identity design. A
-  high-scale website should move to server-created session and conversation
-  identifiers before broad rollout.
+  high-scale website should move to server-created session, conversation, and
+  cart identifiers before broad rollout.
 - The runtime caps Deep Agents recursion per turn and instructs the model to
   use one catalog search per user turn unless the shopper explicitly asks for
   alternatives. This keeps broad shopping prompts from turning into unbounded
   exploratory search loops.
-- Commerce wrapper tools return directly to the caller in this slice. That
-  trades some conversational polish for predictable latency, simpler control
-  flow, and fewer repeated model calls.
+- Catalog search and cart-read tools return to the Deep Agents loop so a single
+  shopper turn can discover products or read the cart before mutating it.
+  Mutating cart tools return directly with the authoritative cart result.
 
 Filesystem and built-in Deep Agents tools:
 
@@ -106,9 +107,10 @@ POST /query/stream
   -> persist conversation summary and tool results under the correct scope
 ```
 
-The first migration should preserve the existing endpoint shape. The server can
-derive internal `session_id`, `conversation_id`, `cart_id`, and `request_id`
-without requiring the frontend to send them yet.
+The first migration preserves the existing endpoint shape. The bundled UI sends
+explicit browser-session identifiers, and the server can still derive internal
+`session_id`, `conversation_id`, `cart_id`, and `request_id` for legacy callers
+that do not send them.
 
 ## Identity Model
 
@@ -169,8 +171,10 @@ Initial tools should be small, typed, and deterministic:
 - `search_catalog`: read-only, stateless product discovery.
 - `get_product_details`: read-only product facts for one product.
 - `get_cart`: read-only cart state for a `cart_id`.
-- `add_cart_item`: mutating cart write with idempotency.
-- `remove_cart_item`: mutating cart write with idempotency.
+- `add_cart_item`: mutating cart write with idempotency, using a `PRODUCT_REF`
+  previously returned by product search.
+- `remove_cart_item`: mutating cart write with idempotency, using a
+  `CART_LINE_ID` returned by cart reads.
 - `view_cart_total`: deterministic arithmetic over cart line prices.
 - `get_store_policy`: read-only controlled policy content.
 - `load_customer_persona`: read-only persona/profile snapshot.
@@ -256,12 +260,14 @@ Implications:
   token-level model chunks. Token-level Deep Agents streaming is a follow-up
   after the harness migration is stable.
 
-### Slice 2: Server-Owned Identity
+### Slice 2: Stable Conversation Identity
 
-- Resolve internal `session_id`, `conversation_id`, `cart_id`, and `request_id`
-  server-side.
+- Accept explicit `session_id`, `conversation_id`, and `cart_id` from clients
+  that have a stable browser/session identity.
+- Keep deriving `request_id` server-side per turn.
 - Map `conversation_id` to the Deep Agents `thread_id`.
-- Keep the current request body compatible while the UI is unchanged.
+- Keep the current request body compatible for legacy callers.
+- The bundled UI now creates session-scoped IDs and sends them on every turn.
 - Add isolation tests before relying on this in production.
 
 ### Slice 3: Shopping Tools
@@ -269,6 +275,12 @@ Implications:
 - Expose current catalog and cart capabilities as typed tools.
 - Keep product search stateless.
 - Keep cart operations deterministic and idempotent.
+- Make cart mutations ref-based: add by `PRODUCT_REF`, remove by
+  `CART_LINE_ID`; do not hide product lookup or fuzzy cart-line matching inside
+  mutation tools.
+- Keep discovery/read tools chainable inside the agent loop so same-turn
+  requests like "find a black bag and add it" can search first, then mutate by
+  ref.
 - Do not create standalone planner or cart-agent classes.
 
 ### Slice 4: Skills

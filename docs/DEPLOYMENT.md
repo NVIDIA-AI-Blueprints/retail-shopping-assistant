@@ -323,6 +323,7 @@ docker stack deploy -c docker-compose.prod.yaml retail-assistant
 |----------|-------------|----------|---------|
 | `NGC_API_KEY` | NVIDIA NGC API key | Yes | - |
 | `LLM_API_KEY` | Language model API key | Yes | - |
+| `VLM_API_KEY` | Optional VLM media perception API key | When `vlm` uses an authenticated endpoint | - |
 | `EMBED_API_KEY` | Embedding model API key | Yes | - |
 | `RAIL_API_KEY` | Guardrails API key | Yes | - |
 | `CATALOG_SEARCH_TIMEOUT_SECONDS` | Optional chain-server timeout for catalog search requests | No | no timeout |
@@ -412,6 +413,11 @@ roles that do not need request-time auth, use `api_key_env: null`. Local NIM
 container startup credentials are separate and are listed once under
 `local_nims.required_env`.
 
+The `vlm` role controls image/video media perception for user uploads. It uses
+a hosted endpoint by default and can be set to `disabled` when media perception
+should be off. Image embedding search remains controlled separately by the
+`image_embedding` role and `CATALOG_IMAGE_EMBEDDING_ENABLED`.
+
 #### Standard Deployment Flow
 
 ```bash
@@ -472,6 +478,29 @@ models:
     source: local_nim
     provider: openai_compatible
     local_service: nvclip
+    api_key_env: null
+```
+
+For VLM media perception through a hosted endpoint:
+
+```yaml
+models:
+  vlm:
+    source: endpoint
+    provider: openai_compatible
+    base_url_env: VLM_BASE_URL
+    model_env: VLM_MODEL
+    api_key_env: VLM_API_KEY
+```
+
+For VLM media perception through the Compose-managed local Omni NIM:
+
+```yaml
+models:
+  vlm:
+    source: local_nim
+    provider: openai_compatible
+    local_service: nemotron_omni
     api_key_env: null
 ```
 
@@ -750,6 +779,11 @@ deploy:
 ```
 
 ### Load Balancing
+
+The bundled UI sends uploaded media as base64 JSON. Keep any reverse proxy
+request-body limit aligned with `media_input.max_video_bytes` after base64
+expansion. With the default 50 MiB raw video cap, `nginx.conf` uses
+`client_max_body_size 80m`.
 
 ```yaml
 # nginx.conf

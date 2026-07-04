@@ -9,11 +9,12 @@ export interface AppConfig {
   api: {
     baseUrl: string;
     port: number;
-    endpoints: {
-      query: string;
-      stream: string;
-      health: string;
-    };
+      endpoints: {
+        query: string;
+        stream: string;
+        capabilities: string;
+        health: string;
+      };
   };
   ui: {
     defaultImages: {
@@ -53,6 +54,7 @@ const getConfig = (): AppConfig => {
       endpoints: {
         query: '/query',
         stream: '/query/stream',
+        capabilities: '/capabilities',
         health: '/health',
       },
     },

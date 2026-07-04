@@ -20,7 +20,7 @@ The Retail Shopping Assistant API provides a comprehensive interface for an AI-p
 ### Key Features
 
 - **Real-time Streaming**: Server-Sent Events (SSE) for live responses
-- **Multi-modal Input**: Text queries and image uploads
+- **Multi-modal Input**: Text queries, image uploads, and optional VLM-backed video/image understanding
 - **Shopping Cart Management**: Add, remove, and view cart items
 - **Content Safety**: Built-in guardrails for safe interactions
 - **Performance Monitoring**: Detailed timing information
@@ -45,7 +45,8 @@ The main request model for all shopping queries.
 interface QueryRequest {
   user_id: number;                    // Unique user identifier
   query: string;                      // User's text query
-  image?: string;                     // Base64 encoded image (optional)
+  image?: string;                     // Legacy base64/data-URL image (optional)
+  media?: MediaAttachment[];          // Image/video attachments (optional)
   session_id?: string;                // Optional website/browser session identifier
   conversation_id?: string;           // Optional chat thread identifier
   cart_id?: string;                   // Optional cart identifier
@@ -55,6 +56,13 @@ interface QueryRequest {
   guardrails?: boolean;               // Enable content safety (default: true)
   image_bool?: boolean;               // Indicate if image is provided (default: false)
 }
+
+interface MediaAttachment {
+  type: 'image' | 'video';
+  data: string;                       // Base64 data URL, or raw base64 with mime_type
+  mime_type: string;                  // image/jpeg, image/png, or video/mp4 by default
+  filename?: string;
+}
 ```
 
 **Example:**
@@ -63,6 +71,7 @@ interface QueryRequest {
   "user_id": 123,
   "query": "Show me red dresses under $100",
   "image": "",
+  "media": [],
   "session_id": "session_abc",
   "conversation_id": "conversation_abc",
   "cart_id": "cart_abc",
@@ -91,6 +100,31 @@ scopes the Deep Agents thread and conversation memory, while `cart_id` scopes
 cart reads/writes. Production website integrations should move these IDs to a
 server-owned session/thread service before broad rollout so customer context and
 cart state cannot bleed across sessions.
+
+`image` remains supported for backward compatibility and is normalized into the
+same internal media list as `media[]`. New clients should use `media[]` for
+video uploads. The bundled UI calls `/capabilities` on load and enforces the
+configured media counts, MIME types, byte limits, and video duration limit.
+
+### Multi-modal Input
+
+Uploaded images can be used in two ways:
+
+- Image embedding search through the catalog retriever when image embeddings
+  are configured.
+- Optional VLM media perception when the `vlm` model role is enabled in
+  `shared/configs/models.yaml`.
+
+Uploaded videos require VLM media perception. If VLM is disabled, video
+understanding is unavailable and the assistant should not invent visual
+details. The VLM analysis is passed to the Deep Agents runtime as concise text
+context; raw media is not persisted into conversation memory.
+
+Descriptive media requests such as "what's in this look" or "describe this
+outfit" are answered from VLM media analysis and should not trigger catalog
+retrieval or product image cards. Catalog retrieval is reserved for explicit
+shopping intent, such as finding similar items, checking availability or price,
+asking for recommendations, or adding an item to the cart.
 
 ### QueryResponse
 
@@ -226,6 +260,32 @@ curl -X POST "http://localhost:8000/query/timing" \
 }
 ```
 
+### GET `/capabilities`
+
+Returns runtime media settings that clients should enforce before upload.
+The byte limits are raw client file sizes. Browser clients send attachments as
+base64 JSON data URLs, so reverse proxies must allow roughly 4/3 of the largest
+raw media limit plus JSON overhead. The default nginx configuration uses
+`client_max_body_size 80m` for the 50 MiB video limit below.
+
+**Response:**
+```json
+{
+  "media_input": {
+    "enabled": true,
+    "allow_mixed_media": true,
+    "max_images_per_turn": 1,
+    "max_videos_per_turn": 1,
+    "image_mime_types": ["image/jpeg", "image/png"],
+    "video_mime_types": ["video/mp4"],
+    "max_image_bytes": 10485760,
+    "max_video_bytes": 52428800,
+    "max_video_duration_seconds": 120,
+    "vlm_enabled": true
+  }
+}
+```
+
 ### GET `/health`
 
 Health check endpoint to verify service status.
@@ -258,6 +318,7 @@ Root endpoint with API information.
     "query": "/query",
     "stream": "/query/stream",
     "timing": "/query/timing",
+    "capabilities": "/capabilities",
     "health": "/health",
     "docs": "/docs"
   }
@@ -563,8 +624,12 @@ print(f"Timing: {response['timings']}")
 ## 📝 Notes
 
 - All timestamps are in Unix timestamp format (seconds since epoch)
-- Image data should be base64 encoded without the data URL prefix
+- Image data may be raw base64 or a `data:` URL; video media should include
+  `mime_type: "video/mp4"` and is sent through `media[]`
 - The API supports both local and cloud-based NIM deployments
+- The `vlm` model role is enabled by default for image/video media perception
+  and can be set to `disabled`; image embedding search remains separately controlled by the
+  `image_embedding` model role and `CATALOG_IMAGE_EMBEDDING_ENABLED`.
 - Content safety is enabled by default but can be disabled per request
 - `/query/stream` uses SSE framing. Token-level Deep Agents streaming is a
   known follow-up after the harness migration; this slice emits completed turn

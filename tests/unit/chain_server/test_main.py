@@ -119,6 +119,17 @@ class TestHealthAndRoot:
         assert body["status"] == "healthy"
         assert body["version"] == "1.0.0"
 
+    def test_capabilities_return_media_config(self, client: TestClient) -> None:
+        response = client.get("/capabilities")
+        assert response.status_code == 200
+
+        media = response.json()["media_input"]
+        assert media["enabled"] is True
+        assert media["max_images_per_turn"] == 1
+        assert media["max_videos_per_turn"] == 1
+        assert media["video_mime_types"] == ["video/mp4"]
+        assert media["vlm_enabled"] is True
+
     def test_root_describes_endpoints(self, client: TestClient) -> None:
         response = client.get("/")
         assert response.status_code == 200
@@ -126,7 +137,7 @@ class TestHealthAndRoot:
         body = response.json()
         assert body["message"] == "Shopping Assistant API"
         assert body["version"] == "1.0.0"
-        for key in ["query", "stream", "timing", "health", "docs"]:
+        for key in ["query", "stream", "timing", "capabilities", "health", "docs"]:
             assert key in body["endpoints"]
 
 
@@ -186,7 +197,60 @@ class TestStreamEndpoint:
         assert runtime.astream_calls
         state_arg, _ = runtime.astream_calls[-1]
         assert state_arg.image.startswith("data:image/jpeg")
-        assert "image" in state_arg.query.lower()
+        assert "media" in state_arg.query.lower()
+
+    def test_video_only_query_populates_media_placeholder(
+        self, main_module, client: TestClient
+    ) -> None:
+        runtime = main_module._test_runtime
+        runtime.astream_calls.clear()
+
+        with client.stream(
+            "POST",
+            "/query/stream",
+            json={
+                "user_id": 1,
+                "query": "",
+                "media": [
+                    {
+                        "type": "video",
+                        "mime_type": "video/mp4",
+                        "data": "data:video/mp4;base64,QUFB",
+                    }
+                ],
+            },
+        ) as stream_response:
+            for _ in stream_response.iter_lines():
+                pass
+
+        assert runtime.astream_calls
+        state_arg, _ = runtime.astream_calls[-1]
+        assert state_arg.image == ""
+        assert state_arg.query == "The user submitted visual media without additional text."
+        assert state_arg.media[0]["type"] == "video"
+        assert state_arg.media[0]["mime_type"] == "video/mp4"
+
+    def test_rejects_too_many_images(
+        self, client: TestClient
+    ) -> None:
+        response = client.post(
+            "/query/timing",
+            json={
+                "user_id": 1,
+                "query": "find these",
+                "image": "data:image/jpeg;base64,QUFB",
+                "media": [
+                    {
+                        "type": "image",
+                        "mime_type": "image/png",
+                        "data": "data:image/png;base64,QkJC",
+                    }
+                ],
+            },
+        )
+
+        assert response.status_code == 400
+        assert "At most 1 image" in response.json()["detail"]
 
     def test_optional_identity_fields_reach_runtime(
         self, main_module, client: TestClient
@@ -309,6 +373,41 @@ class TestDeepAgentsRuntimeScopes:
 
 
 class TestDeepAgentsRuntimeRefs:
+    def test_media_catalog_search_intent_gate(self) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        assert (
+            runtime_mod._media_query_allows_catalog_search("What's in this look")
+            is False
+        )
+        assert (
+            runtime_mod._media_query_allows_catalog_search("describe this outfit")
+            is False
+        )
+        assert runtime_mod._media_query_allows_catalog_search(
+            "The user submitted visual media without additional text."
+        ) is False
+        assert (
+            runtime_mod._media_query_allows_catalog_search(
+                "what is this similar to stylistically"
+            )
+            is False
+        )
+        assert (
+            runtime_mod._media_query_allows_catalog_search("find shoes like this")
+            is True
+        )
+        assert (
+            runtime_mod._media_query_allows_catalog_search(
+                "do you have this under $100"
+            )
+            is True
+        )
+        assert (
+            runtime_mod._media_query_allows_catalog_search("add this to my cart")
+            is True
+        )
+
     def test_search_and_cart_read_tools_are_chainable(
         self,
         base_config,
@@ -369,6 +468,82 @@ class TestDeepAgentsRuntimeRefs:
         assert tools_by_name["add_cart_item_tool"].return_direct is True
         assert tools_by_name["remove_cart_item_tool"].return_direct is True
         assert tools_by_name["view_cart_total_tool"].return_direct is True
+
+    def test_media_analysis_query_skips_catalog_tool(
+        self,
+        base_config,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        captured: Dict[str, Any] = {}
+        deepagents_mod = ModuleType("deepagents")
+        tools_mod = ModuleType("langchain_core.tools")
+        openai_mod = ModuleType("langchain_openai")
+
+        class FakeProfile:
+            def __init__(self, *args, **kwargs) -> None:
+                pass
+
+        class FakeChatOpenAI:
+            def __init__(self, *args, **kwargs) -> None:
+                pass
+
+        def fake_tool(*, return_direct: bool = False):
+            def decorate(fn):
+                fn.return_direct = return_direct
+                return fn
+
+            return decorate
+
+        def fake_create_deep_agent(**kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace()
+
+        def fail_search_catalog(*args, **kwargs):
+            raise AssertionError("descriptive media queries must not search catalog")
+
+        deepagents_mod.GeneralPurposeSubagentProfile = FakeProfile
+        deepagents_mod.HarnessProfile = FakeProfile
+        deepagents_mod.create_deep_agent = fake_create_deep_agent
+        deepagents_mod.register_harness_profile = lambda *args, **kwargs: None
+        tools_mod.tool = fake_tool
+        openai_mod.ChatOpenAI = FakeChatOpenAI
+
+        monkeypatch.setitem(sys.modules, "deepagents", deepagents_mod)
+        monkeypatch.setitem(sys.modules, "langchain_core.tools", tools_mod)
+        monkeypatch.setitem(sys.modules, "langchain_openai", openai_mod)
+        monkeypatch.setattr(runtime_mod, "search_catalog", fail_search_catalog)
+
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+        identity = runtime_mod.RequestIdentity(
+            session_id="session-a",
+            conversation_id="conversation-a",
+            cart_id="cart-a",
+            context_user_id=111,
+            cart_user_id=222,
+            request_id="request-a",
+        )
+        state = State(
+            user_id=111,
+            query="What's in this look",
+            media=[
+                {
+                    "type": "image",
+                    "mime_type": "image/jpeg",
+                    "data": "data:image/jpeg;base64,QUFB",
+                }
+            ],
+            media_analysis='{"summary": "black blazer and white trousers"}',
+        )
+
+        runtime._create_agent(state, identity)
+        tools_by_name = {fn.__name__: fn for fn in captured["tools"]}
+
+        result = tools_by_name["search_catalog_tool"]("black blazer")
+
+        assert "Catalog search skipped" in result
+        assert state.retrieved == {}
 
     def test_product_refs_are_cached_by_conversation(
         self,

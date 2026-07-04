@@ -33,13 +33,14 @@
 
 ## Overview
 
-The Retail Shopping Assistant is an AI-powered blueprint that provides a comprehensive interface for an intelligent retail shopping advisor. The chain server uses the Deep Agents SDK as the assistant harness over deterministic shopping tools, with SSE-framed responses, image-based search, and intelligent shopping cart management.
+The Retail Shopping Assistant is an AI-powered blueprint that provides a comprehensive interface for an intelligent retail shopping advisor. The chain server uses the Deep Agents SDK as the assistant harness over deterministic shopping tools, with SSE-framed responses, image-based search, optional VLM media perception, and intelligent shopping cart management.
 
 ### Key Features
 
 - 🤖 **Intelligent Product Search**: Find products using natural language or images
 - 🛒 **Smart Cart Management**: Add, remove, and manage shopping cart items
 - 🖼️ **Visual Search**: Upload images to find similar products
+- 🎥 **Optional VLM Media Perception**: Enable a VLM role to analyze image and video uploads in shopping context
 - 💬 **Conversational AI**: Natural language interactions
 - 🔒 **Content Safety**: Built-in moderation and safety checks
 - ⚡ **SSE Response Stream**: Event-stream response framing for chat clients; token-level Deep Agents streaming is a follow-up after the harness migration
@@ -110,7 +111,9 @@ For detailed architecture information, see [Architecture Overview](docs/README.m
    The helper prints resolved endpoints without printing API keys. By default,
    `shared/configs/models.yaml` uses NVIDIA Build hosted endpoints for the
    app LLM, text embeddings, image embeddings, and guardrails, and starts no
-   local NIM containers.
+   local NIM containers. The `vlm` role uses a hosted endpoint by default for
+   image/video media understanding in addition to image embedding search; set it
+   to `disabled` in `models.yaml` when that capability should be off.
 
    For local NIMs, edit the desired model roles in
    `shared/configs/models.yaml` to `source: local_nim`, then run:

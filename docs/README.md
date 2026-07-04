@@ -88,9 +88,9 @@ Welcome to the Retail Shopping Assistant documentation! This hub provides compre
 - [API - Cart Operations](API.md#shopping-cart-operations)
 - [Data Models - Cart](API.md#cart)
 
-#### Image Upload
+#### Media Upload
 - [User Guide - Image Upload Feature](USER_GUIDE.md#image-upload-feature)
-- [API - Image-based Search](API.md#image-based-search)
+- [API - Multi-modal Input](API.md#multi-modal-input)
 - [Troubleshooting - Image Issues](USER_GUIDE.md#image-upload-fails)
 
 #### Deployment

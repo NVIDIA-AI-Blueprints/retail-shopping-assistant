@@ -28,7 +28,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faTimesCircle } from '@fortawesome/free-solid-svg-icons';
 
 import ChatMessage from "./ChatMessage";
-import { ChatboxProps } from "../../types";
+import { CapabilitiesResponse, ChatboxProps, MediaAttachment, MediaCapabilities } from "../../types";
 import { config } from "../../config/config";
 import {
   clearUserSession,
@@ -56,12 +56,29 @@ const CustomSwitch = styled(Switch)(({ theme }) => ({
 }));
 
 const Chatbox: React.FC<ChatboxProps> = ({ setNewRenderImage }) => {
+  const defaultMediaCapabilities: MediaCapabilities = {
+    enabled: config.features.imageUpload.enabled,
+    allow_mixed_media: true,
+    max_images_per_turn: 1,
+    max_videos_per_turn: 0,
+    image_mime_types: config.features.imageUpload.allowedTypes,
+    video_mime_types: [],
+    max_image_bytes: config.features.imageUpload.maxSize * 1024 * 1024,
+    max_video_bytes: 0,
+    max_video_duration_seconds: 120,
+    vlm_enabled: false,
+  };
   const [isOpen, setIsOpen] = useState<boolean>(true);
   const [hasBeenOpened, setHasBeenOpened] = useState<boolean>(false);
   const [newMessage, setNewMessage] = useState<string>("");
   const [isGuardrailsOn, setIsGuardrailsOn] = useState(config.features.guardrails.defaultState);
   const [image, setImage] = useState("");
   const [previewImage, setPreviewImage] = useState("");
+  const [video, setVideo] = useState("");
+  const [previewVideo, setPreviewVideo] = useState("");
+  const [videoMimeType, setVideoMimeType] = useState("");
+  const [videoFilename, setVideoFilename] = useState("");
+  const [mediaCapabilities, setMediaCapabilities] = useState<MediaCapabilities>(defaultMediaCapabilities);
   const [messages, setMessages] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const messageRefs = useRef<React.RefObject<HTMLDivElement>[]>([]);
@@ -93,6 +110,23 @@ const Chatbox: React.FC<ChatboxProps> = ({ setNewRenderImage }) => {
     return new Blob([byteArray], { type: "image/png" });
   };
 
+  const getVideoDuration = (file: File): Promise<number> => {
+    return new Promise((resolve, reject) => {
+      const url = window.URL.createObjectURL(file);
+      const element = document.createElement("video");
+      element.preload = "metadata";
+      element.onloadedmetadata = () => {
+        window.URL.revokeObjectURL(url);
+        resolve(element.duration || 0);
+      };
+      element.onerror = () => {
+        window.URL.revokeObjectURL(url);
+        reject(new Error("Failed to read video metadata."));
+      };
+      element.src = url;
+    });
+  };
+
   // Event handlers
   const toggleGuardrails = () => {
     setIsGuardrailsOn(!isGuardrailsOn);
@@ -107,36 +141,82 @@ const Chatbox: React.FC<ChatboxProps> = ({ setNewRenderImage }) => {
     if (!files || files.length === 0) return;
 
     const file = files[0];
-    
-    // Validate file
-    const maxSizeMB = config.features.imageUpload.maxSize;
-    if (file.size > maxSizeMB * 1024 * 1024) {
-      toast.error(`File size must be less than ${maxSizeMB}MB`);
+
+    if (!mediaCapabilities.enabled) {
+      toast.error("Media uploads are disabled.");
       return;
     }
 
-    if (!config.features.imageUpload.allowedTypes.includes(file.type)) {
-              toast.error('Please select a valid image file (JPEG or PNG only)');
+    const isImage = mediaCapabilities.image_mime_types.includes(file.type);
+    const isVideo = mediaCapabilities.video_mime_types.includes(file.type);
+    const videoAllowed = mediaCapabilities.vlm_enabled && mediaCapabilities.max_videos_per_turn > 0;
+
+    if (!isImage && !isVideo) {
+      toast.error("Please select a supported image or video file.");
       return;
+    }
+    if (isImage && mediaCapabilities.max_images_per_turn <= 0) {
+      toast.error("Image upload is not available with the current configuration.");
+      return;
+    }
+    if (isVideo && !videoAllowed) {
+      toast.error("Video upload is not available with the current configuration.");
+      return;
+    }
+    if (!mediaCapabilities.allow_mixed_media && ((isImage && video) || (isVideo && image))) {
+      toast.error("This configuration allows only one media type per turn.");
+      return;
+    }
+
+    const maxBytes = isImage ? mediaCapabilities.max_image_bytes : mediaCapabilities.max_video_bytes;
+    if (file.size > maxBytes) {
+      toast.error(`File size must be less than ${(maxBytes / (1024 * 1024)).toFixed(0)}MB`);
+      return;
+    }
+
+    if (isVideo) {
+      try {
+        const duration = await getVideoDuration(file);
+        if (duration > mediaCapabilities.max_video_duration_seconds) {
+          toast.error(`Video must be ${mediaCapabilities.max_video_duration_seconds} seconds or shorter.`);
+          return;
+        }
+      } catch (error) {
+        toast.error("Failed to inspect video duration.");
+        return;
+      }
     }
 
     try {
-      const base64Image = await convertToBase64(file);
-      setImage(base64Image);
-      
-      const decodedImage = base64ToBlob(base64Image);
-      const imageUrl = window.URL.createObjectURL(decodedImage);
-      setPreviewImage(imageUrl);
+      const base64Media = await convertToBase64(file);
+      if (isImage) {
+        setImage(base64Media);
+        const decodedImage = base64ToBlob(base64Media);
+        const imageUrl = window.URL.createObjectURL(decodedImage);
+        setPreviewImage(imageUrl);
+      } else {
+        setVideo(base64Media);
+        setPreviewVideo(window.URL.createObjectURL(file));
+        setVideoMimeType(file.type);
+        setVideoFilename(file.name);
+      }
       
       e.target.value = "";
     } catch (error) {
-      toast.error('Failed to upload image');
+      toast.error('Failed to upload media');
     }
   };
 
   const clearImage = () => {
     setPreviewImage("");
     setImage("");
+  };
+
+  const clearVideo = () => {
+    setPreviewVideo("");
+    setVideo("");
+    setVideoMimeType("");
+    setVideoFilename("");
   };
 
   const addMessage = (role: string, content: any, productName: string = "") => {
@@ -184,7 +264,7 @@ const Chatbox: React.FC<ChatboxProps> = ({ setNewRenderImage }) => {
   };
 
   const handleSendMessage = async () => {
-    if (!newMessage.trim() && !image) return;
+    if (!newMessage.trim() && !image && !video) return;
 
     // Clear previous cart operation notifications for new message
     shownCartOperations.current.clear();
@@ -214,22 +294,38 @@ const Chatbox: React.FC<ChatboxProps> = ({ setNewRenderImage }) => {
       if (image) {
         addMessage("user_image", previewImage, "");
       }
+      if (video) {
+        addMessage("user_video", previewVideo, "");
+      }
 
       // Add loading message
       addMessage("assistant", "loader", "");
       setNewMessage("");
 
       // Prepare API request
+      const media: MediaAttachment[] = video
+        ? [{
+            type: "video",
+            data: video,
+            mime_type: videoMimeType,
+            filename: videoFilename,
+          }]
+        : [];
       const payload = createApiRequest(
         userSession,
         newMessage,
         image || "",
-        isGuardrailsOn
+        isGuardrailsOn,
+        media
       );
       
-      // Clear image immediately after preparing payload
+      // Clear media immediately after preparing payload
       setImage("");
       setPreviewImage("");
+      setVideo("");
+      setPreviewVideo("");
+      setVideoMimeType("");
+      setVideoFilename("");
 
       const url = `${config.api.baseUrl}${config.api.endpoints.stream}`;
 
@@ -346,6 +442,10 @@ const Chatbox: React.FC<ChatboxProps> = ({ setNewRenderImage }) => {
     setMessages([]);
     setImage("");
     setPreviewImage("");
+    setVideo("");
+    setPreviewVideo("");
+    setVideoMimeType("");
+    setVideoFilename("");
     setNewRenderImage("");
     clearUserSession();
 
@@ -387,6 +487,22 @@ const Chatbox: React.FC<ChatboxProps> = ({ setNewRenderImage }) => {
       setHasBeenOpened(true);
     }
   }, [isOpen]);
+
+  useEffect(() => {
+    const loadCapabilities = async () => {
+      try {
+        const response = await fetch(`${config.api.baseUrl}${config.api.endpoints.capabilities}`);
+        if (!response.ok) return;
+        const data = await response.json() as CapabilitiesResponse;
+        if (data.media_input) {
+          setMediaCapabilities(data.media_input);
+        }
+      } catch (error) {
+        console.warn("Failed to load media capabilities", error);
+      }
+    };
+    loadCapabilities();
+  }, []);
 
   useEffect(() => {
     if (hasBeenOpened) {
@@ -444,6 +560,29 @@ const Chatbox: React.FC<ChatboxProps> = ({ setNewRenderImage }) => {
               </div>
             )}
 
+            {previewVideo && (
+              <div style={{ position: 'relative', display: 'inline-block' }}>
+                <video src={previewVideo} muted style={{ width: '50px', height: '50px', objectFit: 'cover' }} />
+                <button
+                  type="button"
+                  style={{
+                    display: 'inline-flex',
+                    position: 'absolute',
+                    right: '-5px',
+                    top: '-5px',
+                    cursor: 'pointer',
+                    background: 'transparent',
+                    border: 'none',
+                    padding: 0,
+                  }}
+                  onClick={clearVideo}
+                  aria-label="Clear video"
+                >
+                  <FontAwesomeIcon icon={faTimesCircle} />
+                </button>
+              </div>
+            )}
+
             {/* Input field */}
             <input
               ref={inputRef}
@@ -482,9 +621,12 @@ const Chatbox: React.FC<ChatboxProps> = ({ setNewRenderImage }) => {
               <input
                 style={{ display: "none" }}
                 type="file"
-                accept="image/*"
+                accept={[
+                  ...mediaCapabilities.image_mime_types,
+                  ...(mediaCapabilities.vlm_enabled ? mediaCapabilities.video_mime_types : []),
+                ].join(",")}
                 id="image-upload"
-                name="image"
+                name="media"
                 onChange={handleImageUpload}
               />
             </div>

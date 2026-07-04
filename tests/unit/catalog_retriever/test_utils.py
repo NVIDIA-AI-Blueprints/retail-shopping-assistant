@@ -97,6 +97,7 @@ class TestImagePathToBase64:
     ) -> None:
         # The function hardcodes the ``/app/shared/`` prefix, so patch
         # ``open`` to redirect the path lookup to our temp file.
+        monkeypatch.setenv("SHARED_ROOT", "/app/shared")
         img_bytes = _build_jpeg_bytes()
         expected_path = "/app/shared/img.jpg"
         real_path = tmp_path / "img.jpg"
@@ -124,6 +125,7 @@ class TestImagePathToBase64:
     def test_returns_none_when_encoded_exceeds_limit(
         self, tmp_path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        monkeypatch.setenv("SHARED_ROOT", "/app/shared")
         img_bytes = _build_jpeg_bytes(size=(32, 32))
         real_path = tmp_path / "small.jpg"
         real_path.write_bytes(img_bytes)

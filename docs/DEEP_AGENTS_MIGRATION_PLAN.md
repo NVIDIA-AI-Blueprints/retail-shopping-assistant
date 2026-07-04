@@ -42,6 +42,13 @@ Current constraints:
 - Catalog search and cart-read tools return to the Deep Agents loop so a single
   shopper turn can discover products or read the cart before mutating it.
   Mutating cart tools return directly with the authoritative cart result.
+- Optional VLM media perception runs before the Deep Agents turn when the
+  `vlm` model role is enabled. It converts attached image/video media into a
+  concise `MEDIA ANALYSIS` text block. Raw media is not persisted in
+  conversation memory. Descriptive look-analysis requests are answered from
+  `MEDIA ANALYSIS` without catalog retrieval; catalog tools remain authoritative
+  for product names, prices, and availability when the shopper explicitly asks
+  to find, compare, price-check, or add products.
 
 Filesystem and built-in Deep Agents tools:
 
@@ -189,6 +196,7 @@ logic:
 
 - `product_discovery`
 - `image_shopping`
+- `video_shopping` when VLM media perception is enabled
 - `cart_management`
 - `budget_sensitive_recommendation`
 - `persona_aware_recommendation`

@@ -50,6 +50,27 @@ services:
       retries: 60
       start_period: 60s
 
+  nemotron-omni:
+    image: nvcr.io/nim/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:latest
+    ports:
+      - "8005:8000"
+    environment:
+      - NGC_API_KEY=${NGC_API_KEY}
+    volumes:
+      - ${LOCAL_NIM_CACHE}:/opt/nim/.cache
+    user: "${UID:-1000}"
+    shm_size: "32gb"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['0','1']
+              capabilities: [gpu]
+    restart: "no"
+    networks:
+      - shopping-network
+
   embedqa:
     image: nvcr.io/nim/nvidia/nv-embedqa-e5-v5:1.6
     ports:

@@ -24,6 +24,12 @@ local_nims:
       base_url: "http://nvclip:8000/v1"
       model: "nvidia/nvclip"
 
+    nemotron_omni:
+      compose_file: docker-compose-nim-local.yaml
+      compose_service: nemotron-omni
+      base_url: "http://nemotron-omni:8000/v1"
+      model: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"
+
     content_safety_nim:
       compose_file: docker-compose-nim-local.yaml
       compose_service: content
@@ -63,6 +69,16 @@ models:
     model_env: IMAGE_EMBED_MODEL
     model: "nvidia/nvclip"
     api_key_env: EMBED_API_KEY
+
+  vlm:
+    source: endpoint
+    provider: openai_compatible
+    local_service: nemotron_omni
+    base_url_env: VLM_BASE_URL
+    base_url: "https://integrate.api.nvidia.com/v1"
+    model_env: VLM_MODEL
+    model: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"
+    api_key_env: VLM_API_KEY
 
   content_safety:
     source: endpoint

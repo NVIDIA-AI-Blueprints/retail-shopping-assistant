@@ -247,8 +247,14 @@ Implications:
 
 - Add a small adapter that creates and invokes the Deep Agents SDK harness.
 - Keep `/query/stream` as the public entrypoint.
-- Add config for `agent_runtime: legacy_langgraph | deepagents`.
-- Keep legacy behavior as the default until parity is proven.
+- Current PR decision: cut over the chain server to the Deep Agents harness
+  directly and do not keep the bespoke LangGraph runtime as a selectable
+  fallback. This keeps the harness path simple and readable while quality is
+  improved in follow-up PRs.
+- Known limitation for this slice: `/query/stream` remains SSE-framed but emits
+  completed turn events after the Deep Agents turn finishes instead of
+  token-level model chunks. Token-level Deep Agents streaming is a follow-up
+  after the harness migration is stable.
 
 ### Slice 2: Server-Owned Identity
 
@@ -277,11 +283,15 @@ Implications:
 - Run targeted Challenger scenarios.
 - Verify product search, image search, cart mutation claims, and grounded
   responses.
-- Compare Deep Agents output against the legacy path before cutover.
+- Compare Deep Agents output against the committed golden integration
+  conversations and prior WIP/committed baselines before subsequent quality
+  changes.
 
 ### Slice 6: Cutover And Cleanup
 
-- Switch default runtime to Deep Agents after parity.
+- Continue improving the Deep Agents runtime now that the harness is the chain
+  server path.
+- Add token-level streaming for `/query/stream`.
 - Remove bespoke planner/cart/retriever/chatter graph code only after the new
   path is stable.
 - Keep deterministic tools and service contracts.

@@ -33,7 +33,7 @@
 
 ## Overview
 
-The Retail Shopping Assistant is an AI-powered blueprint that provides a comprehensive interface for an intelligent retail shopping advisor. The chain server uses the Deep Agents SDK as the assistant harness over deterministic shopping tools, with real-time responses, image-based search, and intelligent shopping cart management.
+The Retail Shopping Assistant is an AI-powered blueprint that provides a comprehensive interface for an intelligent retail shopping advisor. The chain server uses the Deep Agents SDK as the assistant harness over deterministic shopping tools, with SSE-framed responses, image-based search, and intelligent shopping cart management.
 
 ### Key Features
 
@@ -42,7 +42,7 @@ The Retail Shopping Assistant is an AI-powered blueprint that provides a compreh
 - 🖼️ **Visual Search**: Upload images to find similar products
 - 💬 **Conversational AI**: Natural language interactions
 - 🔒 **Content Safety**: Built-in moderation and safety checks
-- ⚡ **Real-time Streaming**: Live response generation
+- ⚡ **SSE Response Stream**: Event-stream response framing for chat clients; token-level Deep Agents streaming is a follow-up after the harness migration
 - 📱 **Responsive UI**: Modern, mobile-friendly interface
 
 ### Architecture

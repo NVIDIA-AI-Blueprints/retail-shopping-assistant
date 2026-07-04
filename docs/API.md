@@ -150,7 +150,14 @@ interface StreamingChunk {
 
 ### POST `/query/stream`
 
-Streams real-time responses back to the client as the shopping assistant generates them.
+Returns a Server-Sent Events (SSE) response stream for shopping assistant
+responses. In the current Deep Agents harness migration slice, the stream is
+SSE-framed but does not yet emit token-level model chunks while the agent is
+running. The endpoint currently emits the completed turn response and image
+payloads after the Deep Agents turn finishes.
+
+Token-level Deep Agents streaming is a known limitation for this PR and is
+planned as a follow-up after the harness migration is stable.
 
 **Request Body:** `QueryRequest`
 
@@ -558,7 +565,9 @@ print(f"Timing: {response['timings']}")
 - Image data should be base64 encoded without the data URL prefix
 - The API supports both local and cloud-based NIM deployments
 - Content safety is enabled by default but can be disabled per request
-- Streaming responses provide real-time feedback for better user experience
+- `/query/stream` uses SSE framing. Token-level Deep Agents streaming is a
+  known follow-up after the harness migration; this slice emits completed turn
+  events rather than live model chunks.
 
 ---
 

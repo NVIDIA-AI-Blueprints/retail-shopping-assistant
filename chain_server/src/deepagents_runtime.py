@@ -10,7 +10,6 @@ import hashlib
 import json
 import logging
 import os
-import re
 import time
 from typing import Any, AsyncIterator
 import uuid
@@ -28,6 +27,7 @@ from .commerce_tools import (
 from shared.commerce_contracts import (
     AddCartItemInput,
     GetCartInput,
+    ProductSummary,
     RemoveCartItemInput,
     SearchCatalogInput,
 )
@@ -68,6 +68,7 @@ class DeepAgentsRuntime:
         self.config = config
         self._checkpointer = MemorySaver()
         self._profile_registered = False
+        self._product_refs: dict[str, dict[str, ProductSummary]] = {}
 
     async def astream(
         self, state: State, identity: RequestIdentity
@@ -149,7 +150,7 @@ class DeepAgentsRuntime:
         retrieved: dict[str, str] = {}
         state.retrieved = retrieved
 
-        @tool(return_direct=True)
+        @tool(return_direct=False)
         def search_catalog_tool(
             query: str,
             category: str = "",
@@ -180,6 +181,7 @@ class DeepAgentsRuntime:
             if not result.products:
                 return "No matching catalog products were found."
 
+            self._remember_products(identity, result.products)
             lines = []
             for product in result.products:
                 if product.image_url:
@@ -187,7 +189,7 @@ class DeepAgentsRuntime:
                 lines.append(_format_product(product))
             return "\n\n".join(lines)
 
-        @tool(return_direct=True)
+        @tool(return_direct=False)
         def get_cart_tool() -> str:
             """Read the current cart contents."""
 
@@ -196,13 +198,16 @@ class DeepAgentsRuntime:
             return _format_cart(cart)
 
         @tool(return_direct=True)
-        def add_cart_item_tool(item_name: str, quantity: int = 1) -> str:
-            """Add a catalog item to the current cart after validating the product name."""
+        def add_cart_item_tool(product_ref: str, quantity: int = 1) -> str:
+            """Add a catalog item by PRODUCT_REF from a prior search_catalog_tool result."""
 
             quantity = max(1, int(quantity or 1))
-            product = self._lookup_product(item_name)
+            product = self._product_from_ref(identity, product_ref)
             if product is None:
-                return f"No catalog product named '{item_name}' could be found."
+                return (
+                    f"No product with PRODUCT_REF '{product_ref}' is available. "
+                    "Search the catalog first and use the PRODUCT_REF from the result."
+                )
             result = add_cart_item(
                 AddCartItemInput(
                     user_id=str(identity.cart_user_id),
@@ -221,21 +226,22 @@ class DeepAgentsRuntime:
             return result.error.message if result.error else "Cart add failed."
 
         @tool(return_direct=True)
-        def remove_cart_item_tool(item_name: str, quantity: int = 1) -> str:
-            """Remove an item from the current cart by matching against cart contents."""
+        def remove_cart_item_tool(cart_line_id: str, quantity: int = 1) -> str:
+            """Remove a cart item by CART_LINE_ID from get_cart_tool/current-cart output."""
 
             quantity = max(1, int(quantity or 1))
             cart = self._read_cart(identity.cart_user_id)
-            line = _find_cart_line(item_name, cart)
+            line = _cart_line_by_id(cart_line_id, cart)
             if line is None:
-                return f"No cart item named '{item_name}' could be found."
+                return f"No cart line with CART_LINE_ID '{cart_line_id}' could be found."
             result = remove_cart_item(
                 RemoveCartItemInput(
                     user_id=str(identity.cart_user_id),
-                    cart_line_id=line["item"],
+                    cart_line_id=line["cart_line_id"],
+                    product_id=line.get("product_id"),
                     display_name=line["item"],
                     quantity=quantity,
-                    idempotency_key=f"{identity.request_id}:remove:{line['item']}:{quantity}",
+                    idempotency_key=f"{identity.request_id}:remove:{line['cart_line_id']}:{quantity}",
                 ),
                 self.config.memory_port,
             )
@@ -291,6 +297,9 @@ Rules:
   answer from the results you have or ask one concise clarifying question.
 - A tool result is enough to produce a final answer. Do not keep searching for
   alternatives unless the shopper explicitly rejects the current result.
+- When the shopper asks to add an item that has not already been searched in
+  this conversation, call search_catalog_tool first, then call
+  add_cart_item_tool with the selected PRODUCT_REF.
 - If an image is attached, the current image is already available to
   search_catalog_tool. Use that tool for "this", "similar", and image-price
   refinement requests.
@@ -298,6 +307,10 @@ Rules:
 - Cart mutations require explicit shopper intent and must use add_cart_item_tool
   or remove_cart_item_tool. Never claim a cart mutation unless the tool reports
   success.
+- Use PRODUCT_REF from search_catalog_tool when adding an item. Do not pass
+  display names to add_cart_item_tool.
+- Use CART_LINE_ID from CURRENT CART or get_cart_tool when removing an item. Do
+  not guess cart line IDs from product names.
 - If the shopper asks for anything under a budget without a product type,
   category, occasion, style, outfit goal, or image, ask one concise clarifying
   question instead of guessing.
@@ -324,21 +337,21 @@ Rules:
             return [cleaned]
         return list(self.config.categories)
 
-    def _lookup_product(self, item_name: str):
-        result = search_catalog(
-            SearchCatalogInput(
-                query=item_name,
-                categories=self.config.categories,
-                top_k=max(5, self.config.top_k_retrieve),
-            ),
-            self.config.retriever_port,
-            timeout_seconds=self.config.catalog_search_timeout_seconds,
+    def _remember_products(
+        self, identity: RequestIdentity, products: list[ProductSummary]
+    ) -> None:
+        refs = self._product_refs.setdefault(identity.conversation_id, {})
+        for product in products:
+            refs[product.product_id] = product
+        while len(refs) > 50:
+            refs.pop(next(iter(refs)))
+
+    def _product_from_ref(
+        self, identity: RequestIdentity, product_ref: str
+    ) -> ProductSummary | None:
+        return self._product_refs.get(identity.conversation_id, {}).get(
+            (product_ref or "").strip()
         )
-        if not result.ok or not result.products:
-            return None
-        names = [product.display_name for product in result.products]
-        match_idx = _resolve_name_match(item_name, names)
-        return result.products[match_idx] if match_idx is not None else None
 
     def _read_cart(self, user_id: int) -> Cart:
         result = get_cart(GetCartInput(user_id=str(user_id)), self.config.memory_port)
@@ -347,6 +360,8 @@ Rules:
         return Cart(
             contents=[
                 {
+                    "cart_line_id": line.cart_line_id,
+                    "product_id": line.product_id,
                     "item": line.display_name,
                     "amount": line.quantity,
                     "price": line.unit_price.amount if line.unit_price else None,
@@ -470,9 +485,12 @@ def _content_to_text(content: Any) -> str:
 def _format_product(product: Any) -> str:
     text = product.attributes.get("catalog_text") if product.attributes else None
     if isinstance(text, str) and text.strip():
-        return text
+        return f"PRODUCT_REF: {product.product_id}\n{text.strip()}"
     price = f"\nPRICE: ${product.price.amount:.2f}" if product.price else ""
-    return f"{product.display_name} | {product.description}{price}".strip()
+    return (
+        f"PRODUCT_REF: {product.product_id}\n"
+        f"{product.display_name} | {product.description}{price}"
+    ).strip()
 
 
 def _format_cart(cart: Cart) -> str:
@@ -487,7 +505,11 @@ def _format_cart(cart: Cart) -> str:
                 suffix = f" @ ${float(price):.2f}"
             except (TypeError, ValueError):
                 suffix = ""
-        lines.append(f"- {item.get('amount', 1)} x {item.get('item', '')}{suffix}")
+        cart_line_id = item.get("cart_line_id") or item.get("item", "")
+        lines.append(
+            f"- CART_LINE_ID: {cart_line_id} | "
+            f"{item.get('amount', 1)} x {item.get('item', '')}{suffix}"
+        )
     return "\n".join(lines)
 
 
@@ -514,37 +536,13 @@ def _format_cart_total(cart: Cart) -> str:
     return "\n".join(lines + [total])
 
 
-def _find_cart_line(item_name: str, cart: Cart) -> dict[str, Any] | None:
+def _cart_line_by_id(cart_line_id: str, cart: Cart) -> dict[str, Any] | None:
     if not cart.contents:
         return None
-    names = [str(item.get("item") or "") for item in cart.contents]
-    idx = _resolve_name_match(item_name, names)
-    return cart.contents[idx] if idx is not None else None
-
-
-def _resolve_name_match(query_name: str, candidates: list[str]) -> int | None:
-    query_norm = _normalize_name(query_name)
-    if not query_norm:
-        return 0 if candidates else None
-    query_tokens = set(query_norm.split())
-    best_idx = None
-    best_score = 0.0
-    for idx, candidate in enumerate(candidates):
-        candidate_norm = _normalize_name(candidate)
-        if not candidate_norm:
-            continue
-        if query_norm == candidate_norm or query_norm in candidate_norm or candidate_norm in query_norm:
-            return idx
-        candidate_tokens = set(candidate_norm.split())
-        if not candidate_tokens:
-            continue
-        score = len(query_tokens & candidate_tokens) / len(query_tokens | candidate_tokens)
-        if score > best_score:
-            best_score = score
-            best_idx = idx
-    return best_idx if best_idx is not None and best_score >= 0.5 else None
-
-
-def _normalize_name(name: str) -> str:
-    cleaned = re.sub(r"[^a-z0-9 ]+", " ", (name or "").lower())
-    return re.sub(r"\s+", " ", cleaned).strip()
+    target = (cart_line_id or "").strip()
+    if not target:
+        return None
+    for item in cart.contents:
+        if str(item.get("cart_line_id") or "").strip() == target:
+            return item
+    return None

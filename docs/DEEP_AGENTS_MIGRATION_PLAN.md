@@ -38,9 +38,9 @@ Current constraints:
   use one catalog search per user turn unless the shopper explicitly asks for
   alternatives. This keeps broad shopping prompts from turning into unbounded
   exploratory search loops.
-- Commerce wrapper tools return directly to the caller in this slice. That
-  trades some conversational polish for predictable latency, simpler control
-  flow, and fewer repeated model calls.
+- Catalog search and cart-read tools return to the Deep Agents loop so a single
+  shopper turn can discover products or read the cart before mutating it.
+  Mutating cart tools return directly with the authoritative cart result.
 
 Filesystem and built-in Deep Agents tools:
 
@@ -169,8 +169,10 @@ Initial tools should be small, typed, and deterministic:
 - `search_catalog`: read-only, stateless product discovery.
 - `get_product_details`: read-only product facts for one product.
 - `get_cart`: read-only cart state for a `cart_id`.
-- `add_cart_item`: mutating cart write with idempotency.
-- `remove_cart_item`: mutating cart write with idempotency.
+- `add_cart_item`: mutating cart write with idempotency, using a `PRODUCT_REF`
+  previously returned by product search.
+- `remove_cart_item`: mutating cart write with idempotency, using a
+  `CART_LINE_ID` returned by cart reads.
 - `view_cart_total`: deterministic arithmetic over cart line prices.
 - `get_store_policy`: read-only controlled policy content.
 - `load_customer_persona`: read-only persona/profile snapshot.
@@ -269,6 +271,12 @@ Implications:
 - Expose current catalog and cart capabilities as typed tools.
 - Keep product search stateless.
 - Keep cart operations deterministic and idempotent.
+- Make cart mutations ref-based: add by `PRODUCT_REF`, remove by
+  `CART_LINE_ID`; do not hide product lookup or fuzzy cart-line matching inside
+  mutation tools.
+- Keep discovery/read tools chainable inside the agent loop so same-turn
+  requests like "find a black bag and add it" can search first, then mutate by
+  ref.
 - Do not create standalone planner or cart-agent classes.
 
 ### Slice 4: Skills

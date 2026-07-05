@@ -80,8 +80,28 @@ export interface MediaCapabilities {
   vlm_enabled: boolean;
 }
 
+export type CatalogCapabilityType = 'enum' | 'number' | 'text';
+
+export interface CatalogFilterCapability {
+  type: CatalogCapabilityType;
+  operators: string[];
+  source_fields: string[];
+  values: string[];
+  min_value?: number | null;
+  max_value?: number | null;
+  request_aliases: Record<string, string>;
+}
+
+export interface CatalogCapabilities {
+  catalog_id: string;
+  retrieval_modes: string[];
+  image_search_enabled: boolean;
+  filters: Record<string, CatalogFilterCapability>;
+}
+
 export interface CapabilitiesResponse {
   media_input: MediaCapabilities;
+  catalog?: CatalogCapabilities;
 }
 
 export interface ApiResponse {

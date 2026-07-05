@@ -23,7 +23,6 @@ from shared.commerce_contracts import Cart as CommerceCart
 from shared.commerce_contracts import (
     CartLine,
     CatalogCapabilities,
-    CatalogFacetCapability,
     CatalogFilterCapability,
     Money,
     ProductSummary,
@@ -50,6 +49,20 @@ class _StubRuntime:
             "response": self.response_text,
             "timings": {"chatter": 0.1, "memory": 0.01},
         }
+
+    def catalog_capabilities(self, *, force_refresh: bool = False) -> CatalogCapabilities:
+        return CatalogCapabilities(
+            catalog_id="test_catalog",
+            retrieval_modes=["text"],
+            filters={
+                "category": CatalogFilterCapability(
+                    type="enum",
+                    operators=["in"],
+                    source_fields=["subcategory"],
+                    values=["bag", "dress"],
+                )
+            },
+        )
 
 
 @pytest.fixture
@@ -131,12 +144,15 @@ class TestHealthAndRoot:
         response = client.get("/capabilities")
         assert response.status_code == 200
 
-        media = response.json()["media_input"]
+        body = response.json()
+        media = body["media_input"]
         assert media["enabled"] is True
         assert media["max_images_per_turn"] == 1
         assert media["max_videos_per_turn"] == 1
         assert media["video_mime_types"] == ["video/mp4"]
         assert media["vlm_enabled"] is True
+        assert body["catalog"]["catalog_id"] == "test_catalog"
+        assert body["catalog"]["filters"]["category"]["values"] == ["bag", "dress"]
 
     def test_root_describes_endpoints(self, client: TestClient) -> None:
         response = client.get("/")
@@ -424,6 +440,26 @@ class TestDeepAgentsRuntimeRefs:
         monkeypatch.setitem(sys.modules, "langchain_openai", openai_mod)
 
         runtime = runtime_mod.DeepAgentsRuntime(base_config)
+        runtime._catalog_capabilities = SimpleNamespace(
+            get=lambda: CatalogCapabilities(
+                catalog_id="custom_catalog",
+                retrieval_modes=["text"],
+                filters={
+                    "category": CatalogFilterCapability(
+                        type="enum",
+                        operators=["in"],
+                        source_fields=["subcategory"],
+                        values=["dress"],
+                    ),
+                    "color": CatalogFilterCapability(
+                        type="enum",
+                        operators=["in"],
+                        source_fields=["color"],
+                        values=["blue"],
+                    )
+                },
+            )
+        )
         identity = runtime_mod.RequestIdentity(
             session_id="session-a",
             conversation_id="conversation-a",
@@ -442,6 +478,9 @@ class TestDeepAgentsRuntimeRefs:
         assert tools_by_name["add_cart_item_tool"].return_direct is True
         assert tools_by_name["remove_cart_item_tool"].return_direct is True
         assert tools_by_name["view_cart_total_tool"].return_direct is True
+        assert "Catalog ID: custom_catalog" in captured["system_prompt"]
+        assert "values dress" in captured["system_prompt"]
+        assert "top blouse sweater" not in captured["system_prompt"]
 
     def test_search_catalog_tool_executes_structured_plan(
         self,
@@ -490,9 +529,12 @@ class TestDeepAgentsRuntimeRefs:
                     operators=["gte", "lte"],
                     source_fields=["price"],
                 ),
-            },
-            soft_facets={
-                "style": CatalogFacetCapability(type="text"),
+                "color": CatalogFilterCapability(
+                    type="enum",
+                    operators=["in"],
+                    source_fields=["color"],
+                    values=["blue", "black"],
+                ),
             },
         )
         captured_plan = {}
@@ -550,9 +592,11 @@ class TestDeepAgentsRuntimeRefs:
 
         result = tools_by_name["search_catalog_tool"](
             "practical work bag",
-            category="bag",
-            max_price=60,
-            soft_preferences={"style": "practical"},
+            filters={
+                "category": ["bag"],
+                "price": {"max": 60},
+                "color": ["blue"],
+            },
             strictness="hard",
         )
 
@@ -560,9 +604,9 @@ class TestDeepAgentsRuntimeRefs:
         assert state.retrieved == {"Work Bag": "bag.jpg"}
         assert captured_plan["plan"].hard_filters == {
             "category": ["bag"],
-            "max_price": 60,
+            "price": {"max": 60.0},
+            "color": ["blue"],
         }
-        assert captured_plan["plan"].soft_preferences == {"style": "practical"}
         assert captured_plan["plan"].strictness == "hard"
 
     def test_product_refs_are_cached_by_conversation(
@@ -642,6 +686,13 @@ class TestDeepAgentsRuntimeRefs:
         monkeypatch.setitem(sys.modules, "langchain_openai", openai_mod)
 
         runtime = runtime_mod.DeepAgentsRuntime(base_config)
+        runtime._catalog_capabilities = SimpleNamespace(
+            get=lambda: CatalogCapabilities(
+                catalog_id="fashion",
+                retrieval_modes=["text"],
+                filters={},
+            )
+        )
         identity = runtime_mod.RequestIdentity(
             session_id="session-a",
             conversation_id="conversation-a",

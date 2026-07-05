@@ -94,6 +94,7 @@ data.update(
         "image_api_key_env": image_embedding.api_key_env if image_enabled else None,
     }
 )
+capabilities = build_catalog_capabilities(data)
 
 
 # Setup Retriever once when app starts
@@ -109,7 +110,8 @@ config = RetrieverConfig(
     db_name=data["db_name"],
     sim_threshold=data["sim_threshold"],
     text_collection=data["text_collection"],
-    image_collection=data["image_collection"]
+    image_collection=data["image_collection"],
+    filter_capabilities=capabilities.filters,
 )
 
 logging.info("CATALOG RETRIEVER | startup | config.yaml ingested.")
@@ -118,7 +120,6 @@ retriever = Retriever(config=config)
 logging.info("CATALOG RETRIEVER | startup | Checking and populating Milvus database if needed.")
 retriever.milvus_from_csv(csv_path=data["data_source"], verbose=True)
 logging.info("CATALOG RETRIEVER | startup | Milvus database ready.")
-capabilities = build_catalog_capabilities(data)
 
 # Request bodies
 class TextQueryRequest(BaseModel):

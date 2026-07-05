@@ -51,9 +51,12 @@ SDK adapter:
   conversation-history fields are passed to `search_catalog`.
 - Catalog request-building is now separate from catalog execution. The
   request-builder layer validates structured agent intent against catalog-owned
-  capabilities, separates hard filters from soft preferences, and produces a
-  `CatalogSearchPlan`; the catalog execution layer only maps that plan to
-  catalog service requests.
+  capabilities and produces a `CatalogSearchPlan`; the catalog execution layer
+  only maps that plan to catalog service requests.
+- Deep Agents prompt context is also built from catalog-owned capabilities.
+  Chain-server no longer ships a product category allowlist for the active
+  runtime; changing catalog shape is handled by catalog retriever
+  `filter_registry` plus the ingested catalog data.
 - Catalog retriever now searches a wider candidate window, applies hard filters
   against structured metadata, then trims to the requested `top_k`. Query
   responses include structured `products`, diagnostics, and an optional
@@ -79,7 +82,7 @@ No ACP/UCP adapter layer has been added yet.
 | `Cart` | User cart with structured lines and optional subtotal. |
 | `CommerceError` | Structured tool error with code, message, retryability, and details. |
 | `ToolMeta` | Trace and idempotency metadata returned by tools. |
-| `CatalogCapabilities` | Catalog-owned declaration of retrieval modes, hard filters, and soft facets. |
+| `CatalogCapabilities` | Catalog-owned declaration of retrieval modes and hard filters. |
 
 ## Tool Contracts
 
@@ -110,10 +113,23 @@ for the supplied request.
 
 The chain-server request-builder layer consumes `CatalogCapabilities` before it
 creates a product search request. For the current fashion catalog, `category`
-is treated as a hard filter sourced from the catalog `subcategory` field, while
-soft concepts such as color, material, style, occasion, and formality remain
-preferences for language understanding or ranking unless the catalog declares
-them as real filters.
+is treated as a hard filter sourced from the catalog `subcategory` field. If a
+future catalog can strictly filter by color, material, size, or another
+metadata field, that field should be declared under catalog retriever
+`filter_registry` and it will be treated as a hard filter too.
+
+`filter_registry` declares filter names, types, source fields, and operators. It
+does not declare enum values. Enum filter values and numeric min/max ranges are
+filled from the CSV rows when catalog retriever loads the configured
+`data_source`. The operational guide is
+[Catalog Filter Configuration](CATALOG_FILTERS.md).
+
+The active Deep Agents runtime formats the same `CatalogCapabilities` into the
+agent system prompt. This keeps the language layer aware of available hard
+filters without maintaining a second category list in
+`shared/configs/chain_server/config.yaml`. If a future catalog declares
+different filter names or enum values, the prompt, request builder, and catalog
+retriever all consume that catalog-owned shape.
 
 This keeps product search reusable by the Deep Agents adapter, future skills or
 subagents, and later protocol adapters without coupling catalog results to

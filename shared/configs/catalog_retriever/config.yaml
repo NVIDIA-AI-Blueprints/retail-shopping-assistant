@@ -6,6 +6,9 @@ text_collection: "shopping_advisor_text_db"
 image_collection: "shopping_advisor_image_db"
 #data_source: "/app/shared/data/products.csv"
 data_source: "/app/shared/data/products_extended.csv"
+# Declare filter field names and types here. Do not hardcode enum values:
+# enum values and numeric ranges are discovered from the loaded CSV and exposed
+# by /capabilities.
 filter_registry:
   category:
     type: "enum"
@@ -23,14 +26,3 @@ filter_registry:
     request_aliases:
       min: "min_price"
       max: "max_price"
-soft_facets:
-  color:
-    type: "text"
-  material:
-    type: "text"
-  style:
-    type: "text"
-  occasion:
-    type: "text"
-  formality:
-    type: "text"

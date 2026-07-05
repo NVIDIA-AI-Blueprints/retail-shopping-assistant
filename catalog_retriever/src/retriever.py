@@ -9,7 +9,7 @@ Performs both of these in parallel and then re-ranks the results from bothmodels
 """
 
 from openai import OpenAI
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from dataclasses import dataclass, field
 from typing import List, Tuple, Dict, Any
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -25,6 +25,7 @@ from .utils import image_url_to_base64, is_url, is_path, image_path_to_base64, r
 import logging
 import asyncio
 from types import SimpleNamespace
+from shared.commerce_contracts import CatalogFilterCapability
 
 # Set up logging 
 logging.basicConfig(
@@ -47,6 +48,7 @@ class RetrieverConfig(BaseModel):
     sim_threshold: float
     text_collection: str
     image_collection: str
+    filter_capabilities: Dict[str, CatalogFilterCapability] = Field(default_factory=dict)
 
 
 @dataclass
@@ -291,6 +293,7 @@ class Retriever:
         self.sim_threshold = config.sim_threshold
         self.text_collection = config.text_collection
         self.image_collection = config.image_collection
+        self.filter_capabilities = config.filter_capabilities
 
         text_key = os.environ.get(self.text_api_key_env, "") if self.text_api_key_env else ""
         image_key = os.environ.get(self.image_api_key_env, "") if self.image_api_key_env else ""
@@ -897,28 +900,15 @@ class Retriever:
         if not filters:
             return results
 
-        min_price = self._coerce_float(filters.get("min_price"))
-        max_price = self._coerce_float(filters.get("max_price"))
-        category_values = self._normalize_filter_values(filters.get("category"))
-
-        if min_price is None and max_price is None and not category_values:
+        canonical_filters = self._canonical_filters(filters)
+        if not canonical_filters:
             return results
 
         filtered_results: List[Tuple[Any, float]] = []
         for result in results:
             doc = result[0]
-            if category_values and not self._metadata_matches_category(
-                doc.metadata, category_values
-            ):
+            if not self._metadata_matches_filters(doc.metadata, canonical_filters):
                 continue
-            price = self._coerce_float(doc.metadata.get("price"))
-            if min_price is not None or max_price is not None:
-                if price is None:
-                    continue
-                if min_price is not None and price < min_price:
-                    continue
-                if max_price is not None and price > max_price:
-                    continue
             filtered_results.append(result)
 
         if verbose:
@@ -929,6 +919,129 @@ class Retriever:
 
         return filtered_results
 
+    def _canonical_filters(self, filters: Dict[str, Any]) -> Dict[str, Any]:
+        canonical: Dict[str, Any] = {}
+        for name, capability in self.filter_capabilities.items():
+            if name in filters:
+                canonical[name] = filters[name]
+            if capability.type == "number":
+                alias_filter = self._number_alias_filter(filters, name, capability)
+                if alias_filter:
+                    existing = canonical.get(name)
+                    if isinstance(existing, dict):
+                        canonical[name] = {**existing, **alias_filter}
+                    else:
+                        canonical[name] = alias_filter
+        return {
+            name: value
+            for name, value in canonical.items()
+            if value not in (None, "", [], {})
+        }
+
+    @staticmethod
+    def _number_alias_filter(
+        filters: Dict[str, Any],
+        name: str,
+        capability: CatalogFilterCapability,
+    ) -> Dict[str, Any]:
+        aliases = {
+            "min": capability.request_aliases.get("min") or f"min_{name}",
+            "max": capability.request_aliases.get("max") or f"max_{name}",
+        }
+        number_filter: Dict[str, Any] = {}
+        for bound, alias in aliases.items():
+            if alias in filters:
+                number_filter[bound] = filters[alias]
+        return number_filter
+
+    def _metadata_matches_filters(
+        self,
+        metadata: Dict[str, Any],
+        filters: Dict[str, Any],
+    ) -> bool:
+        for name, value in filters.items():
+            capability = self.filter_capabilities.get(name)
+            if capability is None:
+                continue
+            if capability.type == "number":
+                if not self._metadata_matches_number_filter(
+                    metadata, value, name, capability
+                ):
+                    return False
+                continue
+            if not self._metadata_matches_value_filter(metadata, value, name, capability):
+                return False
+        return True
+
+    def _metadata_matches_number_filter(
+        self,
+        metadata: Dict[str, Any],
+        value: Any,
+        name: str,
+        capability: CatalogFilterCapability,
+    ) -> bool:
+        bounds = self._normalize_number_filter(value)
+        if not bounds:
+            return True
+        if (
+            bounds.get("min") is not None
+            and bounds.get("max") is not None
+            and bounds["min"] > bounds["max"]
+        ):
+            return False
+
+        metadata_value = self._first_metadata_number(metadata, name, capability)
+        if metadata_value is None:
+            return False
+        if bounds.get("min") is not None and metadata_value < bounds["min"]:
+            return False
+        if bounds.get("max") is not None and metadata_value > bounds["max"]:
+            return False
+        return True
+
+    @classmethod
+    def _normalize_number_filter(cls, value: Any) -> Dict[str, float]:
+        if not isinstance(value, dict):
+            return {}
+        bounds: Dict[str, float] = {}
+        lower = cls._coerce_float(value.get("min", value.get("gte")))
+        upper = cls._coerce_float(value.get("max", value.get("lte")))
+        if lower is not None:
+            bounds["min"] = lower
+        if upper is not None:
+            bounds["max"] = upper
+        return bounds
+
+    @classmethod
+    def _first_metadata_number(
+        cls,
+        metadata: Dict[str, Any],
+        name: str,
+        capability: CatalogFilterCapability,
+    ) -> float | None:
+        for field in capability.source_fields or [name]:
+            value = cls._coerce_float(metadata.get(field))
+            if value is not None:
+                return value
+        return None
+
+    def _metadata_matches_value_filter(
+        self,
+        metadata: Dict[str, Any],
+        value: Any,
+        name: str,
+        capability: CatalogFilterCapability,
+    ) -> bool:
+        requested_values = self._normalize_filter_values(value)
+        if not requested_values:
+            return True
+        metadata_values = {
+            str(metadata.get(field) or "").strip().lower()
+            for field in capability.source_fields or [name]
+            if str(metadata.get(field) or "").strip()
+        }
+        return bool(metadata_values.intersection(requested_values))
+
     @staticmethod
     def _normalize_filter_values(value: Any) -> set[str]:
         if value is None:
@@ -937,17 +1050,6 @@ class Retriever:
             return {str(item).strip().lower() for item in value if str(item).strip()}
         text = str(value).strip()
         return {text.lower()} if text else set()
-
-    @classmethod
-    def _metadata_matches_category(
-        cls, metadata: Dict[str, Any], category_values: set[str]
-    ) -> bool:
-        product_values = set()
-        for field in ("category", "subcategory"):
-            value = str(metadata.get(field) or "").strip().lower()
-            if value:
-                product_values.add(value)
-        return bool(product_values.intersection(category_values))
 
     @staticmethod
     def _effective_filters(

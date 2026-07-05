@@ -5,7 +5,14 @@ from __future__ import annotations
 
 import requests
 
-from chain_server.src.catalog_capabilities import CatalogCapabilitiesClient
+from chain_server.src.catalog_capabilities import (
+    CatalogCapabilitiesClient,
+    format_catalog_capabilities_for_prompt,
+)
+from shared.commerce_contracts import (
+    CatalogCapabilities,
+    CatalogFilterCapability,
+)
 
 
 class FakeResponse:
@@ -49,7 +56,6 @@ def test_fetches_catalog_capabilities() -> None:
                         "values": ["bag"],
                     }
                 },
-                "soft_facets": {},
             }
         )
     )
@@ -76,7 +82,6 @@ def test_caches_capabilities_until_forced_refresh() -> None:
                 "retrieval_modes": ["text"],
                 "image_search_enabled": False,
                 "filters": {},
-                "soft_facets": {},
             }
         )
     )
@@ -100,3 +105,49 @@ def test_unavailable_capabilities_return_empty_contract() -> None:
 
     assert capabilities.catalog_id == "unavailable"
     assert capabilities.filters == {}
+
+
+def test_unavailable_capabilities_are_not_cached() -> None:
+    session = FakeSession(exc=requests.Timeout("down"))
+    client = CatalogCapabilitiesClient("http://catalog", session=session)
+
+    assert client.get().catalog_id == "unavailable"
+    assert client.get().catalog_id == "unavailable"
+
+    assert len(session.calls) == 2
+
+
+def test_formats_catalog_owned_filters_for_prompt() -> None:
+    capabilities = CatalogCapabilities(
+        catalog_id="custom_catalog",
+        retrieval_modes=["text", "hybrid"],
+        image_search_enabled=True,
+        filters={
+            "category": CatalogFilterCapability(
+                type="enum",
+                operators=["in"],
+                source_fields=["department"],
+                values=["dress", "watch"],
+            ),
+            "price": CatalogFilterCapability(
+                type="number",
+                operators=["gte", "lte"],
+                source_fields=["price"],
+                min_value=10.0,
+                max_value=250.0,
+            ),
+            "color": CatalogFilterCapability(
+                type="enum",
+                operators=["in"],
+                source_fields=["color"],
+                values=["black", "green"],
+            ),
+        },
+    )
+
+    prompt_text = format_catalog_capabilities_for_prompt(capabilities)
+
+    assert "Catalog ID: custom_catalog" in prompt_text
+    assert "- category: enum; operators in; values dress, watch" in prompt_text
+    assert "- price: number; operators gte, lte; range 10.0 to 250.0" in prompt_text
+    assert "- color: enum; operators in; values black, green" in prompt_text

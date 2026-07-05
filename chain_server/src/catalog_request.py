@@ -14,20 +14,17 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-from shared.commerce_contracts import CatalogCapabilities
+from shared.commerce_contracts import CatalogCapabilities, CatalogFilterCapability
 
 
 SearchMode = Literal["text", "image", "hybrid"]
-SearchStrictness = Literal["unspecified", "hard", "soft"]
+SearchStrictness = Literal["unspecified", "hard"]
 
 
 class CatalogSearchIntent(BaseModel):
     query: str = ""
     queries: list[str] = Field(default_factory=list)
-    categories: list[str] = Field(default_factory=list)
-    min_price: float | None = None
-    max_price: float | None = None
-    soft_preferences: dict[str, Any] = Field(default_factory=dict)
+    filters: dict[str, Any] = Field(default_factory=dict)
     strictness: SearchStrictness = "unspecified"
     search_mode: SearchMode | None = None
 
@@ -35,9 +32,6 @@ class CatalogSearchIntent(BaseModel):
     def normalize_query_fields(self) -> "CatalogSearchIntent":
         self.query = self.query.strip()
         self.queries = [query.strip() for query in self.queries if query.strip()]
-        self.categories = [
-            category.strip() for category in self.categories if category.strip()
-        ]
         return self
 
 
@@ -45,7 +39,6 @@ class CatalogSearchPlan(BaseModel):
     should_search: bool
     queries: list[str] = Field(default_factory=list)
     hard_filters: dict[str, Any] = Field(default_factory=dict)
-    soft_preferences: dict[str, Any] = Field(default_factory=dict)
     strictness: SearchStrictness = "unspecified"
     search_mode: SearchMode = "text"
     top_k: int = 4
@@ -62,7 +55,6 @@ def build_catalog_search_plan(
     queries = intent.queries or ([intent.query] if intent.query else [])
     mode = _search_mode(intent.search_mode, capabilities, has_image=has_image)
     hard_filters = _hard_filters(intent, capabilities)
-    soft_preferences = _soft_preferences(intent, capabilities)
 
     if not queries and not has_image:
         return CatalogSearchPlan(
@@ -70,7 +62,6 @@ def build_catalog_search_plan(
             search_mode=mode,
             top_k=top_k,
             strictness=intent.strictness,
-            soft_preferences=soft_preferences,
             hard_filters=hard_filters,
             no_search_reason="missing_query_or_image",
         )
@@ -79,7 +70,6 @@ def build_catalog_search_plan(
         should_search=True,
         queries=queries,
         hard_filters=hard_filters,
-        soft_preferences=soft_preferences,
         strictness=intent.strictness,
         search_mode=mode,
         top_k=top_k,
@@ -91,43 +81,15 @@ def _hard_filters(
     capabilities: CatalogCapabilities,
 ) -> dict[str, Any]:
     filters: dict[str, Any] = {}
-    category_values = _filter_values(capabilities, "category")
-    if category_values is not None:
-        categories = [
-            category
-            for category in intent.categories
-            if category in category_values
-        ]
-        if categories:
-            filters["category"] = categories
-
-    price_filter = capabilities.filters.get("price")
-    if price_filter is not None and price_filter.type == "number":
-        if intent.min_price is not None and intent.min_price > 0:
-            filters["min_price"] = intent.min_price
-        if intent.max_price is not None and intent.max_price > 0:
-            filters["max_price"] = intent.max_price
-
-    if (
-        "min_price" in filters
-        and "max_price" in filters
-        and filters["min_price"] > filters["max_price"]
-    ):
-        filters.pop("min_price")
-        filters.pop("max_price")
+    for name, raw_value in intent.filters.items():
+        capability = capabilities.filters.get(name)
+        if capability is None:
+            continue
+        value = _validated_filter_value(raw_value, capability)
+        if value not in (None, "", [], {}):
+            filters[name] = value
 
     return filters
-
-
-def _soft_preferences(
-    intent: CatalogSearchIntent,
-    capabilities: CatalogCapabilities,
-) -> dict[str, Any]:
-    return {
-        key: value
-        for key, value in intent.soft_preferences.items()
-        if key in capabilities.soft_facets and value not in (None, "", [], {})
-    }
 
 
 def _search_mode(
@@ -146,11 +108,70 @@ def _search_mode(
     return "text"
 
 
-def _filter_values(
-    capabilities: CatalogCapabilities,
-    filter_name: str,
-) -> set[str] | None:
-    capability = capabilities.filters.get(filter_name)
-    if capability is None or capability.type != "enum":
+def _validated_filter_value(
+    value: Any,
+    capability: CatalogFilterCapability,
+) -> Any:
+    if capability.type == "number":
+        return _number_filter(value)
+    if capability.type == "enum":
+        return _enum_filter(value, capability.values)
+    if capability.type == "text":
+        return _text_filter(value)
+    return None
+
+
+def _enum_filter(value: Any, allowed_values: list[str]) -> list[str]:
+    if not allowed_values:
+        return []
+    candidates = _filter_values(value)
+    allowed = set(allowed_values)
+    return [candidate for candidate in candidates if candidate in allowed]
+
+
+def _text_filter(value: Any) -> list[str]:
+    return _filter_values(value)
+
+
+def _filter_values(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    text = str(value).strip()
+    return [text] if text else []
+
+
+def _number_filter(value: Any) -> dict[str, float]:
+    if not isinstance(value, dict):
+        return {}
+
+    lower = _first_number(value, ("min", "gte"))
+    upper = _first_number(value, ("max", "lte"))
+    if lower is not None and upper is not None and lower > upper:
+        return {}
+
+    number_filter: dict[str, float] = {}
+    if lower is not None:
+        number_filter["min"] = lower
+    if upper is not None:
+        number_filter["max"] = upper
+    return number_filter
+
+
+def _first_number(values: dict[str, Any], keys: tuple[str, ...]) -> float | None:
+    for key in keys:
+        if key in values:
+            return _coerce_float(values[key])
+    return None
+
+
+def _coerce_float(value: Any) -> float | None:
+    if isinstance(value, bool):
         return None
-    return set(capability.values)
+    if isinstance(value, int | float):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value.strip())
+        except ValueError:
+            return None
+    return None

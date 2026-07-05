@@ -216,6 +216,7 @@ async def health_check():
 async def capabilities():
     """Return runtime capabilities that the UI should enforce."""
     media_config = config.media_input
+    catalog = assistant_runtime.catalog_capabilities()
     return {
         "media_input": {
             "enabled": media_config.enabled,
@@ -228,7 +229,8 @@ async def capabilities():
             "max_video_bytes": media_config.max_video_bytes,
             "max_video_duration_seconds": media_config.max_video_duration_seconds,
             "vlm_enabled": config.vlm_enabled,
-        }
+        },
+        "catalog": catalog.model_dump(),
     }
 
 

@@ -31,10 +31,11 @@ def test_capabilities_are_declared_and_filled_from_registry_fields(tmp_path) -> 
                 "operators": ["gte", "lte"],
                 "request_aliases": {"min": "min_price", "max": "max_price"},
             },
-        },
-        "soft_facets": {
-            "color": {"type": "enum", "source_fields": ["color"]},
-            "style": {"type": "text"},
+            "color": {
+                "type": "enum",
+                "source_fields": ["color"],
+                "operators": ["in"],
+            },
         },
     }
 
@@ -49,7 +50,7 @@ def test_capabilities_are_declared_and_filled_from_registry_fields(tmp_path) -> 
         "min": "min_price",
         "max": "max_price",
     }
-    assert capabilities.soft_facets["color"].values == ["black", "blue", "red"]
+    assert capabilities.filters["color"].values == ["black", "blue", "red"]
     assert "name" not in capabilities.filters
 
 

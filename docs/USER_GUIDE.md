@@ -38,14 +38,23 @@ The application should be ready to use immediately. If you encounter any issues:
 - **💬 Conversational AI**: Natural language interactions
 - **📱 Responsive Design**: Works on desktop and mobile devices
 
-### Available Product Categories
+### Available Product Filters
 
-- **Bags**: Purses, handbags, totes, clutches
-- **Sunglasses**: Fashion eyewear and accessories
-- **Dresses**: Formal and casual dresses
-- **Skirts**: Various styles and lengths
-- **Tops**: Blouses, sweaters, and shirts
-- **Shoes**: Sandals, heels, flats, and boots
+Catalog filters and allowed values are determined by the loaded catalog and
+the catalog retriever `filter_registry`. They are not fixed in the UI or
+chain server.
+
+To see the current filter fields and values:
+
+```bash
+curl -s http://localhost:8010/capabilities
+curl -s http://localhost:8009/capabilities
+```
+
+The bundled sample catalog currently exposes category and price filters. A
+different catalog can expose different filter fields such as color, material,
+brand, size, department, or any other metadata columns declared in
+`shared/configs/catalog_retriever/config.yaml`.
 
 ## 💬 Using the Chat Interface
 
@@ -401,7 +410,9 @@ AI: "Here are some black shoes that match your image..."
 ### General Questions
 
 **Q: What products can I search for?**
-A: The application includes clothing and accessories: dresses, skirts, tops, shoes, bags, and sunglasses.
+A: Searchable products come from the currently loaded catalog. Check
+`http://localhost:8010/capabilities` for the active hard-filter fields and
+allowed enum values.
 
 **Q: How accurate are the search results?**
 A: The AI uses advanced language models to understand your queries and find relevant products. Results improve with more specific descriptions.

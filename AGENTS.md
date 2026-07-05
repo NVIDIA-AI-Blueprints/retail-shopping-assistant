@@ -178,7 +178,10 @@ Key env vars:
 - `CartItem` rows carry a `price` column; the deterministic `view_cart_total` tool uses these prices instead of letting the LLM do arithmetic. Older DBs are auto-migrated by `_ensure_price_column`.
 - Cart add/remove uses catalog name matching (with normalization + Jaccard fallback) before memory mutation; pure semantic similarity on descriptions is no longer used.
 - The cart agent deterministically resolves pronouns (`it`, `this`) against the most recent product in `RECENT DISCUSSION` and overrides the LLM's `item_name` if they disagree.
-- For image search, catalog retriever bypasses category filtering and relies on similarity ranking. Top-k is applied before price filters, so a tight budget on a high-priced image-similarity cluster can legitimately return zero matches.
+- Catalog retriever applies explicit hard filters, including category and price,
+  over a wider candidate window for text, image, and hybrid search before
+  trimming to top-k. Available filter values come from catalog retriever
+  `/capabilities`, not chain-server category config.
 - Local LLM service is named `nemotron` (was `llama`); chain-server reaches it through `shared/configs/models.yaml` when the app LLM role uses `source: local_nim`.
 - Tool calling against the local NIM requires `--enable-auto-tool-choice --tool-call-parser llama3_json` passthrough args. Without them, requests with `tool_choice="auto"` 400.
 - Nemotron sometimes returns tool calls as XML/JSON inside the assistant `content` field instead of `message.tool_calls`. `chain_server/src/functions.py::parse_tool_call_fallback` handles both shapes; `_coerce_value` parses stringified Python literals (`"[]"`, `"{'k':'v'}"`) so list/dict args don't reach downstream code as strings.

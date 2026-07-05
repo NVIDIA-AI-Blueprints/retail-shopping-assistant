@@ -26,6 +26,7 @@ from catalog_retriever.src.retriever import (
     RetrieverConfig,
     TextEmbeddings,
 )
+from shared.commerce_contracts import CatalogFilterCapability
 
 
 # --------------------------------------------------------------------------->
@@ -45,6 +46,20 @@ def retriever_config() -> RetrieverConfig:
         sim_threshold=0.1,
         text_collection="text_col",
         image_collection="image_col",
+        filter_capabilities={
+            "category": CatalogFilterCapability(
+                type="enum",
+                operators=["in"],
+                source_fields=["subcategory"],
+                values=["bag", "dress"],
+            ),
+            "price": CatalogFilterCapability(
+                type="number",
+                operators=["gte", "lte"],
+                source_fields=["price"],
+                request_aliases={"min": "min_price", "max": "max_price"},
+            ),
+        },
     )
 
 
@@ -75,6 +90,7 @@ def _doc(
     price: Any = 49.99,
     category: str = "dress",
     subcategory: str | None = None,
+    color: str | None = None,
 ) -> SimpleNamespace:
     """Build a minimal object that quacks like a LangChain ``Document``.
 
@@ -93,6 +109,7 @@ def _doc(
             "image": f"{name.lower().replace(' ', '_')}.jpg",
             "category": category,
             "subcategory": sub,
+            "color": color,
         },
     )
 
@@ -293,10 +310,31 @@ class TestApplyStructuredFilters:
         )
         assert [r[0].metadata["name"] for r in filtered] == ["A"]
 
-    def test_no_price_filters_returns_input(self, retriever: Retriever) -> None:
-        # ``min_price`` / ``max_price`` both missing → just passthrough.
+    def test_unknown_filter_returns_input(self, retriever: Retriever) -> None:
         results = [(_doc("A", 10), 0.9)]
         assert retriever._apply_structured_filters(results, filters={"color": "red"}) == results
+
+    def test_enum_filter_uses_declared_metadata_field(
+        self, retriever: Retriever
+    ) -> None:
+        retriever.filter_capabilities["color"] = CatalogFilterCapability(
+            type="enum",
+            operators=["in"],
+            source_fields=["color"],
+            values=["blue", "green"],
+        )
+        results = [
+            (_doc("Blue Dress", color="blue"), 0.9),
+            (_doc("Green Dress", color="green"), 0.8),
+            (_doc("No Color"), 0.7),
+        ]
+
+        filtered = retriever._apply_structured_filters(
+            results,
+            filters={"color": ["blue"]},
+        )
+
+        assert [r[0].metadata["name"] for r in filtered] == ["Blue Dress"]
 
 
 # --------------------------------------------------------------------------->

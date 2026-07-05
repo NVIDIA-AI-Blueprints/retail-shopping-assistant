@@ -9,7 +9,6 @@ from chain_server.src.catalog_request import (
 )
 from shared.commerce_contracts import (
     CatalogCapabilities,
-    CatalogFacetCapability,
     CatalogFilterCapability,
 )
 
@@ -33,10 +32,12 @@ def _capabilities() -> CatalogCapabilities:
                 min_value=39.9,
                 max_value=269.99,
             ),
-        },
-        soft_facets={
-            "style": CatalogFacetCapability(type="text"),
-            "occasion": CatalogFacetCapability(type="text"),
+            "color": CatalogFilterCapability(
+                type="enum",
+                operators=["in"],
+                source_fields=["color"],
+                values=["black", "blue"],
+            ),
         },
     )
 
@@ -45,9 +46,12 @@ def test_builds_hard_filters_from_structured_intent() -> None:
     plan = build_catalog_search_plan(
         CatalogSearchIntent(
             query="work bag",
-            categories=["bag"],
-            max_price=60,
-            soft_preferences={"style": "practical", "unknown": "ignored"},
+            filters={
+                "category": ["bag"],
+                "price": {"max": 60},
+                "color": ["blue"],
+                "unknown": "ignored",
+            },
             strictness="hard",
         ),
         _capabilities(),
@@ -55,19 +59,24 @@ def test_builds_hard_filters_from_structured_intent() -> None:
 
     assert plan.should_search is True
     assert plan.queries == ["work bag"]
-    assert plan.hard_filters == {"category": ["bag"], "max_price": 60}
-    assert plan.soft_preferences == {"style": "practical"}
+    assert plan.hard_filters == {
+        "category": ["bag"],
+        "price": {"max": 60.0},
+        "color": ["blue"],
+    }
     assert plan.strictness == "hard"
     assert plan.search_mode == "text"
 
 
-def test_drops_unsupported_categories_and_invalid_price_range() -> None:
+def test_drops_unsupported_filters_and_invalid_number_range() -> None:
     plan = build_catalog_search_plan(
         CatalogSearchIntent(
             query="watch",
-            categories=["watch"],
-            min_price=200,
-            max_price=50,
+            filters={
+                "category": ["watch"],
+                "color": ["purple"],
+                "price": {"min": 200, "max": 50},
+            },
         ),
         _capabilities(),
     )
@@ -77,7 +86,7 @@ def test_drops_unsupported_categories_and_invalid_price_range() -> None:
 
 def test_defaults_to_hybrid_when_image_is_available() -> None:
     plan = build_catalog_search_plan(
-        CatalogSearchIntent(query="similar shoes", categories=["shoes"]),
+        CatalogSearchIntent(query="similar shoes", filters={"category": ["shoes"]}),
         _capabilities(),
         has_image=True,
     )
@@ -88,13 +97,13 @@ def test_defaults_to_hybrid_when_image_is_available() -> None:
 
 def test_no_query_and_no_image_returns_no_search_plan() -> None:
     plan = build_catalog_search_plan(
-        CatalogSearchIntent(soft_preferences={"style": "practical"}),
+        CatalogSearchIntent(filters={"category": ["bag"]}),
         _capabilities(),
     )
 
     assert plan.should_search is False
     assert plan.no_search_reason == "missing_query_or_image"
-    assert plan.soft_preferences == {"style": "practical"}
+    assert plan.hard_filters == {"category": ["bag"]}
 
 
 def test_uses_explicit_queries_over_single_query() -> None:

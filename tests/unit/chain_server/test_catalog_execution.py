@@ -24,7 +24,7 @@ def test_execute_catalog_search_maps_structured_filters_to_legacy_payload() -> N
         CatalogSearchPlan(
             should_search=True,
             queries=["work bag"],
-            hard_filters={"category": ["bag"], "max_price": 60},
+            hard_filters={"category": ["bag"], "price": {"max": 60}},
             search_mode="text",
             top_k=4,
         ),
@@ -38,7 +38,7 @@ def test_execute_catalog_search_maps_structured_filters_to_legacy_payload() -> N
     assert captured["timeout"] == 5
     assert captured["request"].queries == ["work bag"]
     assert captured["request"].categories == ["bag"]
-    assert captured["request"].filters == {"max_price": 60}
+    assert captured["request"].filters == {"price": {"max": 60}}
     assert captured["request"].image_base64 == ""
 
 

@@ -15,7 +15,6 @@ from typing import Any
 
 from shared.commerce_contracts import (
     CatalogCapabilities,
-    CatalogFacetCapability,
     CatalogFilterCapability,
 )
 
@@ -23,16 +22,10 @@ from shared.commerce_contracts import (
 def build_catalog_capabilities(config: dict[str, Any]) -> CatalogCapabilities:
     rows = _read_rows(config.get("data_source", ""))
     filter_registry = config.get("filter_registry") or {}
-    soft_facet_registry = config.get("soft_facets") or {}
 
     filters = {
         name: _build_filter_capability(spec, rows)
         for name, spec in filter_registry.items()
-        if isinstance(spec, dict)
-    }
-    soft_facets = {
-        name: _build_facet_capability(spec, rows)
-        for name, spec in soft_facet_registry.items()
         if isinstance(spec, dict)
     }
 
@@ -45,7 +38,6 @@ def build_catalog_capabilities(config: dict[str, Any]) -> CatalogCapabilities:
         retrieval_modes=retrieval_modes,
         image_search_enabled=bool(config.get("image_enabled")),
         filters=filters,
-        soft_facets=soft_facets,
     )
 
 
@@ -84,19 +76,6 @@ def _build_filter_capability(
             str(key): str(value)
             for key, value in (spec.get("request_aliases") or {}).items()
         },
-    )
-
-
-def _build_facet_capability(
-    spec: dict[str, Any], rows: list[dict[str, str]]
-) -> CatalogFacetCapability:
-    source_fields = _source_fields(spec)
-    capability_type = str(spec.get("type") or "text")
-    values = _enum_values(rows, source_fields) if capability_type == "enum" else []
-    return CatalogFacetCapability(
-        type=capability_type,  # type: ignore[arg-type]
-        source_fields=source_fields,
-        values=values,
     )
 
 

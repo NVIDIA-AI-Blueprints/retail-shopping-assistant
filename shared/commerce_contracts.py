@@ -138,18 +138,11 @@ class CatalogFilterCapability(CommerceModel):
     request_aliases: dict[str, str] = Field(default_factory=dict)
 
 
-class CatalogFacetCapability(CommerceModel):
-    type: CatalogFilterType
-    source_fields: list[str] = Field(default_factory=list)
-    values: list[str] = Field(default_factory=list)
-
-
 class CatalogCapabilities(CommerceModel):
     catalog_id: str = "default"
     retrieval_modes: list[str] = Field(default_factory=list)
     image_search_enabled: bool = False
     filters: dict[str, CatalogFilterCapability] = Field(default_factory=dict)
-    soft_facets: dict[str, CatalogFacetCapability] = Field(default_factory=dict)
 
 
 class GetProductDetailsInput(CommerceModel):

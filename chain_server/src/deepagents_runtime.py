@@ -18,7 +18,10 @@ from langgraph.checkpoint.memory import MemorySaver
 import requests
 
 from .agenttypes import Cart, State
-from .catalog_capabilities import CatalogCapabilitiesClient
+from .catalog_capabilities import (
+    CatalogCapabilitiesClient,
+    format_catalog_capabilities_for_prompt,
+)
 from .catalog_execution import execute_catalog_search
 from .catalog_request import CatalogSearchIntent, build_catalog_search_plan
 from .commerce_tools import (
@@ -29,6 +32,7 @@ from .commerce_tools import (
 from .media_perception import MediaPerceptionClient
 from shared.commerce_contracts import (
     AddCartItemInput,
+    CatalogCapabilities,
     GetCartInput,
     ProductSummary,
     RemoveCartItemInput,
@@ -76,6 +80,11 @@ class DeepAgentsRuntime:
             config.retriever_port,
             timeout_seconds=config.catalog_search_timeout_seconds,
         )
+
+    def catalog_capabilities(self, *, force_refresh: bool = False) -> CatalogCapabilities:
+        """Return catalog-owned capability metadata for API/UI consumers."""
+
+        return self._catalog_capabilities.get(force_refresh=force_refresh)
 
     async def astream(
         self, state: State, identity: RequestIdentity
@@ -170,14 +179,11 @@ class DeepAgentsRuntime:
         @tool(return_direct=False)
         def search_catalog_tool(
             query: str,
-            category: str = "",
-            min_price: float | None = None,
-            max_price: float | None = None,
-            soft_preferences: dict[str, Any] | None = None,
+            filters: dict[str, Any] | None = None,
             strictness: str = "unspecified",
             search_mode: str | None = None,
         ) -> str:
-            """Execute a structured catalog search request for product discovery."""
+            """Execute product discovery with catalog-declared hard filters."""
 
             capabilities = self._catalog_capabilities.get()
             if capabilities.catalog_id == "unavailable" and not capabilities.filters:
@@ -185,12 +191,7 @@ class DeepAgentsRuntime:
 
             intent = CatalogSearchIntent(
                 query=query,
-                categories=[category] if category else [],
-                min_price=min_price,
-                max_price=max_price,
-                soft_preferences=(
-                    soft_preferences if isinstance(soft_preferences, dict) else {}
-                ),
+                filters=filters if isinstance(filters, dict) else {},
                 strictness=_tool_strictness(strictness),
                 search_mode=_tool_search_mode(search_mode),
             )
@@ -333,17 +334,26 @@ class DeepAgentsRuntime:
         )
 
     def _system_prompt(self) -> str:
-        categories = ", ".join(self.config.categories)
+        catalog_context = format_catalog_capabilities_for_prompt(
+            self._catalog_capabilities.get()
+        )
         return f"""You are a retail shopping assistant for clothing and accessories.
 
 Use tools for catalog facts and cart actions. Do not invent product names,
 prices, availability, materials, care instructions, or cart changes.
 
-Available catalog categories: {categories}
+Catalog capabilities:
+{catalog_context}
 
 Rules:
 - Product discovery, product recommendations, budget filters, and image-similar
   shopping require search_catalog_tool.
+- Use the search_catalog_tool `filters` object only for hard filters listed in
+  Catalog capabilities. Enum filter values must exactly match the listed values.
+  Numeric filters use an object with `min` and/or `max`.
+- If the shopper says "only", "must be", "under", "over", or otherwise gives a
+  strict constraint that is listed as a catalog hard filter, include that
+  constraint in `filters`. Do not place unsupported constraints in `filters`.
 - Media-only or descriptive media requests such as "what's in this look",
   "describe this outfit", "what am I wearing", or "what colors are here" must
   be answered from MEDIA ANALYSIS. Do not call search_catalog_tool and do not
@@ -557,7 +567,7 @@ def _content_to_text(content: Any) -> str:
 
 
 def _tool_strictness(value: str) -> str:
-    return value if value in {"unspecified", "hard", "soft"} else "unspecified"
+    return value if value in {"unspecified", "hard"} else "unspecified"
 
 
 def _tool_search_mode(value: str | None) -> str | None:

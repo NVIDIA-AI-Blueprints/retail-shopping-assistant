@@ -356,6 +356,60 @@ are only soft preferences for request-building and ranking.
 }
 ```
 
+### Catalog Retriever POST `/query/text`
+
+Executes a structured text catalog search on the catalog service port, usually
+`http://localhost:8010/query/text`.
+
+**Request Body:**
+```json
+{
+  "text": ["practical work bag"],
+  "categories": ["bag"],
+  "filters": {"max_price": 60},
+  "k": 4,
+  "candidate_k": 20
+}
+```
+
+`candidate_k` is optional. When omitted, the catalog retriever searches a wider
+candidate window than `k`, applies hard filters over that wider window, and then
+trims the final response to `k`.
+
+**Response:**
+```json
+{
+  "texts": ["Work Bag | structured tote | accessories,bag\nPRICE: 59.0"],
+  "ids": ["123"],
+  "similarities": [0.91],
+  "names": ["Work Bag"],
+  "images": ["/images/work_bag.jpg"],
+  "products": [
+    {
+      "product_id": "123",
+      "display_name": "Work Bag",
+      "description": "structured tote",
+      "category": "bag",
+      "price": {"amount": 59.0, "currency": "USD"},
+      "image_url": "/images/work_bag.jpg",
+      "attributes": {"similarity": 0.91}
+    }
+  ],
+  "diagnostics": {
+    "requested_top_k": 4,
+    "candidate_k": 20,
+    "after_filter_count": 1,
+    "returned_count": 1
+  },
+  "no_result_reason": null
+}
+```
+
+### Catalog Retriever POST `/query/image`
+
+Accepts the same fields as `/query/text`, plus `image_base64`. Explicit category
+and price filters are hard filters for image and hybrid retrieval too.
+
 ### GET `/health`
 
 Health check endpoint to verify service status.

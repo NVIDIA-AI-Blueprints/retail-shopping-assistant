@@ -91,6 +91,8 @@ def _doc(
             "name": name,
             "price": price,
             "image": f"{name.lower().replace(' ', '_')}.jpg",
+            "category": category,
+            "subcategory": sub,
         },
     )
 
@@ -747,7 +749,7 @@ class TestRetrieve:
         assert len(ids) == 1
         assert images == ["silk_dress.jpg"]
 
-    async def test_text_only_no_categories_returns_empty(
+    async def test_text_only_without_categories_searches_all_categories(
         self, retriever: Retriever
     ) -> None:
         retriever.text_db.similarity_search_with_relevance_scores = MagicMock(
@@ -762,7 +764,8 @@ class TestRetrieve:
             verbose=False,
         )
 
-        assert (texts, ids, sims, names, images) == ([], [], [], [], [])
+        assert names == ["Silk Dress"]
+        assert texts and ids and sims and images
 
     async def test_similarity_threshold_drops_low_scores(
         self, retriever: Retriever
@@ -806,7 +809,7 @@ class TestRetrieve:
 
         assert names == ["Mid"]
 
-    async def test_image_search_skips_category_filter(
+    async def test_image_search_applies_explicit_category_filter(
         self, retriever: Retriever
     ) -> None:
         retriever.text_db.similarity_search_with_relevance_scores = MagicMock(
@@ -825,9 +828,32 @@ class TestRetrieve:
             verbose=False,
         )
 
-        # Image search returns results ordered by similarity without category gating.
-        assert "Image Match" in names
-        assert sims[0] == pytest.approx(0.95)
+        assert names == ["Text Match"]
+        assert sims[0] == pytest.approx(0.6)
+
+    async def test_filters_apply_before_trimming_to_top_k(
+        self, retriever: Retriever
+    ) -> None:
+        retriever.text_db.similarity_search_with_relevance_scores = MagicMock(
+            return_value=[
+                (_doc("Over Budget", price=200, category="bag"), 0.95),
+                (_doc("Under Budget", price=50, category="bag"), 0.9),
+            ]
+        )
+
+        output = await retriever.retrieve(
+            query=["work bag"],
+            categories=["bag"],
+            filters={"max_price": 60},
+            k=1,
+            image_bool=False,
+            verbose=False,
+        )
+
+        assert output.names == ["Under Budget"]
+        assert output.diagnostics["candidate_k"] == 5
+        assert output.diagnostics["after_filter_count"] == 1
+        assert output.products[0]["display_name"] == "Under Budget"
 
     async def test_blank_query_replaced_with_dummy(
         self, retriever: Retriever

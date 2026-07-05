@@ -126,6 +126,7 @@ class TextQueryRequest(BaseModel):
     categories: List[str] = []
     filters: Dict[str, Any] = Field(default_factory=dict)
     k: int = 4
+    candidate_k: int | None = None
 
 class ImageQueryRequest(BaseModel):
     text: List[str] = []
@@ -133,46 +134,55 @@ class ImageQueryRequest(BaseModel):
     categories: List[str] = []
     filters: Dict[str, Any] = Field(default_factory=dict)
     k: int = 4
+    candidate_k: int | None = None
 
 # Handles queries only containing text.
 @app.post("/query/text")
 async def query_text(req: TextQueryRequest):
     logging.info(f"CATALOG RETRIEVER | query_text() | Received POST: {req}.")
-    texts, ids, sims, names, images = await retriever.retrieve(
+    result = await retriever.retrieve(
         query=req.text,
         categories=req.categories,
         filters=req.filters,
         k=req.k,
+        candidate_k=req.candidate_k,
         image_bool=False,
         verbose=True
     )
     return {
-        "texts": texts,
-        "ids": ids,
-        "similarities": sims,
-        "names": names,
-        "images": images
+        "texts": result.texts,
+        "ids": result.ids,
+        "similarities": result.similarities,
+        "names": result.names,
+        "images": result.images,
+        "products": result.products,
+        "diagnostics": result.diagnostics,
+        "no_result_reason": result.no_result_reason,
     }
 
 # Handles queries containing text and b64 images.
 @app.post("/query/image")
 async def query_image(req: ImageQueryRequest):
     logging.info(f"CATALOG RETRIEVER | query_image() | Received POST.")
-    texts, ids, sims, names, images = await retriever.retrieve(
+    result = await retriever.retrieve(
         query=req.text,
         image=req.image_base64,
         categories=req.categories,
         filters=req.filters,
         k=req.k,
+        candidate_k=req.candidate_k,
         image_bool=True,
         verbose=True
     )
     return {
-        "texts": texts,
-        "ids": ids,
-        "similarities": sims,
-        "names": names,
-        "images": images
+        "texts": result.texts,
+        "ids": result.ids,
+        "similarities": result.similarities,
+        "names": result.names,
+        "images": result.images,
+        "products": result.products,
+        "diagnostics": result.diagnostics,
+        "no_result_reason": result.no_result_reason,
     }
 
 @app.get("/health")

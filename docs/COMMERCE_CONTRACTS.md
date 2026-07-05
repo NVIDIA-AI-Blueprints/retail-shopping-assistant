@@ -51,6 +51,10 @@ SDK adapter:
   capabilities, separates hard filters from soft preferences, and produces a
   `CatalogSearchPlan`; the catalog execution layer only maps that plan to
   catalog service requests.
+- Catalog retriever now searches a wider candidate window, applies hard filters
+  against structured metadata, then trims to the requested `top_k`. Query
+  responses include structured `products`, diagnostics, and an optional
+  `no_result_reason` in addition to the legacy parallel arrays.
 - Catalog search timeout is configurable through
   `catalog_search_timeout_seconds`. The default is `null`, preserving the
   previous no-timeout catalog POST behavior for slower remote embedding calls.

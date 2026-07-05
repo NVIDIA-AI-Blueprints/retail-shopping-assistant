@@ -116,12 +116,15 @@ class SearchCatalogInput(CommerceModel):
     categories: list[str] = Field(default_factory=list)
     filters: dict[str, Any] = Field(default_factory=dict)
     top_k: int = Field(default=4, ge=1, le=50)
+    candidate_k: int | None = Field(default=None, ge=1, le=200)
 
 
 class SearchCatalogResult(CommerceModel):
     ok: bool
     products: list[ProductSummary] = Field(default_factory=list)
     error: CommerceError | None = None
+    diagnostics: dict[str, Any] = Field(default_factory=dict)
+    no_result_reason: str | None = None
     meta: ToolMeta = Field(default_factory=ToolMeta)
 
 

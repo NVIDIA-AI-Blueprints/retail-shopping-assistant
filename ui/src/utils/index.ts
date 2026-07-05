@@ -5,7 +5,7 @@
  * Utility functions for the Shopping Assistant UI
  */
 
-import { FileUploadResult, UserSession, StreamingChunk, ApiRequest } from '../types';
+import { FileUploadResult, UserSession, StreamingChunk, ApiRequest, MediaAttachment } from '../types';
 import { config } from '../config/config';
 
 const SESSION_STORAGE_KEY = 'shopping_session_identity';
@@ -125,7 +125,8 @@ export const createApiRequest = (
   userSession: UserSession,
   query: string,
   image: string = '',
-  guardrails: boolean = true
+  guardrails: boolean = true,
+  media: MediaAttachment[] = []
 ): ApiRequest => {
   return {
     user_id: userSession.userId,
@@ -135,6 +136,7 @@ export const createApiRequest = (
     query,
     guardrails,
     image,
+    media,
     image_bool: !!image,
   };
 };

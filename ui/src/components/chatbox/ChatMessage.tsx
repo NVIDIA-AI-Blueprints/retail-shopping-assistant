@@ -23,7 +23,7 @@ import React from "react";
 import Showdown from "showdown";
 import SafeHTML from "./SafeHTML";
 import Loader from "./Loader";
-import { ChatMessageProps, MessageRole, ImageContent, ImageRowContent } from "../../types";
+import { ChatMessageProps, ImageContent, ImageRowContent } from "../../types";
 import { isFashionMode } from "../../config/config";
 import nvinfo from "../../assets/nvinfo.jpg";
 
@@ -161,6 +161,19 @@ const ChatMessage = React.forwardRef<HTMLDivElement, ChatMessageProps>(
             src={content as string} 
             alt="User upload"
             style={{ borderRadius: "20px" }} 
+          />
+        </div>
+      );
+    }
+
+    if (role === "user_video" && content) {
+      return (
+        <div className={`messages__item messages__item--${role}`} ref={ref}>
+          <video
+            src={content as string}
+            controls
+            muted
+            style={{ width: "180px", maxHeight: "140px", borderRadius: "20px" }}
           />
         </div>
       );

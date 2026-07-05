@@ -104,4 +104,17 @@ memory_length: 16384
 top_k_retrieve: 4
 catalog_search_timeout_seconds: null
 multimodal: True
+media_input:
+  enabled: true
+  allow_mixed_media: true
+  max_images_per_turn: 1
+  max_videos_per_turn: 1
+  image_mime_types:
+    - "image/jpeg"
+    - "image/png"
+  video_mime_types:
+    - "video/mp4"
+  max_image_bytes: 10485760
+  max_video_bytes: 52428800
+  max_video_duration_seconds: 120
 unsafe_message: "Sorry, I am a shopping assistant that specializes in apparel. Do you have any questions that align better with my expertise?"

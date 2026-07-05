@@ -32,7 +32,7 @@ if str(REPO_ROOT) not in sys.path:
 
 # Several service modules read API keys at import time. Set harmless defaults
 # before any test imports them so we never trip on KeyError during collection.
-for _key in ("LLM_API_KEY", "EMBED_API_KEY", "RAIL_API_KEY", "NVIDIA_API_KEY"):
+for _key in ("LLM_API_KEY", "EMBED_API_KEY", "RAIL_API_KEY", "NVIDIA_API_KEY", "VLM_API_KEY"):
     os.environ.setdefault(_key, f"test-{_key.lower()}")
 os.environ.setdefault("SHARED_CONFIG_ROOT", str(REPO_ROOT / "shared" / "configs"))
 
@@ -68,6 +68,22 @@ def base_config() -> SimpleNamespace:
         top_k_retrieve=4,
         catalog_search_timeout_seconds=None,
         multimodal=True,
+        media_input=SimpleNamespace(
+            enabled=True,
+            allow_mixed_media=True,
+            max_images_per_turn=1,
+            max_videos_per_turn=1,
+            image_mime_types=["image/jpeg", "image/png"],
+            video_mime_types=["video/mp4"],
+            max_image_bytes=10 * 1024 * 1024,
+            max_video_bytes=50 * 1024 * 1024,
+            max_video_duration_seconds=120,
+        ),
+        vlm_enabled=True,
+        vlm_port="http://localhost:8006/v1",
+        vlm_name="test-vlm",
+        vlm_api_key_env="VLM_API_KEY",
+        vlm_api_key_required=True,
         unsafe_message="Sorry, I can only help with shopping questions.",
     )
 

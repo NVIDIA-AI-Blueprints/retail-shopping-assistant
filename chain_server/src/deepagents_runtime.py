@@ -10,6 +10,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import time
 from typing import Any, AsyncIterator
 import uuid
@@ -24,6 +25,7 @@ from .commerce_tools import (
     remove_cart_item,
     search_catalog,
 )
+from .media_perception import MEDIA_ONLY_QUERY, MediaPerceptionClient
 from shared.commerce_contracts import (
     AddCartItemInput,
     GetCartInput,
@@ -69,6 +71,7 @@ class DeepAgentsRuntime:
         self._checkpointer = MemorySaver()
         self._profile_registered = False
         self._product_refs: dict[str, dict[str, ProductSummary]] = {}
+        self._media_perception = MediaPerceptionClient(config)
 
     async def astream(
         self, state: State, identity: RequestIdentity
@@ -99,6 +102,11 @@ class DeepAgentsRuntime:
             state.timings["deepagents"] = time.monotonic() - start
             return state
 
+        media_start = time.monotonic()
+        state.media_analysis = await self._media_perception.analyze(state)
+        if state.media:
+            state.timings["media_perception"] = time.monotonic() - media_start
+
         agent = self._create_agent(state, identity)
         input_message = self._build_user_message(state, identity)
         try:
@@ -122,7 +130,12 @@ class DeepAgentsRuntime:
         if state.guardrails and not self._check_safety("output", identity.context_user_id, state.response):
             state.response = self.config.unsafe_message
 
-        state.context = self._updated_context(state.context, state.query, state.response)
+        state.context = self._updated_context(
+            state.context,
+            state.query,
+            state.response,
+            media_analysis=state.media_analysis,
+        )
         self._persist_context(state, identity)
         state.timings["deepagents"] = time.monotonic() - start
         return state
@@ -159,6 +172,14 @@ class DeepAgentsRuntime:
         ) -> str:
             """Search available catalog products. Use for product discovery and image-similar shopping."""
 
+            if state.media and not _media_query_allows_catalog_search(state.query):
+                return (
+                    "Catalog search skipped: the shopper asked for visual/style "
+                    "analysis, not product retrieval. Answer from MEDIA ANALYSIS "
+                    "only and do not discuss catalog availability, prices, or "
+                    "specific products."
+                )
+
             categories = self._tool_categories(category)
             filters = {
                 key: value
@@ -176,6 +197,19 @@ class DeepAgentsRuntime:
                 self.config.retriever_port,
                 timeout_seconds=self.config.catalog_search_timeout_seconds,
             )
+            fallback_used = False
+            if state.image and state.media_analysis and not result.products and query.strip():
+                result = search_catalog(
+                    SearchCatalogInput(
+                        query=query,
+                        categories=categories,
+                        filters=filters,
+                        top_k=self.config.top_k_retrieve,
+                    ),
+                    self.config.retriever_port,
+                    timeout_seconds=self.config.catalog_search_timeout_seconds,
+                )
+                fallback_used = bool(result.products)
             if not result.ok:
                 return result.error.message if result.error else "Catalog search failed."
             if not result.products:
@@ -187,7 +221,12 @@ class DeepAgentsRuntime:
                 if product.image_url:
                     retrieved[product.display_name] = product.image_url
                 lines.append(_format_product(product))
-            return "\n\n".join(lines)
+            prefix = (
+                "Image similarity returned no matches; text fallback results:\n\n"
+                if fallback_used
+                else ""
+            )
+            return prefix + "\n\n".join(lines)
 
         @tool(return_direct=False)
         def get_cart_tool() -> str:
@@ -292,6 +331,11 @@ Available catalog categories: {categories}
 Rules:
 - Product discovery, product recommendations, budget filters, and image-similar
   shopping require search_catalog_tool.
+- Media-only or descriptive media requests such as "what's in this look",
+  "describe this outfit", "what am I wearing", or "what colors are here" must
+  be answered from MEDIA ANALYSIS. Do not call search_catalog_tool and do not
+  show catalog products unless the shopper explicitly asks to find, shop,
+  recommend, compare, price-check, check availability, or add an item.
 - Use at most one catalog search per user turn. Search with the complete user
   request rather than running many keyword probes. If one search is not enough,
   answer from the results you have or ask one concise clarifying question.
@@ -303,6 +347,12 @@ Rules:
 - If an image is attached, the current image is already available to
   search_catalog_tool. Use that tool for "this", "similar", and image-price
   refinement requests.
+- If MEDIA ANALYSIS is present, use it as the visual/video understanding of
+  the attached media. It can guide search_catalog_tool queries and follow-up
+  pronoun resolution, but catalog tool results remain the source of truth for
+  product names, prices, and availability.
+- If video understanding is unavailable, say so plainly or ask the shopper for
+  a text description. Do not invent visual details.
 - Cart reads require get_cart_tool. Cart totals require view_cart_total_tool.
 - Cart mutations require explicit shopper intent and must use add_cart_item_tool
   or remove_cart_item_tool. Never claim a cart mutation unless the tool reports
@@ -327,6 +377,8 @@ Rules:
             f"CART ID: {identity.cart_id}\n\n"
             f"USER QUERY: {state.query}\n"
             f"IMAGE ATTACHED: {'yes' if state.image else 'no'}\n\n"
+            f"MEDIA ATTACHED:\n{_format_media_summary(state.media)}\n\n"
+            f"MEDIA ANALYSIS:\n{state.media_analysis or '(none)'}\n\n"
             f"CURRENT CART:\n{_format_cart(state.cart)}\n\n"
             f"RECENT DISCUSSION:\n{state.context or '(none)'}"
         )
@@ -416,8 +468,18 @@ Rules:
             return True
         return responses[0].get("content") == text
 
-    def _updated_context(self, old_context: str, query: str, response: str) -> str:
-        new_context = f"{old_context}\nUser: {query}\nAssistant: {response}".strip()
+    def _updated_context(
+        self,
+        old_context: str,
+        query: str,
+        response: str,
+        *,
+        media_analysis: str = "",
+    ) -> str:
+        media_line = f"\nMedia analysis: {media_analysis}" if media_analysis else ""
+        new_context = (
+            f"{old_context}\nUser: {query}{media_line}\nAssistant: {response}"
+        ).strip()
         max_chars = max(1000, int(self.config.memory_length))
         return new_context[-max_chars:]
 
@@ -451,6 +513,64 @@ def create_request_identity(
 def _stable_numeric_id(namespace: str, value: str) -> int:
     digest = hashlib.sha256(f"{namespace}:{value}".encode("utf-8")).hexdigest()
     return int(digest[:15], 16)
+
+
+_EXPLICIT_MEDIA_CATALOG_PATTERNS = (
+    "do you have",
+    "do you carry",
+    "do you sell",
+    "in stock",
+    "available",
+    "availability",
+    "find",
+    "search",
+    "shop",
+    "buy",
+    "purchase",
+    "browse",
+    "show me",
+    "recommend",
+    "suggest",
+    "options",
+    "something like this",
+    "anything like this",
+    "like these",
+    "like this under",
+    "under $",
+    "less than",
+    "cheaper",
+    "budget",
+    "price",
+    "cost",
+    "sale",
+    "add",
+    "cart",
+    "catalog",
+    "product",
+    "products",
+)
+
+_DESCRIPTIVE_MEDIA_QUERY_RE = re.compile(
+    r"^\s*(what(?:'s| is| are)?|describe|break down|analy[sz]e|tell me about|"
+    r"identify|explain|rate)\b",
+    re.IGNORECASE,
+)
+
+
+def _media_query_allows_catalog_search(query: str) -> bool:
+    """Return whether a media-attached turn has explicit shopping intent."""
+
+    normalized = " ".join((query or "").strip().lower().split())
+    if not normalized or normalized == MEDIA_ONLY_QUERY.lower():
+        return False
+
+    if any(pattern in normalized for pattern in _EXPLICIT_MEDIA_CATALOG_PATTERNS):
+        return True
+
+    if _DESCRIPTIVE_MEDIA_QUERY_RE.search(normalized):
+        return False
+
+    return False
 
 
 def _extract_final_text(result: Any) -> str:
@@ -534,6 +654,16 @@ def _format_cart_total(cart: Cart) -> str:
     if missing:
         total += f" excluding items without cached prices: {', '.join(missing)}"
     return "\n".join(lines + [total])
+
+
+def _format_media_summary(media: list[dict[str, Any]]) -> str:
+    if not media:
+        return "(none)"
+    counts: dict[str, int] = {}
+    for item in media:
+        media_type = str(item.get("type") or "unknown")
+        counts[media_type] = counts.get(media_type, 0) + 1
+    return ", ".join(f"{count} {media_type}(s)" for media_type, count in sorted(counts.items()))
 
 
 def _cart_line_by_id(cart_line_id: str, cart: Cart) -> dict[str, Any] | None:

@@ -62,6 +62,14 @@ class State(BaseModel):
     cart: Cart = Field(default_factory=Cart, description="User's shopping cart")
     response: str = Field(default="", description="Generated response from agents")
     image: str = Field(default="", description="Base64 encoded image data")
+    media: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Normalized media attachments for the current turn"
+    )
+    media_analysis: str = Field(
+        default="",
+        description="Structured VLM analysis for the current turn's media"
+    )
     retrieved: Dict[str, str] = Field(
         default_factory=dict,
         description="Dictionary of retrieved product information"

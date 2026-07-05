@@ -26,6 +26,20 @@ from chain_server.src.config import (
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
+def _clear_model_and_service_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    for key in (
+        "CATALOG_RETRIEVER_URL",
+        "MEMORY_RETRIEVER_URL",
+        "RAILS_URL",
+        "CATALOG_SEARCH_TIMEOUT_SECONDS",
+        "LLM_BASE_URL",
+        "LLM_MODEL",
+        "VLM_BASE_URL",
+        "VLM_MODEL",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+
 @pytest.fixture
 def write_yaml(tmp_path: Path):
     """Helper to drop a YAML config into a temporary directory."""
@@ -59,6 +73,9 @@ class TestChainServerConfigValidation:
         assert config.llm_port == valid_config_dict["llm_port"]
         assert config.categories == valid_config_dict["categories"]
         assert config.multimodal is True
+        assert config.vlm_enabled is False
+        assert config.media_input.max_images_per_turn == 1
+        assert config.media_input.max_videos_per_turn == 1
 
     @pytest.mark.parametrize(
         "missing_field",
@@ -158,6 +175,7 @@ class TestLoadConfig:
     def test_returns_typed_chain_server_config(
         self, write_yaml, valid_config_dict: dict, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        _clear_model_and_service_env(monkeypatch)
         monkeypatch.setenv("SHARED_CONFIG_ROOT", str(REPO_ROOT / "shared/configs"))
         monkeypatch.setenv("LLM_API_KEY", "test-key")
         path = write_yaml("config.yaml", valid_config_dict)
@@ -167,10 +185,12 @@ class TestLoadConfig:
         assert isinstance(config, ChainServerConfig)
         assert config.memory_length == valid_config_dict["memory_length"]
         assert config.llm_name == "nvidia/nemotron-3-super-120b-a12b"
+        assert config.vlm_enabled is True
 
     def test_invalid_yaml_surface_as_value_error(
         self, write_yaml, valid_config_dict: dict, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        _clear_model_and_service_env(monkeypatch)
         monkeypatch.setenv("SHARED_CONFIG_ROOT", str(REPO_ROOT / "shared/configs"))
         monkeypatch.setenv("LLM_API_KEY", "test-key")
         bad = dict(valid_config_dict)

@@ -17,7 +17,8 @@ export type MessageRole =
   | 'system' 
   | 'image' 
   | 'image_row' 
-  | 'user_image';
+  | 'user_image'
+  | 'user_video';
 
 export interface ImageContent {
   productUrl: string;
@@ -49,6 +50,7 @@ export interface ApiRequest {
   query: string;
   guardrails: boolean;
   image: string;
+  media?: MediaAttachment[];
   image_bool: boolean;
   session_id?: string;
   conversation_id?: string;
@@ -56,6 +58,30 @@ export interface ApiRequest {
   context?: string;
   cart?: CartData;
   retrieved?: Record<string, string>;
+}
+
+export interface MediaAttachment {
+  type: 'image' | 'video';
+  data: string;
+  mime_type: string;
+  filename?: string;
+}
+
+export interface MediaCapabilities {
+  enabled: boolean;
+  allow_mixed_media: boolean;
+  max_images_per_turn: number;
+  max_videos_per_turn: number;
+  image_mime_types: string[];
+  video_mime_types: string[];
+  max_image_bytes: number;
+  max_video_bytes: number;
+  max_video_duration_seconds: number;
+  vlm_enabled: boolean;
+}
+
+export interface CapabilitiesResponse {
+  media_input: MediaCapabilities;
 }
 
 export interface ApiResponse {

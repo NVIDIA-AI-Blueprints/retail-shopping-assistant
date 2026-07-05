@@ -28,6 +28,42 @@ def load_config_data(base_config_path: str) -> Dict[str, Any]:
     return config
 
 
+class MediaInputConfig(BaseModel):
+    """Configuration for user-attached media accepted by the chain server."""
+
+    enabled: bool = True
+    allow_mixed_media: bool = True
+    max_images_per_turn: int = 1
+    max_videos_per_turn: int = 1
+    image_mime_types: List[str] = Field(default_factory=lambda: ["image/jpeg", "image/png"])
+    video_mime_types: List[str] = Field(default_factory=lambda: ["video/mp4"])
+    max_image_bytes: int = 10 * 1024 * 1024
+    max_video_bytes: int = 50 * 1024 * 1024
+    max_video_duration_seconds: int = 120
+
+    @validator("max_images_per_turn", "max_videos_per_turn")
+    def validate_media_counts(cls, v):
+        if v < 0:
+            raise ValueError("media limits cannot be negative")
+        return v
+
+    @validator("max_image_bytes", "max_video_bytes", "max_video_duration_seconds")
+    def validate_positive_media_limits(cls, v):
+        if v <= 0:
+            raise ValueError("media size and duration limits must be positive")
+        return v
+
+    @validator("image_mime_types", "video_mime_types")
+    def validate_mime_types(cls, v):
+        if not v:
+            raise ValueError("media MIME type lists cannot be empty")
+        return v
+
+    class Config:
+        extra = "forbid"
+        validate_assignment = True
+
+
 class ChainServerConfig(BaseModel):
     """Configuration class for the chain server application."""
     
@@ -36,6 +72,11 @@ class ChainServerConfig(BaseModel):
     llm_name: str = Field(..., description="LLM model name")
     llm_api_key_env: Optional[str] = Field(default="LLM_API_KEY", description="LLM API key environment variable")
     llm_api_key_required: bool = Field(default=True, description="Whether the LLM key must be present")
+    vlm_port: Optional[str] = Field(default=None, description="Optional VLM service endpoint URL")
+    vlm_name: Optional[str] = Field(default=None, description="Optional VLM model name")
+    vlm_api_key_env: Optional[str] = Field(default=None, description="VLM API key environment variable")
+    vlm_api_key_required: bool = Field(default=False, description="Whether the VLM key must be present")
+    vlm_enabled: bool = Field(default=False, description="Whether VLM media perception is enabled")
     
     # Service Endpoints
     retriever_port: str = Field(..., description="Catalog retriever service endpoint")
@@ -61,6 +102,7 @@ class ChainServerConfig(BaseModel):
         ),
     )
     multimodal: bool = Field(..., description="Whether multimodal features are enabled")
+    media_input: MediaInputConfig = Field(default_factory=MediaInputConfig)
     
     # Safety Configuration
     unsafe_message: str = Field(..., description="Message to display for unsafe content")
@@ -69,6 +111,12 @@ class ChainServerConfig(BaseModel):
     def validate_urls(cls, v):
         """Validate that URLs are properly formatted."""
         if not v.startswith(('http://', 'https://')):
+            raise ValueError(f"URL must start with http:// or https://: {v}")
+        return v
+
+    @validator("vlm_port")
+    def validate_optional_vlm_url(cls, v):
+        if v is not None and not v.startswith(("http://", "https://")):
             raise ValueError(f"URL must start with http:// or https://: {v}")
         return v
     
@@ -137,12 +185,24 @@ def load_config(config_path: Optional[str] = None) -> ChainServerConfig:
     model_config = resolve_model_config(config_root=config_root)
     validate_model_config(model_config, roles=("app_llm",))
     app_llm = model_config.require("app_llm")
+    vlm = model_config.get("vlm")
+    if vlm is not None and not vlm.disabled:
+        validate_model_config(model_config, roles=("vlm",))
     config_data.update(
         {
             "llm_port": app_llm.base_url,
             "llm_name": app_llm.model,
             "llm_api_key_env": app_llm.api_key_env,
             "llm_api_key_required": app_llm.api_key_required,
+            "vlm_enabled": bool(vlm is not None and not vlm.disabled),
+            "vlm_port": vlm.base_url if vlm is not None and not vlm.disabled else None,
+            "vlm_name": vlm.model if vlm is not None and not vlm.disabled else None,
+            "vlm_api_key_env": (
+                vlm.api_key_env if vlm is not None and not vlm.disabled else None
+            ),
+            "vlm_api_key_required": (
+                vlm.api_key_required if vlm is not None and not vlm.disabled else False
+            ),
         }
     )
     

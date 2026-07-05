@@ -53,6 +53,9 @@ SDK adapter:
   request-builder layer validates structured agent intent against catalog-owned
   capabilities and produces a `CatalogSearchPlan`; the catalog execution layer
   only maps that plan to catalog service requests.
+- Structured agent intent separates semantic product search text from hard
+  filters. Budget and enum constraints are validated as filters instead of
+  being embedded into the semantic query sent to retrieval.
 - Deep Agents prompt context is also built from catalog-owned capabilities.
   Chain-server no longer ships a product category allowlist for the active
   runtime; changing catalog shape is handled by catalog retriever
@@ -107,9 +110,10 @@ deduplicate mutations yet.
 
 `SearchCatalogInput` intentionally has no `user_id`, cart, memory, session, or
 conversation-history fields. The agent layer can use conversation context to
-decide what query or query terms, optional image, categories, and filters to
-send, but `search_catalog` itself should remain a pure read against the catalog
-for the supplied request.
+decide what semantic product text, optional image, categories, and filters to
+send, but hard constraints such as budget and enum filters should stay out of
+the semantic text. `search_catalog` itself remains a pure read against the
+catalog for the supplied request.
 
 The chain-server request-builder layer consumes `CatalogCapabilities` before it
 creates a product search request. For the current fashion catalog, `category`

@@ -45,7 +45,7 @@ def _capabilities() -> CatalogCapabilities:
 def test_builds_hard_filters_from_structured_intent() -> None:
     plan = build_catalog_search_plan(
         CatalogSearchIntent(
-            query="work bag",
+            semantic_query="work bag",
             filters={
                 "category": ["bag"],
                 "price": {"max": 60},
@@ -58,7 +58,7 @@ def test_builds_hard_filters_from_structured_intent() -> None:
     )
 
     assert plan.should_search is True
-    assert plan.queries == ["work bag"]
+    assert plan.semantic_queries == ["work bag"]
     assert plan.hard_filters == {
         "category": ["bag"],
         "price": {"max": 60.0},
@@ -71,7 +71,7 @@ def test_builds_hard_filters_from_structured_intent() -> None:
 def test_drops_unsupported_filters_and_invalid_number_range() -> None:
     plan = build_catalog_search_plan(
         CatalogSearchIntent(
-            query="watch",
+            semantic_query="watch",
             filters={
                 "category": ["watch"],
                 "color": ["purple"],
@@ -86,7 +86,10 @@ def test_drops_unsupported_filters_and_invalid_number_range() -> None:
 
 def test_defaults_to_hybrid_when_image_is_available() -> None:
     plan = build_catalog_search_plan(
-        CatalogSearchIntent(query="similar shoes", filters={"category": ["shoes"]}),
+        CatalogSearchIntent(
+            semantic_query="similar shoes",
+            filters={"category": ["shoes"]},
+        ),
         _capabilities(),
         has_image=True,
     )
@@ -108,8 +111,31 @@ def test_no_query_and_no_image_returns_no_search_plan() -> None:
 
 def test_uses_explicit_queries_over_single_query() -> None:
     plan = build_catalog_search_plan(
-        CatalogSearchIntent(query="ignored", queries=["bag", "work tote"]),
+        CatalogSearchIntent(
+            semantic_query="ignored",
+            semantic_queries=["bag", "work tote"],
+        ),
         _capabilities(),
     )
 
-    assert plan.queries == ["bag", "work tote"]
+    assert plan.semantic_queries == ["bag", "work tote"]
+
+
+def test_semantic_query_keeps_hard_filters_out_of_search_text() -> None:
+    plan = build_catalog_search_plan(
+        CatalogSearchIntent(
+            semantic_query="floral dresses",
+            filters={
+                "category": ["dress"],
+                "price": {"max": 100},
+            },
+            strictness="hard",
+        ),
+        _capabilities(),
+    )
+
+    assert plan.semantic_queries == ["floral dresses"]
+    assert plan.hard_filters == {
+        "category": ["dress"],
+        "price": {"max": 100.0},
+    }

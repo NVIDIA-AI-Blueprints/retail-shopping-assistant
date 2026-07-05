@@ -15,6 +15,7 @@ from typing import Any, AsyncIterator
 import uuid
 
 from langgraph.checkpoint.memory import MemorySaver
+from pydantic import BaseModel, Field
 import requests
 
 from .agenttypes import Cart, State
@@ -44,6 +45,34 @@ logger = logging.getLogger(__name__)
 _EXCLUDED_DEEP_AGENT_TOOLS = frozenset(
     {"write_todos", "ls", "read_file", "write_file", "edit_file", "glob", "grep", "execute"}
 )
+
+
+class SearchCatalogToolInput(BaseModel):
+    semantic_query: str = Field(
+        default="",
+        description=(
+            "Semantic product search text only. Include product type, style, "
+            "occasion, material, visual descriptors, or other product meaning. "
+            "Exclude hard-filter constraints such as budget, exact enum values, "
+            "strictness words, or quantity limits; put enforceable constraints "
+            "in filters."
+        ),
+    )
+    filters: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Hard filters from Catalog capabilities only. Numeric filters use "
+            "objects like {'max': 100}; enum filters use exact listed values."
+        ),
+    )
+    strictness: str = Field(
+        default="unspecified",
+        description="Use 'hard' when the shopper states an enforceable constraint.",
+    )
+    search_mode: str | None = Field(
+        default=None,
+        description="Optional search mode from Catalog capabilities.",
+    )
 
 
 @dataclass(frozen=True)
@@ -176,9 +205,9 @@ class DeepAgentsRuntime:
         retrieved: dict[str, str] = {}
         state.retrieved = retrieved
 
-        @tool(return_direct=False)
+        @tool(args_schema=SearchCatalogToolInput, return_direct=False)
         def search_catalog_tool(
-            query: str,
+            semantic_query: str,
             filters: dict[str, Any] | None = None,
             strictness: str = "unspecified",
             search_mode: str | None = None,
@@ -190,7 +219,7 @@ class DeepAgentsRuntime:
                 return "Catalog search is unavailable. Please try again."
 
             intent = CatalogSearchIntent(
-                query=query,
+                semantic_query=semantic_query,
                 filters=filters if isinstance(filters, dict) else {},
                 strictness=_tool_strictness(strictness),
                 search_mode=_tool_search_mode(search_mode),
@@ -348,6 +377,9 @@ Catalog capabilities:
 Rules:
 - Product discovery, product recommendations, budget filters, and image-similar
   shopping require search_catalog_tool.
+- Pass only semantic product text to search_catalog_tool.semantic_query. Do not
+  include hard-filter language such as budget limits, strictness words, or exact
+  filter values there. Put enforceable constraints only in filters.
 - Use the search_catalog_tool `filters` object only for hard filters listed in
   Catalog capabilities. Enum filter values must exactly match the listed values.
   Numeric filters use an object with `min` and/or `max`.

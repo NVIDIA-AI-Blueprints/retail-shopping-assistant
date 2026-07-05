@@ -46,7 +46,7 @@ def execute_catalog_search(
     if (
         plan.search_mode == "hybrid"
         and image_base64
-        and plan.queries
+        and plan.semantic_queries
         and result.ok
         and not result.products
     ):
@@ -71,10 +71,10 @@ def _request_from_plan(
         categories = []
 
     effective_image = image_base64 if plan.search_mode in {"image", "hybrid"} else ""
-    query = " ".join(plan.queries)
+    query = " ".join(plan.semantic_queries)
     return SearchCatalogInput(
         query=query,
-        queries=plan.queries,
+        queries=plan.semantic_queries,
         image_base64=effective_image,
         categories=categories,
         filters=hard_filters,

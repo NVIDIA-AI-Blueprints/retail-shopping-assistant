@@ -417,8 +417,9 @@ class TestDeepAgentsRuntimeRefs:
             def __init__(self, *args, **kwargs) -> None:
                 pass
 
-        def fake_tool(*, return_direct: bool = False):
+        def fake_tool(*, args_schema=None, return_direct: bool = False):
             def decorate(fn):
+                fn.args_schema = args_schema
                 fn.return_direct = return_direct
                 return fn
 
@@ -502,8 +503,9 @@ class TestDeepAgentsRuntimeRefs:
             def __init__(self, *args, **kwargs) -> None:
                 pass
 
-        def fake_tool(*, return_direct: bool = False):
+        def fake_tool(*, args_schema=None, return_direct: bool = False):
             def decorate(fn):
+                fn.args_schema = args_schema
                 fn.return_direct = return_direct
                 return fn
 
@@ -591,7 +593,7 @@ class TestDeepAgentsRuntimeRefs:
         tools_by_name = {fn.__name__: fn for fn in captured["tools"]}
 
         result = tools_by_name["search_catalog_tool"](
-            "practical work bag",
+            semantic_query="practical work bag",
             filters={
                 "category": ["bag"],
                 "price": {"max": 60},
@@ -602,6 +604,7 @@ class TestDeepAgentsRuntimeRefs:
 
         assert "PRODUCT_REF: prod_1" in result
         assert state.retrieved == {"Work Bag": "bag.jpg"}
+        assert captured_plan["plan"].semantic_queries == ["practical work bag"]
         assert captured_plan["plan"].hard_filters == {
             "category": ["bag"],
             "price": {"max": 60.0},
@@ -663,8 +666,9 @@ class TestDeepAgentsRuntimeRefs:
             def __init__(self, *args, **kwargs) -> None:
                 pass
 
-        def fake_tool(*, return_direct: bool = False):
+        def fake_tool(*, args_schema=None, return_direct: bool = False):
             def decorate(fn):
+                fn.args_schema = args_schema
                 fn.return_direct = return_direct
                 return fn
 

@@ -189,7 +189,7 @@ plan can contain:
 
 ```json
 {
-  "query": "dresses",
+  "semantic_query": "dresses",
   "filters": {
     "category": ["dress"],
     "color": ["blue"],
@@ -199,6 +199,10 @@ plan can contain:
   "strictness": "hard"
 }
 ```
+
+`semantic_query` is product meaning only. Hard constraints such as budget,
+strict enum filters, and strictness words belong in `filters`/`strictness`, not
+in the semantic search text.
 
 If `color` is not declared as a filter, it is not sent as a hard filter. The
 catalog tool must not pretend it can enforce a field the catalog did not

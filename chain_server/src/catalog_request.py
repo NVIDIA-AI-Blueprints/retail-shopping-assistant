@@ -22,22 +22,24 @@ SearchStrictness = Literal["unspecified", "hard"]
 
 
 class CatalogSearchIntent(BaseModel):
-    query: str = ""
-    queries: list[str] = Field(default_factory=list)
+    semantic_query: str = ""
+    semantic_queries: list[str] = Field(default_factory=list)
     filters: dict[str, Any] = Field(default_factory=dict)
     strictness: SearchStrictness = "unspecified"
     search_mode: SearchMode | None = None
 
     @model_validator(mode="after")
     def normalize_query_fields(self) -> "CatalogSearchIntent":
-        self.query = self.query.strip()
-        self.queries = [query.strip() for query in self.queries if query.strip()]
+        self.semantic_query = self.semantic_query.strip()
+        self.semantic_queries = [
+            query.strip() for query in self.semantic_queries if query.strip()
+        ]
         return self
 
 
 class CatalogSearchPlan(BaseModel):
     should_search: bool
-    queries: list[str] = Field(default_factory=list)
+    semantic_queries: list[str] = Field(default_factory=list)
     hard_filters: dict[str, Any] = Field(default_factory=dict)
     strictness: SearchStrictness = "unspecified"
     search_mode: SearchMode = "text"
@@ -52,11 +54,13 @@ def build_catalog_search_plan(
     has_image: bool = False,
     top_k: int = 4,
 ) -> CatalogSearchPlan:
-    queries = intent.queries or ([intent.query] if intent.query else [])
+    semantic_queries = intent.semantic_queries or (
+        [intent.semantic_query] if intent.semantic_query else []
+    )
     mode = _search_mode(intent.search_mode, capabilities, has_image=has_image)
     hard_filters = _hard_filters(intent, capabilities)
 
-    if not queries and not has_image:
+    if not semantic_queries and not has_image:
         return CatalogSearchPlan(
             should_search=False,
             search_mode=mode,
@@ -68,7 +72,7 @@ def build_catalog_search_plan(
 
     return CatalogSearchPlan(
         should_search=True,
-        queries=queries,
+        semantic_queries=semantic_queries,
         hard_filters=hard_filters,
         strictness=intent.strictness,
         search_mode=mode,

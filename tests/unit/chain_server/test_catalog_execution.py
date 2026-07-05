@@ -23,7 +23,7 @@ def test_execute_catalog_search_maps_structured_filters_to_legacy_payload() -> N
     execution = execute_catalog_search(
         CatalogSearchPlan(
             should_search=True,
-            queries=["work bag"],
+            semantic_queries=["work bag"],
             hard_filters={"category": ["bag"], "price": {"max": 60}},
             search_mode="text",
             top_k=4,
@@ -57,7 +57,7 @@ def test_hybrid_search_retries_text_without_image_when_image_has_no_products() -
     execution = execute_catalog_search(
         CatalogSearchPlan(
             should_search=True,
-            queries=["work bag"],
+            semantic_queries=["work bag"],
             hard_filters={"category": ["bag"]},
             search_mode="hybrid",
             top_k=4,

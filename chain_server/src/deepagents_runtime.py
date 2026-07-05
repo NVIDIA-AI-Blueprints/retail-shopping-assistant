@@ -236,6 +236,18 @@ class DeepAgentsRuntime:
             state.cart = cart
             return _format_cart(cart)
 
+        @tool(return_direct=False)
+        def get_product_details_tool(product_ref: str) -> str:
+            """Read details for a PRODUCT_REF returned by search_catalog_tool."""
+
+            product = self._product_from_ref(identity, product_ref)
+            if product is None:
+                return (
+                    f"No product with PRODUCT_REF '{product_ref}' is available. "
+                    "Search the catalog first and use the PRODUCT_REF from the result."
+                )
+            return _format_product_details(product)
+
         @tool(return_direct=True)
         def add_cart_item_tool(product_ref: str, quantity: int = 1) -> str:
             """Add a catalog item by PRODUCT_REF from a prior search_catalog_tool result."""
@@ -310,6 +322,7 @@ class DeepAgentsRuntime:
             model=model,
             tools=[
                 search_catalog_tool,
+                get_product_details_tool,
                 get_cart_tool,
                 add_cart_item_tool,
                 remove_cart_item_tool,
@@ -341,6 +354,9 @@ Rules:
   answer from the results you have or ask one concise clarifying question.
 - A tool result is enough to produce a final answer. Do not keep searching for
   alternatives unless the shopper explicitly rejects the current result.
+- Product-detail or research questions about a product already returned by
+  search_catalog_tool should use get_product_details_tool with that
+  PRODUCT_REF. Do not run another broad catalog search for known-product facts.
 - When the shopper asks to add an item that has not already been searched in
   this conversation, call search_catalog_tool first, then call
   add_cart_item_tool with the selected PRODUCT_REF.
@@ -359,6 +375,8 @@ Rules:
   success.
 - Use PRODUCT_REF from search_catalog_tool when adding an item. Do not pass
   display names to add_cart_item_tool.
+- Use PRODUCT_REF from search_catalog_tool when requesting product details. Do
+  not pass display names to get_product_details_tool.
 - Use CART_LINE_ID from CURRENT CART or get_cart_tool when removing an item. Do
   not guess cart line IDs from product names.
 - If the shopper asks for anything under a budget without a product type,
@@ -555,6 +573,26 @@ def _format_product(product: Any) -> str:
         f"PRODUCT_REF: {product.product_id}\n"
         f"{product.display_name} | {product.description}{price}"
     ).strip()
+
+
+def _format_product_details(product: ProductSummary) -> str:
+    lines = [
+        f"PRODUCT_REF: {product.product_id}",
+        f"NAME: {product.display_name}",
+    ]
+    if product.category:
+        lines.append(f"CATEGORY: {product.category}")
+    if product.brand:
+        lines.append(f"BRAND: {product.brand}")
+    if product.price:
+        lines.append(f"PRICE: ${product.price.amount:.2f} {product.price.currency}")
+    if product.description:
+        lines.append(f"DESCRIPTION: {product.description}")
+    catalog_text = product.attributes.get("catalog_text") if product.attributes else None
+    if isinstance(catalog_text, str) and catalog_text.strip():
+        lines.append("CATALOG FACTS:")
+        lines.append(catalog_text.strip())
+    return "\n".join(lines)
 
 
 def _format_cart(cart: Cart) -> str:

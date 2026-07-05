@@ -437,6 +437,7 @@ class TestDeepAgentsRuntimeRefs:
 
         tools_by_name = {fn.__name__: fn for fn in captured["tools"]}
         assert tools_by_name["search_catalog_tool"].return_direct is False
+        assert tools_by_name["get_product_details_tool"].return_direct is False
         assert tools_by_name["get_cart_tool"].return_direct is False
         assert tools_by_name["add_cart_item_tool"].return_direct is True
         assert tools_by_name["remove_cart_item_tool"].return_direct is True
@@ -597,6 +598,81 @@ class TestDeepAgentsRuntimeRefs:
 
         assert runtime._product_from_ref(identity_a, "prod_123") == product
         assert runtime._product_from_ref(identity_b, "prod_123") is None
+
+    def test_product_details_tool_reads_cached_product_ref(
+        self,
+        base_config,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        captured: Dict[str, Any] = {}
+        deepagents_mod = ModuleType("deepagents")
+        tools_mod = ModuleType("langchain_core.tools")
+        openai_mod = ModuleType("langchain_openai")
+
+        class FakeProfile:
+            def __init__(self, *args, **kwargs) -> None:
+                pass
+
+        class FakeChatOpenAI:
+            def __init__(self, *args, **kwargs) -> None:
+                pass
+
+        def fake_tool(*, return_direct: bool = False):
+            def decorate(fn):
+                fn.return_direct = return_direct
+                return fn
+
+            return decorate
+
+        def fake_create_deep_agent(**kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace()
+
+        deepagents_mod.GeneralPurposeSubagentProfile = FakeProfile
+        deepagents_mod.HarnessProfile = FakeProfile
+        deepagents_mod.create_deep_agent = fake_create_deep_agent
+        deepagents_mod.register_harness_profile = lambda *args, **kwargs: None
+        tools_mod.tool = fake_tool
+        openai_mod.ChatOpenAI = FakeChatOpenAI
+
+        monkeypatch.setitem(sys.modules, "deepagents", deepagents_mod)
+        monkeypatch.setitem(sys.modules, "langchain_core.tools", tools_mod)
+        monkeypatch.setitem(sys.modules, "langchain_openai", openai_mod)
+
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+        identity = runtime_mod.RequestIdentity(
+            session_id="session-a",
+            conversation_id="conversation-a",
+            cart_id="cart-a",
+            context_user_id=111,
+            cart_user_id=222,
+            request_id="request-a",
+        )
+        runtime._remember_products(
+            identity,
+            [
+                ProductSummary(
+                    product_id="prod_123",
+                    display_name="Work Bag",
+                    description="structured tote",
+                    category="bag",
+                    price=Money(amount=59.0),
+                    attributes={"catalog_text": "Work Bag | structured tote | bag"},
+                )
+            ],
+        )
+
+        runtime._create_agent(State(user_id=111, query="tell me more"), identity)
+        tools_by_name = {fn.__name__: fn for fn in captured["tools"]}
+
+        details = tools_by_name["get_product_details_tool"]("prod_123")
+        missing = tools_by_name["get_product_details_tool"]("Work Bag")
+
+        assert "PRODUCT_REF: prod_123" in details
+        assert "DESCRIPTION: structured tote" in details
+        assert "No product with PRODUCT_REF 'Work Bag'" in missing
 
     def test_format_product_exposes_product_ref(self) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod

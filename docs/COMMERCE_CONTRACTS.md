@@ -39,6 +39,9 @@ SDK adapter:
   returned by catalog search for add operations, and `CART_LINE_ID` values
   returned by cart reads for remove operations. They do not perform hidden
   product-name lookup or fuzzy cart-line matching.
+- Deep Agents product details lookup uses explicit `PRODUCT_REF` values from a
+  prior catalog search in the same conversation. It deepens known products; it
+  is not a second broad search path.
 - Catalog search and cart-read wrapper tools return results to the agent loop
   so explicit cart-mutation requests can search/read and then mutate in one
   turn. Mutation tools still return the authoritative cart result directly.
@@ -85,7 +88,7 @@ The first tool contract set is:
 | Contract | Type | Purpose |
 | --- | --- | --- |
 | `SearchCatalogInput` / `SearchCatalogResult` | Read-only | Find products by query, category, filters, and `top_k`. |
-| `GetProductDetailsInput` / `GetProductDetailsResult` | Read-only | Reserved for fetching one product by durable `product_id` once the catalog exposes one. |
+| `GetProductDetailsInput` / `GetProductDetailsResult` | Read-only | Fetch facts for one known product ref; currently backed by the per-conversation search-result cache until the catalog exposes a durable detail endpoint. |
 | `GetCartInput` / `GetCartResult` | Read-only | Read the authoritative cart for a user. |
 | `GetStorePolicyInput` / `GetStorePolicyResult` | Read-only | Fetch controlled store-policy text by topic. |
 | `AddCartItemInput` / `CartMutationResult` | Mutating | Add a product or variant to the cart from an explicit product ref. |

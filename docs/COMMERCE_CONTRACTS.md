@@ -46,6 +46,11 @@ SDK adapter:
   reference and tests, but they are not the chain-server entrypoint.
 - Catalog search remains stateless: no user, cart, memory, session, or
   conversation-history fields are passed to `search_catalog`.
+- Catalog request-building is now separate from catalog execution. The
+  request-builder layer validates structured agent intent against catalog-owned
+  capabilities, separates hard filters from soft preferences, and produces a
+  `CatalogSearchPlan`; the catalog execution layer only maps that plan to
+  catalog service requests.
 - Catalog search timeout is configurable through
   `catalog_search_timeout_seconds`. The default is `null`, preserving the
   previous no-timeout catalog POST behavior for slower remote embedding calls.
@@ -67,6 +72,7 @@ No ACP/UCP adapter layer has been added yet.
 | `Cart` | User cart with structured lines and optional subtotal. |
 | `CommerceError` | Structured tool error with code, message, retryability, and details. |
 | `ToolMeta` | Trace and idempotency metadata returned by tools. |
+| `CatalogCapabilities` | Catalog-owned declaration of retrieval modes, hard filters, and soft facets. |
 
 ## Tool Contracts
 
@@ -94,6 +100,13 @@ conversation-history fields. The agent layer can use conversation context to
 decide what query or query terms, optional image, categories, and filters to
 send, but `search_catalog` itself should remain a pure read against the catalog
 for the supplied request.
+
+The chain-server request-builder layer consumes `CatalogCapabilities` before it
+creates a product search request. For the current fashion catalog, `category`
+is treated as a hard filter sourced from the catalog `subcategory` field, while
+soft concepts such as color, material, style, occasion, and formality remain
+preferences for language understanding or ranking unless the catalog declares
+them as real filters.
 
 This keeps product search reusable by the Deep Agents adapter, future skills or
 subagents, and later protocol adapters without coupling catalog results to

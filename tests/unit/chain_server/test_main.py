@@ -20,7 +20,15 @@ from fastapi.testclient import TestClient
 
 from chain_server.src.agenttypes import Cart, State
 from shared.commerce_contracts import Cart as CommerceCart
-from shared.commerce_contracts import CartLine, Money, ProductSummary
+from shared.commerce_contracts import (
+    CartLine,
+    CatalogCapabilities,
+    CatalogFacetCapability,
+    CatalogFilterCapability,
+    Money,
+    ProductSummary,
+    SearchCatalogResult,
+)
 
 
 class _StubRuntime:
@@ -373,41 +381,6 @@ class TestDeepAgentsRuntimeScopes:
 
 
 class TestDeepAgentsRuntimeRefs:
-    def test_media_catalog_search_intent_gate(self) -> None:
-        from chain_server.src import deepagents_runtime as runtime_mod
-
-        assert (
-            runtime_mod._media_query_allows_catalog_search("What's in this look")
-            is False
-        )
-        assert (
-            runtime_mod._media_query_allows_catalog_search("describe this outfit")
-            is False
-        )
-        assert runtime_mod._media_query_allows_catalog_search(
-            "The user submitted visual media without additional text."
-        ) is False
-        assert (
-            runtime_mod._media_query_allows_catalog_search(
-                "what is this similar to stylistically"
-            )
-            is False
-        )
-        assert (
-            runtime_mod._media_query_allows_catalog_search("find shoes like this")
-            is True
-        )
-        assert (
-            runtime_mod._media_query_allows_catalog_search(
-                "do you have this under $100"
-            )
-            is True
-        )
-        assert (
-            runtime_mod._media_query_allows_catalog_search("add this to my cart")
-            is True
-        )
-
     def test_search_and_cart_read_tools_are_chainable(
         self,
         base_config,
@@ -469,7 +442,7 @@ class TestDeepAgentsRuntimeRefs:
         assert tools_by_name["remove_cart_item_tool"].return_direct is True
         assert tools_by_name["view_cart_total_tool"].return_direct is True
 
-    def test_media_analysis_query_skips_catalog_tool(
+    def test_search_catalog_tool_executes_structured_plan(
         self,
         base_config,
         monkeypatch: pytest.MonkeyPatch,
@@ -500,8 +473,45 @@ class TestDeepAgentsRuntimeRefs:
             captured.update(kwargs)
             return SimpleNamespace()
 
-        def fail_search_catalog(*args, **kwargs):
-            raise AssertionError("descriptive media queries must not search catalog")
+        capabilities = CatalogCapabilities(
+            catalog_id="fashion",
+            retrieval_modes=["text", "image", "hybrid"],
+            image_search_enabled=True,
+            filters={
+                "category": CatalogFilterCapability(
+                    type="enum",
+                    operators=["in"],
+                    source_fields=["subcategory"],
+                    values=["bag", "dress"],
+                ),
+                "price": CatalogFilterCapability(
+                    type="number",
+                    operators=["gte", "lte"],
+                    source_fields=["price"],
+                ),
+            },
+            soft_facets={
+                "style": CatalogFacetCapability(type="text"),
+            },
+        )
+        captured_plan = {}
+
+        def fake_execute_catalog_search(plan, *args, **kwargs):
+            captured_plan["plan"] = plan
+            return SimpleNamespace(
+                result=SearchCatalogResult(
+                    ok=True,
+                    products=[
+                        ProductSummary(
+                            product_id="prod_1",
+                            display_name="Work Bag",
+                            image_url="bag.jpg",
+                            price=Money(amount=59.0),
+                        )
+                    ],
+                ),
+                fallback_used=False,
+            )
 
         deepagents_mod.GeneralPurposeSubagentProfile = FakeProfile
         deepagents_mod.HarnessProfile = FakeProfile
@@ -513,9 +523,14 @@ class TestDeepAgentsRuntimeRefs:
         monkeypatch.setitem(sys.modules, "deepagents", deepagents_mod)
         monkeypatch.setitem(sys.modules, "langchain_core.tools", tools_mod)
         monkeypatch.setitem(sys.modules, "langchain_openai", openai_mod)
-        monkeypatch.setattr(runtime_mod, "search_catalog", fail_search_catalog)
+        monkeypatch.setattr(
+            runtime_mod,
+            "execute_catalog_search",
+            fake_execute_catalog_search,
+        )
 
         runtime = runtime_mod.DeepAgentsRuntime(base_config)
+        runtime._catalog_capabilities = SimpleNamespace(get=lambda: capabilities)
         identity = runtime_mod.RequestIdentity(
             session_id="session-a",
             conversation_id="conversation-a",
@@ -526,24 +541,28 @@ class TestDeepAgentsRuntimeRefs:
         )
         state = State(
             user_id=111,
-            query="What's in this look",
-            media=[
-                {
-                    "type": "image",
-                    "mime_type": "image/jpeg",
-                    "data": "data:image/jpeg;base64,QUFB",
-                }
-            ],
-            media_analysis='{"summary": "black blazer and white trousers"}',
+            query="show me practical work bags under $60",
         )
 
         runtime._create_agent(state, identity)
         tools_by_name = {fn.__name__: fn for fn in captured["tools"]}
 
-        result = tools_by_name["search_catalog_tool"]("black blazer")
+        result = tools_by_name["search_catalog_tool"](
+            "practical work bag",
+            category="bag",
+            max_price=60,
+            soft_preferences={"style": "practical"},
+            strictness="hard",
+        )
 
-        assert "Catalog search skipped" in result
-        assert state.retrieved == {}
+        assert "PRODUCT_REF: prod_1" in result
+        assert state.retrieved == {"Work Bag": "bag.jpg"}
+        assert captured_plan["plan"].hard_filters == {
+            "category": ["bag"],
+            "max_price": 60,
+        }
+        assert captured_plan["plan"].soft_preferences == {"style": "practical"}
+        assert captured_plan["plan"].strictness == "hard"
 
     def test_product_refs_are_cached_by_conversation(
         self,

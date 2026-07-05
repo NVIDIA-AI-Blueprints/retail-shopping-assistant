@@ -18,6 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 Availability = Literal["in_stock", "out_of_stock", "preorder", "backorder", "unknown"]
+CatalogFilterType = Literal["enum", "number", "text"]
 
 
 class CommerceModel(BaseModel):
@@ -122,6 +123,30 @@ class SearchCatalogResult(CommerceModel):
     products: list[ProductSummary] = Field(default_factory=list)
     error: CommerceError | None = None
     meta: ToolMeta = Field(default_factory=ToolMeta)
+
+
+class CatalogFilterCapability(CommerceModel):
+    type: CatalogFilterType
+    operators: list[str] = Field(default_factory=list)
+    source_fields: list[str] = Field(default_factory=list)
+    values: list[str] = Field(default_factory=list)
+    min_value: float | None = None
+    max_value: float | None = None
+    request_aliases: dict[str, str] = Field(default_factory=dict)
+
+
+class CatalogFacetCapability(CommerceModel):
+    type: CatalogFilterType
+    source_fields: list[str] = Field(default_factory=list)
+    values: list[str] = Field(default_factory=list)
+
+
+class CatalogCapabilities(CommerceModel):
+    catalog_id: str = "default"
+    retrieval_modes: list[str] = Field(default_factory=list)
+    image_search_enabled: bool = False
+    filters: dict[str, CatalogFilterCapability] = Field(default_factory=dict)
+    soft_facets: dict[str, CatalogFacetCapability] = Field(default_factory=dict)
 
 
 class GetProductDetailsInput(CommerceModel):

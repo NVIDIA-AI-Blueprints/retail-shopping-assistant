@@ -13,8 +13,10 @@ import sys
 from shared.model_config import resolve_model_config, validate_model_config
 
 try:
+    from app.capabilities import build_catalog_capabilities
     from app.retriever import Retriever, RetrieverConfig
 except ModuleNotFoundError:
+    from .capabilities import build_catalog_capabilities
     from .retriever import Retriever, RetrieverConfig
 
 # Set up logging 
@@ -116,6 +118,7 @@ retriever = Retriever(config=config)
 logging.info("CATALOG RETRIEVER | startup | Checking and populating Milvus database if needed.")
 retriever.milvus_from_csv(csv_path=data["data_source"], verbose=True)
 logging.info("CATALOG RETRIEVER | startup | Milvus database ready.")
+capabilities = build_catalog_capabilities(data)
 
 # Request bodies
 class TextQueryRequest(BaseModel):
@@ -180,3 +183,9 @@ async def health_check():
         "timestamp": time.time(),
         "version": "1.0.0"
     }
+
+
+@app.get("/capabilities")
+async def get_capabilities():
+    """Return catalog-owned search and filter capabilities."""
+    return capabilities.model_dump()

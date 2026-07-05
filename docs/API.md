@@ -37,6 +37,39 @@ Currently, the API does not require authentication for local deployments. For pr
 
 ## 📊 Data Models
 
+### Catalog Capabilities
+
+The catalog retriever owns its filter and metadata capability contract. Chain
+server request-building code should consume this contract instead of inferring
+filterability from product text or hard-coded category lists.
+
+```typescript
+interface CatalogCapabilities {
+  catalog_id: string;
+  retrieval_modes: Array<'text' | 'image' | 'hybrid'>;
+  image_search_enabled: boolean;
+  filters: Record<string, {
+    type: 'enum' | 'number' | 'text';
+    operators: string[];
+    source_fields: string[];
+    values?: string[];
+    min_value?: number;
+    max_value?: number;
+    request_aliases?: Record<string, string>;
+  }>;
+  soft_facets: Record<string, {
+    type: 'enum' | 'number' | 'text';
+    source_fields: string[];
+    values?: string[];
+  }>;
+}
+```
+
+The default fashion catalog declares `category` as an enum filter sourced from
+the product `subcategory` column, `price` as a numeric filter with `min_price`
+and `max_price` request aliases, and style-oriented metadata such as color,
+material, style, occasion, and formality as soft facets.
+
 ### QueryRequest
 
 The main request model for all shopping queries.
@@ -282,6 +315,43 @@ raw media limit plus JSON overhead. The default nginx configuration uses
     "max_video_bytes": 52428800,
     "max_video_duration_seconds": 120,
     "vlm_enabled": true
+  }
+}
+```
+
+### Catalog Retriever GET `/capabilities`
+
+Catalog retriever exposes a separate capability endpoint on the catalog service
+port, usually `http://localhost:8010/capabilities`. This endpoint describes
+which catalog metadata fields are valid hard filters and which metadata concepts
+are only soft preferences for request-building and ranking.
+
+**Response:** `CatalogCapabilities`
+
+**Example Response:**
+```json
+{
+  "catalog_id": "fashion_products_extended",
+  "retrieval_modes": ["text", "image", "hybrid"],
+  "image_search_enabled": true,
+  "filters": {
+    "category": {
+      "type": "enum",
+      "operators": ["in"],
+      "source_fields": ["subcategory"],
+      "values": ["bag", "dress", "shoes"]
+    },
+    "price": {
+      "type": "number",
+      "operators": ["gte", "lte"],
+      "source_fields": ["price"],
+      "min_value": 39.9,
+      "max_value": 269.99,
+      "request_aliases": {"min": "min_price", "max": "max_price"}
+    }
+  },
+  "soft_facets": {
+    "style": {"type": "text", "source_fields": []}
   }
 }
 ```

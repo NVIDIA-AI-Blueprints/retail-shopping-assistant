@@ -288,7 +288,7 @@ data: {"type": "images", "payload": {"Red Wrap Dress": "https://..."}, "timestam
 
 data: {"type": "content", "payload": "I found several red dresses...", "timestamp": 1716400001.2}
 
-data: {"type": "metrics", "payload": {"timings": {"memory": 0.03, "catalog_search": 0.41, "deepagents": 1.92}, "total_seconds": 2.36, "token_usage": {"input_tokens": 1260, "output_tokens": 180, "total_tokens": 1440, "model_calls": 1}, "model_usage": {"text_embedding": {"status": "used", "calls": 1, "detail": "Catalog text/vector retrieval"}}}, "timestamp": 1716400001.8}
+data: {"type": "metrics", "payload": {"timings": {"memory": 0.03, "catalog_search": 0.41, "deepagents": 1.92}, "total_seconds": 2.36, "token_usage": {"input_tokens": 1260, "output_tokens": 180, "total_tokens": 1440, "model_calls": 1}, "model_usage": {"text_embedding": {"status": "used", "calls": 1, "detail": "Catalog text/vector retrieval"}, "content_safety": {"status": "used", "calls": 2, "detail": "Input and output safety checks"}, "topic_control": {"status": "used", "calls": 1, "detail": "Input topic check"}}}, "timestamp": 1716400001.8}
 
 data: [DONE]
 ```

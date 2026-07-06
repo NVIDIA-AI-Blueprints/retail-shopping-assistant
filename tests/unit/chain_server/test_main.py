@@ -453,6 +453,21 @@ class TestDeepAgentsRuntimeTokenUsage:
         }
 
 
+class TestDeepAgentsRuntimeModelUsage:
+    def test_safety_model_usage_matches_guardrails_flows(self) -> None:
+        from chain_server.src.deepagents_runtime import _record_safety_model_usage
+
+        state = State(user_id=1, query="hello")
+
+        _record_safety_model_usage(state, "input")
+        _record_safety_model_usage(state, "output")
+
+        assert state.model_usage["content_safety"]["status"] == "used"
+        assert state.model_usage["content_safety"]["calls"] == 2
+        assert state.model_usage["topic_control"]["status"] == "used"
+        assert state.model_usage["topic_control"]["calls"] == 1
+
+
 class TestDeepAgentsRuntimeMediaFailures:
     def test_video_dependent_query_short_circuits_when_vlm_is_unavailable(self) -> None:
         from chain_server.src.deepagents_runtime import (

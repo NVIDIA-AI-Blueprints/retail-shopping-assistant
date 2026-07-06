@@ -36,6 +36,8 @@ const InferenceActivityPanel: React.FC<InferenceActivityPanelProps> = ({
   const embeddingCallCount =
     usageCalls(modelUsage, ["text_embedding", "image_embedding"]) || groupedCounts.embedding;
   const omniCallCount = modelUsage.vlm?.calls ?? groupedCounts.vision;
+  const safetyCallCount =
+    usageCalls(modelUsage, ["content_safety", "topic_control"]) || groupedCounts.safety;
 
   return (
     <aside className="inference-panel" aria-label="Inference activity">
@@ -53,7 +55,7 @@ const InferenceActivityPanel: React.FC<InferenceActivityPanelProps> = ({
         <SummaryMetric label="Omni calls" value={omniCallCount} />
         <SummaryMetric label="LLM calls" value={llmCallCount} />
         <SummaryMetric label="Embedding calls" value={embeddingCallCount} />
-        <SummaryMetric label="Safety calls" value={groupedCounts.safety} />
+        <SummaryMetric label="Safety calls" value={safetyCallCount} />
       </div>
 
       <div className="inference-panel__usage" aria-label="Token usage">
@@ -174,8 +176,14 @@ const modelUsageRows = (
     },
     {
       role: "content_safety",
-      label: "Safety",
-      fallbackCalls: countByCategory(events).safety,
+      label: "Content safety",
+      fallbackCalls: 0,
+      fallbackStatus: eventStatus.safety,
+    },
+    {
+      role: "topic_control",
+      label: "Topic control",
+      fallbackCalls: 0,
       fallbackStatus: eventStatus.safety,
     },
   ]

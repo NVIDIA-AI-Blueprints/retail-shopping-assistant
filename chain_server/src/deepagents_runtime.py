@@ -166,6 +166,7 @@ class DeepAgentsRuntime:
             safety_start = time.monotonic()
             input_safe = self._check_safety("input", identity.context_user_id, state.query)
             state.timings["safety_input"] = time.monotonic() - safety_start
+            _record_safety_model_usage(state, "input")
             if not input_safe:
                 state.response = self.config.unsafe_message
                 state.timings["deepagents"] = time.monotonic() - start
@@ -206,6 +207,7 @@ class DeepAgentsRuntime:
             safety_start = time.monotonic()
             output_safe = self._check_safety("output", identity.context_user_id, state.response)
             state.timings["safety_output"] = time.monotonic() - safety_start
+            _record_safety_model_usage(state, "output")
             if not output_safe:
                 state.response = self.config.unsafe_message
 
@@ -709,6 +711,33 @@ def _record_catalog_model_usage(
             calls=1,
             detail="Catalog image similarity retrieval",
         )
+
+
+def _record_safety_model_usage(state: State, mode: str) -> None:
+    if mode == "input":
+        _add_model_usage(
+            state,
+            "content_safety",
+            status="used",
+            calls=1,
+            detail="Input and output safety checks",
+        )
+        _add_model_usage(
+            state,
+            "topic_control",
+            status="used",
+            calls=1,
+            detail="Input topic check",
+        )
+        return
+
+    _add_model_usage(
+        state,
+        "content_safety",
+        status="used",
+        calls=1,
+        detail="Input and output safety checks",
+    )
 
 
 def _add_model_usage(

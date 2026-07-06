@@ -10,28 +10,33 @@ import hashlib
 import json
 import logging
 import os
-import re
 import time
 from typing import Any, AsyncIterator
 import uuid
 
 from langgraph.checkpoint.memory import MemorySaver
+from pydantic import BaseModel, Field
 import requests
 
 from .agenttypes import Cart, State
+from .catalog_capabilities import (
+    CatalogCapabilitiesClient,
+    format_catalog_capabilities_for_prompt,
+)
+from .catalog_execution import execute_catalog_search
+from .catalog_request import CatalogSearchIntent, build_catalog_search_plan
 from .commerce_tools import (
     add_cart_item,
     get_cart,
     remove_cart_item,
-    search_catalog,
 )
-from .media_perception import MEDIA_ONLY_QUERY, MediaPerceptionClient
+from .media_perception import MediaPerceptionClient
 from shared.commerce_contracts import (
     AddCartItemInput,
+    CatalogCapabilities,
     GetCartInput,
     ProductSummary,
     RemoveCartItemInput,
-    SearchCatalogInput,
 )
 
 
@@ -40,6 +45,34 @@ logger = logging.getLogger(__name__)
 _EXCLUDED_DEEP_AGENT_TOOLS = frozenset(
     {"write_todos", "ls", "read_file", "write_file", "edit_file", "glob", "grep", "execute"}
 )
+
+
+class SearchCatalogToolInput(BaseModel):
+    semantic_query: str = Field(
+        default="",
+        description=(
+            "Semantic product search text only. Include product type, style, "
+            "occasion, material, visual descriptors, or other product meaning. "
+            "Exclude hard-filter constraints such as budget, exact enum values, "
+            "strictness words, or quantity limits; put enforceable constraints "
+            "in filters."
+        ),
+    )
+    filters: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Hard filters from Catalog capabilities only. Numeric filters use "
+            "objects like {'max': 100}; enum filters use exact listed values."
+        ),
+    )
+    strictness: str = Field(
+        default="unspecified",
+        description="Use 'hard' when the shopper states an enforceable constraint.",
+    )
+    search_mode: str | None = Field(
+        default=None,
+        description="Optional search mode from Catalog capabilities.",
+    )
 
 
 @dataclass(frozen=True)
@@ -72,6 +105,15 @@ class DeepAgentsRuntime:
         self._profile_registered = False
         self._product_refs: dict[str, dict[str, ProductSummary]] = {}
         self._media_perception = MediaPerceptionClient(config)
+        self._catalog_capabilities = CatalogCapabilitiesClient(
+            config.retriever_port,
+            timeout_seconds=config.catalog_search_timeout_seconds,
+        )
+
+    def catalog_capabilities(self, *, force_refresh: bool = False) -> CatalogCapabilities:
+        """Return catalog-owned capability metadata for API/UI consumers."""
+
+        return self._catalog_capabilities.get(force_refresh=force_refresh)
 
     async def astream(
         self, state: State, identity: RequestIdentity
@@ -163,53 +205,41 @@ class DeepAgentsRuntime:
         retrieved: dict[str, str] = {}
         state.retrieved = retrieved
 
-        @tool(return_direct=False)
+        @tool(args_schema=SearchCatalogToolInput, return_direct=False)
         def search_catalog_tool(
-            query: str,
-            category: str = "",
-            min_price: float | None = None,
-            max_price: float | None = None,
+            semantic_query: str,
+            filters: dict[str, Any] | None = None,
+            strictness: str = "unspecified",
+            search_mode: str | None = None,
         ) -> str:
-            """Search available catalog products. Use for product discovery and image-similar shopping."""
+            """Execute product discovery with catalog-declared hard filters."""
 
-            if state.media and not _media_query_allows_catalog_search(state.query):
-                return (
-                    "Catalog search skipped: the shopper asked for visual/style "
-                    "analysis, not product retrieval. Answer from MEDIA ANALYSIS "
-                    "only and do not discuss catalog availability, prices, or "
-                    "specific products."
-                )
+            capabilities = self._catalog_capabilities.get()
+            if capabilities.catalog_id == "unavailable" and not capabilities.filters:
+                return "Catalog search is unavailable. Please try again."
 
-            categories = self._tool_categories(category)
-            filters = {
-                key: value
-                for key, value in {"min_price": min_price, "max_price": max_price}.items()
-                if value is not None and value > 0
-            }
-            result = search_catalog(
-                SearchCatalogInput(
-                    query=query,
-                    image_base64=state.image,
-                    categories=categories,
-                    filters=filters,
-                    top_k=self.config.top_k_retrieve,
-                ),
+            intent = CatalogSearchIntent(
+                semantic_query=semantic_query,
+                filters=filters if isinstance(filters, dict) else {},
+                strictness=_tool_strictness(strictness),
+                search_mode=_tool_search_mode(search_mode),
+            )
+            plan = build_catalog_search_plan(
+                intent,
+                capabilities,
+                has_image=bool(state.image),
+                top_k=self.config.top_k_retrieve,
+            )
+            if not plan.should_search:
+                return "Catalog search requires a query or image."
+
+            execution = execute_catalog_search(
+                plan,
                 self.config.retriever_port,
+                image_base64=state.image,
                 timeout_seconds=self.config.catalog_search_timeout_seconds,
             )
-            fallback_used = False
-            if state.image and state.media_analysis and not result.products and query.strip():
-                result = search_catalog(
-                    SearchCatalogInput(
-                        query=query,
-                        categories=categories,
-                        filters=filters,
-                        top_k=self.config.top_k_retrieve,
-                    ),
-                    self.config.retriever_port,
-                    timeout_seconds=self.config.catalog_search_timeout_seconds,
-                )
-                fallback_used = bool(result.products)
+            result = execution.result
             if not result.ok:
                 return result.error.message if result.error else "Catalog search failed."
             if not result.products:
@@ -223,7 +253,7 @@ class DeepAgentsRuntime:
                 lines.append(_format_product(product))
             prefix = (
                 "Image similarity returned no matches; text fallback results:\n\n"
-                if fallback_used
+                if execution.fallback_used
                 else ""
             )
             return prefix + "\n\n".join(lines)
@@ -235,6 +265,18 @@ class DeepAgentsRuntime:
             cart = self._read_cart(identity.cart_user_id)
             state.cart = cart
             return _format_cart(cart)
+
+        @tool(return_direct=False)
+        def get_product_details_tool(product_ref: str) -> str:
+            """Read details for a PRODUCT_REF returned by search_catalog_tool."""
+
+            product = self._product_from_ref(identity, product_ref)
+            if product is None:
+                return (
+                    f"No product with PRODUCT_REF '{product_ref}' is available. "
+                    "Search the catalog first and use the PRODUCT_REF from the result."
+                )
+            return _format_product_details(product)
 
         @tool(return_direct=True)
         def add_cart_item_tool(product_ref: str, quantity: int = 1) -> str:
@@ -310,6 +352,7 @@ class DeepAgentsRuntime:
             model=model,
             tools=[
                 search_catalog_tool,
+                get_product_details_tool,
                 get_cart_tool,
                 add_cart_item_tool,
                 remove_cart_item_tool,
@@ -320,17 +363,29 @@ class DeepAgentsRuntime:
         )
 
     def _system_prompt(self) -> str:
-        categories = ", ".join(self.config.categories)
+        catalog_context = format_catalog_capabilities_for_prompt(
+            self._catalog_capabilities.get()
+        )
         return f"""You are a retail shopping assistant for clothing and accessories.
 
 Use tools for catalog facts and cart actions. Do not invent product names,
 prices, availability, materials, care instructions, or cart changes.
 
-Available catalog categories: {categories}
+Catalog capabilities:
+{catalog_context}
 
 Rules:
 - Product discovery, product recommendations, budget filters, and image-similar
   shopping require search_catalog_tool.
+- Pass only semantic product text to search_catalog_tool.semantic_query. Do not
+  include hard-filter language such as budget limits, strictness words, or exact
+  filter values there. Put enforceable constraints only in filters.
+- Use the search_catalog_tool `filters` object only for hard filters listed in
+  Catalog capabilities. Enum filter values must exactly match the listed values.
+  Numeric filters use an object with `min` and/or `max`.
+- If the shopper says "only", "must be", "under", "over", or otherwise gives a
+  strict constraint that is listed as a catalog hard filter, include that
+  constraint in `filters`. Do not place unsupported constraints in `filters`.
 - Media-only or descriptive media requests such as "what's in this look",
   "describe this outfit", "what am I wearing", or "what colors are here" must
   be answered from MEDIA ANALYSIS. Do not call search_catalog_tool and do not
@@ -341,6 +396,9 @@ Rules:
   answer from the results you have or ask one concise clarifying question.
 - A tool result is enough to produce a final answer. Do not keep searching for
   alternatives unless the shopper explicitly rejects the current result.
+- Product-detail or research questions about a product already returned by
+  search_catalog_tool should use get_product_details_tool with that
+  PRODUCT_REF. Do not run another broad catalog search for known-product facts.
 - When the shopper asks to add an item that has not already been searched in
   this conversation, call search_catalog_tool first, then call
   add_cart_item_tool with the selected PRODUCT_REF.
@@ -359,6 +417,8 @@ Rules:
   success.
 - Use PRODUCT_REF from search_catalog_tool when adding an item. Do not pass
   display names to add_cart_item_tool.
+- Use PRODUCT_REF from search_catalog_tool when requesting product details. Do
+  not pass display names to get_product_details_tool.
 - Use CART_LINE_ID from CURRENT CART or get_cart_tool when removing an item. Do
   not guess cart line IDs from product names.
 - If the shopper asks for anything under a budget without a product type,
@@ -382,12 +442,6 @@ Rules:
             f"CURRENT CART:\n{_format_cart(state.cart)}\n\n"
             f"RECENT DISCUSSION:\n{state.context or '(none)'}"
         )
-
-    def _tool_categories(self, category: str) -> list[str]:
-        cleaned = (category or "").strip()
-        if cleaned and cleaned in self.config.categories:
-            return [cleaned]
-        return list(self.config.categories)
 
     def _remember_products(
         self, identity: RequestIdentity, products: list[ProductSummary]
@@ -515,64 +569,6 @@ def _stable_numeric_id(namespace: str, value: str) -> int:
     return int(digest[:15], 16)
 
 
-_EXPLICIT_MEDIA_CATALOG_PATTERNS = (
-    "do you have",
-    "do you carry",
-    "do you sell",
-    "in stock",
-    "available",
-    "availability",
-    "find",
-    "search",
-    "shop",
-    "buy",
-    "purchase",
-    "browse",
-    "show me",
-    "recommend",
-    "suggest",
-    "options",
-    "something like this",
-    "anything like this",
-    "like these",
-    "like this under",
-    "under $",
-    "less than",
-    "cheaper",
-    "budget",
-    "price",
-    "cost",
-    "sale",
-    "add",
-    "cart",
-    "catalog",
-    "product",
-    "products",
-)
-
-_DESCRIPTIVE_MEDIA_QUERY_RE = re.compile(
-    r"^\s*(what(?:'s| is| are)?|describe|break down|analy[sz]e|tell me about|"
-    r"identify|explain|rate)\b",
-    re.IGNORECASE,
-)
-
-
-def _media_query_allows_catalog_search(query: str) -> bool:
-    """Return whether a media-attached turn has explicit shopping intent."""
-
-    normalized = " ".join((query or "").strip().lower().split())
-    if not normalized or normalized == MEDIA_ONLY_QUERY.lower():
-        return False
-
-    if any(pattern in normalized for pattern in _EXPLICIT_MEDIA_CATALOG_PATTERNS):
-        return True
-
-    if _DESCRIPTIVE_MEDIA_QUERY_RE.search(normalized):
-        return False
-
-    return False
-
-
 def _extract_final_text(result: Any) -> str:
     if isinstance(result, dict):
         messages = result.get("messages")
@@ -602,6 +598,14 @@ def _content_to_text(content: Any) -> str:
     return ""
 
 
+def _tool_strictness(value: str) -> str:
+    return value if value in {"unspecified", "hard"} else "unspecified"
+
+
+def _tool_search_mode(value: str | None) -> str | None:
+    return value if value in {"text", "image", "hybrid"} else None
+
+
 def _format_product(product: Any) -> str:
     text = product.attributes.get("catalog_text") if product.attributes else None
     if isinstance(text, str) and text.strip():
@@ -611,6 +615,26 @@ def _format_product(product: Any) -> str:
         f"PRODUCT_REF: {product.product_id}\n"
         f"{product.display_name} | {product.description}{price}"
     ).strip()
+
+
+def _format_product_details(product: ProductSummary) -> str:
+    lines = [
+        f"PRODUCT_REF: {product.product_id}",
+        f"NAME: {product.display_name}",
+    ]
+    if product.category:
+        lines.append(f"CATEGORY: {product.category}")
+    if product.brand:
+        lines.append(f"BRAND: {product.brand}")
+    if product.price:
+        lines.append(f"PRICE: ${product.price.amount:.2f} {product.price.currency}")
+    if product.description:
+        lines.append(f"DESCRIPTION: {product.description}")
+    catalog_text = product.attributes.get("catalog_text") if product.attributes else None
+    if isinstance(catalog_text, str) and catalog_text.strip():
+        lines.append("CATALOG FACTS:")
+        lines.append(catalog_text.strip())
+    return "\n".join(lines)
 
 
 def _format_cart(cart: Cart) -> str:

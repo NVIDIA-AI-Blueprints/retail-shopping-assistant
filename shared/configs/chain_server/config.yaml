@@ -84,17 +84,6 @@ chatter_prompt: |
   - Always format product names as **Product Name** in bold.
   - Keep responses concise and focused on the user's actual request.
   - Respond directly with the final answer; no preamble or meta-commentary.
-categories: [
-    "bag",
-    "sunglasses",
-    "dress",
-    "skirt",
-    "top blouse sweater",
-    "shoes",
-    "earrings",
-    "bracelet",
-    "necklace"
-]
 agent_choices: [
             "cart", 
             "retriever",

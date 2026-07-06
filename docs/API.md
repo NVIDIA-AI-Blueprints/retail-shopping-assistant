@@ -37,6 +37,43 @@ Currently, the API does not require authentication for local deployments. For pr
 
 ## 📊 Data Models
 
+### Catalog Capabilities
+
+The catalog retriever owns its filter and metadata capability contract. Chain
+server request-building code should consume this contract instead of inferring
+filterability from product text or hard-coded category lists.
+
+Filter fields are configured in `shared/configs/catalog_retriever/config.yaml`
+under `filter_registry`. Enum values are never configured statically; they are
+discovered from the configured CSV `source_fields` after the catalog data is
+loaded. See [Catalog Filter Configuration](CATALOG_FILTERS.md) for the operator
+workflow.
+
+```typescript
+interface CatalogCapabilities {
+  catalog_id: string;
+  retrieval_modes: Array<'text' | 'image' | 'hybrid'>;
+  image_search_enabled: boolean;
+  filters: Record<string, {
+    type: 'enum' | 'number' | 'text';
+    operators: string[];
+    source_fields: string[];
+    values?: string[];
+    min_value?: number;
+    max_value?: number;
+    request_aliases?: Record<string, string>;
+  }>;
+}
+```
+
+The default fashion catalog declares `category` as an enum filter sourced from
+the product `subcategory` column, `price` as a numeric filter with `min_price`
+and `max_price` request aliases. Catalogs that can strictly filter by color,
+material, size, or other metadata should declare those fields under
+`filter_registry` too. Do not add static enum values to chain-server config,
+UI code, or prompts. Example enum values in documentation are illustrative
+only; runtime values come from `/capabilities`.
+
 ### QueryRequest
 
 The main request model for all shopping queries.
@@ -104,7 +141,8 @@ cart state cannot bleed across sessions.
 `image` remains supported for backward compatibility and is normalized into the
 same internal media list as `media[]`. New clients should use `media[]` for
 video uploads. The bundled UI calls `/capabilities` on load and enforces the
-configured media counts, MIME types, byte limits, and video duration limit.
+configured media counts, MIME types, byte limits, and video duration limit. That
+same endpoint also exposes catalog filter metadata for future UI controls.
 
 ### Multi-modal Input
 
@@ -262,7 +300,16 @@ curl -X POST "http://localhost:8000/query/timing" \
 
 ### GET `/capabilities`
 
-Returns runtime media settings that clients should enforce before upload.
+Returns runtime media settings that clients should enforce before upload and
+catalog-owned search capability metadata that clients can use to render filter
+controls. Catalog filter values come from the catalog retriever after
+the configured catalog data is loaded; they are not maintained in chain-server
+category config.
+
+The concrete enum values shown below are illustrative response data. Do not
+copy those values into chain-server, UI, or prompt configuration as static
+catalog truth.
+
 The byte limits are raw client file sizes. Browser clients send attachments as
 base64 JSON data URLs, so reverse proxies must allow roughly 4/3 of the largest
 raw media limit plus JSON overhead. The default nginx configuration uses
@@ -282,9 +329,136 @@ raw media limit plus JSON overhead. The default nginx configuration uses
     "max_video_bytes": 52428800,
     "max_video_duration_seconds": 120,
     "vlm_enabled": true
+  },
+  "catalog": {
+    "catalog_id": "fashion_products_extended",
+    "retrieval_modes": ["text", "image", "hybrid"],
+    "image_search_enabled": true,
+    "filters": {
+      "category": {
+        "type": "enum",
+        "operators": ["in"],
+        "source_fields": ["subcategory"],
+        "values": ["bag", "dress", "shoes"]
+      },
+      "price": {
+        "type": "number",
+        "operators": ["gte", "lte"],
+        "source_fields": ["price"],
+        "min_value": 39.9,
+        "max_value": 269.99,
+        "request_aliases": {"min": "min_price", "max": "max_price"}
+      },
+      "color": {
+        "type": "enum",
+        "operators": ["in"],
+        "source_fields": ["color"],
+        "values": ["black", "green"]
+      }
+    }
   }
 }
 ```
+
+### Catalog Retriever GET `/capabilities`
+
+Catalog retriever exposes a separate capability endpoint on the catalog service
+port, usually `http://localhost:8010/capabilities`. This endpoint describes
+which catalog metadata fields are valid hard filters.
+
+For enum filters, `values` is generated from the loaded CSV rows. For numeric
+filters, `min_value` and `max_value` are generated from the loaded CSV rows.
+`filter_registry` specifies field names and types only.
+
+**Response:** `CatalogCapabilities`
+
+**Example Response:**
+The concrete enum values shown below are illustrative response data. The
+catalog retriever derives them from the loaded CSV rows.
+
+```json
+{
+  "catalog_id": "fashion_products_extended",
+  "retrieval_modes": ["text", "image", "hybrid"],
+  "image_search_enabled": true,
+  "filters": {
+    "category": {
+      "type": "enum",
+      "operators": ["in"],
+      "source_fields": ["subcategory"],
+      "values": ["bag", "dress", "shoes"]
+    },
+    "price": {
+      "type": "number",
+      "operators": ["gte", "lte"],
+      "source_fields": ["price"],
+      "min_value": 39.9,
+      "max_value": 269.99,
+      "request_aliases": {"min": "min_price", "max": "max_price"}
+    },
+    "color": {
+      "type": "enum",
+      "operators": ["in"],
+      "source_fields": ["color"],
+      "values": ["black", "green"]
+    }
+  }
+}
+```
+
+### Catalog Retriever POST `/query/text`
+
+Executes a structured text catalog search on the catalog service port, usually
+`http://localhost:8010/query/text`.
+
+**Request Body:**
+```json
+{
+  "text": ["practical work bag"],
+  "categories": ["bag"],
+  "filters": {"price": {"max": 60}},
+  "k": 4,
+  "candidate_k": 20
+}
+```
+
+`candidate_k` is optional. When omitted, the catalog retriever searches a wider
+candidate window than `k`, applies hard filters over that wider window, and then
+trims the final response to `k`.
+
+**Response:**
+```json
+{
+  "texts": ["Work Bag | structured tote | accessories,bag\nPRICE: 59.0"],
+  "ids": ["123"],
+  "similarities": [0.91],
+  "names": ["Work Bag"],
+  "images": ["/images/work_bag.jpg"],
+  "products": [
+    {
+      "product_id": "123",
+      "display_name": "Work Bag",
+      "description": "structured tote",
+      "category": "bag",
+      "price": {"amount": 59.0, "currency": "USD"},
+      "image_url": "/images/work_bag.jpg",
+      "attributes": {"similarity": 0.91}
+    }
+  ],
+  "diagnostics": {
+    "requested_top_k": 4,
+    "candidate_k": 20,
+    "after_filter_count": 1,
+    "returned_count": 1
+  },
+  "no_result_reason": null
+}
+```
+
+### Catalog Retriever POST `/query/image`
+
+Accepts the same fields as `/query/text`, plus `image_base64`. Explicit category
+and price filters are hard filters for image and hybrid retrieval too.
 
 ### GET `/health`
 

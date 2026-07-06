@@ -87,7 +87,6 @@ class TestChainServerConfigValidation:
             "rails_port",
             "routing_prompt",
             "chatter_prompt",
-            "categories",
             "agent_choices",
             "memory_length",
             "top_k_retrieve",
@@ -159,12 +158,22 @@ class TestChainServerConfigValidation:
                 **{**valid_config_dict, "catalog_search_timeout_seconds": value}
             )
 
-    @pytest.mark.parametrize("field", ["categories", "agent_choices"])
+    @pytest.mark.parametrize("field", ["agent_choices"])
     def test_empty_list_fields_are_rejected(
         self, valid_config_dict: dict, field: str
     ) -> None:
         with pytest.raises(ValidationError):
             ChainServerConfig(**{**valid_config_dict, field: []})
+
+    def test_categories_are_optional_legacy_config(
+        self, valid_config_dict: dict
+    ) -> None:
+        config_data = dict(valid_config_dict)
+        del config_data["categories"]
+
+        config = ChainServerConfig(**config_data)
+
+        assert config.categories == []
 
     def test_extra_fields_are_forbidden(self, valid_config_dict: dict) -> None:
         with pytest.raises(ValidationError):

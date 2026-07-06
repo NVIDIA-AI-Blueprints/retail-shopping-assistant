@@ -9,7 +9,8 @@ Performs both of these in parallel and then re-ranks the results from bothmodels
 """
 
 from openai import OpenAI
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from dataclasses import dataclass, field
 from typing import List, Tuple, Dict, Any
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.embeddings import Embeddings
@@ -24,6 +25,7 @@ from .utils import image_url_to_base64, is_url, is_path, image_path_to_base64, r
 import logging
 import asyncio
 from types import SimpleNamespace
+from shared.commerce_contracts import CatalogFilterCapability
 
 # Set up logging 
 logging.basicConfig(
@@ -46,6 +48,26 @@ class RetrieverConfig(BaseModel):
     sim_threshold: float
     text_collection: str
     image_collection: str
+    filter_capabilities: Dict[str, CatalogFilterCapability] = Field(default_factory=dict)
+
+
+@dataclass
+class RetrievalOutput:
+    texts: List[str] = field(default_factory=list)
+    ids: List[str] = field(default_factory=list)
+    similarities: List[float] = field(default_factory=list)
+    names: List[str] = field(default_factory=list)
+    images: List[str] = field(default_factory=list)
+    products: List[Dict[str, Any]] = field(default_factory=list)
+    diagnostics: Dict[str, Any] = field(default_factory=dict)
+    no_result_reason: str | None = None
+
+    def __iter__(self):
+        yield self.texts
+        yield self.ids
+        yield self.similarities
+        yield self.names
+        yield self.images
 
 # Defines a type for storing and embedding text.
 class TextEmbeddings(Embeddings):
@@ -271,6 +293,7 @@ class Retriever:
         self.sim_threshold = config.sim_threshold
         self.text_collection = config.text_collection
         self.image_collection = config.image_collection
+        self.filter_capabilities = config.filter_capabilities
 
         text_key = os.environ.get(self.text_api_key_env, "") if self.text_api_key_env else ""
         image_key = os.environ.get(self.image_api_key_env, "") if self.image_api_key_env else ""
@@ -647,22 +670,34 @@ class Retriever:
         filters: Dict[str, Any] | None = None,
         image: str = "",
         k: int = 4,
+        candidate_k: int | None = None,
         image_bool: bool = False,
         verbose: bool = True
-    ) -> Tuple[List[str], List[str], List[float], List[str], List[str]]:
+    ) -> RetrievalOutput:
         """
         Asynchronously retrieve relevant items from both text and image databases.
         """
+        candidate_limit = max(k, candidate_k or (k * 5))
+        diagnostics: Dict[str, Any] = {
+            "requested_top_k": k,
+            "candidate_k": candidate_limit,
+            "search_mode": "image" if image_bool else "text",
+        }
 
         # Check if our query is blank. If it is, replace it with dummy text.
         local_queries = query
         if not query:
             local_queries = ["Can you find me something like this image?"]
+        query_count = max(1, len(local_queries))
 
         if image_bool:
             if not self.image_enabled or self.image_db is None:
                 logging.info("CATALOG RETRIEVER | retrieve() | Image retrieval requested but image embeddings are disabled.")
-                return [], [], [], [], []
+                diagnostics["returned_count"] = 0
+                return RetrievalOutput(
+                    diagnostics=diagnostics,
+                    no_result_reason="image_embeddings_disabled",
+                )
 
             if verbose:
                 logging.info("CATALOG RETRIEVER | retrieve() | Performing dual retrieval for image input.")
@@ -672,7 +707,13 @@ class Retriever:
             for local_query in local_queries:
                 if verbose:
                     logging.info(f"\t| retrieve() | Checking query: {local_query}.")
-                t2t_tasks.append(asyncio.to_thread(self.text_db.similarity_search_with_relevance_scores, local_query, k=k))
+                t2t_tasks.append(
+                    asyncio.to_thread(
+                        self.text_db.similarity_search_with_relevance_scores,
+                        local_query,
+                        k=candidate_limit,
+                    )
+                )
             if verbose:
                 logging.info("CATALOG RETRIEVER | retrieve() | Started text task.")
             base64_string = image.replace("data:application/octet-stream", "data:image/jpeg")
@@ -680,7 +721,11 @@ class Retriever:
                 logging.info(f"CATALOG RETRIEVER | retrieve() | Starting image task...\n\t| {base64_string[:100]}")
             if verbose:
                 logging.info(f"CATALOG RETRIEVER | retrieve() | Obtained embedding...")
-            i2i_task = asyncio.to_thread(self.image_db.similarity_search_with_relevance_scores, base64_string, k=k*len(query))
+            i2i_task = asyncio.to_thread(
+                self.image_db.similarity_search_with_relevance_scores,
+                base64_string,
+                k=candidate_limit * query_count,
+            )
 
             unformatted_results = await asyncio.gather(*t2t_tasks, i2i_task)
         else:
@@ -691,8 +736,18 @@ class Retriever:
             for local_query in local_queries:
                 if verbose:
                     logging.info(f"\t| retrieve() | Launching text-only retrieval. Query type: {type(local_query)}, Query: {local_query}")
-                results.append(asyncio.to_thread(self.text_db.similarity_search_with_relevance_scores, local_query, k=k*len(query)))
+                results.append(
+                    asyncio.to_thread(
+                        self.text_db.similarity_search_with_relevance_scores,
+                        local_query,
+                        k=candidate_limit * query_count,
+                    )
+                )
             unformatted_results = await asyncio.gather(*results)
+
+        diagnostics["source_result_count"] = sum(
+            len(query_results) for query_results in unformatted_results
+        )
 
         sorted_unformatted_results = []
         for query_results in unformatted_results:
@@ -743,22 +798,51 @@ class Retriever:
                 final_results.append(res)
         
         all_results = final_results
+        diagnostics["deduped_count"] = len(all_results)
 
         if verbose:
             logging.info(f"""CATALOG RETRIEVER | retrieve() | All retrieved results length. {len(all_results)}
                             \n\t| Similarities: {[res[1] for res in all_results]}
                             \n\t| Names: {[res[0].metadata['name'] for res in all_results]}""")
 
-        # Keep the highest-ranked top-k first, then apply explicit filters to that window.
-        ranked_results = all_results[:k]
-        ranked_results = [res for res in ranked_results if res[1] > self.sim_threshold]
-        ranked_results = sorted(ranked_results, key=lambda item: item[1], reverse=True)
+        if not all_results:
+            diagnostics["returned_count"] = 0
+            return RetrievalOutput(
+                diagnostics=diagnostics,
+                no_result_reason="no_candidates",
+            )
+
+        # Apply threshold and hard filters across a wider candidate window before
+        # trimming to the final top-k response.
+        candidate_results = all_results[:candidate_limit]
+        diagnostics["candidate_window_count"] = len(candidate_results)
+        thresholded_results = [
+            res for res in candidate_results if res[1] > self.sim_threshold
+        ]
+        diagnostics["after_threshold_count"] = len(thresholded_results)
+        if not thresholded_results:
+            diagnostics["returned_count"] = 0
+            return RetrievalOutput(
+                diagnostics=diagnostics,
+                no_result_reason="below_similarity_threshold",
+            )
+
+        structured_filters = self._effective_filters(filters, categories)
+        ranked_results = sorted(thresholded_results, key=lambda item: item[1], reverse=True)
         ranked_results = self._apply_structured_filters(
             ranked_results,
-            filters=filters,
+            filters=structured_filters,
             verbose=verbose
         )
+        diagnostics["after_filter_count"] = len(ranked_results)
+        if not ranked_results:
+            diagnostics["returned_count"] = 0
+            return RetrievalOutput(
+                diagnostics=diagnostics,
+                no_result_reason="filtered_out",
+            )
         ranked_results = ranked_results[:k]
+        diagnostics["returned_count"] = len(ranked_results)
 
         if verbose:
             logging.info(
@@ -771,82 +855,23 @@ class Retriever:
         final_sims = [res[1] for res in ranked_results]
         final_names = [res[0].metadata['name'] for res in ranked_results]
         final_images = [res[0].metadata['image'] for res in ranked_results]
+        final_products = [
+            self._product_payload_from_result(res)
+            for res in ranked_results
+        ]
 
         if verbose:
             logging.info(f"CATALOG RETRIEVER | retrieve() | \n\tnames: {final_names} \n\tsimilarities: {final_sims}")
 
-        # Safely extract categories from texts
-        cat_list = []
-        for text in final_texts:
-            try:
-                # Text format: "name | description | category,subcategory"
-                # Extract the last part after | and split by comma
-                category_part = text.split("|")[-1].strip()
-                if "PRICE:" in category_part:
-                    # Handle malformed data where price info got mixed with category
-                    category_part = category_part.split("PRICE:")[0].strip()
-                
-                # Split by comma to get [category, subcategory]
-                parts = category_part.split(",")
-                cats = []
-                for part in parts:
-                    cleaned = part.strip().lower()
-                    if cleaned and not cleaned.startswith("/"):  # Skip malformed data like "/images/..."
-                        cats.append(cleaned)
-                cat_list.append(cats)
-            except Exception as e:
-                if verbose:
-                    logging.warning(f"CATALOG RETRIEVER | Error parsing category from: {text[:50]}... Error: {e}")
-                cat_list.append([])
-
-        if verbose:
-            logging.info(f"CATALOG RETRIEVER | pre-category filtering:\n\tCategories: {cat_list}\n\tUser input: {categories}")
-
-        # For image searches, ALWAYS return all results without category filtering
-        # Image similarity should determine relevance, not predefined categories
-        if image_bool:
-            if verbose:
-                logging.info("CATALOG RETRIEVER | Image search - returning all similarity-based results without category filtering")
-            return final_texts, final_ids, final_sims, final_names, final_images
-        
-        # For text searches, if no categories provided, return empty
-        if not categories:
-            if verbose:
-                logging.info("CATALOG RETRIEVER | No categories provided for text search, returning empty.")
-            return [], [], [], [], []
-
-        # Filter by category - check if any user category matches any product category/subcategory
-        filtered = []
-        for text, id_, sim, name, img, cats in zip(final_texts, 
-                                                   final_ids, 
-                                                   final_sims, 
-                                                   final_names, 
-                                                   final_images, 
-                                                   cat_list):
-            # Check if any user-provided category matches any product category/subcategory
-            match_found = False
-            for user_cat in categories:
-                user_cat_lower = user_cat.lower().strip()
-                for prod_cat in cats:
-                    # Check for partial match (e.g., "bag" matches "bags", "dress" matches "dresses")
-                    if user_cat_lower in prod_cat or prod_cat in user_cat_lower:
-                        match_found = True
-                        break
-                if match_found:
-                    break
-            
-            if match_found:
-                filtered.append((text, id_, sim, name, img))
-
-        if not filtered:
-            if verbose:
-                logging.info("CATALOG RETRIEVER | No matches after category filtering.")
-            return [], [], [], [], []
-
-        texts_out, ids_out, sims_out, names_out, images_out = zip(*filtered)
-        if verbose:
-            logging.info(f"CATALOG RETRIEVER | length of output items: {len(names_out)}")
-        return list(texts_out), list(ids_out), list(sims_out), list(names_out), list(images_out)
+        return RetrievalOutput(
+            texts=final_texts,
+            ids=final_ids,
+            similarities=final_sims,
+            names=final_names,
+            images=final_images,
+            products=final_products,
+            diagnostics=diagnostics,
+        )
 
     @staticmethod
     def _coerce_float(value: Any) -> float | None:
@@ -875,21 +900,14 @@ class Retriever:
         if not filters:
             return results
 
-        min_price = self._coerce_float(filters.get("min_price"))
-        max_price = self._coerce_float(filters.get("max_price"))
-
-        if min_price is None and max_price is None:
+        canonical_filters = self._canonical_filters(filters)
+        if not canonical_filters:
             return results
 
         filtered_results: List[Tuple[Any, float]] = []
         for result in results:
             doc = result[0]
-            price = self._coerce_float(doc.metadata.get("price"))
-            if price is None:
-                continue
-            if min_price is not None and price < min_price:
-                continue
-            if max_price is not None and price > max_price:
+            if not self._metadata_matches_filters(doc.metadata, canonical_filters):
                 continue
             filtered_results.append(result)
 
@@ -900,3 +918,169 @@ class Retriever:
             )
 
         return filtered_results
+
+    def _canonical_filters(self, filters: Dict[str, Any]) -> Dict[str, Any]:
+        canonical: Dict[str, Any] = {}
+        for name, capability in self.filter_capabilities.items():
+            if name in filters:
+                canonical[name] = filters[name]
+            if capability.type == "number":
+                alias_filter = self._number_alias_filter(filters, name, capability)
+                if alias_filter:
+                    existing = canonical.get(name)
+                    if isinstance(existing, dict):
+                        canonical[name] = {**existing, **alias_filter}
+                    else:
+                        canonical[name] = alias_filter
+        return {
+            name: value
+            for name, value in canonical.items()
+            if value not in (None, "", [], {})
+        }
+
+    @staticmethod
+    def _number_alias_filter(
+        filters: Dict[str, Any],
+        name: str,
+        capability: CatalogFilterCapability,
+    ) -> Dict[str, Any]:
+        aliases = {
+            "min": capability.request_aliases.get("min") or f"min_{name}",
+            "max": capability.request_aliases.get("max") or f"max_{name}",
+        }
+        number_filter: Dict[str, Any] = {}
+        for bound, alias in aliases.items():
+            if alias in filters:
+                number_filter[bound] = filters[alias]
+        return number_filter
+
+    def _metadata_matches_filters(
+        self,
+        metadata: Dict[str, Any],
+        filters: Dict[str, Any],
+    ) -> bool:
+        for name, value in filters.items():
+            capability = self.filter_capabilities.get(name)
+            if capability is None:
+                continue
+            if capability.type == "number":
+                if not self._metadata_matches_number_filter(
+                    metadata, value, name, capability
+                ):
+                    return False
+                continue
+            if not self._metadata_matches_value_filter(metadata, value, name, capability):
+                return False
+        return True
+
+    def _metadata_matches_number_filter(
+        self,
+        metadata: Dict[str, Any],
+        value: Any,
+        name: str,
+        capability: CatalogFilterCapability,
+    ) -> bool:
+        bounds = self._normalize_number_filter(value)
+        if not bounds:
+            return True
+        if (
+            bounds.get("min") is not None
+            and bounds.get("max") is not None
+            and bounds["min"] > bounds["max"]
+        ):
+            return False
+
+        metadata_value = self._first_metadata_number(metadata, name, capability)
+        if metadata_value is None:
+            return False
+        if bounds.get("min") is not None and metadata_value < bounds["min"]:
+            return False
+        if bounds.get("max") is not None and metadata_value > bounds["max"]:
+            return False
+        return True
+
+    @classmethod
+    def _normalize_number_filter(cls, value: Any) -> Dict[str, float]:
+        if not isinstance(value, dict):
+            return {}
+        bounds: Dict[str, float] = {}
+        lower = cls._coerce_float(value.get("min", value.get("gte")))
+        upper = cls._coerce_float(value.get("max", value.get("lte")))
+        if lower is not None:
+            bounds["min"] = lower
+        if upper is not None:
+            bounds["max"] = upper
+        return bounds
+
+    @classmethod
+    def _first_metadata_number(
+        cls,
+        metadata: Dict[str, Any],
+        name: str,
+        capability: CatalogFilterCapability,
+    ) -> float | None:
+        for field in capability.source_fields or [name]:
+            value = cls._coerce_float(metadata.get(field))
+            if value is not None:
+                return value
+        return None
+
+    def _metadata_matches_value_filter(
+        self,
+        metadata: Dict[str, Any],
+        value: Any,
+        name: str,
+        capability: CatalogFilterCapability,
+    ) -> bool:
+        requested_values = self._normalize_filter_values(value)
+        if not requested_values:
+            return True
+        metadata_values = {
+            str(metadata.get(field) or "").strip().lower()
+            for field in capability.source_fields or [name]
+            if str(metadata.get(field) or "").strip()
+        }
+        return bool(metadata_values.intersection(requested_values))
+
+    @staticmethod
+    def _normalize_filter_values(value: Any) -> set[str]:
+        if value is None:
+            return set()
+        if isinstance(value, list):
+            return {str(item).strip().lower() for item in value if str(item).strip()}
+        text = str(value).strip()
+        return {text.lower()} if text else set()
+
+    @staticmethod
+    def _effective_filters(
+        filters: Dict[str, Any] | None,
+        categories: List[str],
+    ) -> Dict[str, Any]:
+        effective = dict(filters or {})
+        if categories and "category" not in effective:
+            effective["category"] = categories
+        return effective
+
+    @staticmethod
+    def _product_payload_from_result(result: Tuple[Any, float]) -> Dict[str, Any]:
+        doc, similarity = result
+        metadata = doc.metadata
+        price = Retriever._coerce_float(metadata.get("price"))
+        product: Dict[str, Any] = {
+            "product_id": str(metadata.get("pk") or metadata.get("name")),
+            "display_name": str(metadata.get("name") or ""),
+            "description": str(metadata.get("description") or doc.page_content or ""),
+            "category": str(metadata.get("subcategory") or metadata.get("category") or ""),
+            "image_url": str(metadata.get("image") or ""),
+            "attributes": {
+                "catalog_text": (
+                    doc.page_content + f"\nPRICE: {metadata.get('price')}"
+                ),
+                "similarity": float(similarity),
+                "source_category": metadata.get("category"),
+                "source_subcategory": metadata.get("subcategory"),
+            },
+        }
+        if price is not None:
+            product["price"] = {"amount": price, "currency": "USD"}
+        return product

@@ -351,45 +351,62 @@ chatter_prompt: |
   You are a helpful shopping assistant specializing in...
 ```
 
-### Updating Categories
+### Updating Catalog Filter Metadata
 
-The system uses a static list of product categories for classification and retrieval. These categories are defined in the configuration file and should be updated when new product types are added to the system.
+The active runtime gets available product filters from the catalog retriever
+after the catalog data is loaded. Do not maintain product categories in
+`shared/configs/chain_server/config.yaml`.
 
-#### Current Categories
+The authoritative guide for this workflow is
+[Catalog Filter Configuration](CATALOG_FILTERS.md). The short version is:
+`filter_registry` declares filter field names, types, source fields, and
+operators; enum values are discovered from the ingested CSV and exposed through
+`/capabilities`.
 
-The following categories are currently supported:
-- **Bags**: Handbags, purses, clutches
-- **Sunglasses**: Eyewear and sun protection
-- **Dresses**: Various dress styles and lengths
-- **Skirts**: Different skirt types and lengths
-- **Top/Blouse/Sweater**: Upper body garments
-- **Shoes**: Footwear including heels, flats, and sandals
-- **Earrings**: Jewelry worn on the lobe or edge of the ear
-- **Bracelets**: Jewelry worn on the wrist or arm
-- **Necklaces**: Jawelry wrong around the neck
+#### How to Update Filters
 
-#### How to Update Categories
+1. **Update Product Data**: Add the relevant columns and values to the catalog
+   CSV configured by `shared/configs/catalog_retriever/config.yaml`.
+2. **Declare Hard Filters**: Add real filterable fields under
+   `filter_registry` in `shared/configs/catalog_retriever/config.yaml`. Enum
+   values are discovered from the configured `source_fields`; numeric filters
+   get their min/max range from the catalog rows. Do not hardcode enum values
+   in chain-server config, UI code, or prompts.
+3. **Restart/Reindex**: Restart the catalog retriever so it loads the new data
+   and exposes updated `/capabilities`.
+4. **Verify Capabilities**: Check `http://localhost:8010/capabilities` or the
+   chain-server aggregate `http://localhost:8009/capabilities`.
 
-1. **Edit Configuration Files**: Update the categories list in `shared/configs/chain_server/config.yaml`
-2. **Restart Services**: After updating categories, restart the chain server and catalog retriever services
-3. **Update Product Data**: Ensure new products in your catalog are tagged with the appropriate categories
-4. **Test Classification**: Verify that the LLM can properly classify queries into the new categories
-
-#### Configuration File Location
+#### Example Catalog Retriever Configuration
 
 ```yaml
-# shared/configs/chain_server/config.yaml
-categories: [
-    "bag",
-    "sunglasses", 
-    "dress",
-    "skirt",
-    "top blouse sweater",
-    "shoes",
-    "earrings",
-    "bracelet",
-    "necklace"
-]
+# shared/configs/catalog_retriever/config.yaml
+filter_registry:
+  category:
+    type: "enum"
+    source_fields:
+      - "subcategory"
+    operators:
+      - "in"
+  price:
+    type: "number"
+    source_fields:
+      - "price"
+    operators:
+      - "gte"
+      - "lte"
+  color:
+    type: "enum"
+    source_fields:
+      - "color"
+    operators:
+      - "in"
+  material:
+    type: "enum"
+    source_fields:
+      - "material"
+    operators:
+      - "in"
 ```
 
 ### Model Routing

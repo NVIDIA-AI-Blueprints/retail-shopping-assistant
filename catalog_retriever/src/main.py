@@ -13,8 +13,10 @@ import sys
 from shared.model_config import resolve_model_config, validate_model_config
 
 try:
+    from app.capabilities import build_catalog_capabilities
     from app.retriever import Retriever, RetrieverConfig
 except ModuleNotFoundError:
+    from .capabilities import build_catalog_capabilities
     from .retriever import Retriever, RetrieverConfig
 
 # Set up logging 
@@ -92,6 +94,7 @@ data.update(
         "image_api_key_env": image_embedding.api_key_env if image_enabled else None,
     }
 )
+capabilities = build_catalog_capabilities(data)
 
 
 # Setup Retriever once when app starts
@@ -107,7 +110,8 @@ config = RetrieverConfig(
     db_name=data["db_name"],
     sim_threshold=data["sim_threshold"],
     text_collection=data["text_collection"],
-    image_collection=data["image_collection"]
+    image_collection=data["image_collection"],
+    filter_capabilities=capabilities.filters,
 )
 
 logging.info("CATALOG RETRIEVER | startup | config.yaml ingested.")
@@ -123,6 +127,7 @@ class TextQueryRequest(BaseModel):
     categories: List[str] = []
     filters: Dict[str, Any] = Field(default_factory=dict)
     k: int = 4
+    candidate_k: int | None = None
 
 class ImageQueryRequest(BaseModel):
     text: List[str] = []
@@ -130,46 +135,55 @@ class ImageQueryRequest(BaseModel):
     categories: List[str] = []
     filters: Dict[str, Any] = Field(default_factory=dict)
     k: int = 4
+    candidate_k: int | None = None
 
 # Handles queries only containing text.
 @app.post("/query/text")
 async def query_text(req: TextQueryRequest):
     logging.info(f"CATALOG RETRIEVER | query_text() | Received POST: {req}.")
-    texts, ids, sims, names, images = await retriever.retrieve(
+    result = await retriever.retrieve(
         query=req.text,
         categories=req.categories,
         filters=req.filters,
         k=req.k,
+        candidate_k=req.candidate_k,
         image_bool=False,
         verbose=True
     )
     return {
-        "texts": texts,
-        "ids": ids,
-        "similarities": sims,
-        "names": names,
-        "images": images
+        "texts": result.texts,
+        "ids": result.ids,
+        "similarities": result.similarities,
+        "names": result.names,
+        "images": result.images,
+        "products": result.products,
+        "diagnostics": result.diagnostics,
+        "no_result_reason": result.no_result_reason,
     }
 
 # Handles queries containing text and b64 images.
 @app.post("/query/image")
 async def query_image(req: ImageQueryRequest):
     logging.info(f"CATALOG RETRIEVER | query_image() | Received POST.")
-    texts, ids, sims, names, images = await retriever.retrieve(
+    result = await retriever.retrieve(
         query=req.text,
         image=req.image_base64,
         categories=req.categories,
         filters=req.filters,
         k=req.k,
+        candidate_k=req.candidate_k,
         image_bool=True,
         verbose=True
     )
     return {
-        "texts": texts,
-        "ids": ids,
-        "similarities": sims,
-        "names": names,
-        "images": images
+        "texts": result.texts,
+        "ids": result.ids,
+        "similarities": result.similarities,
+        "names": result.names,
+        "images": result.images,
+        "products": result.products,
+        "diagnostics": result.diagnostics,
+        "no_result_reason": result.no_result_reason,
     }
 
 @app.get("/health")
@@ -180,3 +194,9 @@ async def health_check():
         "timestamp": time.time(),
         "version": "1.0.0"
     }
+
+
+@app.get("/capabilities")
+async def get_capabilities():
+    """Return catalog-owned search and filter capabilities."""
+    return capabilities.model_dump()

@@ -86,16 +86,26 @@ The application comes with sample product data (`products_extended.csv`), but yo
 
 ### CSV File Format
 
-Your custom CSV file should include the following columns:
+Your custom CSV file should include product text fields and any metadata fields
+you want the catalog retriever to expose as hard filters. The default
+fashion catalog uses the columns below, but future catalogs can use different
+filter columns when `shared/configs/catalog_retriever/config.yaml` declares
+them in `filter_registry`.
+
+Do not copy enum values such as colors, materials, sizes, or categories into
+configuration. Declare the CSV field names in `filter_registry`; the catalog
+retriever discovers the actual values after it loads the CSV. See
+[Catalog Filter Configuration](CATALOG_FILTERS.md) for the detailed workflow.
 
 | Column | Description | Required | Example |
 |--------|-------------|----------|---------|
-| `item_name` | Product name | Yes | "Classic Black Patent Leather Purse" |
-| `item_description` | Product description | Yes | "Elegant black patent leather purse..." |
-| `category` | Product category | Yes | "bag" |
+| `name` | Product name | Yes | "Classic Black Patent Leather Purse" |
+| `description` | Product description | Yes | "Elegant black patent leather purse..." |
+| `category` / `subcategory` | Default catalog category metadata | No | "bag" |
 | `brand` | Product brand | No | "Fashion Brand" |
 | `price` | Product price | No | "89.99" |
-| `image_url` | Product image URL or filename | No | "purse_image.jpg" |
+| custom metadata | Fields declared as filters | No | "green", "cotton" |
+| `image` | Product image URL or filename | No | "purse_image.jpg" |
 
 ### Step-by-Step Guide
 
@@ -104,9 +114,9 @@ Your custom CSV file should include the following columns:
 1. **Create your CSV file** with your product data:
    ```bash
    # Example: my_products.csv
-   item_name,item_description,category,brand,price,image_url
-   "Custom Product 1","Description of product 1","shoes","Brand A","99.99","product1.jpg"
-   "Custom Product 2","Description of product 2","bag","Brand B","149.99","product2.jpg"
+   name,description,category,subcategory,color,brand,price,image
+   "Custom Product 1","Description of product 1","fashion","shoes","black","Brand A","99.99","product1.jpg"
+   "Custom Product 2","Description of product 2","fashion","bag","green","Brand B","149.99","product2.jpg"
    ```
 
 2. **Add the CSV file** to the shared data directory:
@@ -162,7 +172,7 @@ If your products have images:
 
 2. **Update image URLs** in your CSV to reference the filenames:
    ```csv
-   item_name,item_description,category,image_url
+   name,description,subcategory,image
    "Product 1","Description","shoes","product1.jpg"
    ```
 

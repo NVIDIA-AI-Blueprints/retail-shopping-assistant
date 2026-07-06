@@ -26,6 +26,7 @@ from catalog_retriever.src.retriever import (
     RetrieverConfig,
     TextEmbeddings,
 )
+from shared.commerce_contracts import CatalogFilterCapability
 
 
 # --------------------------------------------------------------------------->
@@ -45,6 +46,20 @@ def retriever_config() -> RetrieverConfig:
         sim_threshold=0.1,
         text_collection="text_col",
         image_collection="image_col",
+        filter_capabilities={
+            "category": CatalogFilterCapability(
+                type="enum",
+                operators=["in"],
+                source_fields=["subcategory"],
+                values=["bag", "dress"],
+            ),
+            "price": CatalogFilterCapability(
+                type="number",
+                operators=["gte", "lte"],
+                source_fields=["price"],
+                request_aliases={"min": "min_price", "max": "max_price"},
+            ),
+        },
     )
 
 
@@ -75,6 +90,7 @@ def _doc(
     price: Any = 49.99,
     category: str = "dress",
     subcategory: str | None = None,
+    color: str | None = None,
 ) -> SimpleNamespace:
     """Build a minimal object that quacks like a LangChain ``Document``.
 
@@ -91,6 +107,9 @@ def _doc(
             "name": name,
             "price": price,
             "image": f"{name.lower().replace(' ', '_')}.jpg",
+            "category": category,
+            "subcategory": sub,
+            "color": color,
         },
     )
 
@@ -291,10 +310,31 @@ class TestApplyStructuredFilters:
         )
         assert [r[0].metadata["name"] for r in filtered] == ["A"]
 
-    def test_no_price_filters_returns_input(self, retriever: Retriever) -> None:
-        # ``min_price`` / ``max_price`` both missing → just passthrough.
+    def test_unknown_filter_returns_input(self, retriever: Retriever) -> None:
         results = [(_doc("A", 10), 0.9)]
         assert retriever._apply_structured_filters(results, filters={"color": "red"}) == results
+
+    def test_enum_filter_uses_declared_metadata_field(
+        self, retriever: Retriever
+    ) -> None:
+        retriever.filter_capabilities["color"] = CatalogFilterCapability(
+            type="enum",
+            operators=["in"],
+            source_fields=["color"],
+            values=["blue", "green"],
+        )
+        results = [
+            (_doc("Blue Dress", color="blue"), 0.9),
+            (_doc("Green Dress", color="green"), 0.8),
+            (_doc("No Color"), 0.7),
+        ]
+
+        filtered = retriever._apply_structured_filters(
+            results,
+            filters={"color": ["blue"]},
+        )
+
+        assert [r[0].metadata["name"] for r in filtered] == ["Blue Dress"]
 
 
 # --------------------------------------------------------------------------->
@@ -747,7 +787,7 @@ class TestRetrieve:
         assert len(ids) == 1
         assert images == ["silk_dress.jpg"]
 
-    async def test_text_only_no_categories_returns_empty(
+    async def test_text_only_without_categories_searches_all_categories(
         self, retriever: Retriever
     ) -> None:
         retriever.text_db.similarity_search_with_relevance_scores = MagicMock(
@@ -762,7 +802,8 @@ class TestRetrieve:
             verbose=False,
         )
 
-        assert (texts, ids, sims, names, images) == ([], [], [], [], [])
+        assert names == ["Silk Dress"]
+        assert texts and ids and sims and images
 
     async def test_similarity_threshold_drops_low_scores(
         self, retriever: Retriever
@@ -806,7 +847,7 @@ class TestRetrieve:
 
         assert names == ["Mid"]
 
-    async def test_image_search_skips_category_filter(
+    async def test_image_search_applies_explicit_category_filter(
         self, retriever: Retriever
     ) -> None:
         retriever.text_db.similarity_search_with_relevance_scores = MagicMock(
@@ -825,9 +866,32 @@ class TestRetrieve:
             verbose=False,
         )
 
-        # Image search returns results ordered by similarity without category gating.
-        assert "Image Match" in names
-        assert sims[0] == pytest.approx(0.95)
+        assert names == ["Text Match"]
+        assert sims[0] == pytest.approx(0.6)
+
+    async def test_filters_apply_before_trimming_to_top_k(
+        self, retriever: Retriever
+    ) -> None:
+        retriever.text_db.similarity_search_with_relevance_scores = MagicMock(
+            return_value=[
+                (_doc("Over Budget", price=200, category="bag"), 0.95),
+                (_doc("Under Budget", price=50, category="bag"), 0.9),
+            ]
+        )
+
+        output = await retriever.retrieve(
+            query=["work bag"],
+            categories=["bag"],
+            filters={"max_price": 60},
+            k=1,
+            image_bool=False,
+            verbose=False,
+        )
+
+        assert output.names == ["Under Budget"]
+        assert output.diagnostics["candidate_k"] == 5
+        assert output.diagnostics["after_filter_count"] == 1
+        assert output.products[0]["display_name"] == "Under Budget"
 
     async def test_blank_query_replaced_with_dummy(
         self, retriever: Retriever

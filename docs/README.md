@@ -11,6 +11,7 @@ Welcome to the Retail Shopping Assistant documentation! This hub provides compre
 
 ### 🔧 Technical Documentation
 - **[API Documentation](API.md)** - Complete API reference
+- **[Catalog Filter Configuration](CATALOG_FILTERS.md)** - Declaring catalog filter fields without static enum values
 - **[Commerce Contracts](COMMERCE_CONTRACTS.md)** - Internal product, cart, and commerce tool contracts
 - **[Deep Agents Migration Plan](DEEP_AGENTS_MIGRATION_PLAN.md)** - SDK migration, session isolation, tools, skills, and scaling notes
 - **[Deep Agents Cart Tool Goal](DEEP_AGENTS_CART_TOOL_GOAL.md)** - Minimal cart-tool smoke gate and constraints
@@ -37,6 +38,7 @@ Welcome to the Retail Shopping Assistant documentation! This hub provides compre
 | Document | Description | Audience |
 |----------|-------------|----------|
 | [API Documentation](API.md) | Complete API reference with examples | Developers, integrators |
+| [Catalog Filter Configuration](CATALOG_FILTERS.md) | Configure hard filters for uploaded catalogs without hardcoded enum values | Developers, operators |
 | [Commerce Contracts](COMMERCE_CONTRACTS.md) | Internal product, cart, and commerce tool contracts | Developers, architects |
 | [Deep Agents Migration Plan](DEEP_AGENTS_MIGRATION_PLAN.md) | SDK migration, session isolation, tools, skills, and scaling notes | Developers, architects |
 | [Deep Agents Cart Tool Goal](DEEP_AGENTS_CART_TOOL_GOAL.md) | Minimal cart-tool smoke gate and constraints | Developers, evaluators |
@@ -81,6 +83,7 @@ Welcome to the Retail Shopping Assistant documentation! This hub provides compre
 #### Product Search
 - [User Guide - Product Search](USER_GUIDE.md#product-search)
 - [API - Product Search Examples](API.md#product-search)
+- [Catalog Filter Configuration](CATALOG_FILTERS.md)
 - [Main README - Usage Examples](../README.md#usage-examples)
 
 #### Shopping Cart

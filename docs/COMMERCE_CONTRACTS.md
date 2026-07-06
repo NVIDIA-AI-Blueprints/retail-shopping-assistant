@@ -39,6 +39,9 @@ SDK adapter:
   returned by catalog search for add operations, and `CART_LINE_ID` values
   returned by cart reads for remove operations. They do not perform hidden
   product-name lookup or fuzzy cart-line matching.
+- Deep Agents product details lookup uses explicit `PRODUCT_REF` values from a
+  prior catalog search in the same conversation. It deepens known products; it
+  is not a second broad search path.
 - Catalog search and cart-read wrapper tools return results to the agent loop
   so explicit cart-mutation requests can search/read and then mutate in one
   turn. Mutation tools still return the authoritative cart result directly.
@@ -46,6 +49,21 @@ SDK adapter:
   reference and tests, but they are not the chain-server entrypoint.
 - Catalog search remains stateless: no user, cart, memory, session, or
   conversation-history fields are passed to `search_catalog`.
+- Catalog request-building is now separate from catalog execution. The
+  request-builder layer validates structured agent intent against catalog-owned
+  capabilities and produces a `CatalogSearchPlan`; the catalog execution layer
+  only maps that plan to catalog service requests.
+- Structured agent intent separates semantic product search text from hard
+  filters. Budget and enum constraints are validated as filters instead of
+  being embedded into the semantic query sent to retrieval.
+- Deep Agents prompt context is also built from catalog-owned capabilities.
+  Chain-server no longer ships a product category allowlist for the active
+  runtime; changing catalog shape is handled by catalog retriever
+  `filter_registry` plus the ingested catalog data.
+- Catalog retriever now searches a wider candidate window, applies hard filters
+  against structured metadata, then trims to the requested `top_k`. Query
+  responses include structured `products`, diagnostics, and an optional
+  `no_result_reason` in addition to the legacy parallel arrays.
 - Catalog search timeout is configurable through
   `catalog_search_timeout_seconds`. The default is `null`, preserving the
   previous no-timeout catalog POST behavior for slower remote embedding calls.
@@ -67,6 +85,7 @@ No ACP/UCP adapter layer has been added yet.
 | `Cart` | User cart with structured lines and optional subtotal. |
 | `CommerceError` | Structured tool error with code, message, retryability, and details. |
 | `ToolMeta` | Trace and idempotency metadata returned by tools. |
+| `CatalogCapabilities` | Catalog-owned declaration of retrieval modes and hard filters. |
 
 ## Tool Contracts
 
@@ -75,7 +94,7 @@ The first tool contract set is:
 | Contract | Type | Purpose |
 | --- | --- | --- |
 | `SearchCatalogInput` / `SearchCatalogResult` | Read-only | Find products by query, category, filters, and `top_k`. |
-| `GetProductDetailsInput` / `GetProductDetailsResult` | Read-only | Reserved for fetching one product by durable `product_id` once the catalog exposes one. |
+| `GetProductDetailsInput` / `GetProductDetailsResult` | Read-only | Fetch facts for one known product ref; currently backed by the per-conversation search-result cache until the catalog exposes a durable detail endpoint. |
 | `GetCartInput` / `GetCartResult` | Read-only | Read the authoritative cart for a user. |
 | `GetStorePolicyInput` / `GetStorePolicyResult` | Read-only | Fetch controlled store-policy text by topic. |
 | `AddCartItemInput` / `CartMutationResult` | Mutating | Add a product or variant to the cart from an explicit product ref. |
@@ -91,9 +110,30 @@ deduplicate mutations yet.
 
 `SearchCatalogInput` intentionally has no `user_id`, cart, memory, session, or
 conversation-history fields. The agent layer can use conversation context to
-decide what query or query terms, optional image, categories, and filters to
-send, but `search_catalog` itself should remain a pure read against the catalog
-for the supplied request.
+decide what semantic product text, optional image, categories, and filters to
+send, but hard constraints such as budget and enum filters should stay out of
+the semantic text. `search_catalog` itself remains a pure read against the
+catalog for the supplied request.
+
+The chain-server request-builder layer consumes `CatalogCapabilities` before it
+creates a product search request. For the current fashion catalog, `category`
+is treated as a hard filter sourced from the catalog `subcategory` field. If a
+future catalog can strictly filter by color, material, size, or another
+metadata field, that field should be declared under catalog retriever
+`filter_registry` and it will be treated as a hard filter too.
+
+`filter_registry` declares filter names, types, source fields, and operators. It
+does not declare enum values. Enum filter values and numeric min/max ranges are
+filled from the CSV rows when catalog retriever loads the configured
+`data_source`. The operational guide is
+[Catalog Filter Configuration](CATALOG_FILTERS.md).
+
+The active Deep Agents runtime formats the same `CatalogCapabilities` into the
+agent system prompt. This keeps the language layer aware of available hard
+filters without maintaining a second category list in
+`shared/configs/chain_server/config.yaml`. If a future catalog declares
+different filter names or enum values, the prompt, request builder, and catalog
+retriever all consume that catalog-owned shape.
 
 This keeps product search reusable by the Deep Agents adapter, future skills or
 subagents, and later protocol adapters without coupling catalog results to

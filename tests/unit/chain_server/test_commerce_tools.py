@@ -97,6 +97,39 @@ def test_search_catalog_posts_stateless_text_payload() -> None:
     assert result.products[0].category == "bag"
 
 
+def test_search_catalog_prefers_structured_products_when_returned() -> None:
+    session = FakeSession(
+        FakeResponse(
+            {
+                "products": [
+                    {
+                        "product_id": "prod_1",
+                        "display_name": "Work Bag",
+                        "description": "structured tote",
+                        "category": "bag",
+                        "price": {"amount": 59.0, "currency": "USD"},
+                        "image_url": "/images/work_bag.jpg",
+                        "attributes": {"similarity": 0.91},
+                    }
+                ],
+                "diagnostics": {"returned_count": 1},
+                "no_result_reason": None,
+            }
+        )
+    )
+
+    result = search_catalog(
+        SearchCatalogInput(query="work bag"),
+        "http://catalog-retriever:8010",
+        session=session,
+    )
+
+    assert result.ok is True
+    assert result.products[0].display_name == "Work Bag"
+    assert result.products[0].price.amount == 59.0
+    assert result.diagnostics == {"returned_count": 1}
+
+
 def test_search_catalog_uses_configured_timeout_when_provided() -> None:
     session = FakeSession(
         FakeResponse(

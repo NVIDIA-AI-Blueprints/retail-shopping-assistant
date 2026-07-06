@@ -10,7 +10,6 @@ Agents tools, and later protocol adapters can share the same typed boundary.
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
 import requests
@@ -32,9 +31,6 @@ from shared.commerce_contracts import (
     SearchCatalogResult,
     ToolMeta,
 )
-
-
-_PRICE_RE = re.compile(r"\bPRICE:\s*\$?([0-9][0-9,]*(?:\.[0-9]+)?)", re.IGNORECASE)
 
 
 def search_catalog(
@@ -69,6 +65,8 @@ def search_catalog(
         "filters": request.filters,
         "k": request.top_k,
     }
+    if request.candidate_k is not None:
+        payload["candidate_k"] = request.candidate_k
     if image:
         payload["image_base64"] = image
 
@@ -101,7 +99,12 @@ def search_catalog(
             ),
         )
 
-    return SearchCatalogResult(ok=True, products=_products_from_catalog_response(data))
+    return SearchCatalogResult(
+        ok=True,
+        products=_products_from_catalog_response(data),
+        diagnostics=data.get("diagnostics") or {},
+        no_result_reason=data.get("no_result_reason"),
+    )
 
 
 def get_cart(
@@ -282,6 +285,18 @@ def _catalog_session() -> requests.Session:
 
 
 def _products_from_catalog_response(data: dict[str, Any]) -> list[ProductSummary]:
+    structured_products = data.get("products") or []
+    if structured_products:
+        products: list[ProductSummary] = []
+        for product in structured_products:
+            if not isinstance(product, dict):
+                continue
+            try:
+                products.append(ProductSummary.model_validate(product))
+            except ValueError:
+                continue
+        return products
+
     texts = data.get("texts") or []
     ids = data.get("ids") or []
     names = data.get("names") or []
@@ -371,17 +386,24 @@ def _float_or_default(value: Any, default: float | None) -> float | None:
 
 
 def _price_from_text(text: str) -> Money | None:
-    match = _PRICE_RE.search(text)
-    if not match:
-        return None
-    try:
-        return Money(amount=float(match.group(1).replace(",", "")))
-    except ValueError:
-        return None
+    for line in text.splitlines():
+        key, separator, value = line.partition(":")
+        if separator and key.strip().upper() == "PRICE":
+            try:
+                return Money(amount=float(value.strip().replace("$", "").replace(",", "")))
+            except ValueError:
+                return None
+    return None
 
 
 def _strip_price(text: str) -> str:
-    return _PRICE_RE.sub("", text).strip()
+    lines = []
+    for line in text.splitlines():
+        key, separator, _value = line.partition(":")
+        if separator and key.strip().upper() == "PRICE":
+            continue
+        lines.append(line)
+    return "\n".join(lines).strip()
 
 
 def _category_from_text(text: str) -> str | None:

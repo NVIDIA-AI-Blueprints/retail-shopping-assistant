@@ -42,8 +42,9 @@ The Retail Shopping Assistant is an AI-powered blueprint that provides a compreh
 - 🖼️ **Visual Search**: Upload images to find similar products
 - 🎥 **Optional VLM Media Perception**: Enable a VLM role to analyze image and video uploads in shopping context
 - 💬 **Conversational AI**: Natural language interactions
-- 🔒 **Content Safety**: Built-in moderation and safety checks
+- 🔒 **Configurable Content Safety**: Built-in moderation and safety checks are on by default and can be disabled per request or config
 - ⚡ **SSE Response Stream**: Event-stream response framing for chat clients; token-level Deep Agents streaming is a follow-up after the harness migration
+- 📊 **Inference Visibility**: Model names, call counts, and token usage surfaced in the shopping UI
 - 📱 **Responsive UI**: Modern, mobile-friendly interface
 
 ### Architecture

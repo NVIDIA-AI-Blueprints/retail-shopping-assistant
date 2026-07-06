@@ -13,11 +13,12 @@ services:
       - LLM_API_KEY=${LLM_API_KEY:-}
       - LLM_BASE_URL=${LLM_BASE_URL:-}
       - LLM_MODEL=${LLM_MODEL:-}
-      - VLM_API_KEY=${VLM_API_KEY:-}
+      - VLM_API_KEY=${VLM_API_KEY:-${NVIDIA_API_KEY:-}}
       - VLM_BASE_URL=${VLM_BASE_URL:-}
       - VLM_MODEL=${VLM_MODEL:-}
       - CATALOG_RETRIEVER_URL=http://catalog-retriever:8010
       - MEMORY_RETRIEVER_URL=http://memory-retriever:8011
+      - GUARDRAILS_ENABLED=${GUARDRAILS_ENABLED:-true}
     volumes:
       - ./shared:/app/shared
     depends_on:

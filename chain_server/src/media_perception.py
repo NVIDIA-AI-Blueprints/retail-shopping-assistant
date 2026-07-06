@@ -62,21 +62,7 @@ class MediaPerceptionClient:
             content = response.choices[0].message.content or ""
         except Exception as exc:  # noqa: BLE001 - media perception is optional.
             logger.warning("VLM media perception failed: %s", exc)
-            return json.dumps(
-                {
-                    "summary": "Media was attached, but VLM media analysis failed.",
-                    "fashion_items": [],
-                    "style_terms": [],
-                    "colors": [],
-                    "materials_or_textures": [],
-                    "occasion": [],
-                    "search_queries": [],
-                    "constraints_detected": {},
-                    "uncertainties": ["VLM media analysis failed."],
-                    "safety_notes": [],
-                },
-                sort_keys=True,
-            )
+            return _failed_analysis(exc)
 
         return _normalize_vlm_content(content)
 
@@ -151,6 +137,42 @@ def _disabled_analysis(media: list[dict[str, Any]]) -> str:
             "search_queries": [],
             "constraints_detected": {},
             "uncertainties": ["Video understanding requires an enabled VLM."],
+            "safety_notes": [],
+        },
+        sort_keys=True,
+    )
+
+
+def _failed_analysis(exc: Exception) -> str:
+    message = str(exc)
+    lower_message = message.lower()
+    if "401" in message or "unauthorized" in lower_message or "authentication" in lower_message:
+        summary = (
+            "Media was attached, but the configured VLM could not authenticate. "
+            "Video/image understanding is unavailable for this turn."
+        )
+        uncertainty = "VLM authentication failed."
+    elif "access" in lower_message and "model" in lower_message:
+        summary = (
+            "Media was attached, but the configured key is not allowed to access "
+            "the VLM. Video/image understanding is unavailable for this turn."
+        )
+        uncertainty = "VLM model access is not available for the configured key."
+    else:
+        summary = "Media was attached, but VLM media analysis failed."
+        uncertainty = "VLM media analysis failed."
+
+    return json.dumps(
+        {
+            "summary": summary,
+            "fashion_items": [],
+            "style_terms": [],
+            "colors": [],
+            "materials_or_textures": [],
+            "occasion": [],
+            "search_queries": [],
+            "constraints_detected": {},
+            "uncertainties": [uncertainty],
             "safety_notes": [],
         },
         sort_keys=True,

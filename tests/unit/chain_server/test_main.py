@@ -114,6 +114,12 @@ class TestCreateInitialState:
         assert state.cart.is_empty()
         assert state.guardrails is True
 
+    def test_guardrails_request_overrides_config_default(self, main_module) -> None:
+        request = main_module.QueryRequest(user_id=1, query="hi", guardrails=False)
+        state = main_module.create_initial_state(request)
+
+        assert state.guardrails is False
+
     def test_cart_passthrough(self, main_module) -> None:
         cart = Cart(contents=[{"item": "X", "amount": 2, "price": 9.99}])
         request = main_module.QueryRequest(user_id=1, query="hi", cart=cart)
@@ -151,6 +157,10 @@ class TestHealthAndRoot:
         assert media["max_videos_per_turn"] == 1
         assert media["video_mime_types"] == ["video/mp4"]
         assert media["vlm_enabled"] is True
+        assert body["models"]["app_llm"]["model"] == "test-model"
+        assert body["models"]["app_llm"]["enabled"] is True
+        assert body["models"]["vlm"]["model"] == "test-vlm"
+        assert body["models"]["vlm"]["enabled"] is True
         assert body["catalog"]["catalog_id"] == "test_catalog"
         assert body["catalog"]["filters"]["category"]["values"] == ["bag", "dress"]
 
@@ -179,6 +189,7 @@ class TestTimingEndpoint:
         assert body["response"] == main_module._test_runtime.response_text
         assert "total" in body["timings"]
         assert body["timings"]["total"] > 0
+        assert body["model_usage"] == {}
 
 
 class TestStreamEndpoint:
@@ -396,6 +407,189 @@ class TestDeepAgentsRuntimeScopes:
         assert state.cart.contents == [{"item": "Bag", "amount": 1, "price": 20.0}]
 
 
+class TestDeepAgentsRuntimeTokenUsage:
+    def test_collects_normalized_usage_metadata_without_double_counting(self) -> None:
+        from chain_server.src.deepagents_runtime import _collect_token_usage
+
+        result = {
+            "messages": [
+                SimpleNamespace(
+                    content="thinking",
+                    usage_metadata={
+                        "input_tokens": 100,
+                        "output_tokens": 20,
+                        "total_tokens": 120,
+                    },
+                    response_metadata={
+                        "token_usage": {
+                            "prompt_tokens": 100,
+                            "completion_tokens": 20,
+                            "total_tokens": 120,
+                        }
+                    },
+                ),
+                {
+                    "content": "final",
+                    "response_metadata": {
+                        "token_usage": {
+                            "prompt_tokens": 40,
+                            "completion_tokens": 10,
+                            "total_tokens": 50,
+                        }
+                    },
+                },
+            ]
+        }
+
+        assert _collect_token_usage(result) == {
+            "input_tokens": 140,
+            "output_tokens": 30,
+            "total_tokens": 170,
+            "model_calls": 2,
+        }
+
+    def test_collect_token_usage_defaults_when_metadata_is_absent(self) -> None:
+        from chain_server.src.deepagents_runtime import _collect_token_usage
+
+        assert _collect_token_usage({"messages": [{"content": "hello"}]}) == {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "model_calls": 0,
+        }
+
+
+class TestDeepAgentsRuntimeModelUsage:
+    def test_safety_model_usage_matches_guardrails_flows(self) -> None:
+        from chain_server.src.deepagents_runtime import _record_safety_model_usage
+
+        state = State(user_id=1, query="hello")
+
+        _record_safety_model_usage(state, "input")
+        _record_safety_model_usage(state, "output")
+
+        assert state.model_usage["content_safety"]["status"] == "used"
+        assert state.model_usage["content_safety"]["calls"] == 2
+        assert state.model_usage["topic_control"]["status"] == "used"
+        assert state.model_usage["topic_control"]["calls"] == 1
+
+    def test_safety_model_usage_marks_transport_failures(self) -> None:
+        from chain_server.src.deepagents_runtime import _record_safety_model_usage
+
+        state = State(user_id=1, query="hello")
+
+        _record_safety_model_usage(state, "input", ok=False)
+
+        assert state.model_usage["content_safety"]["status"] == "failed"
+        assert state.model_usage["content_safety"]["calls"] == 1
+        assert state.model_usage["topic_control"]["status"] == "failed"
+        assert state.model_usage["topic_control"]["calls"] == 1
+
+    def test_safety_check_transport_error_fails_open_with_failed_usage_signal(
+        self,
+        base_config,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+
+        def fake_post(*args, **kwargs):
+            raise runtime_mod.requests.RequestException("rails down")
+
+        monkeypatch.setattr(runtime_mod.requests, "post", fake_post)
+
+        safe, check_ok = runtime._check_safety("input", 1, "hello")
+
+        assert safe is True
+        assert check_ok is False
+
+    def test_language_model_failure_usage_is_explicit(self) -> None:
+        from chain_server.src.deepagents_runtime import _record_language_model_failure
+
+        state = State(user_id=1, query="hello")
+
+        _record_language_model_failure(state)
+
+        assert state.model_usage["app_llm"]["status"] == "failed"
+        assert state.model_usage["app_llm"]["calls"] == 1
+
+
+class TestDeepAgentsRuntimeMediaFailures:
+    def test_video_dependent_query_short_circuits_when_vlm_is_unavailable(self) -> None:
+        from chain_server.src.deepagents_runtime import (
+            _media_failure_response,
+            _should_short_circuit_media_failure,
+        )
+
+        state = State(
+            user_id=1,
+            query="I love the shoes she is wearing in this video. Do you have something like that?",
+            media=[
+                {
+                    "type": "video",
+                    "mime_type": "video/mp4",
+                    "data": "data:video/mp4;base64,QUFB",
+                }
+            ],
+            media_analysis=(
+                '{"summary": "Media was attached, but the configured VLM could not '
+                'authenticate. Video/image understanding is unavailable for this turn.", '
+                '"uncertainties": ["VLM authentication failed."]}'
+            ),
+        )
+
+        assert _should_short_circuit_media_failure(state) is True
+        response = _media_failure_response(state.media_analysis)
+        assert "Please describe the item in text" in response
+        assert "turn.. Please" not in response
+
+    def test_explicit_text_query_can_continue_when_media_is_unavailable(self) -> None:
+        from chain_server.src.deepagents_runtime import _should_short_circuit_media_failure
+
+        state = State(
+            user_id=1,
+            query="Find black patent heels under $100",
+            media=[
+                {
+                    "type": "video",
+                    "mime_type": "video/mp4",
+                    "data": "data:video/mp4;base64,QUFB",
+                }
+            ],
+            media_analysis=(
+                '{"summary": "Video was attached, but VLM media understanding is not configured.", '
+                '"uncertainties": ["Video understanding requires an enabled VLM."]}'
+            ),
+        )
+
+        assert _should_short_circuit_media_failure(state) is False
+
+    def test_image_similarity_query_continues_when_vlm_is_unavailable(self) -> None:
+        from chain_server.src.deepagents_runtime import _should_short_circuit_media_failure
+
+        image_data = "data:image/jpeg;base64,QUFB"
+        state = State(
+            user_id=1,
+            query="Find products similar to this image",
+            image=image_data,
+            media=[
+                {
+                    "type": "image",
+                    "mime_type": "image/jpeg",
+                    "data": image_data,
+                }
+            ],
+            media_analysis=(
+                '{"summary": "Media was attached, but the configured VLM could not '
+                'authenticate. Video/image understanding is unavailable for this turn.", '
+                '"uncertainties": ["VLM authentication failed."]}'
+            ),
+        )
+
+        assert _should_short_circuit_media_failure(state) is False
+
+
 class TestDeepAgentsRuntimeRefs:
     def test_search_and_cart_read_tools_are_chainable(
         self,
@@ -604,6 +798,10 @@ class TestDeepAgentsRuntimeRefs:
 
         assert "PRODUCT_REF: prod_1" in result
         assert state.retrieved == {"Work Bag": "bag.jpg"}
+        assert [product["product_id"] for product in state.product_results] == ["prod_1"]
+        assert state.model_usage["text_embedding"]["status"] == "used"
+        assert state.model_usage["text_embedding"]["calls"] == 1
+        assert "image_embedding" not in state.model_usage
         assert captured_plan["plan"].semantic_queries == ["practical work bag"]
         assert captured_plan["plan"].hard_filters == {
             "category": ["bag"],
@@ -611,6 +809,118 @@ class TestDeepAgentsRuntimeRefs:
             "color": ["blue"],
         }
         assert captured_plan["plan"].strictness == "hard"
+
+        image_state = State(
+            user_id=111,
+            query="find products similar to this image",
+            image="data:image/jpeg;base64,QUFB",
+        )
+        runtime._create_agent(image_state, identity)
+        image_search_tool = {fn.__name__: fn for fn in captured["tools"]}["search_catalog_tool"]
+
+        image_result = image_search_tool(semantic_query="", filters={})
+
+        assert "PRODUCT_REF: prod_1" in image_result
+        assert captured_plan["plan"].search_mode == "hybrid"
+        assert image_state.model_usage["text_embedding"]["status"] == "used"
+        assert image_state.model_usage["text_embedding"]["calls"] == 1
+        assert image_state.model_usage["image_embedding"]["status"] == "used"
+        assert image_state.model_usage["image_embedding"]["calls"] == 1
+
+    def test_search_catalog_tool_enforces_per_turn_cap(
+        self,
+        base_config,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        captured: Dict[str, Any] = {}
+        deepagents_mod = ModuleType("deepagents")
+        tools_mod = ModuleType("langchain_core.tools")
+        openai_mod = ModuleType("langchain_openai")
+
+        class FakeProfile:
+            def __init__(self, *args, **kwargs) -> None:
+                pass
+
+        class FakeChatOpenAI:
+            def __init__(self, *args, **kwargs) -> None:
+                pass
+
+        def fake_tool(*, args_schema=None, return_direct: bool = False):
+            def decorate(fn):
+                fn.args_schema = args_schema
+                fn.return_direct = return_direct
+                return fn
+
+            return decorate
+
+        def fake_create_deep_agent(**kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace()
+
+        calls = 0
+
+        def fake_execute_catalog_search(plan, *args, **kwargs):
+            nonlocal calls
+            calls += 1
+            return SimpleNamespace(
+                result=SearchCatalogResult(
+                    ok=True,
+                    products=[
+                        ProductSummary(
+                            product_id=f"prod_{calls}",
+                            display_name=f"Product {calls}",
+                            price=Money(amount=59.0),
+                        )
+                    ],
+                ),
+                fallback_used=False,
+            )
+
+        deepagents_mod.GeneralPurposeSubagentProfile = FakeProfile
+        deepagents_mod.HarnessProfile = FakeProfile
+        deepagents_mod.create_deep_agent = fake_create_deep_agent
+        deepagents_mod.register_harness_profile = lambda *args, **kwargs: None
+        tools_mod.tool = fake_tool
+        openai_mod.ChatOpenAI = FakeChatOpenAI
+
+        monkeypatch.setitem(sys.modules, "deepagents", deepagents_mod)
+        monkeypatch.setitem(sys.modules, "langchain_core.tools", tools_mod)
+        monkeypatch.setitem(sys.modules, "langchain_openai", openai_mod)
+        monkeypatch.setattr(
+            runtime_mod,
+            "execute_catalog_search",
+            fake_execute_catalog_search,
+        )
+
+        base_config.max_catalog_searches_per_turn = 1
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+        runtime._catalog_capabilities = SimpleNamespace(
+            get=lambda: CatalogCapabilities(
+                catalog_id="fashion",
+                retrieval_modes=["text"],
+                filters={},
+            )
+        )
+        identity = runtime_mod.RequestIdentity(
+            session_id="session-a",
+            conversation_id="conversation-a",
+            cart_id="cart-a",
+            context_user_id=111,
+            cart_user_id=222,
+            request_id="request-a",
+        )
+
+        runtime._create_agent(State(user_id=111, query="hello"), identity)
+        search_tool = {fn.__name__: fn for fn in captured["tools"]}["search_catalog_tool"]
+
+        first = search_tool(semantic_query="dress")
+        second = search_tool(semantic_query="shoes")
+
+        assert "PRODUCT_REF: prod_1" in first
+        assert "Catalog search limit reached" in second
+        assert calls == 1
 
     def test_product_refs_are_cached_by_conversation(
         self,

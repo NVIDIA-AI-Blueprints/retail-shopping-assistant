@@ -10,18 +10,30 @@ import { ToastContainer } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
 
 import Navbar from "./components/Navbar";
-import Apparel from "./components/Apparel";
+import ProductDetailPanel from "./components/ProductDetailPanel";
 import Chatbox from "./components/chatbox/chatbox";
 import Footer from "./components/Footer";
+import { ProductSummary } from "./types";
 
 const App: React.FC = () => {
-  const [newRenderImage, setNewRenderImage] = useState<string>("");
+  const [selectedProduct, setSelectedProduct] = useState<ProductSummary | null>(null);
+  const [products, setProducts] = useState<ProductSummary[]>([]);
 
   return (
-    <div className="bg-[#FFFFFF] flex flex-col h-screen w-screen">
+    <div className="shopping-app">
       <Navbar />
-      <Apparel newRenderImage={newRenderImage} />
-      <Chatbox setNewRenderImage={setNewRenderImage} />
+      <main className="assistant-workspace">
+        <ProductDetailPanel
+          selectedProduct={selectedProduct}
+          products={products}
+          onProductSelect={setSelectedProduct}
+        />
+        <Chatbox
+          selectedProduct={selectedProduct}
+          onProductSelect={setSelectedProduct}
+          onProductsUpdate={setProducts}
+        />
+      </main>
       <Footer />
       <ToastContainer position="top-right" />
     </div>

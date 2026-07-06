@@ -37,6 +37,7 @@ import {
   MessageData,
   MessageRole,
   ModelCapabilities,
+  ModelUsage,
   ProductPrice,
   ProductSummary,
   TokenUsage,
@@ -307,6 +308,7 @@ const Chatbox: React.FC<ChatboxProps> = ({
   const [videoFilename, setVideoFilename] = useState("");
   const [mediaCapabilities, setMediaCapabilities] = useState<MediaCapabilities>(defaultMediaCapabilities);
   const [modelCapabilities, setModelCapabilities] = useState<ModelCapabilities>({});
+  const [modelUsage, setModelUsage] = useState<ModelUsage>({});
   const [messages, setMessages] = useState<MessageData[]>([]);
   const [inferenceEvents, setInferenceEvents] = useState<InferenceActivity[]>([]);
   const [tokenUsage, setTokenUsage] = useState<TokenUsage | null>(null);
@@ -570,6 +572,7 @@ const Chatbox: React.FC<ChatboxProps> = ({
       createPendingActivities(currentTurnHasMedia.current, isGuardrailsOn, modelCapabilities)
     );
     setTokenUsage(null);
+    setModelUsage({});
 
     // Will be used to enable submit shortly after the last token
     let enableSubmitTimer: number | undefined;
@@ -693,6 +696,7 @@ const Chatbox: React.FC<ChatboxProps> = ({
             if (type === "metrics" && payload && typeof payload === "object") {
               const metricsPayload = payload as InferenceMetricsPayload;
               setTokenUsage(metricsPayload.token_usage ?? null);
+              setModelUsage(metricsPayload.model_usage ?? {});
               setInferenceEvents(
                 activitiesFromMetrics(
                   metricsPayload,
@@ -803,6 +807,7 @@ const Chatbox: React.FC<ChatboxProps> = ({
     setVideoFilename("");
     setInferenceEvents([]);
     setTokenUsage(null);
+    setModelUsage({});
     productsByNameRef.current.clear();
     onProductSelect(null);
     onProductsUpdate([]);
@@ -977,6 +982,7 @@ const Chatbox: React.FC<ChatboxProps> = ({
         events={inferenceEvents}
         models={modelCapabilities}
         tokenUsage={tokenUsage}
+        modelUsage={modelUsage}
       />
     </section>
   );

@@ -11,6 +11,8 @@ import {
   InferenceActivity,
   InferenceCategory,
   ModelCapabilities,
+  ModelUsage,
+  ModelUsageStatus,
   TokenUsage,
 } from "../../types";
 
@@ -18,17 +20,22 @@ interface InferenceActivityPanelProps {
   events: InferenceActivity[];
   models: ModelCapabilities;
   tokenUsage: TokenUsage | null;
+  modelUsage: ModelUsage;
 }
 
 const InferenceActivityPanel: React.FC<InferenceActivityPanelProps> = ({
   events,
   models,
   tokenUsage,
+  modelUsage,
 }) => {
   const groupedCounts = countByCategory(events);
-  const modelStack = modelRows(models);
   const hasTokenUsage = Boolean(tokenUsage && tokenUsage.model_calls > 0);
   const llmCallCount = hasTokenUsage ? tokenUsage!.model_calls : groupedCounts.language;
+  const usageRows = modelUsageRows(models, modelUsage, tokenUsage, events);
+  const embeddingCallCount =
+    usageCalls(modelUsage, ["text_embedding", "image_embedding"]) || groupedCounts.embedding;
+  const omniCallCount = modelUsage.vlm?.calls ?? groupedCounts.vision;
 
   return (
     <aside className="inference-panel" aria-label="Inference activity">
@@ -43,9 +50,9 @@ const InferenceActivityPanel: React.FC<InferenceActivityPanelProps> = ({
       </div>
 
       <div className="inference-panel__summary">
-        <SummaryMetric label="Omni calls" value={groupedCounts.vision} />
+        <SummaryMetric label="Omni calls" value={omniCallCount} />
         <SummaryMetric label="LLM calls" value={llmCallCount} />
-        <SummaryMetric label="Embedding calls" value={groupedCounts.embedding} />
+        <SummaryMetric label="Embedding calls" value={embeddingCallCount} />
         <SummaryMetric label="Safety calls" value={groupedCounts.safety} />
       </div>
 
@@ -67,13 +74,25 @@ const InferenceActivityPanel: React.FC<InferenceActivityPanelProps> = ({
         </div>
       </div>
 
-      {modelStack.length > 0 && (
-        <div className="inference-panel__models" aria-label="Configured model stack">
-          <div className="inference-panel__section-title">Models</div>
-          {modelStack.map((model) => (
+      {usageRows.length > 0 && (
+        <div className="inference-panel__models" aria-label="Per-turn model usage">
+          <div className="inference-panel__section-title">This turn</div>
+          {usageRows.map((model) => (
             <div key={model.role} className="inference-panel__model">
-              <span>{model.label}</span>
+              <div className="inference-panel__model-topline">
+                <span>{model.label}</span>
+                <strong
+                  className={`inference-panel__status inference-panel__status--${model.status}`}
+                >
+                  {statusLabel(model.status)}
+                </strong>
+              </div>
               <p>{model.name}</p>
+              <small>
+                {model.calls > 0
+                  ? `${model.calls} ${model.calls === 1 ? "call" : "calls"}`
+                  : model.detail}
+              </small>
             </div>
           ))}
         </div>
@@ -111,50 +130,130 @@ const countByCategory = (events: InferenceActivity[]): Record<InferenceCategory,
   return counts;
 };
 
-const modelRows = (models: ModelCapabilities): Array<{
+type UsageRowStatus = ModelUsageStatus | "running" | "queued";
+type ActivityUsageStatus = UsageRowStatus | "complete";
+
+const modelUsageRows = (
+  models: ModelCapabilities,
+  modelUsage: ModelUsage,
+  tokenUsage: TokenUsage | null,
+  events: InferenceActivity[]
+): Array<{
   role: string;
   label: string;
   name: string;
+  status: UsageRowStatus;
+  calls: number;
+  detail: string;
 }> => {
-  const rows = [
+  const eventStatus = statusByCategory(events);
+  return [
     {
       role: "app_llm",
       label: "LLM",
-      name: enabledModelName(models.app_llm),
+      fallbackCalls: tokenUsage?.model_calls ?? 0,
+      fallbackStatus: eventStatus.language,
     },
     {
       role: "vlm",
       label: "Omni",
-      name: enabledModelName(models.vlm),
+      fallbackCalls: 0,
+      fallbackStatus: eventStatus.vision,
     },
     {
       role: "text_embedding",
       label: "Text embedding",
-      name: enabledModelName(models.text_embedding),
+      fallbackCalls: 0,
+      fallbackStatus: eventStatus.embedding,
     },
     {
       role: "image_embedding",
       label: "Image embedding",
-      name: enabledModelName(models.image_embedding),
+      fallbackCalls: 0,
+      fallbackStatus: undefined,
     },
     {
       role: "content_safety",
       label: "Safety",
-      name: enabledModelName(models.content_safety),
+      fallbackCalls: countByCategory(events).safety,
+      fallbackStatus: eventStatus.safety,
     },
-    {
-      role: "topic_control",
-      label: "Topic control",
-      name: enabledModelName(models.topic_control),
-    },
-  ];
-
-  return rows.filter((row) => Boolean(row.name));
+  ]
+    .map((row) => usageRow(row, models, modelUsage))
+    .filter((row) => Boolean(row.name || row.status !== "disabled"));
 };
 
-const enabledModelName = (model: ModelCapabilities[string]): string => {
-  if (!model || !model.enabled || !model.model) return "";
+const configuredModelName = (model: ModelCapabilities[string]): string => {
+  if (!model || !model.model) return "Not configured";
   return model.model;
+};
+
+const usageRow = (
+  row: {
+    role: string;
+    label: string;
+    fallbackCalls: number;
+    fallbackStatus?: ActivityUsageStatus;
+  },
+  models: ModelCapabilities,
+  modelUsage: ModelUsage
+) => {
+  const model = models[row.role];
+  const entry = modelUsage[row.role];
+  const isEnabled = Boolean(model?.enabled && model?.model);
+  const calls = entry?.calls ?? row.fallbackCalls;
+  let status: UsageRowStatus = entry?.status ?? "not_used";
+
+  if (!entry) {
+    if (row.fallbackStatus === "running" || row.fallbackStatus === "queued") {
+      status = row.fallbackStatus;
+    } else if (calls > 0 || row.fallbackStatus === "complete") {
+      status = "used";
+    } else if (!isEnabled) {
+      status = "disabled";
+    }
+  }
+
+  return {
+    role: row.role,
+    label: row.label,
+    name: configuredModelName(model),
+    status,
+    calls,
+    detail: entry?.detail || (isEnabled ? "Available" : "Off"),
+  };
+};
+
+const statusByCategory = (
+  events: InferenceActivity[]
+): Partial<Record<InferenceCategory, ActivityUsageStatus>> => {
+  const statuses: Partial<Record<InferenceCategory, ActivityUsageStatus>> = {};
+  events.forEach((event) => {
+    const existing = statuses[event.category];
+    if (existing === "failed" || event.status === "failed") {
+      statuses[event.category] = "failed";
+    } else if (existing === "running" || event.status === "running") {
+      statuses[event.category] = "running";
+    } else if (existing === "queued" || event.status === "queued") {
+      statuses[event.category] = "queued";
+    } else if (event.status === "complete") {
+      statuses[event.category] = "complete";
+    }
+  });
+  return statuses;
+};
+
+const usageCalls = (modelUsage: ModelUsage, roles: string[]): number => {
+  return roles.reduce((total, role) => total + (modelUsage[role]?.calls ?? 0), 0);
+};
+
+const statusLabel = (status: UsageRowStatus): string => {
+  if (status === "used") return "Used";
+  if (status === "failed") return "Failed";
+  if (status === "disabled") return "Off";
+  if (status === "running") return "Running";
+  if (status === "queued") return "Queued";
+  return "Available";
 };
 
 const formatNumber = (value: number): string => {

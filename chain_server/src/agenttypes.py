@@ -82,6 +82,10 @@ class State(BaseModel):
         default_factory=dict,
         description="Normalized model token usage for the current turn"
     )
+    model_usage: Dict[str, Dict[str, Any]] = Field(
+        default_factory=dict,
+        description="Per-role model usage summary for the current turn"
+    )
     next_agent: str = Field(default="", description="Next agent to route to")
     guardrails: bool = Field(default=True, description="Enable content safety checks")
     timings: Annotated[Dict[str, float], ior] = Field(

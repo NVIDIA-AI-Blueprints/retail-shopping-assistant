@@ -179,6 +179,8 @@ interface QueryResponse {
   response: string;                   // Generated response text
   images: Record<string, string>;     // Product images
   timings: Record<string, number>;    // Performance timing data
+  token_usage?: TokenUsage;           // LLM token usage summary
+  model_usage?: ModelUsage;           // Per-role model usage summary
 }
 ```
 
@@ -233,6 +235,11 @@ interface StreamingChunk {
           total_tokens: number;
           model_calls: number;
         };
+        model_usage: Record<string, {
+          status: 'used' | 'failed' | 'disabled' | 'not_used';
+          calls: number;
+          detail?: string;
+        }>;
       };
   timestamp: number;
 }
@@ -281,7 +288,7 @@ data: {"type": "images", "payload": {"Red Wrap Dress": "https://..."}, "timestam
 
 data: {"type": "content", "payload": "I found several red dresses...", "timestamp": 1716400001.2}
 
-data: {"type": "metrics", "payload": {"timings": {"memory": 0.03, "catalog_search": 0.41, "deepagents": 1.92}, "total_seconds": 2.36, "token_usage": {"input_tokens": 1260, "output_tokens": 180, "total_tokens": 1440, "model_calls": 1}}, "timestamp": 1716400001.8}
+data: {"type": "metrics", "payload": {"timings": {"memory": 0.03, "catalog_search": 0.41, "deepagents": 1.92}, "total_seconds": 2.36, "token_usage": {"input_tokens": 1260, "output_tokens": 180, "total_tokens": 1440, "model_calls": 1}, "model_usage": {"text_embedding": {"status": "used", "calls": 1, "detail": "Catalog text/vector retrieval"}}}, "timestamp": 1716400001.8}
 
 data: [DONE]
 ```

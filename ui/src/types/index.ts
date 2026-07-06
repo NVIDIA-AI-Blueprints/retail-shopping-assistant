@@ -171,6 +171,7 @@ export interface InferenceMetricsPayload {
   timings: Record<string, number>;
   total_seconds?: number;
   token_usage?: TokenUsage;
+  model_usage?: ModelUsage;
 }
 
 export interface TokenUsage {
@@ -179,6 +180,16 @@ export interface TokenUsage {
   total_tokens: number;
   model_calls: number;
 }
+
+export type ModelUsageStatus = 'used' | 'failed' | 'disabled' | 'not_used';
+
+export interface ModelUsageEntry {
+  status: ModelUsageStatus;
+  calls: number;
+  detail?: string;
+}
+
+export type ModelUsage = Record<string, ModelUsageEntry | undefined>;
 
 export type InferenceCategory = 'vision' | 'language' | 'embedding' | 'safety' | 'memory' | 'system';
 export type InferenceStatus = 'queued' | 'running' | 'complete' | 'failed';

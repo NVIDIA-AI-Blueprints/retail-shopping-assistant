@@ -183,6 +183,7 @@ class TestTimingEndpoint:
         assert body["response"] == main_module._test_runtime.response_text
         assert "total" in body["timings"]
         assert body["timings"]["total"] > 0
+        assert body["model_usage"] == {}
 
 
 class TestStreamEndpoint:
@@ -502,6 +503,30 @@ class TestDeepAgentsRuntimeMediaFailures:
 
         assert _should_short_circuit_media_failure(state) is False
 
+    def test_image_similarity_query_continues_when_vlm_is_unavailable(self) -> None:
+        from chain_server.src.deepagents_runtime import _should_short_circuit_media_failure
+
+        image_data = "data:image/jpeg;base64,QUFB"
+        state = State(
+            user_id=1,
+            query="Find products similar to this image",
+            image=image_data,
+            media=[
+                {
+                    "type": "image",
+                    "mime_type": "image/jpeg",
+                    "data": image_data,
+                }
+            ],
+            media_analysis=(
+                '{"summary": "Media was attached, but the configured VLM could not '
+                'authenticate. Video/image understanding is unavailable for this turn.", '
+                '"uncertainties": ["VLM authentication failed."]}'
+            ),
+        )
+
+        assert _should_short_circuit_media_failure(state) is False
+
 
 class TestDeepAgentsRuntimeRefs:
     def test_search_and_cart_read_tools_are_chainable(
@@ -712,6 +737,9 @@ class TestDeepAgentsRuntimeRefs:
         assert "PRODUCT_REF: prod_1" in result
         assert state.retrieved == {"Work Bag": "bag.jpg"}
         assert [product["product_id"] for product in state.product_results] == ["prod_1"]
+        assert state.model_usage["text_embedding"]["status"] == "used"
+        assert state.model_usage["text_embedding"]["calls"] == 1
+        assert "image_embedding" not in state.model_usage
         assert captured_plan["plan"].semantic_queries == ["practical work bag"]
         assert captured_plan["plan"].hard_filters == {
             "category": ["bag"],
@@ -719,6 +747,23 @@ class TestDeepAgentsRuntimeRefs:
             "color": ["blue"],
         }
         assert captured_plan["plan"].strictness == "hard"
+
+        image_state = State(
+            user_id=111,
+            query="find products similar to this image",
+            image="data:image/jpeg;base64,QUFB",
+        )
+        runtime._create_agent(image_state, identity)
+        image_search_tool = {fn.__name__: fn for fn in captured["tools"]}["search_catalog_tool"]
+
+        image_result = image_search_tool(semantic_query="", filters={})
+
+        assert "PRODUCT_REF: prod_1" in image_result
+        assert captured_plan["plan"].search_mode == "hybrid"
+        assert image_state.model_usage["text_embedding"]["status"] == "used"
+        assert image_state.model_usage["text_embedding"]["calls"] == 1
+        assert image_state.model_usage["image_embedding"]["status"] == "used"
+        assert image_state.model_usage["image_embedding"]["calls"] == 1
 
     def test_search_catalog_tool_enforces_per_turn_cap(
         self,

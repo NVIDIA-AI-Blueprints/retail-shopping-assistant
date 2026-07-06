@@ -90,6 +90,7 @@ class QueryResponse(BaseModel):
     images: Dict[str, str] = {}
     timings: Dict[str, float] = {}
     token_usage: Dict[str, int] = Field(default_factory=dict)
+    model_usage: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
 
 
 _MODEL_LABELS = {
@@ -203,6 +204,7 @@ async def process_query_timing(request: QueryRequest):
             images=out_state_dict.get("images", {}),
             timings=out_state_dict["timings"],
             token_usage=out_state_dict.get("token_usage", {}),
+            model_usage=out_state_dict.get("model_usage", {}),
         )
         response.timings["total"] = total_time
 

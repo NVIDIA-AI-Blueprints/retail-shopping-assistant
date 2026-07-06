@@ -24,7 +24,11 @@ from .catalog_capabilities import (
     format_catalog_capabilities_for_prompt,
 )
 from .catalog_execution import execute_catalog_search
-from .catalog_request import CatalogSearchIntent, build_catalog_search_plan
+from .catalog_request import (
+    CatalogSearchIntent,
+    CatalogSearchPlan,
+    build_catalog_search_plan,
+)
 from .commerce_tools import (
     add_cart_item,
     get_cart,
@@ -137,6 +141,7 @@ class DeepAgentsRuntime:
                     "timings": output.timings,
                     "total_seconds": sum(output.timings.values()),
                     "token_usage": _normalized_token_usage(output.token_usage),
+                    "model_usage": output.model_usage,
                 },
                 "timestamp": time.time(),
             }
@@ -149,6 +154,7 @@ class DeepAgentsRuntime:
             "images": output.retrieved or {},
             "timings": output.timings,
             "token_usage": _normalized_token_usage(output.token_usage),
+            "model_usage": output.model_usage,
         }
 
     async def _run_turn(self, state: State, identity: RequestIdentity) -> State:
@@ -169,6 +175,7 @@ class DeepAgentsRuntime:
         state.media_analysis = await self._media_perception.analyze(state)
         if state.media:
             state.timings["media_perception"] = time.monotonic() - media_start
+            _record_media_model_usage(state, self.config)
         if _should_short_circuit_media_failure(state):
             state.response = _media_failure_response(state.media_analysis)
             state.timings["deepagents"] = time.monotonic() - start
@@ -283,6 +290,7 @@ class DeepAgentsRuntime:
             )
             state.timings["catalog_search"] = time.monotonic() - search_start
             result = execution.result
+            _record_catalog_model_usage(state, plan, result.ok)
             if not result.ok:
                 return result.error.message if result.error else "Catalog search failed."
             if not result.products:
@@ -460,6 +468,8 @@ Rules:
   VLM is unavailable, or video understanding is not configured, say so plainly.
   Do not infer video-similar products from the media; ask the shopper for a
   text description or search only from explicit text in the shopper request.
+  If an image is attached, image embedding search through search_catalog_tool is
+  still available even when MEDIA ANALYSIS is unavailable.
 - Cart reads require get_cart_tool. Cart totals require view_cart_total_tool.
 - Cart mutations require explicit shopper intent and must use add_cart_item_tool
   or remove_cart_item_tool. Never claim a cart mutation unless the tool reports
@@ -652,9 +662,84 @@ def _append_product_results(state: State, products: list[ProductSummary]) -> Non
 def _should_short_circuit_media_failure(state: State) -> bool:
     if not state.media or not state.media_analysis:
         return False
+    if not any(str(item.get("type") or "").lower() == "video" for item in state.media):
+        return False
     if not _media_analysis_unavailable(state.media_analysis):
         return False
     return _query_depends_on_media(state.query)
+
+
+def _record_media_model_usage(state: State, config: Any) -> None:
+    if not getattr(config, "vlm_enabled", False) or not getattr(config, "vlm_name", None):
+        _add_model_usage(state, "vlm", status="disabled", calls=0)
+        return
+
+    status = "failed" if _media_analysis_unavailable(state.media_analysis) else "used"
+    _add_model_usage(
+        state,
+        "vlm",
+        status=status,
+        calls=1,
+        detail="Attached media understanding",
+    )
+
+
+def _record_catalog_model_usage(
+    state: State,
+    plan: CatalogSearchPlan,
+    ok: bool,
+) -> None:
+    status = "used" if ok else "failed"
+    uses_image_endpoint = bool(state.image) and plan.search_mode in {"image", "hybrid"}
+    uses_text_embedding = bool(plan.semantic_queries) or uses_image_endpoint
+
+    if uses_text_embedding:
+        _add_model_usage(
+            state,
+            "text_embedding",
+            status=status,
+            calls=1,
+            detail="Catalog text/vector retrieval",
+        )
+    if uses_image_endpoint:
+        _add_model_usage(
+            state,
+            "image_embedding",
+            status=status,
+            calls=1,
+            detail="Catalog image similarity retrieval",
+        )
+
+
+def _add_model_usage(
+    state: State,
+    role: str,
+    *,
+    status: str,
+    calls: int,
+    detail: str = "",
+) -> None:
+    existing = state.model_usage.get(role, {})
+    existing_calls = _safe_int(existing.get("calls"))
+    existing_status = str(existing.get("status") or "")
+    next_detail = detail or str(existing.get("detail") or "")
+    state.model_usage[role] = {
+        "status": _merged_model_usage_status(existing_status, status),
+        "calls": existing_calls + max(0, calls),
+        "detail": next_detail,
+    }
+
+
+def _merged_model_usage_status(existing: str, current: str) -> str:
+    priority = {"failed": 4, "used": 3, "disabled": 2, "not_used": 1, "": 0}
+    return existing if priority.get(existing, 0) > priority.get(current, 0) else current
+
+
+def _safe_int(value: Any) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _media_analysis_unavailable(media_analysis: str) -> bool:

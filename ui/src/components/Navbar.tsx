@@ -21,20 +21,10 @@
 
 import React from "react";
 import MenuIcon from "@mui/icons-material/Menu";
-import { config, isFashionMode } from "../config/config";
+import { config } from "../config/config";
 
 const Navbar: React.FC = () => {
   const categories = config.ui.categories;
-
-  const getCategoryLink = (categoryKey: keyof typeof categories): string => {
-    // Remove all mode switching logic
-    return "#";
-  };
-
-  const isCategoryActive = (categoryKey: keyof typeof categories): boolean => {
-    // Only fashion is active
-    return categoryKey === 'fashion';
-  };
 
   return (
     <div>

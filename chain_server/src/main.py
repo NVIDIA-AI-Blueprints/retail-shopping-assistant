@@ -23,6 +23,7 @@ from .agenttypes import State, Cart
 from .config import load_config
 from .deepagents_runtime import DeepAgentsRuntime, create_request_identity
 from .media_perception import MEDIA_ONLY_QUERY
+from shared.model_config import resolve_model_config
 
 # Configure logging
 logging.basicConfig(
@@ -79,7 +80,7 @@ class QueryRequest(BaseModel):
     context: Optional[str] = ""
     cart: Optional[Cart] = None
     retrieved: Optional[Dict[str, str]] = {}
-    guardrails: Optional[bool] = True
+    guardrails: Optional[bool] = None
     image_bool: bool = False
 
 
@@ -88,6 +89,18 @@ class QueryResponse(BaseModel):
     response: str
     images: Dict[str, str] = {}
     timings: Dict[str, float] = {}
+    token_usage: Dict[str, int] = Field(default_factory=dict)
+    model_usage: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
+
+
+_MODEL_LABELS = {
+    "app_llm": "Language reasoning",
+    "vlm": "Vision-language inference",
+    "text_embedding": "Text embedding",
+    "image_embedding": "Image embedding",
+    "content_safety": "Content safety",
+    "topic_control": "Topic control",
+}
 
 
 def create_initial_state(request: QueryRequest) -> State:
@@ -104,7 +117,7 @@ def create_initial_state(request: QueryRequest) -> State:
         media=media,
         context=request.context or "",
         cart=request.cart or Cart(),
-        guardrails=request.guardrails,
+        guardrails=config.guardrails_enabled if request.guardrails is None else request.guardrails,
     )
 
 @app.post("/query/stream")
@@ -189,7 +202,9 @@ async def process_query_timing(request: QueryRequest):
         response = QueryResponse(
             response=out_state_dict["response"],
             images=out_state_dict.get("images", {}),
-            timings=out_state_dict["timings"]
+            timings=out_state_dict["timings"],
+            token_usage=out_state_dict.get("token_usage", {}),
+            model_usage=out_state_dict.get("model_usage", {}),
         )
         response.timings["total"] = total_time
 
@@ -230,6 +245,7 @@ async def capabilities():
             "max_video_duration_seconds": media_config.max_video_duration_seconds,
             "vlm_enabled": config.vlm_enabled,
         },
+        "models": _model_capabilities(),
         "catalog": catalog.model_dump(),
     }
 
@@ -290,6 +306,53 @@ def _normalized_media(request: QueryRequest) -> List[Dict[str, str]]:
         )
         seen_data.add(data)
     return normalized
+
+
+def _model_capabilities() -> Dict[str, Dict[str, Any]]:
+    """Return non-secret model metadata suitable for UI display."""
+
+    models: Dict[str, Dict[str, Any]] = {
+        "app_llm": {
+            "label": _MODEL_LABELS["app_llm"],
+            "model": config.llm_name,
+            "source": "configured",
+            "enabled": True,
+        },
+        "vlm": {
+            "label": _MODEL_LABELS["vlm"],
+            "model": config.vlm_name,
+            "source": "configured",
+            "enabled": bool(config.vlm_enabled and config.vlm_name),
+        },
+    }
+
+    try:
+        resolved = resolve_model_config()
+    except Exception as exc:  # noqa: BLE001 - capabilities should stay best-effort.
+        logger.warning("Failed to resolve model capability metadata: %s", exc)
+        return models
+
+    for role, endpoint in resolved.models.items():
+        models[role] = {
+            "label": _MODEL_LABELS.get(role, role.replace("_", " ").title()),
+            "model": endpoint.model,
+            "source": endpoint.source,
+            "enabled": not endpoint.disabled and bool(endpoint.model),
+        }
+
+    models["app_llm"].update(
+        {
+            "model": config.llm_name,
+            "enabled": True,
+        }
+    )
+    models["vlm"].update(
+        {
+            "model": config.vlm_name,
+            "enabled": bool(config.vlm_enabled and config.vlm_name),
+        }
+    )
+    return models
 
 
 def _validate_media(media: List[Dict[str, str]]) -> None:

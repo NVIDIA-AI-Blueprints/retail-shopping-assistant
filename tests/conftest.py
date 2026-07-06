@@ -66,6 +66,8 @@ def base_config() -> SimpleNamespace:
         agent_choices=["cart", "retriever", "chatter"],
         memory_length=16384,
         top_k_retrieve=4,
+        deepagents_recursion_limit=24,
+        max_catalog_searches_per_turn=3,
         catalog_search_timeout_seconds=None,
         multimodal=True,
         media_input=SimpleNamespace(
@@ -84,6 +86,7 @@ def base_config() -> SimpleNamespace:
         vlm_name="test-vlm",
         vlm_api_key_env="VLM_API_KEY",
         vlm_api_key_required=True,
+        guardrails_enabled=True,
         unsafe_message="Sorry, I can only help with shopping questions.",
     )
 
@@ -105,8 +108,11 @@ def valid_config_dict() -> Dict[str, Any]:
         "agent_choices": ["cart", "retriever", "chatter"],
         "memory_length": 16384,
         "top_k_retrieve": 4,
+        "deepagents_recursion_limit": 24,
+        "max_catalog_searches_per_turn": 3,
         "catalog_search_timeout_seconds": None,
         "multimodal": True,
+        "guardrails_enabled": True,
         "unsafe_message": "Sorry, I can only help with shopping questions.",
     }
 

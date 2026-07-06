@@ -29,6 +29,35 @@ def test_nginx_body_limit_covers_base64_expanded_video_upload() -> None:
     assert body_limit_bytes >= base64_video_bytes + request_overhead_bytes
 
 
+def test_nginx_api_timeout_allows_slow_media_turns() -> None:
+    nginx_config = (REPO_ROOT / "nginx.conf").read_text()
+
+    read_timeout = _parse_nginx_duration(
+        re.search(r"proxy_read_timeout\s+([^;]+);", nginx_config).group(1)
+    )
+    send_timeout = _parse_nginx_duration(
+        re.search(r"proxy_send_timeout\s+([^;]+);", nginx_config).group(1)
+    )
+
+    assert read_timeout >= 300
+    assert send_timeout >= 300
+
+
+def _parse_nginx_duration(value: str) -> int:
+    match = re.fullmatch(r"\s*(\d+)([smhSMH]?)\s*", value)
+    assert match is not None
+
+    amount = int(match.group(1))
+    suffix = match.group(2).lower()
+    multipliers = {
+        "": 1,
+        "s": 1,
+        "m": 60,
+        "h": 60 * 60,
+    }
+    return amount * multipliers[suffix]
+
+
 def _parse_nginx_size(value: str) -> int:
     match = re.fullmatch(r"\s*(\d+)([kKmMgG]?)\s*", value)
     assert match is not None

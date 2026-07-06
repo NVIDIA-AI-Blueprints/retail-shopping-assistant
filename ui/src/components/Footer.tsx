@@ -23,7 +23,7 @@ import React from "react";
 
 const Footer: React.FC = () => {
   return (
-    <div className="bg-[#F2F2F2] w-[100%] absolute bottom-0 right-0 h-[64px] mt-4 font-bold text-[28px] flex items-center justify-center">
+    <div className="bg-[#F2F2F2] w-[100%] h-[64px] font-bold text-[28px] flex items-center justify-center">
       {/* Categories */}
       <div className="bg-[#F2F2F2] mt-[1px] text-white lg:px-8 flex items-center gap-6">
         <div className="flex items-center gap-1 hover:underline">

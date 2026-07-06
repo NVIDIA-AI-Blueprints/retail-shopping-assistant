@@ -74,6 +74,18 @@ class State(BaseModel):
         default_factory=dict,
         description="Dictionary of retrieved product information"
     )
+    product_results: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Structured product summaries returned during the current turn"
+    )
+    token_usage: Dict[str, int] = Field(
+        default_factory=dict,
+        description="Normalized model token usage for the current turn"
+    )
+    model_usage: Dict[str, Dict[str, Any]] = Field(
+        default_factory=dict,
+        description="Per-role model usage summary for the current turn"
+    )
     next_agent: str = Field(default="", description="Next agent to route to")
     guardrails: bool = Field(default=True, description="Enable content safety checks")
     timings: Annotated[Dict[str, float], ior] = Field(

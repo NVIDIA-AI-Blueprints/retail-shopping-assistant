@@ -32,6 +32,9 @@ def _clear_model_and_service_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "MEMORY_RETRIEVER_URL",
         "RAILS_URL",
         "CATALOG_SEARCH_TIMEOUT_SECONDS",
+        "DEEPAGENTS_RECURSION_LIMIT",
+        "MAX_CATALOG_SEARCHES_PER_TURN",
+        "GUARDRAILS_ENABLED",
         "LLM_BASE_URL",
         "LLM_MODEL",
         "VLM_BASE_URL",
@@ -74,6 +77,7 @@ class TestChainServerConfigValidation:
         assert config.categories == valid_config_dict["categories"]
         assert config.multimodal is True
         assert config.vlm_enabled is False
+        assert config.guardrails_enabled is True
         assert config.media_input.max_images_per_turn == 1
         assert config.media_input.max_videos_per_turn == 1
 
@@ -140,6 +144,24 @@ class TestChainServerConfigValidation:
         with pytest.raises(ValidationError):
             ChainServerConfig(**{**valid_config_dict, "top_k_retrieve": value})
 
+    @pytest.mark.parametrize("value", [0, -4])
+    def test_deepagents_recursion_limit_must_be_positive(
+        self, valid_config_dict: dict, value: int
+    ) -> None:
+        with pytest.raises(ValidationError):
+            ChainServerConfig(
+                **{**valid_config_dict, "deepagents_recursion_limit": value}
+            )
+
+    @pytest.mark.parametrize("value", [0, -4])
+    def test_max_catalog_searches_per_turn_must_be_positive(
+        self, valid_config_dict: dict, value: int
+    ) -> None:
+        with pytest.raises(ValidationError):
+            ChainServerConfig(
+                **{**valid_config_dict, "max_catalog_searches_per_turn": value}
+            )
+
     @pytest.mark.parametrize("value", [None, 30, 120.5])
     def test_catalog_search_timeout_accepts_none_or_positive_values(
         self, valid_config_dict: dict, value: float | None
@@ -193,8 +215,54 @@ class TestLoadConfig:
 
         assert isinstance(config, ChainServerConfig)
         assert config.memory_length == valid_config_dict["memory_length"]
+        assert config.deepagents_recursion_limit == valid_config_dict["deepagents_recursion_limit"]
+        assert config.max_catalog_searches_per_turn == valid_config_dict["max_catalog_searches_per_turn"]
+        assert config.guardrails_enabled is True
         assert config.llm_name == "nvidia/nemotron-3-super-120b-a12b"
         assert config.vlm_enabled is True
+
+    @pytest.mark.parametrize(
+        "raw_value,expected",
+        [
+            ("true", True),
+            ("yes", True),
+            ("on", True),
+            ("1", True),
+            ("false", False),
+            ("no", False),
+            ("off", False),
+            ("0", False),
+        ],
+    )
+    def test_guardrails_enabled_env_override_accepts_explicit_bools(
+        self,
+        write_yaml,
+        valid_config_dict: dict,
+        monkeypatch: pytest.MonkeyPatch,
+        raw_value: str,
+        expected: bool,
+    ) -> None:
+        _clear_model_and_service_env(monkeypatch)
+        monkeypatch.setenv("SHARED_CONFIG_ROOT", str(REPO_ROOT / "shared/configs"))
+        monkeypatch.setenv("LLM_API_KEY", "test-key")
+        monkeypatch.setenv("GUARDRAILS_ENABLED", raw_value)
+        path = write_yaml("config.yaml", valid_config_dict)
+
+        config = load_config(str(path))
+
+        assert config.guardrails_enabled is expected
+
+    def test_guardrails_enabled_env_override_rejects_invalid_bool(
+        self, write_yaml, valid_config_dict: dict, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _clear_model_and_service_env(monkeypatch)
+        monkeypatch.setenv("SHARED_CONFIG_ROOT", str(REPO_ROOT / "shared/configs"))
+        monkeypatch.setenv("LLM_API_KEY", "test-key")
+        monkeypatch.setenv("GUARDRAILS_ENABLED", "ture")
+        path = write_yaml("config.yaml", valid_config_dict)
+
+        with pytest.raises(ValueError, match="GUARDRAILS_ENABLED must be one of"):
+            load_config(str(path))
 
     def test_invalid_yaml_surface_as_value_error(
         self, write_yaml, valid_config_dict: dict, monkeypatch: pytest.MonkeyPatch

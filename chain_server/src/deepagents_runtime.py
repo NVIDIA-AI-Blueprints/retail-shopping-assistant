@@ -119,12 +119,28 @@ class DeepAgentsRuntime:
         self, state: State, identity: RequestIdentity
     ) -> AsyncIterator[str]:
         output = await self._run_turn(state, identity)
+        products = output.product_results or []
+        if products:
+            yield json.dumps(
+                {"type": "products", "payload": products, "timestamp": time.time()}
+            )
         images = output.retrieved or {}
         yield json.dumps({"type": "images", "payload": images, "timestamp": time.time()})
         if output.response:
             yield json.dumps(
                 {"type": "content", "payload": output.response, "timestamp": time.time()}
             )
+        yield json.dumps(
+            {
+                "type": "metrics",
+                "payload": {
+                    "timings": output.timings,
+                    "total_seconds": sum(output.timings.values()),
+                    "token_usage": _normalized_token_usage(output.token_usage),
+                },
+                "timestamp": time.time(),
+            }
+        )
 
     async def ainvoke(self, state: State, identity: RequestIdentity) -> dict[str, Any]:
         output = await self._run_turn(state, identity)
@@ -132,6 +148,7 @@ class DeepAgentsRuntime:
             "response": output.response,
             "images": output.retrieved or {},
             "timings": output.timings,
+            "token_usage": _normalized_token_usage(output.token_usage),
         }
 
     async def _run_turn(self, state: State, identity: RequestIdentity) -> State:
@@ -139,15 +156,23 @@ class DeepAgentsRuntime:
         state.user_id = identity.context_user_id
         self._load_memory(state, identity)
 
-        if state.guardrails and not self._check_safety("input", identity.context_user_id, state.query):
-            state.response = self.config.unsafe_message
-            state.timings["deepagents"] = time.monotonic() - start
-            return state
+        if state.guardrails:
+            safety_start = time.monotonic()
+            input_safe = self._check_safety("input", identity.context_user_id, state.query)
+            state.timings["safety_input"] = time.monotonic() - safety_start
+            if not input_safe:
+                state.response = self.config.unsafe_message
+                state.timings["deepagents"] = time.monotonic() - start
+                return state
 
         media_start = time.monotonic()
         state.media_analysis = await self._media_perception.analyze(state)
         if state.media:
             state.timings["media_perception"] = time.monotonic() - media_start
+        if _should_short_circuit_media_failure(state):
+            state.response = _media_failure_response(state.media_analysis)
+            state.timings["deepagents"] = time.monotonic() - start
+            return state
 
         agent = self._create_agent(state, identity)
         input_message = self._build_user_message(state, identity)
@@ -156,10 +181,11 @@ class DeepAgentsRuntime:
                 {"messages": [{"role": "user", "content": input_message}]},
                 config={
                     "configurable": {"thread_id": identity.conversation_id},
-                    "recursion_limit": 12,
+                    "recursion_limit": self.config.deepagents_recursion_limit,
                 },
             )
             state.response = _extract_final_text(result)
+            state.token_usage = _collect_token_usage(result)
         except Exception as exc:  # noqa: BLE001 - keep endpoint resilient.
             logger.exception("DeepAgentsRuntime failed")
             state.response = (
@@ -169,8 +195,12 @@ class DeepAgentsRuntime:
             state.timings["deepagents_error"] = time.monotonic() - start
             return state
 
-        if state.guardrails and not self._check_safety("output", identity.context_user_id, state.response):
-            state.response = self.config.unsafe_message
+        if state.guardrails:
+            safety_start = time.monotonic()
+            output_safe = self._check_safety("output", identity.context_user_id, state.response)
+            state.timings["safety_output"] = time.monotonic() - safety_start
+            if not output_safe:
+                state.response = self.config.unsafe_message
 
         state.context = self._updated_context(
             state.context,
@@ -204,6 +234,7 @@ class DeepAgentsRuntime:
 
         retrieved: dict[str, str] = {}
         state.retrieved = retrieved
+        catalog_searches_this_turn = 0
 
         @tool(args_schema=SearchCatalogToolInput, return_direct=False)
         def search_catalog_tool(
@@ -213,6 +244,16 @@ class DeepAgentsRuntime:
             search_mode: str | None = None,
         ) -> str:
             """Execute product discovery with catalog-declared hard filters."""
+
+            nonlocal catalog_searches_this_turn
+            if catalog_searches_this_turn >= self.config.max_catalog_searches_per_turn:
+                return (
+                    "Catalog search limit reached for this turn. Use the products "
+                    "already returned in this turn to answer concisely, or ask one "
+                    "concise clarifying question if the available products are not "
+                    "enough."
+                )
+            catalog_searches_this_turn += 1
 
             capabilities = self._catalog_capabilities.get()
             if capabilities.catalog_id == "unavailable" and not capabilities.filters:
@@ -233,12 +274,14 @@ class DeepAgentsRuntime:
             if not plan.should_search:
                 return "Catalog search requires a query or image."
 
+            search_start = time.monotonic()
             execution = execute_catalog_search(
                 plan,
                 self.config.retriever_port,
                 image_base64=state.image,
                 timeout_seconds=self.config.catalog_search_timeout_seconds,
             )
+            state.timings["catalog_search"] = time.monotonic() - search_start
             result = execution.result
             if not result.ok:
                 return result.error.message if result.error else "Catalog search failed."
@@ -246,6 +289,7 @@ class DeepAgentsRuntime:
                 return "No matching catalog products were found."
 
             self._remember_products(identity, result.products)
+            _append_product_results(state, result.products)
             lines = []
             for product in result.products:
                 if product.image_url:
@@ -391,11 +435,14 @@ Rules:
   be answered from MEDIA ANALYSIS. Do not call search_catalog_tool and do not
   show catalog products unless the shopper explicitly asks to find, shop,
   recommend, compare, price-check, check availability, or add an item.
-- Use at most one catalog search per user turn. Search with the complete user
-  request rather than running many keyword probes. If one search is not enough,
-  answer from the results you have or ask one concise clarifying question.
-- A tool result is enough to produce a final answer. Do not keep searching for
-  alternatives unless the shopper explicitly rejects the current result.
+- Use at most {self.config.max_catalog_searches_per_turn} catalog searches per
+  user turn. For outfit requests with multiple required item types, run one
+  focused search per required item type, then stop and synthesize from those
+  results.
+- A tool result is enough to produce a final answer. Once you have at least one
+  plausible product for each required item type, answer from those results. Do
+  not keep searching for alternatives unless the shopper explicitly rejects the
+  current result.
 - Product-detail or research questions about a product already returned by
   search_catalog_tool should use get_product_details_tool with that
   PRODUCT_REF. Do not run another broad catalog search for known-product facts.
@@ -409,8 +456,10 @@ Rules:
   the attached media. It can guide search_catalog_tool queries and follow-up
   pronoun resolution, but catalog tool results remain the source of truth for
   product names, prices, and availability.
-- If video understanding is unavailable, say so plainly or ask the shopper for
-  a text description. Do not invent visual details.
+- If MEDIA ANALYSIS says media analysis failed, VLM authentication failed, the
+  VLM is unavailable, or video understanding is not configured, say so plainly.
+  Do not infer video-similar products from the media; ask the shopper for a
+  text description or search only from explicit text in the shopper request.
 - Cart reads require get_cart_tool. Cart totals require view_cart_total_tool.
 - Cart mutations require explicit shopper intent and must use add_cart_item_tool
   or remove_cart_item_tool. Never claim a cart mutation unless the tool reports
@@ -582,6 +631,219 @@ def _extract_final_text(result: Any) -> str:
                     return text
         return _content_to_text(result.get("response")) or ""
     return _content_to_text(getattr(result, "content", result)) or ""
+
+
+def _append_product_results(state: State, products: list[ProductSummary]) -> None:
+    existing_ids = {
+        str(product.get("product_id") or "")
+        for product in state.product_results
+        if isinstance(product, dict)
+    }
+    for product in products:
+        payload = product.model_dump(mode="json")
+        product_id = str(payload.get("product_id") or "")
+        if product_id and product_id in existing_ids:
+            continue
+        state.product_results.append(payload)
+        if product_id:
+            existing_ids.add(product_id)
+
+
+def _should_short_circuit_media_failure(state: State) -> bool:
+    if not state.media or not state.media_analysis:
+        return False
+    if not _media_analysis_unavailable(state.media_analysis):
+        return False
+    return _query_depends_on_media(state.query)
+
+
+def _media_analysis_unavailable(media_analysis: str) -> bool:
+    try:
+        parsed = json.loads(media_analysis)
+    except json.JSONDecodeError:
+        text = media_analysis
+    else:
+        if not isinstance(parsed, dict):
+            text = str(parsed)
+        else:
+            parts = [str(parsed.get("summary") or "")]
+            uncertainties = parsed.get("uncertainties")
+            if isinstance(uncertainties, list):
+                parts.extend(str(item) for item in uncertainties)
+            text = " ".join(parts)
+
+    lowered = text.lower()
+    return any(
+        phrase in lowered
+        for phrase in (
+            "not configured",
+            "unavailable",
+            "authentication failed",
+            "could not authenticate",
+            "not allowed to access",
+            "media analysis failed",
+            "vlm returned no analysis",
+        )
+    )
+
+
+def _query_depends_on_media(query: str) -> bool:
+    lowered = (query or "").strip().lower()
+    if not lowered or lowered == "the user submitted visual media without additional text.":
+        return True
+    return any(
+        phrase in lowered
+        for phrase in (
+            "this video",
+            "the video",
+            "in video",
+            "from video",
+            "attached video",
+            "she is wearing",
+            "he is wearing",
+            "they are wearing",
+            "person is wearing",
+            "like that",
+            "like this",
+            "similar to that",
+            "similar to this",
+            "what is in this",
+            "what's in this",
+            "what am i wearing",
+            "what are they wearing",
+            "describe this",
+        )
+    )
+
+
+def _media_failure_response(media_analysis: str) -> str:
+    detail = "video/image understanding is unavailable for this turn"
+    try:
+        parsed = json.loads(media_analysis)
+    except json.JSONDecodeError:
+        parsed = {}
+    if isinstance(parsed, dict):
+        summary = str(parsed.get("summary") or "").strip()
+        if summary:
+            detail = _clean_media_failure_detail(summary)
+
+    return (
+        f"I could not analyze the attached media because {detail}. "
+        "Please describe the item in text, such as color, silhouette, material, "
+        "and any visible details, and I can search the catalog from that description."
+    )
+
+
+def _clean_media_failure_detail(summary: str) -> str:
+    detail = summary.strip()
+    for prefix in (
+        "Media was attached, but ",
+        "Video was attached, but ",
+        "Image was attached, but ",
+    ):
+        if detail.startswith(prefix):
+            detail = detail[len(prefix):]
+            break
+    if detail:
+        detail = detail[0].lower() + detail[1:]
+    return detail.rstrip(". ") or "video/image understanding is unavailable for this turn"
+
+
+def _collect_token_usage(result: Any) -> dict[str, int]:
+    """Collect normalized token usage from LangChain/OpenAI message metadata."""
+
+    usage = _empty_token_usage()
+    for message in _result_messages(result):
+        record = _message_token_usage_record(message)
+        if not record:
+            continue
+
+        input_tokens = _token_int(record, ("input_tokens", "prompt_tokens", "input"))
+        output_tokens = _token_int(
+            record,
+            ("output_tokens", "completion_tokens", "output"),
+        )
+        total_tokens = _token_int(record, ("total_tokens", "total"))
+        if total_tokens is None and (input_tokens is not None or output_tokens is not None):
+            total_tokens = int(input_tokens or 0) + int(output_tokens or 0)
+
+        if input_tokens is None and output_tokens is None and total_tokens is None:
+            continue
+
+        usage["input_tokens"] += int(input_tokens or 0)
+        usage["output_tokens"] += int(output_tokens or 0)
+        usage["total_tokens"] += int(total_tokens or 0)
+        usage["model_calls"] += 1
+    return usage
+
+
+def _normalized_token_usage(raw: dict[str, Any] | None) -> dict[str, int]:
+    usage = _empty_token_usage()
+    if not isinstance(raw, dict):
+        return usage
+    for key in usage:
+        value = raw.get(key)
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, (int, float)):
+            usage[key] = max(0, int(value))
+    return usage
+
+
+def _empty_token_usage() -> dict[str, int]:
+    return {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "model_calls": 0,
+    }
+
+
+def _result_messages(result: Any) -> list[Any]:
+    if isinstance(result, dict):
+        messages = result.get("messages")
+        if isinstance(messages, list):
+            return messages
+        return [result]
+
+    messages = getattr(result, "messages", None)
+    if isinstance(messages, list):
+        return messages
+    return [result]
+
+
+def _message_token_usage_record(message: Any) -> Any:
+    usage_metadata = _value(message, "usage_metadata")
+    if usage_metadata:
+        return usage_metadata
+
+    response_metadata = _value(message, "response_metadata")
+    if isinstance(response_metadata, dict):
+        token_usage = response_metadata.get("token_usage")
+        if token_usage:
+            return token_usage
+
+    for key in ("token_usage", "usage"):
+        record = _value(message, key)
+        if record:
+            return record
+    return None
+
+
+def _value(source: Any, key: str) -> Any:
+    if isinstance(source, dict):
+        return source.get(key)
+    return getattr(source, key, None)
+
+
+def _token_int(record: Any, keys: tuple[str, ...]) -> int | None:
+    for key in keys:
+        value = _value(record, key)
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, (int, float)):
+            return max(0, int(value))
+    return None
 
 
 def _content_to_text(content: Any) -> str:

@@ -100,6 +100,14 @@ class ChainServerConfig(BaseModel):
     # Performance Configuration
     memory_length: int = Field(..., description="Maximum memory length for context")
     top_k_retrieve: int = Field(..., description="Number of top results to retrieve")
+    deepagents_recursion_limit: int = Field(
+        default=24,
+        description="Maximum Deep Agents graph steps allowed for one assistant turn",
+    )
+    max_catalog_searches_per_turn: int = Field(
+        default=3,
+        description="Maximum catalog search tool calls allowed for one assistant turn",
+    )
     catalog_search_timeout_seconds: Optional[float] = Field(
         default=None,
         description=(
@@ -138,6 +146,20 @@ class ChainServerConfig(BaseModel):
         """Validate top_k_retrieve is positive."""
         if v <= 0:
             raise ValueError("top_k_retrieve must be positive")
+        return v
+
+    @validator('deepagents_recursion_limit')
+    def validate_deepagents_recursion_limit(cls, v):
+        """Validate Deep Agents recursion limit is positive."""
+        if v <= 0:
+            raise ValueError("deepagents_recursion_limit must be positive")
+        return v
+
+    @validator('max_catalog_searches_per_turn')
+    def validate_max_catalog_searches_per_turn(cls, v):
+        """Validate per-turn catalog search cap is positive."""
+        if v <= 0:
+            raise ValueError("max_catalog_searches_per_turn must be positive")
         return v
 
     @validator('catalog_search_timeout_seconds')
@@ -184,6 +206,8 @@ def load_config(config_path: Optional[str] = None) -> ChainServerConfig:
         "memory_port": os.environ.get("MEMORY_RETRIEVER_URL"),
         "rails_port": os.environ.get("RAILS_URL"),
         "catalog_search_timeout_seconds": os.environ.get("CATALOG_SEARCH_TIMEOUT_SECONDS"),
+        "deepagents_recursion_limit": os.environ.get("DEEPAGENTS_RECURSION_LIMIT"),
+        "max_catalog_searches_per_turn": os.environ.get("MAX_CATALOG_SEARCHES_PER_TURN"),
     }
     config_data.update({key: value for key, value in env_overrides.items() if value})
 

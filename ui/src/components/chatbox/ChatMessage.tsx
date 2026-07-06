@@ -28,7 +28,7 @@ import { isFashionMode } from "../../config/config";
 import nvinfo from "../../assets/nvinfo.jpg";
 
 const ChatMessage = React.forwardRef<HTMLDivElement, ChatMessageProps>(
-  ({ role, content, productName }, ref) => {
+  ({ role, content, productName, selectedProductName, onProductSelect }, ref) => {
     
     // CSS class mapping for markdown elements
     const classMap: Record<string, string> = {
@@ -102,17 +102,24 @@ const ChatMessage = React.forwardRef<HTMLDivElement, ChatMessageProps>(
 
     // Image message (single product)
     if (role === "image") {
-      const [imagePath, url, productName, productRating] = (content as string).split("|");
+      const [imagePath, url, imageProductName, productRating] = (content as string).split("|");
       
-      if (imagePath && url && productName && productRating) {
+      if (imagePath && url && imageProductName && productRating) {
+        const product = {
+          productName: imageProductName,
+          productUrl: imagePath,
+        };
+
         return (
           <div className={`messages__item messages__item--${role}`} ref={ref}>
-            <img className="messages__item--image-img" src={imagePath} alt={productName} />
-            <div className="messages__item--image-box">
-              <div className="messages__item--image-stars">
-                {productName}
-              </div>
-            </div>
+            <button
+              type="button"
+              className="product-result-card"
+              onClick={() => onProductSelect?.(product)}
+            >
+              <img className="product-result-card__image" src={imagePath} alt={imageProductName} />
+              <span className="product-result-card__name">{imageProductName}</span>
+            </button>
           </div>
         );
       }
@@ -123,29 +130,30 @@ const ChatMessage = React.forwardRef<HTMLDivElement, ChatMessageProps>(
       const images = content as ImageRowContent;
       
       return (
-        <div style={{ 
-          width: "100%", 
-          height: "auto", 
-          display: "inline-flex", 
-          flexFlow: "row wrap" 
-        }}>
+        <div className="product-result-grid" ref={ref}>
           {images.map((image: ImageContent, index: number) => (
-            <div key={index} className={`messages__item messages__item--image`} ref={ref}>
-              <img 
-                className="messages__item--image-img-rowitem" 
-                src={image.productUrl} 
-                alt={image.productName}
-              />
-              <div className="messages__item--image-box">
-                <div 
-                  className="messages__item--image-stars" 
+            <div key={`${image.productName}-${index}`} className="messages__item messages__item--image">
+              <button
+                type="button"
+                className={`product-result-card${
+                  image.productName === selectedProductName ? " is-selected" : ""
+                }`}
+                onClick={() => onProductSelect?.(image)}
+              >
+                <img
+                  className="product-result-card__image"
+                  src={image.productUrl}
+                  alt={image.productName}
+                />
+                <span
+                  className="product-result-card__name"
                   style={{
-                    maxWidth: isFashionMode() ? "200px" : "none"
+                    maxWidth: isFashionMode() ? "200px" : "none",
                   }}
                 >
                   {image.productName}
-                </div>
-              </div>
+                </span>
+              </button>
             </div>
           ))}
         </div>

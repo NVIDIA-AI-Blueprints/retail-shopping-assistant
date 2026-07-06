@@ -18,17 +18,29 @@
 import React, { useState, useEffect, useRef } from "react";
 import { toast } from "react-toastify";
 import SendIcon from "@mui/icons-material/Send";
-import CancelIcon from "@mui/icons-material/Cancel";
-import DownloadIcon from "@mui/icons-material/Download";
-import FormGroup from '@mui/material/FormGroup';
-import FormControlLabel from '@mui/material/FormControlLabel';
+import AttachFileIcon from "@mui/icons-material/AttachFile";
+import CloseIcon from "@mui/icons-material/Close";
+import RestartAltIcon from "@mui/icons-material/RestartAlt";
 import Switch from '@mui/material/Switch';
 import { styled } from '@mui/material/styles';
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faTimesCircle } from '@fortawesome/free-solid-svg-icons';
 
 import ChatMessage from "./ChatMessage";
-import { CapabilitiesResponse, ChatboxProps, MediaAttachment, MediaCapabilities } from "../../types";
+import InferenceActivityPanel from "./InferenceActivityPanel";
+import {
+  CapabilitiesResponse,
+  ChatboxProps,
+  ImageContent,
+  InferenceActivity,
+  InferenceMetricsPayload,
+  MediaAttachment,
+  MediaCapabilities,
+  MessageData,
+  MessageRole,
+  ModelCapabilities,
+  ProductPrice,
+  ProductSummary,
+  TokenUsage,
+} from "../../types";
 import { config } from "../../config/config";
 import {
   clearUserSession,
@@ -55,20 +67,235 @@ const CustomSwitch = styled(Switch)(({ theme }) => ({
   },
 }));
 
-const Chatbox: React.FC<ChatboxProps> = ({ setNewRenderImage }) => {
+const normalizeProduct = (raw: unknown): ProductSummary | null => {
+  if (!raw || typeof raw !== "object") return null;
+  const value = raw as Record<string, unknown>;
+  const productName = stringValue(value.display_name) || stringValue(value.productName);
+  if (!productName) return null;
+
+  return {
+    productId: stringValue(value.product_id) || stringValue(value.productId),
+    productName,
+    productUrl: stringValue(value.image_url) || stringValue(value.productUrl),
+    description: stringValue(value.description),
+    category: stringValue(value.category),
+    brand: stringValue(value.brand),
+    price: normalizePrice(value.price),
+    availability: stringValue(value.availability),
+    attributes: normalizeAttributes(value.attributes),
+  };
+};
+
+const normalizePrice = (raw: unknown): ProductPrice | null => {
+  if (!raw || typeof raw !== "object") return null;
+  const value = raw as Record<string, unknown>;
+  const amount = Number(value.amount);
+  if (!Number.isFinite(amount)) return null;
+  return {
+    amount,
+    currency: stringValue(value.currency) || "USD",
+  };
+};
+
+const normalizeAttributes = (raw: unknown): Record<string, unknown> | undefined => {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  return raw as Record<string, unknown>;
+};
+
+const stringValue = (value: unknown): string => {
+  return typeof value === "string" ? value.trim() : "";
+};
+
+const productKey = (name: string): string => name.trim().toLowerCase();
+
+const mimeForFile = (file: File, allowedMimeTypes: string[]): string => {
+  if (file.type && allowedMimeTypes.includes(file.type)) return file.type;
+  const lowerName = file.name.toLowerCase();
+  if (lowerName.endsWith(".mp4") && allowedMimeTypes.includes("video/mp4")) {
+    return "video/mp4";
+  }
+  if ((lowerName.endsWith(".jpg") || lowerName.endsWith(".jpeg")) && allowedMimeTypes.includes("image/jpeg")) {
+    return "image/jpeg";
+  }
+  if (lowerName.endsWith(".png") && allowedMimeTypes.includes("image/png")) {
+    return "image/png";
+  }
+  return file.type || "";
+};
+
+const dataUrlWithMime = (dataUrl: string, mimeType: string): string => {
+  if (!mimeType || !dataUrl.startsWith("data:")) return dataUrl;
+  if (/^data:[^;]+;base64,/i.test(dataUrl)) return dataUrl;
+  return dataUrl.replace(/^data:;base64,/i, `data:${mimeType};base64,`);
+};
+
+const acceptedMediaTypes = (capabilities: MediaCapabilities): string => {
+  const imageTypes = capabilities.image_mime_types.flatMap((mimeType) => {
+    if (mimeType === "image/jpeg") return [mimeType, ".jpg", ".jpeg"];
+    if (mimeType === "image/png") return [mimeType, ".png"];
+    return [mimeType];
+  });
+  const advertisedVideoTypes = capabilities.video_mime_types.length > 0
+    ? capabilities.video_mime_types
+    : ["video/mp4"];
+  const videoTypes = advertisedVideoTypes.flatMap((mimeType) => (
+        mimeType === "video/mp4" ? [mimeType, ".mp4"] : [mimeType]
+      ));
+  return Array.from(new Set([...imageTypes, ...videoTypes])).join(",");
+};
+
+const supportedVideoLabel = (capabilities: MediaCapabilities): string => {
+  if (!capabilities.vlm_enabled || capabilities.max_videos_per_turn <= 0) {
+    return "Video upload is disabled by the current model configuration.";
+  }
+  const formats = capabilities.video_mime_types.map((mimeType) => {
+    if (mimeType === "video/mp4") return "MP4";
+    return mimeType;
+  });
+  return `Supported video format: ${formats.join(", ")}. Max ${(capabilities.max_video_bytes / (1024 * 1024)).toFixed(0)}MB.`;
+};
+
+const modelName = (models: ModelCapabilities, role: string): string | undefined => {
+  const model = models[role];
+  return model?.enabled && model.model ? model.model : undefined;
+};
+
+const joinedModelNames = (models: ModelCapabilities, roles: string[]): string | undefined => {
+  const names = roles
+    .map((role) => modelName(models, role))
+    .filter((name): name is string => Boolean(name));
+  return names.length > 0 ? names.join(" / ") : undefined;
+};
+
+const createPendingActivities = (
+  hasMedia: boolean,
+  guardrailsEnabled: boolean,
+  models: ModelCapabilities
+): InferenceActivity[] => {
+  const events: InferenceActivity[] = [
+    {
+      id: "memory-pending",
+      category: "memory",
+      label: "Conversation memory",
+      detail: "Session and cart context",
+      status: "running",
+    },
+    {
+      id: "language-pending",
+      category: "language",
+      label: "Language reasoning",
+      detail: "Planning, tool use, and response generation",
+      modelName: modelName(models, "app_llm"),
+      status: "running",
+    },
+  ];
+
+  if (hasMedia) {
+    events.splice(1, 0, {
+      id: "vision-pending",
+      category: "vision",
+      label: "Vision-language inference",
+      detail: "Attached media understanding",
+      modelName: modelName(models, "vlm"),
+      status: "running",
+    });
+  }
+
+  if (guardrailsEnabled) {
+    events.push({
+      id: "safety-pending",
+      category: "safety",
+      label: "Safety inference",
+      detail: "Input and output checks",
+      modelName: joinedModelNames(models, ["content_safety", "topic_control"]),
+      status: "queued",
+    });
+  }
+
+  return events;
+};
+
+const activitiesFromMetrics = (
+  metrics: InferenceMetricsPayload,
+  hasMedia: boolean,
+  guardrailsEnabled: boolean,
+  models: ModelCapabilities
+): InferenceActivity[] => {
+  const timings = metrics.timings || {};
+  const activities: InferenceActivity[] = [];
+  const addTiming = (
+    key: string,
+    category: InferenceActivity["category"],
+    label: string,
+    detail: string,
+    modelName?: string
+  ) => {
+    const seconds = Number(timings[key]);
+    if (!Number.isFinite(seconds)) return;
+    activities.push({
+      id: key,
+      category,
+      label,
+      detail,
+      modelName,
+      status: "complete",
+      durationMs: Math.max(0, seconds * 1000),
+    });
+  };
+
+  addTiming("media_perception", "vision", "Vision-language inference", "Attached media understanding", modelName(models, "vlm"));
+  addTiming("catalog_search", "embedding", "Embeddings and vector search", "Catalog retrieval workload", joinedModelNames(models, ["text_embedding", "image_embedding"]));
+  addTiming("deepagents", "language", "Language reasoning", "Planning, tool use, and response generation", modelName(models, "app_llm"));
+  addTiming("memory", "memory", "Conversation memory", "Session and cart context");
+  addTiming("safety_input", "safety", "Input safety", "Guardrails check", joinedModelNames(models, ["content_safety", "topic_control"]));
+  addTiming("safety_output", "safety", "Output safety", "Guardrails check", joinedModelNames(models, ["content_safety", "topic_control"]));
+
+  if (activities.length === 0) {
+    return createPendingActivities(hasMedia, guardrailsEnabled, models).map((event) => ({
+      ...event,
+      status: "complete",
+    }));
+  }
+
+  return activities;
+};
+
+const failedActivities = (events: InferenceActivity[]): InferenceActivity[] => {
+  if (events.length === 0) {
+    return [
+      {
+        id: "request-failed",
+        category: "system",
+        label: "Assistant request",
+        detail: "The turn did not complete",
+        status: "failed",
+      },
+    ];
+  }
+  return events.map((event) => ({
+    ...event,
+    status: event.status === "complete" ? event.status : "failed",
+  }));
+};
+
+const Chatbox: React.FC<ChatboxProps> = ({
+  selectedProduct,
+  onProductSelect,
+  onProductsUpdate,
+}) => {
   const defaultMediaCapabilities: MediaCapabilities = {
     enabled: config.features.imageUpload.enabled,
     allow_mixed_media: true,
     max_images_per_turn: 1,
-    max_videos_per_turn: 0,
+    max_videos_per_turn: 1,
     image_mime_types: config.features.imageUpload.allowedTypes,
-    video_mime_types: [],
+    video_mime_types: ["video/mp4"],
     max_image_bytes: config.features.imageUpload.maxSize * 1024 * 1024,
-    max_video_bytes: 0,
+    max_video_bytes: 50 * 1024 * 1024,
     max_video_duration_seconds: 120,
-    vlm_enabled: false,
+    vlm_enabled: true,
   };
-  const [isOpen, setIsOpen] = useState<boolean>(true);
+  const [isOpen] = useState<boolean>(true);
   const [hasBeenOpened, setHasBeenOpened] = useState<boolean>(false);
   const [newMessage, setNewMessage] = useState<string>("");
   const [isGuardrailsOn, setIsGuardrailsOn] = useState(config.features.guardrails.defaultState);
@@ -79,12 +306,19 @@ const Chatbox: React.FC<ChatboxProps> = ({ setNewRenderImage }) => {
   const [videoMimeType, setVideoMimeType] = useState("");
   const [videoFilename, setVideoFilename] = useState("");
   const [mediaCapabilities, setMediaCapabilities] = useState<MediaCapabilities>(defaultMediaCapabilities);
-  const [messages, setMessages] = useState<any[]>([]);
+  const [modelCapabilities, setModelCapabilities] = useState<ModelCapabilities>({});
+  const [messages, setMessages] = useState<MessageData[]>([]);
+  const [inferenceEvents, setInferenceEvents] = useState<InferenceActivity[]>([]);
+  const [tokenUsage, setTokenUsage] = useState<TokenUsage | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const messageRefs = useRef<React.RefObject<HTMLDivElement>[]>([]);
   const [lastAssistantIndex, setLastAssistantIndex] = useState<number | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const shownCartOperations = useRef<Set<string>>(new Set());
+  const productsByNameRef = useRef<Map<string, ProductSummary>>(new Map());
+  const currentTurnHasMedia = useRef(false);
+  const currentTurnGuardrails = useRef(isGuardrailsOn);
+  const handleResetRef = useRef<(() => Promise<void>) | null>(null);
 
   // Utility functions
   const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -147,12 +381,14 @@ const Chatbox: React.FC<ChatboxProps> = ({ setNewRenderImage }) => {
       return;
     }
 
-    const isImage = mediaCapabilities.image_mime_types.includes(file.type);
-    const isVideo = mediaCapabilities.video_mime_types.includes(file.type);
+    const imageMimeType = mimeForFile(file, mediaCapabilities.image_mime_types);
+    const videoMimeTypeForFile = mimeForFile(file, mediaCapabilities.video_mime_types);
+    const isImage = Boolean(imageMimeType && mediaCapabilities.image_mime_types.includes(imageMimeType));
+    const isVideo = Boolean(videoMimeTypeForFile && mediaCapabilities.video_mime_types.includes(videoMimeTypeForFile));
     const videoAllowed = mediaCapabilities.vlm_enabled && mediaCapabilities.max_videos_per_turn > 0;
 
     if (!isImage && !isVideo) {
-      toast.error("Please select a supported image or video file.");
+      toast.error(`Please select a supported image or video file. ${supportedVideoLabel(mediaCapabilities)}`);
       return;
     }
     if (isImage && mediaCapabilities.max_images_per_turn <= 0) {
@@ -190,14 +426,16 @@ const Chatbox: React.FC<ChatboxProps> = ({ setNewRenderImage }) => {
     try {
       const base64Media = await convertToBase64(file);
       if (isImage) {
-        setImage(base64Media);
-        const decodedImage = base64ToBlob(base64Media);
+        const normalizedImage = dataUrlWithMime(base64Media, imageMimeType);
+        setImage(normalizedImage);
+        const decodedImage = base64ToBlob(normalizedImage);
         const imageUrl = window.URL.createObjectURL(decodedImage);
         setPreviewImage(imageUrl);
       } else {
-        setVideo(base64Media);
+        const normalizedVideo = dataUrlWithMime(base64Media, videoMimeTypeForFile);
+        setVideo(normalizedVideo);
         setPreviewVideo(window.URL.createObjectURL(file));
-        setVideoMimeType(file.type);
+        setVideoMimeType(videoMimeTypeForFile);
         setVideoFilename(file.name);
       }
       
@@ -219,7 +457,11 @@ const Chatbox: React.FC<ChatboxProps> = ({ setNewRenderImage }) => {
     setVideoFilename("");
   };
 
-  const addMessage = (role: string, content: any, productName: string = "") => {
+  const addMessage = (
+    role: MessageRole,
+    content: MessageData["content"],
+    productName: string = ""
+  ) => {
     setMessages((prevMessages) => {
       const newMessages = [...prevMessages, { role, content, productName }];
       messageRefs.current = newMessages.map((_, i) => 
@@ -234,7 +476,7 @@ const Chatbox: React.FC<ChatboxProps> = ({ setNewRenderImage }) => {
     });
   };
 
-  const updateLastMessage = (newContent: any, role?: string, appendContent?: boolean) => {
+  const updateLastMessage = (newContent: any, role?: MessageRole, appendContent?: boolean) => {
     setMessages((prevMessages) => {
       if (prevMessages.length === 0) return prevMessages;
 
@@ -263,6 +505,57 @@ const Chatbox: React.FC<ChatboxProps> = ({ setNewRenderImage }) => {
     });
   };
 
+  const mergeProductResults = (products: ProductSummary[]): ProductSummary[] => {
+    products.forEach((product) => {
+      productsByNameRef.current.set(productKey(product.productName), product);
+    });
+
+    const nextProducts = Array.from(productsByNameRef.current.values());
+    onProductsUpdate(nextProducts);
+
+    const hasSelectedProduct =
+      selectedProduct &&
+      nextProducts.some((product) => productKey(product.productName) === productKey(selectedProduct.productName));
+    if (nextProducts.length > 0 && !hasSelectedProduct) {
+      onProductSelect(nextProducts[0]);
+    }
+
+    return nextProducts;
+  };
+
+  const productsFromImagePayload = (payload: Record<string, unknown>): ImageContent[] => {
+    return Object.entries(payload)
+      .map(([productName, productUrl]) => {
+        const existing = productsByNameRef.current.get(productKey(productName));
+        return {
+          ...existing,
+          productName,
+          productUrl: String(productUrl),
+        };
+      })
+      .filter((product) => product.productName && product.productUrl);
+  };
+
+  const enrichExistingImageRows = (products: ProductSummary[]) => {
+    setMessages((prevMessages) =>
+      prevMessages.map((message) => {
+        if (message.role !== "image_row" || !Array.isArray(message.content)) {
+          return message;
+        }
+
+        return {
+          ...message,
+          content: message.content.map((image) => {
+            const product = products.find(
+              (candidate) => productKey(candidate.productName) === productKey(image.productName)
+            );
+            return product ? { ...image, ...product, productUrl: image.productUrl } : image;
+          }),
+        };
+      })
+    );
+  };
+
   const handleSendMessage = async () => {
     if (!newMessage.trim() && !image && !video) return;
 
@@ -271,6 +564,12 @@ const Chatbox: React.FC<ChatboxProps> = ({ setNewRenderImage }) => {
 
     const userSession = getOrCreateUserSession();
     setIsLoading(true);
+    currentTurnHasMedia.current = Boolean(image || video);
+    currentTurnGuardrails.current = isGuardrailsOn;
+    setInferenceEvents(
+      createPendingActivities(currentTurnHasMedia.current, isGuardrailsOn, modelCapabilities)
+    );
+    setTokenUsage(null);
 
     // Will be used to enable submit shortly after the last token
     let enableSubmitTimer: number | undefined;
@@ -339,8 +638,23 @@ const Chatbox: React.FC<ChatboxProps> = ({ setNewRenderImage }) => {
         body: JSON.stringify(payload),
       });
 
-      if (!response.ok || !response.body) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+      if (!response.ok) {
+        let errorMessage = `HTTP error! status: ${response.status}`;
+        try {
+          const errorPayload = await response.json();
+          if (errorPayload?.detail) {
+            errorMessage = String(errorPayload.detail);
+          } else if (errorPayload?.message) {
+            errorMessage = String(errorPayload.message);
+          }
+        } catch {
+          errorMessage = response.statusText || errorMessage;
+        }
+        throw new Error(errorMessage);
+      }
+
+      if (!response.body) {
+        throw new Error("No response body received from assistant.");
       }
 
       // Process streaming response
@@ -366,53 +680,91 @@ const Chatbox: React.FC<ChatboxProps> = ({ setNewRenderImage }) => {
           
           try {
             const { type, payload } = JSON.parse(raw);
-            
-            if (type === 'content') {
-              fullResponse += payload;
-              
+
+            if (type === "products" && Array.isArray(payload)) {
+              const products = payload
+                .map(normalizeProduct)
+                .filter((product): product is ProductSummary => product !== null);
+              const mergedProducts = mergeProductResults(products);
+              enrichExistingImageRows(mergedProducts);
+              continue;
+            }
+
+            if (type === "metrics" && payload && typeof payload === "object") {
+              const metricsPayload = payload as InferenceMetricsPayload;
+              setTokenUsage(metricsPayload.token_usage ?? null);
+              setInferenceEvents(
+                activitiesFromMetrics(
+                  metricsPayload,
+                  currentTurnHasMedia.current,
+                  currentTurnGuardrails.current,
+                  modelCapabilities
+                )
+              );
+              continue;
+            }
+
+            if (type === "error") {
+              setInferenceEvents((prev) => failedActivities(prev));
+              toast.error(String(payload || "Assistant stream failed."));
+              setMessages(prev => prev.filter(msg => msg.content !== "loader"));
+              continue;
+            }
+
+            if (type === "images" && payload && typeof payload === "object") {
+              const images = productsFromImagePayload(payload as Record<string, unknown>);
+              mergeProductResults(images);
+
+              setMessages(prev => {
+                const updated = [...prev];
+                const lastIndex = updated.length - 1;
+                const imageRow = {
+                  role: "image_row" as MessageRole,
+                  content: images,
+                  productName: "",
+                };
+
+                if (updated[lastIndex]?.content === "loader") {
+                  updated[lastIndex] = imageRow;
+                } else {
+                  updated.push(imageRow);
+                }
+                return updated;
+              });
+              continue;
+            }
+
+            if (type === "content") {
+              fullResponse += String(payload || "");
+              const responseSnapshot = fullResponse;
+
               // Check for cart operations and show notifications
-              showCartNotification(fullResponse, shownCartOperations.current, toast);
+              showCartNotification(responseSnapshot, shownCartOperations.current, toast);
 
               // Tokens are flowing; schedule enable when they stop
               scheduleEnableSubmit();
-            } else if (type === 'images') {
-              const images = Object.entries(payload).map(([productName, productUrl]) => ({ 
-                productUrl, 
-                productName 
-              }));
-              
+
               setMessages(prev => {
                 const updated = [...prev];
-                updated[updated.length - 1] = {
-                  ...updated[updated.length - 1],
-                  role: 'image_row',
-                  content: images,
-                };
+                const last = updated[updated.length - 1];
+
+                if (last?.role === "assistant") {
+                  updated[updated.length - 1] = {
+                    ...last,
+                    content: responseSnapshot
+                  };
+                } else {
+                  updated.push({
+                    role: "assistant",
+                    content: responseSnapshot,
+                    productName: ""
+                  });
+                  setLastAssistantIndex(updated.length - 1);
+                }
+
                 return updated;
               });
             }
-
-            // Update assistant message
-            setMessages(prev => {
-              const updated = [...prev];
-              const last = updated[updated.length - 1];
-
-              if (last?.role === 'assistant') {
-                updated[updated.length - 1] = {
-                  ...last,
-                  content: fullResponse
-                };
-              } else {
-                updated.push({
-                  role: 'assistant',
-                  content: fullResponse,
-                  productName: ""
-                });
-                setLastAssistantIndex(updated.length - 1);
-              }
-
-              return updated;
-            });
           } catch (e) {
             continue;
           }
@@ -421,7 +773,10 @@ const Chatbox: React.FC<ChatboxProps> = ({ setNewRenderImage }) => {
       
     } catch (error) {
       console.error('Error sending message:', error);
-      toast.error('Failed to send message. Please try again.');
+      const errorMessage = error instanceof Error
+        ? error.message
+        : 'Failed to send message. Please try again.';
+      toast.error(errorMessage);
       
       // Remove loading message on error
       setMessages(prev => prev.filter(msg => msg.content !== 'loader'));
@@ -446,7 +801,11 @@ const Chatbox: React.FC<ChatboxProps> = ({ setNewRenderImage }) => {
     setPreviewVideo("");
     setVideoMimeType("");
     setVideoFilename("");
-    setNewRenderImage("");
+    setInferenceEvents([]);
+    setTokenUsage(null);
+    productsByNameRef.current.clear();
+    onProductSelect(null);
+    onProductsUpdate([]);
     clearUserSession();
 
     // Add welcome messages
@@ -468,6 +827,7 @@ const Chatbox: React.FC<ChatboxProps> = ({ setNewRenderImage }) => {
       updateLastMessage(word + " ");
     }
   };
+  handleResetRef.current = handleReset;
 
   // Effects
   useEffect(() => {
@@ -480,7 +840,7 @@ const Chatbox: React.FC<ChatboxProps> = ({ setNewRenderImage }) => {
     if (!isLoading) {
       inputRef.current?.focus();
     }
-  }, [messages, isLoading]);
+  }, [messages, isLoading, lastAssistantIndex]);
 
   useEffect(() => {
     if (isOpen) {
@@ -497,6 +857,9 @@ const Chatbox: React.FC<ChatboxProps> = ({ setNewRenderImage }) => {
         if (data.media_input) {
           setMediaCapabilities(data.media_input);
         }
+        if (data.models) {
+          setModelCapabilities(data.models);
+        }
       } catch (error) {
         console.warn("Failed to load media capabilities", error);
       }
@@ -506,162 +869,116 @@ const Chatbox: React.FC<ChatboxProps> = ({ setNewRenderImage }) => {
 
   useEffect(() => {
     if (hasBeenOpened) {
-      handleReset();
+      handleResetRef.current?.();
     }
   }, [hasBeenOpened]);
 
   return (
-    <div>
-      <div className="chatbox">
-        <div className={`chatbox__support ${isOpen ? "chatbox--active" : ""}`}>
-          {/* Header */}
-          <div className="chatbox__header">
-            <h4 className="chatbox__heading--header">
-              Retail Shopping Assistant
-            </h4>
+    <section className="chatbox">
+      <div className={`chatbox__support ${isOpen ? "chatbox--active" : ""}`}>
+        <div className="chatbox__header">
+          <div>
+            <h4 className="chatbox__heading--header">Retail Shopping Assistant</h4>
+            <p className="chatbox__subheading--header">Your Shopping Concierge</p>
           </div>
-
-          {/* Messages */}
-          <div className="chatbox__messages">
-            {[...messages].reverse().map((msg, index) => (
-              <ChatMessage 
-                key={index} 
-                role={msg.role} 
-                content={msg.content} 
-                productName={msg.productName} 
-                ref={messageRefs.current[messages.length - 1 - index]} 
-              />
-            ))}
+          <div className="chatbox__brand">
+            <span>Powered by</span>
+            <img src={logo} alt="NVIDIA" />
           </div>
+        </div>
 
-          {/* Footer */}
-          <div className="chatbox__footer">
-             {/* Image preview */}
-             {previewImage && (
-              <div style={{ position: 'relative', display: 'inline-block' }}>
-                <img src={previewImage} alt="Preview" style={{ width: '50px', height: '50px' }} />
-                <button
-                  type="button"
-                  style={{
-                    display: 'inline-flex',
-                    position: 'absolute',
-                    right: '-5px',
-                    top: '-5px',
-                    cursor: 'pointer',
-                    background: 'transparent',
-                    border: 'none',
-                    padding: 0,
-                  }}
-                  onClick={clearImage}
-                  aria-label="Clear image"
-                >
-                  <FontAwesomeIcon icon={faTimesCircle} />
-                </button>
-              </div>
-            )}
+        <div className="chatbox__messages">
+          {[...messages].reverse().map((msg, index) => (
+            <ChatMessage
+              key={index}
+              role={msg.role}
+              content={msg.content}
+              productName={msg.productName}
+              selectedProductName={selectedProduct?.productName}
+              onProductSelect={onProductSelect}
+              ref={messageRefs.current[messages.length - 1 - index]}
+            />
+          ))}
+        </div>
 
-            {previewVideo && (
-              <div style={{ position: 'relative', display: 'inline-block' }}>
-                <video src={previewVideo} muted style={{ width: '50px', height: '50px', objectFit: 'cover' }} />
-                <button
-                  type="button"
-                  style={{
-                    display: 'inline-flex',
-                    position: 'absolute',
-                    right: '-5px',
-                    top: '-5px',
-                    cursor: 'pointer',
-                    background: 'transparent',
-                    border: 'none',
-                    padding: 0,
-                  }}
-                  onClick={clearVideo}
-                  aria-label="Clear video"
-                >
-                  <FontAwesomeIcon icon={faTimesCircle} />
-                </button>
-              </div>
-            )}
+        <div className="chatbox__footer">
+          {(previewImage || previewVideo) && (
+            <div className="chatbox__preview-strip">
+              {previewImage && (
+                <div className="chatbox__preview">
+                  <img src={previewImage} alt="Preview" />
+                  <button type="button" onClick={clearImage} aria-label="Clear image">
+                    <CloseIcon fontSize="small" />
+                  </button>
+                </div>
+              )}
 
-            {/* Input field */}
+              {previewVideo && (
+                <div className="chatbox__preview">
+                  <video src={previewVideo} muted />
+                  <button type="button" onClick={clearVideo} aria-label="Clear video">
+                    <CloseIcon fontSize="small" />
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="chatbox__composer">
             <input
               ref={inputRef}
               type="text"
               className="input_test"
-              placeholder="Type something here..."
+              placeholder="Ask about products, outfits, prices, or your cart"
               value={newMessage}
               onChange={handleNewMessageChange}
               onKeyUp={handleKeyUp}
             />
 
-            {/* Action buttons */}
-            <div className="button-class">
-              <SendIcon
-                sx={{ color: isLoading ? "lightgray" : "#76B900", cursor: isLoading ? "not-allowed" : "pointer" }}
-                onClick={isLoading ? () => {} : handleSendMessage}
-                fontSize="large"
-              />
-            </div>
-            
-            <div className="button-class">
-              <CancelIcon
-                sx={{ color: "#76B900" }}
-                onClick={handleReset}
-                fontSize="large"
-              />
-            </div>
-            
-            <div className="button-class" style={{ transform: "rotate(180deg)" }}>
-              <label htmlFor="image-upload" style={{ cursor: "pointer" }}>
-                <DownloadIcon
-                  sx={{ color: "#76B900" }}
-                  fontSize="large"
-                />
-              </label>
+            <button
+              type="button"
+              className="chatbox__icon-button"
+              onClick={isLoading ? undefined : handleSendMessage}
+              disabled={isLoading}
+              aria-label="Send message"
+            >
+              <SendIcon fontSize="small" />
+            </button>
+
+            <label className="chatbox__icon-button" aria-label="Attach media">
+              <AttachFileIcon fontSize="small" />
               <input
-                style={{ display: "none" }}
+                className="chatbox__file-input"
                 type="file"
-                accept={[
-                  ...mediaCapabilities.image_mime_types,
-                  ...(mediaCapabilities.vlm_enabled ? mediaCapabilities.video_mime_types : []),
-                ].join(",")}
-                id="image-upload"
+                accept={acceptedMediaTypes(mediaCapabilities)}
                 name="media"
                 onChange={handleImageUpload}
               />
-            </div>
+            </label>
+
+            <button
+              type="button"
+              className="chatbox__icon-button"
+              onClick={handleReset}
+              aria-label="Reset conversation"
+            >
+              <RestartAltIcon fontSize="small" />
+            </button>
           </div>
 
-          {/* Guardrails toggle */}
           <div className="chatbox__guardrail">
-            <FormGroup>
-              <FormControlLabel 
-                control={
-                  <CustomSwitch 
-                    checked={isGuardrailsOn}
-                    onChange={toggleGuardrails}
-                  />
-                } 
-                label="Guardrails" 
-              />
-            </FormGroup>
+            <span>Guardrails</span>
+            <CustomSwitch checked={isGuardrailsOn} onChange={toggleGuardrails} size="small" />
           </div>
-
-          {/* Powered by NVIDIA */}
-          <div className="flex relative flex-row items-center justify-center bg-white pb-[15px]">
-            <h3 className="text-[16px]">Powered by</h3>
-            <img src={logo} alt="NVIDIA" className="h-14" />
-          </div>
-        </div>
-
-        {/* Chatbox toggle button (hidden) */}
-        <div className="chatbox__button" style={{ visibility: "hidden" }}>
-          <button onClick={() => setIsOpen(!isOpen)}>
-            <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/0/00/Chat_icon.svg/44px-Chat_icon.svg.png" alt="Chat" />
-          </button>
         </div>
       </div>
-    </div>
+
+      <InferenceActivityPanel
+        events={inferenceEvents}
+        models={modelCapabilities}
+        tokenUsage={tokenUsage}
+      />
+    </section>
   );
 };
 

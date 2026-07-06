@@ -151,6 +151,10 @@ class TestHealthAndRoot:
         assert media["max_videos_per_turn"] == 1
         assert media["video_mime_types"] == ["video/mp4"]
         assert media["vlm_enabled"] is True
+        assert body["models"]["app_llm"]["model"] == "test-model"
+        assert body["models"]["app_llm"]["enabled"] is True
+        assert body["models"]["vlm"]["model"] == "test-vlm"
+        assert body["models"]["vlm"]["enabled"] is True
         assert body["catalog"]["catalog_id"] == "test_catalog"
         assert body["catalog"]["filters"]["category"]["values"] == ["bag", "dress"]
 
@@ -396,6 +400,109 @@ class TestDeepAgentsRuntimeScopes:
         assert state.cart.contents == [{"item": "Bag", "amount": 1, "price": 20.0}]
 
 
+class TestDeepAgentsRuntimeTokenUsage:
+    def test_collects_normalized_usage_metadata_without_double_counting(self) -> None:
+        from chain_server.src.deepagents_runtime import _collect_token_usage
+
+        result = {
+            "messages": [
+                SimpleNamespace(
+                    content="thinking",
+                    usage_metadata={
+                        "input_tokens": 100,
+                        "output_tokens": 20,
+                        "total_tokens": 120,
+                    },
+                    response_metadata={
+                        "token_usage": {
+                            "prompt_tokens": 100,
+                            "completion_tokens": 20,
+                            "total_tokens": 120,
+                        }
+                    },
+                ),
+                {
+                    "content": "final",
+                    "response_metadata": {
+                        "token_usage": {
+                            "prompt_tokens": 40,
+                            "completion_tokens": 10,
+                            "total_tokens": 50,
+                        }
+                    },
+                },
+            ]
+        }
+
+        assert _collect_token_usage(result) == {
+            "input_tokens": 140,
+            "output_tokens": 30,
+            "total_tokens": 170,
+            "model_calls": 2,
+        }
+
+    def test_collect_token_usage_defaults_when_metadata_is_absent(self) -> None:
+        from chain_server.src.deepagents_runtime import _collect_token_usage
+
+        assert _collect_token_usage({"messages": [{"content": "hello"}]}) == {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "model_calls": 0,
+        }
+
+
+class TestDeepAgentsRuntimeMediaFailures:
+    def test_video_dependent_query_short_circuits_when_vlm_is_unavailable(self) -> None:
+        from chain_server.src.deepagents_runtime import (
+            _media_failure_response,
+            _should_short_circuit_media_failure,
+        )
+
+        state = State(
+            user_id=1,
+            query="I love the shoes she is wearing in this video. Do you have something like that?",
+            media=[
+                {
+                    "type": "video",
+                    "mime_type": "video/mp4",
+                    "data": "data:video/mp4;base64,QUFB",
+                }
+            ],
+            media_analysis=(
+                '{"summary": "Media was attached, but the configured VLM could not '
+                'authenticate. Video/image understanding is unavailable for this turn.", '
+                '"uncertainties": ["VLM authentication failed."]}'
+            ),
+        )
+
+        assert _should_short_circuit_media_failure(state) is True
+        response = _media_failure_response(state.media_analysis)
+        assert "Please describe the item in text" in response
+        assert "turn.. Please" not in response
+
+    def test_explicit_text_query_can_continue_when_media_is_unavailable(self) -> None:
+        from chain_server.src.deepagents_runtime import _should_short_circuit_media_failure
+
+        state = State(
+            user_id=1,
+            query="Find black patent heels under $100",
+            media=[
+                {
+                    "type": "video",
+                    "mime_type": "video/mp4",
+                    "data": "data:video/mp4;base64,QUFB",
+                }
+            ],
+            media_analysis=(
+                '{"summary": "Video was attached, but VLM media understanding is not configured.", '
+                '"uncertainties": ["Video understanding requires an enabled VLM."]}'
+            ),
+        )
+
+        assert _should_short_circuit_media_failure(state) is False
+
+
 class TestDeepAgentsRuntimeRefs:
     def test_search_and_cart_read_tools_are_chainable(
         self,
@@ -604,6 +711,7 @@ class TestDeepAgentsRuntimeRefs:
 
         assert "PRODUCT_REF: prod_1" in result
         assert state.retrieved == {"Work Bag": "bag.jpg"}
+        assert [product["product_id"] for product in state.product_results] == ["prod_1"]
         assert captured_plan["plan"].semantic_queries == ["practical work bag"]
         assert captured_plan["plan"].hard_filters == {
             "category": ["bag"],
@@ -611,6 +719,101 @@ class TestDeepAgentsRuntimeRefs:
             "color": ["blue"],
         }
         assert captured_plan["plan"].strictness == "hard"
+
+    def test_search_catalog_tool_enforces_per_turn_cap(
+        self,
+        base_config,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        captured: Dict[str, Any] = {}
+        deepagents_mod = ModuleType("deepagents")
+        tools_mod = ModuleType("langchain_core.tools")
+        openai_mod = ModuleType("langchain_openai")
+
+        class FakeProfile:
+            def __init__(self, *args, **kwargs) -> None:
+                pass
+
+        class FakeChatOpenAI:
+            def __init__(self, *args, **kwargs) -> None:
+                pass
+
+        def fake_tool(*, args_schema=None, return_direct: bool = False):
+            def decorate(fn):
+                fn.args_schema = args_schema
+                fn.return_direct = return_direct
+                return fn
+
+            return decorate
+
+        def fake_create_deep_agent(**kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace()
+
+        calls = 0
+
+        def fake_execute_catalog_search(plan, *args, **kwargs):
+            nonlocal calls
+            calls += 1
+            return SimpleNamespace(
+                result=SearchCatalogResult(
+                    ok=True,
+                    products=[
+                        ProductSummary(
+                            product_id=f"prod_{calls}",
+                            display_name=f"Product {calls}",
+                            price=Money(amount=59.0),
+                        )
+                    ],
+                ),
+                fallback_used=False,
+            )
+
+        deepagents_mod.GeneralPurposeSubagentProfile = FakeProfile
+        deepagents_mod.HarnessProfile = FakeProfile
+        deepagents_mod.create_deep_agent = fake_create_deep_agent
+        deepagents_mod.register_harness_profile = lambda *args, **kwargs: None
+        tools_mod.tool = fake_tool
+        openai_mod.ChatOpenAI = FakeChatOpenAI
+
+        monkeypatch.setitem(sys.modules, "deepagents", deepagents_mod)
+        monkeypatch.setitem(sys.modules, "langchain_core.tools", tools_mod)
+        monkeypatch.setitem(sys.modules, "langchain_openai", openai_mod)
+        monkeypatch.setattr(
+            runtime_mod,
+            "execute_catalog_search",
+            fake_execute_catalog_search,
+        )
+
+        base_config.max_catalog_searches_per_turn = 1
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+        runtime._catalog_capabilities = SimpleNamespace(
+            get=lambda: CatalogCapabilities(
+                catalog_id="fashion",
+                retrieval_modes=["text"],
+                filters={},
+            )
+        )
+        identity = runtime_mod.RequestIdentity(
+            session_id="session-a",
+            conversation_id="conversation-a",
+            cart_id="cart-a",
+            context_user_id=111,
+            cart_user_id=222,
+            request_id="request-a",
+        )
+
+        runtime._create_agent(State(user_id=111, query="hello"), identity)
+        search_tool = {fn.__name__: fn for fn in captured["tools"]}["search_catalog_tool"]
+
+        first = search_tool(semantic_query="dress")
+        second = search_tool(semantic_query="shoes")
+
+        assert "PRODUCT_REF: prod_1" in first
+        assert "Catalog search limit reached" in second
+        assert calls == 1
 
     def test_product_refs_are_cached_by_conversation(
         self,

@@ -266,6 +266,8 @@ data:
     rails_port: "https://api.nvcf.nvidia.com/v1/chat/completions"
     memory_length: 16384
     top_k_retrieve: 4
+    deepagents_recursion_limit: 24
+    max_catalog_searches_per_turn: 3
     multimodal: true
 ```
 
@@ -323,10 +325,11 @@ docker stack deploy -c docker-compose.prod.yaml retail-assistant
 |----------|-------------|----------|---------|
 | `NGC_API_KEY` | NVIDIA NGC API key | Yes | - |
 | `LLM_API_KEY` | Language model API key | Yes | - |
-| `VLM_API_KEY` | Optional VLM media perception API key | When `vlm` uses an authenticated endpoint | - |
+| `VLM_API_KEY` | Optional VLM media perception API key; Compose falls back to `NVIDIA_API_KEY` when unset | When `vlm` uses an authenticated endpoint and `NVIDIA_API_KEY` is unset | `NVIDIA_API_KEY` |
 | `EMBED_API_KEY` | Embedding model API key | Yes | - |
 | `RAIL_API_KEY` | Guardrails API key | Yes | - |
 | `CATALOG_SEARCH_TIMEOUT_SECONDS` | Optional chain-server timeout for catalog search requests | No | no timeout |
+| `MAX_CATALOG_SEARCHES_PER_TURN` | Caps Deep Agents catalog tool calls in one assistant turn | No | `3` |
 | `LOCAL_NIM_CACHE` | NIM cache directory | Local only | `~/.cache/nim` |
 | `LOG_LEVEL` | Logging level | No | `INFO` |
 | `NODE_ENV` | Node environment | No | `production` |
@@ -509,6 +512,11 @@ models:
     model_env: VLM_MODEL
     api_key_env: VLM_API_KEY
 ```
+
+The sourceable `.env.example` sets `VLM_API_KEY` from `NVIDIA_API_KEY` by
+default. Docker Compose also passes `NVIDIA_API_KEY` as the fallback for
+`VLM_API_KEY` so hosted Omni media perception works with the single-key
+developer setup.
 
 For VLM media perception through the Compose-managed local Omni NIM:
 
@@ -697,6 +705,8 @@ ping api.nvcf.nvidia.com
 # Optimize configuration
 # Edit chain_server/app/config.yaml
 top_k_retrieve: 2  # Reduce for faster responses
+deepagents_recursion_limit: 24  # Raise modestly for multi-item outfit planning
+max_catalog_searches_per_turn: 3  # Bound catalog tool loops per turn
 ```
 
 #### 5. Authentication Issues
@@ -800,7 +810,8 @@ deploy:
 The bundled UI sends uploaded media as base64 JSON. Keep any reverse proxy
 request-body limit aligned with `media_input.max_video_bytes` after base64
 expansion. With the default 50 MiB raw video cap, `nginx.conf` uses
-`client_max_body_size 80m`.
+`client_max_body_size 80m`. Keep API proxy read/send timeouts high enough for
+media analysis and retrieval; the bundled `nginx.conf` uses 300 seconds.
 
 ```yaml
 # nginx.conf

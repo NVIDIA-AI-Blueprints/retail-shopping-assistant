@@ -142,7 +142,8 @@ cart state cannot bleed across sessions.
 same internal media list as `media[]`. New clients should use `media[]` for
 video uploads. The bundled UI calls `/capabilities` on load and enforces the
 configured media counts, MIME types, byte limits, and video duration limit. That
-same endpoint also exposes catalog filter metadata for future UI controls.
+same endpoint also exposes non-secret model names and catalog filter metadata
+for future UI controls.
 
 ### Multi-modal Input
 
@@ -157,6 +158,11 @@ Uploaded videos require VLM media perception. If VLM is disabled, video
 understanding is unavailable and the assistant should not invent visual
 details. The VLM analysis is passed to the Deep Agents runtime as concise text
 context; raw media is not persisted into conversation memory.
+
+If VLM media perception is unavailable and the user request depends on the
+attached media, for example "shoes she is wearing in this video", the assistant
+returns a direct explanation and asks for a text description instead of running
+a long catalog or LLM turn with unsupported visual assumptions.
 
 Descriptive media requests such as "what's in this look" or "describe this
 outfit" are answered from VLM media analysis and should not trigger catalog
@@ -213,8 +219,21 @@ For streaming endpoints, responses are sent as Server-Sent Events (SSE) with the
 
 ```typescript
 interface StreamingChunk {
-  type: 'content' | 'images' | 'error' | 'done';
-  payload: string | Record<string, string>;
+  type: 'content' | 'images' | 'products' | 'metrics' | 'error' | 'done';
+  payload:
+    | string
+    | Record<string, string>
+    | ProductSummary[]
+    | {
+        timings: Record<string, number>;
+        total_seconds: number;
+        token_usage: {
+          input_tokens: number;
+          output_tokens: number;
+          total_tokens: number;
+          model_calls: number;
+        };
+      };
   timestamp: number;
 }
 ```
@@ -226,8 +245,9 @@ interface StreamingChunk {
 Returns a Server-Sent Events (SSE) response stream for shopping assistant
 responses. In the current Deep Agents harness migration slice, the stream is
 SSE-framed but does not yet emit token-level model chunks while the agent is
-running. The endpoint currently emits the completed turn response and image
-payloads after the Deep Agents turn finishes.
+running. The endpoint currently emits product metadata, image payloads,
+completed turn response text, and timing/token-usage metrics after the Deep
+Agents turn finishes.
 
 Token-level Deep Agents streaming is a known limitation for this PR and is
 planned as a follow-up after the harness migration is stable.
@@ -255,11 +275,13 @@ curl -X POST "http://localhost:8000/query/stream" \
 
 **Example Response:**
 ```
+data: {"type": "products", "payload": [{"product_id": "dress-1", "display_name": "Red Wrap Dress", "price": {"amount": 89.0, "currency": "USD"}, "image_url": "https://..."}], "timestamp": 1716400001.1}
+
+data: {"type": "images", "payload": {"Red Wrap Dress": "https://..."}, "timestamp": 1716400001.2}
+
 data: {"type": "content", "payload": "I found several red dresses...", "timestamp": 1716400001.2}
 
-data: {"type": "images", "payload": {"product1": "https://..."}, "timestamp": 1716400001.5}
-
-data: {"type": "content", "payload": " that might interest you...", "timestamp": 1716400001.8}
+data: {"type": "metrics", "payload": {"timings": {"memory": 0.03, "catalog_search": 0.41, "deepagents": 1.92}, "total_seconds": 2.36, "token_usage": {"input_tokens": 1260, "output_tokens": 180, "total_tokens": 1440, "model_calls": 1}}, "timestamp": 1716400001.8}
 
 data: [DONE]
 ```
@@ -313,7 +335,9 @@ catalog truth.
 The byte limits are raw client file sizes. Browser clients send attachments as
 base64 JSON data URLs, so reverse proxies must allow roughly 4/3 of the largest
 raw media limit plus JSON overhead. The default nginx configuration uses
-`client_max_body_size 80m` for the 50 MiB video limit below.
+`client_max_body_size 80m` for the 50 MiB video limit below. The bundled nginx
+configuration also keeps API read/send timeouts at 300 seconds so longer media
+turns are not cut off before the SSE response is emitted.
 
 **Response:**
 ```json
@@ -329,6 +353,26 @@ raw media limit plus JSON overhead. The default nginx configuration uses
     "max_video_bytes": 52428800,
     "max_video_duration_seconds": 120,
     "vlm_enabled": true
+  },
+  "models": {
+    "app_llm": {
+      "label": "Language reasoning",
+      "model": "nvidia/nemotron-3-super-120b-a12b",
+      "source": "endpoint",
+      "enabled": true
+    },
+    "vlm": {
+      "label": "Vision-language inference",
+      "model": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+      "source": "endpoint",
+      "enabled": true
+    },
+    "text_embedding": {
+      "label": "Text embedding",
+      "model": "nvidia/nv-embedqa-e5-v5",
+      "source": "endpoint",
+      "enabled": true
+    }
   },
   "catalog": {
     "catalog_id": "fashion_products_extended",
@@ -410,6 +454,12 @@ catalog retriever derives them from the loaded CSV rows.
 
 Executes a structured text catalog search on the catalog service port, usually
 `http://localhost:8010/query/text`.
+
+The chain server bounds Deep Agents catalog tool loops with
+`max_catalog_searches_per_turn` so one shopping turn cannot keep probing the
+catalog indefinitely. Multi-item outfit requests should fit within the default
+cap by running one focused search per required item type and then synthesizing
+the response from those results.
 
 **Request Body:**
 ```json
@@ -807,7 +857,9 @@ print(f"Timing: {response['timings']}")
 - Content safety is enabled by default but can be disabled per request
 - `/query/stream` uses SSE framing. Token-level Deep Agents streaming is a
   known follow-up after the harness migration; this slice emits completed turn
-  events rather than live model chunks.
+  events rather than live model chunks. The stream includes `products` frames
+  for structured catalog summaries and `metrics` frames for per-turn inference
+  timing summaries.
 
 ---
 

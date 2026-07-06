@@ -20,7 +20,24 @@ export type MessageRole =
   | 'user_image'
   | 'user_video';
 
-export interface ImageContent {
+export interface ProductPrice {
+  amount: number;
+  currency?: string;
+}
+
+export interface ProductSummary {
+  productId?: string;
+  productName: string;
+  productUrl?: string;
+  description?: string;
+  category?: string;
+  brand?: string;
+  price?: ProductPrice | null;
+  availability?: string;
+  attributes?: Record<string, unknown>;
+}
+
+export interface ImageContent extends ProductSummary {
   productUrl: string;
   productName: string;
 }
@@ -28,11 +45,15 @@ export interface ImageContent {
 export interface ImageRowContent extends Array<ImageContent> {}
 
 export interface ChatboxProps {
-  setNewRenderImage: (value: string) => void;
+  selectedProduct: ProductSummary | null;
+  onProductSelect: (product: ProductSummary | null) => void;
+  onProductsUpdate: (products: ProductSummary[]) => void;
 }
 
-export interface ApparelProps {
-  newRenderImage: string;
+export interface ProductDetailPanelProps {
+  selectedProduct: ProductSummary | null;
+  products: ProductSummary[];
+  onProductSelect: (product: ProductSummary | null) => void;
 }
 
 export interface SafeHTMLProps {
@@ -43,6 +64,8 @@ export interface ChatMessageProps {
   role: MessageRole;
   content: string | ImageContent | ImageRowContent;
   productName: string;
+  selectedProductName?: string;
+  onProductSelect?: (product: ProductSummary) => void;
 }
 
 export interface ApiRequest {
@@ -80,6 +103,23 @@ export interface MediaCapabilities {
   vlm_enabled: boolean;
 }
 
+export interface ModelCapability {
+  label: string;
+  model: string | null;
+  source: string;
+  enabled: boolean;
+}
+
+export interface ModelCapabilities {
+  app_llm?: ModelCapability;
+  vlm?: ModelCapability;
+  text_embedding?: ModelCapability;
+  image_embedding?: ModelCapability;
+  content_safety?: ModelCapability;
+  topic_control?: ModelCapability;
+  [role: string]: ModelCapability | undefined;
+}
+
 export type CatalogCapabilityType = 'enum' | 'number' | 'text';
 
 export interface CatalogFilterCapability {
@@ -101,6 +141,7 @@ export interface CatalogCapabilities {
 
 export interface CapabilitiesResponse {
   media_input: MediaCapabilities;
+  models?: ModelCapabilities;
   catalog?: CatalogCapabilities;
 }
 
@@ -108,6 +149,7 @@ export interface ApiResponse {
   response: string;
   images: Record<string, string>;
   timings: Record<string, number>;
+  token_usage?: TokenUsage;
 }
 
 export interface CartData {
@@ -120,9 +162,35 @@ export interface CartItem {
 }
 
 export interface StreamingChunk {
-  type: 'content' | 'images' | 'error';
-  payload: string | Record<string, string>;
+  type: 'content' | 'images' | 'products' | 'metrics' | 'error';
+  payload: string | Record<string, string> | ProductSummary[] | InferenceMetricsPayload;
   timestamp: number;
+}
+
+export interface InferenceMetricsPayload {
+  timings: Record<string, number>;
+  total_seconds?: number;
+  token_usage?: TokenUsage;
+}
+
+export interface TokenUsage {
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  model_calls: number;
+}
+
+export type InferenceCategory = 'vision' | 'language' | 'embedding' | 'safety' | 'memory' | 'system';
+export type InferenceStatus = 'queued' | 'running' | 'complete' | 'failed';
+
+export interface InferenceActivity {
+  id: string;
+  category: InferenceCategory;
+  label: string;
+  detail: string;
+  modelName?: string;
+  status: InferenceStatus;
+  durationMs?: number;
 }
 
 export interface UserSession {

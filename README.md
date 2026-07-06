@@ -44,6 +44,7 @@ The Retail Shopping Assistant is an AI-powered blueprint that provides a compreh
 - 💬 **Conversational AI**: Natural language interactions
 - 🔒 **Content Safety**: Built-in moderation and safety checks
 - ⚡ **SSE Response Stream**: Event-stream response framing for chat clients; token-level Deep Agents streaming is a follow-up after the harness migration
+- 📊 **Inference Visibility**: Model names, call counts, and token usage surfaced in the shopping UI
 - 📱 **Responsive UI**: Modern, mobile-friendly interface
 
 ### Architecture

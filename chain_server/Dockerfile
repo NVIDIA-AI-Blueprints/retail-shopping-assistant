@@ -11,6 +11,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the application code and config
 COPY ./src ./app
+COPY ./skills ./skills
 
 # Set environment variables
 ENV PYTHONPATH=/app

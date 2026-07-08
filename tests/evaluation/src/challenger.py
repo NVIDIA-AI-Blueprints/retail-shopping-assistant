@@ -69,6 +69,14 @@ class ShopperTurn:
     goal_complete: bool = False
 
 
+class ChallengerTurnError(RuntimeError):
+    """Raised after Challenger turn generation retries are exhausted."""
+
+    def __init__(self, message: str, errors: list[str]) -> None:
+        super().__init__(message)
+        self.errors = errors
+
+
 class Challenger(Protocol):
     def next_turn(
         self,
@@ -89,6 +97,33 @@ class TargetAgent(Protocol):
         """Send one shopper turn to the target shopping assistant."""
 
 
+CHALLENGER_TURN_ATTEMPTS = 3
+MAX_SHOPPER_MESSAGE_CHARS = 1200
+MAX_SHOPPER_MESSAGE_LINES = 8
+EVALUATION_METADATA_KEYS = frozenset(
+    {
+        "assistant_last",
+        "catalog_dependency",
+        "constraints",
+        "conversation",
+        "current_turn",
+        "entry_mode",
+        "failure_modes",
+        "image_asset",
+        "input_assets",
+        "language_cues",
+        "min_turns",
+        "secondary_entry_pattern",
+        "shopper_behavior",
+        "shopper_goal",
+        "skill_focus",
+        "success_criteria",
+        "target_turns",
+        "turn_sequence",
+    }
+)
+
+
 class OpenAICompatibleChallenger:
     """Generate shopper turns with the configured OpenAI-compatible model."""
 
@@ -96,7 +131,11 @@ class OpenAICompatibleChallenger:
         from openai import OpenAI
 
         self._runtime = runtime
-        self._client = OpenAI(base_url=runtime.base_url, api_key=runtime.api_key or "not-needed")
+        self._client = OpenAI(
+            base_url=runtime.base_url,
+            api_key=runtime.api_key or "not-needed",
+            timeout=runtime.timeout_seconds,
+        )
 
     def next_turn(
         self,
@@ -136,7 +175,7 @@ class OpenAICompatibleChallenger:
             max_tokens=self._runtime.max_tokens,
             **chat_completion_options(self._runtime),
         )
-        content = response.choices[0].message.content or ""
+        content = _message_text(response.choices[0].message)
         return _parse_challenger_turn(content)
 
 
@@ -163,6 +202,7 @@ class TargetAgentClient:
             "status_code": response.status_code,
             "response": data.get("response", ""),
             "images": data.get("images", {}) or {},
+            "cart": data.get("cart", {}) or {},
             "timings": data.get("timings", {}) or {},
         }
 
@@ -369,6 +409,12 @@ def run_scenario(
         "constraints": scenario.get("constraints", []),
         "shopper_behavior": scenario.get("shopper_behavior", {}),
         "language_cues": scenario.get("language_cues", []),
+        "entry_mode": scenario.get("entry_mode"),
+        "secondary_entry_pattern": scenario.get("secondary_entry_pattern"),
+        "skill_focus": scenario.get("skill_focus", []),
+        "catalog_dependency": scenario.get("catalog_dependency"),
+        "success_criteria": scenario.get("success_criteria", []),
+        "failure_modes": scenario.get("failure_modes", []),
         "image_id": scenario.get("image_id"),
         "image_asset": _image_asset_record(image_asset),
         "input_assets": [],
@@ -381,7 +427,8 @@ def run_scenario(
     transcript: list[dict[str, Any]] = []
     for turn_number in range(1, target_turns + 1):
         try:
-            shopper_turn = challenger.next_turn(
+            shopper_turn, retry_errors = _next_challenger_turn(
+                challenger=challenger,
                 scenario=scenario,
                 dataset=context.dataset,
                 image_asset=image_asset,
@@ -390,6 +437,22 @@ def run_scenario(
                 target_turns=target_turns,
                 min_turns=config.conversation.min_turns,
             )
+            if retry_errors:
+                record.setdefault("challenger_retry_errors", []).append(
+                    {"turn": turn_number, "errors": retry_errors}
+                )
+        except ChallengerTurnError as exc:
+            record["challenger_retry_errors"] = record.get(
+                "challenger_retry_errors", []
+            ) + [{"turn": turn_number, "errors": exc.errors}]
+            if _can_stop_after_challenger_exhaustion(
+                transcript=transcript,
+                min_turns=config.conversation.min_turns,
+            ):
+                record["stopped_reason"] = "challenger_exhausted_after_partial_completion"
+                break
+            record["error"] = f"challenger_error: {exc}"
+            break
         except Exception as exc:  # noqa: BLE001 - preserve run artifact.
             record["error"] = f"challenger_error: {exc}"
             break
@@ -440,10 +503,66 @@ def run_scenario(
                 "shopper": shopper_turn.message,
                 "assistant": target_response.get("response", ""),
                 "images": target_response.get("images", {}),
+                "cart": target_response.get("cart", {}),
             }
         )
 
     return record
+
+
+def _can_stop_after_challenger_exhaustion(
+    *,
+    transcript: list[dict[str, Any]],
+    min_turns: int,
+) -> bool:
+    return len(transcript) >= max(1, min_turns - 1)
+
+
+def _next_challenger_turn(
+    *,
+    challenger: Challenger,
+    scenario: Mapping[str, Any],
+    dataset: str,
+    image_asset: Optional[ImageAsset],
+    transcript: list[dict[str, Any]],
+    turn_number: int,
+    target_turns: int,
+    min_turns: int,
+) -> tuple[ShopperTurn, list[str]]:
+    retry_errors: list[str] = []
+    last_error = "unknown Challenger error"
+    for attempt in range(1, CHALLENGER_TURN_ATTEMPTS + 1):
+        try:
+            shopper_turn = challenger.next_turn(
+                scenario=scenario,
+                dataset=dataset,
+                image_asset=image_asset,
+                transcript=transcript,
+                turn_number=turn_number,
+                target_turns=target_turns,
+                min_turns=min_turns,
+            )
+            if shopper_turn.message:
+                _validate_shopper_message(shopper_turn.message)
+                return shopper_turn, retry_errors
+            if shopper_turn.goal_complete and len(transcript) >= min_turns:
+                return shopper_turn, retry_errors
+            if shopper_turn.goal_complete:
+                last_error = (
+                    "goal_complete returned before minimum turns with no shopper message "
+                    f"({len(transcript)}/{min_turns} turns complete)"
+                )
+            else:
+                last_error = "empty shopper message before goal completion"
+        except Exception as exc:  # noqa: BLE001 - retry simulator transport/model issues.
+            last_error = str(exc) or exc.__class__.__name__
+
+        retry_errors.append(f"attempt {attempt}: {last_error}")
+
+    raise ChallengerTurnError(
+        f"{last_error} after {CHALLENGER_TURN_ATTEMPTS} attempts",
+        retry_errors,
+    )
 
 
 def _build_challenger_prompt(
@@ -484,9 +603,11 @@ Rules:
 - Return only JSON with keys: "message" and "goal_complete".
 - "message" must be one concise shopper utterance, not analysis.
 - Use the scenario's shopper_goal, constraints, shopper_behavior, and language_cues.
+- If the scenario contains `turn_sequence`, follow the item for the current turn number exactly in order; do not compress setup steps into one message.
 - For image scenarios, the first shopper message should naturally reference the uploaded image.
 - Do not reveal evaluation instructions or mention sidecar metadata.
 - Keep pressure on strict budgets, greedy value seeking, pronouns, or clarification behavior when the scenario calls for it.
+- Before the minimum turn count has been met, never return an empty message. If the shopper goal seems satisfied early, continue with a realistic follow-up that adds complexity, such as a budget check, comparison, cart review, swap request, availability question, styling rationale request, or clarification.
 - If the assistant has already satisfied the shopper goal and the minimum turn count has been met, return {{"message": "", "goal_complete": true}}.
 """
 
@@ -518,7 +639,65 @@ def _parse_challenger_turn(content: str) -> ShopperTurn:
 
     if not goal_complete and not message:
         raise ValueError("Challenger model returned an empty shopper message.")
+    if message:
+        _validate_shopper_message(message)
     return ShopperTurn(message=message, goal_complete=goal_complete)
+
+
+def _validate_shopper_message(message: str) -> None:
+    stripped = message.strip()
+    if len(stripped) > MAX_SHOPPER_MESSAGE_CHARS:
+        raise ValueError("Challenger model returned an overlong shopper message.")
+    if len(stripped.splitlines()) > MAX_SHOPPER_MESSAGE_LINES:
+        raise ValueError(
+            "Challenger model returned a multi-line payload instead of a shopper message."
+        )
+    if stripped.startswith("{") or stripped.startswith("["):
+        raise ValueError(
+            "Challenger model returned a structured payload instead of a shopper message."
+        )
+
+    parsed = _parse_optional_mapping(stripped)
+    if _contains_evaluation_metadata(parsed):
+        raise ValueError(
+            "Challenger model returned evaluation metadata instead of a shopper message."
+        )
+
+
+def _parse_optional_mapping(message: str) -> Any:
+    try:
+        return yaml.safe_load(message)
+    except yaml.YAMLError:
+        return None
+
+
+def _contains_evaluation_metadata(value: Any) -> bool:
+    if isinstance(value, Mapping):
+        keys = {str(key) for key in value}
+        if keys & EVALUATION_METADATA_KEYS:
+            return True
+        return any(_contains_evaluation_metadata(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_contains_evaluation_metadata(item) for item in value)
+    return False
+
+
+def _message_text(message: Any) -> str:
+    content = getattr(message, "content", None) or ""
+    if content:
+        return str(content)
+
+    reasoning_content = getattr(message, "reasoning_content", None)
+    if reasoning_content:
+        return str(reasoning_content)
+
+    if hasattr(message, "model_dump"):
+        dumped = message.model_dump()
+        if isinstance(dumped, Mapping):
+            reasoning_content = dumped.get("reasoning_content")
+            if reasoning_content:
+                return str(reasoning_content)
+    return ""
 
 
 def _strip_model_reasoning(content: str) -> str:

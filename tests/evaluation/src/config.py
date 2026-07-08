@@ -31,6 +31,7 @@ class ModelConfig:
     json_mode: bool
     temperature: float
     max_tokens: int
+    timeout_seconds: int
     enabled: bool = True
     rules_file: Optional[str] = None
 
@@ -45,6 +46,7 @@ class ModelRuntime:
     json_mode: bool
     temperature: float
     max_tokens: int
+    timeout_seconds: int
 
 
 @dataclass(frozen=True)
@@ -152,6 +154,7 @@ def resolve_model_runtime(model_config: ModelConfig, *, require: bool = True) ->
         json_mode=model_config.json_mode,
         temperature=model_config.temperature,
         max_tokens=model_config.max_tokens,
+        timeout_seconds=model_config.timeout_seconds,
     )
 
 
@@ -224,6 +227,9 @@ def _load_model_config(
         json_mode=_as_bool(data.get("json_mode", False), f"{section}.json_mode"),
         temperature=_as_float(data.get("temperature"), f"{section}.temperature"),
         max_tokens=_as_int(data.get("max_tokens"), f"{section}.max_tokens"),
+        timeout_seconds=_as_int(
+            data.get("timeout_seconds", 90), f"{section}.timeout_seconds"
+        ),
         rules_file=_optional_str(data.get("rules_file"), f"{section}.rules_file"),
     )
 
@@ -293,6 +299,7 @@ def _snapshot_model(model_config: ModelConfig) -> dict[str, Any]:
         "json_mode": model_config.json_mode,
         "temperature": model_config.temperature,
         "max_tokens": model_config.max_tokens,
+        "timeout_seconds": model_config.timeout_seconds,
         "rules_file": model_config.rules_file,
         "resolved": {
             "base_url": _env_or_config_value(

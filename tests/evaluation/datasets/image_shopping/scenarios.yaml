@@ -54,6 +54,26 @@ scenarios:
   - id: image_find_dress_and_style
     target_turns: 8
     image_id: black_polka_dotted_slip_dress
+    entry_mode: visual_anchor
+    secondary_entry_pattern: visual_anchor
+    skill_focus:
+      - image_grounded_anchor
+      - complete_outfit_planning
+      - complementary_search
+    catalog_dependency:
+      level: visual_seed_asset
+      stable_under_catalog_refresh: false
+      seed_assets:
+        - black_polka_dotted_slip_dress
+      refresh_note: "Re-map image_id and sidecar metadata when the visual catalog or image assets change."
+    success_criteria:
+      - "Uses the uploaded image as the initial anchor."
+      - "Finds the closest grounded catalog match before building an outfit."
+      - "Suggests complementary catalog items without claiming unsupported image details."
+    failure_modes:
+      - "Ignores the uploaded image."
+      - "Builds an outfit around uncataloged or invented products."
+      - "Exposes internal skill, tool, or dataset names."
     brief: "Shopper uploads an image, asks for this style, and then asks how to complete the outfit."
     shopper_goal: "Find the closest catalog match to the image and suggest compatible catalog items."
     constraints:
@@ -139,6 +159,26 @@ scenarios:
   - id: image_top_layering_question
     target_turns: 8
     image_id: classic_silk_camisole_in_black
+    entry_mode: visual_anchor
+    secondary_entry_pattern: visual_anchor
+    skill_focus:
+      - image_grounded_anchor
+      - workwear_layering
+      - unsupported_fact_boundary
+    catalog_dependency:
+      level: visual_seed_asset
+      stable_under_catalog_refresh: false
+      seed_assets:
+        - classic_silk_camisole_in_black
+      refresh_note: "Re-map image_id and sidecar metadata when the visual catalog or image assets change."
+    success_criteria:
+      - "Uses the uploaded image as a style reference for the initial retrieval."
+      - "Answers workwear layering with catalog-supported facts."
+      - "Says when fit, opacity, or layering details are not present in catalog data."
+    failure_modes:
+      - "Ignores the image and answers generically."
+      - "Overstates fit or office suitability without support."
+      - "Exposes internal skill, tool, or dataset names."
     brief: "Shopper uploads an image and asks if there is a comparable item that can be layered for work."
     shopper_goal: "Find a relevant top and understand how it could fit a work outfit."
     constraints:

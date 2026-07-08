@@ -13,6 +13,8 @@ Welcome to the Retail Shopping Assistant documentation! This hub provides compre
 - **[API Documentation](API.md)** - Complete API reference
 - **[Catalog Filter Configuration](CATALOG_FILTERS.md)** - Declaring catalog filter fields without static enum values
 - **[Commerce Contracts](COMMERCE_CONTRACTS.md)** - Internal product, cart, and commerce tool contracts
+- **[Shopper Agent Tool Registry](SHOPPER_AGENT_TOOL_REGISTRY.md)** - Registered Deep Agents tools for the shopper-serving agent
+- **[Shopper Agent Skill Registry](SHOPPER_AGENT_SKILL_REGISTRY.md)** - Registered Deep Agents skills and tuning loop for shopper-facing behavior
 - **[Deep Agents Migration Plan](DEEP_AGENTS_MIGRATION_PLAN.md)** - SDK migration, session isolation, tools, skills, and scaling notes
 - **[Deep Agents Cart Tool Goal](DEEP_AGENTS_CART_TOOL_GOAL.md)** - Minimal cart-tool smoke gate and constraints
 - **[Architecture Overview](../README.md#architecture)** - System design and components
@@ -40,6 +42,8 @@ Welcome to the Retail Shopping Assistant documentation! This hub provides compre
 | [API Documentation](API.md) | Complete API reference with examples | Developers, integrators |
 | [Catalog Filter Configuration](CATALOG_FILTERS.md) | Configure hard filters for uploaded catalogs without hardcoded enum values | Developers, operators |
 | [Commerce Contracts](COMMERCE_CONTRACTS.md) | Internal product, cart, and commerce tool contracts | Developers, architects |
+| [Shopper Agent Tool Registry](SHOPPER_AGENT_TOOL_REGISTRY.md) | Registered Deep Agents tools, risk classes, and skill access boundaries for the shopper-serving agent | Developers, architects, evaluators |
+| [Shopper Agent Skill Registry](SHOPPER_AGENT_SKILL_REGISTRY.md) | Registered Deep Agents skills, runtime loading, and markdown tuning workflow for shopper-facing behavior | Developers, architects, evaluators |
 | [Deep Agents Migration Plan](DEEP_AGENTS_MIGRATION_PLAN.md) | SDK migration, session isolation, tools, skills, and scaling notes | Developers, architects |
 | [Deep Agents Cart Tool Goal](DEEP_AGENTS_CART_TOOL_GOAL.md) | Minimal cart-tool smoke gate and constraints | Developers, evaluators |
 | [Deployment Guide](DEPLOYMENT.md) | Installation and deployment instructions | DevOps, system administrators |
@@ -84,11 +88,15 @@ Welcome to the Retail Shopping Assistant documentation! This hub provides compre
 - [User Guide - Product Search](USER_GUIDE.md#product-search)
 - [API - Product Search Examples](API.md#product-search)
 - [Catalog Filter Configuration](CATALOG_FILTERS.md)
+- [Shopper Agent Tool Registry](SHOPPER_AGENT_TOOL_REGISTRY.md)
+- [Shopper Agent Skill Registry](SHOPPER_AGENT_SKILL_REGISTRY.md)
 - [Main README - Usage Examples](../README.md#usage-examples)
 
 #### Shopping Cart
 - [User Guide - Shopping Cart Management](USER_GUIDE.md#shopping-cart-management)
 - [API - Cart Operations](API.md#shopping-cart-operations)
+- [Shopper Agent Tool Registry](SHOPPER_AGENT_TOOL_REGISTRY.md)
+- [Shopper Agent Skill Registry](SHOPPER_AGENT_SKILL_REGISTRY.md)
 - [Data Models - Cart](API.md#cart)
 
 #### Media Upload
@@ -176,6 +184,8 @@ docs/
 ├── README.md           # This documentation hub
 ├── API.md             # API reference
 ├── COMMERCE_CONTRACTS.md
+├── SHOPPER_AGENT_TOOL_REGISTRY.md
+├── SHOPPER_AGENT_SKILL_REGISTRY.md
 ├── DEEP_AGENTS_MIGRATION_PLAN.md
 ├── DEEP_AGENTS_CART_TOOL_GOAL.md
 ├── DEPLOYMENT.md      # Deployment guide

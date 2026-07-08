@@ -133,11 +133,14 @@ the newest working-tree run.
 
 ## Evaluation Challenger and Judge
 
-For live evaluation under `tests/evaluation`, source the evaluation env file
-without printing values:
+For live evaluation under `tests/evaluation`, source the repo-root `.env`
+without printing values. This is the canonical place for Challenger and Judge
+model names:
 
 ```bash
-set -a && source tests/evaluation/.env && set +a
+set -a && source .env && set +a
+export CHALLENGER_MODEL_API_KEY="${CHALLENGER_MODEL_API_KEY:-${NVIDIA_API_KEY:-}}"
+export JUDGE_MODEL_API_KEY="${JUDGE_MODEL_API_KEY:-${NVIDIA_API_KEY:-}}"
 ```
 
 Run one live Challenger scenario:

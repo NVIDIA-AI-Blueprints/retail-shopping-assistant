@@ -46,7 +46,11 @@ CRITERIA_KEYS = [
     "clarification_recovery",
     "safety_scope",
     "communication_quality",
+    "style_composition_quality",
+    "decision_boundary_quality",
 ]
+
+JUDGE_SCENARIO_ATTEMPTS = 3
 
 
 class Judge(Protocol):
@@ -67,7 +71,11 @@ class OpenAICompatibleJudge:
         from openai import OpenAI
 
         self._runtime = runtime
-        self._client = OpenAI(base_url=runtime.base_url, api_key=runtime.api_key or "not-needed")
+        self._client = OpenAI(
+            base_url=runtime.base_url,
+            api_key=runtime.api_key or "not-needed",
+            timeout=runtime.timeout_seconds,
+        )
 
     def judge_scenario(
         self,
@@ -77,24 +85,32 @@ class OpenAICompatibleJudge:
         scenario: Mapping[str, Any],
     ) -> dict[str, Any]:
         prompt = _build_judge_prompt(rules=rules, run=run, scenario=scenario)
-        response = self._client.chat.completions.create(
-            model=self._runtime.model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a strict retail shopping assistant evaluation Judge. "
-                        "Apply the supplied rules and return only valid JSON."
-                    ),
-                },
-                {"role": "user", "content": prompt},
-            ],
-            temperature=self._runtime.temperature,
-            max_tokens=self._runtime.max_tokens,
-            **chat_completion_options(self._runtime),
+        last_error = "unknown Judge error"
+        for _attempt in range(1, JUDGE_SCENARIO_ATTEMPTS + 1):
+            try:
+                response = self._client.chat.completions.create(
+                    model=self._runtime.model,
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": (
+                                "You are a strict retail shopping assistant evaluation Judge. "
+                                "Apply the supplied rules and return only valid JSON."
+                            ),
+                        },
+                        {"role": "user", "content": prompt},
+                    ],
+                    temperature=self._runtime.temperature,
+                    max_tokens=self._runtime.max_tokens,
+                    **chat_completion_options(self._runtime),
+                )
+                content = _message_text(response.choices[0].message)
+                return _normalize_judgment(_parse_model_mapping(content))
+            except Exception as exc:  # noqa: BLE001 - retry model/provider noncompliance.
+                last_error = str(exc) or exc.__class__.__name__
+        raise ValueError(
+            f"{last_error} after {JUDGE_SCENARIO_ATTEMPTS} Judge attempts"
         )
-        content = response.choices[0].message.content or ""
-        return _normalize_judgment(_parse_model_mapping(content))
 
 
 def judge_run(
@@ -129,7 +145,15 @@ def judge_run(
     for scenario in scenarios:
         if not isinstance(scenario, dict):
             continue
-        judgment = live_judge.judge_scenario(rules=rules, run=run, scenario=scenario)
+        if _scenario_has_evaluation_error(scenario):
+            judgment = _evaluation_error_judgment(scenario)
+        else:
+            try:
+                judgment = live_judge.judge_scenario(
+                    rules=rules, run=run, scenario=scenario
+                )
+            except Exception as exc:  # noqa: BLE001 - preserve partial judged run.
+                judgment = _judge_error_judgment(exc)
         normalized = _normalize_judgment(judgment)
         scenario["judge"] = normalized
         scores.append(int(normalized["score"]))
@@ -140,6 +164,35 @@ def judge_run(
     _write_judged_run(path, run, scores=scores, passes=passes)
     generate_report(path)
     return run
+
+
+def _scenario_has_evaluation_error(scenario: Mapping[str, Any]) -> bool:
+    turns = scenario.get("turns", [])
+    if scenario.get("error"):
+        return True
+    return not isinstance(turns, list) or not turns
+
+
+def _evaluation_error_judgment(scenario: Mapping[str, Any]) -> dict[str, Any]:
+    reason = str(scenario.get("error") or "scenario produced no target turns").strip()
+    return {
+        "score": 1,
+        "pass": False,
+        "reason": f"Evaluation incomplete: {reason}.",
+        "criteria": {key: 1 for key in CRITERIA_KEYS},
+        "critical_failures": [reason],
+    }
+
+
+def _judge_error_judgment(exc: Exception) -> dict[str, Any]:
+    reason = f"Judge failed to score this scenario: {exc}"
+    return {
+        "score": 1,
+        "pass": False,
+        "reason": reason,
+        "criteria": {key: 1 for key in CRITERIA_KEYS},
+        "critical_failures": [reason],
+    }
 
 
 def _write_judged_run(path: Path, run: dict[str, Any], *, scores: list[int], passes: int) -> None:
@@ -193,7 +246,9 @@ Return only JSON with this shape:
     "tool_state_correctness": 4,
     "clarification_recovery": 4,
     "safety_scope": 5,
-    "communication_quality": 4
+    "communication_quality": 4,
+    "style_composition_quality": 4,
+    "decision_boundary_quality": 4
   }},
   "critical_failures": []
 }}
@@ -217,6 +272,7 @@ def _judge_scenario_payload(scenario: Mapping[str, Any]) -> dict[str, Any]:
                 "assistant": target.get("response"),
                 "assistant_error": target.get("error"),
                 "returned_images": target.get("images"),
+                "cart_after": target.get("cart"),
             }
         )
 
@@ -228,6 +284,12 @@ def _judge_scenario_payload(scenario: Mapping[str, Any]) -> dict[str, Any]:
         "constraints": scenario.get("constraints"),
         "shopper_behavior": scenario.get("shopper_behavior"),
         "language_cues": scenario.get("language_cues"),
+        "entry_mode": scenario.get("entry_mode"),
+        "secondary_entry_pattern": scenario.get("secondary_entry_pattern"),
+        "skill_focus": scenario.get("skill_focus"),
+        "catalog_dependency": scenario.get("catalog_dependency"),
+        "success_criteria": scenario.get("success_criteria"),
+        "failure_modes": scenario.get("failure_modes"),
         "image_id": scenario.get("image_id"),
         "image_asset": scenario.get("image_asset"),
         "error": scenario.get("error"),
@@ -249,6 +311,24 @@ def _parse_model_mapping(content: str) -> dict[str, Any]:
     if not isinstance(parsed, dict):
         raise ValueError("Judge model response must be a JSON/YAML object.")
     return parsed
+
+
+def _message_text(message: Any) -> str:
+    content = getattr(message, "content", None) or ""
+    if content:
+        return str(content)
+
+    reasoning_content = getattr(message, "reasoning_content", None)
+    if reasoning_content:
+        return str(reasoning_content)
+
+    if hasattr(message, "model_dump"):
+        dumped = message.model_dump()
+        if isinstance(dumped, Mapping):
+            reasoning_content = dumped.get("reasoning_content")
+            if reasoning_content:
+                return str(reasoning_content)
+    return ""
 
 
 def _normalize_judgment(raw: Mapping[str, Any]) -> dict[str, Any]:

@@ -178,6 +178,7 @@ The response model for non-streaming queries.
 interface QueryResponse {
   response: string;                   // Generated response text
   images: Record<string, string>;     // Product images
+  cart: Cart;                         // Authoritative cart snapshot after the turn
   timings: Record<string, number>;    // Performance timing data
   token_usage?: TokenUsage;           // LLM token usage summary
   model_usage?: ModelUsage;           // Per-role model usage summary
@@ -191,6 +192,9 @@ interface QueryResponse {
   "images": {
     "product1": "https://cdn.shop.com/dress1.jpg",
     "product2": "https://cdn.shop.com/dress2.jpg"
+  },
+  "cart": {
+    "contents": []
   },
   "timings": {
     "total": 3.48,
@@ -318,6 +322,9 @@ curl -X POST "http://localhost:8000/query/timing" \
   "images": {
     "product1": "https://cdn.shop.com/dress1.jpg",
     "product2": "https://cdn.shop.com/dress2.jpg"
+  },
+  "cart": {
+    "contents": []
   },
   "timings": {
     "total": 3.48,
@@ -467,6 +474,15 @@ The chain server bounds Deep Agents catalog tool loops with
 catalog indefinitely. Multi-item outfit requests should fit within the default
 cap by running one focused search per required item type and then synthesizing
 the response from those results.
+
+The chain server also bounds product-detail reads with
+`max_product_detail_reads_per_turn`. Detail reads are intended for direct
+product fact questions and shortlisted comparisons, not for enriching every
+initial outfit recommendation.
+
+When a cart item matches a product ref cached in the active conversation, the
+chain server can return that product image again on later cart or comparison
+turns without forcing another catalog search.
 
 **Request Body:**
 ```json

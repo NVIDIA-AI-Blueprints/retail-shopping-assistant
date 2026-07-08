@@ -108,6 +108,21 @@ class ChainServerConfig(BaseModel):
         default=3,
         description="Maximum catalog search tool calls allowed for one assistant turn",
     )
+    max_product_detail_reads_per_turn: int = Field(
+        default=2,
+        description="Maximum product-detail tool calls allowed for one assistant turn",
+    )
+    grounding_rewrite_enabled: bool = Field(
+        default=True,
+        description=(
+            "Whether to run a final grounded response editor over Deep Agents "
+            "drafts that have tool evidence."
+        ),
+    )
+    grounding_rewrite_max_evidence_chars: int = Field(
+        default=12000,
+        description="Maximum tool evidence characters passed to the grounding editor",
+    )
     catalog_search_timeout_seconds: Optional[float] = Field(
         default=None,
         description=(
@@ -166,6 +181,20 @@ class ChainServerConfig(BaseModel):
             raise ValueError("max_catalog_searches_per_turn must be positive")
         return v
 
+    @validator('max_product_detail_reads_per_turn')
+    def validate_max_product_detail_reads_per_turn(cls, v):
+        """Validate per-turn product-detail read cap is positive."""
+        if v <= 0:
+            raise ValueError("max_product_detail_reads_per_turn must be positive")
+        return v
+
+    @validator('grounding_rewrite_max_evidence_chars')
+    def validate_grounding_rewrite_max_evidence_chars(cls, v):
+        """Validate grounding editor evidence window size."""
+        if v <= 0:
+            raise ValueError("grounding_rewrite_max_evidence_chars must be positive")
+        return v
+
     @validator('catalog_search_timeout_seconds')
     def validate_catalog_search_timeout(cls, v):
         """Validate optional catalog search timeout."""
@@ -212,6 +241,13 @@ def load_config(config_path: Optional[str] = None) -> ChainServerConfig:
         "catalog_search_timeout_seconds": os.environ.get("CATALOG_SEARCH_TIMEOUT_SECONDS"),
         "deepagents_recursion_limit": os.environ.get("DEEPAGENTS_RECURSION_LIMIT"),
         "max_catalog_searches_per_turn": os.environ.get("MAX_CATALOG_SEARCHES_PER_TURN"),
+        "max_product_detail_reads_per_turn": os.environ.get(
+            "MAX_PRODUCT_DETAIL_READS_PER_TURN"
+        ),
+        "grounding_rewrite_enabled": _env_bool("GROUNDING_REWRITE_ENABLED"),
+        "grounding_rewrite_max_evidence_chars": os.environ.get(
+            "GROUNDING_REWRITE_MAX_EVIDENCE_CHARS"
+        ),
         "guardrails_enabled": _env_bool("GUARDRAILS_ENABLED"),
     }
     config_data.update(

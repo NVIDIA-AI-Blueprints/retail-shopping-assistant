@@ -7,9 +7,12 @@ Current scope:
 
 - `PLAN.md` is the design source for the scaffold.
 - `eval_config.yaml` contains non-secret config references only.
-- `datasets/` contains text/image shopping scenario briefs for Challenger runs.
+- `datasets/` contains text, image, and style-guide shopping scenario briefs
+  for Challenger runs.
 - `datasets/image_shopping/assets/` contains generated product-photo inputs
   plus YAML sidecars that own image descriptions.
+- `datasets/style_guide/` contains styling-skill behavior scenarios with
+  explicit catalog-coupling metadata and refresh notes.
 - `results/` is reserved for generated run output and is ignored except for
   `.gitkeep`.
 - `src/` contains evaluation-only Challenger, Judge, and report helpers.
@@ -22,27 +25,49 @@ the live Shopping Assistant, then feeds the assistant response back into the
 next Challenger prompt. Image scenarios send the asset image on the first turn
 only; sidecar descriptions stay in evaluation metadata.
 
+`conversation.min_turns` is intentional: style and shopping evaluations should
+exercise longer, more complex conversations. If a shopper goal appears
+satisfied before the minimum turn count, the Challenger must continue with a
+realistic follow-up such as a budget check, comparison, cart review, swap,
+availability question, styling rationale request, or clarification. It may only
+return an empty message with `goal_complete: true` once the minimum turn count
+has been reached.
+
+Generated Challenger turns are validated before they are sent to the target
+agent. Empty messages, structured scenario payloads, overlong multi-line
+messages, and evaluation metadata leakage are retried and recorded as
+`challenger_retry_errors` in the run artifact.
+
 The Judge reads a saved `run.yaml`, applies `judge_rules.md` with the configured
 `judge_model`, and appends scenario-level scores, reasons, criteria, and
 critical failures back into the run record.
 
 ## Running
 
-Start the target Shopping Assistant, then source the evaluation environment file:
+Start the target Shopping Assistant, then source the repo-root environment file:
 
 ```bash
 set -a
-source tests/evaluation/.env
+source .env
 set +a
 ```
 
-That file should provide the Challenger model variables referenced by
+The repo-root `.env` should provide the Challenger model variables referenced by
 `eval_config.yaml`:
 
 ```bash
 export CHALLENGER_MODEL_BASE_URL="<openai-compatible-base-url>"
 export CHALLENGER_MODEL_NAME="<challenger-model-name>"
 export CHALLENGER_MODEL_API_KEY="<challenger-api-key>"
+```
+
+If the root env stores the provider key in `NVIDIA_API_KEY`, export the
+evaluation-specific aliases before running Challenger or Judge. Do not print the
+secret values:
+
+```bash
+export CHALLENGER_MODEL_API_KEY="${CHALLENGER_MODEL_API_KEY:-${NVIDIA_API_KEY:-}}"
+export JUDGE_MODEL_API_KEY="${JUDGE_MODEL_API_KEY:-${NVIDIA_API_KEY:-}}"
 ```
 
 For a locally hosted Hugging Face, TGI, vLLM, or other OpenAI-compatible model,
@@ -69,10 +94,22 @@ Env vars override `base_url` and `model` when both are set. For a cloud endpoint
 where missing auth should fail before the run starts, set `api_key_required:
 true`.
 
-For reasoning-capable local chat templates, keep `disable_thinking: true` so the
-Challenger and Judge request final answers without `<think>` output. Keep
-`json_mode: true` so model responses are requested as JSON objects. Set either
-flag to `false` only for endpoints that reject that OpenAI-compatible option.
+For reasoning-capable local chat templates, set `disable_thinking: true` so the
+Challenger and Judge request final answers without `<think>` output. Keep it
+`false` for Azure/OpenAI-style endpoints that reject `chat_template_kwargs`.
+Keep `json_mode: true` so model responses are requested as JSON objects. Set
+either flag to `false` only for endpoints that reject that OpenAI-compatible
+option.
+`challenger_model.timeout_seconds` and `judge_model.timeout_seconds` bound the
+OpenAI-compatible model calls separately from `target_agent.timeout_seconds`,
+which bounds requests to the Shopping Assistant.
+
+Some Azure/OpenAI-style reasoning endpoints only accept the default
+temperature. Use `temperature: 1.0` for those endpoints.
+
+Reasoning endpoints may consume part of the completion budget before emitting
+final JSON. If Judge responses finish with `length` and empty content, raise
+`judge_model.max_tokens` before rerunning the Judge.
 
 ## Challenger Commands
 
@@ -80,7 +117,7 @@ The dry run validates scenario selection and does not call a model or the target
 Shopping Assistant:
 
 ```bash
-set -a && source tests/evaluation/.env && set +a
+set -a && source .env && set +a
 PYTHONPATH=tests/evaluation python -m src.challenger --dry-run
 ```
 
@@ -88,38 +125,46 @@ The live Challenger uses `CHALLENGER_MODEL_*` and sends turns to
 `target_agent.base_url` plus `target_agent.endpoint` from `eval_config.yaml`:
 
 ```bash
-set -a && source tests/evaluation/.env && set +a
+set -a && source .env && set +a
 PYTHONPATH=tests/evaluation python -m src.challenger
 ```
 
 Run one specified live scenario by id:
 
 ```bash
-set -a && source tests/evaluation/.env && set +a
+set -a && source .env && set +a
 PYTHONPATH=tests/evaluation python -m src.challenger --scenario-id text_budget_work_bag
+```
+
+Run the style-guide dataset only:
+
+```bash
+set -a && source .env && set +a
+PYTHONPATH=tests/evaluation python -m src.challenger --all-scenarios --dataset style_guide
 ```
 
 Run every scenario in the configured dataset list, ignoring
 `scenario_limit_per_dataset`:
 
 ```bash
-set -a && source tests/evaluation/.env && set +a
+set -a && source .env && set +a
 PYTHONPATH=tests/evaluation python -m src.challenger --all-scenarios
 ```
 
 Run every text and image scenario explicitly:
 
 ```bash
-set -a && source tests/evaluation/.env && set +a
-PYTHONPATH=tests/evaluation python -m src.challenger --all-scenarios --dataset text_shopping --dataset image_shopping
+set -a && source .env && set +a
+PYTHONPATH=tests/evaluation python -m src.challenger --all-scenarios --dataset text_shopping --dataset image_shopping --dataset style_guide
 ```
 
 Useful selection flags:
 
 - `--scenario-id <id>`: run one scenario id. Repeat the flag to run multiple
   named scenarios.
-- `--dataset <name>`: select a dataset such as `text_shopping` or
-  `image_shopping`. Repeat the flag to include multiple datasets.
+- `--dataset <name>`: select a dataset such as `text_shopping`,
+  `image_shopping`, or `style_guide`. Repeat the flag to include multiple
+  datasets.
 - `--all-scenarios`: ignore `scenario_limit_per_dataset` and run every selected
   scenario.
 - `--scenario-limit <n>`: override `scenario_limit_per_dataset` for this run.
@@ -136,7 +181,46 @@ target_agent:
 
 The Challenger generates shopper turns with `challenger_model`, sends each turn
 to `target_agent.endpoint`, sends image assets only on the first image-scenario
-turn, and writes `results/runs/<run_id>/run.yaml`.
+turn, and writes `results/runs/<run_id>/run.yaml`. Target responses preserve
+the authoritative post-turn `cart` snapshot returned by `/query/timing`; the
+Judge receives that same state as `cart_after` so cart mutation claims are
+scored against tool-backed state, not prose alone.
+
+## Style Guide Dataset
+
+`datasets/style_guide/scenarios.yaml` evaluates the styling skill's customer
+conversation behavior across the agreed entry modes:
+
+- `anchor_product`
+- `no_anchor_discovery`
+- `cart_styling`
+- `mid_browse_styling`
+
+It also covers secondary patterns such as occasion-first, constraint-first,
+comparison, wardrobe-gap, and post-selection refinement. Existing visual-anchor
+coverage remains in `datasets/image_shopping/scenarios.yaml` with style
+metadata on the relevant image scenarios.
+
+The style-guide scenarios are not meant to hard-code one perfect outfit. Each
+scenario declares a `catalog_dependency` level:
+
+- `behavior_only`: survives most catalog changes.
+- `category_level`: requires broad product categories and prices, not exact
+  product names.
+- `seed_anchor`: intentionally depends on a named seed anchor product.
+- `cart_state_seed`: intentionally depends on named seed products to create
+  cart state.
+- `visual_seed_asset`: depends on committed image assets and sidecars.
+
+When deploying with a materially different catalog, review the `seed_anchor`,
+`cart_state_seed`, and `visual_seed_asset` scenarios and update their
+`refresh_note`, `seed_products`, or `seed_assets` values. Lower-coupled
+scenarios should usually stay unchanged unless the deployment no longer
+supports apparel, footwear, bags, or accessory styling.
+
+Some scenarios include `turn_sequence` for setup-sensitive behavior such as cart
+styling. Challenger must follow those steps in order so the target app is tested
+against real cart state rather than an unverified shopper claim.
 
 ## Judge Commands
 
@@ -154,14 +238,14 @@ For a no-auth local Judge model, set `JUDGE_MODEL_BASE_URL` and
 Judge the latest saved run:
 
 ```bash
-set -a && source tests/evaluation/.env && set +a
+set -a && source .env && set +a
 PYTHONPATH=tests/evaluation python -m src.judge --latest --enable-judge
 ```
 
 Judge a specific run:
 
 ```bash
-set -a && source tests/evaluation/.env && set +a
+set -a && source .env && set +a
 PYTHONPATH=tests/evaluation python -m src.judge tests/evaluation/results/runs/<run_id>/run.yaml --enable-judge
 ```
 

@@ -9,6 +9,12 @@ execution yet, and no generated result artifacts committed.
 The framework will support text and image shopping datasets, with 8-turn
 qualitative Challenger runs and optional Judge scoring later.
 
+Current follow-on scope adds a `style_guide` dataset for styling-skill behavior
+coverage. It keeps most scenarios catalog-light through `behavior_only` and
+`category_level` catalog dependency metadata, while explicitly marking
+seed-product, cart-state, and visual-asset cases that must be refreshed when a
+new deployment uses a materially different catalog.
+
 ## Directory Layout
 
 ```text
@@ -33,6 +39,10 @@ tests/evaluation/
       scenarios.yaml
       assets/
         .gitkeep
+
+    style_guide/
+      README.md
+      scenarios.yaml
 
   results/
     .gitkeep

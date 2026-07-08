@@ -26,7 +26,9 @@ Current constraints:
 - Existing commerce tool implementations are not modified in this slice.
 - The Deep Agents adapter exposes thin request-scoped wrapper tools over the
   existing commerce functions.
-- No skills are added yet; the first goal is a readable SDK harness.
+- The first shopper-facing skill is loaded from
+  `chain_server/skills/shopper/outfit-styling/SKILL.md` through the Deep
+  Agents SDK skills interface.
 - The public request body remains backward compatible.
 - Optional `session_id`, `conversation_id`, and `cart_id` fields are accepted,
   and the bundled UI now sends browser-session identifiers on every turn.
@@ -53,9 +55,12 @@ Current constraints:
 Filesystem and built-in Deep Agents tools:
 
 - Deep Agents includes filesystem, todo, shell, and subagent tools by default.
-- This shopping runtime registers a harness profile that excludes the built-in
-  filesystem, todo, and shell tools and disables the default general-purpose
-  subagent.
+- This shopping runtime registers a harness profile that excludes built-in
+  filesystem write/edit/list/search tools, todo tools, shell tools, and the
+  default general-purpose subagent.
+- Built-in `read_file` remains available only so Deep Agents can read static
+  skill files from a virtual-mode filesystem backend rooted at
+  `chain_server/skills`.
 - Customer profile, cart, price, inventory, order, and payment truth must not
   live in local files or the Deep Agents virtual filesystem.
 - If future skills use filesystem-backed instructions, those files must be
@@ -186,25 +191,35 @@ Initial tools should be small, typed, and deterministic:
 - `get_store_policy`: read-only controlled policy content.
 - `load_customer_persona`: read-only persona/profile snapshot.
 
+The active shopper-serving Deep Agents tool registry is documented in
+[Shopper Agent Tool Registry](SHOPPER_AGENT_TOOL_REGISTRY.md). The active skill
+registry is documented in
+[Shopper Agent Skill Registry](SHOPPER_AGENT_SKILL_REGISTRY.md). Those
+registries are the source for which tools and skills are actually registered
+today, their boundaries, and current limitations. Planned contracts in this
+section should not be treated as agent-callable until they appear in the
+registries as registered runtime capabilities.
+
 The Deep Agent decides when to call a tool. The tool decides whether the call is
 valid and what state changes are allowed.
 
 ## Skills
 
 Initial skills should be domain instructions and examples, not hidden business
-logic:
+logic. The first registered skill is:
 
-- `product_discovery`
-- `image_shopping`
-- `video_shopping` when VLM media perception is enabled
-- `cart_management`
-- `budget_sensitive_recommendation`
-- `persona_aware_recommendation`
-- `store_policy_answers`
+- `outfit-styling`: fashion styling across anchor product, no-anchor
+  discovery, cart styling, conversational mid-browse, visual, and budget-aware
+  styling requests.
 
 Skills may guide tool use, explain constraints, and provide examples. They
 should not own cart mutation, pricing, inventory, profile persistence, or order
 creation.
+
+Planned future skills remain product discovery, visual shopping,
+cart-management, budget-sensitive recommendation, persona-aware recommendation,
+and store-policy answers. Keep them as markdown-guided behavior until
+evaluation shows a need for a dedicated subagent or separate tool budget.
 
 ## Filesystem And Context
 
@@ -293,8 +308,8 @@ Implications:
 
 ### Slice 4: Skills
 
-- Add initial shopping skills for product discovery, image shopping, budget
-  guidance, persona-aware recommendation, and cart management.
+- Add and iterate initial shopping skills. `outfit-styling` is the first
+  registered skill and remains a markdown-guided behavior surface.
 - Keep skills as guidance. Keep state changes in tools.
 
 ### Slice 5: Deep Agents Runtime Parity

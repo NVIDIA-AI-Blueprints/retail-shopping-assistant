@@ -34,6 +34,9 @@ def _clear_model_and_service_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "CATALOG_SEARCH_TIMEOUT_SECONDS",
         "DEEPAGENTS_RECURSION_LIMIT",
         "MAX_CATALOG_SEARCHES_PER_TURN",
+        "MAX_PRODUCT_DETAIL_READS_PER_TURN",
+        "GROUNDING_REWRITE_ENABLED",
+        "GROUNDING_REWRITE_MAX_EVIDENCE_CHARS",
         "GUARDRAILS_ENABLED",
         "LLM_BASE_URL",
         "LLM_MODEL",
@@ -78,6 +81,9 @@ class TestChainServerConfigValidation:
         assert config.multimodal is True
         assert config.vlm_enabled is False
         assert config.guardrails_enabled is True
+        assert config.grounding_rewrite_enabled is True
+        assert config.max_product_detail_reads_per_turn == 2
+        assert config.grounding_rewrite_max_evidence_chars == 12000
         assert config.media_input.max_images_per_turn == 1
         assert config.media_input.max_videos_per_turn == 1
 
@@ -162,6 +168,15 @@ class TestChainServerConfigValidation:
                 **{**valid_config_dict, "max_catalog_searches_per_turn": value}
             )
 
+    @pytest.mark.parametrize("value", [0, -4])
+    def test_max_product_detail_reads_per_turn_must_be_positive(
+        self, valid_config_dict: dict, value: int
+    ) -> None:
+        with pytest.raises(ValidationError):
+            ChainServerConfig(
+                **{**valid_config_dict, "max_product_detail_reads_per_turn": value}
+            )
+
     @pytest.mark.parametrize("value", [None, 30, 120.5])
     def test_catalog_search_timeout_accepts_none_or_positive_values(
         self, valid_config_dict: dict, value: float | None
@@ -178,6 +193,15 @@ class TestChainServerConfigValidation:
         with pytest.raises(ValidationError):
             ChainServerConfig(
                 **{**valid_config_dict, "catalog_search_timeout_seconds": value}
+            )
+
+    @pytest.mark.parametrize("value", [0, -1])
+    def test_grounding_rewrite_evidence_window_must_be_positive(
+        self, valid_config_dict: dict, value: int
+    ) -> None:
+        with pytest.raises(ValidationError):
+            ChainServerConfig(
+                **{**valid_config_dict, "grounding_rewrite_max_evidence_chars": value}
             )
 
     @pytest.mark.parametrize("field", ["agent_choices"])
@@ -217,6 +241,7 @@ class TestLoadConfig:
         assert config.memory_length == valid_config_dict["memory_length"]
         assert config.deepagents_recursion_limit == valid_config_dict["deepagents_recursion_limit"]
         assert config.max_catalog_searches_per_turn == valid_config_dict["max_catalog_searches_per_turn"]
+        assert config.max_product_detail_reads_per_turn == valid_config_dict["max_product_detail_reads_per_turn"]
         assert config.guardrails_enabled is True
         assert config.llm_name == "nvidia/nemotron-3-super-120b-a12b"
         assert config.vlm_enabled is True
@@ -263,6 +288,57 @@ class TestLoadConfig:
 
         with pytest.raises(ValueError, match="GUARDRAILS_ENABLED must be one of"):
             load_config(str(path))
+
+    @pytest.mark.parametrize(
+        "raw_value,expected",
+        [
+            ("true", True),
+            ("false", False),
+        ],
+    )
+    def test_grounding_rewrite_enabled_env_override_accepts_explicit_bools(
+        self,
+        write_yaml,
+        valid_config_dict: dict,
+        monkeypatch: pytest.MonkeyPatch,
+        raw_value: str,
+        expected: bool,
+    ) -> None:
+        _clear_model_and_service_env(monkeypatch)
+        monkeypatch.setenv("SHARED_CONFIG_ROOT", str(REPO_ROOT / "shared/configs"))
+        monkeypatch.setenv("LLM_API_KEY", "test-key")
+        monkeypatch.setenv("GROUNDING_REWRITE_ENABLED", raw_value)
+        path = write_yaml("config.yaml", valid_config_dict)
+
+        config = load_config(str(path))
+
+        assert config.grounding_rewrite_enabled is expected
+
+    def test_grounding_rewrite_max_evidence_env_override(
+        self, write_yaml, valid_config_dict: dict, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _clear_model_and_service_env(monkeypatch)
+        monkeypatch.setenv("SHARED_CONFIG_ROOT", str(REPO_ROOT / "shared/configs"))
+        monkeypatch.setenv("LLM_API_KEY", "test-key")
+        monkeypatch.setenv("GROUNDING_REWRITE_MAX_EVIDENCE_CHARS", "6400")
+        path = write_yaml("config.yaml", valid_config_dict)
+
+        config = load_config(str(path))
+
+        assert config.grounding_rewrite_max_evidence_chars == 6400
+
+    def test_max_product_detail_reads_env_override(
+        self, write_yaml, valid_config_dict: dict, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _clear_model_and_service_env(monkeypatch)
+        monkeypatch.setenv("SHARED_CONFIG_ROOT", str(REPO_ROOT / "shared/configs"))
+        monkeypatch.setenv("LLM_API_KEY", "test-key")
+        monkeypatch.setenv("MAX_PRODUCT_DETAIL_READS_PER_TURN", "2")
+        path = write_yaml("config.yaml", valid_config_dict)
+
+        config = load_config(str(path))
+
+        assert config.max_product_detail_reads_per_turn == 2
 
     def test_invalid_yaml_surface_as_value_error(
         self, write_yaml, valid_config_dict: dict, monkeypatch: pytest.MonkeyPatch

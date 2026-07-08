@@ -88,6 +88,7 @@ class QueryResponse(BaseModel):
     """Response model for shopping queries."""
     response: str
     images: Dict[str, str] = {}
+    cart: Cart = Field(default_factory=Cart)
     timings: Dict[str, float] = {}
     token_usage: Dict[str, int] = Field(default_factory=dict)
     model_usage: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
@@ -202,6 +203,7 @@ async def process_query_timing(request: QueryRequest):
         response = QueryResponse(
             response=out_state_dict["response"],
             images=out_state_dict.get("images", {}),
+            cart=out_state_dict.get("cart", Cart()),
             timings=out_state_dict["timings"],
             token_usage=out_state_dict.get("token_usage", {}),
             model_usage=out_state_dict.get("model_usage", {}),

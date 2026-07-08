@@ -70,6 +70,12 @@ SDK adapter:
 - Cart tools are stateful and adapt the current memory service API without
   changing the public service schema.
 
+The runtime Deep Agents tool names, risk classes, skill access boundaries, and
+registered-vs-planned status are tracked separately in
+[Shopper Agent Tool Registry](SHOPPER_AGENT_TOOL_REGISTRY.md). This document
+defines the shared contract layer; the registry defines what the
+shopper-serving Deep Agent can actually call today.
+
 No ACP/UCP adapter layer has been added yet.
 
 ## Core Models

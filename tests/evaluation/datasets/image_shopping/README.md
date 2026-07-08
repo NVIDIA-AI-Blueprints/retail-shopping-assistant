@@ -23,3 +23,7 @@ References:
 Scenarios should reference sidecar `id` values as `image_id`. Sidecar
 descriptions are evaluation ground truth and are not sent to the shopping
 agent by default.
+
+Some image scenarios also carry style-guide metadata for visual-anchor styling
+coverage. Treat those scenarios as `visual_seed_asset` dependencies and re-map
+their `image_id` values when replacing the catalog images or sidecars.

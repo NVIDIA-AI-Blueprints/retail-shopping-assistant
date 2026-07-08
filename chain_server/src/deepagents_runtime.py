@@ -10,12 +10,13 @@ import hashlib
 import json
 import logging
 import os
+from pathlib import Path
 import time
 from typing import Any, AsyncIterator
 import uuid
 
 from langgraph.checkpoint.memory import MemorySaver
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 import requests
 
 from .agenttypes import Cart, State
@@ -46,8 +47,91 @@ from shared.commerce_contracts import (
 
 logger = logging.getLogger(__name__)
 
+try:
+    from deepagents.backends import FilesystemBackend as _FilesystemBackend
+except Exception:  # pragma: no cover - dependency import is validated at runtime.
+    _FilesystemBackend = None
+
+_SHOPPER_SKILLS_ENV = "SHOPPER_SKILLS_ROOT"
+_SHOPPER_SKILLS_SOURCE = "/shopper"
+_SEARCH_RESULT_GROUNDING_NOTE = (
+    "SEARCH_RESULT_GROUNDING_NOTE: Use search results for candidate names, prices, "
+    "categories, image availability, and modest styling fit only. Treat product "
+    "names as display names, not attribute evidence. Do not infer or group-claim "
+    "length, color, print, material, care, construction, fit, comfort, weather, "
+    "grass, gravel, or best-in-category performance from names or search snippets."
+)
+_PRODUCT_DETAIL_GROUNDING_NOTE = (
+    "PRODUCT_DETAIL_GROUNDING_NOTE: This detail result exposes only "
+    "the fields shown below. Material, care, dimensions, closures, fit, "
+    "sizing, colorways, and outdoor performance are unavailable unless explicitly "
+    "listed. Do not infer them from product names or prior marketing text."
+)
+_GROUNDING_EDITOR_SYSTEM_PROMPT = """You are a final response editor for a retail shopping assistant.
+
+Rewrite the draft response only as needed so it is grounded in TOOL EVIDENCE
+and CURRENT CART. Keep the shopper's requested task and any successful cart
+action intact.
+
+Rules:
+- Return only the final shopper-facing response text.
+- Do not add products, prices, cart actions, or product facts absent from TOOL
+  EVIDENCE or CURRENT CART.
+- Remove PRODUCT_REF, CART_LINE_ID, tool names, and internal IDs.
+- Remove internal skill, mode, evaluator, judge, cache, backend, tool-evidence,
+  structured-field, and data-layer language. Use shopper-safe phrasing such as
+  "I don't have fabric or care details available for that item."
+- If the draft says "product detail tool", "catalog detail tool", "the tool
+  requires", or similar internal mechanics, rewrite it into shopper-safe
+  language without the word "tool".
+- If a product appears only in search results, you may state only its name,
+  price, category/role, image availability, and a modest styling reason.
+- Treat product names as display names, not proof of length, color, print,
+  material, construction, fit, care, or vibe. Do not say a product is solid,
+  floral, gingham, maxi, knee-length, woven, structured, neutral, lightweight,
+  polished, or dressier unless that attribute appears in product-detail evidence.
+- Material, care, dimensions, pockets, closures, fit, comfort, and outdoor
+  practicality claims require matching product-detail evidence and a direct
+  shopper need for that fact.
+- Group claims such as "all are maxi length", "both are cotton", "the lightest",
+  "most polished", or "best for heat" require product-detail evidence for every
+  item included in that claim. Remove the claim if any item lacks that support.
+- Do not say an item is stable on grass or gravel, water-resistant, bug-safe,
+  all-day comfortable, maximally breathable, or best-in-category unless the
+  evidence explicitly says that exact claim.
+- Do not convert indirect evidence into outdoor surface performance. If the
+  evidence says flat sole, ankle strap, linen, cotton, or elastic waistband,
+  state only that fact when needed; do not add grass, gravel, outdoor-surface,
+  heat, or all-evening performance claims. Avoid phrases such as "works well
+  for outdoor surfaces"; use "a flat shoe option" or "fits the practical
+  direction" instead.
+- The shopper and Judge see only the final answer, not hidden tool output. Avoid
+  long product-spec dumps; keep catalog facts item-specific and visibly modest.
+- If image evidence is available, do not say images are unavailable or that you
+  cannot show them. Say the product image should appear with the result, or
+  simply answer the comparison.
+- Preserve exact cart totals and cart contents when they are present in CURRENT
+  CART or tool evidence.
+- If the draft is already compliant, return it unchanged.
+"""
 _EXCLUDED_DEEP_AGENT_TOOLS = frozenset(
-    {"write_todos", "ls", "read_file", "write_file", "edit_file", "glob", "grep", "execute"}
+    {"write_todos", "ls", "write_file", "edit_file", "glob", "grep", "execute"}
+)
+_PRODUCT_NAME_STOPWORDS = frozenset({"a", "an", "and", "in", "of", "the", "to", "with"})
+_INTERNAL_SHOPPER_REPLACEMENTS = (
+    ("The product detail tool doesn't return", "I don't have"),
+    ("the product detail tool doesn't return", "I don't have"),
+    ("The catalog detail tool doesn't return", "I don't have"),
+    ("the catalog detail tool doesn't return", "I don't have"),
+    ("The product detail tool does not return", "I don't have"),
+    ("the product detail tool does not return", "I don't have"),
+    ("The catalog detail tool does not return", "I don't have"),
+    ("the catalog detail tool does not return", "I don't have"),
+    ("the product detail tool", "the product details I can access"),
+    ("the catalog detail tool", "the product details I can access"),
+    ("because the tool requires", "because I need"),
+    ("The tool requires", "I need"),
+    ("the tool requires", "I need"),
 )
 
 
@@ -76,6 +160,37 @@ class SearchCatalogToolInput(BaseModel):
     search_mode: str | None = Field(
         default=None,
         description="Optional search mode from Catalog capabilities.",
+    )
+
+
+class AddCartItemsToolItemInput(BaseModel):
+    product_ref: str = Field(
+        ...,
+        min_length=1,
+        description="PRODUCT_REF returned by search_catalog_tool in this conversation.",
+    )
+    quantity: int = Field(
+        default=1,
+        ge=1,
+        description="Quantity of this product to add.",
+    )
+    expected_display_name: str | None = Field(
+        default=None,
+        description=(
+            "Shopper-facing product name the agent intends to add. When the "
+            "shopper explicitly names the product, copy that exact product name."
+        ),
+    )
+
+
+class AddCartItemsToolInput(BaseModel):
+    items: list[AddCartItemsToolItemInput] = Field(
+        ...,
+        min_length=1,
+        description=(
+            "One or more catalog products to add. Each product must use a "
+            "PRODUCT_REF returned by search_catalog_tool."
+        ),
     )
 
 
@@ -152,6 +267,7 @@ class DeepAgentsRuntime:
         return {
             "response": output.response,
             "images": output.retrieved or {},
+            "cart": output.cart.model_dump(mode="json"),
             "timings": output.timings,
             "token_usage": _normalized_token_usage(output.token_usage),
             "model_usage": output.model_usage,
@@ -196,16 +312,31 @@ class DeepAgentsRuntime:
                     "recursion_limit": self.config.deepagents_recursion_limit,
                 },
             )
-            state.response = _extract_final_text(result)
+            draft_response = _extract_final_text(result)
             state.token_usage = _collect_token_usage(result)
+            state.response = self._rewrite_response_for_grounding(
+                state,
+                result,
+                draft_response,
+            )
         except Exception as exc:  # noqa: BLE001 - keep endpoint resilient.
             logger.exception("DeepAgentsRuntime failed")
-            state.response = (
+            self._reset_agent_thread(identity)
+            fallback_response = _partial_product_results_response(state)
+            state.response = fallback_response or (
                 "I encountered an error while helping with your shopping request. "
                 "Please try again."
             )
             _record_language_model_failure(state)
             state.timings["deepagents_error"] = time.monotonic() - start
+            if fallback_response:
+                state.context = self._updated_context(
+                    state.context,
+                    state.query,
+                    state.response,
+                    media_analysis=state.media_analysis,
+                )
+                self._persist_context(state, identity)
             return state
 
         if state.guardrails:
@@ -238,7 +369,6 @@ class DeepAgentsRuntime:
             register_harness_profile,
         )
         from langchain_core.tools import tool
-        from langchain_openai import ChatOpenAI
 
         if not self._profile_registered:
             register_harness_profile(
@@ -250,9 +380,12 @@ class DeepAgentsRuntime:
             )
             self._profile_registered = True
 
+        skills_backend = self._create_skills_backend()
         retrieved: dict[str, str] = {}
         state.retrieved = retrieved
+        self._append_cached_cart_images(retrieved, state.cart, identity)
         catalog_searches_this_turn = 0
+        product_detail_reads_this_turn = 0
 
         @tool(args_schema=SearchCatalogToolInput, return_direct=False)
         def search_catalog_tool(
@@ -266,10 +399,10 @@ class DeepAgentsRuntime:
             nonlocal catalog_searches_this_turn
             if catalog_searches_this_turn >= self.config.max_catalog_searches_per_turn:
                 return (
-                    "Catalog search limit reached for this turn. Use the products "
-                    "already returned in this turn to answer concisely, or ask one "
-                    "concise clarifying question if the available products are not "
-                    "enough."
+                    "STOP_TOOL_USE: Catalog search limit reached for this turn. "
+                    "Do not call more tools this turn. Use the products already "
+                    "returned in this turn to answer concisely, or ask one concise "
+                    "clarifying question if the available products are not enough."
                 )
             catalog_searches_this_turn += 1
 
@@ -309,7 +442,7 @@ class DeepAgentsRuntime:
 
             self._remember_products(identity, result.products)
             _append_product_results(state, result.products)
-            lines = []
+            lines = [_SEARCH_RESULT_GROUNDING_NOTE]
             for product in result.products:
                 if product.image_url:
                     retrieved[product.display_name] = product.image_url
@@ -327,49 +460,115 @@ class DeepAgentsRuntime:
 
             cart = self._read_cart(identity.cart_user_id)
             state.cart = cart
+            self._append_cached_cart_images(retrieved, cart, identity)
             return _format_cart(cart)
 
         @tool(return_direct=False)
         def get_product_details_tool(product_ref: str) -> str:
             """Read details for a PRODUCT_REF returned by search_catalog_tool."""
 
+            nonlocal product_detail_reads_this_turn
+            if (
+                product_detail_reads_this_turn
+                >= self.config.max_product_detail_reads_per_turn
+            ):
+                return (
+                    "STOP_TOOL_USE: Product-detail read limit reached for this "
+                    "turn. Do not call more tools this turn. Answer now from the "
+                    "details already read and keep any other products to names, "
+                    "prices, categories, image availability, and styling role."
+                )
+            product_detail_reads_this_turn += 1
+
             product = self._product_from_ref(identity, product_ref)
             if product is None:
                 return (
                     f"No product with PRODUCT_REF '{product_ref}' is available. "
                     "Search the catalog first and use the PRODUCT_REF from the result."
                 )
+            if product.image_url:
+                retrieved[product.display_name] = product.image_url
             return _format_product_details(product)
 
-        @tool(return_direct=True)
-        def add_cart_item_tool(product_ref: str, quantity: int = 1) -> str:
-            """Add a catalog item by PRODUCT_REF from a prior search_catalog_tool result."""
+        @tool(args_schema=AddCartItemsToolInput, return_direct=False)
+        def add_cart_items_tool(items: list[AddCartItemsToolItemInput]) -> str:
+            """Add one or more catalog items by PRODUCT_REF from prior search results."""
 
-            quantity = max(1, int(quantity or 1))
-            product = self._product_from_ref(identity, product_ref)
-            if product is None:
-                return (
-                    f"No product with PRODUCT_REF '{product_ref}' is available. "
-                    "Search the catalog first and use the PRODUCT_REF from the result."
+            try:
+                requested_items = _normalize_cart_add_tool_items(items)
+            except ValueError as exc:
+                return f"Cart add failed: {exc}"
+            if not requested_items:
+                return "Cart add failed: provide at least one PRODUCT_REF to add."
+
+            refs = self._product_refs.get(identity.conversation_id, {})
+            resolved: list[tuple[str, ProductSummary, int]] = []
+            failed: list[str] = []
+            blocked: list[str] = []
+            for product_ref, request in requested_items.items():
+                product = self._product_from_ref(identity, product_ref)
+                if product is None:
+                    failed.append(
+                        f"- PRODUCT_REF '{product_ref}': Search the catalog first "
+                        "and use the PRODUCT_REF from the result."
+                    )
+                    continue
+                expected_name = request.get("expected_display_name") or ""
+                if expected_name and not _same_product_display_name(
+                    expected_name,
+                    product.display_name,
+                ):
+                    blocked.append(
+                        f"- PRODUCT_REF '{product_ref}': expected "
+                        f"'{expected_name}', but that ref resolves to "
+                        f"'{product.display_name}'. Use the matching PRODUCT_REF "
+                        "for the intended product before adding."
+                    )
+                    continue
+                resolved.append((product_ref, product, int(request["quantity"])))
+
+            blocked.extend(
+                _cart_add_scope_failures(
+                    state.query,
+                    [(product_ref, product) for product_ref, product, _ in resolved],
+                    refs.values(),
                 )
-            result = add_cart_item(
-                AddCartItemInput(
-                    user_id=str(identity.cart_user_id),
-                    product_id=product.product_id,
-                    display_name=product.display_name,
-                    quantity=quantity,
-                    unit_price=product.price,
-                    image_url=product.image_url,
-                    idempotency_key=f"{identity.request_id}:add:{product.product_id}:{quantity}",
-                ),
-                self.config.memory_port,
             )
-            state.cart = self._read_cart(identity.cart_user_id)
-            if result.ok:
-                return result.message or f"Added {quantity} {product.display_name} to cart."
-            return result.error.message if result.error else "Cart add failed."
+            if blocked:
+                state.cart = self._read_cart(identity.cart_user_id)
+                self._append_cached_cart_images(retrieved, state.cart, identity)
+                return _format_cart_add_result([], failed + blocked, state.cart)
 
-        @tool(return_direct=True)
+            added: list[str] = []
+            for product_ref, product, quantity in resolved:
+                result = add_cart_item(
+                    AddCartItemInput(
+                        user_id=str(identity.cart_user_id),
+                        product_id=product.product_id,
+                        display_name=product.display_name,
+                        quantity=quantity,
+                        unit_price=product.price,
+                        image_url=product.image_url,
+                        idempotency_key=(
+                            f"{identity.request_id}:add:{product.product_id}:{quantity}"
+                        ),
+                    ),
+                    self.config.memory_port,
+                )
+                if result.ok:
+                    added.append(
+                        f"- {quantity} x {product.display_name} "
+                        f"(PRODUCT_REF: {product.product_id})"
+                    )
+                else:
+                    message = result.error.message if result.error else "Cart add failed."
+                    failed.append(f"- PRODUCT_REF '{product_ref}': {message}")
+
+            state.cart = self._read_cart(identity.cart_user_id)
+            self._append_cached_cart_images(retrieved, state.cart, identity)
+            return _format_cart_add_result(added, failed, state.cart)
+
+        @tool(return_direct=False)
         def remove_cart_item_tool(cart_line_id: str, quantity: int = 1) -> str:
             """Remove a cart item by CART_LINE_ID from get_cart_tool/current-cart output."""
 
@@ -390,40 +589,137 @@ class DeepAgentsRuntime:
                 self.config.memory_port,
             )
             state.cart = self._read_cart(identity.cart_user_id)
+            self._append_cached_cart_images(retrieved, state.cart, identity)
             if result.ok:
                 return result.message or f"Removed {quantity} {line['item']} from cart."
             return result.error.message if result.error else "Cart remove failed."
 
-        @tool(return_direct=True)
+        @tool(return_direct=False)
         def view_cart_total_tool() -> str:
             """Compute the current cart total from cached cart line prices."""
 
             cart = self._read_cart(identity.cart_user_id)
             state.cart = cart
+            self._append_cached_cart_images(retrieved, cart, identity)
             return _format_cart_total(cart)
+
+        return create_deep_agent(
+            model=self._create_chat_model(),
+            tools=[
+                search_catalog_tool,
+                get_product_details_tool,
+                get_cart_tool,
+                add_cart_items_tool,
+                remove_cart_item_tool,
+                view_cart_total_tool,
+            ],
+            system_prompt=self._system_prompt(),
+            skills=[_SHOPPER_SKILLS_SOURCE] if skills_backend is not None else None,
+            backend=skills_backend,
+            checkpointer=self._checkpointer,
+        )
+
+    def _reset_agent_thread(self, identity: RequestIdentity) -> None:
+        try:
+            self._checkpointer.delete_thread(identity.conversation_id)
+        except Exception as exc:  # pragma: no cover - cleanup is best effort.
+            logger.warning("Could not reset Deep Agents thread after failure: %s", exc)
+
+    def _create_chat_model(self):
+        from langchain_openai import ChatOpenAI
 
         api_key_env = getattr(self.config, "llm_api_key_env", None)
         api_key = os.environ.get(api_key_env, "") if api_key_env else "not-needed"
-        model = ChatOpenAI(
+        return ChatOpenAI(
             model=self.config.llm_name,
             base_url=self.config.llm_port,
             api_key=api_key or "not-needed",
             temperature=0,
             extra_body={"chat_template_kwargs": {"enable_thinking": False}},
         )
-        return create_deep_agent(
-            model=model,
-            tools=[
-                search_catalog_tool,
-                get_product_details_tool,
-                get_cart_tool,
-                add_cart_item_tool,
-                remove_cart_item_tool,
-                view_cart_total_tool,
-            ],
-            system_prompt=self._system_prompt(),
-            checkpointer=self._checkpointer,
+
+    def _rewrite_response_for_grounding(
+        self,
+        state: State,
+        result: Any,
+        draft_response: str,
+    ) -> str:
+        if not draft_response:
+            return draft_response
+        if not getattr(self.config, "grounding_rewrite_enabled", True):
+            return _scrub_internal_shopper_language(draft_response)
+
+        evidence = _collect_tool_grounding_evidence(
+            result,
+            max_chars=getattr(self.config, "grounding_rewrite_max_evidence_chars", 12000),
         )
+        if not evidence:
+            return _scrub_internal_shopper_language(draft_response)
+
+        start = time.monotonic()
+        prompt = (
+            f"USER QUERY:\n{state.query}\n\n"
+            f"CURRENT CART:\n{_format_cart(state.cart)}\n\n"
+            f"AVAILABLE IMAGES:\n{_format_retrieved_images(state.retrieved)}\n\n"
+            f"TOOL EVIDENCE:\n{evidence}\n\n"
+            f"DRAFT RESPONSE:\n{draft_response}"
+        )
+        try:
+            rewrite_result = self._create_chat_model().invoke(
+                [
+                    {"role": "system", "content": _GROUNDING_EDITOR_SYSTEM_PROMPT},
+                    {"role": "user", "content": prompt},
+                ]
+            )
+        except Exception:  # noqa: BLE001 - response editor must fail open.
+            logger.exception("Grounding response editor failed")
+            state.timings["grounding_rewrite"] = time.monotonic() - start
+            _add_model_usage(
+                state,
+                "app_llm_grounding_editor",
+                status="failed",
+                calls=1,
+                detail="Final response grounding rewrite failed open",
+            )
+            return draft_response
+
+        state.timings["grounding_rewrite"] = time.monotonic() - start
+        _add_model_usage(
+            state,
+            "app_llm_grounding_editor",
+            status="used",
+            calls=1,
+            detail="Final response grounding rewrite",
+        )
+        state.token_usage = _merge_token_usage(
+            state.token_usage,
+            _collect_token_usage(rewrite_result),
+        )
+
+        rewritten = _content_to_text(_value(rewrite_result, "content"))
+        if not rewritten:
+            rewritten = _content_to_text(rewrite_result)
+        return _scrub_internal_shopper_language(rewritten or draft_response)
+
+    def _create_skills_backend(self):
+        if _FilesystemBackend is None:
+            logger.warning("Deep Agents filesystem backend unavailable; shopper skills disabled.")
+            return None
+        skills_root = self._shopper_skills_root()
+        if skills_root is None:
+            logger.warning("Shopper skills root not found; Deep Agents skills disabled.")
+            return None
+        return _FilesystemBackend(root_dir=skills_root, virtual_mode=True)
+
+    def _shopper_skills_root(self) -> Path | None:
+        configured_root = os.environ.get(_SHOPPER_SKILLS_ENV)
+        candidates = [Path(configured_root)] if configured_root else []
+        candidates.append(Path(__file__).resolve().parents[1] / "skills")
+
+        for candidate in candidates:
+            if (candidate / "shopper").is_dir():
+                return candidate
+        return None
 
     def _system_prompt(self) -> str:
         catalog_context = format_catalog_capabilities_for_prompt(
@@ -432,7 +728,30 @@ class DeepAgentsRuntime:
         return f"""You are a retail shopping assistant for clothing and accessories.
 
 Use tools for catalog facts and cart actions. Do not invent product names,
-prices, availability, materials, care instructions, or cart changes.
+prices, availability, materials, care instructions, tax, shipping, stock
+status, delivery dates, or cart changes.
+PRODUCT_REF and CART_LINE_ID are internal identifiers for tool calls. Do not
+show them to shoppers in normal responses.
+Do not expose skill names, tool names, entry-mode names, evaluator/judge names,
+cache/backend details, structured-field labels, or internal data-layer language
+to shoppers. If a detail is unavailable, say it plainly, for example: "I don't
+have fabric or care details available for that item."
+Do not upgrade shopper assumptions, preference language, or earlier styling
+inferences into catalog facts. Separate confirmed product facts from styling
+judgment, and keep outfit-wide material or comfort claims item-specific unless
+every included piece is supported by tool evidence.
+Do not group leather, rubber, metal, or generic canvas under "natural fibers";
+attribute materials item by item.
+Outdoor-practicality claims require exact support: do not say products are
+stable on grass or gravel, water-resistant, all-day comfortable, weather-safe,
+secure for a full event, or good for outdoor surfaces unless the catalog says
+so. With indirect evidence, state only the confirmed construction detail and
+keep the styling judgment separate.
+Do not convert sole or strap facts into surface guarantees. Rubber sole means
+rubber sole; ankle strap means ankle strap. Do not add grass, gravel, weather,
+outdoor-surface performance, all-day comfort, maximum breathability, or
+best-in-category performance claims unless those claims are directly supported
+by product details.
 
 Catalog capabilities:
 {catalog_context}
@@ -458,6 +777,12 @@ Rules:
   user turn. For outfit requests with multiple required item types, run one
   focused search per required item type, then stop and synthesize from those
   results.
+- Use at most {self.config.max_product_detail_reads_per_turn} product-detail
+  reads per user turn. Product details are for direct product fact questions,
+  cart or comparison follow-ups, or already-shortlisted items; they are not
+  required for an initial no-anchor outfit recommendation.
+- If a tool returns STOP_TOOL_USE, stop tool calling immediately and produce the
+  best concise shopper-facing answer from the evidence already available.
 - A tool result is enough to produce a final answer. Once you have at least one
   plausible product for each required item type, answer from those results. Do
   not keep searching for alternatives unless the shopper explicitly rejects the
@@ -465,15 +790,51 @@ Rules:
 - Product-detail or research questions about a product already returned by
   search_catalog_tool should use get_product_details_tool with that
   PRODUCT_REF. Do not run another broad catalog search for known-product facts.
+- Initial recommendations should use product name, price, category or role,
+  and one styling reason. Do not enumerate materials, dimensions, pockets,
+  closures, care, or construction details unless the shopper asks for those
+  details and you have called get_product_details_tool.
+- Search-only product names are display names, not confirmed attributes. Do not
+  parse length, color, print, material, construction, fit, care, or formality
+  from names such as "Ocean Breeze", "Floral", "Gingham", "Woven", "Linen",
+  "Canvas", or "Maxi" unless product details confirm the attribute. You may
+  say "candidate" or "could be worth checking" and offer to pull details.
+- Do not make group-level claims such as "all are maxi length", "both are
+  cotton", "the lightest", "most polished", or "best for heat" unless every
+  item in the group has product-detail evidence supporting that exact claim.
+- For no-anchor outfit building, do not call product details just to make the
+  outfit sound richer. Search by the needed item roles, choose a coherent set,
+  and keep the rationale to color, proportion, formality, silhouette, and
+  shopper goal.
+- If the shopper mentions outdoor practicality in a broad outfit request,
+  prefer searched categories that naturally fit the situation, such as flat
+  shoes or a light layer, but do not state product material, breathability,
+  ground stability, outdoor-surface performance, heat performance, or
+  all-evening comfort unless the shopper asks a direct product-specific
+  question and details support it.
+- Product comparison tables, material claims, dimensions, pocket/closure
+  details, care/washability answers, comfort claims, and outdoor-practicality
+  claims require get_product_details_tool for each relevant PRODUCT_REF before
+  finalizing the answer. If you have only search results, keep the answer to
+  names, prices, and brief candidate fit.
+- Even after product details, compare only confirmed construction facts for
+  surface or weather concerns: lower heel versus higher heel, strap versus no
+  strap, rubber sole versus unspecified sole, zip closure versus open top. Do
+  not state the resulting performance on grass, gravel, rain, bugs, spills, or
+  outdoor ground unless product details explicitly state it.
+- Shopper wording is not product evidence. If the shopper mentions an
+  unverified attribute such as heel shape, material, colorway, fit, or care,
+  verify it with tools or refer to it as the shopper's preference, not as a
+  catalog fact.
 - When the shopper asks to add an item that has not already been searched in
   this conversation, call search_catalog_tool first, then call
-  add_cart_item_tool with the selected PRODUCT_REF.
+  add_cart_items_tool with a one-item list containing the selected PRODUCT_REF.
 - If an image is attached, the current image is already available to
   search_catalog_tool. Use that tool for "this", "similar", and image-price
   refinement requests.
 - If MEDIA ANALYSIS is present, use it as the visual/video understanding of
   the attached media. It can guide search_catalog_tool queries and follow-up
-  pronoun resolution, but catalog tool results remain the source of truth for
+  pronoun resolution, but catalog results remain the source of truth for
   product names, prices, and availability.
 - If MEDIA ANALYSIS says media analysis failed, VLM authentication failed, the
   VLM is unavailable, or video understanding is not configured, say so plainly.
@@ -482,21 +843,57 @@ Rules:
   If an image is attached, image embedding search through search_catalog_tool is
   still available even when MEDIA ANALYSIS is unavailable.
 - Cart reads require get_cart_tool. Cart totals require view_cart_total_tool.
-- Cart mutations require explicit shopper intent and must use add_cart_item_tool
+- Cart mutations require explicit shopper intent and must use add_cart_items_tool
   or remove_cart_item_tool. Never claim a cart mutation unless the tool reports
   success.
-- Use PRODUCT_REF from search_catalog_tool when adding an item. Do not pass
-  display names to add_cart_item_tool.
+- Cart mutation scope must match the shopper's explicit add or remove request.
+  Selection, approval, or styling preference is not cart intent by itself.
+  If the shopper asks to "add those", add only the items named in that add
+  request or its direct antecedent. Do not add earlier anchor, core outfit, or
+  optional pieces unless the shopper explicitly includes them in the cart
+  request.
+- For an explicit cart swap, finish the whole swap before the final response:
+  remove the rejected cart line, add the selected replacement when a valid
+  PRODUCT_REF is already available, then summarize the updated cart. If the
+  replacement has not been searched in this conversation, search first.
+- If cart mutation scope is ambiguous, ask one concise clarification before
+  calling any cart mutation tool. Example: "Do you want me to add just the bag,
+  layer, and earrings, or the full outfit including the dress and sandals?"
+- For cart styling requests, inspect CURRENT CART or call get_cart_tool first.
+  Do not search for products already named as cart contents just to verify them.
+  If the cart is empty but the shopper names items, say you do not see those
+  items in the cart yet, then give provisional styling advice from the named
+  items without claiming cart truth. Search at most once for a missing piece
+  only after identifying the gap.
+- Use PRODUCT_REF from search_catalog_tool when adding items. Do not pass
+  display names as product_ref values to add_cart_items_tool. Include
+  expected_display_name for each item so the tool can verify that the selected
+  PRODUCT_REF resolves to the shopper-facing product name you intend to add.
+- When the shopper asks to add multiple selected products, call
+  add_cart_items_tool once with an item list. The tool may report partial
+  success; the final answer must clearly distinguish added items from failures.
 - Use PRODUCT_REF from search_catalog_tool when requesting product details. Do
   not pass display names to get_product_details_tool.
+- Use internal identifiers only in tool calls. Do not expose PRODUCT_REF or
+  CART_LINE_ID in customer-facing responses.
 - Use CART_LINE_ID from CURRENT CART or get_cart_tool when removing an item. Do
   not guess cart line IDs from product names.
 - If the shopper asks for anything under a budget without a product type,
   category, occasion, style, outfit goal, or image, ask one concise clarifying
   question instead of guessing.
+- Tax, shipping fees, delivery dates, and real-time stock or inventory status
+  are not available through the current tools. If asked, say that plainly and
+  direct the shopper to checkout or the retailer product page. Do not treat a
+  catalog result as proof that an item is in stock or ready to ship.
 - Persona or preference context is guidance only. The current shopper request
   wins when it conflicts with previous preferences.
-- Keep final answers concise and grounded in tool results.
+- Keep final answers concise and grounded in tool results. Attribute materials,
+  comfort, construction, and outdoor-practicality claims to the specific items
+  that support them instead of making unsupported whole-outfit claims. Avoid
+  guarantee language such as "will stay comfortable all evening" unless the
+  catalog evidence supports the guarantee. Before finalizing, remove or soften
+  unsupported phrases about grass, gravel, water resistance, all-day comfort,
+  maximum breathability, or best-in-category performance.
 """
 
     def _build_user_message(self, state: State, identity: RequestIdentity) -> str:
@@ -528,6 +925,30 @@ Rules:
         return self._product_refs.get(identity.conversation_id, {}).get(
             (product_ref or "").strip()
         )
+
+    def _append_cached_cart_images(
+        self,
+        retrieved: dict[str, str],
+        cart: Cart,
+        identity: RequestIdentity,
+    ) -> None:
+        if not cart.contents:
+            return
+        refs = self._product_refs.get(identity.conversation_id, {})
+        if not refs:
+            return
+
+        products_by_key: dict[str, ProductSummary] = {}
+        for product in refs.values():
+            products_by_key[product.product_id] = product
+            products_by_key[product.display_name] = product
+
+        for item in cart.contents:
+            product = products_by_key.get(str(item.get("product_id") or ""))
+            if product is None:
+                product = products_by_key.get(str(item.get("item") or ""))
+            if product is not None and product.image_url:
+                retrieved[product.display_name] = product.image_url
 
     def _read_cart(self, user_id: int) -> Cart:
         result = get_cart(GetCartInput(user_id=str(user_id)), self.config.memory_port)
@@ -668,6 +1089,60 @@ def _append_product_results(state: State, products: list[ProductSummary]) -> Non
         state.product_results.append(payload)
         if product_id:
             existing_ids.add(product_id)
+
+
+def _partial_product_results_response(state: State) -> str:
+    products = [
+        product for product in state.product_results if isinstance(product, dict)
+    ]
+    if not products:
+        return ""
+
+    lines = [
+        "I found these grounded catalog options so far:",
+        "",
+    ]
+    seen: set[str] = set()
+    for product in products[:8]:
+        name = str(product.get("display_name") or "").strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        parts = [f"**{name}**"]
+        category = str(product.get("category") or "").strip()
+        if category:
+            parts.append(category)
+        price = _product_result_price(product)
+        if price:
+            parts.append(price)
+        lines.append("- " + " — ".join(parts))
+
+    if len(lines) <= 2:
+        return ""
+    lines.extend(
+        [
+            "",
+            (
+                "I do not want to overstate outdoor performance, material, care, "
+                "or fit details without a completed detail check. I can continue "
+                "from these options or narrow one piece at a time."
+            ),
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _product_result_price(product: dict[str, Any]) -> str:
+    price = product.get("price")
+    if isinstance(price, dict):
+        amount = price.get("amount")
+        currency = str(price.get("currency") or "USD")
+    else:
+        amount = price
+        currency = "USD"
+    if not isinstance(amount, (int, float)):
+        return ""
+    return f"${float(amount):.2f} {currency}"
 
 
 def _should_short_circuit_media_failure(state: State) -> bool:
@@ -918,6 +1393,151 @@ def _collect_token_usage(result: Any) -> dict[str, int]:
     return usage
 
 
+def _merge_token_usage(
+    base: dict[str, Any] | None,
+    additional: dict[str, Any] | None,
+) -> dict[str, int]:
+    merged = _normalized_token_usage(base)
+    extra = _normalized_token_usage(additional)
+    for key in merged:
+        merged[key] += extra[key]
+    return merged
+
+
+def _collect_tool_grounding_evidence(result: Any, *, max_chars: int) -> str:
+    parts: list[str] = []
+    for message in _result_messages(result):
+        content = _content_to_text(_value(message, "content"))
+        if not content:
+            continue
+        if not _is_tool_evidence_message(message, content):
+            continue
+        parts.append(_customer_safe_tool_evidence(content))
+
+    evidence = "\n\n---\n\n".join(parts).strip()
+    if len(evidence) <= max_chars:
+        return evidence
+    return evidence[-max_chars:]
+
+
+def _customer_safe_tool_evidence(content: str) -> str:
+    if "SEARCH_RESULT_GROUNDING_NOTE" in content:
+        return _summarize_product_evidence(
+            content,
+            heading="CUSTOMER_SAFE_SEARCH_EVIDENCE",
+            note=(
+                "Search results support only product names, prices, categories, "
+                "image availability, and a modest styling role. They do not "
+                "support length, color, print, materials, care, construction, "
+                "fit, comfort, weather, grass, gravel, heat, or best-in-category "
+                "claims. Treat names as display names, not attribute evidence; "
+                "group claims require product-detail evidence for every item."
+            ),
+        )
+    if "PRODUCT_DETAIL_GROUNDING_NOTE" in content:
+        return _summarize_product_evidence(
+            content,
+            heading="CUSTOMER_SAFE_PRODUCT_DETAIL_EVIDENCE",
+            note=(
+                "Product details were read for these products, but the available "
+                "detail data contains only the listed facts. Do "
+                "not state material, care, dimensions, closures, fit, sizing, "
+                "colorways, or outdoor performance unless the field appears in "
+                "this evidence summary."
+            ),
+        )
+    return _summarize_cart_evidence(content)
+
+
+def _summarize_product_evidence(content: str, *, heading: str, note: str) -> str:
+    products = _product_evidence_records(content)
+    lines = [f"{heading}: {note}"]
+    if not products:
+        return "\n".join(lines + [_strip_internal_ids_from_evidence_line(content)])
+    for product in products:
+        summary_parts = [product["name"]]
+        if product.get("category"):
+            summary_parts.append(f"category: {product['category']}")
+        if product.get("price"):
+            summary_parts.append(f"price: {product['price']}")
+        if product.get("image_url"):
+            summary_parts.append("image: available")
+        lines.append("- " + " | ".join(summary_parts))
+    return "\n".join(lines)
+
+
+def _product_evidence_records(content: str) -> list[dict[str, str]]:
+    records: list[dict[str, str]] = []
+    current: dict[str, str] = {}
+    key_map = {
+        "NAME:": "name",
+        "CATEGORY:": "category",
+        "PRICE:": "price",
+        "IMAGE_URL:": "image_url",
+    }
+    for raw_line in content.splitlines():
+        line = raw_line.strip()
+        if line.startswith("PRODUCT_REF:"):
+            if current.get("name"):
+                records.append(current)
+            current = {}
+            continue
+        for prefix, key in key_map.items():
+            if line.startswith(prefix):
+                current[key] = line[len(prefix) :].strip()
+                break
+    if current.get("name"):
+        records.append(current)
+    return records
+
+
+def _summarize_cart_evidence(content: str) -> str:
+    lines = ["CUSTOMER_SAFE_CART_EVIDENCE:"]
+    for raw_line in content.splitlines():
+        cleaned = _strip_internal_ids_from_evidence_line(raw_line)
+        if cleaned:
+            lines.append(cleaned)
+    return "\n".join(lines)
+
+
+def _strip_internal_ids_from_evidence_line(line: str) -> str:
+    stripped = line.strip()
+    if not stripped:
+        return ""
+    if stripped.startswith("PRODUCT_REF:") or stripped.startswith("CART_LINE_ID:"):
+        return ""
+    if stripped.startswith("- CART_LINE_ID:") and "|" in stripped:
+        return "- " + stripped.split("|", 1)[1].strip()
+
+    marker = "(PRODUCT_REF:"
+    while marker in stripped:
+        start = stripped.find(marker)
+        end = stripped.find(")", start)
+        if end == -1:
+            stripped = stripped[:start].rstrip()
+            break
+        stripped = (stripped[:start] + stripped[end + 1 :]).strip()
+    return stripped
+
+
+def _is_tool_evidence_message(message: Any, content: str) -> bool:
+    message_type = str(_value(message, "type") or "").lower()
+    role = str(_value(message, "role") or "").lower()
+    if message_type == "tool" or role == "tool":
+        return True
+    return any(
+        marker in content
+        for marker in (
+            "SEARCH_RESULT_GROUNDING_NOTE",
+            "PRODUCT_DETAIL_GROUNDING_NOTE",
+            "CART_ADD_RESULT",
+            "PRODUCT_REF:",
+            "CART_LINE_ID:",
+            "Cart total:",
+        )
+    )
+
+
 def _normalized_token_usage(raw: dict[str, Any] | None) -> dict[str, int]:
     usage = _empty_token_usage()
     if not isinstance(raw, dict):
@@ -1010,18 +1630,27 @@ def _tool_search_mode(value: str | None) -> str | None:
 
 
 def _format_product(product: Any) -> str:
-    text = product.attributes.get("catalog_text") if product.attributes else None
-    if isinstance(text, str) and text.strip():
-        return f"PRODUCT_REF: {product.product_id}\n{text.strip()}"
-    price = f"\nPRICE: ${product.price.amount:.2f}" if product.price else ""
-    return (
-        f"PRODUCT_REF: {product.product_id}\n"
-        f"{product.display_name} | {product.description}{price}"
-    ).strip()
+    lines = [
+        f"PRODUCT_REF: {product.product_id}",
+        f"NAME: {product.display_name}",
+    ]
+    if getattr(product, "category", None):
+        lines.append(f"CATEGORY: {product.category}")
+    if product.price:
+        lines.append(f"PRICE: ${product.price.amount:.2f} {product.price.currency}")
+    if product.image_url:
+        lines.append(f"IMAGE_URL: {product.image_url}")
+    lines.append(
+        "DETAILS: Call get_product_details_tool with this PRODUCT_REF before "
+        "stating materials, dimensions, pockets, closures, care, comfort, or "
+        "outdoor-practicality claims."
+    )
+    return "\n".join(lines)
 
 
 def _format_product_details(product: ProductSummary) -> str:
     lines = [
+        _PRODUCT_DETAIL_GROUNDING_NOTE,
         f"PRODUCT_REF: {product.product_id}",
         f"NAME: {product.display_name}",
     ]
@@ -1031,12 +1660,169 @@ def _format_product_details(product: ProductSummary) -> str:
         lines.append(f"BRAND: {product.brand}")
     if product.price:
         lines.append(f"PRICE: ${product.price.amount:.2f} {product.price.currency}")
-    if product.description:
-        lines.append(f"DESCRIPTION: {product.description}")
-    catalog_text = product.attributes.get("catalog_text") if product.attributes else None
-    if isinstance(catalog_text, str) and catalog_text.strip():
-        lines.append("CATALOG FACTS:")
-        lines.append(catalog_text.strip())
+    if product.image_url:
+        lines.append(f"IMAGE_URL: {product.image_url}")
+    lines.append(
+        "STRUCTURED_DETAILS_UNAVAILABLE: material, care, dimensions, closures, "
+        "fit, sizing, colorways, and outdoor performance are not available as "
+        "fields in the current product detail data."
+    )
+    return "\n".join(lines)
+
+
+def _normalize_cart_add_tool_items(
+    items: list[AddCartItemsToolItemInput] | list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    normalized: dict[str, dict[str, Any]] = {}
+    for item in items or []:
+        try:
+            parsed = (
+                item
+                if isinstance(item, AddCartItemsToolItemInput)
+                else AddCartItemsToolItemInput.model_validate(item)
+            )
+            quantity = max(1, int(parsed.quantity or 1))
+        except (TypeError, ValueError, ValidationError) as exc:
+            raise ValueError("each item must include a PRODUCT_REF and quantity") from exc
+        entry = normalized.setdefault(
+            parsed.product_ref,
+            {
+                "quantity": 0,
+                "expected_display_name": (
+                    parsed.expected_display_name.strip()
+                    if parsed.expected_display_name
+                    else ""
+                ),
+            },
+        )
+        entry["quantity"] += quantity
+        if not entry["expected_display_name"] and parsed.expected_display_name:
+            entry["expected_display_name"] = parsed.expected_display_name.strip()
+    return normalized
+
+
+def _cart_add_scope_failures(
+    user_query: str,
+    requested_products: list[tuple[str, ProductSummary]],
+    cached_products: Any,
+) -> list[str]:
+    explicitly_named = _explicitly_named_products(user_query, cached_products)
+    if not explicitly_named:
+        return []
+
+    explicit_names = {
+        _normalize_product_name(product.display_name) for product in explicitly_named
+    }
+    failures = []
+    for product_ref, product in requested_products:
+        if _normalize_product_name(product.display_name) in explicit_names:
+            continue
+        failures.append(
+            f"- PRODUCT_REF '{product_ref}': selected '{product.display_name}' is "
+            "outside the current explicit add request. The current request names: "
+            f"{_format_cached_product_refs(explicitly_named)}. Retry with matching "
+            "PRODUCT_REF values only, or ask a clarification."
+        )
+    return failures
+
+
+def _explicitly_named_products(text: str, cached_products: Any) -> list[ProductSummary]:
+    normalized_text = _normalize_product_name(text)
+    if not normalized_text:
+        return []
+
+    padded_text = f" {normalized_text} "
+    matches: list[ProductSummary] = []
+    seen: set[str] = set()
+    products = list(cached_products)
+    for product in products:
+        normalized_name = _normalize_product_name(product.display_name)
+        if not normalized_name:
+            continue
+        if f" {normalized_name} " not in padded_text:
+            continue
+        key = product.product_id or product.display_name
+        if key in seen:
+            continue
+        seen.add(key)
+        matches.append(product)
+
+    query_tokens = set(_product_name_tokens(text))
+    for product in products:
+        key = product.product_id or product.display_name
+        if key in seen:
+            continue
+        product_tokens = _product_name_tokens(product.display_name)
+        required_overlap = 3 if len(product_tokens) > 3 and matches else 2
+        if not _product_name_tokens_match(
+            query_tokens,
+            product_tokens,
+            required_overlap=required_overlap,
+        ):
+            continue
+        seen.add(key)
+        matches.append(product)
+    return matches
+
+
+def _same_product_display_name(expected: str, actual: str) -> bool:
+    return _normalize_product_name(expected) == _normalize_product_name(actual)
+
+
+def _normalize_product_name(value: str) -> str:
+    chars = []
+    for char in str(value or "").casefold():
+        chars.append(char if char.isalnum() else " ")
+    return " ".join("".join(chars).split())
+
+
+def _product_name_tokens(value: str) -> list[str]:
+    return [
+        token
+        for token in _normalize_product_name(value).split()
+        if token not in _PRODUCT_NAME_STOPWORDS
+    ]
+
+
+def _product_name_tokens_match(
+    query_tokens: set[str],
+    product_tokens: list[str],
+    *,
+    required_overlap: int,
+) -> bool:
+    if len(product_tokens) < 2:
+        return False
+    overlap = query_tokens.intersection(product_tokens)
+    required = min(required_overlap, len(set(product_tokens)))
+    return len(overlap) >= required
+
+
+def _format_cached_product_refs(products: list[ProductSummary]) -> str:
+    return ", ".join(
+        f"{product.display_name} (PRODUCT_REF: {product.product_id})"
+        for product in products
+    )
+
+
+def _scrub_internal_shopper_language(text: str) -> str:
+    scrubbed = text or ""
+    for internal, replacement in _INTERNAL_SHOPPER_REPLACEMENTS:
+        scrubbed = scrubbed.replace(internal, replacement)
+    return scrubbed
+
+
+def _format_cart_add_result(added: list[str], failed: list[str], cart: Cart) -> str:
+    lines = ["CART_ADD_RESULT"]
+    if added:
+        lines.append("Added:")
+        lines.extend(added)
+    if failed:
+        lines.append("Failed:")
+        lines.extend(failed)
+    lines.append("Current cart:")
+    lines.append(_format_cart(cart))
+    lines.append("Cart total:")
+    lines.append(_format_cart_total(cart))
     return "\n".join(lines)
 
 
@@ -1081,6 +1867,15 @@ def _format_cart_total(cart: Cart) -> str:
     if missing:
         total += f" excluding items without cached prices: {', '.join(missing)}"
     return "\n".join(lines + [total])
+
+
+def _format_retrieved_images(retrieved: dict[str, str] | None) -> str:
+    if not retrieved:
+        return "(none)"
+    lines = []
+    for name, image_url in retrieved.items():
+        lines.append(f"- {name}: image available")
+    return "\n".join(lines)
 
 
 def _format_media_summary(media: list[dict[str, Any]]) -> str:

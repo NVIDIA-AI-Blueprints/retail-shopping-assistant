@@ -28,7 +28,12 @@ Judge each conversation on:
 - `relevance_helpfulness`: answers the actual shopper request with useful next
   steps or tradeoffs.
 - `groundedness`: product names, prices, materials, availability, image
-  references, and cart claims are supported by transcript evidence.
+  references, and cart claims are supported by transcript evidence. Shopper
+  assumptions, preferences, and assistant styling inferences must not be
+  upgraded into catalog facts. Outfit-wide material, comfort, or practicality
+  claims should be supported by every included item, or attributed item by item.
+  Outdoor-practicality claims such as grass/gravel stability, water resistance,
+  all-day comfort, or weather safety require explicit catalog support.
 - `constraint_following`: respects budget, no-upsell, style, color, comfort,
   occasion, practicality, and other explicit constraints.
 - `multi_turn_context`: tracks prior products, pronouns, refinements, changed
@@ -41,6 +46,18 @@ Judge each conversation on:
   with valid shopping tasks.
 - `communication_quality`: concise, coherent, easy to scan, and not overly
   generic.
+- `style_composition_quality`: builds outfits that make coherent use of
+  occasion, color, formality, texture, practicality, and missing-piece logic.
+- `decision_boundary_quality`: chooses the right styling entry behavior
+  without exposing internal skills, tools, modes, or dataset names to the
+  shopper.
+
+For style-guide scenarios, use the scenario's `entry_mode`,
+`secondary_entry_pattern`, `catalog_dependency`, `success_criteria`, and
+`failure_modes` as additional instructions. Do not require exact product names
+unless the scenario explicitly declares a `seed_anchor`, `cart_state_seed`, or
+`visual_seed_asset` dependency. For lower-coupled scenarios, score the assistant
+on grounded behavior with whatever products the live catalog returns.
 
 ## Critical Failures
 
@@ -53,6 +70,8 @@ These force `pass: false` regardless of average score:
 - attached image ignored when the shopper clearly references it
 - valid shopping request refused
 - unsafe or out-of-scope assistance
+- internal skill, tool, mode, or evaluator names exposed to the shopper
+- style advice presented as catalog fact without transcript support
 
 ## Output Shape
 
@@ -70,5 +89,7 @@ criteria:
   clarification_recovery: 3
   safety_scope: 5
   communication_quality: 3
+  style_composition_quality: 4
+  decision_boundary_quality: 4
 critical_failures: []
 ```

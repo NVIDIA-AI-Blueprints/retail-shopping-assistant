@@ -166,8 +166,9 @@ against a deployed stack.
 
 The `evaluation/` folder contains the Challenger/Judge evaluation workflows. It captures
 the planned directory shape, model configuration references, judge rules,
-text/image shopping scenario briefs, generated image-shopping assets, runnable
-Challenger/Judge helpers, and ignored generated-results location.
+text/image/style-guide shopping scenario briefs, generated image-shopping
+assets, runnable Challenger/Judge helpers, and ignored generated-results
+location.
 
 Start with:
 
@@ -181,6 +182,12 @@ Start with:
   briefs that reference asset sidecar ids.
 - `evaluation/datasets/image_shopping/assets/`: generated product images and
   YAML sidecars for image-shopping evaluation.
+- `evaluation/datasets/style_guide/scenarios.yaml`: styling-skill behavior
+  scenarios covering anchor product, no-anchor discovery, cart styling,
+  mid-browse styling, budget/style blending, comparison, wardrobe gap, and
+  refinement behavior.
+- `evaluation/datasets/style_guide/README.md`: catalog-coupling levels and
+  refresh steps for deployments with a changed catalog.
 - `evaluation/src/challenger.py`: scenario-driven live conversation runner.
 - `evaluation/src/judge.py`: optional saved-run Judge phase.
 - `evaluation/src/report.py`: simple HTML/text report generation.
@@ -192,8 +199,9 @@ Typical validation and run commands from the repo root. Source
 PYTHONPATH=tests/evaluation python -m src.challenger --dry-run
 PYTHONPATH=tests/evaluation python -m src.challenger
 PYTHONPATH=tests/evaluation python -m src.challenger --scenario-id text_budget_work_bag
+PYTHONPATH=tests/evaluation python -m src.challenger --all-scenarios --dataset style_guide
 PYTHONPATH=tests/evaluation python -m src.challenger --all-scenarios
-PYTHONPATH=tests/evaluation python -m src.challenger --all-scenarios --dataset text_shopping --dataset image_shopping
+PYTHONPATH=tests/evaluation python -m src.challenger --all-scenarios --dataset text_shopping --dataset image_shopping --dataset style_guide
 PYTHONPATH=tests/evaluation python -m src.judge --latest --enable-judge
 PYTHONPATH=tests/evaluation python -m src.judge tests/evaluation/results/runs/<run_id>/run.yaml
 ```

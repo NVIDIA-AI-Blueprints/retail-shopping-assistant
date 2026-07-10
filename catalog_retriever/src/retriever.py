@@ -245,7 +245,9 @@ class Milvus:
             fields.pop(self.VECTOR_FIELD, None)
             fields[self.PK_FIELD] = hit.id
             document = SimpleNamespace(page_content=page_content, metadata=fields)
-            results.append((document, float(hit.score)))
+            # Match langchain-milvus's COSINE relevance-score contract.
+            relevance_score = (float(hit.score) + 1.0) / 2.0
+            results.append((document, relevance_score))
         return results
 
 class Retriever:

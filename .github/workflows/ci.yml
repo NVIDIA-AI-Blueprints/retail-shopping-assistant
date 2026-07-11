@@ -110,6 +110,11 @@ jobs:
               echo "  - Adding sleep before docker logs command..."
               sed -i '/"# Monitor application startup\\n",/a\    "!sleep 60\\n",' "$TEMP_NOTEBOOK"
               echo "    ✅ Added sleep 60 before docker logs command"
+
+              # Modification 3: Pin the cloned app to the workflow commit
+              echo "  - Pinning cloned app to the workflow commit..."
+              sed -i 's|!git clone https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant.git #Using HTTP|!git clone https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant.git \&\& git -C retail-shopping-assistant checkout --detach $GITHUB_SHA \&\& git -C retail-shopping-assistant rev-parse HEAD #Using HTTP|' "$TEMP_NOTEBOOK"
+              echo "    ✅ Pinned cloned app to $GITHUB_SHA"
               
               echo "✅ All notebook modifications complete"
             fi

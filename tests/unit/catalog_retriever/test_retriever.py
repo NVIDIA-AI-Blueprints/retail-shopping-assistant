@@ -113,7 +113,7 @@ class TestMilvusAdapter:
 
         class _Hit:
             id = 42
-            score = 0.99
+            score = 0.2
             fields = {
                 "text": "Red Dress | bright | dress,day",
                 "name": "Red Dress",
@@ -187,7 +187,7 @@ class TestMilvusAdapter:
             "price": 12.5,
             "pk": 42,
         }
-        assert results[0][1] == pytest.approx(0.99)
+        assert results[0][1] == pytest.approx(0.6)
 
 
 # --------------------------------------------------------------------------->

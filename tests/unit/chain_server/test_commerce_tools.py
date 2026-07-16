@@ -10,12 +10,14 @@ import requests
 from chain_server.src.commerce_tools import (
     add_cart_item,
     get_cart,
+    get_product_details,
     remove_cart_item,
     search_catalog,
 )
 from shared.commerce_contracts import (
     AddCartItemInput,
     GetCartInput,
+    GetProductDetailsInput,
     Money,
     RemoveCartItemInput,
     SearchCatalogInput,
@@ -229,6 +231,95 @@ def test_search_catalog_returns_structured_request_error() -> None:
     assert result.ok is False
     assert result.error.code == "catalog_request_failed"
     assert result.error.retryable is True
+
+
+def test_search_catalog_preserves_non_retryable_filter_rejection() -> None:
+    result = search_catalog(
+        SearchCatalogInput(
+            query="blue item",
+            filters={"unknown": ["value"]},
+        ),
+        "http://catalog-retriever:8010",
+        session=FakeSession(
+            FakeResponse(
+                {"detail": "Unsupported catalog filter(s): unknown"},
+                status_code=422,
+            )
+        ),
+    )
+
+    assert result.ok is False
+    assert result.error.code == "catalog_filter_rejected"
+    assert result.error.retryable is False
+    assert result.error.message == "Unsupported catalog filter(s): unknown"
+
+
+def test_get_product_details_reads_url_encoded_product_id() -> None:
+    session = FakeSession(
+        FakeResponse(
+            {
+                "product_id": "generated:abc123",
+                "display_name": "Travel Pant",
+                "description": "A soft pant.",
+                "category": "pants",
+                "price": {"amount": 49.9, "currency": "USD"},
+                "image_url": "/images/pant.jpg",
+                "attributes": {
+                    "care": "Machine wash cold.",
+                    "composition": "cotton",
+                },
+                "variants": [],
+            }
+        )
+    )
+
+    result = get_product_details(
+        GetProductDetailsInput(product_id="generated:abc123"),
+        "http://catalog-retriever:8010/",
+        timeout_seconds=3,
+        session=session,
+    )
+
+    assert result.ok is True
+    assert result.product.attributes["care"] == "Machine wash cold."
+    assert session.calls == [
+        {
+            "url": "http://catalog-retriever:8010/products/generated%3Aabc123",
+            "timeout": 3,
+        }
+    ]
+
+
+def test_get_product_details_maps_missing_product_to_non_retryable_error() -> None:
+    result = get_product_details(
+        GetProductDetailsInput(product_id="missing"),
+        "http://catalog",
+        session=FakeSession(FakeResponse({"detail": "not found"}, status_code=404)),
+    )
+
+    assert result.ok is False
+    assert result.error.code == "product_not_found"
+    assert result.error.retryable is False
+
+
+def test_get_product_details_rejects_mismatched_response_id() -> None:
+    result = get_product_details(
+        GetProductDetailsInput(product_id="requested"),
+        "http://catalog",
+        session=FakeSession(
+            FakeResponse(
+                {
+                    "product_id": "different",
+                    "display_name": "Different",
+                    "attributes": {},
+                    "variants": [],
+                }
+            )
+        ),
+    )
+
+    assert result.ok is False
+    assert result.error.code == "catalog_response_invalid"
 
 
 def test_get_cart_maps_memory_rows_to_contract_cart() -> None:

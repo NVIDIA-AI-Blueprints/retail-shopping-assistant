@@ -1,213 +1,154 @@
-# Embedding Management for Catalog Retriever
+# Catalog Embedding Management
 
-## 📋 Table of Contents
+The catalog retriever owns text and image embedding creation. Clients send raw
+text or raw image data; they never send embedding vectors.
 
-- [Overview](#overview)
-- [How It Works](#how-it-works)
-- [Force Repopulation](#force-repopulation)
-- [When to Repopulate](#when-to-repopulate)
-- [Custom Data Source](#custom-data-source)
+## Startup Synchronization
 
-## Overview
+At startup the service loads and validates:
 
-The catalog retriever includes simple embedding caching to avoid unnecessary reprocessing on startup.
-
-## How It Works
-
-- **On Startup**: The system checks if embeddings already exist in the Milvus database
-- **If Embeddings Exist**: Skips population and uses existing embeddings
-- **If No Embeddings**: Populates embeddings from the CSV file
-
-## Force Repopulation
-
-To force the system to repopulate embeddings (e.g., when you change the embedding model, update products.csv or images, etc), you need to delete the existing embeddings from the Milvus database.
-
-### Option 1: Delete via Milvus CLI
-
-```bash
-# Connect to Milvus container
-docker exec -it <milvus-standalone-container> bash
-
-# Use Milvus CLI to delete collections
-milvus_cli
-use default
-drop collection shopping_advisor_text_db
-drop collection shopping_advisor_image_db
-exit
+```text
+shared/data/enriched_products.jsonl
+shared/data/enriched_products.schema.yaml
 ```
 
-### Option 2: Delete via Python Script
+It computes an internal fingerprint from:
 
-Create a script to delete the collections:
+- JSONL contents;
+- sidecar contents;
+- text embedding model;
+- image embedding model and enabled state;
+- referenced local image bytes when image search is enabled; and
+- semantic-document template version.
 
-```python
-from pymilvus import connections, utility
+Any code change that alters `build_search_document()` output must also bump
+`SEARCH_DOCUMENT_TEMPLATE_VERSION` in `catalog_retriever/src/catalog.py`.
+Otherwise an existing index could match unchanged data/model inputs even though
+its embedded text uses the previous template.
 
-# Connect to Milvus
-connections.connect("default", host="localhost", port="19530")
+Each indexed record carries that fingerprint. The service reuses an index only
+when its fingerprint and entity count match the active snapshot. Otherwise it
+drops and rebuilds all enabled catalog collections. A failed required text or
+image embedding aborts startup so a partial snapshot is not served.
 
-# Delete collections
-if utility.has_collection("shopping_advisor_text_db"):
-    utility.drop_collection("shopping_advisor_text_db")
-    print("Text collection deleted")
+Manual volume deletion is therefore unnecessary for ordinary catalog or model
+changes.
 
-if utility.has_collection("shopping_advisor_image_db"):
-    utility.drop_collection("shopping_advisor_image_db")
-    print("Image collection deleted")
+## Text Embedding Source
+
+One deterministic document is built per product:
+
+```text
+name: {name}
+taxonomy: {ordered taxonomy path}
+attributes:
+- {sidecar field marked semantic}: {value}
+summary: {primary description or configured fallback}
 ```
 
-### Option 3: Restart with Fresh Database
+For the bundled catalog, the primary summary is `enriched_description` and
+`description` is used only when enrichment is absent. Searchable attributes are
+sorted, missing fields are omitted, enum underscores are humanized, and list
+values are deduplicated and sorted.
 
-If using Docker Compose, you can restart with a fresh Milvus database:
+IDs, prices, images, URLs, and source-row bookkeeping remain metadata and are
+not embedded. `composition` and `care` are semantic/detail fields in the
+current sidecar.
 
-```bash
-# Stop the services
-docker compose down
+## Image Embeddings
 
-# Remove Milvus volume to start fresh
-docker volume rm retail-shopping-assistant_milvus_data
+When the `image_embedding` model role is enabled, the catalog service reads the
+image field declared by the sidecar, loads each local/remote image, and creates
+one image embedding per product. The text and image collections store the same
+source product ID and filter metadata so all search modes enforce identical
+hard filters. A missing local image fails startup, and changing its bytes
+changes the internal fingerprint even when its JSONL path stays the same.
 
-# Restart services
-docker compose up -d
-```
+Set `CATALOG_IMAGE_EMBEDDING_ENABLED=false` to run text-only. Image query and
+hybrid modes then disappear from `/capabilities`.
 
-## When to Repopulate
+## Replace the Catalog
 
-You should force repopulation when:
-- You want to use a different embedding model
-- Products.csv file is updated
-- Product images are modified
-- You want to ensure fresh embeddings
-- Database corruption is suspected
+1. Put the new JSONL and role sidecar under `shared/data/`.
+2. Point the catalog config at both files:
 
-## Custom Data Source
-
-The application comes with sample product data (`products_extended.csv`), but you can easily replace it with your own product catalog. This section explains how to use a custom CSV file for your retail data.
-
-### CSV File Format
-
-Your custom CSV file should include product text fields and any metadata fields
-you want the catalog retriever to expose as hard filters. The default
-fashion catalog uses the columns below, but future catalogs can use different
-filter columns when `shared/configs/catalog_retriever/config.yaml` declares
-them in `filter_registry`.
-
-Do not copy enum values such as colors, materials, sizes, or categories into
-configuration. Declare the CSV field names in `filter_registry`; the catalog
-retriever discovers the actual values after it loads the CSV. See
-[Catalog Filter Configuration](CATALOG_FILTERS.md) for the detailed workflow.
-
-| Column | Description | Required | Example |
-|--------|-------------|----------|---------|
-| `name` | Product name | Yes | "Classic Black Patent Leather Purse" |
-| `description` | Product description | Yes | "Elegant black patent leather purse..." |
-| `category` / `subcategory` | Default catalog category metadata | No | "bag" |
-| `brand` | Product brand | No | "Fashion Brand" |
-| `price` | Product price | No | "89.99" |
-| custom metadata | Fields declared as filters | No | "green", "cotton" |
-| `image` | Product image URL or filename | No | "purse_image.jpg" |
-
-### Step-by-Step Guide
-
-#### Step 1: Prepare Your Data File
-
-1. **Create your CSV file** with your product data:
-   ```bash
-   # Example: my_products.csv
-   name,description,category,subcategory,color,brand,price,image
-   "Custom Product 1","Description of product 1","fashion","shoes","black","Brand A","99.99","product1.jpg"
-   "Custom Product 2","Description of product 2","fashion","bag","green","Brand B","149.99","product2.jpg"
-   ```
-
-2. **Add the CSV file** to the shared data directory:
-   ```bash
-   # Copy your CSV file to the shared data directory
-   cp my_products.csv shared/data/
-   ```
-
-#### Step 2: Update Configuration
-
-1. **Edit the catalog retriever configuration**:
-   ```bash
-   # Edit the configuration file
-   shared/configs/catalog_retriever/config.yaml
-   ```
-
-2. **Update the data_source parameter**:
    ```yaml
-   data_source: "/app/shared/data/my_products.csv"  # Update this line
+   data_source: "/app/shared/data/my_products.jsonl"
+   schema_source: "/app/shared/data/my_products.schema.yaml"
    ```
 
-#### Step 3: Clear Vector Database Cache
+3. For local process mode, set both host paths if overriding config:
 
-1. **Remove the existing vector database volumes**:
    ```bash
-   # Stop the services first
-   docker compose -f docker-compose.yaml down
-   
-   # Remove the catalog retriever volumes to force re-indexing
-   rm -rf catalog_retriever/volumes/
+   export CATALOG_DATA_SOURCE="$PWD/shared/data/my_products.jsonl"
+   export CATALOG_SCHEMA_SOURCE="$PWD/shared/data/my_products.schema.yaml"
    ```
 
-#### Step 4: Restart Services
+4. Restart the catalog service and watch indexing:
 
-**Restart the application** to use the new data:
-```bash
-# Restart services to rebuild the vector database
-docker compose -f docker-compose.yaml up -d --build
-
-# Monitor the catalog retriever logs to see indexing progress
-docker compose logs -f catalog-retriever
-```
-
-### Adding Product Images
-
-If your products have images:
-
-1. **Add image files** to the shared images directory:
    ```bash
-   # Copy your product images
-   shared/images/
+   docker compose up -d --build catalog-retriever
+   docker compose logs -f catalog-retriever
    ```
 
-2. **Update image URLs** in your CSV to reference the filenames:
-   ```csv
-   name,description,subcategory,image
-   "Product 1","Description","shoes","product1.jpg"
-   ```
+5. Wait for catalog health and verify the active schema and values:
 
-3. **Restart services** to index the new images:
    ```bash
-   docker compose -f docker-compose.yaml restart catalog-retriever
+   curl -s http://localhost:8010/health
+   curl -s http://localhost:8010/capabilities
    ```
 
-### Configuration for Different Environments
+6. Restart the chain server so it drops its process-lifetime cached capability
+   contract:
 
-For different model endpoints, edit the relevant role in
-`shared/configs/models.yaml`:
+   ```bash
+   docker compose restart chain-server
+   ```
+
+7. Verify the chain-cached contract before serving traffic:
+
+   ```bash
+   curl -s http://localhost:8009/capabilities
+   ```
+
+Changing only rows or observed values does not require application-code or
+sidecar changes, but it still requires the catalog-health-then-chain restart
+sequence above. Add a sidecar entry only when a new field's meaning must be
+declared. See [Catalog Schema and Filters](CATALOG_FILTERS.md).
+
+## Query Verification
+
+Text:
 
 ```bash
-python scripts/model_config.py show --validate
+curl -sS -X POST http://localhost:8010/query/text \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "text": ["formal geometric jewelry"],
+    "filters": {"price": {"lte": 200}},
+    "k": 4
+  }'
 ```
 
-For a custom product CSV location, set `CATALOG_DATA_SOURCE` and restart the
-catalog service:
+Image plus text:
 
 ```bash
-export CATALOG_DATA_SOURCE=/app/shared/data/products.csv
-docker compose -f docker-compose.yaml up -d --build
+curl -sS -X POST http://localhost:8010/query/image \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "text": ["similar style"],
+    "image_base64": "data:image/jpeg;base64,...",
+    "filters": {"price": {"lte": 200}},
+    "k": 4
+  }'
 ```
 
-### Verification
+The default candidate window covers the complete active catalog before hard
+filtering and final `k` trimming.
 
-After restarting, verify your custom data is loaded:
+## Recovery
 
-```bash
-# Check catalog retriever health
-curl http://localhost:8010/health
-
-# Check if your products are searchable
-curl -X POST http://localhost:8010/search \
-  -H "Content-Type: application/json" \
-  -d '{"query": "your_product_name", "top_k": 5}'
-```
+Manual collection or volume removal is reserved for database corruption or
+operational recovery. If needed, stop the catalog service, drop
+`shopping_advisor_text_db` and `shopping_advisor_image_db`, then restart. The
+service rebuilds them from the validated snapshot.

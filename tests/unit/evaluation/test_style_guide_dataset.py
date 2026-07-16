@@ -1,4 +1,4 @@
-import csv
+import json
 from pathlib import Path
 
 import yaml
@@ -8,7 +8,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 EVAL_ROOT = REPO_ROOT / "tests" / "evaluation"
 STYLE_GUIDE_PATH = EVAL_ROOT / "datasets" / "style_guide" / "scenarios.yaml"
 IMAGE_SHOPPING_PATH = EVAL_ROOT / "datasets" / "image_shopping" / "scenarios.yaml"
-PRODUCTS_PATH = REPO_ROOT / "shared" / "data" / "products.csv"
+PRODUCTS_PATH = REPO_ROOT / "shared" / "data" / "enriched_products.jsonl"
 
 
 def test_style_guide_dataset_covers_styling_entry_modes_and_patterns():
@@ -94,9 +94,9 @@ def _load_scenarios(path: Path) -> list[dict]:
 
 
 def _catalog_product_names() -> list[str]:
-    with PRODUCTS_PATH.open("r", encoding="utf-8-sig", newline="") as handle:
+    with PRODUCTS_PATH.open("r", encoding="utf-8") as handle:
         return [
             row["name"]
-            for row in csv.DictReader(handle)
-            if row.get("name") and len(row["name"]) > 4
+            for line in handle
+            if (row := json.loads(line)).get("name") and len(row["name"]) > 4
         ]

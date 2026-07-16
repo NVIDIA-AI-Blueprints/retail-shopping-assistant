@@ -1,0 +1,98 @@
+# Catalog field meaning only. Values and category applicability are discovered
+# from enriched_products.jsonl during ingestion.
+record:
+  product_id: record_id
+  name: name
+  description: enriched_description
+  fallback_description: description
+  image: image
+  price: price
+
+taxonomy:
+  fields:
+    - category
+    - subcategory
+
+fields:
+  category:
+    type: enum
+    uses: [filter, semantic, detail]
+  subcategory:
+    type: enum
+    uses: [filter, semantic, detail]
+  price:
+    type: number
+    uses: [filter, detail]
+  primary_color:
+    type: enum
+    uses: [filter, semantic, detail]
+  pattern:
+    type: enum
+    uses: [filter, semantic, detail]
+
+  closure:
+    type: enum
+    uses: [filter, semantic, detail]
+  garment_length:
+    type: enum
+    uses: [filter, semantic, detail]
+  neckline:
+    type: enum
+    uses: [filter, semantic, detail]
+  silhouette:
+    type: enum
+    uses: [filter, semantic, detail]
+  sleeve_length:
+    type: enum
+    uses: [filter, semantic, detail]
+
+  bag_closure:
+    type: enum
+    uses: [filter, semantic, detail]
+  carry_method:
+    type: enum
+    uses: [filter, semantic, detail]
+  structure:
+    type: enum
+    uses: [filter, semantic, detail]
+
+  fastening:
+    type: enum
+    uses: [filter, semantic, detail]
+  heel_type:
+    type: enum
+    uses: [filter, semantic, detail]
+  shaft_height:
+    type: enum
+    uses: [filter, semantic, detail]
+  toe_shape:
+    type: enum
+    uses: [filter, semantic, detail]
+
+  frame_shape:
+    type: enum
+    uses: [filter, semantic, detail]
+  lens_appearance:
+    type: enum
+    uses: [filter, semantic, detail]
+
+  jewelry_form:
+    type: enum
+    uses: [filter, semantic, detail]
+  metal_color:
+    type: enum
+    uses: [filter, semantic, detail]
+
+  composition:
+    type: text
+    uses: [semantic, detail]
+  care:
+    type: text
+    uses: [semantic, detail]
+
+  url:
+    type: text
+    uses: []
+  source_row:
+    type: number
+    uses: []

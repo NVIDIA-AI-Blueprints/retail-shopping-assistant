@@ -11,7 +11,8 @@ Welcome to the Retail Shopping Assistant documentation! This hub provides compre
 
 ### 🔧 Technical Documentation
 - **[API Documentation](API.md)** - Complete API reference
-- **[Catalog Filter Configuration](CATALOG_FILTERS.md)** - Declaring catalog filter fields without static enum values
+- **[Catalog Schema and Filters](CATALOG_FILTERS.md)** - Declaring JSONL field roles without static catalog values
+- **[Catalog Architecture](CATALOG_REFACTOR_PLAN.md)** - Start here for JSONL ingestion, advertised capabilities, agent discovery, and validated retrieval
 - **[Commerce Contracts](COMMERCE_CONTRACTS.md)** - Internal product, cart, and commerce tool contracts
 - **[Shopper Agent Tool Registry](SHOPPER_AGENT_TOOL_REGISTRY.md)** - Registered Deep Agents tools for the shopper-serving agent
 - **[Shopper Agent Skill Registry](SHOPPER_AGENT_SKILL_REGISTRY.md)** - Registered Deep Agents skills and tuning loop for shopper-facing behavior
@@ -40,7 +41,8 @@ Welcome to the Retail Shopping Assistant documentation! This hub provides compre
 | Document | Description | Audience |
 |----------|-------------|----------|
 | [API Documentation](API.md) | Complete API reference with examples | Developers, integrators |
-| [Catalog Filter Configuration](CATALOG_FILTERS.md) | Configure hard filters for uploaded catalogs without hardcoded enum values | Developers, operators |
+| [Catalog Schema and Filters](CATALOG_FILTERS.md) | Configure data-derived filters with a catalog role sidecar | Developers, operators |
+| [Catalog Architecture](CATALOG_REFACTOR_PLAN.md) | Understand the end-to-end ingest, capability advertisement, agent discovery, and validated retrieval flow | Developers, architects |
 | [Commerce Contracts](COMMERCE_CONTRACTS.md) | Internal product, cart, and commerce tool contracts | Developers, architects |
 | [Shopper Agent Tool Registry](SHOPPER_AGENT_TOOL_REGISTRY.md) | Registered Deep Agents tools, risk classes, and skill access boundaries for the shopper-serving agent | Developers, architects, evaluators |
 | [Shopper Agent Skill Registry](SHOPPER_AGENT_SKILL_REGISTRY.md) | Registered Deep Agents skills, runtime loading, and markdown tuning workflow for shopper-facing behavior | Developers, architects, evaluators |
@@ -87,7 +89,7 @@ Welcome to the Retail Shopping Assistant documentation! This hub provides compre
 #### Product Search
 - [User Guide - Product Search](USER_GUIDE.md#product-search)
 - [API - Product Search Examples](API.md#product-search)
-- [Catalog Filter Configuration](CATALOG_FILTERS.md)
+- [Catalog Schema and Filters](CATALOG_FILTERS.md)
 - [Shopper Agent Tool Registry](SHOPPER_AGENT_TOOL_REGISTRY.md)
 - [Shopper Agent Skill Registry](SHOPPER_AGENT_SKILL_REGISTRY.md)
 - [Main README - Usage Examples](../README.md#usage-examples)

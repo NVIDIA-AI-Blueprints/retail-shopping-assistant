@@ -46,6 +46,7 @@ ENV/
 # IDE
 .vscode/
 .idea/
+**/.ipynb_checkpoints/
 *.swp
 *.swo
 

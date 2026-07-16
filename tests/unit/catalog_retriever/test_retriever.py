@@ -15,16 +15,14 @@ from types import SimpleNamespace
 from typing import Any, Dict, List, Tuple
 from unittest.mock import MagicMock
 
-import numpy as np
 import pytest
 
 from catalog_retriever.src import retriever as retriever_mod
 from catalog_retriever.src.retriever import (
-    ImageEmbeddings,
+    CatalogFilterError,
     Milvus,
     Retriever,
     RetrieverConfig,
-    TextEmbeddings,
 )
 from shared.commerce_contracts import CatalogFilterCapability
 
@@ -46,6 +44,14 @@ def retriever_config() -> RetrieverConfig:
         sim_threshold=0.1,
         text_collection="text_col",
         image_collection="image_col",
+        catalog_size=0,
+        product_id_field="record_id",
+        name_field="name",
+        description_field="enriched_description",
+        fallback_description_field="description",
+        image_field="image",
+        price_field="price",
+        taxonomy_fields=["category", "subcategory"],
         filter_capabilities={
             "category": CatalogFilterCapability(
                 type="enum",
@@ -76,6 +82,9 @@ def retriever(
     class _FakeMilvus:
         def __init__(self, *_, **__) -> None:
             self.col = None
+            self.matches_catalog = MagicMock(return_value=False)
+            self.reset = MagicMock()
+            self.add_embeddings = MagicMock()
 
         def similarity_search_with_relevance_scores(self, *_, **__):  # pragma: no cover - replaced per test
             raise NotImplementedError
@@ -91,6 +100,7 @@ def _doc(
     category: str = "dress",
     subcategory: str | None = None,
     color: str | None = None,
+    product_id: str | None = None,
 ) -> SimpleNamespace:
     """Build a minimal object that quacks like a LangChain ``Document``.
 
@@ -104,6 +114,7 @@ def _doc(
         page_content=page_content,
         metadata={
             "pk": id(name),
+            "record_id": product_id or f"id:{name}",
             "name": name,
             "price": price,
             "image": f"{name.lower().replace(' ', '_')}.jpg",
@@ -120,6 +131,25 @@ def _doc(
 
 
 class TestMilvusAdapter:
+    def test_catalog_match_requires_every_record_to_have_the_fingerprint(self) -> None:
+        calls: Dict[str, Any] = {}
+
+        class _Collection:
+            num_entities = 2
+
+            def flush(self) -> None:
+                pass
+
+            def query(self, **kwargs):
+                calls.update(kwargs)
+                return [{"catalog_fingerprint": "current"}]
+
+        db = object.__new__(Milvus)
+        db.col = _Collection()
+
+        assert db.matches_catalog("current", expected_count=2) is False
+        assert calls["limit"] == 2
+
     def test_add_and_search_uses_pymilvus_boundary(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -230,6 +260,14 @@ class TestRetrieverConfig:
             sim_threshold=0.5,
             text_collection="tc",
             image_collection="ic",
+            catalog_size=1,
+            product_id_field="id",
+            name_field="title",
+            description_field="summary",
+            fallback_description_field=None,
+            image_field="image_ref",
+            price_field="amount",
+            taxonomy_fields=["department"],
         )
         assert cfg.sim_threshold == 0.5
 
@@ -249,6 +287,14 @@ class TestCoerceFloat:
             ("19.99", 19.99),
             ("$1,299.00", 1299.0),
             ("  $25  ", 25.0),
+            (True, None),
+            (False, None),
+            (float("nan"), None),
+            (float("inf"), None),
+            (float("-inf"), None),
+            ("NaN", None),
+            ("Infinity", None),
+            ("-Infinity", None),
             ("nonsense", None),
             (["list"], None),
             ({}, None),
@@ -261,6 +307,18 @@ class TestCoerceFloat:
 
 
 class TestApplyStructuredFilters:
+    def test_legacy_categories_cannot_compete_with_taxonomy_filters(
+        self, retriever: Retriever
+    ) -> None:
+        with pytest.raises(
+            CatalogFilterError,
+            match="cannot be combined with explicit taxonomy filter",
+        ):
+            retriever._effective_filters(
+                {"category": ["bag"]},
+                ["dress"],
+            )
+
     def test_returns_input_when_filters_empty(self, retriever: Retriever) -> None:
         results = [(_doc("A", 10), 0.9), (_doc("B", 20), 0.8)]
         assert retriever._apply_structured_filters(results, filters=None) == results
@@ -310,9 +368,10 @@ class TestApplyStructuredFilters:
         )
         assert [r[0].metadata["name"] for r in filtered] == ["A"]
 
-    def test_unknown_filter_returns_input(self, retriever: Retriever) -> None:
+    def test_unknown_filter_is_rejected(self, retriever: Retriever) -> None:
         results = [(_doc("A", 10), 0.9)]
-        assert retriever._apply_structured_filters(results, filters={"color": "red"}) == results
+        with pytest.raises(CatalogFilterError, match="Unsupported catalog filter"):
+            retriever._apply_structured_filters(results, filters={"color": "red"})
 
     def test_enum_filter_uses_declared_metadata_field(
         self, retriever: Retriever
@@ -335,6 +394,116 @@ class TestApplyStructuredFilters:
         )
 
         assert [r[0].metadata["name"] for r in filtered] == ["Blue Dress"]
+
+    def test_enum_filter_matches_the_canonical_value_advertised_by_capabilities(
+        self, retriever: Retriever
+    ) -> None:
+        retriever.filter_capabilities["color"] = CatalogFilterCapability(
+            type="enum",
+            operators=["in"],
+            source_fields=["color"],
+            values=["dark blue"],
+        )
+        product = _doc("Blue Dress", color="  dark  blue ")
+
+        filtered = retriever._apply_structured_filters(
+            [(product, 0.9)],
+            filters={"color": ["dark blue"]},
+        )
+
+        assert [result[0].metadata["name"] for result in filtered] == ["Blue Dress"]
+
+    def test_enum_list_filter_uses_any_overlap(self, retriever: Retriever) -> None:
+        retriever.filter_capabilities["tags"] = CatalogFilterCapability(
+            type="enum_list",
+            operators=["in"],
+            source_fields=["tags"],
+            values=["soft", "travel", "work"],
+        )
+        travel = _doc("Travel Pant")
+        travel.metadata["tags"] = ["soft", "travel"]
+        work = _doc("Work Pant")
+        work.metadata["tags"] = ["work"]
+
+        filtered = retriever._apply_structured_filters(
+            [(travel, 0.9), (work, 0.8)],
+            filters={"tags": ["travel", "work"]},
+        )
+
+        assert [result[0].metadata["name"] for result in filtered] == [
+            "Travel Pant",
+            "Work Pant",
+        ]
+
+    def test_invalid_numeric_operator_is_rejected(self, retriever: Retriever) -> None:
+        with pytest.raises(CatalogFilterError, match="Unsupported operator"):
+            retriever._apply_structured_filters(
+                [(_doc("A"), 0.9)], filters={"price": {"equals": 10}}
+            )
+
+    @pytest.mark.parametrize(
+        "filters",
+        [
+            {"price": {"max": "NaN"}},
+            {"price": {"min": True}},
+            {"price": {"gte": float("inf")}},
+            {"price": {"lte": "-Infinity"}},
+            {"max_price": False},
+            {"price": {"min": "NaN", "max": 100}},
+        ],
+    )
+    def test_invalid_numeric_bound_rejects_the_entire_filter(
+        self, retriever: Retriever, filters: Dict[str, Any]
+    ) -> None:
+        with pytest.raises(CatalogFilterError, match="invalid bound"):
+            retriever._apply_structured_filters(
+                [(_doc("A", 50), 0.9)], filters=filters
+            )
+
+    @pytest.mark.parametrize(
+        "bounds",
+        [
+            {"min": 0, "gte": 100},
+            {"max": 200, "lte": 50},
+        ],
+    )
+    def test_duplicate_numeric_bound_aliases_are_rejected(
+        self, retriever: Retriever, bounds: Dict[str, Any]
+    ) -> None:
+        with pytest.raises(CatalogFilterError, match="cannot combine bound aliases"):
+            retriever._apply_structured_filters(
+                [(_doc("A", 50), 0.9)], filters={"price": bounds}
+            )
+
+    @pytest.mark.parametrize(
+        "filters",
+        [
+            {"price": {"min": 100}, "min_price": 0},
+            {"price": {"gte": 100}, "min_price": 0},
+            {"price": {"max": 50}, "max_price": 200},
+            {"price": {"lte": 50}, "max_price": 200},
+        ],
+    )
+    def test_nested_and_top_level_numeric_bound_aliases_are_rejected(
+        self, retriever: Retriever, filters: Dict[str, Any]
+    ) -> None:
+        with pytest.raises(
+            CatalogFilterError,
+            match="cannot combine canonical and top-level aliases",
+        ):
+            retriever._apply_structured_filters(
+                [(_doc("A", 50), 0.9)], filters=filters
+            )
+
+    def test_nested_and_top_level_numeric_bounds_can_supply_opposite_sides(
+        self, retriever: Retriever
+    ) -> None:
+        filtered = retriever._apply_structured_filters(
+            [(_doc("In Range", 50), 0.9), (_doc("Too High", 150), 0.8)],
+            filters={"price": {"min": 20}, "max_price": 100},
+        )
+
+        assert [result[0].metadata["name"] for result in filtered] == ["In Range"]
 
 
 # --------------------------------------------------------------------------->
@@ -669,99 +838,136 @@ class TestImageEmbeddings:
         assert result == [None, [0.42]]
 
 
-class TestMilvusFromCsv:
-    def test_skips_when_embeddings_already_exist(
-        self, retriever: Retriever, tmp_path
-    ) -> None:
-        retriever.text_db.col = SimpleNamespace(flush=lambda: None, num_entities=5)
-        retriever.image_db.col = SimpleNamespace(flush=lambda: None, num_entities=5)
-        retriever.text_db.add_embeddings = MagicMock()
-        retriever.image_db.add_embeddings = MagicMock()
-
-        retriever.milvus_from_csv(csv_path=str(tmp_path / "anything.csv"))
-
-        retriever.text_db.add_embeddings.assert_not_called()
-        retriever.image_db.add_embeddings.assert_not_called()
-
-    def test_populates_collections_when_empty(
-        self, retriever: Retriever, tmp_path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        retriever.text_db.col = None
-        retriever.image_db.col = None
-
-        # Minimal CSV with the columns read by milvus_from_csv.
-        csv_path = tmp_path / "products.csv"
-        csv_path.write_text(
-            "name,description,category,subcategory,image\n"
-            "Silk Dress,elegant,dress,dress,silk.jpg\n"
+class TestSyncSnapshot:
+    @staticmethod
+    def _snapshot() -> SimpleNamespace:
+        record = SimpleNamespace(
+            product_id="record_id",
+            name="name",
+            description="enriched_description",
+            fallback_description="description",
+            image="image",
+            price="price",
+        )
+        return SimpleNamespace(
+            fingerprint="abc123",
+            product_count=2,
+            products=(
+                {
+                    "record_id": "p1",
+                    "name": "A",
+                    "enriched_description": "A desc",
+                    "description": "old A",
+                    "image": "a.jpg",
+                    "price": "10",
+                    "category": "apparel",
+                    "subcategory": "pants",
+                },
+                {
+                    "record_id": "p2",
+                    "name": "B",
+                    "enriched_description": "B desc",
+                    "description": "old B",
+                    "image": "b.jpg",
+                    "price": "20",
+                    "category": "bags",
+                    "subcategory": "totes",
+                },
+            ),
+            search_documents=("document A", "document B"),
+            schema=SimpleNamespace(
+                record=record,
+                taxonomy=SimpleNamespace(fields=["category", "subcategory"]),
+            ),
+            capabilities=SimpleNamespace(
+                filters={
+                    "category": CatalogFilterCapability(
+                        type="enum",
+                        operators=["in"],
+                        source_fields=["category"],
+                        values=["apparel", "bags"],
+                    )
+                }
+            ),
         )
 
-        retriever.text_embeddings = MagicMock(return_value=[[0.1, 0.2]])
-        retriever.image_embeddings = MagicMock(return_value=[[0.3, 0.4]])
+    def test_reuses_complete_matching_indexes(self, retriever: Retriever) -> None:
+        snapshot = self._snapshot()
+        retriever.text_db.matches_catalog.return_value = True
+        retriever.image_db.matches_catalog.return_value = True
+        retriever.text_embeddings = MagicMock()
+        retriever.image_embeddings = MagicMock()
 
-        retriever.text_db.add_embeddings = MagicMock()
-        retriever.image_db.add_embeddings = MagicMock()
+        retriever.sync_snapshot(snapshot)
 
-        retriever.milvus_from_csv(csv_path=str(csv_path))
+        retriever.text_db.reset.assert_not_called()
+        retriever.image_db.reset.assert_not_called()
+        retriever.text_embeddings.assert_not_called()
+        retriever.image_embeddings.assert_not_called()
 
-        retriever.text_db.add_embeddings.assert_called_once()
+    def test_mismatch_rebuilds_both_indexes_from_same_snapshot(
+        self, retriever: Retriever
+    ) -> None:
+        snapshot = self._snapshot()
+        retriever.text_db.matches_catalog.return_value = True
+        retriever.image_db.matches_catalog.return_value = False
+        retriever.text_embeddings = MagicMock(return_value=[[0.1], [0.2]])
+        retriever.image_embeddings = MagicMock(return_value=[[0.3], [0.4]])
+        retriever._embedding_counts = MagicMock(return_value=(2, 2))
+
+        retriever.sync_snapshot(snapshot)
+
+        retriever.text_db.reset.assert_called_once_with()
+        retriever.image_db.reset.assert_called_once_with()
+        text_call = retriever.text_db.add_embeddings.call_args.kwargs
+        assert text_call["texts"] == ["document A", "document B"]
+        assert all(
+            metadata["catalog_fingerprint"] == "abc123"
+            for metadata in text_call["metadatas"]
+        )
+        assert [
+            metadata["record_id"] for metadata in text_call["metadatas"]
+        ] == ["p1", "p2"]
         retriever.image_db.add_embeddings.assert_called_once()
 
-    def test_skips_failed_embeddings_when_populating(
-        self, retriever: Retriever, tmp_path
+    def test_embedding_failure_aborts_snapshot_startup(
+        self, retriever: Retriever
     ) -> None:
-        retriever.text_db.col = None
-        retriever.image_db.col = None
-
-        csv_path = tmp_path / "p.csv"
-        csv_path.write_text(
-            "name,description,category,subcategory,image\n"
-            "A,x,cat,sub,a.jpg\n"
-            "B,y,cat,sub,b.jpg\n"
-        )
-
-        # One text embedding fails; one image embedding fails.
+        snapshot = self._snapshot()
         retriever.text_embeddings = MagicMock(return_value=[[0.1], None])
-        retriever.image_embeddings = MagicMock(return_value=[None, [0.4]])
 
-        retriever.text_db.add_embeddings = MagicMock()
-        retriever.image_db.add_embeddings = MagicMock()
+        with pytest.raises(RuntimeError, match="text indexing failed"):
+            retriever.sync_snapshot(snapshot)
 
-        retriever.milvus_from_csv(csv_path=str(csv_path))
-
-        text_call = retriever.text_db.add_embeddings.call_args.kwargs
-        assert text_call["embeddings"] == [[0.1]]
-        assert len(text_call["texts"]) == 1
-
-        image_call = retriever.image_db.add_embeddings.call_args.kwargs
-        assert image_call["embeddings"] == [[0.4]]
-
-    def test_missing_image_embeddings_do_not_repopulate_text(
-        self, retriever: Retriever, tmp_path
-    ) -> None:
-        retriever.text_db.col = SimpleNamespace(flush=lambda: None, num_entities=5)
-        retriever.image_db.col = SimpleNamespace(flush=lambda: None, num_entities=0)
-
-        csv_path = tmp_path / "p.csv"
-        csv_path.write_text(
-            "name,description,category,subcategory,image\n"
-            "A,x,cat,sub,a.jpg\n"
-        )
-
-        retriever.text_embeddings = MagicMock(return_value=[[0.1]])
-        retriever.image_embeddings = MagicMock(return_value=[None])
-        retriever.text_db.add_embeddings = MagicMock()
-        retriever.image_db.add_embeddings = MagicMock()
-
-        retriever.milvus_from_csv(csv_path=str(csv_path))
-
-        retriever.text_embeddings.assert_not_called()
         retriever.text_db.add_embeddings.assert_not_called()
-        retriever.image_embeddings.assert_called_once()
         retriever.image_db.add_embeddings.assert_not_called()
 
 
 class TestRetrieve:
+    async def test_default_candidate_window_covers_active_catalog(
+        self, retriever: Retriever
+    ) -> None:
+        retriever.catalog_size = 205
+        retriever.text_db.similarity_search_with_relevance_scores = MagicMock(
+            return_value=[(_doc("Silk Dress"), 0.9)]
+        )
+
+        output = await retriever.retrieve(
+            query=["dress"],
+            categories=[],
+            k=4,
+            image_bool=False,
+            verbose=False,
+        )
+
+        assert output.diagnostics["candidate_k"] == 205
+        assert (
+            retriever.text_db.similarity_search_with_relevance_scores.call_args.kwargs[
+                "k"
+            ]
+            == 205
+        )
+
     async def test_text_only_category_match_filters(self, retriever: Retriever) -> None:
         retriever.text_db.similarity_search_with_relevance_scores = MagicMock(
             return_value=[
@@ -934,17 +1140,17 @@ class TestRetrieve:
         assert len(names) == 1
         assert len(ids) == 1
 
-    async def test_deduplicates_by_name_when_pk_differs(
+    async def test_keeps_duplicate_names_when_product_ids_differ(
         self, retriever: Retriever
     ) -> None:
-        first = _doc("Same Product", category="dress")
-        second = _doc("Same Product", category="dress")
+        first = _doc("Same Product", category="dress", product_id="product-1")
+        second = _doc("Same Product", category="dress", product_id="product-2")
         second.metadata["pk"] = first.metadata["pk"] + 1
         retriever.text_db.similarity_search_with_relevance_scores = MagicMock(
             return_value=[(first, 0.9), (second, 0.85)]
         )
 
-        _texts, ids, _sims, names, _images = await retriever.retrieve(
+        output = await retriever.retrieve(
             query=["q"],
             categories=["dress"],
             k=5,
@@ -952,5 +1158,9 @@ class TestRetrieve:
             verbose=False,
         )
 
-        assert names == ["Same Product"]
-        assert len(ids) == 1
+        assert output.names == ["Same Product", "Same Product"]
+        assert output.ids == ["product-1", "product-2"]
+        assert [product["product_id"] for product in output.products] == [
+            "product-1",
+            "product-2",
+        ]

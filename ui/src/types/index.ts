@@ -120,7 +120,8 @@ export interface ModelCapabilities {
   [role: string]: ModelCapability | undefined;
 }
 
-export type CatalogCapabilityType = 'enum' | 'number' | 'text';
+export type CatalogCapabilityType = 'enum' | 'enum_list' | 'number' | 'text';
+export type CatalogFieldType = CatalogCapabilityType | 'unclassified';
 
 export interface CatalogFilterCapability {
   type: CatalogCapabilityType;
@@ -134,9 +135,43 @@ export interface CatalogFilterCapability {
 
 export interface CatalogCapabilities {
   catalog_id: string;
+  product_count: number;
   retrieval_modes: string[];
   image_search_enabled: boolean;
   filters: Record<string, CatalogFilterCapability>;
+  fields: Record<string, CatalogFieldCapability>;
+  taxonomy: CatalogTaxonomyCapabilities;
+}
+
+export interface CatalogFieldCapability {
+  type: CatalogFieldType;
+  observed_type?: string | null;
+  filterable: boolean;
+  searchable: boolean;
+  detail: boolean;
+  taxonomy: boolean;
+  operators: string[];
+  source_fields: string[];
+  coverage: { present: number; total: number };
+  values: Array<{ value: string; count: number }>;
+  min_value?: number | null;
+  max_value?: number | null;
+}
+
+export interface CatalogTaxonomyScope {
+  product_count: number;
+  filters: Record<string, CatalogFieldCapability>;
+  semantic_fields: Record<string, CatalogFieldCapability>;
+}
+
+export interface CatalogTaxonomyCategory extends CatalogTaxonomyScope {
+  subcategories: Record<string, CatalogTaxonomyScope>;
+}
+
+export interface CatalogTaxonomyCapabilities {
+  category_field?: string | null;
+  subcategory_field?: string | null;
+  categories: Record<string, CatalogTaxonomyCategory>;
 }
 
 export interface CapabilitiesResponse {

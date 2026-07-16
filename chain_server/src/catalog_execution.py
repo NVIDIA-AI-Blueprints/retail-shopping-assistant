@@ -66,9 +66,6 @@ def _request_from_plan(
     image_base64: str,
 ) -> SearchCatalogInput:
     hard_filters = dict(plan.hard_filters)
-    categories = hard_filters.pop("category", [])
-    if not isinstance(categories, list):
-        categories = []
 
     effective_image = image_base64 if plan.search_mode in {"image", "hybrid"} else ""
     query = " ".join(plan.semantic_queries)
@@ -76,7 +73,7 @@ def _request_from_plan(
         query=query,
         queries=plan.semantic_queries,
         image_base64=effective_image,
-        categories=categories,
+        categories=[],
         filters=hard_filters,
         top_k=plan.top_k,
     )

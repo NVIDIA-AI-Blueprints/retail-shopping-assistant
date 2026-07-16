@@ -8,7 +8,7 @@ from chain_server.src.catalog_request import CatalogSearchPlan
 from shared.commerce_contracts import ProductSummary, SearchCatalogResult
 
 
-def test_execute_catalog_search_maps_structured_filters_to_legacy_payload() -> None:
+def test_execute_catalog_search_passes_filters_without_taxonomy_special_case() -> None:
     captured = {}
 
     def fake_search(request, catalog_retriever_url, timeout_seconds=None):
@@ -37,8 +37,11 @@ def test_execute_catalog_search_maps_structured_filters_to_legacy_payload() -> N
     assert captured["url"] == "http://catalog"
     assert captured["timeout"] == 5
     assert captured["request"].queries == ["work bag"]
-    assert captured["request"].categories == ["bag"]
-    assert captured["request"].filters == {"price": {"max": 60}}
+    assert captured["request"].categories == []
+    assert captured["request"].filters == {
+        "category": ["bag"],
+        "price": {"max": 60},
+    }
     assert captured["request"].image_base64 == ""
 
 

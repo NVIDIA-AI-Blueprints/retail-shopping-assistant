@@ -161,9 +161,11 @@ The Brev deployment guide walks you through the entire process from creating a L
 
 ## Documentation
 
+- **[Project Status](STATUS.md)**: Current implementation, verification, quality qualification, and remaining risks
 - **[User Guide](docs/USER_GUIDE.md)**: How to use the application
 - **[API Documentation](docs/API.md)**: Complete API reference
-- **[Catalog Filter Configuration](docs/CATALOG_FILTERS.md)**: How to declare catalog filter fields without hardcoding enum values
+- **[Catalog Schema and Filters](docs/CATALOG_FILTERS.md)**: JSONL field roles and data-derived filter capabilities
+- **[Catalog Architecture](docs/CATALOG_REFACTOR_PLAN.md)**: Start here for JSONL ingest, lifecycle-cached capabilities, compact agent discovery, validation, and retrieval
 - **[Commerce Contracts](docs/COMMERCE_CONTRACTS.md)**: Internal product, cart, and commerce tool contracts
 - **[Shopper Agent Tool Registry](docs/SHOPPER_AGENT_TOOL_REGISTRY.md)**: Registered Deep Agents tools for the shopper-serving agent
 - **[Shopper Agent Skill Registry](docs/SHOPPER_AGENT_SKILL_REGISTRY.md)**: Registered Deep Agents skills and markdown tuning loop

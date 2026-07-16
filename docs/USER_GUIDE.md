@@ -41,8 +41,8 @@ The application should be ready to use immediately. If you encounter any issues:
 ### Available Product Filters
 
 Catalog filters and allowed values are determined by the loaded catalog and
-the catalog retriever `filter_registry`. They are not fixed in the UI or
-chain server.
+its schema sidecar. They are not fixed in the UI, chain server, or application
+code.
 
 To see the current filter fields and values:
 
@@ -51,10 +51,15 @@ curl -s http://localhost:8010/capabilities
 curl -s http://localhost:8009/capabilities
 ```
 
-The bundled sample catalog currently exposes category and price filters. A
-different catalog can expose different filter fields such as color, material,
-brand, size, department, or any other metadata columns declared in
-`shared/configs/catalog_retriever/config.yaml`.
+Port `8010` shows the catalog service's live snapshot. Port `8009` shows the
+contract cached for the chain-server process lifetime. After a catalog change,
+operators restart the catalog, wait for it to become healthy, and then restart
+the chain server so these responses match.
+
+The bundled catalog advertises taxonomy, price, color, pattern, and observed
+category-specific facets. A different catalog can expose different fields by
+declaring their roles in its adjacent schema sidecar. Actual values and
+category scopes always come from the ingested rows.
 
 ## 💬 Using the Chat Interface
 
@@ -412,7 +417,8 @@ AI: "Here are some black shoes that match your image..."
 **Q: What products can I search for?**
 A: Searchable products come from the currently loaded catalog. Check
 `http://localhost:8010/capabilities` for the active hard-filter fields and
-allowed enum values.
+allowed enum values. The chain-server view at
+`http://localhost:8009/capabilities` updates after the chain server restarts.
 
 **Q: How accurate are the search results?**
 A: The AI uses advanced language models to understand your queries and find relevant products. Results improve with more specific descriptions.
@@ -477,7 +483,9 @@ A: This is a demonstration application. The products shown are for display purpo
 A: The prices shown are from the demonstration dataset and may not reflect current market prices.
 
 **Q: Can I see more product details?**
-A: Yes, you can ask for more information about specific products, including materials, care instructions, and styling tips.
+A: Yes. After a product search, ask about that item. The assistant reads
+catalog-provided structured details such as material or care when present and
+states when the catalog does not provide a requested fact.
 
 ---
 

@@ -51,7 +51,7 @@ def select_python(explicit: str | None = None) -> str:
         return explicit
 
     env_python = os.environ.get("RETAIL_TEST_PYTHON")
-    if env_python:
+    if _is_concrete_env_value(env_python):
         return env_python
 
     candidates = [
@@ -63,6 +63,24 @@ def select_python(explicit: str | None = None) -> str:
             return str(candidate)
 
     return sys.executable
+
+
+def _is_concrete_env_value(value: str | None) -> bool:
+    """Reject unexpanded shell-default expressions read from dotenv files."""
+
+    return bool(value and value.strip() and "$" not in value)
+
+
+def normalize_test_env(env: dict[str, str]) -> None:
+    """Give host-side tests real repository paths when dotenv values are symbolic."""
+
+    defaults = {
+        "SHARED_ROOT": str(REPO_ROOT / "shared"),
+        "SHARED_CONFIG_ROOT": str(REPO_ROOT / "shared" / "configs"),
+    }
+    for key, default in defaults.items():
+        if not _is_concrete_env_value(env.get(key)):
+            env[key] = default
 
 
 def print_command(cmd: list[str], cwd: Path) -> None:
@@ -745,6 +763,7 @@ def main() -> int:
     args = parse_args()
     python_bin = select_python(args.python_bin)
     env = os.environ.copy()
+    normalize_test_env(env)
 
     statuses: list[int] = []
     if args.suite in {"unit", "all"}:

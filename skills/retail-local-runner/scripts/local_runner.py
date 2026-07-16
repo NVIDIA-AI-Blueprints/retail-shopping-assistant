@@ -262,7 +262,16 @@ def base_env() -> dict[str, str]:
     env["MEMORY_RETRIEVER_URL"] = "http://localhost:8011"
     env["RAILS_URL"] = "http://localhost:8012"
     env["CATALOG_DB_PORT"] = "http://localhost:19530"
-    env["CATALOG_DATA_SOURCE"] = str(REPO_ROOT / "shared" / "data" / "products_extended.csv")
+    set_if_empty(
+        env,
+        "CATALOG_DATA_SOURCE",
+        str(REPO_ROOT / "shared" / "data" / "enriched_products.jsonl"),
+    )
+    set_if_empty(
+        env,
+        "CATALOG_SCHEMA_SOURCE",
+        str(REPO_ROOT / "shared" / "data" / "enriched_products.schema.yaml"),
+    )
     env["PYTHONUNBUFFERED"] = "1"
     env["PYTHONPATH"] = str(REPO_ROOT) + (
         os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else ""

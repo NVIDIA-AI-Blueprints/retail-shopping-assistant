@@ -48,25 +48,32 @@ Purpose: Product discovery and recommendation over the catalog.
 
 Inputs:
 
-- `semantic_query`: Product meaning plus soft or descriptive preferences, such
-  as product type, style, occasion, material, silhouette, or visual descriptors.
-  A preference such as "maybe cotton" belongs here.
-- `required_constraints`: Every shopper must-have as a structured field and
-  value, including requirements that capabilities mark semantic/detail-only or
-  do not advertise. Advertised numeric constraints use objects such as
-  `{"max": 100}`; advertised enum constraints use exact capability values.
+- `semantic_query` (required): One soft/descriptive product query. Product words
+  may be repeated for relevance, but this field never enforces taxonomy or
+  another must-have. Use an empty string only for image-only search.
+- `taxonomy` (required): `category` and `subcategory` arrays whose allowed values
+  are generated from cached catalog capabilities. Use exact advertised values;
+  text search requires at least one value, while image-only search may use two
+  empty arrays. A subcategory-only value maps to all owning categories; an
+  incompatible category/subcategory pair is rejected.
+- `required_constraints` (required): Non-taxonomy shopper must-haves. Advertised
+  enum values are exact and numeric constraints use `min`/`max`. Unsupported
+  strict requirements are retained so validation refuses rather than weakens
+  the request. A preference such as "maybe cotton" stays in `semantic_query`.
 - `search_mode`: Optional `text`, `image`, or `hybrid` when supported by
   catalog capabilities.
 
 Preconditions:
 
-- Requires either semantic product text or an attached image.
-- Deterministic validation converts supported `required_constraints` into
-  catalog hard filters. Any unsupported field, value, or operator stops the
-  search instead of being dropped or treated as semantic relevance.
-- The per-turn catalog search cap applies. When reached, the tool returns a
-  `STOP_TOOL_USE` instruction so the agent should answer from evidence already
-  collected instead of continuing the loop.
+- Requires either product text or an attached image.
+- Capability-derived taxonomy mapping and all other hard-filter validation
+  complete before retrieval. Unsupported fields, values, and operators stop the
+  search instead of becoming semantic relevance.
+- One normalized taxonomy scope may execute once per turn. Duplicate values are
+  removed before the scope key is reserved, and partially incompatible
+  category/subcategory sets are rejected before retrieval. A repeated same-scope
+  call returns `STOP_TOOL_USE` even when `semantic_query` is paraphrased;
+  different scopes share the configured search cap.
 
 Outputs:
 
@@ -77,6 +84,8 @@ Outputs:
   to the agent loop.
 - Product payloads are also appended to the runtime product result stream.
 - Product image URLs are appended to the runtime retrieved-image map.
+- The serving agent sends one text query per catalog call. The catalog performs
+  no shopper-language interpretation, query expansion, or learned reranking.
 
 Side effects:
 
@@ -109,7 +118,7 @@ Current limitations:
 
 - Returned product IDs are source `record_id` values. The current feed does not
   guarantee those generated IDs across catalog replacements.
-- Broad multi-item outfit turns must stay within the configured search cap.
+- Broad multi-item outfit turns share the distinct taxonomy-scope budget.
 
 ### `get_product_details_tool`
 

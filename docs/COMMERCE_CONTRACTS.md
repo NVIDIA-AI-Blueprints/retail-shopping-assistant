@@ -55,19 +55,20 @@ SDK adapter:
   request-builder layer validates structured agent intent against catalog-owned
   capabilities and produces a `CatalogSearchPlan`; the catalog execution layer
   only maps that plan to catalog service requests.
-- Structured agent intent separates soft/descriptive semantic text from
-  `required_constraints`. The request builder validates every must-have against
-  current capabilities, refuses unsupported requirements, and converts only
-  supported entries into catalog hard filters.
+- Structured agent intent has three required parts: one `semantic_query`, a
+  capability-derived `taxonomy` envelope, and `required_constraints`. The chain
+  maps generic taxonomy roles to advertised field names, validates scope
+  consistency and other must-haves, and produces catalog hard filters. One
+  normalized taxonomy scope may execute once per turn, preventing paraphrase
+  fan-out while allowing bounded searches for distinct product scopes.
 - Deep Agents prompt context is also built from catalog-owned capabilities.
   Chain-server no longer ships a product category allowlist for the active
   runtime; changing catalog shape is handled by the JSONL role sidecar plus the
   ingested catalog data.
-- Catalog retriever uses source product IDs, covers the complete current
-  snapshot by default, applies hard filters against structured metadata, then
-  trims to the requested `top_k`. Query
-  responses include structured `products`, diagnostics, and an optional
-  `no_result_reason` in addition to the legacy parallel arrays.
+- Catalog retriever uses source product IDs and covers the complete current
+  snapshot by default. Query responses include structured `products`,
+  diagnostics, and an optional `no_result_reason` in addition to the legacy
+  parallel arrays.
 - Catalog search timeout is configurable through
   `catalog_search_timeout_seconds`. The default is `null`, preserving the
   previous no-timeout catalog POST behavior for slower remote embedding calls.
@@ -119,13 +120,20 @@ deduplicate mutations yet.
 ### Stateless Catalog Search
 
 `SearchCatalogInput` intentionally has no `user_id`, cart, memory, session, or
-conversation-history fields. The agent layer can use conversation context to
-produce soft/descriptive semantic text plus structured `required_constraints`.
-The chain-server request builder checks every required field and value against
-the active capabilities, refuses the request if any must-have cannot be
-enforced, and maps the validated subset to `SearchCatalogInput.filters`.
-`search_catalog` itself remains a pure read against the catalog for that
-validated request.
+conversation-history fields. The agent layer uses conversation context to
+produce one `semantic_query`, a capability-derived `taxonomy` envelope, and
+structured `required_constraints`. The chain maps taxonomy roles to the actual
+advertised field names, checks every required field and value, refuses requests
+that cannot be enforced, and sends `queries=[semantic_query]` plus the validated
+hard filters. `search_catalog` itself remains a pure read.
+
+The catalog makes no chat/completion call and performs no shopper-language
+interpretation or query expansion. It generates the configured text/image
+embeddings, performs vector retrieval and candidate fusion, deduplicates by
+source product ID, applies hard filters and thresholds, and sorts results
+deterministically. The
+lower-level `queries` list remains for direct/internal compatibility, but the
+serving agent sends one entry and bounds distinct taxonomy scopes per turn.
 
 The chain-server request-builder consumes `CatalogCapabilities` before it
 creates a product search request. Authoritative field roles come from the

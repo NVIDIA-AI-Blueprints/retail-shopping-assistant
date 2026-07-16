@@ -332,7 +332,7 @@ docker stack deploy -c docker-compose.prod.yaml retail-assistant
 | `RAIL_API_KEY` | Guardrails API key | Yes | - |
 | `GUARDRAILS_ENABLED` | Default chain-server guardrails setting for requests that omit `guardrails`; accepts true/false, yes/no, on/off, or 1/0 | No | `true` |
 | `CATALOG_SEARCH_TIMEOUT_SECONDS` | Optional chain-server timeout for catalog search requests | No | no timeout |
-| `MAX_CATALOG_SEARCHES_PER_TURN` | Caps Deep Agents catalog tool calls in one assistant turn | No | `3` |
+| `MAX_CATALOG_SEARCHES_PER_TURN` | Caps distinct catalog taxonomy-scope executions in one assistant turn; a repeated same-scope request is stopped | No | `3` |
 | `MAX_PRODUCT_DETAIL_READS_PER_TURN` | Caps Deep Agents product-detail reads in one assistant turn | No | `2` |
 | `LOCAL_NIM_CACHE` | NIM cache directory | Local only | `~/.cache/nim` |
 | `LOG_LEVEL` | Logging level | No | `INFO` |
@@ -692,7 +692,7 @@ ping api.nvcf.nvidia.com
 # Edit chain_server/app/config.yaml
 top_k_retrieve: 2  # Reduce for faster responses
 deepagents_recursion_limit: 24  # Raise modestly for multi-item outfit planning
-max_catalog_searches_per_turn: 3  # Bound catalog tool loops per turn
+max_catalog_searches_per_turn: 3  # Bound distinct taxonomy-scope searches per turn
 max_product_detail_reads_per_turn: 2  # Bound product-detail reads per turn
 ```
 

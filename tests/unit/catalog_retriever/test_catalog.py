@@ -308,6 +308,30 @@ def test_text_field_cannot_be_declared_as_a_hard_filter(tmp_path) -> None:
 
 
 @pytest.mark.parametrize(
+    "replacement",
+    [
+        "category: {type: enum, uses: [semantic, detail]}",
+        "category: {type: enum_list, uses: [filter, semantic, detail]}",
+    ],
+)
+def test_taxonomy_fields_must_be_scalar_enum_hard_filters(
+    tmp_path, replacement: str
+) -> None:
+    invalid_schema = SCHEMA.replace(
+        "category: {type: enum, uses: [filter, semantic, detail]}",
+        replacement,
+    )
+    data_path, schema_path = _write_source(
+        tmp_path, [_product()], schema=invalid_schema
+    )
+
+    with pytest.raises(
+        ValueError, match="taxonomy fields must be scalar enum hard filters: category"
+    ):
+        load_catalog(str(data_path), str(schema_path), image_enabled=False)
+
+
+@pytest.mark.parametrize(
     "reserved_field",
     ["pk", "text", "vector", "catalog_fingerprint"],
 )

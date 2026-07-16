@@ -72,6 +72,7 @@ interface CatalogCapabilities {
     detail: boolean;
     taxonomy: boolean;
     operators: string[];
+    source_fields: string[];
     coverage: {present: number; total: number};
     values: Array<{value: string; count: number}>;
     min_value?: number;
@@ -107,6 +108,9 @@ interface CatalogCapabilities {
 `fields` and nested `taxonomy` are authoritative. `filters` remains for
 compatibility and is generated from the same field roles. Do not add static
 catalog values to chain-server config, UI code, prompts, or the sidecar.
+Catalog ingestion requires each ordered taxonomy field to be a scalar `enum`
+with `filter` use so the agent's generic taxonomy envelope can always be
+enforced; the field names and observed values remain catalog-owned.
 
 ### QueryRequest
 
@@ -331,6 +335,10 @@ data: {"type": "metrics", "payload": {"timings": {"memory": 0.03, "catalog_searc
 data: [DONE]
 ```
 
+`model_usage.text_embedding.calls` counts embedding attempts made for the
+agent's single semantic query. A hybrid request that attempts its text fallback
+adds one more text-embedding call.
+
 ### POST `/query/timing`
 
 Processes a query and returns detailed timing information for performance analysis.
@@ -545,11 +553,12 @@ catalog retriever derives them from the loaded JSONL.
 Executes a structured text catalog search on the catalog service port, usually
 `http://localhost:8010/query/text`.
 
-The chain server bounds Deep Agents catalog tool loops with
-`max_catalog_searches_per_turn` so one shopping turn cannot keep probing the
-catalog indefinitely. Multi-item outfit requests should fit within the default
-cap by running one focused search per required item type and then synthesizing
-the response from those results.
+The agent-facing search tool accepts one semantic query and one required
+capability-derived taxonomy envelope. `max_catalog_searches_per_turn` bounds
+distinct taxonomy-scope executions; the same normalized scope can execute only
+once in a turn, so paraphrasing does not trigger another retrieval. The chain
+maps generic category/subcategory selections to advertised field names and
+sends the semantic query as a singleton `text` list.
 
 The chain server also bounds product-detail reads with
 `max_product_detail_reads_per_turn`. Detail reads are intended for direct
@@ -563,7 +572,7 @@ turns without forcing another catalog search.
 **Request Body:**
 ```json
 {
-  "text": ["practical work bag"],
+  "text": ["practical structured office tote"],
   "categories": [],
   "filters": {"subcategory": ["tote_bags"], "price": {"max": 60}},
   "k": 4,
@@ -571,9 +580,16 @@ turns without forcing another catalog search.
 }
 ```
 
+The catalog endpoint retains a text-list shape for direct/internal compatibility;
+the serving agent uses one entry. The catalog performs embedding generation,
+vector search, candidate fusion, product-ID deduplication, hard filtering,
+thresholding, and deterministic similarity ordering. It performs no
+shopper-language interpretation, query expansion, chat/completion call, or
+learned reranking.
+
 `candidate_k` is optional. When omitted, the current small-catalog default
-covers the complete active snapshot, applies hard filters, and then trims the
-final response to `k`.
+covers the complete active snapshot before hard filtering and final trimming to
+`k`.
 
 Unknown filter fields, values, taxonomy values, or operators return HTTP 422
 with the catalog's validation message. The chain server treats that response as
@@ -620,6 +636,7 @@ also ambiguous and returns HTTP 422.
 
 Accepts the same fields as `/query/text`, plus `image_base64`. Explicit category
 and price filters are hard filters for image and hybrid retrieval too.
+Image and hybrid results retain pooled similarity-score ordering.
 When the active capabilities do not advertise image or hybrid retrieval, an
 image-only assistant request asks the shopper for a text description instead
 of issuing an empty text search. An explicit image/hybrid mode is never silently

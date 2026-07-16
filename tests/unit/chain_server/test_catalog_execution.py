@@ -9,9 +9,10 @@ from shared.commerce_contracts import ProductSummary, SearchCatalogResult
 
 
 def test_execute_catalog_search_passes_filters_without_taxonomy_special_case() -> None:
-    captured = {}
+    captured = {"calls": 0}
 
     def fake_search(request, catalog_retriever_url, timeout_seconds=None):
+        captured["calls"] += 1
         captured["request"] = request
         captured["url"] = catalog_retriever_url
         captured["timeout"] = timeout_seconds
@@ -36,6 +37,7 @@ def test_execute_catalog_search_passes_filters_without_taxonomy_special_case() -
     assert execution.result.products[0].display_name == "Work Bag"
     assert captured["url"] == "http://catalog"
     assert captured["timeout"] == 5
+    assert captured["calls"] == 1
     assert captured["request"].queries == ["work bag"]
     assert captured["request"].categories == []
     assert captured["request"].filters == {
@@ -70,10 +72,35 @@ def test_hybrid_search_retries_text_without_image_when_image_has_no_products() -
         search_fn=fake_search,
     )
 
+    assert execution.fallback_attempted is True
     assert execution.fallback_used is True
     assert len(requests) == 2
     assert requests[0].image_base64 == "data:image/jpeg;base64,abc"
     assert requests[1].image_base64 == ""
+
+
+def test_hybrid_search_records_empty_text_fallback_attempt() -> None:
+    requests = []
+
+    def fake_search(request, catalog_retriever_url, timeout_seconds=None):
+        requests.append(request)
+        return SearchCatalogResult(ok=True, products=[])
+
+    execution = execute_catalog_search(
+        CatalogSearchPlan(
+            should_search=True,
+            semantic_queries=["work bag"],
+            search_mode="hybrid",
+            top_k=4,
+        ),
+        "http://catalog",
+        image_base64="data:image/jpeg;base64,abc",
+        search_fn=fake_search,
+    )
+
+    assert execution.fallback_attempted is True
+    assert execution.fallback_used is False
+    assert len(requests) == 2
 
 
 def test_no_search_plan_does_not_call_catalog() -> None:

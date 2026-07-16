@@ -20,30 +20,50 @@ The schema-driven catalog refactor is implemented:
   process lifetime, reuses the full object for deterministic validation, and
   sends the LLM a compact projection rather than refetching the API each turn;
   and
-- soft preferences remain semantic, while every must-have is validated as a
-  required constraint and unsupported strict requirements stop the search.
+- every agent catalog call requires one `semantic_query`, a `taxonomy` envelope,
+  and `required_constraints`. The allowed `taxonomy.category` and
+  `taxonomy.subcategory` values are generated from the cached catalog
+  capabilities rather than application taxonomy. Text search requires at least
+  one of those values; only image-only search may leave both arrays empty;
+- the chain maps those generic taxonomy roles to the catalog-advertised field
+  names, infers owning categories for a valid subcategory-only selection,
+  rejects incompatible category/subcategory selections, and applies the result
+  as deterministic hard filters; and
+- one normalized taxonomy scope may execute only once per shopper turn. A
+  repeated same-scope call is stopped even when its semantic wording changes;
+  distinct scopes remain bounded by `max_catalog_searches_per_turn`.
+
+The catalog service performs embeddings, filtering, and deterministic retrieval
+only. It makes no chat/completion call or shopper-language interpretation.
 
 The concise source of truth is
 [Schema-Driven Catalog Architecture](docs/CATALOG_REFACTOR_PLAN.md).
 
 ## Verification
 
-- Offline unit suite: 664 passed.
+- Offline unit suite: 670 passed.
 - Current capability API response: 147,792 bytes; compact LLM projection:
   5,769 bytes, down from 12,962 bytes before this change while retaining
   taxonomy keys, every current enum value, and semantic/filter roles.
 - UI production build: compiled successfully.
 - UI lint: 0 errors and 3 pre-existing warnings.
 - Docker Compose configuration: valid.
-- Fixed shopping evaluation: 48/48 turns completed with no request or Judge
-  errors.
-- The post-compaction WIP Judge average is 3.2292/5 versus 3.2083/5 on the
-  cached Staging baseline.
-- The WIP score-4-or-better rate is 22/48 versus 23/48 on Staging.
-- Mean, median, p95, and maximum latency all improved: 8.475s / 7.141s /
-  25.167s / 29.367s versus Staging's 14.922s / 8.863s / 57.367s / 94.609s.
-- Four internal memory-persistence calls timed out, although all shopper
-  responses and Judge scores completed; this remains a reliability caveat.
+- The latest live shopping evaluation and timing comparison are preserved in
+  the canonical local quality archive rather than versioned as source.
+- The latest 48-turn run improved Judge average from 3.0000 to 3.1667 and the
+  score-4-or-better count from 20 to 22 versus the removed multi-query WIP. All
+  48 turns completed and were timed. Mean / median / p95 were 15.638s / 12.439s
+  / 33.997s; one provider 429 plus its 60-second retry produced the 70.836s
+  maximum. There were no request or Judge errors. One Deep Agents recursion
+  failure returned grounded fallback products, and five memory operations
+  approached the 10-second timeout.
+- “Show me stylish clutches.” improved from 2/5 in 26.883s to 4/5 in 6.812s.
+  The catalog received one text query with `category=bags` and
+  `subcategory=clutches`. “Any closed shoes or boots?” also scored 4/5 and
+  returned both requested branches.
+- The run is promoted to the canonical local `current_wip` archive. Against
+  Staging, Judge average is 3.1667 versus 3.2083 with one fewer score>=4; mean
+  and median are slower, while p95 and maximum are more than 23 seconds lower.
 
 The comparison remains qualified because the catalog treatment changed. Two
 low Judge scores remain confirmed stale-reference cases: existing beige skirts
@@ -52,13 +72,22 @@ top contradicts an old “none available” Golden.
 
 ## Remaining Quality Risk
 
-Twelve turns still scored 2/5. The recurring risks are completeness for broad
-budget requests and context-sensitive matching across follow-up turns. The
-prior 117.286-second light-summer failure is resolved in this run: it returned
-products in 10.261 seconds and scored 3/5. The four memory-persistence timeouts
-also need follow-up outside this catalog-refactor scope.
+The corrected contract guarantees validation and enforcement of the scope and
+must-haves the agent supplies. It cannot prove that a language model copied
+every strict phrase from shopper language into `required_constraints`. For
+example, if the agent omitted “only cotton,” deterministic validation would
+have no omitted value to reject. Guaranteeing that separately would require
+another interpretation/review model call or fixed natural-language rules; both
+were intentionally excluded to avoid added latency and hard-coded language
+logic. The prompt and required tool fields are the chosen minimal boundary.
 
-The catalog architecture and its qualified quality evidence are ready to
-preserve in a feature commit. The raw Judge score should not be described as an
-unqualified catalog-quality gain until catalog-dependent Goldens are reconciled
-with the active inventory.
+After the live run, offline-only fail-closed checks were added for duplicate
+taxonomy values, partially incompatible category/subcategory sets, and taxonomy
+fields that are not scalar enum hard filters. These generic checks add no model
+call and do not alter the valid requests observed in the 48-turn run.
+
+The single grounded recursion fallback, five slow memory operations, and the
+provider-retry tail remain reliability observations rather than hidden reruns.
+
+The raw Judge score should not be described as an unqualified catalog-quality
+gain until catalog-dependent Goldens are reconciled with the active inventory.

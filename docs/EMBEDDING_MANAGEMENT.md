@@ -1,7 +1,9 @@
 # Catalog Embedding Management
 
 The catalog retriever owns text and image embedding creation. Clients send raw
-text or raw image data; they never send embedding vectors.
+text or raw image data; they never send embedding vectors. The service makes no
+chat/completion call and performs no LLM interpretation, query expansion, or
+learned reranking.
 
 ## Startup Synchronization
 
@@ -118,13 +120,21 @@ declared. See [Catalog Schema and Filters](CATALOG_FILTERS.md).
 
 ## Query Verification
 
+At query time, the serving agent sends one entry in the `text` list. It receives
+one text embedding and vector search, followed by deterministic candidate
+fusion, product-ID deduplication, hard filtering, thresholding, and similarity
+ordering. Direct/internal
+clients retain the list shape for compatibility, and supplied entries are
+embedded concurrently. `/query/image` retains pooled image/text similarity
+ordering.
+
 Text:
 
 ```bash
 curl -sS -X POST http://localhost:8010/query/text \
   -H 'Content-Type: application/json' \
   -d '{
-    "text": ["formal geometric jewelry"],
+    "text": ["formal geometric earrings"],
     "filters": {"price": {"lte": 200}},
     "k": 4
   }'
@@ -144,7 +154,7 @@ curl -sS -X POST http://localhost:8010/query/image \
 ```
 
 The default candidate window covers the complete active catalog before hard
-filtering and final `k` trimming.
+filtering, thresholding, and final deterministic trimming to `k`.
 
 ## Recovery
 

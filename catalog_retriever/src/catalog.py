@@ -91,6 +91,17 @@ class CatalogSchema(BaseModel):
             raise ValueError(
                 "taxonomy fields must be declared under fields: " + ", ".join(missing)
             )
+        invalid_taxonomy = [
+            name
+            for name in self.taxonomy.fields
+            if self.fields[name].type != "enum"
+            or "filter" not in self.fields[name].uses
+        ]
+        if invalid_taxonomy:
+            raise ValueError(
+                "taxonomy fields must be scalar enum hard filters: "
+                + ", ".join(invalid_taxonomy)
+            )
         reserved = sorted(
             (self.core_fields | set(self.fields) | set(self.taxonomy.fields))
             & _RESERVED_INDEX_FIELDS

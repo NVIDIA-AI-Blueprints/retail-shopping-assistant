@@ -7,9 +7,10 @@ The catalog retriever loads
 `shared/data/enriched_products.schema.yaml`. The JSONL supplies products and
 values; the sidecar supplies field meaning. Catalog ingestion, capabilities,
 filter validation, execution, and product lookup are deterministic. No LLM runs
-inside the catalog service or parses the raw sidecar. The shopper-facing LLM
-uses the catalog's advertised capabilities to express intent; deterministic
-code decides whether that intent can be enforced.
+inside the catalog service for interpretation, query expansion, or reranking.
+Its only model inference is configured text/image embedding generation. The
+shopper-facing LLM uses the catalog's advertised capabilities to express
+intent; deterministic code decides whether that intent can be enforced.
 
 ## At a Glance
 
@@ -19,21 +20,22 @@ code decides whether that intent can be enforced.
 | Index | Snapshot semantic documents and images | Fingerprinted Milvus collections | Catalog service |
 | Advertise | The same snapshot | `GET /capabilities`: fields, values, ranges, coverage, and taxonomy scopes | Catalog service |
 | Discover | First successful capability response, cached for the chain-server process lifetime | Full validation contract plus a compact prompt projection | Chain server |
-| Interpret | Shopper language + advertised contract | `semantic_query` + `required_constraints` | Shopper LLM |
-| Enforce | Structured intent + the same capabilities | Validated hard filters, or a refusal when a must-have cannot be enforced | Deterministic chain code |
-| Retrieve | Semantic query/image + validated filters | Product refs; optional deterministic details lookup | Catalog service |
+| Interpret | Shopper language + advertised contract | One required `semantic_query` + required `taxonomy` envelope + required `required_constraints` | Shopper LLM |
+| Enforce | Structured intent + the same capabilities | Taxonomy roles mapped to advertised fields plus validated hard filters, or a refusal | Deterministic chain code |
+| Retrieve | Singleton agent text query/image + validated filters | Product refs; optional deterministic details lookup | Catalog service |
 
 The agent depends on advertised capabilities, but capabilities are not trusted
 as executable instructions. The chain validates the agent's structured intent,
 and the catalog validates the resulting request again.
 
-The tool's JSON schema deliberately keeps `required_constraints` generic. The
-chain keeps the full capability object for deterministic validation, while the
-per-turn system prompt receives only a compact projection of filter names,
-types, allowed values or ranges, scoped field applicability, and
-semantic/searchability roles. Counts, coverage, and repeated scoped values stay
-out of the LLM prompt; generated catalog values are not baked into Python or a
-static tool schema.
+The agent tool schema requires `semantic_query`, `taxonomy`, and
+`required_constraints`. The taxonomy envelope has stable `category` and
+`subcategory` roles, but their enum values are generated from the cached
+capability contract. `required_constraints` stays generic for non-taxonomy
+must-haves. The chain keeps the full capability object for deterministic mapping
+and validation, while the system prompt receives a compact projection of other
+filter, semantic, and detail roles. Generated values are never baked into
+application code.
 
 Explicit image or hybrid intent is also validated against advertised retrieval
 modes and requires an attached image. It stops before retrieval rather than
@@ -74,8 +76,11 @@ If the current capabilities advertise `subcategory`, `primary_color`, and
 ```json
 {
   "semantic_query": "cotton skirt",
+  "taxonomy": {
+    "category": ["apparel"],
+    "subcategory": ["skirts"]
+  },
   "required_constraints": {
-    "subcategory": ["skirts"],
     "primary_color": ["beige"],
     "price": {"max": 100}
   }
@@ -99,9 +104,12 @@ Implementation map:
 
 - ingest and semantic documents: `catalog_retriever/src/catalog.py`;
 - generated capabilities: `catalog_retriever/src/capabilities.py`;
-- capability API and deterministic detail API: `catalog_retriever/src/main.py`;
+- capability/detail API and request models: `catalog_retriever/src/main.py`;
+- embedding retrieval, filtering, and deterministic ranking:
+  `catalog_retriever/src/retriever.py`;
 - lifecycle caching and compact prompt rendering: `chain_server/src/catalog_capabilities.py`;
-- intent validation: `chain_server/src/catalog_request.py`; and
+- intent validation: `chain_server/src/catalog_request.py`;
+- plan-to-request mapping: `chain_server/src/catalog_execution.py`; and
 - agent tool wiring: `chain_server/src/deepagents_runtime.py`.
 
 ## What Changed From the Old Catalog
@@ -178,6 +186,12 @@ taxonomy:
   fields: [category, subcategory]
 
 fields:
+  category:
+    type: enum
+    uses: [filter, semantic, detail]
+  subcategory:
+    type: enum
+    uses: [filter, semantic, detail]
   neckline:
     type: enum
     uses: [filter, semantic, detail]
@@ -205,6 +219,11 @@ uses are:
 Hard filters may use `enum`, `enum_list`, or `number`. Text fields are semantic
 or detail evidence; declaring a text hard filter fails schema validation rather
 than introducing an undefined matching rule.
+
+Every ordered taxonomy field must be a scalar `enum` with `filter` use because
+the agent's generic taxonomy envelope is enforced as a hard browse scope. The
+sidecar still supplies the field names, and ingestion still derives every
+category and subcategory value from the rows.
 
 For the current catalog, `composition` and `care` are semantic/detail text,
 not exact filters. All colors, patterns, taxonomy values, and category-specific
@@ -256,12 +275,33 @@ filters, values, taxonomy values, and operators return explicit validation
 errors.
 
 The chain server fetches capabilities on first use and caches the first
-successful response for its process lifetime. Every assistant turn reuses that
-full object for request-plan validation and receives only its compact prompt
-projection. Structured intent keeps soft/descriptive preferences in the
-semantic query and carries every must-have in `required_constraints`.
-Unsupported or invalid required constraints stop the search instead of being
-silently weakened; only validated entries become catalog hard filters.
+successful response for its process lifetime. Every agent search supplies
+exactly one semantic query, a required taxonomy envelope, and required
+non-taxonomy constraints. Text search requires at least one advertised category
+or subcategory; both arrays may be empty only for image-only search. Generic
+taxonomy roles map through `taxonomy.category_field` and
+`taxonomy.subcategory_field`;
+subcategory-only selections infer all owning categories. When both roles are
+present, every selected subcategory must belong to a selected category and
+every selected category must own at least one selected subcategory; partial or
+complete incompatibilities fail before retrieval.
+
+The runtime executes a normalized taxonomy scope at most once per turn,
+regardless of semantic paraphrasing. Different scopes may execute within the
+configured cap. The agent's one query is sent to the catalog as a singleton
+`text` list. Unsupported or invalid must-haves stop the search rather than being
+silently weakened.
+
+The catalog HTTP contract retains its text-list shape for compatibility with
+direct/internal clients. Multiple entries, when supplied directly, are embedded
+concurrently and combined deterministically before product-ID deduplication,
+shared filtering, thresholding, and final similarity ordering. The
+serving agent does not use that shape for query expansion. The catalog does not
+interpret “or,” invent queries, choose constraints, call a chat model, or run a
+learned reranker.
+
+The structure guarantees that supplied scope values are current and enforced;
+language-to-scope selection remains an agent judgment.
 
 ## Product Details and Refresh
 

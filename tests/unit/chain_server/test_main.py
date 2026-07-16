@@ -10,10 +10,12 @@ a lightweight stub before importing the module.
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import importlib
 from pathlib import Path
 import sys
 from types import ModuleType, SimpleNamespace
+from threading import Barrier
 from typing import Any, Dict, Iterator, List
 
 import pytest
@@ -26,6 +28,9 @@ from shared.commerce_contracts import (
     CartMutationResult,
     CatalogCapabilities,
     CatalogFilterCapability,
+    CatalogTaxonomyCapabilities,
+    CatalogTaxonomyCategory,
+    CatalogTaxonomySubcategory,
     CommerceError,
     GetProductDetailsResult,
     Money,
@@ -597,16 +602,142 @@ class TestDeepAgentsRuntimeMediaFailures:
 
 
 class TestDeepAgentsRuntimeRefs:
+    def test_search_catalog_tool_schema_is_generated_from_catalog_taxonomy(
+        self,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        capabilities = CatalogCapabilities(
+            catalog_id="custom",
+            retrieval_modes=["text"],
+            taxonomy=CatalogTaxonomyCapabilities(
+                category_field="department",
+                subcategory_field="product_type",
+                categories={
+                    "bags": CatalogTaxonomyCategory(
+                        product_count=2,
+                        subcategories={
+                            "clutches": CatalogTaxonomySubcategory(product_count=1),
+                            "satchels": CatalogTaxonomySubcategory(product_count=1),
+                        },
+                    ),
+                    "footwear": CatalogTaxonomyCategory(
+                        product_count=1,
+                        subcategories={
+                            "boots": CatalogTaxonomySubcategory(product_count=1),
+                        },
+                    ),
+                },
+            ),
+        )
+
+        schema_model = runtime_mod._search_catalog_tool_input_model(capabilities)
+        schema = schema_model.model_json_schema()
+
+        assert set(schema_model.model_fields) == {
+            "semantic_query",
+            "taxonomy",
+            "required_constraints",
+            "search_mode",
+        }
+        assert set(schema["required"]) == {
+            "semantic_query",
+            "taxonomy",
+            "required_constraints",
+        }
+        assert "semantic_queries" not in schema["properties"]
+        taxonomy_ref = schema["properties"]["taxonomy"]["$ref"]
+        taxonomy_schema = schema["$defs"][taxonomy_ref.rsplit("/", 1)[-1]]
+        assert set(taxonomy_schema["required"]) == {"category", "subcategory"}
+        assert taxonomy_schema["properties"]["category"]["items"]["enum"] == [
+            "bags",
+            "footwear",
+        ]
+        assert taxonomy_schema["properties"]["subcategory"]["items"]["enum"] == [
+            "boots",
+            "clutches",
+            "satchels",
+        ]
+
+        complete_request = {
+            "semantic_query": "stylish evening bag",
+            "taxonomy": {
+                "category": ["bags"],
+                "subcategory": ["clutches"],
+            },
+            "required_constraints": {},
+        }
+        request = schema_model.model_validate(complete_request)
+        assert request.taxonomy.category == ["bags"]
+        assert request.taxonomy.subcategory == ["clutches"]
+
+        for missing_field in ("semantic_query", "taxonomy", "required_constraints"):
+            with pytest.raises(ValueError):
+                schema_model.model_validate(
+                    {
+                        key: value
+                        for key, value in complete_request.items()
+                        if key != missing_field
+                    }
+                )
+
+        with pytest.raises(ValueError):
+            schema_model.model_validate(
+                {
+                    **complete_request,
+                    "taxonomy": {"category": ["bags"], "subcategory": ["wallets"]},
+                }
+            )
+        with pytest.raises(ValueError, match="Extra inputs are not permitted"):
+            schema_model.model_validate(
+                {
+                    **complete_request,
+                    "semantic_queries": ["clutch", "evening purse"],
+                }
+            )
+        with pytest.raises(
+            ValueError,
+            match="text catalog search requires an advertised category or subcategory",
+        ):
+            schema_model.model_validate(
+                {
+                    **complete_request,
+                    "taxonomy": {"category": [], "subcategory": []},
+                }
+            )
+
+        image_only = schema_model.model_validate(
+            {
+                "semantic_query": "",
+                "taxonomy": {"category": [], "subcategory": []},
+                "required_constraints": {},
+            }
+        )
+        assert image_only.taxonomy.category == []
+
     @pytest.mark.parametrize("legacy_field", ["filters", "strictness"])
     def test_search_catalog_tool_input_rejects_legacy_constraint_fields(
         self, legacy_field: str
     ) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
 
+        capabilities = CatalogCapabilities(
+            catalog_id="custom",
+            taxonomy=CatalogTaxonomyCapabilities(
+                category_field="department",
+                categories={
+                    "apparel": CatalogTaxonomyCategory(product_count=1),
+                },
+            ),
+        )
+        schema_model = runtime_mod._search_catalog_tool_input_model(capabilities)
+
         with pytest.raises(ValueError, match="Extra inputs are not permitted"):
-            runtime_mod.SearchCatalogToolInput.model_validate(
+            schema_model.model_validate(
                 {
                     "semantic_query": "dresses",
+                    "taxonomy": {"category": ["apparel"], "subcategory": []},
+                    "required_constraints": {},
                     legacy_field: (
                         {"price": {"max": 100}}
                         if legacy_field == "filters"
@@ -614,6 +745,120 @@ class TestDeepAgentsRuntimeRefs:
                     ),
                 }
             )
+
+    def test_taxonomy_mapping_uses_catalog_fields_and_validates_scope(self) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        capabilities = CatalogCapabilities(
+            catalog_id="custom",
+            taxonomy=CatalogTaxonomyCapabilities(
+                category_field="department",
+                subcategory_field="product_type",
+                categories={
+                    "accessories": CatalogTaxonomyCategory(
+                        product_count=1,
+                        subcategories={
+                            "clutches": CatalogTaxonomySubcategory(product_count=1),
+                        },
+                    ),
+                    "apparel": CatalogTaxonomyCategory(
+                        product_count=1,
+                        subcategories={
+                            "dresses": CatalogTaxonomySubcategory(product_count=1),
+                        },
+                    ),
+                    "bags": CatalogTaxonomyCategory(
+                        product_count=2,
+                        subcategories={
+                            "clutches": CatalogTaxonomySubcategory(product_count=1),
+                            "satchels": CatalogTaxonomySubcategory(product_count=1),
+                        },
+                    ),
+                },
+            ),
+        )
+
+        mapped, issues = runtime_mod._taxonomy_hard_constraints(
+            {"category": ["bags"], "subcategory": ["clutches"]},
+            capabilities,
+        )
+        inferred, inferred_issues = runtime_mod._taxonomy_hard_constraints(
+            {"category": [], "subcategory": ["clutches"]},
+            capabilities,
+        )
+        mismatched, mismatch_issues = runtime_mod._taxonomy_hard_constraints(
+            {"category": ["apparel"], "subcategory": ["clutches"]},
+            capabilities,
+        )
+        partially_mismatched, partial_mismatch_issues = (
+            runtime_mod._taxonomy_hard_constraints(
+                {
+                    "category": ["bags", "apparel"],
+                    "subcategory": ["clutches"],
+                },
+                capabilities,
+            )
+        )
+        normalized, normalized_issues = runtime_mod._taxonomy_hard_constraints(
+            {
+                "category": ["bags", "bags"],
+                "subcategory": ["clutches", "clutches"],
+            },
+            capabilities,
+        )
+
+        assert mapped == {
+            "department": ["bags"],
+            "product_type": ["clutches"],
+        }
+        assert issues == []
+        assert inferred == {
+            "department": ["accessories", "bags"],
+            "product_type": ["clutches"],
+        }
+        assert inferred_issues == []
+        assert mismatched == {
+            "department": ["apparel"],
+            "product_type": ["clutches"],
+        }
+        assert "not available in selected categories" in mismatch_issues[0]
+        assert partially_mismatched == {
+            "department": ["apparel", "bags"],
+            "product_type": ["clutches"],
+        }
+        assert "category 'apparel' has no selected subcategory" in (
+            partial_mismatch_issues
+        )
+        assert normalized == {
+            "department": ["bags"],
+            "product_type": ["clutches"],
+        }
+        assert normalized_issues == []
+
+    def test_catalog_model_usage_counts_attempted_hybrid_fallback(self) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+        from chain_server.src.catalog_request import CatalogSearchPlan
+
+        state = State(
+            user_id=111,
+            query="find a work bag like this",
+            image="data:image/jpeg;base64,QUFB",
+        )
+        plan = CatalogSearchPlan(
+            should_search=True,
+            semantic_queries=["structured office tote"],
+            search_mode="hybrid",
+        )
+
+        runtime_mod._record_catalog_model_usage(
+            state,
+            plan,
+            True,
+            fallback_attempted=True,
+        )
+
+        assert state.model_usage["text_embedding"]["calls"] == 2
+        assert state.model_usage["image_embedding"]["calls"] == 1
 
     def test_search_and_cart_read_tools_are_chainable(
         self,
@@ -683,6 +928,12 @@ class TestDeepAgentsRuntimeRefs:
                         values=["blue"],
                     )
                 },
+                taxonomy=CatalogTaxonomyCapabilities(
+                    category_field="category",
+                    categories={
+                        "dress": CatalogTaxonomyCategory(product_count=1),
+                    },
+                ),
             )
         )
         identity = runtime_mod.RequestIdentity(
@@ -705,12 +956,11 @@ class TestDeepAgentsRuntimeRefs:
             "remove_cart_item_tool",
             "view_cart_total_tool",
         }
-        assert (
-            tools_by_name["search_catalog_tool"].args_schema
-            is runtime_mod.SearchCatalogToolInput
-        )
-        assert set(runtime_mod.SearchCatalogToolInput.model_fields) == {
+        search_schema = tools_by_name["search_catalog_tool"].args_schema
+        assert search_schema is not runtime_mod.SearchCatalogToolInput
+        assert set(search_schema.model_fields) == {
             "semantic_query",
+            "taxonomy",
             "required_constraints",
             "search_mode",
         }
@@ -735,10 +985,20 @@ class TestDeepAgentsRuntimeRefs:
         assert "execute" in excluded_tools
         assert "Retrieval modes: text" in captured["system_prompt"]
         assert "values dress" in captured["system_prompt"]
-        assert "Put every shopper must-have in `required_constraints`" in (
+        assert "Put every non-taxonomy shopper must-have" in (
             captured["system_prompt"]
         )
-        assert "Semantic relevance ranks candidates" in captured["system_prompt"]
+        assert "Semantic relevance cannot guarantee" in captured["system_prompt"]
+        assert "Every search call must include exactly one `semantic_query`" in (
+            captured["system_prompt"]
+        )
+        assert "`taxonomy.category` and `taxonomy.subcategory`" in (
+            captured["system_prompt"]
+        )
+        assert "One normalized taxonomy scope can execute only once" in (
+            captured["system_prompt"]
+        )
+        assert "semantic_queries" not in captured["system_prompt"]
         assert "top blouse sweater" not in captured["system_prompt"]
         assert "Cart mutation scope must match" in captured["system_prompt"]
         assert "Selection, approval, or styling preference is not cart intent" in (
@@ -844,11 +1104,17 @@ class TestDeepAgentsRuntimeRefs:
             retrieval_modes=["text", "image", "hybrid"],
             image_search_enabled=True,
             filters={
-                "category": CatalogFilterCapability(
+                "department": CatalogFilterCapability(
                     type="enum",
                     operators=["in"],
-                    source_fields=["subcategory"],
-                    values=["bag", "dress"],
+                    source_fields=["department"],
+                    values=["apparel", "bags"],
+                ),
+                "product_type": CatalogFilterCapability(
+                    type="enum",
+                    operators=["in"],
+                    source_fields=["product_type"],
+                    values=["dresses", "satchels"],
                 ),
                 "price": CatalogFilterCapability(
                     type="number",
@@ -862,6 +1128,24 @@ class TestDeepAgentsRuntimeRefs:
                     values=["blue", "black"],
                 ),
             },
+            taxonomy=CatalogTaxonomyCapabilities(
+                category_field="department",
+                subcategory_field="product_type",
+                categories={
+                    "apparel": CatalogTaxonomyCategory(
+                        product_count=1,
+                        subcategories={
+                            "dresses": CatalogTaxonomySubcategory(product_count=1),
+                        },
+                    ),
+                    "bags": CatalogTaxonomyCategory(
+                        product_count=1,
+                        subcategories={
+                            "satchels": CatalogTaxonomySubcategory(product_count=1),
+                        },
+                    ),
+                },
+            ),
         )
         captured_plan = {}
 
@@ -880,6 +1164,7 @@ class TestDeepAgentsRuntimeRefs:
                         )
                     ],
                 ),
+                fallback_attempted=False,
                 fallback_used=False,
             )
 
@@ -918,9 +1203,9 @@ class TestDeepAgentsRuntimeRefs:
         tools_by_name = {fn.__name__: fn for fn in captured["tools"]}
 
         result = tools_by_name["search_catalog_tool"](
-            semantic_query="practical work bag",
+            semantic_query="practical structured work bag",
+            taxonomy={"category": ["bags"], "subcategory": ["satchels"]},
             required_constraints={
-                "category": ["bag"],
                 "price": {"max": 60},
                 "color": ["blue"],
             },
@@ -934,9 +1219,12 @@ class TestDeepAgentsRuntimeRefs:
         assert state.model_usage["text_embedding"]["status"] == "used"
         assert state.model_usage["text_embedding"]["calls"] == 1
         assert "image_embedding" not in state.model_usage
-        assert captured_plan["plan"].semantic_queries == ["practical work bag"]
+        assert captured_plan["plan"].semantic_queries == [
+            "practical structured work bag"
+        ]
         assert captured_plan["plan"].hard_filters == {
-            "category": ["bag"],
+            "department": ["bags"],
+            "product_type": ["satchels"],
             "price": {"max": 60.0},
             "color": ["blue"],
         }
@@ -944,6 +1232,7 @@ class TestDeepAgentsRuntimeRefs:
 
         required_constraint_failure = tools_by_name["search_catalog_tool"](
             semantic_query="dresses",
+            taxonomy={"category": ["apparel"], "subcategory": ["dresses"]},
             required_constraints={"composition": "cotton"},
         )
 
@@ -961,7 +1250,11 @@ class TestDeepAgentsRuntimeRefs:
         runtime._create_agent(image_state, identity)
         image_search_tool = {fn.__name__: fn for fn in captured["tools"]}["search_catalog_tool"]
 
-        image_result = image_search_tool(semantic_query="", required_constraints={})
+        image_result = image_search_tool(
+            semantic_query="",
+            taxonomy={"category": [], "subcategory": []},
+            required_constraints={},
+        )
 
         assert "SEARCH_RESULT_GROUNDING_NOTE" in image_result
         assert "PRODUCT_REF: prod_1" in image_result
@@ -1019,6 +1312,7 @@ class TestDeepAgentsRuntimeRefs:
                         )
                     ],
                 ),
+                fallback_attempted=False,
                 fallback_used=False,
             )
 
@@ -1038,7 +1332,7 @@ class TestDeepAgentsRuntimeRefs:
             fake_execute_catalog_search,
         )
 
-        base_config.max_catalog_searches_per_turn = 1
+        base_config.max_catalog_searches_per_turn = 2
         runtime = runtime_mod.DeepAgentsRuntime(base_config)
         capability_calls = []
 
@@ -1047,7 +1341,43 @@ class TestDeepAgentsRuntimeRefs:
             return CatalogCapabilities(
                 catalog_id="fashion",
                 retrieval_modes=["text"],
-                filters={},
+                filters={
+                    "department": CatalogFilterCapability(
+                        type="enum",
+                        operators=["in"],
+                        source_fields=["department"],
+                        values=["bags", "footwear"],
+                    ),
+                    "product_type": CatalogFilterCapability(
+                        type="enum",
+                        operators=["in"],
+                        source_fields=["product_type"],
+                        values=["boots", "clutches", "satchels"],
+                    ),
+                },
+                taxonomy=CatalogTaxonomyCapabilities(
+                    category_field="department",
+                    subcategory_field="product_type",
+                    categories={
+                        "bags": CatalogTaxonomyCategory(
+                            product_count=2,
+                            subcategories={
+                                "clutches": CatalogTaxonomySubcategory(
+                                    product_count=1
+                                ),
+                                "satchels": CatalogTaxonomySubcategory(
+                                    product_count=1
+                                ),
+                            },
+                        ),
+                        "footwear": CatalogTaxonomyCategory(
+                            product_count=1,
+                            subcategories={
+                                "boots": CatalogTaxonomySubcategory(product_count=1),
+                            },
+                        ),
+                    },
+                ),
             )
 
         runtime._catalog_capabilities = SimpleNamespace(
@@ -1062,15 +1392,64 @@ class TestDeepAgentsRuntimeRefs:
             request_id="request-a",
         )
 
-        runtime._create_agent(State(user_id=111, query="hello"), identity)
+        state = State(user_id=111, query="hello")
+        runtime._create_agent(state, identity)
         search_tool = {fn.__name__: fn for fn in captured["tools"]}["search_catalog_tool"]
 
-        first = search_tool(semantic_query="dress")
-        second = search_tool(semantic_query="shoes")
+        start = Barrier(3)
 
-        assert "PRODUCT_REF: prod_1" in first
-        assert "STOP_TOOL_USE: Catalog search limit reached" in second
+        def concurrent_search(query: str) -> str:
+            start.wait()
+            return search_tool(
+                semantic_query=query,
+                taxonomy={
+                    "category": ["bags"],
+                    "subcategory": ["clutches"],
+                },
+                required_constraints={},
+            )
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            first = executor.submit(concurrent_search, "dress")
+            second = executor.submit(concurrent_search, "shoes")
+            start.wait()
+            results = [first.result(), second.result()]
+
+        assert sum("PRODUCT_REF: prod_1" in result for result in results) == 1
+        assert sum(
+            "already searched" in result.lower()
+            for result in results
+        ) == 1
         assert calls == 1
+        assert state.model_usage["text_embedding"]["calls"] == 1
+
+        duplicate_values = search_tool(
+            semantic_query="another clutch paraphrase",
+            taxonomy={
+                "category": ["bags", "bags"],
+                "subcategory": ["clutches", "clutches"],
+            },
+            required_constraints={},
+        )
+        assert "already searched" in duplicate_values.lower()
+        assert calls == 1
+
+        different_scope = search_tool(
+            semantic_query="structured office satchel",
+            taxonomy={"category": ["bags"], "subcategory": ["satchels"]},
+            required_constraints={},
+        )
+        assert "PRODUCT_REF: prod_2" in different_scope
+        assert calls == 2
+
+        over_cap = search_tool(
+            semantic_query="ankle boots",
+            taxonomy={"category": ["footwear"], "subcategory": ["boots"]},
+            required_constraints={},
+        )
+        assert "STOP_TOOL_USE: Catalog search limit reached" in over_cap
+        assert calls == 2
+        assert state.model_usage["text_embedding"]["calls"] == 2
         assert capability_calls == [{}]
 
     def test_product_refs_are_cached_by_conversation(

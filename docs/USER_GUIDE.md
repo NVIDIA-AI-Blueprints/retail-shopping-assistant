@@ -421,7 +421,11 @@ allowed enum values. The chain-server view at
 `http://localhost:8009/capabilities` updates after the chain server restarts.
 
 **Q: How accurate are the search results?**
-A: The AI uses advanced language models to understand your queries and find relevant products. Results improve with more specific descriptions.
+A: The assistant model interprets your request using the catalog's advertised
+capabilities. The catalog itself makes no generative-LLM call: it creates
+text/image embeddings, applies exact filters, and deterministically fuses
+retrieval results. More specific descriptions usually improve semantic
+matching.
 
 **Q: Can I save my preferences?**
 A: Currently, preferences are not saved between sessions. Each session starts fresh.

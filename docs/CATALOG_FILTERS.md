@@ -30,6 +30,12 @@ taxonomy:
   fields: [category, subcategory]
 
 fields:
+  category:
+    type: enum
+    uses: [filter, semantic, detail]
+  subcategory:
+    type: enum
+    uses: [filter, semantic, detail]
   primary_color:
     type: enum
     uses: [filter, semantic, detail]
@@ -61,6 +67,12 @@ Uses:
 The sidecar declares field meaning only. It must never enumerate values or say
 that a field applies to a particular category. Ingestion derives values,
 ranges, coverage, and category scope from the active rows.
+
+Taxonomy fields are the generic agent's mandatory browse scope, so ingestion
+requires each one to be a scalar `enum` with `filter` use. This is a structural
+contract, not a fixed taxonomy: field names and all values still come from the
+sidecar and active rows. Non-taxonomy fields may independently add or remove
+`filter` use.
 
 ## Dynamic Capabilities
 
@@ -101,7 +113,7 @@ code.
 | New category, subcategory, enum, or tag value | Update JSONL, then use the coordinated restart below |
 | Optional field missing on some products | No schema change; update JSONL, then use the coordinated restart below |
 | Entirely new field | Add its type/uses to the sidecar, then use the coordinated restart below |
-| Field should no longer be filterable | Remove `filter` from its sidecar uses, then use the coordinated restart below |
+| Non-taxonomy field should no longer be filterable | Remove `filter` from its sidecar uses, then use the coordinated restart below |
 
 Unknown source fields are preserved but exposed as `unclassified`. They cannot
 silently become search text or hard filters.
@@ -113,16 +125,23 @@ inventory-absence claims with the active catalog snapshot.
 
 ## Direct Catalog-Service Query Example
 
-This is the internal catalog API shape. The agent-facing tool instead uses
-`semantic_query` plus `required_constraints`; the chain validates that intent
-and converts supported must-haves into this `filters` payload.
+This is the internal catalog API shape. The agent-facing tool requires one
+`semantic_query`, a capability-derived `taxonomy` envelope, and
+`required_constraints`. The chain maps `taxonomy.category` and
+`taxonomy.subcategory` to the actual advertised taxonomy field names and
+combines them with validated non-taxonomy must-haves in `filters`. The serving
+agent sends a singleton `text` list; direct catalog clients retain the list
+shape for compatibility. Duplicate taxonomy values are normalized away. If
+both roles are supplied, each selected category must own at least one selected
+subcategory and each subcategory must belong to a selected category; otherwise
+the search stops before retrieval.
 
 Text requests keep semantic meaning in `text` and exact requirements in
 `filters`:
 
 ```json
 {
-  "text": ["flowing formal dress"],
+  "text": ["flowing structured formal dress"],
   "filters": {
     "subcategory": ["dresses"],
     "neckline": ["v_neck"],
@@ -131,6 +150,10 @@ Text requests keep semantic meaning in `text` and exact requirements in
   "k": 4
 }
 ```
+
+The text entry is embedded and retrieved; candidates are fused, deduplicated by
+product ID, hard-filtered, thresholded, and similarity-sorted. The catalog performs no LLM
+interpretation, query expansion, or learned reranking.
 
 Different fields use AND. Multiple enum/list values within one field use OR.
 Unsupported fields, values, taxonomy values, and operators return HTTP 422

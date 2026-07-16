@@ -41,10 +41,10 @@ Top-level orchestration is via `docker-compose.yaml`; optional local NIM model c
 - Shared request/state models: `chain_server/src/agenttypes.py`
 - `graph.py`, `planner.py`, `retriever.py`, `cart.py`, `chatter.py`, and `summarizer.py` are legacy compatibility paths, not the serving runtime.
 
-- Catalog API entrypoints: `catalog_retriever/src/main.py`
+- Catalog API entrypoints and request validation: `catalog_retriever/src/main.py`
 - JSONL loading/search-document construction: `catalog_retriever/src/catalog.py`
 - Dynamic catalog capabilities: `catalog_retriever/src/capabilities.py`
-- Embedding/retrieval/reranking/filtering: `catalog_retriever/src/retriever.py`
+- Embedding retrieval, deterministic ranking, and filtering: `catalog_retriever/src/retriever.py`
 - Image/base64 helpers: `catalog_retriever/src/utils.py`
 
 - Memory API and SQLite schema (`CartItem` includes `price`, with idempotent migration): `memory_retriever/src/main.py`
@@ -185,9 +185,13 @@ Key env vars:
 - The serving cart tools require a `PRODUCT_REF` from catalog search for adds and
   a `CART_LINE_ID` from cart state for removals. Adds revalidate the product
   against the active catalog before changing memory state.
-- Catalog retriever applies explicit hard filters, including category and price,
-  over the complete current small-catalog candidate set for text, image, and
-  hybrid search before trimming to top-k. Field roles come from the catalog
+- Catalog retriever fuses candidate lists, deduplicates by product ID, applies
+  explicit hard filters (including taxonomy and price), then performs
+  deterministic thresholding, similarity ranking, and top-k trimming. The
+  current small-catalog candidate window covers the complete active snapshot.
+  The serving agent
+  sends one semantic text query per catalog call. The catalog makes no
+  chat/completion call or LLM interpretation. Field roles come from the catalog
   sidecar; values, ranges, and taxonomy scopes come from the JSONL and are
   exposed through `/capabilities`, not chain-server config.
 - Catalog startup fingerprints the JSONL, sidecar, embedding models, image

@@ -58,7 +58,8 @@ The application follows a microservices architecture:
   required capability-derived taxonomy envelope, deterministic constraint
   mapping, and same-scope search deduplication
 - **Catalog Retriever**: Generative-LLM-free text/image embedding search, hard
-  filtering, and deterministic result ranking
+  filtering, normalized COSINE relevance scores, and deterministic result
+  ranking
 - **Memory Retriever**: User context and cart management
 - **Guardrails**: Content safety and moderation
 - **UI**: React-based frontend interface

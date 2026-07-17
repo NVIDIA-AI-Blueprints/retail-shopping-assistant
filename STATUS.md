@@ -12,6 +12,8 @@ The schema-driven catalog refactor is implemented:
   improves how existing products can be discovered and verified;
 - startup builds one validated snapshot for indexing, capabilities, filtering,
   product details, and index-rebuild fingerprinting;
+- raw Milvus COSINE scores are normalized to `[0, 1]` relevance scores before
+  applying the configured similarity threshold;
 - catalog values and category-specific field availability are derived from the
   active rows rather than hard-coded in application logic;
 - the catalog publishes fields, values, ranges, coverage, taxonomy scopes, and

@@ -123,10 +123,11 @@ declared. See [Catalog Schema and Filters](CATALOG_FILTERS.md).
 At query time, the serving agent sends one entry in the `text` list. It receives
 one text embedding and vector search, followed by deterministic candidate
 fusion, product-ID deduplication, hard filtering, thresholding, and similarity
-ordering. Direct/internal
-clients retain the list shape for compatibility, and supplied entries are
-embedded concurrently. `/query/image` retains pooled image/text similarity
-ordering.
+ordering. Milvus COSINE scores are normalized from `[-1, 1]` to `[0, 1]`
+relevance scores before the configured similarity threshold is applied.
+Direct/internal clients retain the list shape for compatibility, and supplied
+entries are embedded concurrently. `/query/image` retains pooled image/text
+similarity ordering.
 
 Text:
 

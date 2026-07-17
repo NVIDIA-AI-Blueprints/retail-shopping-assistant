@@ -658,6 +658,9 @@ class TestDeepAgentsRuntimeRefs:
             "clutches",
             "satchels",
         ]
+        assert {"const": "text", "type": "string"} in schema["properties"][
+            "search_mode"
+        ]["anyOf"]
 
         complete_request = {
             "semantic_query": "stylish evening bag",
@@ -670,6 +673,11 @@ class TestDeepAgentsRuntimeRefs:
         request = schema_model.model_validate(complete_request)
         assert request.taxonomy.category == ["bags"]
         assert request.taxonomy.subcategory == ["clutches"]
+
+        with pytest.raises(ValueError):
+            schema_model.model_validate(
+                {**complete_request, "search_mode": "typo-mode"}
+            )
 
         for missing_field in ("semantic_query", "taxonomy", "required_constraints"):
             with pytest.raises(ValueError):
@@ -1228,6 +1236,17 @@ class TestDeepAgentsRuntimeRefs:
             "price": {"max": 60.0},
             "color": ["blue"],
         }
+        assert captured_plan["calls"] == 1
+
+        invalid_mode_failure = tools_by_name["search_catalog_tool"](
+            semantic_query="practical structured work bag",
+            taxonomy={"category": ["bags"], "subcategory": ["satchels"]},
+            required_constraints={},
+            search_mode="typo-mode",
+        )
+
+        assert "does not match current capabilities" in invalid_mode_failure
+        assert "search_mode" in invalid_mode_failure
         assert captured_plan["calls"] == 1
 
         required_constraint_failure = tools_by_name["search_catalog_tool"](

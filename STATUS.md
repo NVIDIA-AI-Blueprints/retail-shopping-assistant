@@ -1,6 +1,6 @@
 # Project Status
 
-Updated: 2026-07-16
+Updated: 2026-07-17
 
 ## Current Milestone
 
@@ -25,6 +25,9 @@ The schema-driven catalog refactor is implemented:
   `taxonomy.subcategory` values are generated from the cached catalog
   capabilities rather than application taxonomy. Text search requires at least
   one of those values; only image-only search may leave both arrays empty;
+- the optional search-mode enum is generated from the catalog's advertised
+  retrieval modes, and an explicit unknown or unsupported mode stops before
+  retrieval instead of becoming an automatic default;
 - the chain maps those generic taxonomy roles to the catalog-advertised field
   names, infers owning categories for a valid subcategory-only selection,
   rejects incompatible category/subcategory selections, and applies the result

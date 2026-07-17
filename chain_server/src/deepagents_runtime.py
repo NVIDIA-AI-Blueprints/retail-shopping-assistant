@@ -80,6 +80,10 @@ _PRODUCT_DETAIL_GROUNDING_NOTE = (
     "sizing, colorways, and outdoor performance are unavailable unless explicitly "
     "listed. Do not infer them from product names or prior marketing text."
 )
+_UNSUPPORTED_SEARCH_MODE_MESSAGE = (
+    "The requested search mode is not available for the active catalog. "
+    "Ask the shopper to use an advertised mode."
+)
 _GROUNDING_EDITOR_SYSTEM_PROMPT = """You are a final response editor for a retail shopping assistant.
 
 Rewrite the draft response only as needed so it is grounded in TOOL EVIDENCE
@@ -222,9 +226,15 @@ class SearchCatalogToolInput(BaseModel):
 def _search_catalog_tool_input_model(
     capabilities: CatalogCapabilities,
 ) -> type[SearchCatalogToolInput]:
-    """Create one tool schema whose taxonomy enums come from the active catalog."""
+    """Create one tool schema whose enums come from the active catalog."""
 
     taxonomy = capabilities.taxonomy
+    advertised_search_modes = tuple(dict.fromkeys(capabilities.retrieval_modes))
+    search_mode_type = (
+        Literal.__getitem__(advertised_search_modes)
+        if advertised_search_modes
+        else str
+    )
     category_values = (
         sorted(taxonomy.categories, key=str.casefold)
         if taxonomy.category_field
@@ -272,6 +282,13 @@ def _search_catalog_tool_input_model(
                     "category or subcategory; both arrays may be empty only for an "
                     "image-only search."
                 ),
+            ),
+        ),
+        search_mode=(
+            search_mode_type | None,
+            Field(
+                default=None,
+                description="Optional search mode advertised by the active catalog.",
             ),
         ),
     )
@@ -665,13 +682,20 @@ class DeepAgentsRuntime:
                     + ". Ask the shopper to choose an advertised product type."
                 )
 
+            normalized_search_mode = _tool_search_mode(request.search_mode)
+            if request.search_mode is not None and (
+                normalized_search_mode is None
+                or request.search_mode not in capabilities.retrieval_modes
+            ):
+                return _UNSUPPORTED_SEARCH_MODE_MESSAGE
+
             intent = CatalogSearchIntent(
                 semantic_query=request.semantic_query,
                 required_constraints={
                     **request.required_constraints,
                     **taxonomy_constraints,
                 },
-                search_mode=_tool_search_mode(request.search_mode),
+                search_mode=normalized_search_mode,
             )
             plan = build_catalog_search_plan(
                 intent,
@@ -692,10 +716,7 @@ class DeepAgentsRuntime:
                         "Ask the shopper to describe what they want to find."
                     )
                 if plan.no_search_reason == "unsupported_search_mode":
-                    return (
-                        "The requested search mode is not available for the active "
-                        "catalog. Ask the shopper to use an advertised mode."
-                    )
+                    return _UNSUPPORTED_SEARCH_MODE_MESSAGE
                 if plan.no_search_reason == "missing_image_for_search_mode":
                     return (
                         "That search mode requires an attached image. Ask the shopper "

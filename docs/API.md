@@ -28,8 +28,13 @@ The Retail Shopping Assistant API provides a comprehensive interface for an AI-p
 ## 🌐 Base URL
 
 ```
-http://localhost:8000
+http://localhost:3000/api   # normal UI/nginx entrypoint
+http://localhost:8009       # direct chain-server development endpoint
 ```
+
+The catalog retriever is an internal service at `http://localhost:8010`. See
+[Catalog Architecture](CATALOG_REFACTOR_PLAN.md) for the ingest, capability,
+agent-discovery, and validation flow.
 
 ## 🔐 Authentication
 
@@ -43,19 +48,53 @@ The catalog retriever owns its filter and metadata capability contract. Chain
 server request-building code should consume this contract instead of inferring
 filterability from product text or hard-coded category lists.
 
-Filter fields are configured in `shared/configs/catalog_retriever/config.yaml`
-under `filter_registry`. Enum values are never configured statically; they are
-discovered from the configured CSV `source_fields` after the catalog data is
-loaded. See [Catalog Filter Configuration](CATALOG_FILTERS.md) for the operator
-workflow.
+Field roles come from `shared/data/enriched_products.schema.yaml`. Enum/list
+values, numeric ranges, taxonomy nodes, and field coverage are discovered from
+the configured JSONL. See [Catalog Schema and Filters](CATALOG_FILTERS.md).
+
+The chain server caches the first successfully fetched full contract for its
+process lifetime and uses that object for deterministic request validation.
+The LLM receives only a compact projection of the fields, values, taxonomy
+keys/scopes, and semantic/filter roles it needs; the full response below is not
+copied into every prompt.
 
 ```typescript
 interface CatalogCapabilities {
   catalog_id: string;
+  product_count: number;
   retrieval_modes: Array<'text' | 'image' | 'hybrid'>;
   image_search_enabled: boolean;
+  fields: Record<string, {
+    type: 'enum' | 'enum_list' | 'number' | 'text' | 'unclassified';
+    observed_type?: string;
+    filterable: boolean;
+    searchable: boolean;
+    detail: boolean;
+    taxonomy: boolean;
+    operators: string[];
+    source_fields: string[];
+    coverage: {present: number; total: number};
+    values: Array<{value: string; count: number}>;
+    min_value?: number;
+    max_value?: number;
+  }>;
+  taxonomy: {
+    category_field?: string;
+    subcategory_field?: string;
+    categories: Record<string, {
+      product_count: number;
+      filters: Record<string, unknown>;
+      semantic_fields: Record<string, unknown>;
+      subcategories: Record<string, {
+        product_count: number;
+        filters: Record<string, unknown>;
+        semantic_fields: Record<string, unknown>;
+      }>;
+    }>;
+  };
+  // Flat compatibility projection of fields where filterable=true.
   filters: Record<string, {
-    type: 'enum' | 'number' | 'text';
+    type: 'enum' | 'enum_list' | 'number' | 'text';
     operators: string[];
     source_fields: string[];
     values?: string[];
@@ -66,13 +105,12 @@ interface CatalogCapabilities {
 }
 ```
 
-The default fashion catalog declares `category` as an enum filter sourced from
-the product `subcategory` column, `price` as a numeric filter with `min_price`
-and `max_price` request aliases. Catalogs that can strictly filter by color,
-material, size, or other metadata should declare those fields under
-`filter_registry` too. Do not add static enum values to chain-server config,
-UI code, or prompts. Example enum values in documentation are illustrative
-only; runtime values come from `/capabilities`.
+`fields` and nested `taxonomy` are authoritative. `filters` remains for
+compatibility and is generated from the same field roles. Do not add static
+catalog values to chain-server config, UI code, prompts, or the sidecar.
+Catalog ingestion requires each ordered taxonomy field to be a scalar `enum`
+with `filter` use so the agent's generic taxonomy envelope can always be
+enforced; the field names and observed values remain catalog-owned.
 
 ### QueryRequest
 
@@ -275,7 +313,7 @@ Accept: text/event-stream
 
 **Example Request:**
 ```bash
-curl -X POST "http://localhost:8000/query/stream" \
+curl -X POST "http://localhost:8009/query/stream" \
   -H "Content-Type: application/json" \
   -H "Accept: text/event-stream" \
   -d '{
@@ -297,6 +335,10 @@ data: {"type": "metrics", "payload": {"timings": {"memory": 0.03, "catalog_searc
 data: [DONE]
 ```
 
+`model_usage.text_embedding.calls` counts embedding attempts made for the
+agent's single semantic query. A hybrid request that attempts its text fallback
+adds one more text-embedding call.
+
 ### POST `/query/timing`
 
 Processes a query and returns detailed timing information for performance analysis.
@@ -307,7 +349,7 @@ Processes a query and returns detailed timing information for performance analys
 
 **Example Request:**
 ```bash
-curl -X POST "http://localhost:8000/query/timing" \
+curl -X POST "http://localhost:8009/query/timing" \
   -H "Content-Type: application/json" \
   -d '{
     "user_id": 123,
@@ -342,6 +384,11 @@ controls. Catalog filter values come from the catalog retriever after
 the configured catalog data is loaded; they are not maintained in chain-server
 category config.
 
+The `catalog` member is the chain server's process-lifetime cached contract,
+not a per-request read of the catalog service. After replacing a catalog,
+verify the live contract on port `8010`, then restart the chain server before
+using this aggregate endpoint on port `8009`.
+
 The concrete enum values shown below are illustrative response data. Do not
 copy those values into chain-server, UI, or prompt configuration as static
 catalog truth.
@@ -353,7 +400,7 @@ raw media limit plus JSON overhead. The default nginx configuration uses
 configuration also keeps API read/send timeouts at 300 seconds so longer media
 turns are not cut off before the SSE response is emitted.
 
-**Response:**
+**Abridged response:**
 ```json
 {
   "media_input": {
@@ -389,15 +436,16 @@ turns are not cut off before the SSE response is emitted.
     }
   },
   "catalog": {
-    "catalog_id": "fashion_products_extended",
+    "catalog_id": "fashion_products",
+    "product_count": 205,
     "retrieval_modes": ["text", "image", "hybrid"],
     "image_search_enabled": true,
     "filters": {
       "category": {
         "type": "enum",
         "operators": ["in"],
-        "source_fields": ["subcategory"],
-        "values": ["bag", "dress", "shoes"]
+        "source_fields": ["category"],
+        "values": ["apparel", "bags", "eyewear", "footwear", "jewelry"]
       },
       "price": {
         "type": "number",
@@ -406,14 +454,25 @@ turns are not cut off before the SSE response is emitted.
         "min_value": 39.9,
         "max_value": 269.99,
         "request_aliases": {"min": "min_price", "max": "max_price"}
-      },
-      "color": {
-        "type": "enum",
-        "operators": ["in"],
-        "source_fields": ["color"],
-        "values": ["black", "green"]
       }
-    }
+    },
+    "fields": {
+      "care": {
+        "type": "text",
+        "observed_type": null,
+        "filterable": false,
+        "searchable": true,
+        "detail": true,
+        "taxonomy": false,
+        "operators": [],
+        "source_fields": ["care"],
+        "coverage": {"present": 24, "total": 205},
+        "values": [],
+        "min_value": null,
+        "max_value": null
+      }
+    },
+    "taxonomy": {"category_field": "category", "subcategory_field": "subcategory", "categories": {}}
   }
 }
 ```
@@ -422,29 +481,29 @@ turns are not cut off before the SSE response is emitted.
 
 Catalog retriever exposes a separate capability endpoint on the catalog service
 port, usually `http://localhost:8010/capabilities`. This endpoint describes
-which catalog metadata fields are valid hard filters.
-
-For enum filters, `values` is generated from the loaded CSV rows. For numeric
-filters, `min_value` and `max_value` are generated from the loaded CSV rows.
-`filter_registry` specifies field names and types only.
+which fields are searchable, filterable, or available as details, including
+their observed taxonomy scopes. It is the live contract for the catalog
+snapshot loaded by that catalog-service process; the chain-server aggregate on
+port `8009` is its cached copy.
 
 **Response:** `CatalogCapabilities`
 
 **Example Response:**
-The concrete enum values shown below are illustrative response data. The
-catalog retriever derives them from the loaded CSV rows.
+The concrete values shown below are abridged observed response data. The
+catalog retriever derives them from the loaded JSONL.
 
 ```json
 {
-  "catalog_id": "fashion_products_extended",
+  "catalog_id": "fashion_products",
+  "product_count": 205,
   "retrieval_modes": ["text", "image", "hybrid"],
   "image_search_enabled": true,
   "filters": {
     "category": {
       "type": "enum",
       "operators": ["in"],
-      "source_fields": ["subcategory"],
-      "values": ["bag", "dress", "shoes"]
+      "source_fields": ["category"],
+      "values": ["apparel", "bags", "eyewear", "footwear", "jewelry"]
     },
     "price": {
       "type": "number",
@@ -453,12 +512,37 @@ catalog retriever derives them from the loaded CSV rows.
       "min_value": 39.9,
       "max_value": 269.99,
       "request_aliases": {"min": "min_price", "max": "max_price"}
-    },
-    "color": {
-      "type": "enum",
-      "operators": ["in"],
-      "source_fields": ["color"],
-      "values": ["black", "green"]
+    }
+  },
+  "fields": {
+    "care": {
+      "type": "text",
+      "filterable": false,
+      "searchable": true,
+      "detail": true,
+      "taxonomy": false,
+      "operators": [],
+      "source_fields": ["care"],
+      "coverage": {"present": 24, "total": 205},
+      "values": []
+    }
+  },
+  "taxonomy": {
+    "category_field": "category",
+    "subcategory_field": "subcategory",
+    "categories": {
+      "apparel": {
+        "product_count": 96,
+        "filters": {},
+        "semantic_fields": {},
+        "subcategories": {
+          "dresses": {
+            "product_count": 32,
+            "filters": {"neckline": {"values": [{"value": "v_neck", "count": 19}]}},
+            "semantic_fields": {}
+          }
+        }
+      }
     }
   }
 }
@@ -469,11 +553,12 @@ catalog retriever derives them from the loaded CSV rows.
 Executes a structured text catalog search on the catalog service port, usually
 `http://localhost:8010/query/text`.
 
-The chain server bounds Deep Agents catalog tool loops with
-`max_catalog_searches_per_turn` so one shopping turn cannot keep probing the
-catalog indefinitely. Multi-item outfit requests should fit within the default
-cap by running one focused search per required item type and then synthesizing
-the response from those results.
+The agent-facing search tool accepts one semantic query and one required
+capability-derived taxonomy envelope. `max_catalog_searches_per_turn` bounds
+distinct taxonomy-scope executions; the same normalized scope can execute only
+once in a turn, so paraphrasing does not trigger another retrieval. The chain
+maps generic category/subcategory selections to advertised field names and
+sends the semantic query as a singleton `text` list.
 
 The chain server also bounds product-detail reads with
 `max_product_detail_reads_per_turn`. Detail reads are intended for direct
@@ -487,32 +572,51 @@ turns without forcing another catalog search.
 **Request Body:**
 ```json
 {
-  "text": ["practical work bag"],
-  "categories": ["bag"],
-  "filters": {"price": {"max": 60}},
+  "text": ["practical structured office tote"],
+  "categories": [],
+  "filters": {"subcategory": ["tote_bags"], "price": {"max": 60}},
   "k": 4,
-  "candidate_k": 20
+  "candidate_k": 205
 }
 ```
 
-`candidate_k` is optional. When omitted, the catalog retriever searches a wider
-candidate window than `k`, applies hard filters over that wider window, and then
-trims the final response to `k`.
+The catalog endpoint retains a text-list shape for direct/internal compatibility;
+the serving agent uses one entry. The catalog performs embedding generation,
+vector search, candidate fusion, product-ID deduplication, hard filtering,
+thresholding, and deterministic similarity ordering. It performs no
+shopper-language interpretation, query expansion, chat/completion call, or
+learned reranking.
+
+`candidate_k` is optional. When omitted, the current small-catalog default
+covers the complete active snapshot before hard filtering and final trimming to
+`k`.
+
+Unknown filter fields, values, taxonomy values, or operators return HTTP 422
+with the catalog's validation message. The chain server treats that response as
+non-retryable and does not silently rerun a weakened query. Numeric bounds must
+be finite numbers, not booleans; if any supplied bound is invalid, the complete
+filter request is rejected instead of partially applied. `min`/`gte` are lower-
+bound aliases and `max`/`lte` are upper-bound aliases. Supplying both aliases
+for the same bound is ambiguous and returns HTTP 422. The same rule applies
+across representations: for example, `price.min` cannot be combined with the
+top-level `min_price` compatibility alias. Legacy `categories` may accompany
+non-taxonomy filters, but combining it with an explicit taxonomy filter is
+also ambiguous and returns HTTP 422.
 
 **Response:**
 ```json
 {
   "texts": ["Work Bag | structured tote | accessories,bag\nPRICE: 59.0"],
-  "ids": ["123"],
+  "ids": ["generated:abc123"],
   "similarities": [0.91],
   "names": ["Work Bag"],
   "images": ["/images/work_bag.jpg"],
   "products": [
     {
-      "product_id": "123",
+      "product_id": "generated:abc123",
       "display_name": "Work Bag",
       "description": "structured tote",
-      "category": "bag",
+      "category": "tote_bags",
       "price": {"amount": 59.0, "currency": "USD"},
       "image_url": "/images/work_bag.jpg",
       "attributes": {"similarity": 0.91}
@@ -520,7 +624,7 @@ trims the final response to `k`.
   ],
   "diagnostics": {
     "requested_top_k": 4,
-    "candidate_k": 20,
+    "candidate_k": 205,
     "after_filter_count": 1,
     "returned_count": 1
   },
@@ -532,6 +636,43 @@ trims the final response to `k`.
 
 Accepts the same fields as `/query/text`, plus `image_base64`. Explicit category
 and price filters are hard filters for image and hybrid retrieval too.
+Image and hybrid results retain pooled similarity-score ordering.
+When the active capabilities do not advertise image or hybrid retrieval, an
+image-only assistant request asks the shopper for a text description instead
+of issuing an empty text search. An explicit image/hybrid mode is never silently
+downgraded to text and requires an attached image; unsupported or incomplete
+mode requests stop before retrieval.
+
+Request models reject unknown fields, including client-supplied embedding
+vectors.
+
+### Catalog Retriever GET `/products/{product_id}`
+
+Returns deterministic details for one source product ID from the active
+snapshot. Core mapped roles such as identity, name, description, image, and
+price are returned in top-level contract fields; other source fields marked
+`detail` in the sidecar appear under `attributes`. Accepted source IDs are
+nonempty canonical strings safe for one URL path segment, so the ID returned by
+search round-trips exactly through this endpoint. A missing ID returns HTTP 404.
+
+```json
+{
+  "product_id": "generated:abc123",
+  "display_name": "Classic Black Patent Leather Purse",
+  "description": "A structured black patent leather tote...",
+  "category": "tote_bags",
+  "price": {"amount": 49.9, "currency": "USD"},
+  "image_url": "/images/Classic_Black_Patent_Leather_Purse.jpg",
+  "attributes": {
+    "care": "spot clean with a damp cloth",
+    "composition": "patent leather",
+    "primary_color": "black",
+    "structure": "structured"
+  },
+  "variants": [],
+  "source_uri": null
+}
+```
 
 ### GET `/health`
 
@@ -589,7 +730,7 @@ interface ErrorResponse {
 | Status Code | Description | Example |
 |-------------|-------------|---------|
 | 400 | Bad Request | Invalid request format |
-| 422 | Validation Error | Missing required fields |
+| 422 | Validation Error | Missing fields or unsupported catalog constraint |
 | 500 | Internal Server Error | Service unavailable |
 | 503 | Service Unavailable | NIM containers not ready |
 
@@ -616,7 +757,7 @@ Currently, the API does not implement rate limiting. For production deployments,
 
 **Find dresses by description:**
 ```bash
-curl -X POST "http://localhost:8000/query/stream" \
+curl -X POST "http://localhost:8009/query/stream" \
   -H "Content-Type: application/json" \
   -d '{
     "user_id": 123,
@@ -626,7 +767,7 @@ curl -X POST "http://localhost:8000/query/stream" \
 
 **Search by price range:**
 ```bash
-curl -X POST "http://localhost:8000/query/stream" \
+curl -X POST "http://localhost:8009/query/stream" \
   -H "Content-Type: application/json" \
   -d '{
     "user_id": 123,
@@ -638,7 +779,7 @@ curl -X POST "http://localhost:8000/query/stream" \
 
 **Add item to cart:**
 ```bash
-curl -X POST "http://localhost:8000/query/stream" \
+curl -X POST "http://localhost:8009/query/stream" \
   -H "Content-Type: application/json" \
   -d '{
     "user_id": 123,
@@ -651,7 +792,7 @@ curl -X POST "http://localhost:8000/query/stream" \
 
 **View cart contents:**
 ```bash
-curl -X POST "http://localhost:8000/query/stream" \
+curl -X POST "http://localhost:8009/query/stream" \
   -H "Content-Type: application/json" \
   -d '{
     "user_id": 123,
@@ -669,7 +810,7 @@ curl -X POST "http://localhost:8000/query/stream" \
 
 **Remove item from cart:**
 ```bash
-curl -X POST "http://localhost:8000/query/stream" \
+curl -X POST "http://localhost:8009/query/stream" \
   -H "Content-Type: application/json" \
   -d '{
     "user_id": 123,
@@ -689,7 +830,7 @@ curl -X POST "http://localhost:8000/query/stream" \
 
 **Search by uploaded image:**
 ```bash
-curl -X POST "http://localhost:8000/query/stream" \
+curl -X POST "http://localhost:8009/query/stream" \
   -H "Content-Type: application/json" \
   -d '{
     "user_id": 123,
@@ -703,7 +844,7 @@ curl -X POST "http://localhost:8000/query/stream" \
 
 **General questions:**
 ```bash
-curl -X POST "http://localhost:8000/query/stream" \
+curl -X POST "http://localhost:8009/query/stream" \
   -H "Content-Type: application/json" \
   -d '{
     "user_id": 123,
@@ -714,7 +855,7 @@ curl -X POST "http://localhost:8000/query/stream" \
 
 **Style advice:**
 ```bash
-curl -X POST "http://localhost:8000/query/stream" \
+curl -X POST "http://localhost:8009/query/stream" \
   -H "Content-Type: application/json" \
   -d '{
     "user_id": 123,
@@ -726,7 +867,7 @@ curl -X POST "http://localhost:8000/query/stream" \
 
 **Get detailed timing information:**
 ```bash
-curl -X POST "http://localhost:8000/query/timing" \
+curl -X POST "http://localhost:8009/query/timing" \
   -H "Content-Type: application/json" \
   -d '{
     "user_id": 123,
@@ -742,7 +883,7 @@ curl -X POST "http://localhost:8000/query/timing" \
 class ShoppingAssistantAPI {
   private baseUrl: string;
 
-  constructor(baseUrl: string = 'http://localhost:8000') {
+  constructor(baseUrl: string = 'http://localhost:8009') {
     this.baseUrl = baseUrl;
   }
 
@@ -812,7 +953,7 @@ import json
 import sseclient
 
 class ShoppingAssistantAPI:
-    def __init__(self, base_url: str = "http://localhost:8000"):
+    def __init__(self, base_url: str = "http://localhost:8009"):
         self.base_url = base_url
 
     def stream_query(self, request: dict):

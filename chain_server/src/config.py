@@ -106,7 +106,7 @@ class ChainServerConfig(BaseModel):
     )
     max_catalog_searches_per_turn: int = Field(
         default=3,
-        description="Maximum catalog search tool calls allowed for one assistant turn",
+        description="Maximum distinct catalog taxonomy scopes allowed per turn",
     )
     max_product_detail_reads_per_turn: int = Field(
         default=2,
@@ -176,7 +176,7 @@ class ChainServerConfig(BaseModel):
 
     @validator('max_catalog_searches_per_turn')
     def validate_max_catalog_searches_per_turn(cls, v):
-        """Validate per-turn catalog search cap is positive."""
+        """Validate the per-turn catalog taxonomy-scope budget is positive."""
         if v <= 0:
             raise ValueError("max_catalog_searches_per_turn must be positive")
         return v

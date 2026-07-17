@@ -7,6 +7,8 @@ Main FastAPI application for the Shopping Assistant API.
 This module provides the main API endpoints for the shopping assistant,
 including query processing and streaming responses.
 """
+import asyncio
+
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -233,7 +235,7 @@ async def health_check():
 async def capabilities():
     """Return runtime capabilities that the UI should enforce."""
     media_config = config.media_input
-    catalog = assistant_runtime.catalog_capabilities()
+    catalog = await asyncio.to_thread(assistant_runtime.catalog_capabilities)
     return {
         "media_input": {
             "enabled": media_config.enabled,

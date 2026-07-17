@@ -17,18 +17,18 @@ tests/
 │   ├── memory_retriever/
 │   └── guardrails/
 ├── integration/            # End-to-end scripts driving live services
+│   ├── conversations/
+│   │   └── shopping/
+│   │       └── conv_*.yaml # Committed shopping golden conversations
 │   ├── conversation_collector.py
-│   ├── output_collector.py
 │   ├── response_quality.py
 │   ├── time_breakdown.py
-│   ├── quality_plots.py
-│   └── run_tests.sh
-├── evaluation/             # Challenger/Judge evaluation workflows
-│   ├── PLAN.md
-│   ├── eval_config.yaml
-│   ├── judge_rules.md
-│   └── datasets/
-└── examples/               # YAML conversation scenarios consumed by integration scripts
+│   └── quality_plots.py
+└── evaluation/             # Challenger/Judge evaluation workflows
+    ├── PLAN.md
+    ├── eval_config.yaml
+    ├── judge_rules.md
+    └── datasets/
 ```
 
 ## Unit tests
@@ -42,25 +42,18 @@ test or via fixtures in `conftest.py`.
 
 ### Running the unit suite
 
-Install the development dependencies into a virtual environment, then run
-`pytest` from the repo root:
+The repository runner selects the local development/test environment and sets
+host-side shared paths:
 
 ```bash
-python3 -m venv .venv-tests
-source .venv-tests/bin/activate
-pip install -r tests/requirements-dev.txt
-
-cd tests
-pytest -q
+python skills/retail-test-runner/scripts/run_retail_tests.py unit
 ```
 
-Common invocations:
+Pass focused pytest arguments after `--pytest-args`:
 
 ```bash
-pytest unit/chain_server                 # single service
-pytest unit/chain_server/test_cart.py    # single file
-pytest -k "test_add_to_cart"             # keyword match
-pytest --cov=chain_server --cov=catalog_retriever --cov=memory_retriever --cov=guardrails
+python skills/retail-test-runner/scripts/run_retail_tests.py unit \
+  --pytest-args -q unit/catalog_retriever
 ```
 
 ### Writing new unit tests
@@ -87,14 +80,15 @@ Guidelines:
 
 The `integration/` folder contains scripts that exercise the full system
 via its public HTTP endpoints. They assume all services are running
-(typically via `docker compose up`) and are driven by YAML scenario files
-under `examples/`.
+(typically via Docker Compose or the local runner). The committed source of
+truth is `integration/conversations/shopping/conv_*.yaml`.
 
-Typical flow:
+Run endpoint conversations and timing without the paid Judge stage:
 
 ```bash
-export TEST_PATH="2025_08_16"
-bash integration/run_tests.sh
+python skills/retail-test-runner/scripts/run_retail_tests.py integration \
+  --test-path shopping \
+  --skip-quality
 ```
 
 The files under `integration/conversations/<TEST_PATH>/conv_*.yaml` are the
@@ -103,51 +97,14 @@ fixed queries plus expected answers. Generated response output, judge output,
 plots, timing summaries, and comparisons are ignored artifacts and should not
 be committed unless that is an explicit project decision.
 
-For commit-scoped quality and timing tracking, run the deterministic retail
-test runner with an explicit result directory. To capture a previous-commit
-baseline, run from that commit or a clean checkout and use a stable label such
-as the short SHA:
-
-```bash
-BASELINE_SHA="$(git rev-parse --short HEAD)"
-python skills/retail-test-runner/scripts/run_retail_tests.py integration \
-  --test-path shopping \
-  --result-directory "$BASELINE_SHA" \
-  --archive-label "$BASELINE_SHA"
-```
-
-To capture the latest working-tree run and generate a local comparison:
-
-```bash
-python skills/retail-test-runner/scripts/run_retail_tests.py integration \
-  --test-path shopping \
-  --result-directory results \
-  --archive-label latest \
-  --compare-with "$BASELINE_SHA"
-```
-
 Endpoint results are written to the ignored directory
-`integration/conversations/<TEST_PATH>/<RESULT_DIRECTORY>/`. LLM-as-judge
+`integration/conversations/<TEST_PATH>/results/`. LLM-as-judge
 outputs are written to the ignored directory
-`integration/conversations/<TEST_PATH>/quality/<RESULT_DIRECTORY>/`.
-
-The runner also archives each integration run under the ignored local archive
-root `integration/conversations/<TEST_PATH>/quality_progress/`. Set
-`RETAIL_TEST_ARCHIVE_ROOT` or pass `--archive-root` to choose a different local
-location. The archive contains the golden YAML snapshot, actual result YAML,
-copied `timing_summary.png`, computed `timing_summary.json`, judge summaries
-when quality runs, metadata, and a short `summary.md`.
-
-For the default `results` directory, the runner automatically preserves the
-existing `results/` output as `quality_progress/runs/previous/` before a new
-integration run starts. After the run succeeds, the new output is archived as
-`quality_progress/runs/latest/`, and a comparison report is written under
-`quality_progress/comparisons/`. Quality progress is appended to
-`quality_progress/progress.jsonl` and summarized in
-`quality_progress/progress.md`.
-
-Use `--no-local-archive` only when intentionally skipping the ignored local
-quality/timing trail.
+`integration/conversations/<TEST_PATH>/quality/results/`. Archive completed
+shopping runs and their quality/timing comparisons outside the repository under
+`~/exec-briefs/retail-shopping-assistant/quality/shopping/`; the canonical
+archive stores judged output under `judge/`. In-repo generated folders are
+scratch output, not the reported quality artifact.
 
 The judge stage requires explicit environment configuration:
 

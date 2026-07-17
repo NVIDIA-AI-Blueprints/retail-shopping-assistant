@@ -23,7 +23,7 @@ services rather than local files or agent-owned memory.
 | Tool | Risk class | Source of truth | Status |
 | --- | --- | --- | --- |
 | `search_catalog_tool` | `read_only_catalog` | Catalog retriever | Registered |
-| `get_product_details_tool` | `read_only_catalog_cache` | Per-conversation product-ref cache | Registered |
+| `get_product_details_tool` | `read_only_catalog` | Active catalog snapshot; conversation cache authorizes the ref | Registered |
 | `get_cart_tool` | `read_only_cart` | Memory cart service | Registered |
 | `view_cart_total_tool` | `computed_read_cart` | Memory cart service plus cached line prices | Registered |
 | `add_cart_items_tool` | `mutating_cart` | Memory cart service | Registered |
@@ -34,7 +34,7 @@ services rather than local files or agent-owned memory.
 | Class | Meaning | Rules |
 | --- | --- | --- |
 | `read_only_catalog` | Reads catalog data without shopper state mutation. | Broadly available to discovery, styling, visual, comparison, and budget skills. |
-| `read_only_catalog_cache` | Reads product facts for refs already returned in this conversation. | Requires a known `PRODUCT_REF`; not a durable SKU lookup. |
+| `read_only_catalog_cache` | Legacy/cache-only catalog read classification. | No active registered tool uses the cache as product-detail truth. |
 | `read_only_cart` | Reads the authoritative cart for the scoped `cart_id`. | Safe for cart summaries and budget checks. |
 | `computed_read_cart` | Computes over authoritative cart reads. | Do arithmetic in code, not model prose. |
 | `mutating_cart` | Changes cart contents. | Requires explicit shopper intent, valid refs, and service-side success before claiming the change. |
@@ -48,23 +48,32 @@ Purpose: Product discovery and recommendation over the catalog.
 
 Inputs:
 
-- `semantic_query`: Product meaning only, such as product type, style,
-  occasion, material, silhouette, or visual descriptors.
-- `filters`: Hard filters declared by catalog capabilities only. Numeric
-  filters use objects such as `{"max": 100}`. Enum filters must use exact
-  catalog capability values.
-- `strictness`: `hard` when the shopper states an enforceable constraint,
-  otherwise `unspecified`.
+- `semantic_query` (required): One soft/descriptive product query. Product words
+  may be repeated for relevance, but this field never enforces taxonomy or
+  another must-have. Use an empty string only for image-only search.
+- `taxonomy` (required): `category` and `subcategory` arrays whose allowed values
+  are generated from cached catalog capabilities. Use exact advertised values;
+  text search requires at least one value, while image-only search may use two
+  empty arrays. A subcategory-only value maps to all owning categories; an
+  incompatible category/subcategory pair is rejected.
+- `required_constraints` (required): Non-taxonomy shopper must-haves. Advertised
+  enum values are exact and numeric constraints use `min`/`max`. Unsupported
+  strict requirements are retained so validation refuses rather than weakens
+  the request. A preference such as "maybe cotton" stays in `semantic_query`.
 - `search_mode`: Optional `text`, `image`, or `hybrid` when supported by
   catalog capabilities.
 
 Preconditions:
 
-- Requires either semantic product text or an attached image.
-- Hard filters must come from catalog capabilities.
-- The per-turn catalog search cap applies. When reached, the tool returns a
-  `STOP_TOOL_USE` instruction so the agent should answer from evidence already
-  collected instead of continuing the loop.
+- Requires either product text or an attached image.
+- Capability-derived taxonomy mapping and all other hard-filter validation
+  complete before retrieval. Unsupported fields, values, and operators stop the
+  search instead of becoming semantic relevance.
+- One normalized taxonomy scope may execute once per turn. Duplicate values are
+  removed before the scope key is reserved, and partially incompatible
+  category/subcategory sets are rejected before retrieval. A repeated same-scope
+  call returns `STOP_TOOL_USE` even when `semantic_query` is paraphrased;
+  different scopes share the configured search cap.
 
 Outputs:
 
@@ -75,25 +84,29 @@ Outputs:
   to the agent loop.
 - Product payloads are also appended to the runtime product result stream.
 - Product image URLs are appended to the runtime retrieved-image map.
+- The serving agent sends one text query per catalog call. The catalog performs
+  no shopper-language interpretation, query expansion, or learned reranking.
 
 Side effects:
 
 - Caches returned `PRODUCT_REF` values inside the scoped conversation for later
   product details or cart add calls.
-- Records the most recent search result order so explicit follow-up add
-  requests such as "add that dress to my cart" can resolve the intended product
-  without another model loop.
+- Cached refs let later product-detail or cart calls resolve a previously found
+  product without another catalog search. Each shopper turn still runs the
+  assistant model.
 - Records catalog timing and model-usage metadata.
 
 Failure behavior:
 
 - Returns a short tool-readable failure string such as unavailable catalog,
   invalid search request, catalog failure, or no matching products.
+- Returns without calling catalog search when a required constraint cannot be
+  enforced by the active capabilities.
 - If the Deep Agents loop fails after catalog search has returned products, the
   runtime clears the failed thread checkpoint and returns a grounded partial
   product summary instead of a generic shopper-facing error.
 
-Allowed skill use:
+Permitted skill roles (only registered skills are active):
 
 - `product-discovery`
 - `outfit-styling`
@@ -103,8 +116,9 @@ Allowed skill use:
 
 Current limitations:
 
-- Returned product IDs are current retriever result refs, not durable SKUs.
-- Broad multi-item outfit turns must stay within the configured search cap.
+- Returned product IDs are source `record_id` values. The current feed does not
+  guarantee those generated IDs across catalog replacements.
+- Broad multi-item outfit turns share the distinct taxonomy-scope budget.
 
 ### `get_product_details_tool`
 
@@ -127,10 +141,10 @@ Outputs:
 
 - Product name, category, brand when available, price, and image URL when
   available.
-- A structured-details-unavailable note for material, care, dimensions,
-  closures, fit, sizing, colorways, and outdoor performance when those fields
-  are not explicitly available. The tool intentionally does not expose raw
-  catalog marketing copy as factual detail evidence.
+- Generic structured attributes marked `detail` by the active catalog sidecar,
+  including exact composition or care text when present. Missing attributes
+  remain unavailable; the tool does not infer them or expose raw marketing copy
+  as factual detail evidence.
 - Product image URLs are appended to the runtime retrieved-image map so the UI
   can show images for detail follow-ups without requiring a repeat search.
 - Cart items are rehydrated from the conversation's cached product refs when
@@ -153,8 +167,10 @@ Side effects:
 Failure behavior:
 
 - Returns guidance to search the catalog first when the ref is unknown.
+- Returns guidance to search again when the cached ref is absent from the
+  active catalog snapshot.
 
-Allowed skill use:
+Permitted skill roles (only registered skills are active):
 
 - `product-discovery`
 - `outfit-styling`
@@ -164,8 +180,8 @@ Allowed skill use:
 
 Current limitations:
 
-- This is not a durable product detail endpoint. It deepens known search results
-  from the conversation cache.
+- Source IDs in the current feed are generated and are not guaranteed across
+  catalog replacements. Lookup is deterministic within the active snapshot.
 
 ### `get_cart_tool`
 
@@ -192,7 +208,7 @@ Failure behavior:
 
 - Returns an empty cart if the cart read fails through the wrapper.
 
-Allowed skill use:
+Permitted skill roles (only registered skills are active):
 
 - `budget-shopping`
 - `cart-management`
@@ -228,7 +244,7 @@ Failure behavior:
 
 - Reports an empty cart total when no cart lines are available.
 
-Allowed skill use:
+Permitted skill roles (only registered skills are active):
 
 - `budget-shopping`
 - `cart-management`
@@ -296,7 +312,7 @@ Failure behavior:
 - Partial success is allowed and must be described accurately in the final
   assistant response.
 
-Allowed skill use:
+Permitted skill roles (only registered skills are active):
 
 - `cart-management`
 
@@ -342,7 +358,7 @@ Failure behavior:
 - Returns a clear missing-line or mutation failure message and must not be
   described as success.
 
-Allowed skill use:
+Permitted skill roles (only registered skills are active):
 
 - `cart-management`
 
@@ -387,7 +403,7 @@ but they are not registered tools in the active Deep Agents runtime:
 | `get_store_policy_tool` | Planned. No registered runtime tool. |
 | `update_cart_item_tool` | Planned contract. No registered runtime tool. |
 | `load_customer_persona_tool` | Planned. No registered runtime tool. |
-| Durable product detail lookup | Planned. Current product details are cache-backed. |
+| Cross-catalog durable product identity | Planned; requires an upstream stable ID guarantee. |
 | Inventory, variant, and size availability lookup | Not implemented as a tool. |
 | Checkout, order, payment, address, or account mutation | Not implemented and should be treated as `future_high_risk`. |
 | Outfit styling tool | Not a tool. Styling is model behavior guided by skills over catalog results. |

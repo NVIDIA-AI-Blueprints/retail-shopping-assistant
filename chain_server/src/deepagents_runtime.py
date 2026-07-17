@@ -5,18 +5,27 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 import hashlib
 import json
 import logging
 import os
 from pathlib import Path
+from threading import Lock
 import time
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Literal
 import uuid
 
 from langgraph.checkpoint.memory import MemorySaver
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    create_model,
+    model_validator,
+)
 import requests
 
 from .agenttypes import Cart, State
@@ -33,13 +42,17 @@ from .catalog_request import (
 from .commerce_tools import (
     add_cart_item,
     get_cart,
+    get_product_details,
     remove_cart_item,
 )
 from .media_perception import MediaPerceptionClient
 from shared.commerce_contracts import (
     AddCartItemInput,
     CatalogCapabilities,
+    CommerceError,
     GetCartInput,
+    GetProductDetailsInput,
+    ProductDetail,
     ProductSummary,
     RemoveCartItemInput,
 )
@@ -66,6 +79,10 @@ _PRODUCT_DETAIL_GROUNDING_NOTE = (
     "the fields shown below. Material, care, dimensions, closures, fit, "
     "sizing, colorways, and outdoor performance are unavailable unless explicitly "
     "listed. Do not infer them from product names or prior marketing text."
+)
+_UNSUPPORTED_SEARCH_MODE_MESSAGE = (
+    "The requested search mode is not available for the active catalog. "
+    "Ask the shopper to use an advertised mode."
 )
 _GROUNDING_EDITOR_SYSTEM_PROMPT = """You are a final response editor for a retail shopping assistant.
 
@@ -135,32 +152,235 @@ _INTERNAL_SHOPPER_REPLACEMENTS = (
 )
 
 
+class CatalogTaxonomyToolInput(BaseModel):
+    """Catalog-derived taxonomy roles used by the agent search tool."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    category: list[str] = Field(
+        ...,
+        description=(
+            "Exact advertised category values required by the shopper. Use an "
+            "empty list only when subcategory supplies the text-search scope or "
+            "the search is image-only."
+        ),
+    )
+    subcategory: list[str] = Field(
+        ...,
+        description=(
+            "Exact advertised subcategory values required by the shopper. Use an "
+            "empty list when category supplies the text-search scope or the search "
+            "is image-only."
+        ),
+    )
+
+
 class SearchCatalogToolInput(BaseModel):
+    """Stable shape narrowed to catalog-specific enums for each agent turn."""
+
+    model_config = ConfigDict(extra="forbid")
+
     semantic_query: str = Field(
-        default="",
+        ...,
         description=(
-            "Semantic product search text only. Include product type, style, "
-            "occasion, material, visual descriptors, or other product meaning. "
-            "Exclude hard-filter constraints such as budget, exact enum values, "
-            "strictness words, or quantity limits; put enforceable constraints "
-            "in filters."
+            "One soft or descriptive product search string for semantic ranking. "
+            "Product type may be repeated for relevance, but taxonomy and other "
+            "must-haves are enforced only by the structured fields below. Use an "
+            "empty string only for an image-only search."
         ),
     )
-    filters: dict[str, Any] | None = Field(
-        default=None,
+    taxonomy: CatalogTaxonomyToolInput = Field(
+        ...,
         description=(
-            "Hard filters from Catalog capabilities only. Numeric filters use "
-            "objects like {'max': 100}; enum filters use exact listed values."
+            "Required catalog-derived taxonomy selection. Allowed category and "
+            "subcategory values come from the active catalog capabilities."
         ),
     )
-    strictness: str = Field(
-        default="unspecified",
-        description="Use 'hard' when the shopper states an enforceable constraint.",
+    required_constraints: dict[str, Any] = Field(
+        ...,
+        description=(
+            "Every non-taxonomy shopper must-have as a structured field and value, "
+            "including requirements that Catalog capabilities mark semantic/detail-"
+            "only or do not advertise. Advertised numeric constraints use objects "
+            "like {'max': 100}; advertised enum constraints use exact listed values. "
+            "Unsupported requirements are preserved so validation can refuse the "
+            "search instead of silently weakening it."
+        ),
     )
     search_mode: str | None = Field(
         default=None,
         description="Optional search mode from Catalog capabilities.",
     )
+
+    @model_validator(mode="after")
+    def text_search_has_taxonomy_scope(self) -> "SearchCatalogToolInput":
+        if self.semantic_query.strip() and not (
+            self.taxonomy.category or self.taxonomy.subcategory
+        ):
+            raise ValueError(
+                "text catalog search requires an advertised category or subcategory"
+            )
+        return self
+
+
+def _search_catalog_tool_input_model(
+    capabilities: CatalogCapabilities,
+) -> type[SearchCatalogToolInput]:
+    """Create one tool schema whose enums come from the active catalog."""
+
+    taxonomy = capabilities.taxonomy
+    advertised_search_modes = tuple(dict.fromkeys(capabilities.retrieval_modes))
+    search_mode_type = (
+        Literal.__getitem__(advertised_search_modes)
+        if advertised_search_modes
+        else str
+    )
+    category_values = (
+        sorted(taxonomy.categories, key=str.casefold)
+        if taxonomy.category_field
+        else []
+    )
+    subcategory_values = (
+        sorted(
+            {
+                name
+                for category in taxonomy.categories.values()
+                for name in category.subcategories
+            },
+            key=str.casefold,
+        )
+        if taxonomy.subcategory_field
+        else []
+    )
+
+    category_type, category_field = _taxonomy_list_field(
+        category_values,
+        role="category",
+        advertised_field=taxonomy.category_field,
+    )
+    subcategory_type, subcategory_field = _taxonomy_list_field(
+        subcategory_values,
+        role="subcategory",
+        advertised_field=taxonomy.subcategory_field,
+    )
+    taxonomy_model = create_model(
+        "CatalogTaxonomySelection",
+        __config__=ConfigDict(extra="forbid"),
+        category=(category_type, category_field),
+        subcategory=(subcategory_type, subcategory_field),
+    )
+    return create_model(
+        "CatalogSearchInput",
+        __base__=SearchCatalogToolInput,
+        taxonomy=(
+            taxonomy_model,
+            Field(
+                ...,
+                description=(
+                    "Required taxonomy selection generated from the active catalog. "
+                    "Use exact enum values. A text search requires at least one "
+                    "category or subcategory; both arrays may be empty only for an "
+                    "image-only search."
+                ),
+            ),
+        ),
+        search_mode=(
+            search_mode_type | None,
+            Field(
+                default=None,
+                description="Optional search mode advertised by the active catalog.",
+            ),
+        ),
+    )
+
+
+def _taxonomy_list_field(
+    values: list[str],
+    *,
+    role: str,
+    advertised_field: str | None,
+) -> tuple[Any, Any]:
+    field_name = advertised_field or "not advertised"
+    description = (
+        f"Exact {role} values advertised through catalog field '{field_name}'. "
+        "Use an empty list when the other taxonomy role supplies the text scope or "
+        "the search is image-only."
+    )
+    if not values:
+        return list[str], Field(..., max_length=0, description=description)
+
+    literal_type = Literal.__getitem__(tuple(values))
+    return list[literal_type], Field(..., description=description)
+
+
+def _taxonomy_hard_constraints(
+    selection: BaseModel | dict[str, Any],
+    capabilities: CatalogCapabilities,
+) -> tuple[dict[str, list[str]], list[str]]:
+    """Map generic taxonomy roles to catalog-owned hard-filter field names."""
+
+    raw = selection.model_dump() if isinstance(selection, BaseModel) else selection
+    categories = sorted(set(raw.get("category", [])), key=str.casefold)
+    subcategories = sorted(set(raw.get("subcategory", [])), key=str.casefold)
+    taxonomy = capabilities.taxonomy
+    issues: list[str] = []
+
+    for category in categories:
+        if category not in taxonomy.categories:
+            issues.append(f"category '{category}' is not advertised")
+
+    owners: dict[str, list[str]] = {
+        subcategory: sorted(
+            [
+                category_name
+                for category_name, category in taxonomy.categories.items()
+                if subcategory in category.subcategories
+            ],
+            key=str.casefold,
+        )
+        for subcategory in subcategories
+    }
+    for subcategory, subcategory_owners in owners.items():
+        if not subcategory_owners:
+            issues.append(f"subcategory '{subcategory}' is not advertised")
+        elif categories and not set(categories).intersection(subcategory_owners):
+            issues.append(
+                f"subcategory '{subcategory}' is not available in selected categories"
+            )
+
+    if categories and subcategories:
+        for category in categories:
+            advertised = taxonomy.categories.get(category)
+            if advertised is None:
+                continue
+            if not set(subcategories).intersection(advertised.subcategories):
+                issues.append(
+                    f"category '{category}' has no selected subcategory"
+                )
+
+    effective_categories = categories
+    if subcategories and not categories:
+        effective_categories = sorted(
+            {
+                owner
+                for subcategory_owners in owners.values()
+                for owner in subcategory_owners
+            },
+            key=str.casefold,
+        )
+
+    constraints: dict[str, list[str]] = {}
+    if effective_categories:
+        if taxonomy.category_field:
+            constraints[taxonomy.category_field] = effective_categories
+        else:
+            issues.append("the catalog does not advertise a category filter field")
+    if subcategories:
+        if taxonomy.subcategory_field:
+            constraints[taxonomy.subcategory_field] = subcategories
+        else:
+            issues.append("the catalog does not advertise a subcategory filter field")
+    return constraints, issues
 
 
 class AddCartItemsToolItemInput(BaseModel):
@@ -229,10 +449,10 @@ class DeepAgentsRuntime:
             timeout_seconds=config.catalog_search_timeout_seconds,
         )
 
-    def catalog_capabilities(self, *, force_refresh: bool = False) -> CatalogCapabilities:
-        """Return catalog-owned capability metadata for API/UI consumers."""
+    def catalog_capabilities(self) -> CatalogCapabilities:
+        """Return the process-lifecycle catalog capability contract."""
 
-        return self._catalog_capabilities.get(force_refresh=force_refresh)
+        return self._catalog_capabilities.get()
 
     async def astream(
         self, state: State, identity: RequestIdentity
@@ -302,7 +522,8 @@ class DeepAgentsRuntime:
             state.timings["deepagents"] = time.monotonic() - start
             return state
 
-        agent = self._create_agent(state, identity)
+        turn_capabilities = await asyncio.to_thread(self._catalog_capabilities.get)
+        agent = self._create_agent(state, identity, turn_capabilities)
         input_message = self._build_user_message(state, identity)
         try:
             result = await agent.ainvoke(
@@ -319,7 +540,7 @@ class DeepAgentsRuntime:
                 result,
                 draft_response,
             )
-        except Exception as exc:  # noqa: BLE001 - keep endpoint resilient.
+        except Exception:  # noqa: BLE001 - keep endpoint resilient.
             logger.exception("DeepAgentsRuntime failed")
             self._reset_agent_thread(identity)
             fallback_response = _partial_product_results_response(state)
@@ -361,7 +582,12 @@ class DeepAgentsRuntime:
         state.timings["deepagents"] = time.monotonic() - start
         return state
 
-    def _create_agent(self, state: State, identity: RequestIdentity):
+    def _create_agent(
+        self,
+        state: State,
+        identity: RequestIdentity,
+        turn_capabilities: CatalogCapabilities | None = None,
+    ):
         from deepagents import (
             GeneralPurposeSubagentProfile,
             HarnessProfile,
@@ -369,6 +595,12 @@ class DeepAgentsRuntime:
             register_harness_profile,
         )
         from langchain_core.tools import tool
+
+        # One cached lifecycle contract is authoritative for prompt construction
+        # and deterministic validation. Catalog requests are revalidated by the
+        # active catalog service before execution.
+        if turn_capabilities is None:
+            turn_capabilities = self._catalog_capabilities.get()
 
         if not self._profile_registered:
             register_harness_profile(
@@ -384,37 +616,86 @@ class DeepAgentsRuntime:
         retrieved: dict[str, str] = {}
         state.retrieved = retrieved
         self._append_cached_cart_images(retrieved, state.cart, identity)
+        search_input_model = _search_catalog_tool_input_model(turn_capabilities)
         catalog_searches_this_turn = 0
+        searched_taxonomy_scopes: set[tuple[tuple[str, tuple[str, ...]], ...]] = set()
+        catalog_tool_lock = Lock()
         product_detail_reads_this_turn = 0
 
-        @tool(args_schema=SearchCatalogToolInput, return_direct=False)
+        @tool(args_schema=search_input_model, return_direct=False)
         def search_catalog_tool(
             semantic_query: str,
-            filters: dict[str, Any] | None = None,
-            strictness: str = "unspecified",
+            taxonomy: BaseModel | dict[str, Any],
+            required_constraints: dict[str, Any],
             search_mode: str | None = None,
         ) -> str:
-            """Execute product discovery with catalog-declared hard filters."""
+            """Validate must-haves, then execute grounded product discovery."""
 
             nonlocal catalog_searches_this_turn
-            if catalog_searches_this_turn >= self.config.max_catalog_searches_per_turn:
-                return (
-                    "STOP_TOOL_USE: Catalog search limit reached for this turn. "
-                    "Do not call more tools this turn. Use the products already "
-                    "returned in this turn to answer concisely, or ask one concise "
-                    "clarifying question if the available products are not enough."
-                )
-            catalog_searches_this_turn += 1
-
-            capabilities = self._catalog_capabilities.get()
+            capabilities = turn_capabilities
             if capabilities.catalog_id == "unavailable" and not capabilities.filters:
                 return "Catalog search is unavailable. Please try again."
 
+            try:
+                request = search_input_model.model_validate(
+                    {
+                        "semantic_query": semantic_query,
+                        "taxonomy": (
+                            taxonomy.model_dump()
+                            if isinstance(taxonomy, BaseModel)
+                            else taxonomy
+                        ),
+                        "required_constraints": required_constraints,
+                        "search_mode": search_mode,
+                    }
+                )
+            except ValidationError as exc:
+                return (
+                    "The catalog search request does not match current capabilities: "
+                    f"{exc.errors(include_url=False)}"
+                )
+
+            taxonomy_constraints, taxonomy_issues = _taxonomy_hard_constraints(
+                request.taxonomy,
+                capabilities,
+            )
+            taxonomy_fields = {
+                field_name
+                for field_name in (
+                    capabilities.taxonomy.category_field,
+                    capabilities.taxonomy.subcategory_field,
+                )
+                if field_name
+            }
+            overlapping_fields = sorted(
+                taxonomy_fields.intersection(request.required_constraints)
+            )
+            if overlapping_fields:
+                taxonomy_issues.append(
+                    "taxonomy fields must use the taxonomy selection, not "
+                    "required_constraints: " + ", ".join(overlapping_fields)
+                )
+            if taxonomy_issues:
+                return (
+                    "The requested catalog taxonomy cannot be enforced: "
+                    + "; ".join(taxonomy_issues)
+                    + ". Ask the shopper to choose an advertised product type."
+                )
+
+            normalized_search_mode = _tool_search_mode(request.search_mode)
+            if request.search_mode is not None and (
+                normalized_search_mode is None
+                or request.search_mode not in capabilities.retrieval_modes
+            ):
+                return _UNSUPPORTED_SEARCH_MODE_MESSAGE
+
             intent = CatalogSearchIntent(
-                semantic_query=semantic_query,
-                filters=filters if isinstance(filters, dict) else {},
-                strictness=_tool_strictness(strictness),
-                search_mode=_tool_search_mode(search_mode),
+                semantic_query=request.semantic_query,
+                required_constraints={
+                    **request.required_constraints,
+                    **taxonomy_constraints,
+                },
+                search_mode=normalized_search_mode,
             )
             plan = build_catalog_search_plan(
                 intent,
@@ -423,7 +704,52 @@ class DeepAgentsRuntime:
                 top_k=self.config.top_k_retrieve,
             )
             if not plan.should_search:
+                if plan.constraint_issues:
+                    return (
+                        "The requested catalog requirement cannot be enforced: "
+                        + "; ".join(plan.constraint_issues)
+                        + ". Ask the shopper to relax it or use an advertised filter."
+                    )
+                if plan.no_search_reason == "image_search_unavailable":
+                    return (
+                        "Image search is not available for the active catalog. "
+                        "Ask the shopper to describe what they want to find."
+                    )
+                if plan.no_search_reason == "unsupported_search_mode":
+                    return _UNSUPPORTED_SEARCH_MODE_MESSAGE
+                if plan.no_search_reason == "missing_image_for_search_mode":
+                    return (
+                        "That search mode requires an attached image. Ask the shopper "
+                        "to attach one or use text search."
+                    )
                 return "Catalog search requires a query or image."
+
+            taxonomy_scope = tuple(
+                sorted(
+                    (
+                        field_name,
+                        tuple(sorted(values, key=str.casefold)),
+                    )
+                    for field_name, values in taxonomy_constraints.items()
+                )
+            )
+            with catalog_tool_lock:
+                if taxonomy_scope in searched_taxonomy_scopes:
+                    return (
+                        "STOP_TOOL_USE: This catalog taxonomy scope was already "
+                        "searched in this turn. Do not retry it with a paraphrase or "
+                        "query expansion. Use the products already returned, or ask "
+                        "one concise clarifying question."
+                    )
+                if catalog_searches_this_turn >= self.config.max_catalog_searches_per_turn:
+                    return (
+                        "STOP_TOOL_USE: Catalog search limit reached for this turn. "
+                        "Do not call more tools this turn. Use the products already "
+                        "returned in this turn to answer concisely, or ask one concise "
+                        "clarifying question if the available products are not enough."
+                    )
+                searched_taxonomy_scopes.add(taxonomy_scope)
+                catalog_searches_this_turn += 1
 
             search_start = time.monotonic()
             execution = execute_catalog_search(
@@ -432,20 +758,32 @@ class DeepAgentsRuntime:
                 image_base64=state.image,
                 timeout_seconds=self.config.catalog_search_timeout_seconds,
             )
-            state.timings["catalog_search"] = time.monotonic() - search_start
+            catalog_elapsed = time.monotonic() - search_start
             result = execution.result
-            _record_catalog_model_usage(state, plan, result.ok)
+            with catalog_tool_lock:
+                state.timings["catalog_search"] = max(
+                    state.timings.get("catalog_search", 0.0),
+                    catalog_elapsed,
+                )
+                _record_catalog_model_usage(
+                    state,
+                    plan,
+                    result.ok,
+                    fallback_attempted=execution.fallback_attempted,
+                )
+                if result.ok and result.products:
+                    self._remember_products(identity, result.products)
+                    _append_product_results(state, result.products)
+                    for product in result.products:
+                        if product.image_url:
+                            retrieved[product.display_name] = product.image_url
             if not result.ok:
                 return result.error.message if result.error else "Catalog search failed."
             if not result.products:
                 return "No matching catalog products were found."
 
-            self._remember_products(identity, result.products)
-            _append_product_results(state, result.products)
             lines = [_SEARCH_RESULT_GROUNDING_NOTE]
             for product in result.products:
-                if product.image_url:
-                    retrieved[product.display_name] = product.image_url
                 lines.append(_format_product(product))
             prefix = (
                 "Image similarity returned no matches; text fallback results:\n\n"
@@ -480,11 +818,30 @@ class DeepAgentsRuntime:
                 )
             product_detail_reads_this_turn += 1
 
-            product = self._product_from_ref(identity, product_ref)
-            if product is None:
+            cached_product = self._product_from_ref(identity, product_ref)
+            if cached_product is None:
                 return (
                     f"No product with PRODUCT_REF '{product_ref}' is available. "
                     "Search the catalog first and use the PRODUCT_REF from the result."
+                )
+            detail_result = get_product_details(
+                GetProductDetailsInput(product_id=cached_product.product_id),
+                self.config.retriever_port,
+                timeout_seconds=self.config.catalog_search_timeout_seconds,
+            )
+            if not detail_result.ok or detail_result.product is None:
+                return _product_detail_failure_message(
+                    detail_result.error,
+                    cart_validation=False,
+                )
+            product = detail_result.product
+            if not _same_product_display_name(
+                product.display_name,
+                cached_product.display_name,
+            ):
+                return (
+                    "That product reference now resolves to a different item. "
+                    "Search the catalog again before using its details."
                 )
             if product.image_url:
                 retrieved[product.display_name] = product.image_url
@@ -525,7 +882,33 @@ class DeepAgentsRuntime:
                         "for the intended product before adding."
                     )
                     continue
-                resolved.append((product_ref, product, int(request["quantity"])))
+                active_detail = get_product_details(
+                    GetProductDetailsInput(product_id=product.product_id),
+                    self.config.retriever_port,
+                    timeout_seconds=self.config.catalog_search_timeout_seconds,
+                )
+                if not active_detail.ok or active_detail.product is None:
+                    failed.append(
+                        f"- PRODUCT_REF '{product_ref}': "
+                        + _product_detail_failure_message(
+                            active_detail.error,
+                            cart_validation=True,
+                        )
+                    )
+                    continue
+                if not _same_product_display_name(
+                    active_detail.product.display_name,
+                    product.display_name,
+                ):
+                    blocked.append(
+                        f"- PRODUCT_REF '{product_ref}': That reference now "
+                        "resolves to a different product. Search again and use "
+                        "the new PRODUCT_REF before adding it."
+                    )
+                    continue
+                resolved.append(
+                    (product_ref, active_detail.product, int(request["quantity"]))
+                )
 
             blocked.extend(
                 _cart_add_scope_failures(
@@ -613,7 +996,7 @@ class DeepAgentsRuntime:
                 remove_cart_item_tool,
                 view_cart_total_tool,
             ],
-            system_prompt=self._system_prompt(),
+            system_prompt=self._system_prompt(turn_capabilities),
             skills=[_SHOPPER_SKILLS_SOURCE] if skills_backend is not None else None,
             backend=skills_backend,
             checkpointer=self._checkpointer,
@@ -721,11 +1104,9 @@ class DeepAgentsRuntime:
                 return candidate
         return None
 
-    def _system_prompt(self) -> str:
-        catalog_context = format_catalog_capabilities_for_prompt(
-            self._catalog_capabilities.get()
-        )
-        return f"""You are a retail shopping assistant for clothing and accessories.
+    def _system_prompt(self, capabilities: CatalogCapabilities) -> str:
+        catalog_context = format_catalog_capabilities_for_prompt(capabilities)
+        return f"""You are a retail shopping assistant for the products advertised by the active catalog.
 
 Use tools for catalog facts and cart actions. Do not invent product names,
 prices, availability, materials, care instructions, tax, shipping, stock
@@ -759,24 +1140,38 @@ Catalog capabilities:
 Rules:
 - Product discovery, product recommendations, budget filters, and image-similar
   shopping require search_catalog_tool.
-- Pass only semantic product text to search_catalog_tool.semantic_query. Do not
-  include hard-filter language such as budget limits, strictness words, or exact
-  filter values there. Put enforceable constraints only in filters.
-- Use the search_catalog_tool `filters` object only for hard filters listed in
-  Catalog capabilities. Enum filter values must exactly match the listed values.
-  Numeric filters use an object with `min` and/or `max`.
-- If the shopper says "only", "must be", "under", "over", or otherwise gives a
-  strict constraint that is listed as a catalog hard filter, include that
-  constraint in `filters`. Do not place unsupported constraints in `filters`.
+- Every search call must include exactly one `semantic_query`, one `taxonomy`
+  object, and one `required_constraints` object. Put product meaning and soft
+  preferences in `semantic_query`. Use an empty string only for image-only
+  search; do not create synonyms, paraphrases, or query expansions as additional
+  searches.
+- The `taxonomy.category` and `taxonomy.subcategory` arrays contain only the
+  exact values allowed by the current tool schema, which is generated from the
+  active Catalog capabilities. List each value once. Use all applicable values
+  for an inclusive request containing alternatives. When both arrays are used,
+  every subcategory must belong to a selected category and every selected
+  category must own at least one selected subcategory. Every text search needs
+  at least one taxonomy value; if a broad request has no clear scope, ask one
+  concise clarifying question. Both arrays may be empty only for an image-only
+  search. Taxonomy is mapped deterministically to the Catalog's actual filter
+  field names.
+- Put every non-taxonomy shopper must-have in `required_constraints`, including
+  requirements whose fields are semantic/detail-only or absent from Catalog
+  capabilities. Do not omit an unsupported must-have or rely on semantic search
+  to enforce it; deterministic validation must refuse that search instead of
+  weakening it. Semantic relevance cannot guarantee a must-have requirement.
+- For required constraints advertised as hard filters, enum values must exactly
+  match listed values and numeric values use an object with `min` and/or `max`.
 - Media-only or descriptive media requests such as "what's in this look",
   "describe this outfit", "what am I wearing", or "what colors are here" must
   be answered from MEDIA ANALYSIS. Do not call search_catalog_tool and do not
   show catalog products unless the shopper explicitly asks to find, shop,
   recommend, compare, price-check, check availability, or add an item.
-- Use at most {self.config.max_catalog_searches_per_turn} catalog searches per
-  user turn. For outfit requests with multiple required item types, run one
-  focused search per required item type, then stop and synthesize from those
-  results.
+- Use at most {self.config.max_catalog_searches_per_turn} catalog search calls per
+  user turn. One normalized taxonomy scope can execute only once in a turn; do
+  not retry the same scope with different semantic wording. For outfit requests
+  with multiple required item types, run one focused search per distinct
+  taxonomy scope, then stop and synthesize from those results.
 - Use at most {self.config.max_product_detail_reads_per_turn} product-detail
   reads per user turn. Product details are for direct product fact questions,
   cart or comparison follow-ups, or already-shortlisted items; they are not
@@ -796,8 +1191,7 @@ Rules:
   details and you have called get_product_details_tool.
 - Search-only product names are display names, not confirmed attributes. Do not
   parse length, color, print, material, construction, fit, care, or formality
-  from names such as "Ocean Breeze", "Floral", "Gingham", "Woven", "Linen",
-  "Canvas", or "Maxi" unless product details confirm the attribute. You may
+  from descriptive names unless product details confirm the attribute. You may
   say "candidate" or "could be worth checking" and offer to pull details.
 - Do not make group-level claims such as "all are maxi length", "both are
   cotton", "the lightest", "most polished", or "best for heat" unless every
@@ -1174,17 +1568,25 @@ def _record_catalog_model_usage(
     state: State,
     plan: CatalogSearchPlan,
     ok: bool,
+    *,
+    fallback_attempted: bool = False,
 ) -> None:
     status = "used" if ok else "failed"
     uses_image_endpoint = bool(state.image) and plan.search_mode in {"image", "hybrid"}
-    uses_text_embedding = bool(plan.semantic_queries) or uses_image_endpoint
+    text_embedding_calls = 1 if plan.semantic_queries else 0
+    if uses_image_endpoint and text_embedding_calls == 0:
+        # Image retrieval currently includes one deterministic text-side query
+        # alongside the image embedding, even when the shopper supplied no text.
+        text_embedding_calls = 1
+    if fallback_attempted:
+        text_embedding_calls += 1 if plan.semantic_queries else 0
 
-    if uses_text_embedding:
+    if text_embedding_calls:
         _add_model_usage(
             state,
             "text_embedding",
             status=status,
-            calls=1,
+            calls=text_embedding_calls,
             detail="Catalog text/vector retrieval",
         )
     if uses_image_endpoint:
@@ -1462,13 +1864,16 @@ def _summarize_product_evidence(content: str, *, heading: str, note: str) -> str
             summary_parts.append(f"price: {product['price']}")
         if product.get("image_url"):
             summary_parts.append("image: available")
+        if product.get("details"):
+            summary_parts.append("details: " + "; ".join(product["details"]))
         lines.append("- " + " | ".join(summary_parts))
     return "\n".join(lines)
 
 
-def _product_evidence_records(content: str) -> list[dict[str, str]]:
-    records: list[dict[str, str]] = []
-    current: dict[str, str] = {}
+def _product_evidence_records(content: str) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    current: dict[str, Any] = {}
+    reading_details = False
     key_map = {
         "NAME:": "name",
         "CATEGORY:": "category",
@@ -1481,6 +1886,17 @@ def _product_evidence_records(content: str) -> list[dict[str, str]]:
             if current.get("name"):
                 records.append(current)
             current = {}
+            reading_details = False
+            continue
+        if line == "DETAILS:":
+            reading_details = True
+            continue
+        if reading_details and line.startswith("- ") and ":" in line:
+            label, value = line[2:].split(":", 1)
+            if label.strip() and value.strip():
+                current.setdefault("details", []).append(
+                    f"{label.strip()}: {value.strip()}"
+                )
             continue
         for prefix, key in key_map.items():
             if line.startswith(prefix):
@@ -1621,10 +2037,6 @@ def _content_to_text(content: Any) -> str:
     return ""
 
 
-def _tool_strictness(value: str) -> str:
-    return value if value in {"unspecified", "hard"} else "unspecified"
-
-
 def _tool_search_mode(value: str | None) -> str | None:
     return value if value in {"text", "image", "hybrid"} else None
 
@@ -1648,7 +2060,7 @@ def _format_product(product: Any) -> str:
     return "\n".join(lines)
 
 
-def _format_product_details(product: ProductSummary) -> str:
+def _format_product_details(product: ProductDetail) -> str:
     lines = [
         _PRODUCT_DETAIL_GROUNDING_NOTE,
         f"PRODUCT_REF: {product.product_id}",
@@ -1662,12 +2074,25 @@ def _format_product_details(product: ProductSummary) -> str:
         lines.append(f"PRICE: ${product.price.amount:.2f} {product.price.currency}")
     if product.image_url:
         lines.append(f"IMAGE_URL: {product.image_url}")
-    lines.append(
-        "STRUCTURED_DETAILS_UNAVAILABLE: material, care, dimensions, closures, "
-        "fit, sizing, colorways, and outdoor performance are not available as "
-        "fields in the current product detail data."
-    )
+    if product.attributes:
+        lines.append("DETAILS:")
+        for name, value in sorted(product.attributes.items()):
+            lines.append(
+                f"- {name.replace('_', ' ')}: {_format_detail_value(value)}"
+            )
+    else:
+        lines.append("NO_ADDITIONAL_STRUCTURED_DETAILS")
     return "\n".join(lines)
+
+
+def _format_detail_value(value: Any) -> str:
+    if isinstance(value, list):
+        return ", ".join(str(item) for item in value)
+    if isinstance(value, dict):
+        return ", ".join(
+            f"{key}={value[key]}" for key in sorted(value)
+        )
+    return str(value)
 
 
 def _normalize_cart_add_tool_items(
@@ -1767,6 +2192,36 @@ def _explicitly_named_products(text: str, cached_products: Any) -> list[ProductS
 
 def _same_product_display_name(expected: str, actual: str) -> bool:
     return _normalize_product_name(expected) == _normalize_product_name(actual)
+
+
+def _product_detail_failure_message(
+    error: CommerceError | None,
+    *,
+    cart_validation: bool,
+) -> str:
+    if error is not None and error.code == "product_not_found":
+        return (
+            "The product is no longer present in the active catalog. "
+            "Search again before adding it."
+            if cart_validation
+            else (
+                "That product is no longer available in the active catalog. "
+                "Search the catalog again before using its details."
+            )
+        )
+    if error is not None and error.retryable:
+        return (
+            "The catalog is temporarily unavailable, so the cart was not changed. "
+            "Please try again."
+            if cart_validation
+            else "Product details are temporarily unavailable. Please try again."
+        )
+    return (
+        "The product could not be verified, so the cart was not changed. "
+        "Search again before adding it."
+        if cart_validation
+        else "Product details could not be verified. Search the catalog again."
+    )
 
 
 def _normalize_product_name(value: str) -> str:

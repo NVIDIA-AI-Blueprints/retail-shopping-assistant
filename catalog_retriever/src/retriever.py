@@ -11,6 +11,7 @@ Performs both of these in parallel and then re-ranks the results from bothmodels
 from openai import OpenAI
 from pydantic import BaseModel, Field
 from dataclasses import dataclass, field
+from math import isfinite
 from typing import List, Tuple, Dict, Any
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.embeddings import Embeddings
@@ -18,7 +19,6 @@ from pymilvus import Collection, CollectionSchema, DataType, FieldSchema, connec
 import os
 import sys
 import re
-import pandas as pd
 import numpy as np
 from numpy import mean
 from .utils import image_url_to_base64, is_url, is_path, image_path_to_base64, resize_base64_image
@@ -26,6 +26,7 @@ import logging
 import asyncio
 from types import SimpleNamespace
 from shared.commerce_contracts import CatalogFilterCapability
+from .catalog import CatalogSnapshot
 
 # Set up logging 
 logging.basicConfig(
@@ -49,6 +50,18 @@ class RetrieverConfig(BaseModel):
     text_collection: str
     image_collection: str
     filter_capabilities: Dict[str, CatalogFilterCapability] = Field(default_factory=dict)
+    catalog_size: int
+    product_id_field: str
+    name_field: str
+    description_field: str
+    fallback_description_field: str | None
+    image_field: str
+    price_field: str
+    taxonomy_fields: List[str]
+
+
+class CatalogFilterError(ValueError):
+    """Raised when a caller requests a filter outside catalog capabilities."""
 
 
 @dataclass
@@ -83,7 +96,7 @@ class TextEmbeddings(Embeddings):
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
         """Generate text embeddings for multiple texts"""
-        logging.info(f"TextEmbeddings | embed_documents() | called.")
+        logging.info("TextEmbeddings | embed_documents() | called.")
         res = self.retriever.text_embeddings(texts)
         normed = [list(r/np.linalg.norm(r) for r in res)]
         return normed
@@ -101,12 +114,12 @@ class ImageEmbeddings(Embeddings):
             logging.info(f"ImageEmbeddings | embed_query() | embedding output:\n\t| {embeddings[0][:50]}")
             return embeddings[0]
         else:
-            logging.error(f"ImageEmbeddings | embed_query() | Failed to generate embedding for image")
+            logging.error("ImageEmbeddings | embed_query() | Failed to generate embedding for image")
             raise ValueError("Failed to generate image embedding")
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
         """Generate image embeddings for multiple images"""
-        logging.info(f"ImageEmbeddings | embed_query() | called.")
+        logging.info("ImageEmbeddings | embed_query() | called.")
         return self.retriever.image_embeddings(texts)
 
 
@@ -245,6 +258,36 @@ class Milvus:
         collection.insert(records)
         collection.flush()
 
+    def matches_catalog(self, fingerprint: str, expected_count: int) -> bool:
+        """Return whether this collection exactly represents one snapshot."""
+
+        if self.col is None:
+            return False
+        try:
+            self.col.flush()
+            if self.col.num_entities != expected_count:
+                return False
+            escaped = fingerprint.replace("\\", "\\\\").replace('"', '\\"')
+            matches = self.col.query(
+                expr=f'catalog_fingerprint == "{escaped}"',
+                output_fields=["catalog_fingerprint"],
+                limit=expected_count,
+            )
+            return len(matches) == expected_count
+        except Exception as exc:
+            logging.info(
+                "CATALOG RETRIEVER | Milvus.matches_catalog() | "
+                f"Collection state could not be verified: {exc}"
+            )
+            return False
+
+    def reset(self) -> None:
+        """Drop the fixed collection so it can be rebuilt from one snapshot."""
+
+        if utility.has_collection(self.collection_name, using=self.alias):
+            utility.drop_collection(self.collection_name, using=self.alias)
+        self.col = None
+
     def similarity_search_with_relevance_scores(
         self,
         query: str,
@@ -294,6 +337,14 @@ class Retriever:
         self.text_collection = config.text_collection
         self.image_collection = config.image_collection
         self.filter_capabilities = config.filter_capabilities
+        self.catalog_size = config.catalog_size
+        self.product_id_field = config.product_id_field
+        self.name_field = config.name_field
+        self.description_field = config.description_field
+        self.fallback_description_field = config.fallback_description_field
+        self.image_field = config.image_field
+        self.price_field = config.price_field
+        self.taxonomy_fields = config.taxonomy_fields
 
         text_key = os.environ.get(self.text_api_key_env, "") if self.text_api_key_env else ""
         image_key = os.environ.get(self.image_api_key_env, "") if self.image_api_key_env else ""
@@ -319,7 +370,7 @@ class Retriever:
         self.text_embeddings_obj = TextEmbeddings(self)
         self.image_embeddings_obj = ImageEmbeddings(self) if self.image_enabled else None
 
-        logging.info(f"CATALOG RETRIEVER | Retriever.__init__() | Initializing Milvus connections.")
+        logging.info("CATALOG RETRIEVER | Retriever.__init__() | Initializing Milvus connections.")
 
 
         # Initialize Milvus with embedding classes
@@ -340,7 +391,7 @@ class Retriever:
                 index_params={"metric_type": "COSINE"},
             )
 
-        logging.info(f"CATALOG RETRIEVER | Retriever.__init__() | Milvus collections initialized.")
+        logging.info("CATALOG RETRIEVER | Retriever.__init__() | Milvus collections initialized.")
 
     def _embedding_counts(self) -> Tuple[int, int]:
         """Return current text and image collection entity counts."""
@@ -393,7 +444,7 @@ class Retriever:
             extra_body={"input_type": query_type, "truncate": "NONE"}
         )
 
-        logging.info(f"CATALOG RETRIEVER | Retriever.embed_chunk() | Chunk embedded.")
+        logging.info("CATALOG RETRIEVER | Retriever.embed_chunk() | Chunk embedded.")
 
         return response.data[0].embedding   
 
@@ -539,7 +590,7 @@ class Retriever:
                                 logging.info(f"CATALOG RETRIEVER | Image resized successfully to {len(input_data)} bytes")
                         else:
                             if verbose:
-                                logging.warning(f"CATALOG RETRIEVER | Failed to resize image or still too large after resize")
+                                logging.warning("CATALOG RETRIEVER | Failed to resize image or still too large after resize")
                             input_data = None 
                 except Exception as e:
                     if verbose:
@@ -589,79 +640,91 @@ class Retriever:
 
 
 
-    def milvus_from_csv(self, csv_path: str, verbose: bool = False) -> None:
-        """
-        Fill missing Milvus collections with data from a CSV file.
-        """ 
+    def sync_snapshot(self, snapshot: CatalogSnapshot, verbose: bool = False) -> None:
+        """Reuse or rebuild the fixed collections for one validated snapshot."""
 
-        text_count, image_count = self._embedding_counts()
-        image_ready = (not self.image_enabled) or image_count > 0
-        if text_count > 0 and image_ready:
-            logging.info("CATALOG RETRIEVER | Retriever.milvus_from_csv() | Embeddings already exist, skipping population.")
+        record = snapshot.schema.record
+        self.catalog_size = snapshot.product_count
+        self.product_id_field = record.product_id
+        self.name_field = record.name
+        self.description_field = record.description
+        self.fallback_description_field = record.fallback_description
+        self.image_field = record.image
+        self.price_field = record.price
+        self.taxonomy_fields = snapshot.schema.taxonomy.fields
+        self.filter_capabilities = snapshot.capabilities.filters
+        text_ready = self.text_db.matches_catalog(
+            snapshot.fingerprint, snapshot.product_count
+        )
+        image_ready = (not self.image_enabled) or bool(
+            self.image_db
+            and self.image_db.matches_catalog(
+                snapshot.fingerprint, snapshot.product_count
+            )
+        )
+        if text_ready and image_ready:
+            logging.info(
+                "CATALOG RETRIEVER | Retriever.sync_snapshot() | "
+                "Indexes match the active catalog; reusing them."
+            )
             return
 
         logging.info(
-            "CATALOG RETRIEVER | Retriever.milvus_from_csv() | "
-            f"Populating missing embeddings from: '{csv_path}' "
-            f"(text_count={text_count}, image_count={image_count})"
+            "CATALOG RETRIEVER | Retriever.sync_snapshot() | "
+            f"Rebuilding indexes for {snapshot.product_count} products."
+        )
+        self.text_db.reset()
+        if self.image_db is not None:
+            self.image_db.reset()
+
+        metadatas = [
+            {**product, "catalog_fingerprint": snapshot.fingerprint}
+            for product in snapshot.products
+        ]
+        text_embeddings = self.text_embeddings(
+            list(snapshot.search_documents),
+            query_type="passage",
+            verbose=verbose,
+        )
+        if len(text_embeddings) != snapshot.product_count or any(
+            embedding is None for embedding in text_embeddings
+        ):
+            raise RuntimeError("Catalog text indexing failed; no partial snapshot will be served")
+        self.text_db.add_embeddings(
+            texts=list(snapshot.search_documents),
+            embeddings=[embedding for embedding in text_embeddings if embedding is not None],
+            metadatas=metadatas,
         )
 
-        # Get our pd dataframe
-        try:
-            df = pd.read_csv(csv_path)
-            logging.info(f"CATALOG RETRIEVER | Retriever.milvus_from_csv() | CSV read in.")
-        except Exception as e:
-            logging.debug(f"CATALOG RETRIEVER | Retriever.milvus_from_csv() | Error: {e} -- Failed to read CSV: {csv_path}.")            
-            dir_contents = []
-            for entry in os.listdir("."):
-                dir_contents.append(entry)
-            logging.info(f"CATALOG RETRIEVER | Retriever.milvus_from_csv() | Directory contents at failure: {dir_contents}")
-
-        metadatas = df.to_dict(orient="records")
-
-        if text_count == 0:
-            combined_texts = [f"{name} | {desc} | {category},{subcategory}" for name, desc, category, subcategory in zip(df["name"].tolist(), df["description"].tolist(), df["category"].tolist(), df["subcategory"].tolist())]
-            text_embs = self.text_embeddings(combined_texts,query_type="passage",verbose=verbose)
-
-            successful_texts_data = [
-                (text, emb, meta) for text, emb, meta in zip(combined_texts, text_embs, metadatas) if emb is not None
+        if self.image_enabled:
+            if self.image_db is None:
+                raise RuntimeError("Catalog image index is enabled but unavailable")
+            image_references = [
+                str(product[snapshot.schema.record.image])
+                for product in snapshot.products
             ]
-            if successful_texts_data:
-                successful_texts, successful_text_embs, successful_text_metadatas = zip(*successful_texts_data)
-                self.text_db.add_embeddings(
-                    texts=list(successful_texts),
-                    embeddings=list(successful_text_embs),
-                    metadatas=list(successful_text_metadatas)
+            image_embeddings = self.image_embeddings(image_references, verbose=verbose)
+            if len(image_embeddings) != snapshot.product_count or any(
+                embedding is None for embedding in image_embeddings
+            ):
+                raise RuntimeError(
+                    "Catalog image indexing failed; no partial snapshot will be served"
                 )
+            self.image_db.add_embeddings(
+                texts=image_references,
+                embeddings=[
+                    embedding for embedding in image_embeddings if embedding is not None
+                ],
+                metadatas=metadatas,
+            )
 
-            logging.info(f"CATALOG RETRIEVER | Retriever.milvus_from_csv() | Text embeddings obtained.")
-        else:
-            logging.info("CATALOG RETRIEVER | Retriever.milvus_from_csv() | Text embeddings already exist, skipping text population.")
-
-        if not self.image_enabled:
-            logging.info("CATALOG RETRIEVER | Retriever.milvus_from_csv() | Image embeddings disabled, skipping image population.")
-        elif image_count == 0:
-            image_embs = self.image_embeddings(df["image"].tolist(), verbose=verbose)
-
-            total_images = len(df["image"].tolist())
-            failed_image_embeddings = total_images - len([e for e in image_embs if e is not None])
-            logging.info(f"CATALOG RETRIEVER | Retriever.milvus_from_csv() | Total images: {total_images}, Failed embeddings: {failed_image_embeddings}")
-
-            successful_images_data = [
-                (img_ref, emb, meta) for img_ref, emb, meta in zip(df["image"].tolist(), image_embs, metadatas) if emb is not None
-            ]
-            if successful_images_data:
-                successful_images, successful_image_embs, successful_image_metadatas = zip(*successful_images_data)
-                assert self.image_db is not None
-                self.image_db.add_embeddings(
-                    texts=list(successful_images),
-                    embeddings=list(successful_image_embs),
-                    metadatas=list(successful_image_metadatas)
-                )
-
-            logging.info(f"CATALOG RETRIEVER | Retriever.milvus_from_csv() | Image embeddings obtained.")
-        else:
-            logging.info("CATALOG RETRIEVER | Retriever.milvus_from_csv() | Image embeddings already exist, skipping image population.")
+        text_count, image_count = self._embedding_counts()
+        if text_count != snapshot.product_count or (
+            self.image_enabled and image_count != snapshot.product_count
+        ):
+            raise RuntimeError(
+                "Catalog index count does not match the active catalog snapshot"
+            )
 
     async def retrieve(
         self,
@@ -677,18 +740,21 @@ class Retriever:
         """
         Asynchronously retrieve relevant items from both text and image databases.
         """
-        candidate_limit = max(k, candidate_k or (k * 5))
+        candidate_limit = max(k, candidate_k or self.catalog_size or (k * 5))
         diagnostics: Dict[str, Any] = {
             "requested_top_k": k,
             "candidate_k": candidate_limit,
             "search_mode": "image" if image_bool else "text",
         }
+        effective_filters = self._effective_filters(filters, categories)
+        structured_filters = (
+            self._canonical_filters(effective_filters) if effective_filters else {}
+        )
 
         # Check if our query is blank. If it is, replace it with dummy text.
         local_queries = query
         if not query:
             local_queries = ["Can you find me something like this image?"]
-        query_count = max(1, len(local_queries))
 
         if image_bool:
             if not self.image_enabled or self.image_db is None:
@@ -720,11 +786,11 @@ class Retriever:
             if verbose:
                 logging.info(f"CATALOG RETRIEVER | retrieve() | Starting image task...\n\t| {base64_string[:100]}")
             if verbose:
-                logging.info(f"CATALOG RETRIEVER | retrieve() | Obtained embedding...")
+                logging.info("CATALOG RETRIEVER | retrieve() | Obtained embedding...")
             i2i_task = asyncio.to_thread(
                 self.image_db.similarity_search_with_relevance_scores,
                 base64_string,
-                k=candidate_limit * query_count,
+                k=candidate_limit,
             )
 
             unformatted_results = await asyncio.gather(*t2t_tasks, i2i_task)
@@ -740,7 +806,7 @@ class Retriever:
                     asyncio.to_thread(
                         self.text_db.similarity_search_with_relevance_scores,
                         local_query,
-                        k=candidate_limit * query_count,
+                        k=candidate_limit,
                     )
                 )
             unformatted_results = await asyncio.gather(*results)
@@ -758,7 +824,7 @@ class Retriever:
         if verbose:
             logging.info(f"""CATALOG RETRIEVER | retrieve() | Pre-interleaving data
                             \n\t| Similarities: {[res[1] for sublist in sorted_unformatted_results for res in sublist]}
-                            \n\t| Names: {[res[0].metadata['name'] for sublist in sorted_unformatted_results for res in sublist]}""")
+                            \n\t| Names: {[res[0].metadata.get(self.name_field) for sublist in sorted_unformatted_results for res in sublist]}""")
 
         # For image search, combine all results and sort by similarity instead of interleaving
         if image_bool:
@@ -782,15 +848,14 @@ class Retriever:
                 except StopIteration:
                     pass
                 
-        # Deduplicate. Older deployments may have duplicate rows with different
-        # Milvus primary keys after repeated partial population attempts, so
-        # prefer a stable product-name key when available.
+        # Deduplicate by source product identity. Display names are not IDs and
+        # two legitimate products may share one.
         seen_ids = set()
         final_results = [] 
         for res in interleaved_results:
             pk_value = res[0].metadata.get("pk") 
-            name_value = res[0].metadata.get("name")
-            id_ = str(name_value).strip().lower() if name_value else (
+            product_id = res[0].metadata.get(self.product_id_field)
+            id_ = str(product_id) if product_id is not None else (
                 str(pk_value) if pk_value is not None else None
             )
             if id_ is not None and id_ not in seen_ids:
@@ -803,7 +868,7 @@ class Retriever:
         if verbose:
             logging.info(f"""CATALOG RETRIEVER | retrieve() | All retrieved results length. {len(all_results)}
                             \n\t| Similarities: {[res[1] for res in all_results]}
-                            \n\t| Names: {[res[0].metadata['name'] for res in all_results]}""")
+                            \n\t| Names: {[res[0].metadata.get(self.name_field) for res in all_results]}""")
 
         if not all_results:
             diagnostics["returned_count"] = 0
@@ -812,12 +877,26 @@ class Retriever:
                 no_result_reason="no_candidates",
             )
 
-        # Apply threshold and hard filters across a wider candidate window before
-        # trimming to the final top-k response.
+        # Apply hard filters and the similarity threshold across the complete
+        # candidate window before trimming to the final top-k response.
         candidate_results = all_results[:candidate_limit]
         diagnostics["candidate_window_count"] = len(candidate_results)
+        filtered_results = self._apply_structured_filters(
+            candidate_results,
+            filters=structured_filters,
+            verbose=verbose,
+            canonical=True,
+        )
+        diagnostics["after_filter_count"] = len(filtered_results)
+        if not filtered_results:
+            diagnostics["returned_count"] = 0
+            return RetrievalOutput(
+                diagnostics=diagnostics,
+                no_result_reason="filtered_out",
+            )
+
         thresholded_results = [
-            res for res in candidate_results if res[1] > self.sim_threshold
+            res for res in filtered_results if res[1] > self.sim_threshold
         ]
         diagnostics["after_threshold_count"] = len(thresholded_results)
         if not thresholded_results:
@@ -826,21 +905,11 @@ class Retriever:
                 diagnostics=diagnostics,
                 no_result_reason="below_similarity_threshold",
             )
-
-        structured_filters = self._effective_filters(filters, categories)
-        ranked_results = sorted(thresholded_results, key=lambda item: item[1], reverse=True)
-        ranked_results = self._apply_structured_filters(
-            ranked_results,
-            filters=structured_filters,
-            verbose=verbose
+        ranked_results = sorted(
+            thresholded_results,
+            key=lambda item: item[1],
+            reverse=True,
         )
-        diagnostics["after_filter_count"] = len(ranked_results)
-        if not ranked_results:
-            diagnostics["returned_count"] = 0
-            return RetrievalOutput(
-                diagnostics=diagnostics,
-                no_result_reason="filtered_out",
-            )
         ranked_results = ranked_results[:k]
         diagnostics["returned_count"] = len(ranked_results)
 
@@ -850,11 +919,27 @@ class Retriever:
                 f"Ranked window after threshold+filters: {len(ranked_results)}"
             )
 
-        final_texts = [res[0].page_content + f"\nPRICE: {res[0].metadata['price']}" for res in ranked_results]
-        final_ids = [str(res[0].metadata["pk"]) for res in ranked_results]
+        final_texts = [
+            res[0].page_content
+            + f"\nPRICE: {res[0].metadata.get(self.price_field)}"
+            for res in ranked_results
+        ]
+        final_ids = [
+            str(
+                res[0].metadata.get(self.product_id_field)
+                or res[0].metadata.get("pk")
+            )
+            for res in ranked_results
+        ]
         final_sims = [res[1] for res in ranked_results]
-        final_names = [res[0].metadata['name'] for res in ranked_results]
-        final_images = [res[0].metadata['image'] for res in ranked_results]
+        final_names = [
+            str(res[0].metadata.get(self.name_field) or "")
+            for res in ranked_results
+        ]
+        final_images = [
+            str(res[0].metadata.get(self.image_field) or "")
+            for res in ranked_results
+        ]
         final_products = [
             self._product_payload_from_result(res)
             for res in ranked_results
@@ -876,23 +961,30 @@ class Retriever:
     @staticmethod
     def _coerce_float(value: Any) -> float | None:
         """Best-effort conversion to float for numeric filter/metadata values."""
-        if value is None:
+        if value is None or isinstance(value, bool):
             return None
         if isinstance(value, (int, float)):
-            return float(value)
+            try:
+                number = float(value)
+            except (OverflowError, ValueError):
+                return None
+            return number if isfinite(number) else None
         if isinstance(value, str):
             cleaned = value.strip().replace("$", "").replace(",", "")
             try:
-                return float(cleaned)
-            except ValueError:
+                number = float(cleaned)
+            except (OverflowError, ValueError):
                 return None
+            return number if isfinite(number) else None
         return None
 
     def _apply_structured_filters(
         self,
         results: List[Tuple[Any, float]],
         filters: Dict[str, Any] | None,
-        verbose: bool = False
+        verbose: bool = False,
+        *,
+        canonical: bool = False,
     ) -> List[Tuple[Any, float]]:
         """
         Apply structured metadata filters before assembling final response payloads.
@@ -900,7 +992,7 @@ class Retriever:
         if not filters:
             return results
 
-        canonical_filters = self._canonical_filters(filters)
+        canonical_filters = filters if canonical else self._canonical_filters(filters)
         if not canonical_filters:
             return results
 
@@ -920,23 +1012,109 @@ class Retriever:
         return filtered_results
 
     def _canonical_filters(self, filters: Dict[str, Any]) -> Dict[str, Any]:
+        aliases = {
+            alias
+            for capability in self.filter_capabilities.values()
+            for alias in capability.request_aliases.values()
+        }
+        unknown = sorted(set(filters) - set(self.filter_capabilities) - aliases)
+        if unknown:
+            raise CatalogFilterError(
+                "Unsupported catalog filter(s): " + ", ".join(unknown)
+            )
+
         canonical: Dict[str, Any] = {}
         for name, capability in self.filter_capabilities.items():
             if name in filters:
-                canonical[name] = filters[name]
+                canonical[name] = self._validated_filter_value(
+                    name, filters[name], capability
+                )
             if capability.type == "number":
                 alias_filter = self._number_alias_filter(filters, name, capability)
                 if alias_filter:
                     existing = canonical.get(name)
                     if isinstance(existing, dict):
+                        duplicate_bounds = sorted(set(existing).intersection(alias_filter))
+                        if duplicate_bounds:
+                            raise CatalogFilterError(
+                                f"Numeric filter '{name}' cannot combine canonical "
+                                "and top-level aliases for bound(s): "
+                                + ", ".join(duplicate_bounds)
+                            )
                         canonical[name] = {**existing, **alias_filter}
                     else:
                         canonical[name] = alias_filter
+                    canonical[name] = self._validated_filter_value(
+                        name, canonical[name], capability
+                    )
         return {
             name: value
             for name, value in canonical.items()
             if value not in (None, "", [], {})
         }
+
+    def _validated_filter_value(
+        self,
+        name: str,
+        value: Any,
+        capability: CatalogFilterCapability,
+    ) -> Any:
+        if capability.type == "number":
+            if not isinstance(value, dict):
+                raise CatalogFilterError(
+                    f"Numeric filter '{name}' requires min/max or gte/lte bounds"
+                )
+            unsupported = set(value) - {"min", "max", "gte", "lte"}
+            if unsupported:
+                raise CatalogFilterError(
+                    f"Unsupported operator(s) for '{name}': "
+                    + ", ".join(sorted(unsupported))
+                )
+            duplicate_aliases = [
+                "/".join(aliases)
+                for aliases in (("min", "gte"), ("max", "lte"))
+                if all(alias in value for alias in aliases)
+            ]
+            if duplicate_aliases:
+                raise CatalogFilterError(
+                    f"Numeric filter '{name}' cannot combine bound aliases: "
+                    + ", ".join(duplicate_aliases)
+                )
+            invalid_bounds = [
+                operator
+                for operator, raw_bound in value.items()
+                if self._coerce_float(raw_bound) is None
+            ]
+            if invalid_bounds:
+                raise CatalogFilterError(
+                    f"Numeric filter '{name}' has invalid bound(s): "
+                    + ", ".join(sorted(invalid_bounds))
+                )
+            bounds = self._normalize_number_filter(value)
+            if not bounds:
+                raise CatalogFilterError(f"Numeric filter '{name}' has no valid bounds")
+            if (
+                bounds.get("min") is not None
+                and bounds.get("max") is not None
+                and bounds["min"] > bounds["max"]
+            ):
+                raise CatalogFilterError(
+                    f"Numeric filter '{name}' has a minimum above its maximum"
+                )
+            return bounds
+
+        requested = self._normalize_filter_values(value)
+        if not requested:
+            raise CatalogFilterError(f"Filter '{name}' has no values")
+        if capability.type in {"enum", "enum_list"}:
+            allowed = {item.casefold(): item for item in capability.values}
+            invalid = sorted(item for item in requested if item.casefold() not in allowed)
+            if invalid:
+                raise CatalogFilterError(
+                    f"Unsupported value(s) for '{name}': " + ", ".join(invalid)
+                )
+            return [allowed[item.casefold()] for item in requested]
+        return sorted(requested)
 
     @staticmethod
     def _number_alias_filter(
@@ -1019,8 +1197,8 @@ class Retriever:
         name: str,
         capability: CatalogFilterCapability,
     ) -> float | None:
-        for field in capability.source_fields or [name]:
-            value = cls._coerce_float(metadata.get(field))
+        for source_field in capability.source_fields or [name]:
+            value = cls._coerce_float(metadata.get(source_field))
             if value is not None:
                 return value
         return None
@@ -1035,50 +1213,96 @@ class Retriever:
         requested_values = self._normalize_filter_values(value)
         if not requested_values:
             return True
-        metadata_values = {
-            str(metadata.get(field) or "").strip().lower()
-            for field in capability.source_fields or [name]
-            if str(metadata.get(field) or "").strip()
-        }
+        metadata_values: set[str] = set()
+        for source_field in capability.source_fields or [name]:
+            raw_value = metadata.get(source_field)
+            values = raw_value if isinstance(raw_value, list) else [raw_value]
+            metadata_values.update(
+                normalized
+                for item in values
+                if (normalized := self._normalize_filter_text(item))
+            )
         return bool(metadata_values.intersection(requested_values))
 
-    @staticmethod
-    def _normalize_filter_values(value: Any) -> set[str]:
+    @classmethod
+    def _normalize_filter_values(cls, value: Any) -> set[str]:
         if value is None:
             return set()
         if isinstance(value, list):
-            return {str(item).strip().lower() for item in value if str(item).strip()}
-        text = str(value).strip()
-        return {text.lower()} if text else set()
+            return {
+                normalized
+                for item in value
+                if (normalized := cls._normalize_filter_text(item))
+            }
+        text = cls._normalize_filter_text(value)
+        return {text} if text else set()
 
     @staticmethod
+    def _normalize_filter_text(value: Any) -> str:
+        if value is None:
+            return ""
+        return " ".join(str(value).split()).casefold()
+
     def _effective_filters(
+        self,
         filters: Dict[str, Any] | None,
         categories: List[str],
     ) -> Dict[str, Any]:
         effective = dict(filters or {})
-        if categories and "category" not in effective:
-            effective["category"] = categories
+        if categories:
+            explicit_taxonomy = sorted(
+                field for field in self.taxonomy_fields if field in effective
+            )
+            if explicit_taxonomy:
+                raise CatalogFilterError(
+                    "Legacy 'categories' cannot be combined with explicit "
+                    "taxonomy filter(s): " + ", ".join(explicit_taxonomy)
+                )
+            requested = {str(value).strip().casefold() for value in categories}
+            matched = False
+            for field in self.taxonomy_fields:
+                capability = self.filter_capabilities.get(field)
+                if capability is None:
+                    continue
+                available = {value.casefold() for value in capability.values}
+                if requested and requested.issubset(available):
+                    effective[field] = categories
+                    matched = True
+                    break
+            if requested and not matched:
+                raise CatalogFilterError(
+                    "Unsupported taxonomy value(s): "
+                    + ", ".join(sorted(str(value) for value in categories))
+                )
         return effective
 
-    @staticmethod
-    def _product_payload_from_result(result: Tuple[Any, float]) -> Dict[str, Any]:
+    def _product_payload_from_result(self, result: Tuple[Any, float]) -> Dict[str, Any]:
         doc, similarity = result
         metadata = doc.metadata
-        price = Retriever._coerce_float(metadata.get("price"))
+        price = Retriever._coerce_float(metadata.get(self.price_field))
+        description = metadata.get(self.description_field)
+        if not description and self.fallback_description_field:
+            description = metadata.get(self.fallback_description_field)
+        taxonomy = {
+            field: metadata.get(field)
+            for field in self.taxonomy_fields
+            if metadata.get(field) not in (None, "")
+        }
+        category = list(taxonomy.values())[-1] if taxonomy else ""
         product: Dict[str, Any] = {
-            "product_id": str(metadata.get("pk") or metadata.get("name")),
-            "display_name": str(metadata.get("name") or ""),
-            "description": str(metadata.get("description") or doc.page_content or ""),
-            "category": str(metadata.get("subcategory") or metadata.get("category") or ""),
-            "image_url": str(metadata.get("image") or ""),
+            "product_id": str(
+                metadata.get(self.product_id_field) or metadata.get("pk") or ""
+            ),
+            "display_name": str(metadata.get(self.name_field) or ""),
+            "description": str(description or doc.page_content or ""),
+            "category": str(category),
+            "image_url": str(metadata.get(self.image_field) or ""),
             "attributes": {
                 "catalog_text": (
-                    doc.page_content + f"\nPRICE: {metadata.get('price')}"
+                    doc.page_content + f"\nPRICE: {metadata.get(self.price_field)}"
                 ),
                 "similarity": float(similarity),
-                "source_category": metadata.get("category"),
-                "source_subcategory": metadata.get("subcategory"),
+                "taxonomy": taxonomy,
             },
         }
         if price is not None:

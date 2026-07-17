@@ -8,10 +8,17 @@ from pydantic import ValidationError
 
 from shared.commerce_contracts import (
     AddCartItemInput,
+    CatalogCapabilities,
+    CatalogCoverage,
+    CatalogFieldCapability,
+    CatalogTaxonomyCapabilities,
+    CatalogTaxonomyCategory,
+    CatalogValueCapability,
     Cart,
     CartLine,
     Money,
     ProductSummary,
+    SearchCatalogInput,
     SearchCatalogResult,
 )
 
@@ -83,3 +90,41 @@ def test_search_result_serializes_structured_products() -> None:
     dumped = result.model_dump()
     assert dumped["products"][0]["product_id"] == "prod_123"
     assert dumped["products"][0]["display_name"] == cart.lines[0].display_name
+
+
+def test_catalog_capabilities_support_nested_taxonomy_and_enum_lists() -> None:
+    tags = CatalogFieldCapability(
+        type="enum_list",
+        filterable=True,
+        searchable=True,
+        detail=True,
+        operators=["in"],
+        source_fields=["tags"],
+        coverage=CatalogCoverage(present=2, total=3),
+        values=[CatalogValueCapability(value="travel", count=2)],
+    )
+    capabilities = CatalogCapabilities(
+        catalog_id="dynamic",
+        product_count=3,
+        fields={"tags": tags},
+        taxonomy=CatalogTaxonomyCapabilities(
+            category_field="category",
+            categories={
+                "new_category": CatalogTaxonomyCategory(
+                    product_count=3,
+                    filters={"tags": tags},
+                    semantic_fields={"tags": tags},
+                )
+            },
+        ),
+    )
+
+    assert capabilities.fields["tags"].type == "enum_list"
+    assert capabilities.taxonomy.categories["new_category"].product_count == 3
+
+
+def test_search_input_rejects_client_supplied_embedding_vectors() -> None:
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        SearchCatalogInput.model_validate(
+            {"query": "travel pants", "embedding": [0.1, 0.2]}
+        )

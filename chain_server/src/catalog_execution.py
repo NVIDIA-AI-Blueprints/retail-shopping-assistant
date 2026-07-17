@@ -19,6 +19,7 @@ SearchCatalogFn = Callable[..., SearchCatalogResult]
 
 class CatalogSearchExecution(BaseModel):
     result: SearchCatalogResult
+    fallback_attempted: bool = False
     fallback_used: bool = False
 
 
@@ -42,6 +43,7 @@ def execute_catalog_search(
         timeout_seconds=timeout_seconds,
     )
     fallback_used = False
+    fallback_attempted = False
 
     if (
         plan.search_mode == "hybrid"
@@ -50,6 +52,7 @@ def execute_catalog_search(
         and result.ok
         and not result.products
     ):
+        fallback_attempted = True
         result = search_fn(
             _request_from_plan(plan, image_base64=""),
             catalog_retriever_url,
@@ -57,7 +60,11 @@ def execute_catalog_search(
         )
         fallback_used = bool(result.products)
 
-    return CatalogSearchExecution(result=result, fallback_used=fallback_used)
+    return CatalogSearchExecution(
+        result=result,
+        fallback_attempted=fallback_attempted,
+        fallback_used=fallback_used,
+    )
 
 
 def _request_from_plan(
@@ -66,9 +73,6 @@ def _request_from_plan(
     image_base64: str,
 ) -> SearchCatalogInput:
     hard_filters = dict(plan.hard_filters)
-    categories = hard_filters.pop("category", [])
-    if not isinstance(categories, list):
-        categories = []
 
     effective_image = image_base64 if plan.search_mode in {"image", "hybrid"} else ""
     query = " ".join(plan.semantic_queries)
@@ -76,7 +80,7 @@ def _request_from_plan(
         query=query,
         queries=plan.semantic_queries,
         image_base64=effective_image,
-        categories=categories,
+        categories=[],
         filters=hard_filters,
         top_k=plan.top_k,
     )

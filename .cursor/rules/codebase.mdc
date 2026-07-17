@@ -21,7 +21,7 @@ alwaysApply: false
 
 The NVIDIA Retail Shopping Assistant is an AI-powered microservices application that provides intelligent shopping assistance through:
 
-- **Multi-agent AI architecture** using LangGraph for orchestration
+- **Deep Agents SDK assistant runtime** with deterministic commerce tools
 - **Natural language queries** and **image-based search**
 - **Smart cart management** with persistent storage
 - **Content safety** via guardrails
@@ -29,7 +29,7 @@ The NVIDIA Retail Shopping Assistant is an AI-powered microservices application 
 - **Modern React-based UI**
 
 ### Key Technologies
-- **LangGraph**: Agent orchestration framework
+- **Deep Agents SDK / LangGraph**: Assistant runtime and conversation checkpointing
 - **FastAPI**: Python web framework for all backend services
 - **React + TypeScript**: Frontend
 - **Milvus**: Vector database for similarity search
@@ -49,7 +49,7 @@ The NVIDIA Retail Shopping Assistant is an AI-powered microservices application 
                            │
                    ┌──────────────┐
                    │ Chain Server │ ← Main Orchestrator
-                   │ (LangGraph)  │
+                   │(Deep Agents) │
                    └──────────────┘
                            │
        ┌───────────────────┼───────────────────┐
@@ -82,23 +82,24 @@ All services communicate via HTTP REST APIs:
 
 ### 1. Chain Server (`/chain_server/`)
 
-**Purpose**: Main orchestrator using LangGraph to coordinate specialized agents
+**Purpose**: Main orchestrator using `DeepAgentsRuntime` and registered catalog,
+product-detail, and cart tools. The older planner/retriever/cart/chatter graph
+remains only as a compatibility path and is not used by the serving API.
 
 **Key Files**:
 - `main.py`: FastAPI application with streaming endpoints
-- `graph.py`: LangGraph definition and node orchestration
-- `planner.py`: Query routing agent
-- `cart.py`: Shopping cart management agent
-- `retriever.py`: Product search agent
-- `chatter.py`: Natural language response generation
-- `summarizer.py`: Response summarization
+- `deepagents_runtime.py`: Serving assistant loop, tool registry, grounding, and memory lifecycle
+- `catalog_capabilities.py`: Process-lifetime catalog contract cache and compact prompt projection
+- `catalog_request.py`: Deterministic required-constraint validation
+- `catalog_execution.py`: Pure mapping from validated plans to catalog requests
+- `commerce_tools.py`: Typed catalog and cart service adapters
+- `media_perception.py`: Image/video analysis before the assistant turn
 
-**Agent Types**:
-- **PlannerAgent**: Routes queries to appropriate specialized agents
-- **CartAgent**: Handles add/remove/view cart operations
-- **RetrieverAgent**: Searches product catalog using text/image
-- **ChatterAgent**: Generates conversational responses
-- **SummaryAgent**: Summarizes final responses
+**Registered Tool Types**:
+- **Catalog search**: Semantic/image retrieval with capability-validated hard filters
+- **Product details**: Deterministic lookup for a known search ref
+- **Cart reads and totals**: Authoritative state and code-based arithmetic
+- **Cart mutations**: Explicit product/cart-line refs with service-side confirmation
 
 ### 2. Catalog Retriever (`/catalog_retriever/`)
 
@@ -108,12 +109,15 @@ All services communicate via HTTP REST APIs:
 - Text embedding using NVIDIA NIM models
 - Image embedding using NVCLIP
 - Milvus vector database queries
-- Product similarity matching
-- Category-based filtering
+- Schema-driven JSONL loading and semantic-document construction
+- Data-derived capabilities and generic hard filtering
+- Source-ID product detail lookup
 
 **API Endpoints**:
 - `POST /query/text`: Text-based product search
 - `POST /query/image`: Image + text search
+- `GET /capabilities`: Active fields, values, ranges, and taxonomy scopes
+- `GET /products/{product_id}`: Deterministic detail fields
 
 ### 3. Memory Retriever (`/memory_retriever/`)
 
@@ -170,71 +174,58 @@ All services communicate via HTTP REST APIs:
    ↓ HTTP POST /query/stream
 3. Chain Server (main.py)
    ↓
-4. LangGraph Orchestration (graph.py)
+4. DeepAgentsRuntime
    ↓
-5. Parallel Execution:
-   ├─ Memory Retrieval (get_memory)
-   ├─ Input Safety Check (check_input_safety)
-   └─ Query Routing (planner_node)
+5. Load scoped memory/cart; run optional input safety and media analysis
    ↓
-6. Specialized Agent Processing:
-   ├─ Cart Operations (cart_node)
-   ├─ Product Search (retriever_node)
-   └─ General Chat (passthrough_node)
+6. Deep Agents model selects registered catalog/detail/cart tools
    ↓
-7. Response Generation (chatter_node)
+7. Ground final text against tool evidence and current cart
    ↓
-8. Output Safety Check (check_output_safety)
+8. Optional output safety check
    ↓
-9. Response Summarization (summarize_node)
+9. Persist bounded conversation context
    ↓
 10. Streaming Response to Frontend
 ```
 
-### Agent Routing Logic
+### Tool Selection and Validation
 
-The **PlannerAgent** routes queries based on intent:
-
-```python
-# From config.yaml routing_prompt
-if query about "adding/removing items" → cart_node
-if query about "finding/searching products" → search (retriever)
-if query is "general conversation" → chatter
-```
+The serving model selects only registered tools. Catalog values and field roles
+come from the cached `/capabilities` contract; deterministic code validates
+every required constraint before any search and the catalog validates the wire
+request again.
 
 ### Product Search Workflow
 
 ```
-1. RetrieverAgent receives query
+1. Deep Agents receives shopper language plus compact catalog capabilities
    ↓
-2. LLM extracts search entities and categories
+2. Model emits semantic text and structured required constraints
    ↓
-3. HTTP request to Catalog Retriever
+3. Chain server validates constraints, then calls Catalog Retriever
    ├─ Text Search: /query/text
    └─ Image Search: /query/image  
    ↓
-4. Milvus vector similarity search
+4. Milvus similarity search plus deterministic hard filtering
    ↓
-5. Return top-k products with metadata
+5. Return top-k products with source IDs and metadata
    ↓
-6. Format results for ChatterAgent
+6. Optional /products/{product_id} lookup deepens a known result
 ```
 
 ### Cart Management Workflow
 
 ```
-1. CartAgent receives cart operation request
+1. Deep Agents receives an explicit cart request
    ↓
-2. LLM function calling determines action:
-   ├─ add_to_cart_function
-   ├─ remove_from_cart_function
-   └─ view_cart_function
+2. Registered tool resolves a known PRODUCT_REF or CART_LINE_ID
    ↓
-3. Product validation via Catalog Retriever
+3. Adds revalidate the product against the active catalog
    ↓
 4. Cart update via Memory Retriever API
    ↓
-5. Return confirmation message
+5. Return the authoritative cart result before claiming success
 ```
 
 ## API Endpoints
@@ -242,11 +233,14 @@ if query is "general conversation" → chatter
 ### Chain Server (Port 8009)
 - `POST /query/stream`: Streaming query processing
 - `POST /query/timing`: Query with timing information
+- `GET /capabilities`: UI/model roles plus cached catalog contract
 - `GET /health`: Health check
 
 ### Catalog Retriever (Port 8010)
 - `POST /query/text`: Text-based search
 - `POST /query/image`: Image + text search
+- `GET /capabilities`: Active catalog query contract
+- `GET /products/{product_id}`: Deterministic product details
 - `GET /health`: Health check
 
 ### Memory Retriever (Port 8011)
@@ -273,24 +267,23 @@ Each service has YAML configurations in `/shared/configs/`:
 
 **Chain Server** (`chain_server/config.yaml`):
 ```yaml
-llm_port: "http://llama:8000/v1"
-llm_name: "meta/llama-3.1-70b-instruct"
 retriever_port: "http://catalog-retriever:8010"
 memory_port: "http://memory-retriever:8011"
 rails_port: "http://rails:8012"
-routing_prompt: |
-  [Detailed routing instructions]
-chatter_prompt: |
-  [Conversational assistant instructions]
-categories: ["bag", "sunglasses", "dress", "skirt", "top blouse sweater", "shoes"]
-agent_choices: ["cart", "retriever", "chatter"]
+deepagents_recursion_limit: 24
+max_catalog_searches_per_turn: 3
+max_product_detail_reads_per_turn: 2
 ```
 
 **Catalog Retriever** (`catalog_retriever/config.yaml`):
 ```yaml
-db_port: "milvus:19530"
-data_source: "/app/shared/data/products.csv"
+db_port: "http://milvus:19530"
+data_source: "/app/shared/data/enriched_products.jsonl"
+schema_source: "/app/shared/data/enriched_products.schema.yaml"
 ```
+
+Catalog values and category-specific field availability are derived from the
+JSONL. The sidecar declares field roles and types, not category or enum values.
 
 ### Model Routing Support
 
@@ -353,27 +346,12 @@ The frontend handles multiple message types:
 - **Text Collection**: Product text embeddings
 - **Image Collection**: Product image embeddings
 
-**Schema**:
-```python
-# Text embeddings
-{
-  "id": int,
-  "embedding": vector(1024),  # Text embedding
-  "text": str,               # Product description
-  "name": str,               # Product name
-  "image": str,              # Image path
-  "category": str            # Product category
-}
-
-# Image embeddings  
-{
-  "id": int,
-  "embedding": vector(1024),  # Image embedding
-  "name": str,               # Product name
-  "image": str,              # Image path
-  "category": str            # Product category
-}
-```
+Both collections use an auto-generated integer `pk`, a `text` payload, and a
+runtime-dimension `vector`. Dynamic metadata carries the source product fields
+and `catalog_fingerprint`, including the sidecar-mapped source product ID used
+by search, details, and cart adapters. Because these names belong to the index,
+sidecars cannot map or declare `pk`, `text`, `vector`, or
+`catalog_fingerprint` as source fields.
 
 ### SQLite Storage (Memory Retriever)
 
@@ -397,13 +375,21 @@ CREATE TABLE cart_items (
 
 ### Product Catalog
 
-Products are stored in CSV format (`/shared/data/products.csv`):
-```csv
-category,subcategory,name,description,url,price,image
-accessories,bag,Classic Black Patent Leather Purse,"Description...",/images/...,49.9,/images/...
+Products are stored as JSON Lines with a field-role sidecar:
+
+```text
+/shared/data/enriched_products.jsonl
+/shared/data/enriched_products.schema.yaml
 ```
 
-**Categories**: bag, sunglasses, dress, skirt, top blouse sweater, shoes
+Each JSONL row carries the product values. The sidecar maps product identity,
+taxonomy, semantic, filter, and detail roles. `GET /capabilities` advertises the
+observed categories, values, numeric ranges, coverage, and taxonomy scopes to
+the chain server; do not hard-code those values in prompts or application code.
+The chain server caches the first successful full contract for its process
+lifetime, uses it for deterministic validation, and sends only a compact
+projection to the LLM. After a catalog change, wait for catalog health and then
+restart the chain server.
 
 ## Deployment
 
@@ -484,7 +470,8 @@ python scripts/model_config.py deploy --build
 **Configuration**:
 - `shared/configs/chain_server/config.yaml`: Main config
 - `shared/configs/catalog_retriever/config.yaml`: Search config
-- `shared/data/products.csv`: Product catalog
+- `shared/data/enriched_products.jsonl`: Product catalog values
+- `shared/data/enriched_products.schema.yaml`: Product field roles
 
 ### File Organization
 
@@ -515,4 +502,3 @@ This NVIDIA Retail Shopping Assistant demonstrates sophisticated AI application 
 - **Modern UI/UX** with React and TypeScript
 
 The system is well-architected for both development and production deployment, with clear separation of concerns and comprehensive configuration management.
-

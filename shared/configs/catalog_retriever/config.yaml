@@ -1,28 +1,8 @@
 db_port: "http://milvus:19530" 
 db_name: "shopping_advisor_db"
-catalog_id: "fashion_products_extended"
+catalog_id: "fashion_products"
 sim_threshold: 0.3
 text_collection: "shopping_advisor_text_db"
 image_collection: "shopping_advisor_image_db"
-#data_source: "/app/shared/data/products.csv"
-data_source: "/app/shared/data/products_extended.csv"
-# Declare filter field names and types here. Do not hardcode enum values:
-# enum values and numeric ranges are discovered from the loaded CSV and exposed
-# by /capabilities.
-filter_registry:
-  category:
-    type: "enum"
-    source_fields:
-      - "subcategory"
-    operators:
-      - "in"
-  price:
-    type: "number"
-    source_fields:
-      - "price"
-    operators:
-      - "gte"
-      - "lte"
-    request_aliases:
-      min: "min_price"
-      max: "max_price"
+data_source: "/app/shared/data/enriched_products.jsonl"
+schema_source: "/app/shared/data/enriched_products.schema.yaml"

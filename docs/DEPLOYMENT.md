@@ -104,10 +104,11 @@ The env file is a sourceable shell profile. Source the profile you want before
 validation or deployment; `COMPOSE_DISABLE_ENV_FILE=1` keeps Docker Compose
 from auto-parsing repo-root `.env` as dotenv and mixing environments.
 
-For an existing deployment, rebuild the Milvus catalog embeddings when changing
-the text/image embedding model or catalog data source. The catalog service skips
-collections that are already populated, so stale vectors can otherwise remain
-from the previous model configuration.
+For an existing deployment, restart the catalog service when changing the
+text/image embedding model or catalog data source. Its fingerprint reuses only
+matching complete collections and rebuilds mismatches. After the catalog is
+healthy, restart the chain server so its process-lifetime cached capability
+contract matches the active catalog.
 
 ## 🎛️ Deployment Options
 
@@ -331,7 +332,7 @@ docker stack deploy -c docker-compose.prod.yaml retail-assistant
 | `RAIL_API_KEY` | Guardrails API key | Yes | - |
 | `GUARDRAILS_ENABLED` | Default chain-server guardrails setting for requests that omit `guardrails`; accepts true/false, yes/no, on/off, or 1/0 | No | `true` |
 | `CATALOG_SEARCH_TIMEOUT_SECONDS` | Optional chain-server timeout for catalog search requests | No | no timeout |
-| `MAX_CATALOG_SEARCHES_PER_TURN` | Caps Deep Agents catalog tool calls in one assistant turn | No | `3` |
+| `MAX_CATALOG_SEARCHES_PER_TURN` | Caps distinct catalog taxonomy-scope executions in one assistant turn; a repeated same-scope request is stopped | No | `3` |
 | `MAX_PRODUCT_DETAIL_READS_PER_TURN` | Caps Deep Agents product-detail reads in one assistant turn | No | `2` |
 | `LOCAL_NIM_CACHE` | NIM cache directory | Local only | `~/.cache/nim` |
 | `LOG_LEVEL` | Logging level | No | `INFO` |
@@ -365,56 +366,37 @@ after the catalog data is loaded. Do not maintain product categories in
 `shared/configs/chain_server/config.yaml`.
 
 The authoritative guide for this workflow is
-[Catalog Filter Configuration](CATALOG_FILTERS.md). The short version is:
-`filter_registry` declares filter field names, types, source fields, and
-operators; enum values are discovered from the ingested CSV and exposed through
-`/capabilities`.
+[Catalog Schema and Filters](CATALOG_FILTERS.md). The short version is: the
+JSONL sidecar declares field types and uses, while all values, ranges, coverage,
+and taxonomy scopes are discovered from the ingested rows.
 
 #### How to Update Filters
 
-1. **Update Product Data**: Add the relevant columns and values to the catalog
-   CSV configured by `shared/configs/catalog_retriever/config.yaml`.
-2. **Declare Hard Filters**: Add real filterable fields under
-   `filter_registry` in `shared/configs/catalog_retriever/config.yaml`. Enum
-   values are discovered from the configured `source_fields`; numeric filters
-   get their min/max range from the catalog rows. Do not hardcode enum values
-   in chain-server config, UI code, or prompts.
-3. **Restart/Reindex**: Restart the catalog retriever so it loads the new data
-   and exposes updated `/capabilities`.
-4. **Verify Capabilities**: Check `http://localhost:8010/capabilities` or the
-   chain-server aggregate `http://localhost:8009/capabilities`.
+1. **Update Product Data**: Add products or values to the JSONL configured by
+   `shared/configs/catalog_retriever/config.yaml`.
+2. **Declare New Field Meaning**: Only for an entirely new field, add its type
+   and `filter`, `semantic`, and/or `detail` uses to the adjacent schema
+   sidecar. Never add enum values or category applicability rules.
+3. **Restart/Reindex Catalog**: Restart the catalog retriever so it loads the
+   new data and synchronizes its indexes.
+4. **Verify Live Capabilities**: Wait for catalog health, then check
+   `http://localhost:8010/capabilities`.
+5. **Restart Chain Server**: Restart it so it drops the prior
+   process-lifetime cached contract.
+6. **Verify Cached Capabilities**: Check the chain-server aggregate at
+   `http://localhost:8009/capabilities` before serving traffic.
 
-#### Example Catalog Retriever Configuration
+#### Catalog Retriever Configuration
 
 ```yaml
 # shared/configs/catalog_retriever/config.yaml
-filter_registry:
-  category:
-    type: "enum"
-    source_fields:
-      - "subcategory"
-    operators:
-      - "in"
-  price:
-    type: "number"
-    source_fields:
-      - "price"
-    operators:
-      - "gte"
-      - "lte"
-  color:
-    type: "enum"
-    source_fields:
-      - "color"
-    operators:
-      - "in"
-  material:
-    type: "enum"
-    source_fields:
-      - "material"
-    operators:
-      - "in"
+data_source: "/app/shared/data/enriched_products.jsonl"
+schema_source: "/app/shared/data/enriched_products.schema.yaml"
 ```
+
+The service fingerprint automatically rebuilds indexes when data, sidecar,
+embedding models, image-search state, referenced local image bytes, or the
+semantic template changes.
 
 ### Model Routing
 
@@ -710,7 +692,7 @@ ping api.nvcf.nvidia.com
 # Edit chain_server/app/config.yaml
 top_k_retrieve: 2  # Reduce for faster responses
 deepagents_recursion_limit: 24  # Raise modestly for multi-item outfit planning
-max_catalog_searches_per_turn: 3  # Bound catalog tool loops per turn
+max_catalog_searches_per_turn: 3  # Bound distinct taxonomy-scope searches per turn
 max_product_detail_reads_per_turn: 2  # Bound product-detail reads per turn
 ```
 

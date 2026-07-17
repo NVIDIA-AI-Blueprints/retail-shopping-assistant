@@ -11,6 +11,7 @@ Agents tools, and later protocol adapters can share the same typed boundary.
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import quote
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -24,7 +25,10 @@ from shared.commerce_contracts import (
     CommerceError,
     GetCartInput,
     GetCartResult,
+    GetProductDetailsInput,
+    GetProductDetailsResult,
     Money,
+    ProductDetail,
     ProductSummary,
     RemoveCartItemInput,
     SearchCatalogInput,
@@ -77,6 +81,32 @@ def search_catalog(
             json=payload,
             timeout=timeout_seconds,
         )
+        if getattr(response, "status_code", None) in {400, 422}:
+            status_code = int(response.status_code)
+            try:
+                error_payload = response.json()
+            except (AttributeError, TypeError, ValueError):
+                error_payload = {}
+            detail = (
+                error_payload.get("detail")
+                if isinstance(error_payload, dict)
+                else None
+            )
+            message = detail if isinstance(detail, str) and detail.strip() else (
+                "Catalog rejected the search request."
+            )
+            return SearchCatalogResult(
+                ok=False,
+                error=CommerceError(
+                    code=(
+                        "catalog_filter_rejected"
+                        if status_code == 422
+                        else "catalog_request_rejected"
+                    ),
+                    message=message,
+                    details={"status_code": status_code},
+                ),
+            )
         response.raise_for_status()
         data = response.json()
     except requests.RequestException as exc:
@@ -105,6 +135,63 @@ def search_catalog(
         diagnostics=data.get("diagnostics") or {},
         no_result_reason=data.get("no_result_reason"),
     )
+
+
+def get_product_details(
+    request: GetProductDetailsInput,
+    catalog_retriever_url: str,
+    *,
+    timeout_seconds: float | None = None,
+    session: Any | None = None,
+) -> GetProductDetailsResult:
+    """Read one product from the active deterministic catalog snapshot."""
+
+    http = session or requests
+    product_id = quote(request.product_id, safe="")
+    try:
+        response = http.get(
+            f"{catalog_retriever_url.rstrip('/')}/products/{product_id}",
+            timeout=timeout_seconds,
+        )
+        if getattr(response, "status_code", None) == 404:
+            return GetProductDetailsResult(
+                ok=False,
+                error=CommerceError(
+                    code="product_not_found",
+                    message="Product is not present in the active catalog. Search again.",
+                ),
+            )
+        response.raise_for_status()
+        product = ProductDetail.model_validate(response.json())
+    except requests.RequestException as exc:
+        return GetProductDetailsResult(
+            ok=False,
+            error=CommerceError(
+                code="catalog_request_failed",
+                message="Product detail request failed.",
+                retryable=True,
+                details={"error": str(exc)},
+            ),
+        )
+    except ValueError as exc:
+        return GetProductDetailsResult(
+            ok=False,
+            error=CommerceError(
+                code="catalog_response_invalid",
+                message="Product detail response was invalid.",
+                details={"error": str(exc)},
+            ),
+        )
+
+    if product.product_id != request.product_id:
+        return GetProductDetailsResult(
+            ok=False,
+            error=CommerceError(
+                code="catalog_response_invalid",
+                message="Product detail response did not match the requested product.",
+            ),
+        )
+    return GetProductDetailsResult(ok=True, product=product)
 
 
 def get_cart(
@@ -273,7 +360,7 @@ def _query_terms(request: SearchCatalogInput) -> list[str]:
 def _catalog_session() -> requests.Session:
     retry_strategy = Retry(
         total=3,
-        status_forcelist=[422, 429, 500, 502, 503, 504],
+        status_forcelist=[429, 500, 502, 503, 504],
         allowed_methods=["POST"],
         backoff_factor=1,
     )

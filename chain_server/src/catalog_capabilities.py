@@ -6,12 +6,14 @@
 from __future__ import annotations
 
 import logging
+from threading import Lock
 from typing import Any
 
 import requests
 
 from shared.commerce_contracts import (
     CatalogCapabilities,
+    CatalogFieldCapability,
     CatalogFilterCapability,
 )
 
@@ -36,27 +38,35 @@ class CatalogCapabilitiesClient:
         )
         self.session = session or requests
         self._cached: CatalogCapabilities | None = None
+        self._cache_lock = Lock()
 
-    def get(self, *, force_refresh: bool = False) -> CatalogCapabilities:
-        if self._cached is not None and not force_refresh:
+    def get(self) -> CatalogCapabilities:
+        """Return the first successful capability contract for this process."""
+
+        if self._cached is not None:
             return self._cached
 
-        try:
-            response = self.session.get(
-                f"{self.catalog_retriever_url}/capabilities",
-                timeout=self.timeout_seconds,
-            )
-            response.raise_for_status()
-            capabilities = CatalogCapabilities.model_validate(response.json())
-        except (requests.RequestException, ValueError) as exc:
-            logger.warning("Catalog capabilities unavailable: %s", exc)
-            return CatalogCapabilities(catalog_id="unavailable")
+        # UI capability reads and shopper turns can arrive together at startup.
+        # Only one of them should perform the first service request.
+        with self._cache_lock:
+            if self._cached is not None:
+                return self._cached
 
-        self._cached = capabilities
-        return capabilities
+            try:
+                response = self.session.get(
+                    f"{self.catalog_retriever_url}/capabilities",
+                    timeout=self.timeout_seconds,
+                )
+                response.raise_for_status()
+                capabilities = CatalogCapabilities.model_validate(response.json())
+            except (requests.RequestException, ValueError) as exc:
+                logger.warning("Catalog capabilities unavailable: %s", exc)
+                # Do not cache failure: the next request retries until the
+                # catalog service supplies one valid lifecycle contract.
+                return CatalogCapabilities(catalog_id="unavailable")
 
-    def clear(self) -> None:
-        self._cached = None
+            self._cached = capabilities
+            return capabilities
 
 
 def format_catalog_capabilities_for_prompt(
@@ -71,33 +81,149 @@ def format_catalog_capabilities_for_prompt(
             "clarifying question when the shopper request is underspecified."
         )
 
-    lines = [f"Catalog ID: {capabilities.catalog_id}"]
+    lines: list[str] = []
     if capabilities.retrieval_modes:
         lines.append(f"Retrieval modes: {', '.join(capabilities.retrieval_modes)}")
 
-    if capabilities.filters:
-        lines.append("Hard filters:")
-        for name, capability in sorted(capabilities.filters.items()):
-            lines.append(f"- {name}: {_format_filter_capability(capability)}")
+    filters = effective_filter_capabilities(capabilities)
+    if filters:
+        lines.append("Hard filters (enum values are exact; numbers use min/max):")
+        for name, capability in sorted(filters.items()):
+            field = capabilities.fields.get(name)
+            lines.append(
+                f"- {name}: "
+                + _format_filter_capability(
+                    capability,
+                    searchable=field.searchable if field is not None else None,
+                )
+            )
+
+    semantic_only = {
+        name: field
+        for name, field in capabilities.fields.items()
+        if field.searchable and not field.filterable and field.coverage.present > 0
+    }
+    if semantic_only:
+        lines.append("Semantic/detail fields (not hard filters):")
+        for name, field in sorted(semantic_only.items()):
+            lines.append(f"- {name}: {_format_semantic_field(field)}")
+
+    if capabilities.taxonomy.categories:
+        category_field = capabilities.taxonomy.category_field or "taxonomy_level_1"
+        subcategory_field = (
+            capabilities.taxonomy.subcategory_field or "taxonomy_level_2"
+        )
+        lines.append(
+            "Taxonomy-specific field availability "
+            f"({category_field} > {subcategory_field}; "
+            "use exact values from Hard filters above):"
+        )
+        taxonomy_fields = {
+            field
+            for field in (
+                capabilities.taxonomy.category_field,
+                capabilities.taxonomy.subcategory_field,
+            )
+            if field
+        }
+        for category_name in sorted(
+            capabilities.taxonomy.categories,
+            key=str.casefold,
+        ):
+            category = capabilities.taxonomy.categories[category_name]
+            lines.append(f"- {category_field}={category_name}")
+            lines.extend(
+                _format_scope(
+                    category.filters,
+                    category.semantic_fields,
+                    "  ",
+                    excluded_fields=taxonomy_fields,
+                )
+            )
+            for subcategory_name in sorted(
+                category.subcategories,
+                key=str.casefold,
+            ):
+                subcategory = category.subcategories[subcategory_name]
+                lines.append(f"  - {subcategory_field}={subcategory_name}")
+                lines.extend(
+                    _format_scope(
+                        subcategory.filters,
+                        subcategory.semantic_fields,
+                        "    ",
+                        excluded_fields=taxonomy_fields,
+                    )
+                )
 
     return "\n".join(lines)
 
 
-def _format_filter_capability(capability: CatalogFilterCapability) -> str:
+def effective_filter_capabilities(
+    capabilities: CatalogCapabilities,
+) -> dict[str, CatalogFilterCapability]:
+    """Use authoritative field roles, with legacy flat capabilities as fallback."""
+
+    if not capabilities.fields:
+        return capabilities.filters
+    return {
+        name: CatalogFilterCapability(
+            type=field.type,  # type: ignore[arg-type]
+            operators=field.operators,
+            source_fields=field.source_fields,
+            values=[value.value for value in field.values],
+            min_value=field.min_value,
+            max_value=field.max_value,
+            request_aliases=(
+                {"min": f"min_{name}", "max": f"max_{name}"}
+                if field.type == "number"
+                else {}
+            ),
+        )
+        for name, field in capabilities.fields.items()
+        if field.filterable and field.coverage.present > 0
+    }
+
+
+def _format_filter_capability(
+    capability: CatalogFilterCapability,
+    *,
+    searchable: bool | None,
+) -> str:
     parts = [capability.type]
-    if capability.operators:
-        parts.append(f"operators {', '.join(capability.operators)}")
     if capability.values:
         parts.append(f"values {_format_values(capability.values)}")
     elif capability.min_value is not None or capability.max_value is not None:
-        parts.append(f"range {_format_range(capability.min_value, capability.max_value)}")
+        parts.append(
+            f"range {_format_range(capability.min_value, capability.max_value)}"
+        )
+    if searchable is not None:
+        parts.append(f"semantic {'yes' if searchable else 'no'}")
     return "; ".join(parts)
 
 
-def _format_values(values: list[str], *, limit: int = 80) -> str:
-    displayed = values[:limit]
-    suffix = f", ... +{len(values) - limit} more" if len(values) > limit else ""
-    return ", ".join(displayed) + suffix
+def _format_semantic_field(field: CatalogFieldCapability) -> str:
+    return f"{field.type}; detail {'yes' if field.detail else 'no'}"
+
+
+def _format_scope(
+    filters: dict[str, CatalogFieldCapability],
+    semantic_fields: dict[str, CatalogFieldCapability],
+    indent: str,
+    *,
+    excluded_fields: set[str],
+) -> list[str]:
+    lines: list[str] = []
+    filter_names = sorted(set(filters) - excluded_fields)
+    if filter_names:
+        lines.append(indent + "filters: " + ", ".join(filter_names))
+    semantic_only = set(semantic_fields) - set(filters) - excluded_fields
+    if semantic_only:
+        lines.append(indent + "semantic/detail: " + ", ".join(sorted(semantic_only)))
+    return lines
+
+
+def _format_values(values: list[str]) -> str:
+    return ", ".join(values)
 
 
 def _format_range(min_value: float | None, max_value: float | None) -> str:

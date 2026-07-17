@@ -37,10 +37,11 @@ Current constraints:
 - The compatibility mapping is not the final production identity design. A
   high-scale website should move to server-created session, conversation, and
   cart identifiers before broad rollout.
-- The runtime caps Deep Agents recursion per turn and instructs the model to
-  use one catalog search per user turn unless the shopper explicitly asks for
-  alternatives. This keeps broad shopping prompts from turning into unbounded
-  exploratory search loops.
+- The runtime caps Deep Agents recursion and distinct catalog taxonomy scopes
+  per turn. The agent tool accepts one semantic query, and a normalized scope
+  can execute only once even if later wording paraphrases it. This prevents
+  exploratory same-scope loops while allowing bounded searches for different
+  outfit components.
 - Catalog search and cart-read tools return to the Deep Agents loop so a single
   shopper turn can discover products or read the cart before mutating it.
   Mutating cart tools return directly with the authoritative cart result.

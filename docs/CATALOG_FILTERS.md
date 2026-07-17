@@ -1,253 +1,192 @@
-# Catalog Filters
+# Catalog Schema and Filters
 
-This guide explains how catalog filter metadata works when you replace or
-extend the product catalog.
-
-## Core Rule
-
-Do not hardcode enum values in chain-server, UI, prompts, or docs.
-
-The only place you declare catalog filters is:
+Catalog behavior is defined by two files:
 
 ```text
-shared/configs/catalog_retriever/config.yaml
+shared/data/enriched_products.jsonl
+shared/data/enriched_products.schema.yaml
 ```
 
-That config declares **which CSV fields are valid hard filters**. It does not
-declare enum values such as `dress`, `bag`, `blue`, or `cotton`.
+The JSONL contains products and values. The sidecar describes what each field
+means. Do not hardcode category names, colors, tags, or other catalog values in
+Python, prompts, UI code, or YAML configuration.
 
-Enum values and numeric ranges are discovered by the catalog retriever after it
-loads the configured CSV. The discovered filter contract is exposed through:
+## Sidecar Roles
 
-```text
-http://localhost:8010/capabilities
-http://localhost:8009/capabilities
-```
-
-## What `filter_registry` Means
-
-`filter_registry` is catalog policy. Each entry answers:
-
-- What is the public filter name?
-- What type of filter is it?
-- Which CSV column or columns provide its values?
-- Which operators are supported?
-
-Example:
+Core record mappings identify the product ID, display name, descriptions,
+image, and price. Ordered taxonomy fields establish the hierarchy. Each other
+field has a type and zero or more uses:
 
 ```yaml
-filter_registry:
+record:
+  product_id: record_id
+  name: name
+  description: enriched_description
+  fallback_description: description
+  image: image
+  price: price
+
+taxonomy:
+  fields: [category, subcategory]
+
+fields:
   category:
-    type: "enum"
-    source_fields:
-      - "subcategory"
-    operators:
-      - "in"
-  price:
-    type: "number"
-    source_fields:
-      - "price"
-    operators:
-      - "gte"
-      - "lte"
+    type: enum
+    uses: [filter, semantic, detail]
+  subcategory:
+    type: enum
+    uses: [filter, semantic, detail]
+  primary_color:
+    type: enum
+    uses: [filter, semantic, detail]
+  composition:
+    type: text
+    uses: [semantic, detail]
+  care:
+    type: text
+    uses: [semantic, detail]
 ```
 
-This means:
+Types:
 
-- `category` is an enforceable enum filter.
-- Its values are read from the CSV `subcategory` column.
-- `price` is an enforceable numeric filter.
-- Its range is read from the CSV `price` column.
+| Type | Meaning | Hard-filter behavior |
+| --- | --- | --- |
+| `enum` | One canonical value | Exact `in` membership |
+| `enum_list` | Zero or more canonical values | Any requested value overlaps |
+| `number` | Numeric value | `gte` / `lte` bounds |
+| `text` | Free text | Semantic/detail only; `filter` is rejected during schema validation |
 
-It does **not** mean the enum values are known ahead of time.
+Uses:
 
-## What You Need To Know Before Deployment
-
-You do not need to know enum values before deployment.
-
-You do need to decide which CSV columns are allowed to become hard filters. That
-is a catalog policy decision, not an enum-value decision.
-
-For example, before deployment you might know:
-
-```text
-This catalog has columns named color, material, size, and price.
-Users may strictly filter on those fields.
-```
-
-That is enough to write `filter_registry`. You do not need to know whether the
-loaded values are `blue`, `navy`, `teal`, `cotton`, `linen`, or any other
-specific value.
-
-If the incoming catalog schema is also unknown, inspect the CSV header before
-deployment and decide which fields should be filterable. Do not guess from user
-language and do not promote every column automatically. Some columns are product
-text, IDs, image paths, long descriptions, or internal metadata and should not
-be hard filters.
-
-## Example: New Catalog With Different Fields
-
-Suppose a new catalog CSV contains:
-
-```csv
-category,subcategory,name,description,image,price,color,material,size
-apparel,dress,Blue Silk Dress,Formal silk dress,/images/blue_dress.jpg,120,blue,silk,M
-apparel,dress,Green Cotton Dress,Casual cotton dress,/images/green_dress.jpg,80,green,cotton,L
-accessories,bag,Black Leather Tote,Work tote,/images/black_tote.jpg,180,black,leather,one size
-```
-
-If users should be able to say "only blue", "only silk", or "size M" and have
-the catalog strictly enforce that, declare those fields as filters:
-
-```yaml
-filter_registry:
-  category:
-    type: "enum"
-    source_fields:
-      - "subcategory"
-    operators:
-      - "in"
-  color:
-    type: "enum"
-    source_fields:
-      - "color"
-    operators:
-      - "in"
-  material:
-    type: "enum"
-    source_fields:
-      - "material"
-    operators:
-      - "in"
-  size:
-    type: "enum"
-    source_fields:
-      - "size"
-    operators:
-      - "in"
-  price:
-    type: "number"
-    source_fields:
-      - "price"
-    operators:
-      - "gte"
-      - "lte"
-```
-
-After restart/reindex, `/capabilities` will contain values discovered from the
-CSV, for example:
-
-```json
-{
-  "filters": {
-    "category": {
-      "type": "enum",
-      "source_fields": ["subcategory"],
-      "values": ["bag", "dress"]
-    },
-    "color": {
-      "type": "enum",
-      "source_fields": ["color"],
-      "values": ["black", "blue", "green"]
-    },
-    "material": {
-      "type": "enum",
-      "source_fields": ["material"],
-      "values": ["cotton", "leather", "silk"]
-    },
-    "size": {
-      "type": "enum",
-      "source_fields": ["size"],
-      "values": ["L", "M", "one size"]
-    },
-    "price": {
-      "type": "number",
-      "source_fields": ["price"],
-      "min_value": 80,
-      "max_value": 180
-    }
-  }
-}
-```
-
-The values above come from the ingested CSV. They are not copied into config.
-
-## How User Requests Use Filters
-
-The language layer builds a structured search request from user intent. The
-request builder then validates every requested filter against catalog
-capabilities.
-
-Example user request:
-
-```text
-Only show me blue silk dresses under 100.
-```
-
-If `category`, `color`, `material`, and `price` are declared filters, the search
-plan can contain:
-
-```json
-{
-  "semantic_query": "dresses",
-  "filters": {
-    "category": ["dress"],
-    "color": ["blue"],
-    "material": ["silk"],
-    "price": {"max": 100}
-  },
-  "strictness": "hard"
-}
-```
-
-`semantic_query` is product meaning only. Hard constraints such as budget,
-strict enum filters, and strictness words belong in `filters`/`strictness`, not
-in the semantic search text.
-
-If `color` is not declared as a filter, it is not sent as a hard filter. The
-catalog tool must not pretend it can enforce a field the catalog did not
-declare.
-
-## Current CSV Loader Expectations
-
-The current catalog loader expects the bundled product rows to include these
-core columns for indexing and display:
-
-| Column | Purpose |
+| Use | Effect |
 | --- | --- |
-| `name` | Product display name and retrieval text |
-| `description` | Product description and retrieval text |
-| `category` | Broad catalog grouping |
-| `subcategory` | Default public `category` filter source |
-| `image` | Product image path or URL |
-| `price` | Numeric price metadata when price filtering is enabled |
+| `filter` | Advertised and enforced as a hard filter |
+| `semantic` | Included in the product's text embedding document |
+| `detail` | Returned by `GET /products/{product_id}` |
 
-Additional columns such as `color`, `material`, `size`, `brand`, or
-`department` may be used as filters when declared in `filter_registry`.
+The sidecar declares field meaning only. It must never enumerate values or say
+that a field applies to a particular category. Ingestion derives values,
+ranges, coverage, and category scope from the active rows.
 
-## Refresh Checklist
+Taxonomy fields are the generic agent's mandatory browse scope, so ingestion
+requires each one to be a scalar `enum` with `filter` use. This is a structural
+contract, not a fixed taxonomy: field names and all values still come from the
+sidecar and active rows. Non-taxonomy fields may independently add or remove
+`filter` use.
 
-1. Put the new CSV under `shared/data/`.
-2. Set `data_source` in `shared/configs/catalog_retriever/config.yaml`.
-3. Declare only filter field names, types, source fields, and operators in
-   `filter_registry`.
-4. Do not write enum values in config.
-5. Clear/rebuild catalog embeddings if the product data changed.
-6. Restart catalog retriever and chain-server.
-7. Check `http://localhost:8010/capabilities`.
-8. Check `http://localhost:8009/capabilities`.
+## Dynamic Capabilities
 
-## Troubleshooting
+After ingestion, inspect:
 
-If a filter is missing from `/capabilities`, check that it is declared in
-`filter_registry`.
+```bash
+curl -s http://localhost:8010/capabilities
+curl -s http://localhost:8009/capabilities
+```
 
-If an enum filter appears but its `values` list is empty, check that the
-configured `source_fields` exactly match CSV column names and that the CSV rows
-contain non-empty values.
+Port `8010` returns the catalog service's live snapshot. Port `8009` returns
+the chain server's process-lifetime cached copy. The chain fetches the first
+successful full contract once, uses it for deterministic validation, and gives
+the LLM only a compact projection without counts, coverage, or repeated scoped
+values. The projection retains the actual taxonomy field names, every observed
+enum/list value for this small-catalog design, and whether a hard filter is
+also semantically searchable.
 
-If a user asks for a strict filter and results are not filtered, check that the
-field is declared in `filter_registry` and appears under `/capabilities.filters`.
+The catalog response contains:
 
-If a new catalog uses different core columns for product text or images, update
-the catalog loader before deploying that catalog shape.
+- `product_count` and retrieval modes;
+- `fields`, the authoritative field-role contract;
+- `taxonomy.categories.<category>.subcategories.<subcategory>` with scoped
+  filters and semantic fields; and
+- `filters`, a flat compatibility projection used by existing clients.
+
+Enum/list values and numeric ranges are always observed from the JSONL. The
+nested scopes tell the agent which fields and values are present for a product
+type. For example, current dress rows advertise `neckline`, while current boot
+rows advertise `shaft_height`; neither relationship exists in application
+code.
+
+## Changing the Catalog
+
+| Change | Required work |
+| --- | --- |
+| New product | Replace/update JSONL, then use the coordinated restart below |
+| New category, subcategory, enum, or tag value | Update JSONL, then use the coordinated restart below |
+| Optional field missing on some products | No schema change; update JSONL, then use the coordinated restart below |
+| Entirely new field | Add its type/uses to the sidecar, then use the coordinated restart below |
+| Non-taxonomy field should no longer be filterable | Remove `filter` from its sidecar uses, then use the coordinated restart below |
+
+Unknown source fields are preserved but exposed as `unclassified`. They cannot
+silently become search text or hard filters.
+
+Because newly structured attributes can make existing products discoverable in
+new ways, changing rows or field roles also requires reviewing catalog-dependent
+integration Goldens. Keep behavioral expectations stable, but reconcile frozen
+inventory-absence claims with the active catalog snapshot.
+
+## Direct Catalog-Service Query Example
+
+This is the internal catalog API shape. The agent-facing tool requires one
+`semantic_query`, a capability-derived `taxonomy` envelope, and
+`required_constraints`. The chain maps `taxonomy.category` and
+`taxonomy.subcategory` to the actual advertised taxonomy field names and
+combines them with validated non-taxonomy must-haves in `filters`. The serving
+agent sends a singleton `text` list; direct catalog clients retain the list
+shape for compatibility. Duplicate taxonomy values are normalized away. If
+both roles are supplied, each selected category must own at least one selected
+subcategory and each subcategory must belong to a selected category; otherwise
+the search stops before retrieval.
+
+Text requests keep semantic meaning in `text` and exact requirements in
+`filters`:
+
+```json
+{
+  "text": ["flowing structured formal dress"],
+  "filters": {
+    "subcategory": ["dresses"],
+    "neckline": ["v_neck"],
+    "price": {"lte": 200}
+  },
+  "k": 4
+}
+```
+
+The text entry is embedded and retrieved; candidates are fused, deduplicated by
+product ID, hard-filtered, thresholded, and similarity-sorted. The catalog performs no LLM
+interpretation, query expansion, or learned reranking.
+
+Different fields use AND. Multiple enum/list values within one field use OR.
+Unsupported fields, values, taxonomy values, and operators return HTTP 422
+instead of being ignored. Numeric bounds must be finite numbers; booleans,
+`NaN`, infinities, and a range containing any invalid bound return HTTP 422
+rather than weakening the requested filter. `min` and `gte` are aliases for
+the lower bound, while `max` and `lte` are aliases for the upper bound. Supply
+only one spelling for each bound; combining both aliases for the same bound is
+ambiguous and returns HTTP 422. Do not combine a nested bound with its top-level
+compatibility alias either: `price.min` plus `min_price`, or `price.max` plus
+`max_price`, returns HTTP 422. Legacy `categories` can be combined with
+non-taxonomy filters, but not with an explicit taxonomy filter in `filters`.
+
+Care instructions remain semantic text because whole care paragraphs are not
+safe enum values. For an exact care question, first search for the product and
+then call `GET /products/{product_id}`. If a future feed needs strict care
+filtering, add a structured field such as `care_method` and declare its role in
+the sidecar; do not parse prose in catalog code.
+
+## Rebuild Workflow
+
+1. Validate that every JSONL line is an object with a unique product ID. IDs
+   must be nonempty canonical strings that fit one URL path segment; ingestion
+   rejects IDs whose whitespace would be normalized, slash-containing IDs, and
+   dot-only path segments.
+2. Update the sidecar only when field meaning changes.
+3. Restart the catalog retriever.
+4. Watch startup logs until all enabled indexes are synchronized.
+5. Verify `http://localhost:8010/capabilities` and a targeted text/image query.
+6. Restart the chain server so it drops its cached capability contract.
+7. Verify `http://localhost:8009/capabilities` before serving traffic.
+
+The service calculates an internal fingerprint from data, sidecar, embedding
+models, image-search state, referenced local image bytes, and the semantic
+template. Matching indexes are reused; changed inputs trigger a full rebuild.
+Manual Milvus volume deletion is not required for normal catalog refreshes.

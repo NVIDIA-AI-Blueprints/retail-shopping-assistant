@@ -37,7 +37,9 @@ The Retail Shopping Assistant is an AI-powered blueprint that provides a compreh
 
 ### Key Features
 
-- 🤖 **Intelligent Product Search**: Find products using natural language or images
+- 🤖 **Intelligent Product Search**: The assistant translates natural language
+  into catalog queries and advertised filters; the catalog performs only
+  deterministic embedding retrieval and ranking
 - 🛒 **Smart Cart Management**: Add, remove, and manage shopping cart items
 - 🖼️ **Visual Search**: Upload images to find similar products
 - 🎥 **Optional VLM Media Perception**: Enable a VLM role to analyze image and video uploads in shopping context
@@ -52,13 +54,42 @@ The Retail Shopping Assistant is an AI-powered blueprint that provides a compreh
 ![Shopping Assistant Diagram](notebook/shopping-assistant-diagram.jpg)
 
 The application follows a microservices architecture:
-- **Chain Server**: Main API with Deep Agents SDK orchestration
-- **Catalog Retriever**: Product search and recommendations
+- **Chain Server**: Deep Agents SDK orchestration with one semantic query, a
+  required capability-derived taxonomy envelope, deterministic constraint
+  mapping, and same-scope search deduplication
+- **Catalog Retriever**: Generative-LLM-free text/image embedding search, hard
+  filtering, and deterministic result ranking
 - **Memory Retriever**: User context and cart management
 - **Guardrails**: Content safety and moderation
 - **UI**: React-based frontend interface
 
-For detailed architecture information, see [Architecture Overview](docs/README.md#architecture-overview).
+For detailed architecture information, see the [Documentation Hub](docs/README.md).
+
+### Catalog lifecycle and capability publishing
+
+1. At startup, the catalog service loads `enriched_products.jsonl` and its
+   field-role sidecar into one validated snapshot.
+2. That snapshot supplies embedding documents, product details, filters, and
+   the live contract at `http://localhost:8010/capabilities`.
+3. On its first successful fetch, the chain server caches one process-wide
+   contract shared by all sessions. Its aggregate endpoint at
+   `http://localhost:8009/capabilities` returns the cached catalog contract with
+   the other runtime capabilities.
+4. The cached taxonomy values generate the agent's search-tool schema. Each
+   search supplies one semantic query, a taxonomy scope, and non-taxonomy
+   must-haves; deterministic chain code maps and validates them before calling
+   the catalog.
+5. The catalog validates the request again, generates embeddings, applies hard
+   filters, and ranks results. It performs no shopper-language interpretation or
+   chat/completion call.
+
+Catalog values are never copied into agent or catalog code. After replacing the
+JSONL or sidecar, restart and verify the catalog service first, then restart and
+verify the chain server so its process-lifetime cache matches the new snapshot.
+See [Catalog Architecture](docs/CATALOG_REFACTOR_PLAN.md) for the complete flow
+and [Catalog Schema and Filters](docs/CATALOG_FILTERS.md) for the sidecar rules.
+The exact published response is documented in
+[Catalog Retriever capabilities](docs/API.md#catalog-retriever-get-capabilities).
 
 ## Get Started
 
@@ -161,9 +192,11 @@ The Brev deployment guide walks you through the entire process from creating a L
 
 ## Documentation
 
+- **[Project Status](STATUS.md)**: Current implementation, verification, quality qualification, and remaining risks
 - **[User Guide](docs/USER_GUIDE.md)**: How to use the application
 - **[API Documentation](docs/API.md)**: Complete API reference
-- **[Catalog Filter Configuration](docs/CATALOG_FILTERS.md)**: How to declare catalog filter fields without hardcoding enum values
+- **[Catalog Schema and Filters](docs/CATALOG_FILTERS.md)**: JSONL field roles and data-derived filter capabilities
+- **[Catalog Architecture](docs/CATALOG_REFACTOR_PLAN.md)**: Start here for JSONL ingest, lifecycle-cached capabilities, compact agent discovery, validation, and retrieval
 - **[Commerce Contracts](docs/COMMERCE_CONTRACTS.md)**: Internal product, cart, and commerce tool contracts
 - **[Shopper Agent Tool Registry](docs/SHOPPER_AGENT_TOOL_REGISTRY.md)**: Registered Deep Agents tools for the shopper-serving agent
 - **[Shopper Agent Skill Registry](docs/SHOPPER_AGENT_SKILL_REGISTRY.md)**: Registered Deep Agents skills and markdown tuning loop

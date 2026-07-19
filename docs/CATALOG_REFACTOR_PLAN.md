@@ -37,6 +37,13 @@ and validation, while the system prompt receives a compact projection of other
 filter, semantic, and detail roles. Generated values are never baked into
 application code.
 
+Each search accepts at most one category. When a broad request names no concrete
+type, `agent_selected_type` may include the advertised subcategories that serve
+one focused semantic role in that category. `no_direct_catalog_match` uses empty
+taxonomy and no hard constraints and performs no retrieval. It is decided from
+the requested type alone: an unsupported modifier does not erase an advertised
+type, while subjective style remains semantic direction.
+
 Explicit image or hybrid intent is also validated against advertised retrieval
 modes and requires an attached image. It stops before retrieval rather than
 silently becoming a text search.
@@ -277,20 +284,30 @@ errors.
 The chain server fetches capabilities on first use and caches the first
 successful response for its process lifetime. Every agent search supplies
 exactly one semantic query, a required taxonomy envelope, and required
-non-taxonomy constraints. Text search requires at least one advertised category
-or subcategory; both arrays may be empty only for image-only search. Generic
-taxonomy roles map through `taxonomy.category_field` and
-`taxonomy.subcategory_field`;
-subcategory-only selections infer all owning categories. When both roles are
-present, every selected subcategory must belong to a selected category and
-every selected category must own at least one selected subcategory; partial or
-complete incompatibilities fail before retrieval.
+non-taxonomy constraints. Each call accepts at most one category. Executable
+text search requires at least one advertised category or subcategory; both
+arrays are empty for image-only search and for the
+`no_direct_catalog_match` no-retrieval result. Generic taxonomy roles map
+through `taxonomy.category_field` and `taxonomy.subcategory_field`;
+subcategory-only selections infer their owning category and fail if multiple
+owners would cross the one-category boundary. When both roles are present,
+every selected subcategory must belong to the selected category; incompatibility
+fails before retrieval.
 
-The runtime executes a normalized taxonomy scope at most once per turn,
-regardless of semantic paraphrasing. Different scopes may execute within the
-configured cap. The agent's one query is sent to the catalog as a singleton
-`text` list. Unsupported or invalid must-haves stop the search rather than being
-silently weakened.
+The runtime executes a normalized taxonomy-plus-hard-constraint scope at most
+once per turn, regardless of semantic paraphrasing. Genuinely different hard-
+filter scopes may execute within the configured cap. The agent's one query is
+sent to the catalog as a singleton `text` list. Unsupported direct must-haves
+stop the search rather than being silently weakened; an unsupported modifier
+does not erase an advertised type, and subjective style stays semantic.
+
+One invalid search may receive one search-only repair. A successful repaired
+partial search may continue to another valid role, but the runtime never offers
+a second repair. Each successful search-tool result records the model-authored
+semantic query as `SEARCH_DIRECTION_EVIDENCE`. Search-only styling responses
+label it as ranking preference rather than product fact and nominate the first
+ranked result, or one first result per requested role, alongside deterministic
+facts and confirmed filters. They make no separate rationale model call.
 
 The catalog HTTP contract retains its text-list shape for compatibility with
 direct/internal clients. Multiple entries, when supplied directly, are embedded
@@ -317,6 +334,10 @@ feed does not guarantee cross-catalog stability. Detail reads and cart adds
 verify both cached ID and display name against the active catalog; stale or
 reused refs require a fresh search. Transient catalog failures leave the cart
 unchanged and are not described as product removal.
+
+The cache that authorizes same-conversation refs is bounded and process-local;
+it is not part of the Redis checkpoint. A restart, another replica, eviction,
+or catalog replacement requires a fresh search before details or cart adds.
 
 An internal fingerprint covers the JSONL, sidecar, embedding model names,
 image-search state, local image bytes when image search is enabled, and

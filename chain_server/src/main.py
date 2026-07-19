@@ -79,6 +79,7 @@ class QueryRequest(BaseModel):
     session_id: Optional[str] = None
     conversation_id: Optional[str] = None
     cart_id: Optional[str] = None
+    persona: Optional[Dict[str, Any]] = None
     context: Optional[str] = ""
     cart: Optional[Cart] = None
     retrieved: Optional[Dict[str, str]] = {}
@@ -94,6 +95,7 @@ class QueryResponse(BaseModel):
     timings: Dict[str, float] = {}
     token_usage: Dict[str, int] = Field(default_factory=dict)
     model_usage: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
+    agent_diagnostics: Dict[str, Any] = Field(default_factory=dict)
 
 
 _MODEL_LABELS = {
@@ -153,7 +155,11 @@ async def process_query_stream(request: QueryRequest):
         async def send_updates():
             """Generator function for streaming updates."""
             try:
-                async for chunk in assistant_runtime.astream(state, identity):
+                async for chunk in assistant_runtime.astream(
+                    state,
+                    identity,
+                    persona_snapshot=request.persona,
+                ):
                     yield f"data: {chunk}\n\n"
                 yield "data: [DONE]\n\n"
             except Exception as e:
@@ -194,7 +200,11 @@ async def process_query_timing(request: QueryRequest):
         
         # Process query and collect timing data
         start_time = time.monotonic()
-        out_state_dict = await assistant_runtime.ainvoke(state, identity)
+        out_state_dict = await assistant_runtime.ainvoke(
+            state,
+            identity,
+            persona_snapshot=request.persona,
+        )
         end_time = time.monotonic()
         
         logger.info(f"chain-server | /query/timing | Collected state: {out_state_dict}")
@@ -209,6 +219,7 @@ async def process_query_timing(request: QueryRequest):
             timings=out_state_dict["timings"],
             token_usage=out_state_dict.get("token_usage", {}),
             model_usage=out_state_dict.get("model_usage", {}),
+            agent_diagnostics=out_state_dict.get("agent_diagnostics", {}),
         )
         response.timings["total"] = total_time
 

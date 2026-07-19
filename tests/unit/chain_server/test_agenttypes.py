@@ -84,8 +84,17 @@ class TestState:
         assert state.next_agent == ""
         assert state.guardrails is True
         assert state.timings == {}
+        assert state.agent_diagnostics == {}
         assert isinstance(state.cart, Cart)
         assert state.cart.is_empty()
+
+    def test_agent_diagnostics_default_is_isolated(self) -> None:
+        first = State(user_id=1, query="first")
+        second = State(user_id=2, query="second")
+
+        first.agent_diagnostics["tool_calls"] = [{"tool_name": "read_file"}]
+
+        assert second.agent_diagnostics == {}
 
     def test_add_timing_records_step_duration(self) -> None:
         state = State(user_id=1, query="hi")

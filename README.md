@@ -40,13 +40,22 @@ The Retail Shopping Assistant is an AI-powered blueprint that provides a compreh
 - 🤖 **Intelligent Product Search**: The assistant translates natural language
   into catalog queries and advertised filters; the catalog performs only
   deterministic embedding retrieval and ranking
-- 🛒 **Smart Cart Management**: Add, remove, and manage shopping cart items
+- 🛒 **Deterministic Cart Management**: Read, add, remove, update quantities,
+  and compute subtotals through typed tools
+- 🧠 **Configurable Conversation Checkpoints**: In-process memory for local
+  development and tests, with Redis for shared durable production state;
+  product-result refs remain a separate process-local cache
+- 📚 **Enforced Shopper Skills**: Every turn first semantically selects and
+  fully loads the smallest applicable skill set before shopping tools become
+  available; product work uses one discovery or styling primary, with budget
+  guidance only when the shopper states a budget
 - 🖼️ **Visual Search**: Upload images to find similar products
 - 🎥 **Optional VLM Media Perception**: Enable a VLM role to analyze image and video uploads in shopping context
 - 💬 **Conversational AI**: Natural language interactions
 - 🔒 **Configurable Content Safety**: Built-in moderation and safety checks are on by default and can be disabled per request or config
 - ⚡ **SSE Response Stream**: Event-stream response framing for chat clients; token-level Deep Agents streaming is a follow-up after the harness migration
-- 📊 **Inference Visibility**: Model names, call counts, and token usage surfaced in the shopping UI
+- 📊 **Inference Visibility**: Model names, call counts, token usage, and
+  operator-facing ordered agent/tool termination diagnostics
 - 📱 **Responsive UI**: Modern, mobile-friendly interface
 
 ### Architecture
@@ -54,9 +63,11 @@ The Retail Shopping Assistant is an AI-powered blueprint that provides a compreh
 ![Shopping Assistant Diagram](notebook/shopping-assistant-diagram.jpg)
 
 The application follows a microservices architecture:
-- **Chain Server**: Deep Agents SDK orchestration with one semantic query, a
-  required capability-derived taxonomy envelope, deterministic constraint
-  mapping, and same-scope search deduplication
+- **Chain Server**: Deep Agents SDK orchestration with five registered shopper
+  skills, a required per-turn activation phase, nine deterministic shopping
+  tools, capability-derived search schemas, bounded search-schema repair,
+  grounded response assembly, optional read-only persona context, and a
+  configurable conversation checkpointer
 - **Catalog Retriever**: Generative-LLM-free text/image embedding search, hard
   filtering, normalized COSINE relevance scores, and deterministic result
   ranking
@@ -64,7 +75,10 @@ The application follows a microservices architecture:
 - **Guardrails**: Content safety and moderation
 - **UI**: React-based frontend interface
 
-For detailed architecture information, see the [Documentation Hub](docs/README.md).
+For the serving-agent flow, see
+[Shopper Agent Architecture](docs/SHOPPER_AGENT_ARCHITECTURE.md). The
+[Documentation Hub](docs/README.md) links the detailed contracts and operations
+guides.
 
 ### Catalog lifecycle and capability publishing
 
@@ -76,13 +90,45 @@ For detailed architecture information, see the [Documentation Hub](docs/README.m
    contract shared by all sessions. Its aggregate endpoint at
    `http://localhost:8009/capabilities` returns the cached catalog contract with
    the other runtime capabilities.
-4. The cached taxonomy values generate the agent's search-tool schema. Each
-   search supplies one semantic query, a taxonomy scope, and non-taxonomy
-   must-haves; deterministic chain code maps and validates them before calling
-   the catalog.
-5. The catalog validates the request again, generates embeddings, applies hard
-   filters, and ranks results. It performs no shopper-language interpretation or
-   chat/completion call.
+4. Cached capabilities generate both the allowed taxonomy values and the
+   non-taxonomy `required_constraints` properties. The agent semantically
+   selects exact advertised values; deterministic chain code validates and maps
+   them but does not interpret shopper language. Each call covers at most one
+   category; a broad request may select the advertised subcategories that serve
+   one focused product role.
+5. An explicitly requested type with no faithful advertised value takes a
+   no-retrieval path with empty taxonomy and no hard constraints. An unsupported
+   modifier does not erase an advertised product type. A directly stated
+   must-have missing from the generated schema is preserved in
+   `unadvertised_requirements` so the runtime can refuse to present it as
+   guaranteed instead of silently weakening it; subjective style remains
+   semantic direction.
+6. The catalog validates executable requests again, generates embeddings,
+   applies hard filters, and ranks results. It performs no shopper-language
+   interpretation or chat/completion call.
+
+Successful search evidence preserves the model-authored semantic query as a
+ranking preference. Search-only styling answers are assembled deterministically
+from that direction plus tool-returned candidate facts and confirmed filters;
+they label the direction as preference rather than product fact and nominate the
+first ranked result, or one first result per requested role, without a separate
+rationale model call. The grounding boundary keeps current-turn and prior-turn
+tool-role evidence separate, so earlier results can resolve references but
+cannot prove that a new search or cart mutation ran.
+
+Final-response extraction ignores tool messages, assistant tool-call messages,
+and internal skill-activation markers. If a completed graph contains no
+shopper-facing answer, the runtime returns a safe retry response and records the
+termination reason as `incomplete_agent_response` rather than exposing internal
+content.
+
+Product refs remembered for same-conversation follow-ups are process-local,
+bounded, and valid only for the active catalog snapshot. Redis makes the Deep
+Agents checkpoint durable; it does not persist that ref cache. A process
+restart, another replica, cache eviction, or catalog replacement therefore
+requires a fresh search before product details or cart adds. Optional persona
+data is caller-provided advisory context, not trusted profile truth; production
+callers must authenticate its owner and allowlist fields before forwarding it.
 
 Catalog values are never copied into agent or catalog code. After replacing the
 JSONL or sidecar, restart and verify the catalog service first, then restart and
@@ -134,6 +180,9 @@ The exact published response is documented in
    Set `NVIDIA_API_KEY` in the file. The env file is a sourceable shell file;
    sourcing it also sets `COMPOSE_DISABLE_ENV_FILE=1` so Docker Compose uses
    the exported shell environment instead of auto-parsing repo-root `.env`.
+   `CHECKPOINT_STORE=memory` is the local default. Production replicas should
+   point `CHECKPOINT_STORE=redis` at an operator-managed Redis 8+ or Redis Stack
+   service as described in the [Deployment Guide](docs/DEPLOYMENT.md).
 
 5. **Validate and deploy**:
    ```bash
@@ -199,12 +248,15 @@ The Brev deployment guide walks you through the entire process from creating a L
 - **[Catalog Schema and Filters](docs/CATALOG_FILTERS.md)**: JSONL field roles and data-derived filter capabilities
 - **[Catalog Architecture](docs/CATALOG_REFACTOR_PLAN.md)**: Start here for JSONL ingest, lifecycle-cached capabilities, compact agent discovery, validation, and retrieval
 - **[Commerce Contracts](docs/COMMERCE_CONTRACTS.md)**: Internal product, cart, and commerce tool contracts
+- **[Shopper Agent Architecture](docs/SHOPPER_AGENT_ARCHITECTURE.md)**: Clean map of the published catalog, turn flow, skills, tools, and memory boundaries
 - **[Shopper Agent Tool Registry](docs/SHOPPER_AGENT_TOOL_REGISTRY.md)**: Registered Deep Agents tools for the shopper-serving agent
 - **[Shopper Agent Skill Registry](docs/SHOPPER_AGENT_SKILL_REGISTRY.md)**: Registered Deep Agents skills and markdown tuning loop
 - **[Deep Agents Migration Plan](docs/DEEP_AGENTS_MIGRATION_PLAN.md)**: SDK migration, session isolation, tools, skills, and scaling notes
 - **[Deep Agents Cart Tool Goal](docs/DEEP_AGENTS_CART_TOOL_GOAL.md)**: Minimal cart-tool smoke gate and constraints
 - **[Deployment Guide](docs/DEPLOYMENT.md)**: Installation and setup instructions
-- **[Testing and Evaluation](tests/README.md)**: Unit, integration, and Challenger/Judge evaluation workflows
+- **[Testing and Evaluation](tests/README.md)**: Unit, integration, and
+  Challenger/Judge workflows; multi-turn judging treats the actual generated
+  conversation history as authoritative
 - **[Documentation Hub](docs/README.md)**: Complete documentation index
 
 ## Contribution Guidelines

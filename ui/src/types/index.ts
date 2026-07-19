@@ -185,6 +185,7 @@ export interface ApiResponse {
   images: Record<string, string>;
   timings: Record<string, number>;
   token_usage?: TokenUsage;
+  agent_diagnostics?: AgentDiagnostics;
 }
 
 export interface CartData {
@@ -207,6 +208,37 @@ export interface InferenceMetricsPayload {
   total_seconds?: number;
   token_usage?: TokenUsage;
   model_usage?: ModelUsage;
+  agent_diagnostics?: AgentDiagnostics;
+}
+
+export interface AgentToolCallDiagnostic {
+  sequence: number;
+  tool_name: string;
+  arguments: Record<string, unknown>;
+  status: 'completed' | 'rejected' | 'error' | 'pending';
+  rejection_reason?: string;
+  duplicate?: boolean;
+}
+
+export interface AgentPartialMessageDiagnostic {
+  type: string;
+  content: string;
+  name?: string;
+  tool_call_id?: string;
+  tool_calls?: Array<Record<string, unknown>>;
+  truncated?: boolean;
+}
+
+export interface AgentDiagnostics {
+  skill_files_read: string[];
+  tool_calls: AgentToolCallDiagnostic[];
+  rejected_tool_calls: number[];
+  duplicate_tool_calls: number[];
+  final_termination_reason: string;
+  partial_graph_messages: AgentPartialMessageDiagnostic[];
+  partial_graph_messages_truncated?: boolean;
+  partial_graph_capture_error?: string;
+  diagnostic_collection_error?: string;
 }
 
 export interface TokenUsage {

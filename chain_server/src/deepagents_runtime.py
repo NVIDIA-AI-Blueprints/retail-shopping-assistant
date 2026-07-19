@@ -18,12 +18,14 @@ from typing import Any, AsyncIterator, Literal
 import uuid
 
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.errors import GraphRecursionError
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
     ValidationError,
     create_model,
+    field_validator,
     model_validator,
 )
 import requests
@@ -31,6 +33,7 @@ import requests
 from .agenttypes import Cart, State
 from .catalog_capabilities import (
     CatalogCapabilitiesClient,
+    effective_filter_capabilities,
     format_catalog_capabilities_for_prompt,
 )
 from .catalog_execution import execute_catalog_search
@@ -41,24 +44,88 @@ from .catalog_request import (
 )
 from .commerce_tools import (
     add_cart_item,
+    check_product_availability,
     get_cart,
     get_product_details,
+    get_store_policy,
     remove_cart_item,
+    update_cart_item,
 )
 from .media_perception import MediaPerceptionClient
+from .skill_activation import (
+    SKILL_ACTIVATION_COMPLETE,
+    SKILL_ACTIVATION_REQUIRED,
+    SKILL_ACTIVATION_TOOL_NAME,
+    ShopperSkillActivationError,
+    ShopperSkillActivationMiddleware,
+)
+from .tool_loop_control import (
+    CONSTRAINT_REVIEW_PREFIX,
+    SEARCH_VALIDATION_ERROR_PREFIX,
+    ToolLoopControlMiddleware,
+)
 from shared.commerce_contracts import (
     AddCartItemInput,
     CatalogCapabilities,
+    Cart as CommerceCart,
+    CartMutationResult,
+    CheckProductAvailabilityInput,
+    CheckProductAvailabilityResult,
     CommerceError,
     GetCartInput,
     GetProductDetailsInput,
+    GetStorePolicyInput,
+    GetStorePolicyResult,
     ProductDetail,
     ProductSummary,
     RemoveCartItemInput,
+    UpdateCartItemInput,
 )
 
 
 logger = logging.getLogger(__name__)
+
+
+def _build_checkpointer():
+    """Return a LangGraph checkpointer based on ``CHECKPOINT_STORE``.
+
+    ``memory`` is the development/test default. ``redis`` selects the async
+    Redis saver used by this runtime's ``ainvoke`` path.
+    """
+
+    store = os.environ.get("CHECKPOINT_STORE", "memory").lower()
+    if store == "redis":
+        try:
+            from langgraph.checkpoint.redis.aio import AsyncRedisSaver
+        except ImportError as exc:
+            raise ImportError(
+                "CHECKPOINT_STORE=redis requires langgraph-checkpoint-redis. "
+                "Install it or set CHECKPOINT_STORE=memory."
+            ) from exc
+        url = os.environ.get(
+            "CHECKPOINT_REDIS_URL", "redis://localhost:6379/0"
+        )
+        ttl_seconds = int(os.environ.get("CHECKPOINT_TTL_SECONDS", "86400"))
+        return AsyncRedisSaver(
+            redis_url=url,
+            ttl={"default_ttl": ttl_seconds / 60},
+        )
+    return MemorySaver()
+
+
+def _format_persona_block(persona: dict[str, Any]) -> str:
+    """Format a persona snapshot as a read-only system prompt block."""
+
+    lines = ["SHOPPER CONTEXT (read-only, loaded at turn start):"]
+    for key, value in persona.items():
+        if value:
+            lines.append(f"  {key}: {value}")
+    lines.append(
+        "Use this context to guide search queries and styling judgment. "
+        "Do not treat it as catalog truth or override tool results with it."
+    )
+    return "\n".join(lines)
+
 
 try:
     from deepagents.backends import FilesystemBackend as _FilesystemBackend
@@ -66,13 +133,25 @@ except Exception:  # pragma: no cover - dependency import is validated at runtim
     _FilesystemBackend = None
 
 _SHOPPER_SKILLS_ENV = "SHOPPER_SKILLS_ROOT"
-_SHOPPER_SKILLS_SOURCE = "/shopper"
 _SEARCH_RESULT_GROUNDING_NOTE = (
     "SEARCH_RESULT_GROUNDING_NOTE: Use search results for candidate names, prices, "
-    "categories, image availability, and modest styling fit only. Treat product "
-    "names as display names, not attribute evidence. Do not infer or group-claim "
+    "categories, image availability, confirmed filters listed in "
+    "SEARCH_FILTER_EVIDENCE, advertised taxonomy listed in "
+    "SEARCH_TAXONOMY_EVIDENCE, and modest styling fit only. Treat product names as "
+    "display names, not attribute evidence. Do not infer or group-claim "
     "length, color, print, material, care, construction, fit, comfort, weather, "
-    "grass, gravel, or best-in-category performance from names or search snippets."
+    "grass, gravel, or best-in-category performance from names or search snippets. "
+    "Do not override a confirmed filter based on words in a display name."
+)
+_SEARCH_FILTER_EVIDENCE_PREFIX = "SEARCH_FILTER_EVIDENCE:"
+_SEARCH_TAXONOMY_EVIDENCE_PREFIX = "SEARCH_TAXONOMY_EVIDENCE:"
+_SEARCH_DIRECTION_EVIDENCE_PREFIX = "SEARCH_DIRECTION_EVIDENCE:"
+_SEARCH_SCOPE_COMPLETE_NOTE = (
+    "SEARCH_SCOPE_COMPLETE: The shopper's current request can now be answered "
+    "from this search and existing turn evidence. Answer now. Do not search an "
+    "adjacent category or substitute merely because search budget remains. Use "
+    "the direct antecedent from recent discussion as the styling anchor; an item "
+    "does not need to be in the cart to receive styling advice."
 )
 _PRODUCT_DETAIL_GROUNDING_NOTE = (
     "PRODUCT_DETAIL_GROUNDING_NOTE: This detail result exposes only "
@@ -84,6 +163,16 @@ _UNSUPPORTED_SEARCH_MODE_MESSAGE = (
     "The requested search mode is not available for the active catalog. "
     "Ask the shopper to use an advertised mode."
 )
+_NO_DIRECT_TAXONOMY_RESPONSE = (
+    "The catalog doesn't advertise a product type that directly matches this "
+    "request. Would you like me to search a different advertised product type?"
+)
+_UNSUPPORTED_REQUIREMENT_RESPONSE = (
+    "I can't guarantee that requirement from the catalog information available "
+    "to this assistant, so I won't present unverified matches. Would you like me "
+    "to treat it as a preference and show candidates to verify on their product "
+    "pages?"
+)
 _GROUNDING_EDITOR_SYSTEM_PROMPT = """You are a final response editor for a retail shopping assistant.
 
 Rewrite the draft response only as needed so it is grounded in TOOL EVIDENCE
@@ -92,8 +181,29 @@ action intact.
 
 Rules:
 - Return only the final shopper-facing response text.
+- For a styling request, answer the styling question rather than returning a raw
+  product list. Connect candidates to the shopper's goal or direct antecedent
+  using category/role, exact confirmed filters, and general styling judgment.
+  Keep styling judgment visibly separate from catalog facts and never derive it
+  from words parsed out of a display name.
+- Labeling text as styling judgment does not permit display-name inference. If
+  the evidence does not distinguish candidates, give a useful group-level
+  rationale and offer a detail check instead of inventing item-level differences.
 - Do not add products, prices, cart actions, or product facts absent from TOOL
   EVIDENCE or CURRENT CART.
+- CURRENT-TURN TOOL EVIDENCE is the only evidence for a search or mutation in
+  this turn. PRIOR-TURN TOOL EVIDENCE may support direct references to products
+  previously shown, but it does not prove that a new search or mutation ran.
+- If TOOL EVIDENCE says there is no direct advertised taxonomy match, do not
+  claim a search ran or returned products. Say only that the requested product
+  type is not advertised, then ask whether to search a different advertised
+  type. Do not name alternatives unless their exact taxonomy values appear in
+  TOOL EVIDENCE.
+- Use RECENT DISCUSSION to resolve direct references such as "that" and
+  "those." A discussed product or styling anchor does not need to be in CURRENT
+  CART. RECENT DISCUSSION cannot establish whether the current search succeeded
+  or supply the current turn's candidates. Do not introduce an absent-cart
+  caveat unless the shopper asks about the cart or requests a cart mutation.
 - Remove PRODUCT_REF, CART_LINE_ID, tool names, and internal IDs.
 - Remove internal skill, mode, evaluator, judge, cache, backend, tool-evidence,
   structured-field, and data-layer language. Use shopper-safe phrasing such as
@@ -102,7 +212,25 @@ Rules:
   requires", or similar internal mechanics, rewrite it into shopper-safe
   language without the word "tool".
 - If a product appears only in search results, you may state only its name,
-  price, category/role, image availability, and a modest styling reason.
+  price, category/role, image availability, exact values in confirmed search-
+  filter evidence, and a modest styling reason. Every other word in its display
+  name is non-evidence.
+- Confirmed search-filter evidence applies to every product returned by that
+  search. Preserve it and do not contradict it. One allowed value confirms that
+  value; multiple allowed values prove only membership in the set, not which
+  value each product has. Do not infer adjacent attributes that the evidence
+  does not name.
+- Do not omit a returned product or override a confirmed filter merely because
+  words in its display name appear to conflict. If that visible conflict matters
+  to the request, flag it as catalog information worth verifying rather than
+  resolving it from the name.
+- For each search-only candidate, delete descriptive sentences that merely
+  restate or interpret words in the display name. Keep the name, price,
+  category/role, confirmed filters, and a modest reason tied to the shopper's
+  stated goal.
+- Advertised search-taxonomy evidence lists the valid product types used by that
+  search. Do not call an unlisted product type advertised or offer it as an
+  advertised alternative.
 - Treat product names as display names, not proof of length, color, print,
   material, construction, fit, care, or vibe. Do not say a product is solid,
   floral, gingham, maxi, knee-length, woven, structured, neutral, lightweight,
@@ -162,7 +290,7 @@ class CatalogTaxonomyToolInput(BaseModel):
         description=(
             "Exact advertised category values required by the shopper. Use an "
             "empty list only when subcategory supplies the text-search scope or "
-            "the search is image-only."
+            "taxonomy_status is 'image_only' or 'no_direct_catalog_match'."
         ),
     )
     subcategory: list[str] = Field(
@@ -170,9 +298,18 @@ class CatalogTaxonomyToolInput(BaseModel):
         description=(
             "Exact advertised subcategory values required by the shopper. Use an "
             "empty list when category supplies the text-search scope or the search "
-            "is image-only."
+            "status is 'image_only' or 'no_direct_catalog_match'."
         ),
     )
+
+    @field_validator("category", "subcategory", mode="before")
+    @classmethod
+    def deduplicate_values(cls, value: Any) -> Any:
+        """Normalize repeated taxonomy values before cardinality validation."""
+
+        if isinstance(value, str):
+            return [value]
+        return list(dict.fromkeys(value)) if isinstance(value, list) else value
 
 
 class SearchCatalogToolInput(BaseModel):
@@ -189,22 +326,82 @@ class SearchCatalogToolInput(BaseModel):
             "empty string only for an image-only search."
         ),
     )
+    taxonomy_status: Literal[
+        "exact_requested_type",
+        "member_of_requested_umbrella",
+        "agent_selected_type",
+        "no_direct_catalog_match",
+        "image_only",
+    ] = Field(
+        ...,
+        description=(
+            "Direction-aware semantic relation to the shopper's requested product "
+            "type. Use 'exact_requested_type' only when every selected taxonomy "
+            "value means the same product type the shopper named. Use "
+            "'member_of_requested_umbrella' when the shopper named a true umbrella "
+            "or explicit alternatives and every selected value is a faithful child "
+            "or named alternative; do not "
+            "reverse this relation merely because the requested type is a child of "
+            "a selected parent category. Apply this direction test: each selected "
+            "catalog value must answer yes to 'is this a kind of the product scope "
+            "the shopper asked for?' A skirt is a kind of bottom; a dress is not a "
+            "kind of bottom; a flat or sandal is not a kind of sneaker even though "
+            "all are footwear. Use 'agent_selected_type' only when a broad "
+            "styling or discovery request names no concrete product type; choose "
+            "one focused role in one category and include every advertised "
+            "subcategory that serves that role. Never use it to "
+            "replace an explicitly requested unavailable type. Use "
+            "'no_direct_catalog_match' only for an explicitly requested concrete "
+            "product type when only parent, adjacent, or substitute types exist. "
+            "Decide that from the product type alone and send no required "
+            "constraints on this no-retrieval path. "
+            "A modifier does not erase an advertised product type: for example, "
+            "if skirts are advertised but denim is not enforceable, keep skirts "
+            "as taxonomy and preserve denim as an unadvertised requirement. "
+            "Never use it for an outfit, occasion, season, weather need, style/vibe, "
+            "or product attribute. Use 'image_only' only "
+            "when no text query or taxonomy scope is needed."
+        ),
+    )
     taxonomy: CatalogTaxonomyToolInput = Field(
         ...,
         description=(
             "Required catalog-derived taxonomy selection. Allowed category and "
-            "subcategory values come from the active catalog capabilities."
+            "subcategory values come from the active catalog capabilities. Every "
+            "selected value must be the requested product type or a child of an "
+            "umbrella the shopper actually named, except for one exact leaf chosen "
+            "under agent_selected_type for a broad request. Never select a parent "
+            "or sibling as a substitute. For example, skirts may satisfy bottoms; "
+            "dresses may not."
         ),
     )
     required_constraints: dict[str, Any] = Field(
         ...,
         description=(
-            "Every non-taxonomy shopper must-have as a structured field and value, "
-            "including requirements that Catalog capabilities mark semantic/detail-"
-            "only or do not advertise. Advertised numeric constraints use objects "
-            "like {'max': 100}; advertised enum constraints use exact listed values. "
-            "Unsupported requirements are preserved so validation can refuse the "
-            "search instead of silently weakening it."
+            "Every non-taxonomy must-have stated for the target products in the "
+            "current shopper turn, as a structured field and value. Facts about "
+            "an antecedent or anchor guide semantic styling judgment; do not copy "
+            "them onto a complementary product unless the shopper explicitly asks "
+            "for the same value. "
+            "The active catalog replaces this base field with its advertised hard "
+            "filters and an explicit lane for directly stated requirements it "
+            "cannot enforce. Season, weather, occasion, and subjective style/vibe "
+            "context remain semantic direction unless the shopper directly "
+            "requires an objective product attribute."
+        ),
+    )
+    scope_complete: bool = Field(
+        ...,
+        description=(
+            "True only when this search plus existing turn evidence is enough to "
+            "answer the shopper's complete current request. For a recommendation-"
+            "only one-role request this is true. Set false when an explicitly "
+            "requested product role, product-detail verification, availability "
+            "check, or cart action still must run after this search. Do not set "
+            "false merely to search alternatives or adjacent types, or because a "
+            "broader multi-turn outfit project remains unfinished. 'Start with a "
+            "beige top' and 'What bottoms go with that?' are each complete after "
+            "their own one-role search."
         ),
     )
     search_mode: str | None = Field(
@@ -214,12 +411,72 @@ class SearchCatalogToolInput(BaseModel):
 
     @model_validator(mode="after")
     def text_search_has_taxonomy_scope(self) -> "SearchCatalogToolInput":
-        if self.semantic_query.strip() and not (
+        if len(set(self.taxonomy.category)) > 1:
+            raise ValueError("catalog search accepts at most one category")
+        has_taxonomy = bool(
             self.taxonomy.category or self.taxonomy.subcategory
+        )
+        has_query = bool(self.semantic_query.strip())
+        if self.taxonomy_status == "no_direct_catalog_match":
+            if has_taxonomy:
+                raise ValueError(
+                    "no_direct_catalog_match requires empty taxonomy arrays"
+                )
+            if not has_query:
+                raise ValueError(
+                    "no_direct_catalog_match requires a requested product type"
+                )
+            constraints = (
+                self.required_constraints.model_dump(exclude_none=True)
+                if isinstance(self.required_constraints, BaseModel)
+                else self.required_constraints
+            )
+            if any(value not in (None, "", [], {}) for value in constraints.values()):
+                raise ValueError(
+                    "no_direct_catalog_match cannot include required constraints"
+                )
+            return self
+        if self.taxonomy_status == "image_only":
+            if has_query or has_taxonomy:
+                raise ValueError(
+                    "image_only requires an empty semantic query and taxonomy"
+                )
+            return self
+        if self.taxonomy_status == "member_of_requested_umbrella" and not (
+            self.taxonomy.subcategory
         ):
+            raise ValueError(
+                "member_of_requested_umbrella requires an advertised subcategory"
+            )
+        if self.taxonomy_status == "agent_selected_type" and not (
+            self.taxonomy.subcategory
+        ):
+            raise ValueError(
+                "agent_selected_type requires an advertised subcategory"
+            )
+        if has_query and not has_taxonomy:
             raise ValueError(
                 "text catalog search requires an advertised category or subcategory"
             )
+        if not has_query:
+            raise ValueError("text catalog search requires a semantic query")
+        return self
+
+
+class _CatalogNumberConstraint(BaseModel):
+    """Inclusive numeric range accepted by catalog hard filters."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    min: float | None = None
+    max: float | None = None
+
+    @model_validator(mode="after")
+    def has_a_bound(self) -> "_CatalogNumberConstraint":
+        if self.min is None and self.max is None:
+            raise ValueError("numeric constraint requires min and/or max")
+        if self.min is not None and self.max is not None and self.min > self.max:
+            raise ValueError("numeric constraint min cannot exceed max")
         return self
 
 
@@ -265,9 +522,12 @@ def _search_catalog_tool_input_model(
     )
     taxonomy_model = create_model(
         "CatalogTaxonomySelection",
-        __config__=ConfigDict(extra="forbid"),
+        __base__=CatalogTaxonomyToolInput,
         category=(category_type, category_field),
         subcategory=(subcategory_type, subcategory_field),
+    )
+    required_constraints_model = _required_constraints_input_model(
+        capabilities,
     )
     return create_model(
         "CatalogSearchInput",
@@ -279,8 +539,36 @@ def _search_catalog_tool_input_model(
                 description=(
                     "Required taxonomy selection generated from the active catalog. "
                     "Use exact enum values. A text search requires at least one "
-                    "category or subcategory; both arrays may be empty only for an "
-                    "image-only search."
+                    "category or subcategory unless taxonomy_status is "
+                    "'no_direct_catalog_match'; both arrays may be empty for that "
+                    "no-retrieval result or when taxonomy_status is 'image_only'."
+                    " Every value must be a kind of the requested scope: skirts "
+                    "may satisfy bottoms; dresses may not. For a broad request "
+                    "that names no product type, agent_selected_type chooses one "
+                    "focused role in one category and includes every advertised "
+                    "subcategory that serves that role."
+                ),
+            ),
+        ),
+        required_constraints=(
+            required_constraints_model,
+            Field(
+                ...,
+                description=(
+                    "Catalog hard filters and any defining requirement the active "
+                    "catalog cannot enforce. Apply constraints only when the "
+                    "current turn states them for the target products; an anchor's "
+                    "attributes belong in semantic styling context unless the "
+                    "shopper explicitly requests the same value. Use only the "
+                    "advertised properties "
+                    "in this object; put unsupported must-haves in "
+                    "unadvertised_requirements instead of weakening them. For "
+                    "'Do you have water-resistant bags?', use "
+                    "{'unadvertised_requirements': ['water resistance']}. Do not "
+                    "put broad season, weather, occasion, or subjective style/vibe "
+                    "context here unless the shopper directly requires a product "
+                    "attribute. 'Rainy day outfit' does not require water "
+                    "resistance; 'water-resistant bags' does."
                 ),
             ),
         ),
@@ -304,13 +592,170 @@ def _taxonomy_list_field(
     description = (
         f"Exact {role} values advertised through catalog field '{field_name}'. "
         "Use an empty list when the other taxonomy role supplies the text scope or "
-        "the search is image-only."
+        "taxonomy_status is 'image_only' or 'no_direct_catalog_match'."
     )
+    if role == "category":
+        description += " Select at most one category per catalog search."
     if not values:
         return list[str], Field(..., max_length=0, description=description)
 
     literal_type = Literal.__getitem__(tuple(values))
-    return list[literal_type], Field(..., description=description)
+    max_length = 1 if role == "category" else None
+    return list[literal_type], Field(
+        ...,
+        max_length=max_length,
+        description=description,
+    )
+
+
+def _required_constraints_input_model(
+    capabilities: CatalogCapabilities,
+) -> type[BaseModel]:
+    """Create a hard-constraint schema from advertised catalog filters."""
+
+    taxonomy_fields = {
+        field_name
+        for field_name in (
+            capabilities.taxonomy.category_field,
+            capabilities.taxonomy.subcategory_field,
+        )
+        if field_name
+    }
+    fields: dict[str, tuple[Any, Any]] = {}
+    for name, capability in sorted(effective_filter_capabilities(capabilities).items()):
+        if name in taxonomy_fields:
+            continue
+        if capability.type in {"enum", "enum_list"} and capability.values:
+            value_type = Literal.__getitem__(tuple(capability.values))
+            field_type = value_type | list[value_type] | None
+        elif capability.type == "number":
+            field_type = _CatalogNumberConstraint | None
+        else:
+            field_type = str | list[str] | None
+        fields[name] = (
+            field_type,
+            Field(
+                default=None,
+                description=f"Advertised hard filter '{name}'.",
+            ),
+        )
+    fields["unadvertised_requirements"] = (
+        list[str],
+        Field(
+            default_factory=list,
+            description=(
+                "Only objective product requirements directly stated in the "
+                "current shopper turn and absent from this schema. Never infer a "
+                "requirement from season, weather, occasion, or subjective "
+                "style/vibe context: 'rainy day outfit' produces an empty list. "
+                "Use ['water resistance'] for 'water-resistant bags' because that "
+                "turn directly states the product requirement. Never omit or "
+                "soften a directly stated requirement. "
+                "In an 'A or B' request, do not put the "
+                "supported advertised branch here."
+            ),
+        ),
+    )
+    return create_model(
+        "CatalogRequiredConstraints",
+        __config__=ConfigDict(extra="forbid"),
+        **fields,
+    )
+
+
+@dataclass(frozen=True)
+class _ShopperSkill:
+    path: str
+    description: str
+    content: str
+
+
+class _ShopperSkillActivationInput(BaseModel):
+    """Shared composition rules for dynamic shopper-skill activation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    skill_names: list[str]
+
+    @model_validator(mode="after")
+    def primary_procedures_are_exclusive(self) -> "_ShopperSkillActivationInput":
+        selected = set(self.skill_names)
+        primary = selected.intersection(
+            {"outfit-styling", "product-discovery"}
+        )
+        if len(primary) > 1:
+            raise ValueError(
+                "select exactly one primary procedure: outfit-styling or "
+                "product-discovery, never both"
+            )
+        if "budget-shopping" in selected and len(primary) != 1:
+            raise ValueError(
+                "budget-shopping requires exactly one primary procedure: "
+                "outfit-styling or product-discovery"
+            )
+        return self
+
+
+def _shopper_skill_registry(
+    skills_root: Path | None,
+) -> dict[str, _ShopperSkill]:
+    """Load validated shopper skill names, virtual paths, and full content."""
+
+    if skills_root is None:
+        raise RuntimeError("Shopper skills root is unavailable.")
+    import yaml
+
+    registry: dict[str, _ShopperSkill] = {}
+    for skill_path in sorted((skills_root / "shopper").glob("*/SKILL.md")):
+        content = skill_path.read_text(encoding="utf-8")
+        if not content.startswith("---\n") or "\n---\n" not in content:
+            raise RuntimeError(f"Invalid skill frontmatter: {skill_path.name}")
+        frontmatter, body = content.removeprefix("---\n").split("\n---\n", 1)
+        metadata = yaml.safe_load(frontmatter)
+        if not isinstance(metadata, dict):
+            raise RuntimeError(f"Invalid shopper skill: {skill_path.parent.name}")
+        name = str(metadata.get("name") or "")
+        raw_description = metadata.get("description")
+        description = (
+            raw_description.strip() if isinstance(raw_description, str) else ""
+        )
+        if name != skill_path.parent.name or not description or not body.strip():
+            raise RuntimeError(f"Invalid shopper skill: {skill_path.parent.name}")
+        registry[name] = _ShopperSkill(
+            path=f"/shopper/{name}/SKILL.md",
+            description=description,
+            content=content,
+        )
+    if not registry:
+        raise RuntimeError("No registered shopper skills were found.")
+    return registry
+
+
+def _skill_activation_input_model(
+    skill_names: tuple[str, ...],
+) -> type[BaseModel]:
+    """Create the semantic skill-selection schema from the active registry."""
+
+    skill_name_type = Literal.__getitem__(skill_names)
+    return create_model(
+        "ShopperSkillActivationInput",
+        __base__=_ShopperSkillActivationInput,
+        skill_names=(
+            list[skill_name_type],
+            Field(
+                ...,
+                min_length=1,
+                max_length=len(skill_names),
+                description=(
+                    "Smallest set of registered shopper skills whose descriptions "
+                    "cover the current turn's complete intent. For product search "
+                    "or styling, select exactly one primary procedure: outfit-"
+                    "styling or product-discovery, never both. Cart and policy "
+                    "intents may select their standalone skill without a primary."
+                ),
+            ),
+        ),
+    )
 
 
 def _taxonomy_hard_constraints(
@@ -360,7 +805,7 @@ def _taxonomy_hard_constraints(
 
     effective_categories = categories
     if subcategories and not categories:
-        effective_categories = sorted(
+        inferred_categories = sorted(
             {
                 owner
                 for subcategory_owners in owners.values()
@@ -368,6 +813,14 @@ def _taxonomy_hard_constraints(
             },
             key=str.casefold,
         )
+        if len(inferred_categories) > 1:
+            issues.append(
+                "subcategory selection has multiple owning categories; select "
+                "exactly one advertised category"
+            )
+            effective_categories = []
+        else:
+            effective_categories = inferred_categories
 
     constraints: dict[str, list[str]] = {}
     if effective_categories:
@@ -381,6 +834,30 @@ def _taxonomy_hard_constraints(
         else:
             issues.append("the catalog does not advertise a subcategory filter field")
     return constraints, issues
+
+
+def _catalog_search_scope(
+    taxonomy: dict[str, list[str]],
+    required_constraints: dict[str, Any],
+) -> dict[str, Any]:
+    """Return the normalized hard-filter identity for one catalog search."""
+
+    return {
+        "taxonomy": _normalized_scope_value(taxonomy),
+        "required_constraints": _normalized_scope_value(required_constraints),
+    }
+
+
+def _normalized_scope_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: _normalized_scope_value(item)
+            for key, item in sorted(value.items())
+        }
+    if isinstance(value, list):
+        normalized = [_normalized_scope_value(item) for item in value]
+        return sorted(normalized, key=lambda item: json.dumps(item, sort_keys=True))
+    return value
 
 
 class AddCartItemsToolItemInput(BaseModel):
@@ -414,6 +891,37 @@ class AddCartItemsToolInput(BaseModel):
     )
 
 
+class _UpdateCartItemsInput(BaseModel):
+    cart_line_id: str = Field(
+        description="CART_LINE_ID from get_cart_tool. Not the product name."
+    )
+    quantity: int = Field(
+        ge=0,
+        description="New total quantity. Set to 0 to remove the line.",
+    )
+
+
+class _GetStorePolicyInput(BaseModel):
+    topic: Literal[
+        "returns",
+        "shipping",
+        "sizing",
+        "payment",
+        "price_match",
+        "gift_cards",
+    ] = Field(description="Policy topic to look up.")
+
+
+class _CheckAvailabilityInput(BaseModel):
+    product_ref: str = Field(
+        description="PRODUCT_REF from a prior catalog search in this conversation."
+    )
+    variant_hint: str | None = Field(
+        default=None,
+        description="Size, color, or variant the shopper asked about.",
+    )
+
+
 @dataclass(frozen=True)
 class RequestIdentity:
     """Server-owned identity used to scope one assistant turn."""
@@ -440,7 +948,9 @@ class DeepAgentsRuntime:
 
     def __init__(self, config: Any) -> None:
         self.config = config
-        self._checkpointer = MemorySaver()
+        self._checkpointer = _build_checkpointer()
+        self._checkpointer_ready = not hasattr(self._checkpointer, "asetup")
+        self._checkpointer_setup_lock = asyncio.Lock()
         self._profile_registered = False
         self._product_refs: dict[str, dict[str, ProductSummary]] = {}
         self._media_perception = MediaPerceptionClient(config)
@@ -455,9 +965,16 @@ class DeepAgentsRuntime:
         return self._catalog_capabilities.get()
 
     async def astream(
-        self, state: State, identity: RequestIdentity
+        self,
+        state: State,
+        identity: RequestIdentity,
+        persona_snapshot: dict[str, Any] | None = None,
     ) -> AsyncIterator[str]:
-        output = await self._run_turn(state, identity)
+        output = await self._run_turn(
+            state,
+            identity,
+            persona_snapshot=persona_snapshot,
+        )
         products = output.product_results or []
         if products:
             yield json.dumps(
@@ -477,13 +994,23 @@ class DeepAgentsRuntime:
                     "total_seconds": sum(output.timings.values()),
                     "token_usage": _normalized_token_usage(output.token_usage),
                     "model_usage": output.model_usage,
+                    "agent_diagnostics": output.agent_diagnostics,
                 },
                 "timestamp": time.time(),
             }
         )
 
-    async def ainvoke(self, state: State, identity: RequestIdentity) -> dict[str, Any]:
-        output = await self._run_turn(state, identity)
+    async def ainvoke(
+        self,
+        state: State,
+        identity: RequestIdentity,
+        persona_snapshot: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        output = await self._run_turn(
+            state,
+            identity,
+            persona_snapshot=persona_snapshot,
+        )
         return {
             "response": output.response,
             "images": output.retrieved or {},
@@ -491,11 +1018,18 @@ class DeepAgentsRuntime:
             "timings": output.timings,
             "token_usage": _normalized_token_usage(output.token_usage),
             "model_usage": output.model_usage,
+            "agent_diagnostics": output.agent_diagnostics,
         }
 
-    async def _run_turn(self, state: State, identity: RequestIdentity) -> State:
+    async def _run_turn(
+        self,
+        state: State,
+        identity: RequestIdentity,
+        persona_snapshot: dict[str, Any] | None = None,
+    ) -> State:
         start = time.monotonic()
         state.user_id = identity.context_user_id
+        state.agent_diagnostics = _empty_agent_diagnostics("not_started")
         self._load_memory(state, identity)
 
         if state.guardrails:
@@ -510,6 +1044,9 @@ class DeepAgentsRuntime:
             if not input_safe:
                 state.response = self.config.unsafe_message
                 state.timings["deepagents"] = time.monotonic() - start
+                state.agent_diagnostics = _empty_agent_diagnostics(
+                    "input_guardrail_blocked"
+                )
                 return state
 
         media_start = time.monotonic()
@@ -520,29 +1057,79 @@ class DeepAgentsRuntime:
         if _should_short_circuit_media_failure(state):
             state.response = _media_failure_response(state.media_analysis)
             state.timings["deepagents"] = time.monotonic() - start
+            state.agent_diagnostics = _empty_agent_diagnostics("media_failure")
             return state
 
         turn_capabilities = await asyncio.to_thread(self._catalog_capabilities.get)
-        agent = self._create_agent(state, identity, turn_capabilities)
-        input_message = self._build_user_message(state, identity)
+        await self._ensure_checkpointer_ready()
+        invoke_config = {
+            "configurable": {"thread_id": identity.conversation_id},
+            "recursion_limit": self.config.deepagents_recursion_limit,
+        }
+        agent = None
         try:
+            agent = self._create_agent(
+                state,
+                identity,
+                turn_capabilities,
+                persona_snapshot=persona_snapshot,
+            )
+            input_message = self._build_user_message(state, identity)
             result = await agent.ainvoke(
                 {"messages": [{"role": "user", "content": input_message}]},
-                config={
-                    "configurable": {"thread_id": identity.conversation_id},
-                    "recursion_limit": self.config.deepagents_recursion_limit,
-                },
+                config=invoke_config,
             )
             draft_response = _extract_final_text(result)
             state.token_usage = _collect_token_usage(result)
-            state.response = self._rewrite_response_for_grounding(
-                state,
-                result,
-                draft_response,
+            state.agent_diagnostics = _safe_collect_agent_diagnostics(
+                _result_messages(result),
+                request_id=identity.request_id,
+                final_termination_reason="completed",
             )
-        except Exception:  # noqa: BLE001 - keep endpoint resilient.
+            state.response = (
+                _no_direct_taxonomy_response(
+                    result,
+                    request_id=identity.request_id,
+                )
+                or _unsupported_requirement_response(
+                    result,
+                    request_id=identity.request_id,
+                )
+                or self._rewrite_response_for_grounding(
+                    state,
+                    result,
+                    draft_response,
+                    request_id=identity.request_id,
+                )
+            )
+            if not state.response:
+                state.response = (
+                    "I could not complete that shopping request. Please try again."
+                )
+                state.agent_diagnostics[
+                    "final_termination_reason"
+                ] = "incomplete_agent_response"
+        except Exception as exc:  # noqa: BLE001 - keep endpoint resilient.
+            partial_messages, capture_error = await _partial_graph_messages(
+                agent,
+                invoke_config,
+            )
+            if isinstance(exc, GraphRecursionError):
+                termination_reason = "recursion_limit"
+            elif isinstance(exc, ShopperSkillActivationError):
+                termination_reason = "skill_activation_failed"
+            else:
+                termination_reason = "agent_error"
+            state.agent_diagnostics = _safe_collect_agent_diagnostics(
+                partial_messages,
+                request_id=identity.request_id,
+                final_termination_reason=termination_reason,
+                preserve_partial_messages=True,
+            )
+            if capture_error:
+                state.agent_diagnostics["partial_graph_capture_error"] = capture_error
             logger.exception("DeepAgentsRuntime failed")
-            self._reset_agent_thread(identity)
+            await self._reset_agent_thread(identity)
             fallback_response = _partial_product_results_response(state)
             state.response = fallback_response or (
                 "I encountered an error while helping with your shopping request. "
@@ -571,6 +1158,9 @@ class DeepAgentsRuntime:
             _record_safety_model_usage(state, "output", ok=output_check_ok)
             if not output_safe:
                 state.response = self.config.unsafe_message
+                state.agent_diagnostics[
+                    "final_termination_reason"
+                ] = "output_guardrail_blocked"
 
         state.context = self._updated_context(
             state.context,
@@ -587,6 +1177,7 @@ class DeepAgentsRuntime:
         state: State,
         identity: RequestIdentity,
         turn_capabilities: CatalogCapabilities | None = None,
+        persona_snapshot: dict[str, Any] | None = None,
     ):
         from deepagents import (
             GeneralPurposeSubagentProfile,
@@ -612,13 +1203,20 @@ class DeepAgentsRuntime:
             )
             self._profile_registered = True
 
+        skills_root = self._shopper_skills_root()
         skills_backend = self._create_skills_backend()
+        if skills_backend is None:
+            raise RuntimeError("Shopper skill backend is unavailable.")
+        skill_registry = _shopper_skill_registry(skills_root)
+        skill_activation_input = _skill_activation_input_model(
+            tuple(skill_registry)
+        )
         retrieved: dict[str, str] = {}
         state.retrieved = retrieved
         self._append_cached_cart_images(retrieved, state.cart, identity)
         search_input_model = _search_catalog_tool_input_model(turn_capabilities)
         catalog_searches_this_turn = 0
-        searched_taxonomy_scopes: set[tuple[tuple[str, tuple[str, ...]], ...]] = set()
+        searched_catalog_scopes: list[dict[str, Any]] = []
         catalog_tool_lock = Lock()
         product_detail_reads_this_turn = 0
 
@@ -626,10 +1224,63 @@ class DeepAgentsRuntime:
         def search_catalog_tool(
             semantic_query: str,
             taxonomy: BaseModel | dict[str, Any],
-            required_constraints: dict[str, Any],
+            required_constraints: BaseModel | dict[str, Any],
+            scope_complete: bool = True,
+            taxonomy_status: str = "exact_requested_type",
             search_mode: str | None = None,
         ) -> str:
-            """Validate must-haves, then execute grounded product discovery."""
+            """Find products by description, category, or price. Use for browse,
+            search, and recommendation requests. Set taxonomy_status to
+            'exact_requested_type' only when selected values mean the same product
+            type the shopper named. Use 'member_of_requested_umbrella' only when
+            the shopper named an umbrella or explicit alternatives and every
+            selected value is its faithful child or named alternative;
+            never reverse that relationship because the requested type belongs to
+            a selected parent. Ask whether each selected value is a kind of the
+            shopper's requested scope: a skirt is a kind of bottom; a flat or
+            sandal is not a kind of sneaker. For a broad styling or discovery
+            request that names no concrete product type, use 'agent_selected_type'
+            and choose one focused role in one category, including every advertised
+            subcategory that serves that role. Never use
+            it to replace a concrete unavailable type. Use 'no_direct_catalog_match' only
+            for an explicitly requested concrete product type when only parent,
+            adjacent, or substitute types exist. Never use it for an outfit,
+            occasion, season, weather need, style/vibe, or product attribute. Set
+            empty taxonomy arrays on that path so it reports the gap without
+            retrieval. Use 'image_only' only with an empty text query and taxonomy. A turn
+            asking for one recommendation-only product role permits one inclusive
+            matched search, then an answer; set scope_complete=true. Set it false
+            only when an explicitly requested product role, product-detail check,
+            availability check, or cart action still must run after this search.
+            Judge completeness against this user turn, not an unfinished multi-turn
+            outfit project. "Start with a beige top" and "What bottoms go with
+            that?" are complete after their one-role searches.
+            An unavailable type inside a one-role umbrella does not make the scope
+            partial. Do NOT search an adjacent category or substitute
+            after a result. Do NOT use if the product was already found in this conversation
+            (use get_product_details_tool).
+            Each call covers at most one catalog category. Include all faithful
+            subtypes for one requested role, but never mix categories in one call.
+            Copy every attribute that defines the requested products into
+            required_constraints. Use only advertised filter properties directly;
+            put any defining requirement not in the schema into
+            unadvertised_requirements. For "Do you have water-resistant bags?",
+            use {"unadvertised_requirements": ["water resistance"]}, not a soft
+            semantic preference. Broad season, weather, occasion, and subjective
+            style/vibe context stays in semantic_query unless the shopper directly
+            requires a product attribute. Apply hard constraints only when the
+            current turn states them for the target products; do not copy an
+            anchor's color or material onto a complementary role. "Rainy day
+            outfit" does not imply a
+            water-resistance requirement. For alternatives joined by "or", search
+            a faithful advertised branch and explain any unavailable branch; do not
+            put the supported branch in unadvertised_requirements.
+            When the shopper names an umbrella or explicit alternatives, use
+            member_of_requested_umbrella with every faithful advertised child in
+            one call; do not narrow it with agent_selected_type.
+            Do NOT repeat a search with the same taxonomy and hard constraints;
+            semantic paraphrases do not create a new scope.
+            """
 
             nonlocal catalog_searches_this_turn
             capabilities = turn_capabilities
@@ -640,12 +1291,18 @@ class DeepAgentsRuntime:
                 request = search_input_model.model_validate(
                     {
                         "semantic_query": semantic_query,
+                        "taxonomy_status": taxonomy_status,
                         "taxonomy": (
                             taxonomy.model_dump()
                             if isinstance(taxonomy, BaseModel)
                             else taxonomy
                         ),
-                        "required_constraints": required_constraints,
+                        "required_constraints": (
+                            required_constraints.model_dump()
+                            if isinstance(required_constraints, BaseModel)
+                            else required_constraints
+                        ),
+                        "scope_complete": scope_complete,
                         "search_mode": search_mode,
                     }
                 )
@@ -653,6 +1310,42 @@ class DeepAgentsRuntime:
                 return (
                     "The catalog search request does not match current capabilities: "
                     f"{exc.errors(include_url=False)}"
+                )
+
+            if request.taxonomy_status == "no_direct_catalog_match":
+                return (
+                    "STOP_TOOL_USE: No faithful advertised catalog taxonomy "
+                    f"matches the requested product type in '{request.semantic_query}'. "
+                    "Do not search adjacent product types. Tell the shopper the "
+                    "requested type is not advertised and ask before offering an "
+                    "alternative."
+                )
+
+            normalized_constraints = request.required_constraints.model_dump(
+                exclude_none=True,
+            )
+            unadvertised_requirements = normalized_constraints.pop(
+                "unadvertised_requirements",
+                [],
+            )
+            if unadvertised_requirements:
+                if not request.scope_complete:
+                    return (
+                        f"{CONSTRAINT_REVIEW_PREFIX} A partial multi-role search "
+                        "cannot infer an unsupported hard requirement from broad "
+                        "season, weather, occasion, or style context. Re-read the "
+                        "current shopper turn once. If the product requirement was "
+                        "directly stated, stop and explain that it cannot be "
+                        "guaranteed. Otherwise remove the inferred requirement and "
+                        "retry one focused advertised role."
+                    )
+                return (
+                    "The requested catalog requirement cannot be enforced: "
+                    + ", ".join(
+                        f"'{requirement}' is not an advertised hard filter"
+                        for requirement in unadvertised_requirements
+                    )
+                    + ". Ask the shopper whether to treat it as a preference."
                 )
 
             taxonomy_constraints, taxonomy_issues = _taxonomy_hard_constraints(
@@ -668,7 +1361,7 @@ class DeepAgentsRuntime:
                 if field_name
             }
             overlapping_fields = sorted(
-                taxonomy_fields.intersection(request.required_constraints)
+                taxonomy_fields.intersection(normalized_constraints)
             )
             if overlapping_fields:
                 taxonomy_issues.append(
@@ -692,7 +1385,7 @@ class DeepAgentsRuntime:
             intent = CatalogSearchIntent(
                 semantic_query=request.semantic_query,
                 required_constraints={
-                    **request.required_constraints,
+                    **normalized_constraints,
                     **taxonomy_constraints,
                 },
                 search_mode=normalized_search_mode,
@@ -724,22 +1417,17 @@ class DeepAgentsRuntime:
                     )
                 return "Catalog search requires a query or image."
 
-            taxonomy_scope = tuple(
-                sorted(
-                    (
-                        field_name,
-                        tuple(sorted(values, key=str.casefold)),
-                    )
-                    for field_name, values in taxonomy_constraints.items()
-                )
-            )
             with catalog_tool_lock:
-                if taxonomy_scope in searched_taxonomy_scopes:
+                search_scope = _catalog_search_scope(
+                    taxonomy_constraints,
+                    normalized_constraints,
+                )
+                if search_scope in searched_catalog_scopes:
                     return (
-                        "STOP_TOOL_USE: This catalog taxonomy scope was already "
-                        "searched in this turn. Do not retry it with a paraphrase or "
-                        "query expansion. Use the products already returned, or ask "
-                        "one concise clarifying question."
+                        "STOP_TOOL_USE: This catalog taxonomy and constraint scope was already "
+                        "searched in this turn. Do not retry it "
+                        "with a paraphrase or query expansion. Use the products "
+                        "already returned, or ask one concise clarifying question."
                     )
                 if catalog_searches_this_turn >= self.config.max_catalog_searches_per_turn:
                     return (
@@ -748,7 +1436,7 @@ class DeepAgentsRuntime:
                         "returned in this turn to answer concisely, or ask one concise "
                         "clarifying question if the available products are not enough."
                     )
-                searched_taxonomy_scopes.add(taxonomy_scope)
+                searched_catalog_scopes.append(search_scope)
                 catalog_searches_this_turn += 1
 
             search_start = time.monotonic()
@@ -782,7 +1470,20 @@ class DeepAgentsRuntime:
             if not result.products:
                 return "No matching catalog products were found."
 
-            lines = [_SEARCH_RESULT_GROUNDING_NOTE]
+            confirmed_filters = {
+                name: value
+                for name, value in plan.hard_filters.items()
+                if name not in taxonomy_fields
+            }
+            lines = [
+                _SEARCH_RESULT_GROUNDING_NOTE,
+                _format_search_direction_evidence(request.semantic_query),
+                _format_search_taxonomy_evidence(taxonomy_constraints),
+            ]
+            if confirmed_filters:
+                lines.append(_format_search_filter_evidence(confirmed_filters))
+            if request.scope_complete:
+                lines.append(_SEARCH_SCOPE_COMPLETE_NOTE)
             for product in result.products:
                 lines.append(_format_product(product))
             prefix = (
@@ -794,7 +1495,11 @@ class DeepAgentsRuntime:
 
         @tool(return_direct=False)
         def get_cart_tool() -> str:
-            """Read the current cart contents."""
+            """Read the current cart. Use before cart mutations to get
+            CART_LINE_ID values, or when the shopper asks what is in their cart.
+            Do NOT call again if the cart was already read this turn and no
+            mutation has occurred since.
+            """
 
             cart = self._read_cart(identity.cart_user_id)
             state.cart = cart
@@ -803,7 +1508,11 @@ class DeepAgentsRuntime:
 
         @tool(return_direct=False)
         def get_product_details_tool(product_ref: str) -> str:
-            """Read details for a PRODUCT_REF returned by search_catalog_tool."""
+            """Get detailed facts (material, care, dimensions, closures) for a
+            product already found in this conversation. Requires a PRODUCT_REF
+            from search — not a product name. Do NOT call for initial
+            recommendations. Stop immediately if STOP_TOOL_USE is returned.
+            """
 
             nonlocal product_detail_reads_this_turn
             if (
@@ -849,7 +1558,10 @@ class DeepAgentsRuntime:
 
         @tool(args_schema=AddCartItemsToolInput, return_direct=False)
         def add_cart_items_tool(items: list[AddCartItemsToolItemInput]) -> str:
-            """Add one or more catalog items by PRODUCT_REF from prior search results."""
+            """Add products to the cart. Use ONLY on explicit shopper intent to
+            add, buy, or put items in the cart. Requires PRODUCT_REF values from
+            search — not names. Call once with all items, not once per item.
+            """
 
             try:
                 requested_items = _normalize_cart_add_tool_items(items)
@@ -953,7 +1665,11 @@ class DeepAgentsRuntime:
 
         @tool(return_direct=False)
         def remove_cart_item_tool(cart_line_id: str, quantity: int = 1) -> str:
-            """Remove a cart item by CART_LINE_ID from get_cart_tool/current-cart output."""
+            """Remove a cart line. Use ONLY on explicit shopper intent to remove
+            an item. Requires CART_LINE_ID from get_cart_tool — do not guess.
+            Use update_cart_items_tool to change quantity instead of removing
+            and re-adding.
+            """
 
             quantity = max(1, int(quantity or 1))
             cart = self._read_cart(identity.cart_user_id)
@@ -973,38 +1689,189 @@ class DeepAgentsRuntime:
             )
             state.cart = self._read_cart(identity.cart_user_id)
             self._append_cached_cart_images(retrieved, state.cart, identity)
-            if result.ok:
-                return result.message or f"Removed {quantity} {line['item']} from cart."
-            return result.error.message if result.error else "Cart remove failed."
+            return _format_cart_remove_result(
+                result,
+                fallback=f"Removed {quantity} {line['item']} from cart.",
+            )
+
+        @tool(args_schema=_UpdateCartItemsInput, return_direct=False)
+        def update_cart_items_tool(cart_line_id: str, quantity: int) -> str:
+            """Change the quantity of an item already in the cart, or remove it
+            by setting quantity to 0. Use ONLY when the shopper explicitly asks
+            to change a quantity or remove by quantity. Do NOT use for initial
+            adds — use add_cart_items_tool. Do NOT guess the CART_LINE_ID; call
+            get_cart_tool first if you do not have one.
+            """
+
+            result = update_cart_item(
+                UpdateCartItemInput(
+                    user_id=str(identity.cart_user_id),
+                    cart_line_id=cart_line_id,
+                    quantity=quantity,
+                    idempotency_key=(
+                        f"{identity.request_id}:update:{cart_line_id}:{quantity}"
+                    ),
+                ),
+                self.config.memory_port,
+            )
+            state.cart = self._read_cart(identity.cart_user_id)
+            self._append_cached_cart_images(retrieved, state.cart, identity)
+            return _format_update_cart_result(result, state.cart)
+
+        @tool(args_schema=_GetStorePolicyInput, return_direct=False)
+        def get_store_policy_tool(
+            topic: Literal[
+                "returns",
+                "shipping",
+                "sizing",
+                "payment",
+                "price_match",
+                "gift_cards",
+            ],
+        ) -> str:
+            """Look up store policy for: returns, shipping, sizing, payment,
+            price_match, or gift_cards. Use ONLY for these policy topics. Do
+            NOT use for product facts, prices, or availability. If this tool
+            returns a not-found error, relay the message to the shopper and
+            direct them to the retailer's help center. Do NOT substitute model
+            knowledge for a missing policy.
+            """
+
+            skills_root = self._shopper_skills_root()
+            policies_path = (
+                skills_root / "shopper" / "store-policy" / "policies.yaml"
+                if skills_root is not None
+                else Path("store-policy/policies.yaml")
+            )
+            result = get_store_policy(
+                GetStorePolicyInput(topic=topic),
+                policies_path,
+            )
+            return _format_policy_result(result)
+
+        @tool(args_schema=_CheckAvailabilityInput, return_direct=False)
+        def check_product_availability_tool(
+            product_ref: str,
+            variant_hint: str | None = None,
+        ) -> str:
+            """Check whether a specific product is available or in stock. Use
+            ONLY when the shopper explicitly asks about availability, stock,
+            or a specific size/color. Do NOT use for browsing. This tool always
+            returns 'not available through the assistant' — it exists to give
+            an honest answer instead of a guess.
+            """
+
+            result = check_product_availability(
+                CheckProductAvailabilityInput(
+                    product_ref=product_ref,
+                    variant_hint=variant_hint,
+                )
+            )
+            return _format_availability_result(result)
 
         @tool(return_direct=False)
         def view_cart_total_tool() -> str:
-            """Compute the current cart total from cached cart line prices."""
+            """Compute the cart subtotal. Use for budget checks or when the
+            shopper asks for the total. Does not include tax or shipping. Use
+            get_cart_tool for line contents.
+            """
 
             cart = self._read_cart(identity.cart_user_id)
             state.cart = cart
             self._append_cached_cart_images(retrieved, cart, identity)
             return _format_cart_total(cart)
 
+        shopping_tools = [
+            search_catalog_tool,
+            get_product_details_tool,
+            get_cart_tool,
+            add_cart_items_tool,
+            remove_cart_item_tool,
+            update_cart_items_tool,
+            view_cart_total_tool,
+            get_store_policy_tool,
+            check_product_availability_tool,
+        ]
+        skill_gate = ShopperSkillActivationMiddleware(
+            request_id=identity.request_id,
+            gated_tools=frozenset(
+                str(
+                    getattr(candidate, "name", None)
+                    or getattr(candidate, "__name__", "")
+                )
+                for candidate in shopping_tools
+            ),
+            skill_descriptions={
+                name: skill.description
+                for name, skill in skill_registry.items()
+            },
+        )
+        tool_loop_control = ToolLoopControlMiddleware()
+
+        @tool(args_schema=skill_activation_input, return_direct=False)
+        def activate_shopper_skills_tool(skill_names: list[str]) -> str:
+            """Select and load shopper behavior skills for this turn. This is
+            the required first step before answering or calling shopping tools.
+            Select the smallest set whose registered descriptions cover the
+            complete current intent. Use outfit-styling for outfit building,
+            completion, refinement, or mid-browse styling questions; style-led
+            single-piece selection, including a statement or balancing piece,
+            also uses outfit-styling. Use product-discovery for search and browse
+            without styling intent. These are alternative primary procedures,
+            never a pair. Add budget-shopping only as a modifier when the shopper
+            states a budget. Keep outfit-styling as the primary skill throughout
+            an active outfit-building thread, including its single-piece follow-up
+            searches.
+            """
+
+            selected_names = list(dict.fromkeys(skill_names))
+            try:
+                selected_files = {
+                    skill_registry[name].path: skill_registry[name].content
+                    for name in selected_names
+                }
+                activated = skill_gate.activate(selected_files)
+            except (KeyError, ValueError):
+                skill_gate.fail()
+                return (
+                    "SHOPPER_SKILL_ACTIVATION_FAILED: Registered skill "
+                    "instructions could not be loaded."
+                )
+            if not activated:
+                return "SHOPPER_SKILL_ACTIVATION_ALREADY_COMPLETE"
+            return (
+                f"{SKILL_ACTIVATION_COMPLETE} "
+                + ", ".join(selected_files)
+            )
+
         return create_deep_agent(
             model=self._create_chat_model(),
-            tools=[
-                search_catalog_tool,
-                get_product_details_tool,
-                get_cart_tool,
-                add_cart_items_tool,
-                remove_cart_item_tool,
-                view_cart_total_tool,
-            ],
-            system_prompt=self._system_prompt(turn_capabilities),
-            skills=[_SHOPPER_SKILLS_SOURCE] if skills_backend is not None else None,
+            tools=[activate_shopper_skills_tool, *shopping_tools],
+            system_prompt=self._system_prompt(
+                turn_capabilities,
+                persona_snapshot=persona_snapshot,
+            ),
+            middleware=[skill_gate, tool_loop_control],
             backend=skills_backend,
             checkpointer=self._checkpointer,
         )
 
-    def _reset_agent_thread(self, identity: RequestIdentity) -> None:
+    async def _ensure_checkpointer_ready(self) -> None:
+        if self._checkpointer_ready:
+            return
+        async with self._checkpointer_setup_lock:
+            if self._checkpointer_ready:
+                return
+            await self._checkpointer.asetup()
+            self._checkpointer_ready = True
+
+    async def _reset_agent_thread(self, identity: RequestIdentity) -> None:
         try:
-            self._checkpointer.delete_thread(identity.conversation_id)
+            delete_thread = getattr(self._checkpointer, "adelete_thread", None)
+            if delete_thread is not None:
+                await delete_thread(identity.conversation_id)
+            else:
+                self._checkpointer.delete_thread(identity.conversation_id)
         except Exception as exc:  # pragma: no cover - cleanup is best effort.
             logger.warning("Could not reset Deep Agents thread after failure: %s", exc)
 
@@ -1026,25 +1893,50 @@ class DeepAgentsRuntime:
         state: State,
         result: Any,
         draft_response: str,
+        *,
+        request_id: str,
     ) -> str:
-        if not draft_response:
-            return draft_response
         if not getattr(self.config, "grounding_rewrite_enabled", True):
             return _scrub_internal_shopper_language(draft_response)
 
-        evidence = _collect_tool_grounding_evidence(
-            result,
-            max_chars=getattr(self.config, "grounding_rewrite_max_evidence_chars", 12000),
+        max_evidence_chars = getattr(
+            self.config,
+            "grounding_rewrite_max_evidence_chars",
+            12000,
         )
-        if not evidence:
+        current_evidence = _collect_tool_grounding_evidence(
+            result,
+            max_chars=max_evidence_chars,
+            request_id=request_id,
+        )
+        prior_evidence = _collect_message_grounding_evidence(
+            _prior_turn_messages(_result_messages(result), request_id),
+            max_chars=max_evidence_chars,
+        )
+        if current_evidence and _has_search_only_tool_evidence(
+            result,
+            request_id=request_id,
+        ):
+            return self._build_search_only_response(
+                state,
+                result,
+                request_id=request_id,
+            )
+        if not draft_response:
+            return draft_response
+        if not current_evidence and not prior_evidence:
             return _scrub_internal_shopper_language(draft_response)
 
         start = time.monotonic()
         prompt = (
             f"USER QUERY:\n{state.query}\n\n"
+            f"RECENT DISCUSSION:\n{state.context or '(none)'}\n\n"
             f"CURRENT CART:\n{_format_cart(state.cart)}\n\n"
             f"AVAILABLE IMAGES:\n{_format_retrieved_images(state.retrieved)}\n\n"
-            f"TOOL EVIDENCE:\n{evidence}\n\n"
+            "CURRENT-TURN TOOL EVIDENCE:\n"
+            f"{current_evidence or '(none)'}\n\n"
+            "PRIOR-TURN TOOL EVIDENCE:\n"
+            f"{prior_evidence or '(none)'}\n\n"
             f"DRAFT RESPONSE:\n{draft_response}"
         )
         try:
@@ -1064,7 +1956,7 @@ class DeepAgentsRuntime:
                 calls=1,
                 detail="Final response grounding rewrite failed open",
             )
-            return draft_response
+            return _scrub_internal_shopper_language(draft_response)
 
         state.timings["grounding_rewrite"] = time.monotonic() - start
         _add_model_usage(
@@ -1083,6 +1975,44 @@ class DeepAgentsRuntime:
         if not rewritten:
             rewritten = _content_to_text(rewrite_result)
         return _scrub_internal_shopper_language(rewritten or draft_response)
+
+    def _build_search_only_response(
+        self,
+        state: State,
+        result: Any,
+        *,
+        request_id: str,
+    ) -> str:
+        """Render search facts deterministically around a fact-free rationale."""
+
+        if "/shopper/outfit-styling/SKILL.md" not in state.agent_diagnostics.get(
+            "skill_files_read",
+            [],
+        ):
+            return _format_search_only_response(
+                state,
+                result,
+                request_id=request_id,
+            )
+
+        return _format_search_only_response(
+            state,
+            result,
+            request_id=request_id,
+            rationale=(
+                _multi_search_direction(
+                    state,
+                    result,
+                    request_id=request_id,
+                )
+                if _successful_search_count(result, request_id=request_id) > 1
+                else _single_search_direction(
+                    state,
+                    result,
+                    request_id=request_id,
+                )
+            ),
+        )
 
     def _create_skills_backend(self):
         if _FilesystemBackend is None:
@@ -1104,9 +2034,13 @@ class DeepAgentsRuntime:
                 return candidate
         return None
 
-    def _system_prompt(self, capabilities: CatalogCapabilities) -> str:
+    def _system_prompt(
+        self,
+        capabilities: CatalogCapabilities,
+        persona_snapshot: dict[str, Any] | None = None,
+    ) -> str:
         catalog_context = format_catalog_capabilities_for_prompt(capabilities)
-        return f"""You are a retail shopping assistant for the products advertised by the active catalog.
+        prompt = f"""You are a retail shopping assistant for the products advertised by the active catalog.
 
 Use tools for catalog facts and cart actions. Do not invent product names,
 prices, availability, materials, care instructions, tax, shipping, stock
@@ -1138,40 +2072,149 @@ Catalog capabilities:
 {catalog_context}
 
 Rules:
+- Every turn begins with shopper-skill activation. Select the smallest set of
+  registered skills that covers the complete current intent, then follow the
+  injected full instructions before constructing shopping-tool arguments or a
+  final response. Never combine activation and shopping calls in one response.
+- Outfit styling and product discovery are alternative primary procedures;
+  never activate both. Budget shopping may accompany either only as a modifier
+  when the shopper states a budget.
+- Style-led fashion selection belongs to outfit styling even when the shopper
+  asks for one statement or balancing piece. Product discovery is for browse
+  and filter intent without styling judgment.
+- Keep the primary skill aligned with the active conversation task. An outfit-
+  building or styling thread continues to use outfit styling for piece-by-piece
+  searches until the shopper changes tasks; do not reclassify a follow-up as
+  product discovery merely because it asks for one product type.
+- The model owns the semantic choice of taxonomy values from the exact values
+  advertised in Catalog capabilities. Runtime validation only enforces that
+  contract; it does not infer shopper meaning or substitute product types.
 - Product discovery, product recommendations, budget filters, and image-similar
-  shopping require search_catalog_tool.
-- Every search call must include exactly one `semantic_query`, one `taxonomy`
-  object, and one `required_constraints` object. Put product meaning and soft
-  preferences in `semantic_query`. Use an empty string only for image-only
-  search; do not create synonyms, paraphrases, or query expansions as additional
-  searches.
+  shopping use search_catalog_tool. Every call declares `taxonomy_status` as
+  `exact_requested_type`, `member_of_requested_umbrella`,
+  `agent_selected_type`, `no_direct_catalog_match`, or `image_only`. Exact means
+  every selected value is the same product type the shopper named. Umbrella-member means the shopper
+  named a true umbrella and every selected value is its child. Never reverse
+  that relation merely because the requested type belongs to a broader selected
+  category. Apply one direction test to every selected value: "is this a kind of
+  the product scope the shopper asked for?" A skirt is a kind of bottom; a flat
+  or sandal is not a kind of sneaker even though all are footwear. If no value
+  qualifies because a broad styling or discovery request did not name a product
+  type, `agent_selected_type` may choose one focused role in one category and
+  include every advertised subcategory that serves that role. It must not replace
+  an explicitly requested unavailable type. If no value
+  qualifies for an explicitly requested concrete product type, use
+  `no_direct_catalog_match` with empty taxonomy arrays; that path reports the
+  gap without retrieval and has no required constraints. Decide it from the
+  requested product type alone: an unavailable attribute or subjective modifier
+  does not erase an advertised type. Never use that status for an outfit, occasion, season,
+  weather need, style/vibe, or product attribute. Never search an adjacent type
+  as a substitute.
+- Every search call must include exactly one `semantic_query`, one
+  `taxonomy_status`, one `taxonomy` object, and one `required_constraints`
+  object, plus `scope_complete`. Set `scope_complete` true only when this search
+  plus existing turn evidence is enough to answer the shopper's complete current
+  request. A recommendation-only one-role request is complete after its one
+  inclusive search. Set it false while an explicitly requested product role,
+  product-detail verification, availability check, or cart action still must
+  run after the search. Never set it false merely to search alternatives. A
+  requested type with no faithful advertised taxonomy match does not make a
+  one-role scope partial; report that gap without another search.
+  Judge completeness against the current user turn, not an unfinished broader
+  outfit project. "Start with a beige top" and "What bottoms go with that?" are
+  each complete after their one-role search. Put
+  product meaning and soft preferences in `semantic_query`. Use an
+  empty string only for image-only search; do not create synonyms, paraphrases,
+  or query expansions as additional searches.
 - The `taxonomy.category` and `taxonomy.subcategory` arrays contain only the
   exact values allowed by the current tool schema, which is generated from the
   active Catalog capabilities. List each value once. Use all applicable values
   for an inclusive request containing alternatives. When both arrays are used,
   every subcategory must belong to a selected category and every selected
   category must own at least one selected subcategory. Every text search needs
-  at least one taxonomy value; if a broad request has no clear scope, ask one
-  concise clarifying question. Both arrays may be empty only for an image-only
-  search. Taxonomy is mapped deterministically to the Catalog's actual filter
-  field names.
+  at least one taxonomy value when `taxonomy_status` is `exact_requested_type`
+  or `member_of_requested_umbrella`; if a broad request has no clear scope, ask
+  one concise clarifying question. Both arrays may be empty only for an
+  `image_only` search or a `no_direct_catalog_match` no-retrieval result. Taxonomy is mapped
+  deterministically to the Catalog's actual filter field names.
+- Each catalog call covers at most one category and one focused product role.
+  Include every faithful advertised subtype for that role in the same call, but
+  never mix apparel, footwear, bags, or other categories in one retrieval. A
+  multi-role request uses separate focused calls up to the search cap. An outfit
+  or style/vibe is not a taxonomy umbrella; use `agent_selected_type` to choose
+  one focused starting role when the shopper did not name one.
+- If an explicitly requested product type has no faithful advertised taxonomy
+  value, do not broaden to its parent category, omit it, or silently substitute
+  an adjacent type. Tell the shopper that type is unavailable and ask before
+  searching an alternative.
+- Never describe an unadvertised or unselected product type as advertised. When
+  offering a next search direction, name only exact taxonomy values shown in
+  Catalog capabilities or the current search's taxonomy evidence.
 - Put every non-taxonomy shopper must-have in `required_constraints`, including
   requirements whose fields are semantic/detail-only or absent from Catalog
   capabilities. Do not omit an unsupported must-have or rely on semantic search
   to enforce it; deterministic validation must refuse that search instead of
-  weakening it. Semantic relevance cannot guarantee a must-have requirement.
+  weakening it. Preserve performance requirements such as water resistance or
+  machine washability here as well. An attribute that defines the requested
+  products is required even without the words "must have." Semantic relevance cannot guarantee
+  a must-have requirement; only explicitly optional or preferred wording makes
+  it soft. Use only advertised filter properties directly. For "Do you have
+  water-resistant bags?", include
+  `{{"unadvertised_requirements": ["water resistance"]}}`; do not send an
+  empty object.
+- Apply hard constraints only to the target products named in the current turn.
+  An anchor's confirmed color, material, or other attribute is styling context,
+  not a hard filter for a complementary role, unless the shopper explicitly asks
+  for the same value or palette.
 - For required constraints advertised as hard filters, enum values must exactly
   match listed values and numeric values use an object with `min` and/or `max`.
+  When one shopper constraint includes multiple applicable advertised enum
+  values, include all of them in one list and one search rather than trying one
+  value at a time.
 - Media-only or descriptive media requests such as "what's in this look",
   "describe this outfit", "what am I wearing", or "what colors are here" must
   be answered from MEDIA ANALYSIS. Do not call search_catalog_tool and do not
   show catalog products unless the shopper explicitly asks to find, shop,
   recommend, compare, price-check, check availability, or add an item.
 - Use at most {self.config.max_catalog_searches_per_turn} catalog search calls per
-  user turn. One normalized taxonomy scope can execute only once in a turn; do
-  not retry the same scope with different semantic wording. For outfit requests
+  user turn. One normalized taxonomy-and-required-constraint scope can execute
+  only once in a turn; do not retry the same hard-filter scope with different
+  semantic wording. For outfit requests
   with multiple required item types, run one focused search per distinct
   taxonomy scope, then stop and synthesize from those results.
+- An outfit request with a season, weather need, occasion, or style/vibe already
+  has enough direction to begin with a grounded partial outfit. Do not answer
+  only with a questionnaire; search the most useful core role first and ask at
+  most one concise follow-up while presenting the grounded result.
+- An unspecified request for one style-led piece, such as a statement piece,
+  does not identify a product role. Ask one concise category or occasion question
+  before searching. This does not apply to an outfit or complete-look request,
+  where the named vibe, occasion, season, or weather need is enough to begin.
+- A whole or complete outfit remains incomplete until current or directly
+  referenced prior evidence covers multiple complementary roles, or the search
+  cap is reached and the missing role is disclosed. A one-piece dress may be the
+  clothing core, but does not by itself complete an outfit request.
+- For a broad style/vibe request, select a useful core role from exact taxonomy
+  values currently advertised by the catalog. Do not invent an unadvertised
+  product type from the vibe or copy a generic styling example into taxonomy.
+- Treat broad weather or occasion context as styling direction, not automatically
+  as a product-attribute guarantee. A "rainy day outfit" or "wet-weather outfit"
+  should search practical
+  advertised roles without adding an unadvertised requirement; add water
+  resistance to `unadvertised_requirements` only when the shopper directly
+  requires it for a product. "Rainy day outfit" does not imply water resistance;
+  "water-resistant bags" directly requires it.
+- Subjective style/vibe language is semantic direction unless the shopper makes
+  it an explicit hard requirement. Objective product attributes such as material,
+  weather performance, sale status, or a specific shade remain must-haves when
+  they define the requested product.
+- For alternatives joined by "or", search the faithful advertised branch and
+  disclose the unavailable branch. Do not reject a supported branch merely
+  because another alternative is unavailable, and never list the supported
+  taxonomy value in `unadvertised_requirements`.
+- When every named alternative is advertised, use
+  `member_of_requested_umbrella` and include all of them in one call. Do not use
+  `agent_selected_type` to narrow an explicit umbrella or alternatives.
 - Use at most {self.config.max_product_detail_reads_per_turn} product-detail
   reads per user turn. Product details are for direct product fact questions,
   cart or comparison follow-ups, or already-shortlisted items; they are not
@@ -1182,6 +2225,18 @@ Rules:
   plausible product for each required item type, answer from those results. Do
   not keep searching for alternatives unless the shopper explicitly rejects the
   current result.
+- A request for one product role gets one inclusive search scope containing all
+  faithful advertised types for that role. Do not use remaining search budget
+  on adjacent categories, one-piece substitutes, or unrelated product types.
+  A dress is not a bottom and does not satisfy a request for separates.
+- In an active styling thread, a group of recent candidates can be the direct
+  antecedent. If they share a confirmed constraint that is sufficient for the
+  next request, use it as the provisional anchor and search the requested role.
+  Do not require one exact product selection or an occasion when the shopper is
+  asking for generally compatible options and the shared anchor is sufficient.
+- In the final response to a follow-up search, explicitly connect the new
+  candidates to the named antecedent or to that candidate group's shared
+  confirmed constraint. Do not return an unexplained product list.
 - Product-detail or research questions about a product already returned by
   search_catalog_tool should use get_product_details_tool with that
   PRODUCT_REF. Do not run another broad catalog search for known-product facts.
@@ -1189,6 +2244,14 @@ Rules:
   and one styling reason. Do not enumerate materials, dimensions, pockets,
   closures, care, or construction details unless the shopper asks for those
   details and you have called get_product_details_tool.
+- For search-only recommendations, keep every product line to name, price,
+  category/role, image availability when useful, and exact confirmed filters.
+  Put the styling reason in a separate sentence based on role and shopper
+  context; never derive it by interpreting words in the display name.
+- A successful search may report confirmed filters. Every returned product
+  passed each reported predicate. A single allowed value confirms that value;
+  multiple allowed values confirm membership in the set, not which value each
+  product has. Do not infer an adjacent attribute from a confirmed filter.
 - Search-only product names are display names, not confirmed attributes. Do not
   parse length, color, print, material, construction, fit, care, or formality
   from descriptive names unless product details confirm the attribute. You may
@@ -1229,7 +2292,7 @@ Rules:
 - If MEDIA ANALYSIS is present, use it as the visual/video understanding of
   the attached media. It can guide search_catalog_tool queries and follow-up
   pronoun resolution, but catalog results remain the source of truth for
-  product names, prices, and availability.
+  product names and prices. Catalog results are not inventory evidence.
 - If MEDIA ANALYSIS says media analysis failed, VLM authentication failed, the
   VLM is unavailable, or video understanding is not configured, say so plainly.
   Do not infer video-similar products from the media; ask the shopper for a
@@ -1237,9 +2300,13 @@ Rules:
   If an image is attached, image embedding search through search_catalog_tool is
   still available even when MEDIA ANALYSIS is unavailable.
 - Cart reads require get_cart_tool. Cart totals require view_cart_total_tool.
-- Cart mutations require explicit shopper intent and must use add_cart_items_tool
-  or remove_cart_item_tool. Never claim a cart mutation unless the tool reports
-  success.
+- Use recent discussion, not CURRENT CART, to resolve ordinary product and
+  styling references such as "that" and "those." A discussed anchor does not
+  need to be in the cart for styling advice. Mention that an item is absent from
+  the cart only when the shopper asks about cart contents or a cart mutation.
+- Cart mutations require explicit shopper intent and must use
+  add_cart_items_tool, remove_cart_item_tool, or update_cart_items_tool. Never
+  claim a cart mutation unless the tool reports success.
 - Cart mutation scope must match the shopper's explicit add or remove request.
   Selection, approval, or styling preference is not cart intent by itself.
   If the shopper asks to "add those", add only the items named in that add
@@ -1272,13 +2339,21 @@ Rules:
   CART_LINE_ID in customer-facing responses.
 - Use CART_LINE_ID from CURRENT CART or get_cart_tool when removing an item. Do
   not guess cart line IDs from product names.
+- Use update_cart_items_tool for quantity changes. Set quantity to zero only
+  when the shopper explicitly asks to remove that line.
+- Store policy questions about returns, shipping, sizing, payment, price
+  matching, or gift cards require get_store_policy_tool. Never substitute model
+  knowledge for policy content that the tool does not return.
+- Explicit stock, inventory, size, color, or variant availability questions
+  require check_product_availability_tool with a PRODUCT_REF from a prior
+  search. Relay its availability limitation rather than guessing.
 - If the shopper asks for anything under a budget without a product type,
   category, occasion, style, outfit goal, or image, ask one concise clarifying
   question instead of guessing.
-- Tax, shipping fees, delivery dates, and real-time stock or inventory status
-  are not available through the current tools. If asked, say that plainly and
-  direct the shopper to checkout or the retailer product page. Do not treat a
-  catalog result as proof that an item is in stock or ready to ship.
+- Tax, delivery dates, and real-time stock or inventory status are not
+  available through the current tools. If asked, say that plainly and direct
+  the shopper to checkout or the retailer product page. Do not treat a catalog
+  result as proof that an item is in stock or ready to ship.
 - Persona or preference context is guidance only. The current shopper request
   wins when it conflicts with previous preferences.
 - Keep final answers concise and grounded in tool results. Attribute materials,
@@ -1289,6 +2364,9 @@ Rules:
   unsupported phrases about grass, gravel, water resistance, all-day comfort,
   maximum breathability, or best-in-category performance.
 """
+        if persona_snapshot:
+            return f"{_format_persona_block(persona_snapshot)}\n\n{prompt}"
+        return prompt
 
     def _build_user_message(self, state: State, identity: RequestIdentity) -> str:
         return (
@@ -1454,16 +2532,359 @@ def _stable_numeric_id(namespace: str, value: str) -> int:
     return int(digest[:15], 16)
 
 
+def _empty_agent_diagnostics(final_termination_reason: str) -> dict[str, Any]:
+    return {
+        "skill_files_read": [],
+        "tool_calls": [],
+        "rejected_tool_calls": [],
+        "duplicate_tool_calls": [],
+        "final_termination_reason": final_termination_reason,
+        "partial_graph_messages": [],
+    }
+
+
+async def _partial_graph_messages(
+    agent: Any,
+    invoke_config: dict[str, Any],
+) -> tuple[list[Any], str | None]:
+    """Read the last graph state before its failed checkpoint is deleted."""
+
+    get_state = getattr(agent, "aget_state", None)
+    if get_state is None:
+        return [], "state_snapshot_unavailable"
+    try:
+        snapshot = await get_state(invoke_config)
+    except Exception as exc:  # noqa: BLE001 - diagnostics cannot block cleanup.
+        error_type = type(exc).__name__
+        logger.warning(
+            "Could not snapshot Deep Agents state before cleanup: %s",
+            error_type,
+        )
+        return [], error_type
+
+    values = _value(snapshot, "values")
+    messages = _value(values, "messages")
+    return (messages if isinstance(messages, list) else []), None
+
+
+def _collect_agent_diagnostics(
+    messages: list[Any],
+    *,
+    request_id: str,
+    final_termination_reason: str,
+    preserve_partial_messages: bool = False,
+) -> dict[str, Any]:
+    """Collect current-turn skill, tool, and termination diagnostics."""
+
+    diagnostics = _empty_agent_diagnostics(final_termination_reason)
+    turn_messages = _current_turn_messages(messages, request_id)
+    tool_results = _tool_results_by_call_id(turn_messages)
+    skill_files_read: list[str] = []
+
+    for message in turn_messages:
+        if _message_type(message) != "ai":
+            continue
+        for raw_call in _value(message, "tool_calls") or []:
+            call = _normalized_tool_call(raw_call)
+            sequence = len(diagnostics["tool_calls"]) + 1
+            result_message = tool_results.get(call["tool_call_id"])
+            status, rejection_reason = _tool_call_status(
+                call["tool_name"],
+                result_message,
+            )
+            entry = {
+                "sequence": sequence,
+                "tool_name": call["tool_name"],
+                "arguments": call["arguments"],
+                "status": status,
+            }
+            if rejection_reason:
+                entry["rejection_reason"] = rejection_reason
+            if rejection_reason == "duplicate_catalog_scope":
+                entry["duplicate"] = True
+                diagnostics["duplicate_tool_calls"].append(sequence)
+            if status == "rejected":
+                diagnostics["rejected_tool_calls"].append(sequence)
+            diagnostics["tool_calls"].append(entry)
+
+            for skill_path in _skill_file_paths(call, status):
+                if skill_path not in skill_files_read:
+                    skill_files_read.append(skill_path)
+
+    diagnostics["skill_files_read"] = skill_files_read
+    if preserve_partial_messages:
+        partial, truncated = _serialize_partial_graph_messages(turn_messages)
+        diagnostics["partial_graph_messages"] = partial
+        if truncated:
+            diagnostics["partial_graph_messages_truncated"] = True
+    return diagnostics
+
+
+def _safe_collect_agent_diagnostics(
+    messages: list[Any],
+    *,
+    request_id: str,
+    final_termination_reason: str,
+    preserve_partial_messages: bool = False,
+) -> dict[str, Any]:
+    """Collect diagnostics without allowing tracing to change turn behavior."""
+
+    try:
+        return _collect_agent_diagnostics(
+            messages,
+            request_id=request_id,
+            final_termination_reason=final_termination_reason,
+            preserve_partial_messages=preserve_partial_messages,
+        )
+    except Exception as exc:  # noqa: BLE001 - diagnostics must fail independently.
+        error_type = type(exc).__name__
+        logger.warning("Could not collect Deep Agents diagnostics: %s", error_type)
+        diagnostics = _empty_agent_diagnostics(final_termination_reason)
+        diagnostics["diagnostic_collection_error"] = error_type
+        return diagnostics
+
+
+def _current_turn_messages(messages: list[Any], request_id: str) -> list[Any]:
+    marker = f"REQUEST ID: {request_id}"
+    start: int | None = None
+    for index, message in enumerate(messages):
+        if _message_type(message) != "human":
+            continue
+        if marker in _content_to_text(_value(message, "content")):
+            start = index + 1
+    return [] if start is None else messages[start:]
+
+
+def _prior_turn_messages(messages: list[Any], request_id: str) -> list[Any]:
+    """Return messages before the current server-owned request marker."""
+
+    marker = f"REQUEST ID: {request_id}"
+    for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
+        if _message_type(message) != "human":
+            continue
+        if marker in _content_to_text(_value(message, "content")):
+            return messages[:index]
+    return []
+
+
+def _no_direct_taxonomy_response(
+    result: Any,
+    *,
+    request_id: str,
+) -> str | None:
+    """Return the fixed shopper response for a current-turn no-match result."""
+
+    messages = _current_turn_messages(_result_messages(result), request_id)
+    for message in messages:
+        if _message_type(message) != "tool":
+            continue
+        content = _content_to_text(_value(message, "content"))
+        if content.startswith(
+            "STOP_TOOL_USE: No faithful advertised catalog taxonomy"
+        ):
+            return _NO_DIRECT_TAXONOMY_RESPONSE
+    return None
+
+
+def _unsupported_requirement_response(
+    result: Any,
+    *,
+    request_id: str,
+) -> str | None:
+    """Return the fixed shopper response for an unenforceable must-have."""
+
+    messages = _current_turn_messages(_result_messages(result), request_id)
+    for message in messages:
+        if _message_type(message) != "tool":
+            continue
+        content = _content_to_text(_value(message, "content"))
+        if content.startswith(
+            "The requested catalog requirement cannot be enforced:"
+        ):
+            return _UNSUPPORTED_REQUIREMENT_RESPONSE
+    return None
+
+
+def _tool_results_by_call_id(messages: list[Any]) -> dict[str, Any]:
+    results: dict[str, Any] = {}
+    for message in messages:
+        if _message_type(message) != "tool":
+            continue
+        tool_call_id = str(_value(message, "tool_call_id") or "")
+        if tool_call_id:
+            results[tool_call_id] = message
+    return results
+
+
+def _normalized_tool_call(raw_call: Any) -> dict[str, Any]:
+    arguments = _value(raw_call, "args")
+    if isinstance(arguments, str):
+        try:
+            arguments = json.loads(arguments)
+        except json.JSONDecodeError:
+            arguments = {"value": arguments}
+    if not isinstance(arguments, dict):
+        arguments = {} if arguments is None else {"value": arguments}
+    return {
+        "tool_call_id": str(_value(raw_call, "id") or ""),
+        "tool_name": str(_value(raw_call, "name") or "unknown"),
+        "arguments": _diagnostic_json_value(arguments),
+    }
+
+
+def _tool_call_status(
+    tool_name: str,
+    result_message: Any | None,
+) -> tuple[str, str | None]:
+    if result_message is None:
+        return "pending", None
+    content = _content_to_text(_value(result_message, "content"))
+    rejection_reason = _tool_rejection_reason(content)
+    if rejection_reason:
+        return "rejected", rejection_reason
+    if _value(result_message, "status") == "error":
+        return "error", None
+    if tool_name == "read_file" and content.lower().startswith(
+        ("error", "file not found")
+    ):
+        return "error", None
+    return "completed", None
+
+
+def _tool_rejection_reason(content: str) -> str | None:
+    markers = (
+        (SKILL_ACTIVATION_REQUIRED, "skill_activation_required"),
+        ("SHOPPER_SKILL_ACTIVATION_FAILED:", "skill_activation_failed"),
+        (
+            "STOP_TOOL_USE: This catalog taxonomy and constraint scope was already searched",
+            "duplicate_catalog_scope",
+        ),
+        ("STOP_TOOL_USE: Catalog search limit reached", "catalog_search_limit"),
+        (
+            "STOP_TOOL_USE: No faithful advertised catalog taxonomy",
+            "no_advertised_taxonomy_match",
+        ),
+        (
+            "STOP_TOOL_USE: Product-detail read limit reached",
+            "product_detail_read_limit",
+        ),
+        (
+            "The catalog search request does not match current capabilities:",
+            "invalid_catalog_request",
+        ),
+        (SEARCH_VALIDATION_ERROR_PREFIX, "invalid_catalog_request"),
+        (CONSTRAINT_REVIEW_PREFIX, "constraint_review_required"),
+        (
+            "The requested catalog taxonomy cannot be enforced:",
+            "unsupported_catalog_taxonomy",
+        ),
+        (
+            "The requested catalog requirement cannot be enforced:",
+            "unsupported_catalog_constraint",
+        ),
+        (_UNSUPPORTED_SEARCH_MODE_MESSAGE, "unsupported_search_mode"),
+    )
+    for marker, reason in markers:
+        if content.startswith(marker):
+            return reason
+    if content.startswith("STOP_TOOL_USE:"):
+        return "stop_tool_use"
+    return None
+
+
+def _skill_file_paths(call: dict[str, Any], status: str) -> list[str]:
+    if status != "completed":
+        return []
+    arguments = call["arguments"]
+    if call["tool_name"] == SKILL_ACTIVATION_TOOL_NAME:
+        names = arguments.get("skill_names") or []
+        if not isinstance(names, list):
+            return []
+        return [
+            f"/shopper/{name}/SKILL.md"
+            for name in names
+            if isinstance(name, str) and name.strip()
+        ]
+    if call["tool_name"] != "read_file":
+        return []
+    path = str(arguments.get("file_path") or arguments.get("path") or "")
+    normalized = path.replace("\\", "/")
+    if normalized.startswith("/shopper/") and normalized.endswith("/SKILL.md"):
+        return [normalized]
+    return []
+
+
+def _serialize_partial_graph_messages(
+    messages: list[Any],
+) -> tuple[list[dict[str, Any]], bool]:
+    relevant = [
+        message for message in messages if _message_type(message) in {"ai", "tool"}
+    ]
+    truncated = len(relevant) > 24
+    serialized: list[dict[str, Any]] = []
+    for message in relevant[-24:]:
+        content = _content_to_text(_value(message, "content"))
+        content_truncated = len(content) > 2000
+        payload: dict[str, Any] = {
+            "type": _message_type(message),
+            "content": content[:2000],
+        }
+        for field in ("name", "tool_call_id"):
+            value = _value(message, field)
+            if value:
+                payload[field] = str(value)
+        tool_calls = _value(message, "tool_calls")
+        if tool_calls:
+            payload["tool_calls"] = [
+                _normalized_tool_call(call) for call in tool_calls
+            ]
+        if content_truncated:
+            payload["truncated"] = True
+            truncated = True
+        serialized.append(payload)
+    return serialized, truncated
+
+
+def _message_type(message: Any) -> str:
+    message_type = str(_value(message, "type") or _value(message, "role") or "")
+    return {"assistant": "ai", "user": "human"}.get(message_type, message_type)
+
+
+def _diagnostic_json_value(value: Any) -> Any:
+    if isinstance(value, BaseModel):
+        return value.model_dump(mode="json")
+    if isinstance(value, dict):
+        return {
+            str(key): _diagnostic_json_value(item) for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_diagnostic_json_value(item) for item in value]
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return str(value)
+
+
 def _extract_final_text(result: Any) -> str:
     if isinstance(result, dict):
         messages = result.get("messages")
         if isinstance(messages, list):
             for message in reversed(messages):
+                if _message_type(message) in {"human", "system", "tool"}:
+                    continue
+                if _value(message, "tool_calls"):
+                    continue
                 content = getattr(message, "content", None)
                 if content is None and isinstance(message, dict):
                     content = message.get("content")
                 text = _content_to_text(content)
-                if text:
+                if text and not text.startswith(
+                    (
+                        SKILL_ACTIVATION_COMPLETE,
+                        SKILL_ACTIVATION_REQUIRED,
+                        "SHOPPER_SKILL_ACTIVATION_FAILED:",
+                    )
+                ):
                     return text
         return _content_to_text(result.get("response")) or ""
     return _content_to_text(getattr(result, "content", result)) or ""
@@ -1524,6 +2945,237 @@ def _partial_product_results_response(state: State) -> str:
         ]
     )
     return "\n".join(lines)
+
+
+def _has_search_only_tool_evidence(result: Any, *, request_id: str) -> bool:
+    """Return whether current-turn commerce evidence contains only searches."""
+
+    tool_names: list[str] = []
+    has_search_result = False
+    for message in _current_turn_messages(_result_messages(result), request_id):
+        if _message_type(message) != "tool":
+            continue
+        name = str(_value(message, "name") or "")
+        content = _content_to_text(_value(message, "content"))
+        if not name and "SEARCH_RESULT_GROUNDING_NOTE" in content:
+            name = "search_catalog_tool"
+        if name in {SKILL_ACTIVATION_TOOL_NAME, "read_file"}:
+            continue
+        tool_names.append(name)
+        if name == "search_catalog_tool" and "SEARCH_RESULT_GROUNDING_NOTE" in (
+            content
+        ):
+            has_search_result = True
+    return has_search_result and set(tool_names) == {"search_catalog_tool"}
+
+
+def _format_search_only_response(
+    state: State,
+    result: Any,
+    *,
+    request_id: str,
+    rationale: str = "",
+) -> str:
+    """Render grounded search facts without interpreting display-name words."""
+
+    products = [
+        product for product in state.product_results if isinstance(product, dict)
+    ]
+    category_counts = _returned_category_counts(state)
+    candidate_count = sum(category_counts.values()) or len(products)
+    if rationale.strip():
+        lines = ["General styling direction: " + rationale.strip(), ""]
+    else:
+        noun = "candidate" if candidate_count == 1 else "candidates"
+        lines = [f"I found {candidate_count} catalog {noun}.", ""]
+    lines.extend(("Catalog candidates:", ""))
+    for product in products:
+        name = str(product.get("display_name") or "").strip()
+        if not name:
+            continue
+        parts = [f"**{name}**"]
+        price = _product_result_price(product)
+        if price:
+            parts.append(price)
+        category = str(product.get("category") or "").strip()
+        if category:
+            parts.append(category.replace("_", " "))
+        lines.append("- " + " — ".join(parts))
+
+    filter_statements = _confirmed_search_filter_statements(
+        result,
+        request_id=request_id,
+    )
+    if filter_statements:
+        lines.extend(("", "Catalog-confirmed filters: " + "; ".join(filter_statements) + "."))
+    lines.extend(
+        (
+            "",
+            (
+                "Product-specific material, construction, length, fit, care, and "
+                "weather performance require a detail check unless confirmed above."
+            ),
+        )
+    )
+    return "\n".join(lines)
+
+
+def _successful_search_count(result: Any, *, request_id: str) -> int:
+    """Count current-turn searches that returned grounded candidates."""
+
+    return sum(
+        1
+        for message in _current_turn_messages(_result_messages(result), request_id)
+        if _message_type(message) == "tool"
+        and "SEARCH_RESULT_GROUNDING_NOTE"
+        in _content_to_text(_value(message, "content"))
+    )
+
+
+def _single_search_direction(
+    state: State,
+    result: Any,
+    *,
+    request_id: str,
+) -> str:
+    """Describe one styling search without turning preferences into facts."""
+
+    records = _successful_search_records(result, request_id=request_id)
+    if records:
+        record = records[0]
+        direction = (
+            f'I used "{record["direction"]}" as the catalog ranking direction. '
+            "That direction is a preference, not a confirmed product fact."
+        )
+        if record["first_product"]:
+            direction += (
+                " A grounded starting pick from the ranked result is "
+                f'**{record["first_product"]}**.'
+            )
+        return direction
+
+    categories = list(_returned_category_counts(state))
+    category_text = categories[0] if categories else "the selected category"
+    return f"The catalog returned options in {category_text} for this styling step."
+
+
+def _multi_search_direction(
+    state: State,
+    result: Any,
+    *,
+    request_id: str,
+) -> str:
+    """Describe a multi-role result without inferring product attributes."""
+
+    records = _successful_search_records(result, request_id=request_id)
+    if records:
+        directions = "; ".join(
+            f'"{record["direction"]}"' for record in records
+        )
+        text = (
+            "I used separate catalog ranking directions for each requested role: "
+            f"{directions}. These are preferences, not confirmed product facts."
+        )
+        first_products = [
+            record["first_product"]
+            for record in records
+            if record["first_product"]
+        ]
+        if first_products:
+            text += (
+                " One grounded starting combination from those ranked results is "
+                + " + ".join(f"**{name}**" for name in first_products)
+                + "."
+            )
+        return text
+
+    categories = list(_returned_category_counts(state))
+    if not categories:
+        return "The returned options provide a grounded starting point for this look."
+    return (
+        "These returned roles can be combined for the requested look: "
+        + ", ".join(categories)
+        + "."
+    )
+
+
+def _successful_search_records(
+    result: Any,
+    *,
+    request_id: str,
+) -> list[dict[str, str]]:
+    """Read ranking direction and first product from successful searches."""
+
+    records: list[dict[str, str]] = []
+    for message in _current_turn_messages(_result_messages(result), request_id):
+        if _message_type(message) != "tool":
+            continue
+        content = _content_to_text(_value(message, "content"))
+        if "SEARCH_RESULT_GROUNDING_NOTE" not in content:
+            continue
+        products = _product_evidence_records(content)
+        records.append(
+            {
+                "direction": _search_direction_evidence(content),
+                "first_product": products[0]["name"] if products else "",
+            }
+        )
+    return [record for record in records if record["direction"]]
+
+
+def _returned_category_counts(state: State) -> dict[str, int]:
+    """Count current-turn product summaries by their returned category."""
+
+    counts: dict[str, int] = {}
+    for product in state.product_results:
+        if not isinstance(product, dict):
+            continue
+        category = str(product.get("category") or "").strip()
+        if category:
+            counts[category] = counts.get(category, 0) + 1
+    return dict(sorted(counts.items(), key=lambda item: item[0].casefold()))
+
+
+def _confirmed_search_filter_statements(
+    result: Any,
+    *,
+    request_id: str,
+) -> list[str]:
+    """Format canonical search filters as shopper-safe predicates."""
+
+    statements: list[str] = []
+    seen: set[str] = set()
+    for message in _current_turn_messages(_result_messages(result), request_id):
+        if _message_type(message) != "tool":
+            continue
+        filters = _search_filter_evidence(
+            _content_to_text(_value(message, "content"))
+        )
+        for name, value in filters.items():
+            statement = _format_filter_statement(name, value)
+            if statement and statement not in seen:
+                seen.add(statement)
+                statements.append(statement)
+    return statements
+
+
+def _format_filter_statement(name: str, value: Any) -> str:
+    label = name.replace("_", " ")
+    if isinstance(value, list):
+        values = [str(item).replace("_", " ") for item in value]
+        if len(values) == 1:
+            return f"{label} is {values[0]}"
+        if values:
+            return f"{label} is one of {', '.join(values)}"
+        return ""
+    if isinstance(value, dict):
+        bounds = []
+        if value.get("min") is not None:
+            bounds.append(f"minimum {value['min']}")
+        if value.get("max") is not None:
+            bounds.append(f"maximum {value['max']}")
+        return f"{label} {' and '.join(bounds)}" if bounds else ""
+    return f"{label} is {value}"
 
 
 def _product_result_price(product: dict[str, Any]) -> str:
@@ -1806,9 +3458,27 @@ def _merge_token_usage(
     return merged
 
 
-def _collect_tool_grounding_evidence(result: Any, *, max_chars: int) -> str:
+def _collect_tool_grounding_evidence(
+    result: Any,
+    *,
+    max_chars: int,
+    request_id: str | None = None,
+) -> str:
+    messages = _result_messages(result)
+    if request_id is not None:
+        messages = _current_turn_messages(messages, request_id)
+    return _collect_message_grounding_evidence(messages, max_chars=max_chars)
+
+
+def _collect_message_grounding_evidence(
+    messages: list[Any],
+    *,
+    max_chars: int,
+) -> str:
+    """Collect customer-safe evidence from actual tool-role messages."""
+
     parts: list[str] = []
-    for message in _result_messages(result):
+    for message in messages:
         content = _content_to_text(_value(message, "content"))
         if not content:
             continue
@@ -1823,18 +3493,31 @@ def _collect_tool_grounding_evidence(result: Any, *, max_chars: int) -> str:
 
 
 def _customer_safe_tool_evidence(content: str) -> str:
+    if content.startswith(
+        "STOP_TOOL_USE: No faithful advertised catalog taxonomy"
+    ):
+        return (
+            "CUSTOMER_SAFE_NO_MATCH_EVIDENCE: The active catalog has no direct "
+            "advertised taxonomy match for the shopper's requested product type. "
+            "No retrieval ran and no alternative product type was selected. Say "
+            "that plainly and ask permission before searching a different "
+            "advertised type. Do not name alternatives."
+        )
     if "SEARCH_RESULT_GROUNDING_NOTE" in content:
         return _summarize_product_evidence(
             content,
             heading="CUSTOMER_SAFE_SEARCH_EVIDENCE",
             note=(
                 "Search results support only product names, prices, categories, "
-                "image availability, and a modest styling role. They do not "
+                "image availability, confirmed search filters, and a modest "
+                "styling role. Beyond an exact confirmed filter, they do not "
                 "support length, color, print, materials, care, construction, "
                 "fit, comfort, weather, grass, gravel, heat, or best-in-category "
                 "claims. Treat names as display names, not attribute evidence; "
                 "group claims require product-detail evidence for every item."
             ),
+            confirmed_filters=_search_filter_evidence(content),
+            taxonomy_scope=_search_taxonomy_evidence(content),
         )
     if "PRODUCT_DETAIL_GROUNDING_NOTE" in content:
         return _summarize_product_evidence(
@@ -1851,9 +3534,31 @@ def _customer_safe_tool_evidence(content: str) -> str:
     return _summarize_cart_evidence(content)
 
 
-def _summarize_product_evidence(content: str, *, heading: str, note: str) -> str:
+def _summarize_product_evidence(
+    content: str,
+    *,
+    heading: str,
+    note: str,
+    confirmed_filters: dict[str, Any] | None = None,
+    taxonomy_scope: dict[str, Any] | None = None,
+) -> str:
     products = _product_evidence_records(content)
     lines = [f"{heading}: {note}"]
+    if confirmed_filters:
+        lines.append(
+            "CONFIRMED_SEARCH_FILTERS: Every product below passed each filter "
+            "predicate. A one-value list confirms that value; a multi-value list "
+            "confirms only membership in the set, not which value matched: "
+            + json.dumps(confirmed_filters, sort_keys=True, default=str)
+        )
+    if taxonomy_scope:
+        lines.append(
+            "ADVERTISED_SEARCH_TAXONOMY: This search used only these advertised "
+            "taxonomy values. Lists are inclusive scopes; they do not mean every "
+            "product has every value. Do not describe an unlisted product type "
+            "as advertised: "
+            + json.dumps(taxonomy_scope, sort_keys=True, default=str)
+        )
     if not products:
         return "\n".join(lines + [_strip_internal_ids_from_evidence_line(content)])
     for product in products:
@@ -1868,6 +3573,52 @@ def _summarize_product_evidence(content: str, *, heading: str, note: str) -> str
             summary_parts.append("details: " + "; ".join(product["details"]))
         lines.append("- " + " | ".join(summary_parts))
     return "\n".join(lines)
+
+
+def _search_filter_evidence(content: str) -> dict[str, Any]:
+    """Read the canonical hard-filter marker from one search result."""
+
+    return _search_json_evidence(content, _SEARCH_FILTER_EVIDENCE_PREFIX)
+
+
+def _search_direction_evidence(content: str) -> str:
+    """Read the semantic ranking preference from one successful search."""
+
+    for raw_line in content.splitlines():
+        line = raw_line.strip()
+        if not line.startswith(_SEARCH_DIRECTION_EVIDENCE_PREFIX):
+            continue
+        payload = line.removeprefix(_SEARCH_DIRECTION_EVIDENCE_PREFIX).strip()
+        try:
+            parsed = json.loads(payload)
+        except json.JSONDecodeError:
+            return ""
+        if isinstance(parsed, str):
+            return " ".join(parsed.split())
+        return ""
+    return ""
+
+
+def _search_taxonomy_evidence(content: str) -> dict[str, Any]:
+    """Read the advertised taxonomy marker from one search result."""
+
+    return _search_json_evidence(content, _SEARCH_TAXONOMY_EVIDENCE_PREFIX)
+
+
+def _search_json_evidence(content: str, prefix: str) -> dict[str, Any]:
+    """Read one JSON evidence marker from a tool result."""
+
+    for raw_line in content.splitlines():
+        line = raw_line.strip()
+        if not line.startswith(prefix):
+            continue
+        payload = line.removeprefix(prefix).strip()
+        try:
+            parsed = json.loads(payload)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
 
 
 def _product_evidence_records(content: str) -> list[dict[str, Any]]:
@@ -1939,19 +3690,18 @@ def _strip_internal_ids_from_evidence_line(line: str) -> str:
 def _is_tool_evidence_message(message: Any, content: str) -> bool:
     message_type = str(_value(message, "type") or "").lower()
     role = str(_value(message, "role") or "").lower()
-    if message_type == "tool" or role == "tool":
-        return True
-    return any(
-        marker in content
-        for marker in (
-            "SEARCH_RESULT_GROUNDING_NOTE",
-            "PRODUCT_DETAIL_GROUNDING_NOTE",
-            "CART_ADD_RESULT",
-            "PRODUCT_REF:",
-            "CART_LINE_ID:",
-            "Cart total:",
+    tool_name = str(_value(message, "name") or "")
+    if tool_name in {SKILL_ACTIVATION_TOOL_NAME, "read_file"}:
+        return False
+    if content.startswith(
+        (
+            SKILL_ACTIVATION_COMPLETE,
+            SKILL_ACTIVATION_REQUIRED,
+            "SHOPPER_SKILL_ACTIVATION_FAILED:",
         )
-    )
+    ):
+        return False
+    return message_type == "tool" or role == "tool"
 
 
 def _normalized_token_usage(raw: dict[str, Any] | None) -> dict[str, int]:
@@ -2039,6 +3789,33 @@ def _content_to_text(content: Any) -> str:
 
 def _tool_search_mode(value: str | None) -> str | None:
     return value if value in {"text", "image", "hybrid"} else None
+
+
+def _format_search_filter_evidence(filters: dict[str, Any]) -> str:
+    """Format canonical hard filters proven by a successful search."""
+
+    return (
+        f"{_SEARCH_FILTER_EVIDENCE_PREFIX} "
+        + json.dumps(filters, sort_keys=True, default=str)
+    )
+
+
+def _format_search_direction_evidence(semantic_query: str) -> str:
+    """Record the model-authored preference used for successful ranking."""
+
+    return (
+        f"{_SEARCH_DIRECTION_EVIDENCE_PREFIX} "
+        + json.dumps(semantic_query, ensure_ascii=False)
+    )
+
+
+def _format_search_taxonomy_evidence(taxonomy: dict[str, Any]) -> str:
+    """Format the advertised taxonomy scope used by a successful search."""
+
+    return (
+        f"{_SEARCH_TAXONOMY_EVIDENCE_PREFIX} "
+        + json.dumps(taxonomy, sort_keys=True, default=str)
+    )
 
 
 def _format_product(product: Any) -> str:
@@ -2275,13 +4052,31 @@ def _format_cart_add_result(added: list[str], failed: list[str], cart: Cart) -> 
         lines.append("Failed:")
         lines.extend(failed)
     lines.append("Current cart:")
-    lines.append(_format_cart(cart))
+    lines.append(_format_cart_lines(cart))
     lines.append("Cart total:")
     lines.append(_format_cart_total(cart))
     return "\n".join(lines)
 
 
-def _format_cart(cart: Cart) -> str:
+def _format_cart_lines(cart: Cart | CommerceCart) -> str:
+    if isinstance(cart, CommerceCart):
+        if not cart.lines:
+            return "  (cart is empty)"
+        lines = [
+            f"  {line.cart_line_id} | {line.display_name} | qty {line.quantity}"
+            + (
+                f" | {line.unit_price.currency} {line.unit_price.amount:.2f}"
+                if line.unit_price
+                else ""
+            )
+            for line in cart.lines
+        ]
+        if cart.subtotal:
+            lines.append(
+                f"  SUBTOTAL: {cart.subtotal.currency} {cart.subtotal.amount:.2f}"
+            )
+        return "\n".join(lines)
+
     if not cart.contents:
         return "(empty)"
     lines = []
@@ -2299,6 +4094,56 @@ def _format_cart(cart: Cart) -> str:
             f"{item.get('amount', 1)} x {item.get('item', '')}{suffix}"
         )
     return "\n".join(lines)
+
+
+def _format_cart(cart: Cart) -> str:
+    return _format_cart_lines(cart)
+
+
+def _format_cart_remove_result(
+    result: CartMutationResult,
+    *,
+    fallback: str,
+) -> str:
+    if not result.ok:
+        return result.error.message if result.error else "Cart remove failed."
+    message = result.message or fallback
+    if result.cart is not None:
+        return "\n".join(
+            [message, "Current cart:", _format_cart_lines(result.cart)]
+        )
+    return message
+
+
+def _format_update_cart_result(
+    result: CartMutationResult,
+    cart: Cart | CommerceCart | None = None,
+) -> str:
+    if not result.ok:
+        message = result.error.message if result.error else "unknown error"
+        return f"CART UPDATE FAILED: {message}"
+    lines = ["CART UPDATED"]
+    if result.changed_line:
+        lines.append(
+            f"  {result.changed_line.display_name} → "
+            f"qty {result.changed_line.quantity}"
+        )
+    active_cart = cart if cart is not None else result.cart
+    if active_cart is not None:
+        lines.append(_format_cart_lines(active_cart))
+    return "\n".join(lines)
+
+
+def _format_policy_result(result: GetStorePolicyResult) -> str:
+    if not result.ok or result.policy is None:
+        message = result.error.message if result.error else "unknown error"
+        return f"POLICY NOT AVAILABLE: {message}"
+    policy = result.policy
+    return f"STORE POLICY — {policy.title}\n{policy.body}"
+
+
+def _format_availability_result(result: CheckProductAvailabilityResult) -> str:
+    return f"AVAILABILITY ({result.product_ref}): {result.message}"
 
 
 def _format_cart_total(cart: Cart) -> str:

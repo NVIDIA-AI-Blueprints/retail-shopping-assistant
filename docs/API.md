@@ -125,6 +125,7 @@ interface QueryRequest {
   session_id?: string;                // Optional website/browser session identifier
   conversation_id?: string;           // Optional chat thread identifier
   cart_id?: string;                   // Optional cart identifier
+  persona?: Record<string, unknown>;  // Optional read-only turn-start shopper context
   context?: string;                   // Previous conversation context
   cart?: Cart;                        // Current shopping cart state
   retrieved?: Record<string, string>; // Previously retrieved products
@@ -150,6 +151,10 @@ interface MediaAttachment {
   "session_id": "session_abc",
   "conversation_id": "conversation_abc",
   "cart_id": "cart_abc",
+  "persona": {
+    "preferred_colors": ["sage", "cream"],
+    "usual_size": "M"
+  },
   "context": "Previous conversation about summer clothing",
   "cart": {
     "contents": [
@@ -175,6 +180,21 @@ scopes the Deep Agents thread and conversation memory, while `cart_id` scopes
 cart reads/writes. Production website integrations should move these IDs to a
 server-owned session/thread service before broad rollout so customer context and
 cart state cannot bleed across sessions.
+
+Redis checkpointing can make the `conversation_id` thread durable, but it does
+not persist the runtime's bounded product-ref cache. `PRODUCT_REF` evidence is
+process-local and valid only for the active catalog snapshot. A restart, another
+replica, cache eviction, or catalog replacement requires a fresh product search
+before details or cart adds.
+
+`persona` is optional and the bundled UI does not send it. When a caller
+provides a non-empty object, the chain server injects its truthy values as
+read-only context at the start of that turn. Persona context may guide search
+and styling judgment, but it is not catalog or store-policy truth and cannot
+override tool results. The runtime does not fetch or mutate the persona and
+does not expose an agent-callable persona loader. It also does not authenticate
+persona ownership or restrict arbitrary caller-provided keys. Production callers
+must authenticate the shopper context and allowlist persona fields upstream.
 
 `image` remains supported for backward compatibility and is normalized into the
 same internal media list as `media[]`. New clients should use `media[]` for
@@ -220,8 +240,62 @@ interface QueryResponse {
   timings: Record<string, number>;    // Performance timing data
   token_usage?: TokenUsage;           // LLM token usage summary
   model_usage?: ModelUsage;           // Per-role model usage summary
+  agent_diagnostics?: AgentDiagnostics; // Ordered agent/tool trace
 }
 ```
+
+`AgentDiagnostics` is operator-facing turn metadata. It is additive and must
+not be rendered as assistant prose.
+
+```typescript
+interface AgentDiagnostics {
+  skill_files_read: string[];
+  tool_calls: Array<{
+    sequence: number;
+    tool_name: string;
+    arguments: Record<string, unknown>;
+    status: 'completed' | 'rejected' | 'error' | 'pending';
+    rejection_reason?: string;
+    duplicate?: boolean;
+  }>;
+  rejected_tool_calls: number[];       // Sequence numbers in tool_calls
+  duplicate_tool_calls: number[];      // Rejected duplicate-call subset
+  final_termination_reason: string;
+  partial_graph_messages: Array<{
+    type: string;
+    content: string;
+    tool_calls?: Array<Record<string, unknown>>;
+    truncated?: boolean;
+  }>;
+  partial_graph_messages_truncated?: boolean;
+  partial_graph_capture_error?: string;
+  diagnostic_collection_error?: string;
+}
+```
+
+Successful turns leave `partial_graph_messages` empty. Before a failed graph
+checkpoint is deleted, the runtime reads its latest state and preserves up to
+the final 24 current-turn assistant/tool messages, with each content field
+bounded to 2,000 characters. Tool calls remain in model-issued order even when
+parallel tool results finish in another order. `skill_files_read` contains only
+successfully activated/injected `/shopper/.../SKILL.md` paths and successful
+explicit reads of those files; other reference-file reads remain visible in
+`tool_calls`. Every Deep Agents turn starts with an internal
+`activate_shopper_skills_tool` call. A pre-activation or same-batch shopping
+call is rejected with `rejection_reason: "skill_activation_required"`.
+
+Successful internal search-tool results carry `SEARCH_DIRECTION_EVIDENCE`, the
+model-authored semantic query used as a ranking preference. For search-only
+styling turns, response text labels that direction as preference rather than a
+product fact and nominates the first ranked result, or one first result per
+requested role, alongside deterministic candidate facts and confirmed filters.
+No separate rationale model call is made.
+
+Final-response extraction skips tool messages, assistant messages that still
+contain tool calls, and internal skill-activation markers. If a completed graph
+contains no shopper-facing response, the API emits
+`"I could not complete that shopping request. Please try again."` and reports
+`final_termination_reason: "incomplete_agent_response"` in diagnostics.
 
 **Example:**
 ```json
@@ -238,6 +312,19 @@ interface QueryResponse {
     "total": 3.48,
     "memory": 0.12,
     "deepagents": 3.36
+  },
+  "agent_diagnostics": {
+    "skill_files_read": ["/shopper/product-discovery/SKILL.md"],
+    "tool_calls": [{
+      "sequence": 1,
+      "tool_name": "activate_shopper_skills_tool",
+      "arguments": {"skill_names": ["product-discovery"]},
+      "status": "completed"
+    }],
+    "rejected_tool_calls": [],
+    "duplicate_tool_calls": [],
+    "final_termination_reason": "completed",
+    "partial_graph_messages": []
   }
 }
 ```
@@ -282,6 +369,7 @@ interface StreamingChunk {
           calls: number;
           detail?: string;
         }>;
+        agent_diagnostics?: AgentDiagnostics;
       };
   timestamp: number;
 }
@@ -295,8 +383,14 @@ Returns a Server-Sent Events (SSE) response stream for shopping assistant
 responses. In the current Deep Agents harness migration slice, the stream is
 SSE-framed but does not yet emit token-level model chunks while the agent is
 running. The endpoint currently emits product metadata, image payloads,
-completed turn response text, and timing/token-usage metrics after the Deep
-Agents turn finishes.
+completed turn response text, and timing/token-usage/agent diagnostic metrics
+after the Deep Agents turn finishes.
+
+Every unblocked Deep Agents turn includes one bounded activation model step
+before normal shopping-tool selection. That step selects registered shopper
+skills; the runtime injects their complete instructions before exposing the
+nine shopping tools. It is included in `token_usage.model_calls` and
+`agent_diagnostics`.
 
 Token-level Deep Agents streaming is a known limitation for this PR and is
 planned as a follow-up after the harness migration is stable.
@@ -330,7 +424,7 @@ data: {"type": "images", "payload": {"Red Wrap Dress": "https://..."}, "timestam
 
 data: {"type": "content", "payload": "I found several red dresses...", "timestamp": 1716400001.2}
 
-data: {"type": "metrics", "payload": {"timings": {"memory": 0.03, "catalog_search": 0.41, "deepagents": 1.92}, "total_seconds": 2.36, "token_usage": {"input_tokens": 1260, "output_tokens": 180, "total_tokens": 1440, "model_calls": 1}, "model_usage": {"text_embedding": {"status": "used", "calls": 1, "detail": "Catalog text/vector retrieval"}, "content_safety": {"status": "used", "calls": 2, "detail": "Input and output safety checks"}, "topic_control": {"status": "used", "calls": 1, "detail": "Input topic check"}}}, "timestamp": 1716400001.8}
+data: {"type": "metrics", "payload": {"timings": {"memory": 0.03, "catalog_search": 0.41, "deepagents": 1.92}, "total_seconds": 2.36, "token_usage": {"input_tokens": 1260, "output_tokens": 180, "total_tokens": 1440, "model_calls": 3}, "model_usage": {"text_embedding": {"status": "used", "calls": 1, "detail": "Catalog text/vector retrieval"}, "content_safety": {"status": "used", "calls": 2, "detail": "Input and output safety checks"}, "topic_control": {"status": "used", "calls": 1, "detail": "Input topic check"}}, "agent_diagnostics": {"skill_files_read": ["/shopper/product-discovery/SKILL.md"], "tool_calls": [{"sequence": 1, "tool_name": "activate_shopper_skills_tool", "arguments": {"skill_names": ["product-discovery"]}, "status": "completed"}], "rejected_tool_calls": [], "duplicate_tool_calls": [], "final_termination_reason": "completed", "partial_graph_messages": []}}, "timestamp": 1716400001.8}
 
 data: [DONE]
 ```
@@ -372,9 +466,27 @@ curl -X POST "http://localhost:8009/query/timing" \
     "total": 3.48,
     "memory": 0.12,
     "deepagents": 3.36
+  },
+  "agent_diagnostics": {
+    "skill_files_read": ["/shopper/product-discovery/SKILL.md"],
+    "tool_calls": [{
+      "sequence": 1,
+      "tool_name": "activate_shopper_skills_tool",
+      "arguments": {"skill_names": ["product-discovery"]},
+      "status": "completed"
+    }],
+    "rejected_tool_calls": [],
+    "duplicate_tool_calls": [],
+    "final_termination_reason": "completed",
+    "partial_graph_messages": []
   }
 }
 ```
+
+Agent diagnostics can contain shopper-derived tool arguments and internal
+references. Treat them as operator/evaluation metadata: apply the same access
+control and retention policy as application logs, and never display them as
+shopper-facing content.
 
 ### GET `/capabilities`
 
@@ -553,12 +665,23 @@ catalog retriever derives them from the loaded JSONL.
 Executes a structured text catalog search on the catalog service port, usually
 `http://localhost:8010/query/text`.
 
-The agent-facing search tool accepts one semantic query and one required
-capability-derived taxonomy envelope. `max_catalog_searches_per_turn` bounds
-distinct taxonomy-scope executions; the same normalized scope can execute only
-once in a turn, so paraphrasing does not trigger another retrieval. The chain
-maps generic category/subcategory selections to advertised field names and
-sends the semantic query as a singleton `text` list.
+The agent-facing search tool accepts one semantic query, one required
+capability-derived taxonomy envelope, and capability-derived hard constraints.
+Each call accepts at most one category. For a broad request that names no type,
+`agent_selected_type` may include the advertised subcategories serving one
+focused semantic role. `no_direct_catalog_match` is a no-retrieval result with
+empty taxonomy and no hard constraints; an unsupported modifier does not erase
+an advertised type, and subjective style remains semantic. The duplicate-search
+identity is normalized taxonomy plus hard constraints, so paraphrasing cannot
+repeat a retrieval while a genuinely different hard-filter scope may run within
+`max_catalog_searches_per_turn`. The chain maps generic category/subcategory
+selections to advertised field names and sends the semantic query as a singleton
+`text` list.
+
+One invalid agent search may receive one search-only repair. A successful
+repaired partial search may continue to another valid role, but a second repair
+is not available; completed scopes and deterministic stop results force answer
+synthesis.
 
 The chain server also bounds product-detail reads with
 `max_product_detail_reads_per_turn`. Detail reads are intended for direct
@@ -567,7 +690,8 @@ initial outfit recommendation.
 
 When a cart item matches a product ref cached in the active conversation, the
 chain server can return that product image again on later cart or comparison
-turns without forcing another catalog search.
+turns without forcing another catalog search, provided the same process still
+holds the ref and the catalog snapshot has not changed.
 
 **Request Body:**
 ```json

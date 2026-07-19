@@ -332,11 +332,44 @@ docker stack deploy -c docker-compose.prod.yaml retail-assistant
 | `RAIL_API_KEY` | Guardrails API key | Yes | - |
 | `GUARDRAILS_ENABLED` | Default chain-server guardrails setting for requests that omit `guardrails`; accepts true/false, yes/no, on/off, or 1/0 | No | `true` |
 | `CATALOG_SEARCH_TIMEOUT_SECONDS` | Optional chain-server timeout for catalog search requests | No | no timeout |
-| `MAX_CATALOG_SEARCHES_PER_TURN` | Caps distinct catalog taxonomy-scope executions in one assistant turn; a repeated same-scope request is stopped | No | `3` |
+| `MAX_CATALOG_SEARCHES_PER_TURN` | Caps distinct catalog taxonomy-plus-hard-constraint scope executions in one assistant turn; a repeated scope is stopped even when semantic wording changes | No | `3` |
 | `MAX_PRODUCT_DETAIL_READS_PER_TURN` | Caps Deep Agents product-detail reads in one assistant turn | No | `2` |
+| `CHECKPOINT_STORE` | Deep Agents conversation checkpoint store: `memory` or `redis` | No | `memory` |
+| `CHECKPOINT_REDIS_URL` | Redis connection URL used when `CHECKPOINT_STORE=redis` | Redis mode only | `redis://localhost:6379/0` |
+| `CHECKPOINT_TTL_SECONDS` | Redis checkpoint lifetime in seconds | No | `86400` |
 | `LOCAL_NIM_CACHE` | NIM cache directory | Local only | `~/.cache/nim` |
 | `LOG_LEVEL` | Logging level | No | `INFO` |
 | `NODE_ENV` | Node environment | No | `production` |
+
+### Conversation Checkpointing
+
+`CHECKPOINT_STORE=memory` preserves the in-process development and test
+behavior. Checkpoints disappear when the chain-server process restarts, and
+separate replicas do not share conversation state.
+
+Production deployments should use `CHECKPOINT_STORE=redis`. The runtime uses
+the asynchronous Redis checkpointer keyed by `conversation_id` and expires
+checkpoints after `CHECKPOINT_TTL_SECONDS`. The Redis endpoint must provide the
+JSON and search capabilities available in Redis 8+ or Redis Stack.
+
+Checkpoint records can contain conversation state. Use an operator-managed
+endpoint with authentication and transport encryption in production, and pass
+those settings through `CHECKPOINT_REDIS_URL` (for example, a secret-backed
+`rediss://` URL). Do not commit credentials to `.env` or deployment files.
+
+The bundled `docker-compose.yaml` forwards all three checkpoint variables to
+the chain-server container but intentionally does not deploy Redis. Operators
+must provide and manage the Redis service, then set a URL reachable from the
+chain-server network. In a container deployment, the default `localhost` URL
+is suitable only if Redis is deliberately reachable in that same network
+namespace.
+
+```bash
+export CHECKPOINT_STORE=redis
+export CHECKPOINT_REDIS_URL=rediss://checkpoint-user:REDACTED@redis.example.internal:6379/0
+export CHECKPOINT_TTL_SECONDS=86400
+python scripts/model_config.py deploy --build
+```
 
 ### Configuration File
 
@@ -692,7 +725,7 @@ ping api.nvcf.nvidia.com
 # Edit chain_server/app/config.yaml
 top_k_retrieve: 2  # Reduce for faster responses
 deepagents_recursion_limit: 24  # Raise modestly for multi-item outfit planning
-max_catalog_searches_per_turn: 3  # Bound distinct taxonomy-scope searches per turn
+max_catalog_searches_per_turn: 3  # Bound distinct taxonomy-plus-hard-constraint scopes
 max_product_detail_reads_per_turn: 2  # Bound product-detail reads per turn
 ```
 
@@ -781,6 +814,10 @@ docker run --rm -v retail-shopping-assistant_milvus_data:/data \
 ## 📈 Scaling
 
 ### Horizontal Scaling
+
+Configure the shared Redis checkpoint store before increasing chain-server
+replicas. The in-process store gives each replica an independent conversation
+namespace and is not a production horizontal-scaling configuration.
 
 ```yaml
 # In docker-compose.yaml

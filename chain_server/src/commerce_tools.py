@@ -8,8 +8,16 @@ return shared commerce contracts so current LangGraph agents, future Deep
 Agents tools, and later protocol adapters can share the same typed boundary.
 """
 
+# KNOWN LIMITATION — Cart line identity:
+# The memory service uses display_name as the cart line key. CART_LINE_IDs
+# returned by cart tools are display name aliases, not stable IDs. Two items
+# with similar names can conflict. This will be resolved when the memory
+# service returns stable server-generated line IDs.
+
 from __future__ import annotations
 
+from pathlib import Path
+from threading import Lock
 from typing import Any
 from urllib.parse import quote
 
@@ -22,19 +30,29 @@ from shared.commerce_contracts import (
     Cart,
     CartLine,
     CartMutationResult,
+    CheckProductAvailabilityInput,
+    CheckProductAvailabilityResult,
     CommerceError,
     GetCartInput,
     GetCartResult,
     GetProductDetailsInput,
     GetProductDetailsResult,
+    GetStorePolicyInput,
+    GetStorePolicyResult,
     Money,
     ProductDetail,
     ProductSummary,
     RemoveCartItemInput,
     SearchCatalogInput,
     SearchCatalogResult,
+    StorePolicy,
     ToolMeta,
+    UpdateCartItemInput,
 )
+
+
+_POLICY_CACHE: dict[str, StorePolicy] | None = None
+_POLICY_CACHE_LOCK = Lock()
 
 
 def search_catalog(
@@ -347,6 +365,180 @@ def remove_cart_item(
         ),
         message=str(data.get("message") or ""),
         meta=ToolMeta(idempotency_key=request.idempotency_key),
+    )
+
+
+def update_cart_item(
+    request: UpdateCartItemInput,
+    memory_retriever_url: str,
+    *,
+    timeout_seconds: float = 10,
+    session: Any | None = None,
+) -> CartMutationResult:
+    """Update the quantity of an existing cart line.
+
+    Quantity zero removes the line. The adapter removes the complete current
+    line before optionally adding the requested quantity because the memory
+    service does not have a dedicated update endpoint.
+    """
+
+    cart_result = get_cart(
+        GetCartInput(user_id=request.user_id),
+        memory_retriever_url,
+        timeout_seconds=timeout_seconds,
+        session=session,
+    )
+    if not cart_result.ok or cart_result.cart is None:
+        return CartMutationResult(
+            ok=False,
+            error=CommerceError(
+                code="cart_read_failed",
+                message="Could not read cart before update.",
+            ),
+            meta=ToolMeta(idempotency_key=request.idempotency_key),
+        )
+
+    line = next(
+        (
+            line
+            for line in cart_result.cart.lines
+            if line.cart_line_id == request.cart_line_id
+        ),
+        None,
+    )
+    if line is None:
+        return CartMutationResult(
+            ok=False,
+            error=CommerceError(
+                code="cart_line_not_found",
+                message=(
+                    f"CART_LINE_ID '{request.cart_line_id}' not found. "
+                    "Call get_cart_tool to get current line IDs."
+                ),
+            ),
+            meta=ToolMeta(idempotency_key=request.idempotency_key),
+        )
+
+    remove_key = request.idempotency_key
+    if request.quantity > 0:
+        remove_key = f"{request.idempotency_key}-remove"
+    remove_result = remove_cart_item(
+        RemoveCartItemInput(
+            user_id=request.user_id,
+            cart_line_id=request.cart_line_id,
+            idempotency_key=remove_key,
+            quantity=line.quantity,
+            product_id=line.product_id,
+            display_name=line.display_name,
+        ),
+        memory_retriever_url,
+        timeout_seconds=timeout_seconds,
+        session=session,
+    )
+    if not remove_result.ok:
+        return CartMutationResult(
+            ok=False,
+            error=remove_result.error,
+            meta=ToolMeta(idempotency_key=request.idempotency_key),
+        )
+    if request.quantity == 0:
+        return CartMutationResult(
+            ok=True,
+            message=remove_result.message,
+            meta=ToolMeta(idempotency_key=request.idempotency_key),
+        )
+
+    return add_cart_item(
+        AddCartItemInput(
+            user_id=request.user_id,
+            product_id=line.product_id,
+            quantity=request.quantity,
+            idempotency_key=f"{request.idempotency_key}-add",
+            display_name=line.display_name,
+            unit_price=line.unit_price,
+            image_url=line.image_url,
+        ),
+        memory_retriever_url,
+        timeout_seconds=timeout_seconds,
+        session=session,
+    )
+
+
+def _load_policies(policies_path: str | Path) -> dict[str, StorePolicy]:
+    global _POLICY_CACHE
+    with _POLICY_CACHE_LOCK:
+        if _POLICY_CACHE is None:
+            import yaml
+
+            with open(policies_path, "r") as policy_file:
+                data = yaml.safe_load(policy_file)
+            _POLICY_CACHE = {
+                topic: StorePolicy(
+                    policy_id=topic,
+                    topic=topic,
+                    title=policy["title"],
+                    body=policy["body"],
+                    source_uri=policy.get("source_uri"),
+                )
+                for topic, policy in (data.get("policies") or {}).items()
+            }
+    return _POLICY_CACHE
+
+
+def get_store_policy(
+    request: GetStorePolicyInput,
+    policies_path: str | Path,
+) -> GetStorePolicyResult:
+    """Read controlled store policy content from a static YAML file.
+
+    Never reads from model knowledge. Returns a structured failure when the
+    topic is absent so the agent can relay the honest answer to the shopper.
+    """
+
+    try:
+        policies = _load_policies(policies_path)
+    except Exception as exc:
+        return GetStorePolicyResult(
+            ok=False,
+            error=CommerceError(
+                code="policy_load_failed",
+                message="Policy file could not be loaded.",
+                details={"error": str(exc)},
+            ),
+        )
+
+    policy = policies.get(request.topic)
+    if policy is None:
+        return GetStorePolicyResult(
+            ok=False,
+            error=CommerceError(
+                code="policy_topic_not_found",
+                message=(
+                    f"Policy topic '{request.topic}' is not available through "
+                    "the assistant. Direct the shopper to the retailer's help center."
+                ),
+            ),
+        )
+    return GetStorePolicyResult(ok=True, policy=policy)
+
+
+def check_product_availability(
+    request: CheckProductAvailabilityInput,
+) -> CheckProductAvailabilityResult:
+    """Return a consistent availability signal for a known product ref.
+
+    The catalog has no live inventory. This stub always returns unknown with a
+    message the agent relays to the shopper. It exists to prevent guessing.
+    """
+
+    return CheckProductAvailabilityResult(
+        ok=True,
+        product_ref=request.product_ref,
+        availability="unknown",
+        message=(
+            "Real-time inventory is not available through the assistant. "
+            "Availability and size can be confirmed on the product page or at checkout."
+        ),
     )
 
 

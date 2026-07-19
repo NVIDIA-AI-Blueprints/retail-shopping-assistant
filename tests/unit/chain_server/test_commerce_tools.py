@@ -5,22 +5,34 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 import requests
 
+from chain_server.src import commerce_tools as commerce_tools_mod
 from chain_server.src.commerce_tools import (
     add_cart_item,
+    check_product_availability,
     get_cart,
     get_product_details,
+    get_store_policy,
     remove_cart_item,
     search_catalog,
+    update_cart_item,
 )
 from shared.commerce_contracts import (
     AddCartItemInput,
+    Cart,
+    CartLine,
+    CartMutationResult,
+    CheckProductAvailabilityInput,
     GetCartInput,
+    GetCartResult,
     GetProductDetailsInput,
+    GetStorePolicyInput,
     Money,
     RemoveCartItemInput,
     SearchCatalogInput,
+    UpdateCartItemInput,
 )
 
 
@@ -399,6 +411,260 @@ def test_remove_cart_item_posts_memory_payload_and_returns_message() -> None:
     assert result.changed_line.product_id == "prod_123"
     assert result.message == "removed 1 Silk Dress"
     assert result.meta.idempotency_key == "cart-remove-1"
+
+
+def test_update_cart_item_replaces_existing_quantity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = []
+    cart = Cart(
+        user_id="42",
+        lines=[
+            CartLine(
+                cart_line_id="Silk Dress",
+                product_id="prod_123",
+                display_name="Silk Dress",
+                quantity=2,
+                unit_price=Money(amount=49.99),
+                image_url="/images/silk-dress.jpg",
+            )
+        ],
+    )
+
+    def fake_get_cart(request, memory_retriever_url, **kwargs):
+        calls.append(("get", request, memory_retriever_url, kwargs))
+        return GetCartResult(ok=True, cart=cart)
+
+    def fake_remove_cart_item(request, memory_retriever_url, **kwargs):
+        calls.append(("remove", request, memory_retriever_url, kwargs))
+        return CartMutationResult(ok=True)
+
+    def fake_add_cart_item(request, memory_retriever_url, **kwargs):
+        calls.append(("add", request, memory_retriever_url, kwargs))
+        return CartMutationResult(ok=True, changed_line=cart.lines[0])
+
+    monkeypatch.setattr(commerce_tools_mod, "get_cart", fake_get_cart)
+    monkeypatch.setattr(
+        commerce_tools_mod,
+        "remove_cart_item",
+        fake_remove_cart_item,
+    )
+    monkeypatch.setattr(commerce_tools_mod, "add_cart_item", fake_add_cart_item)
+
+    session = object()
+    result = update_cart_item(
+        UpdateCartItemInput(
+            user_id="42",
+            cart_line_id="Silk Dress",
+            quantity=4,
+            idempotency_key="cart-update-1",
+        ),
+        "http://memory-retriever:8011",
+        timeout_seconds=7,
+        session=session,
+    )
+
+    assert result.ok is True
+    assert [call[0] for call in calls] == ["get", "remove", "add"]
+    remove_request = calls[1][1]
+    assert remove_request.quantity == 2
+    assert remove_request.product_id == "prod_123"
+    assert remove_request.display_name == "Silk Dress"
+    assert remove_request.idempotency_key == "cart-update-1-remove"
+    add_request = calls[2][1]
+    assert add_request.quantity == 4
+    assert add_request.product_id == "prod_123"
+    assert add_request.display_name == "Silk Dress"
+    assert add_request.unit_price.amount == 49.99
+    assert add_request.image_url == "/images/silk-dress.jpg"
+    assert add_request.idempotency_key == "cart-update-1-add"
+    assert all(call[3] == {"timeout_seconds": 7, "session": session} for call in calls)
+
+
+def test_update_cart_item_quantity_zero_removes_complete_line(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    removed = []
+    cart = Cart(
+        user_id="42",
+        lines=[
+            CartLine(
+                cart_line_id="Silk Dress",
+                product_id="prod_123",
+                display_name="Silk Dress",
+                quantity=3,
+            )
+        ],
+    )
+
+    monkeypatch.setattr(
+        commerce_tools_mod,
+        "get_cart",
+        lambda *args, **kwargs: GetCartResult(ok=True, cart=cart),
+    )
+
+    def fake_remove_cart_item(request, *args, **kwargs):
+        removed.append(request)
+        return CartMutationResult(ok=True)
+
+    monkeypatch.setattr(
+        commerce_tools_mod,
+        "remove_cart_item",
+        fake_remove_cart_item,
+    )
+    monkeypatch.setattr(
+        commerce_tools_mod,
+        "add_cart_item",
+        lambda *args, **kwargs: pytest.fail("quantity zero must not re-add the line"),
+    )
+
+    result = update_cart_item(
+        UpdateCartItemInput(
+            user_id="42",
+            cart_line_id="Silk Dress",
+            quantity=0,
+            idempotency_key="cart-update-remove",
+        ),
+        "http://memory-retriever:8011",
+    )
+
+    assert result.ok is True
+    assert result.changed_line is None
+    assert len(removed) == 1
+    assert removed[0].quantity == 3
+    assert removed[0].idempotency_key == "cart-update-remove"
+
+
+def test_update_cart_item_returns_structured_error_for_unknown_line(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cart = Cart(
+        user_id="42",
+        lines=[
+            CartLine(
+                cart_line_id="Silk Dress",
+                product_id="prod_123",
+                display_name="Silk Dress",
+                quantity=1,
+            )
+        ],
+    )
+    monkeypatch.setattr(
+        commerce_tools_mod,
+        "get_cart",
+        lambda *args, **kwargs: GetCartResult(ok=True, cart=cart),
+    )
+    monkeypatch.setattr(
+        commerce_tools_mod,
+        "remove_cart_item",
+        lambda *args, **kwargs: pytest.fail("unknown lines must not be removed"),
+    )
+    monkeypatch.setattr(
+        commerce_tools_mod,
+        "add_cart_item",
+        lambda *args, **kwargs: pytest.fail("unknown lines must not be added"),
+    )
+
+    result = update_cart_item(
+        UpdateCartItemInput(
+            user_id="42",
+            cart_line_id="Unknown Line",
+            quantity=2,
+            idempotency_key="cart-update-missing",
+        ),
+        "http://memory-retriever:8011",
+    )
+
+    assert result.ok is False
+    assert result.error.code == "cart_line_not_found"
+    assert "Call get_cart_tool" in result.error.message
+    assert result.meta.idempotency_key == "cart-update-missing"
+
+
+def test_get_store_policy_loads_all_configured_topics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    policies_path = (
+        Path(__file__).resolve().parents[3]
+        / "chain_server"
+        / "skills"
+        / "shopper"
+        / "store-policy"
+        / "policies.yaml"
+    )
+    monkeypatch.setattr(commerce_tools_mod, "_POLICY_CACHE", None)
+
+    for topic in (
+        "returns",
+        "shipping",
+        "sizing",
+        "payment",
+        "price_match",
+        "gift_cards",
+    ):
+        result = get_store_policy(GetStorePolicyInput(topic=topic), policies_path)
+
+        assert result.ok is True
+        assert result.policy.topic == topic
+        assert result.policy.title
+        assert result.policy.body
+        assert "last_updated" not in type(result.policy).model_fields
+
+
+def test_get_store_policy_returns_error_for_unknown_topic(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    policies_path = (
+        Path(__file__).resolve().parents[3]
+        / "chain_server"
+        / "skills"
+        / "shopper"
+        / "store-policy"
+        / "policies.yaml"
+    )
+    monkeypatch.setattr(commerce_tools_mod, "_POLICY_CACHE", None)
+
+    result = get_store_policy(
+        GetStorePolicyInput(topic="international_shipping"),
+        policies_path,
+    )
+
+    assert result.ok is False
+    assert result.error.code == "policy_topic_not_found"
+    assert "retailer's help center" in result.error.message
+
+
+def test_get_store_policy_returns_error_when_file_is_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(commerce_tools_mod, "_POLICY_CACHE", None)
+
+    result = get_store_policy(
+        GetStorePolicyInput(topic="returns"),
+        tmp_path / "missing-policies.yaml",
+    )
+
+    assert result.ok is False
+    assert result.error.code == "policy_load_failed"
+    assert result.error.message == "Policy file could not be loaded."
+
+
+def test_check_product_availability_returns_consistent_unknown_result() -> None:
+    result = check_product_availability(
+        CheckProductAvailabilityInput(
+            product_ref="prod_123",
+            variant_hint="blue, size medium",
+        )
+    )
+
+    assert result.ok is True
+    assert result.product_ref == "prod_123"
+    assert result.availability == "unknown"
+    assert result.message == (
+        "Real-time inventory is not available through the assistant. "
+        "Availability and size can be confirmed on the product page or at checkout."
+    )
 
 
 def test_commerce_tools_do_not_import_current_agents() -> None:

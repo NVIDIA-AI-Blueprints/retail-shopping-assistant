@@ -206,6 +206,19 @@ class GetProductDetailsResult(CommerceModel):
     meta: ToolMeta = Field(default_factory=ToolMeta)
 
 
+class CheckProductAvailabilityInput(CommerceModel):
+    product_ref: str = Field(..., min_length=1)
+    variant_hint: str | None = None  # size, color, or variant the shopper named
+
+
+class CheckProductAvailabilityResult(CommerceModel):
+    ok: bool
+    product_ref: str
+    availability: Availability
+    message: str
+    meta: ToolMeta = Field(default_factory=ToolMeta)
+
+
 class GetCartInput(CommerceModel):
     user_id: str = Field(..., min_length=1)
 

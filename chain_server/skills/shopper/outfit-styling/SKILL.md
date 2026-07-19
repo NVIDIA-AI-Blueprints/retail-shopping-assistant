@@ -1,19 +1,35 @@
 ---
 name: outfit-styling
-description: Customer-facing fashion styling for a shopping assistant. Use when the shopper asks to build, complete, validate, compare, refine, or budget an outfit from a product page, homepage discovery, cart, uploaded image, or mid-browse style question.
+description: Customer-facing fashion styling and style-led fashion selection. Use instead of product-discovery when the shopper asks to build, complete, validate, compare, balance, or refine an outfit, or wants a fashion piece chosen for a style or vibe such as a statement piece. Keep using it throughout that active outfit-building thread and any style-led single-piece thread, including follow-up searches. Budget-shopping may accompany it only as a modifier.
 ---
 
 # Outfit Styling
 
 Use this skill for fashion styling, outfit composition, and style-aware shopping. Do not expose skill names, tool names, entry-mode names, or internal reasoning to the shopper.
 
+## Mandatory Turn Boundary
+
+- When outfit intent includes a season, weather need, occasion, or style/vibe, call `search_catalog_tool` in the current turn and begin with a grounded partial outfit. Never answer only with clarification questions.
+- For a broad style/vibe request, choose a useful core role only from taxonomy values advertised by the active catalog. Do not translate the vibe into an unadvertised product type or copy a generic example into the tool call.
+- An unspecified request for one style-led piece, such as "a statement piece," does not identify a product role. Ask one concise category or occasion question before searching. This differs from an outfit or complete-look request, where the named vibe, occasion, season, or weather need is enough to start a multi-role plan.
+- A broad outfit, style, or vibe is not a product-type umbrella. When the shopper names no concrete product type, use `agent_selected_type` for one focused role in one category and include every advertised subcategory that serves that role. Use separate calls for additional outfit roles.
+- Treat broad weather or occasion context as styling direction, not automatically as a product-attribute guarantee. For example, a "rainy day outfit" or "wet-weather outfit" should start with practical advertised roles and modest reasoning; add water resistance to `unadvertised_requirements` only when the shopper directly requires that attribute for a target product.
+- Subjective style or vibe words remain semantic direction unless the shopper explicitly makes them hard requirements. Objective product attributes such as material, weather performance, sale status, or a specific shade remain must-haves when they define the requested product.
+- For alternatives joined by "or", search the faithful advertised branch and explain the unavailable branch. Do not reject a supported branch because another alternative is unavailable, and do not put the supported taxonomy value in `unadvertised_requirements`.
+- Each search covers one catalog category and one focused product role. Include all faithful advertised subtypes for that role in the same call, but never mix apparel, footwear, bags, or other categories in one retrieval. A multi-role outfit uses separate focused calls up to the search cap.
+- A request for a whole or complete outfit remains incomplete until current or directly referenced prior evidence covers multiple complementary roles, or the search cap is reached and the missing role is disclosed. A one-piece dress may be the clothing core, but does not by itself complete an outfit request.
+
 ## Operating Principles
 
-- Treat styling as multi-intent by default. Combine occasion, vibe, budget, comfort, cart state, visual context, and explicit cart intent in one response plan.
+- Scope styling to the shopper's current request. Use this as the single primary procedure; do not combine it with product-discovery. Budget-shopping may accompany it only as a modifier.
+- Search only the product scope requested in the current turn. When the shopper explicitly requests multiple pieces, cover those pieces within the search cap. Resolve references such as "that" from the direct antecedent. "Start with X" means solve only X; preserve earlier context for styling judgment without completing other outfit categories.
+- When the direct antecedent is a group of candidates with a shared confirmed constraint, use that shared constraint as a provisional styling anchor. For example, a follow-up about bottoms after beige-top candidates should mention the beige-top direction in the semantic query; do not copy beige into the bottoms' hard color filter unless the shopper asks for a tonal or same-color match. Do not require the shopper to select one exact top unless a confirmed difference between candidates would materially change the search.
+- A follow-up requesting one product role gets one inclusive search scope containing all faithful advertised types for that role. Do not spend unused search budget on adjacent categories or one-piece substitutes. A dress is not a bottom and does not satisfy a request for separates.
+- Set `scope_complete` to true only when the search plus existing turn evidence is enough to answer the shopper's complete current request. Judge the current turn, not an unfinished multi-turn outfit project: "Start with a beige top" and "What bottoms go with that?" are each complete after their one-role search. Set it false while another role explicitly requested in this turn, a product-detail verification, an availability check, or a cart action still must run. Never set it false merely to search alternatives. A requested type with no faithful advertised taxonomy match does not make a one-role scope partial; report that gap without another search.
 - Ground catalog products, prices, and availability in tools. Styling taste can be judgment; product facts cannot.
 - Prefer a useful partial outfit over an ungrounded complete outfit. If the catalog cannot satisfy every piece, say what is missing and give the closest grounded option.
 - Apply styling fundamentals first, trends second, personal fit third. Trends are framing language, not the boundary.
-- Ask at most one concise clarifying question when the request lacks enough styling direction to search responsibly. If the shopper gives occasion, budget, product type, image, cart, or anchor product context, start helping.
+- Ask at most one concise clarifying question when the request lacks enough styling direction to search responsibly. A season, weather need, occasion, or style/vibe plus outfit intent is enough to begin helping with a grounded partial outfit; do not respond with only a questionnaire. Budget, product type, image, cart, or anchor product context is also enough to start helping.
 - Do not upsell broadly. Recommend missing pieces only when they improve the stated outfit, cart, or goal.
 
 ## Fact And Inference Boundaries
@@ -72,6 +88,8 @@ Use this skill for fashion styling, outfit composition, and style-aware shopping
 
 Apply these before reaching for trends. They govern every outfit regardless of season.
 
+Product types in the formulas and examples below are generic fashion concepts, not catalog taxonomy. Map the shopper's meaning to exact values advertised by the active catalog; never copy an example product type into a tool call unless the catalog advertises it.
+
 ### Color
 
 - **60-30-10:** 60% neutral base, 30% supporting color, 10% accent. Prevents outfits from feeling flat or chaotic.
@@ -107,7 +125,7 @@ Apply these before reaching for trends. They govern every outfit regardless of s
 
 Trends give recommendations relevance. They do not override fundamentals, personal fit, or the catalog boundary.
 
-- **Trend data source:** Reference `trends-current.md` for the active seasonal snapshot — colors, silhouettes, key pieces, and fabric signals. Assume it is refreshed each season.
+- **Trend data source:** Reference `/shopper/trends-current.md` for the active seasonal snapshot — colors, silhouettes, key pieces, and fabric signals. Assume it is refreshed each season.
 - **Use trends as framing language.** Recommend catalog pieces in the vocabulary of what is happening now: "this dusty rose blouse fits the soft-romantic direction we're seeing this season" rather than "this is a blouse."
 - **Do not force trends onto the shopper.** If a trend does not flatter their coloring, body type, or lifestyle, either translate it into an accent (bag, shoe, scarf) or skip it. Say why briefly.
 - **Trends have hierarchy:** color trends are the easiest to translate; silhouette trends require fit judgment; specific item trends (a particular shoe, a particular bag shape) are the most catalog-dependent.
@@ -120,7 +138,7 @@ When the exact trend item is not in the catalog, translate the trend into its *i
 ### The Substitution Method
 
 1. **Identify the feeling the trend item creates** — feminine, powerful, elongating, soft, statement, romantic, structured, playful.
-2. **Search the catalog for a piece that creates the same feeling** — same category first, adjacent category second.
+2. **Search the catalog for a piece that creates the same feeling** — use the same advertised product type. If that type is not advertised, report the gap and ask before searching an adjacent type.
 3. **Frame the substitution honestly** — do not pretend it is the trend item; position it as the catalog's answer to the trend.
 
 ### Example Intent Maps
@@ -136,13 +154,15 @@ When the exact trend item is not in the catalog, translate the trend into its *i
 
 ### What to Say
 
-Substitution language should acknowledge the trend and land the recommendation without over-explaining:
+After the shopper accepts an alternative direction, substitution language should acknowledge the trend and land the recommendation without over-explaining:
 
 > *"[Trend item] is having a moment right now. We don't carry it in this exact form, but [catalog item] gives the same [feeling] and works well for [occasion]."*
 
 ### When to Not Substitute
 
 - If the shopper's request has no trend element, do not introduce one.
+- If an explicitly requested product type is not advertised, report that gap and offer an alternative direction. Do not search the alternative until the shopper accepts it.
+- Do not force a weak substitute merely to complete a broad style request.
 - If no catalog piece captures the trend intent within two categories of the original, do not force a stretch. Say the catalog does not have a strong answer for that trend right now.
 
 ## Entry Modes
@@ -184,11 +204,17 @@ The shopper asks a style question while browsing, comparing, filtering, or refin
 
 - Answer the style question directly before broadening the search.
 - Preserve recent product and outfit context; do not restart as a cold discovery flow.
+- Treat "that", "those", and incremental requests as referring to the direct antecedent unless the shopper explicitly reaches further back. Search only the requested product scope while retaining the antecedent as styling context.
+- A candidate group can be the antecedent. Use its shared confirmed constraint as the anchor for the next requested role instead of asking the shopper to choose one item first.
 - For refinements such as more casual, less expensive, dressier, brighter, or more comfortable, keep the accepted parts and swap only the rejected constraint.
 
 ## Tool Use
 
 - Use `search_catalog_tool` for product discovery, complements, substitutions, budget filters, and image-grounded shopping.
+- Interpret shopper meaning against the active catalog capabilities and choose only exact advertised taxonomy values that faithfully match. Use `exact_requested_type` only when every selected value means the same product type the shopper named. Use `member_of_requested_umbrella` when the shopper names a true umbrella or explicit alternatives, and include every faithful advertised child in the same call; do not reverse that relationship because the requested type belongs to a broader selected category. Apply one direction test to every value: "is this a kind of the product scope the shopper asked for?" A skirt is a kind of bottom; a flat or sandal is not a kind of sneaker even though all are footwear. Use `agent_selected_type` only when an outfit plan needs one role that the shopper did not name, for one focused role in one category with every advertised subtype that serves it. Before using `no_direct_catalog_match`, separate the requested product type from its modifiers: an unavailable attribute does not erase an advertised type, subjective style stays in the semantic query, and a supported alternative branch must still be searched. Use no-direct only when an explicitly requested concrete product type has no direct match, with empty taxonomy arrays and no required constraints so no retrieval runs. Never use it for an outfit, occasion, season, weather need, style/vibe, or product attribute. Do not broaden to its parent category, omit it, or silently substitute another type; report the gap and offer one next direction.
+- When an umbrella term maps to only one faithful advertised type, search that type once and say which other requested types the catalog does not advertise. Do not add unrelated advertised types merely to increase the result set.
+- Preserve every explicit must-have. Use its exact advertised property in `required_constraints`, or `unadvertised_requirements` when the property is absent; let deterministic validation report what the catalog cannot enforce rather than omitting or weakening it.
+- When one shopper constraint maps to multiple advertised enum values, include all faithful values in one list and one search rather than retrying one value at a time.
 - Use `get_product_details_tool` for facts about a known `PRODUCT_REF`.
 - Current product details expose only the fields returned by the product detail
   tool.
@@ -246,6 +272,7 @@ The shopper asks a style question while browsing, comparing, filtering, or refin
   unverified style attributes. Do not describe search-only products as solid,
   subtle, floral, gingham, woven, maxi, lightweight, neutral, polished, or
   structured unless product details confirmed that attribute.
+- For a follow-up search, explicitly connect the candidates to the named antecedent or to the shared confirmed constraint of the referenced candidate group.
 - For an outfit, include why the pieces work together: color, proportion, formality, texture, comfort, reuse, or occasion fit.
 - Keep final outfit and cart summaries item-specific. For example, say the
   skirt and top provide the breathable linen/cotton base while the sandals add

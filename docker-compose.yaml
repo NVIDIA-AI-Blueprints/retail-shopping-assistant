@@ -19,6 +19,9 @@ services:
       - CATALOG_RETRIEVER_URL=http://catalog-retriever:8010
       - MEMORY_RETRIEVER_URL=http://memory-retriever:8011
       - GUARDRAILS_ENABLED=${GUARDRAILS_ENABLED:-true}
+      - CHECKPOINT_STORE=${CHECKPOINT_STORE:-memory}
+      - CHECKPOINT_REDIS_URL=${CHECKPOINT_REDIS_URL:-redis://localhost:6379/0}
+      - CHECKPOINT_TTL_SECONDS=${CHECKPOINT_TTL_SECONDS:-86400}
     volumes:
       - ./shared:/app/shared
     depends_on:

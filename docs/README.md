@@ -14,6 +14,7 @@ Welcome to the Retail Shopping Assistant documentation! This hub provides compre
 - **[Catalog Schema and Filters](CATALOG_FILTERS.md)** - Declaring JSONL field roles without static catalog values
 - **[Catalog Architecture](CATALOG_REFACTOR_PLAN.md)** - Start here for JSONL ingestion, advertised capabilities, agent discovery, and validated retrieval
 - **[Commerce Contracts](COMMERCE_CONTRACTS.md)** - Internal product, cart, and commerce tool contracts
+- **[Shopper Agent Architecture](SHOPPER_AGENT_ARCHITECTURE.md)** - Published catalog, turn flow, skill-to-tool mapping, and memory boundaries
 - **[Shopper Agent Tool Registry](SHOPPER_AGENT_TOOL_REGISTRY.md)** - Registered Deep Agents tools for the shopper-serving agent
 - **[Shopper Agent Skill Registry](SHOPPER_AGENT_SKILL_REGISTRY.md)** - Registered Deep Agents skills and tuning loop for shopper-facing behavior
 - **[Deep Agents Migration Plan](DEEP_AGENTS_MIGRATION_PLAN.md)** - SDK migration, session isolation, tools, skills, and scaling notes
@@ -44,6 +45,7 @@ Welcome to the Retail Shopping Assistant documentation! This hub provides compre
 | [Catalog Schema and Filters](CATALOG_FILTERS.md) | Configure data-derived filters with a catalog role sidecar | Developers, operators |
 | [Catalog Architecture](CATALOG_REFACTOR_PLAN.md) | Understand the end-to-end ingest, capability advertisement, agent discovery, and validated retrieval flow | Developers, architects |
 | [Commerce Contracts](COMMERCE_CONTRACTS.md) | Internal product, cart, and commerce tool contracts | Developers, architects |
+| [Shopper Agent Architecture](SHOPPER_AGENT_ARCHITECTURE.md) | Understand the published catalog, turn flow, skill-to-tool mapping, and memory boundaries | Developers, architects |
 | [Shopper Agent Tool Registry](SHOPPER_AGENT_TOOL_REGISTRY.md) | Registered Deep Agents tools, risk classes, and skill access boundaries for the shopper-serving agent | Developers, architects, evaluators |
 | [Shopper Agent Skill Registry](SHOPPER_AGENT_SKILL_REGISTRY.md) | Registered Deep Agents skills, runtime loading, and markdown tuning workflow for shopper-facing behavior | Developers, architects, evaluators |
 | [Deep Agents Migration Plan](DEEP_AGENTS_MIGRATION_PLAN.md) | SDK migration, session isolation, tools, skills, and scaling notes | Developers, architects |
@@ -71,10 +73,11 @@ Welcome to the Retail Shopping Assistant documentation! This hub provides compre
 
 ### I'm a Developer
 1. **[Main README](../README.md)** - Project overview and architecture
-2. **[API Documentation](API.md)** - Understand the API
-3. **[Deployment Guide](DEPLOYMENT.md)** - Set up development environment
-4. **[Testing and Evaluation](../tests/README.md)** - Run tests and evaluator workflows
-5. **[Configuration Guide](../README.md#configuration)** - Customize the application
+2. **[Shopper Agent Architecture](SHOPPER_AGENT_ARCHITECTURE.md)** - Understand the serving agent boundaries
+3. **[API Documentation](API.md)** - Understand the API
+4. **[Deployment Guide](DEPLOYMENT.md)** - Set up development environment
+5. **[Testing and Evaluation](../tests/README.md)** - Run tests and evaluator workflows
+6. **[Configuration Guide](../README.md#configuration)** - Customize the application
 
 ### I'm Deploying to Production
 1. **[Deployment Guide](DEPLOYMENT.md)** - Production deployment instructions
@@ -186,6 +189,7 @@ docs/
 ├── README.md           # This documentation hub
 ├── API.md             # API reference
 ├── COMMERCE_CONTRACTS.md
+├── SHOPPER_AGENT_ARCHITECTURE.md
 ├── SHOPPER_AGENT_TOOL_REGISTRY.md
 ├── SHOPPER_AGENT_SKILL_REGISTRY.md
 ├── DEEP_AGENTS_MIGRATION_PLAN.md
@@ -225,7 +229,7 @@ We welcome feedback on the documentation:
 
 ---
 
-**Last Updated**: January 2024  
+**Last Updated**: July 2026
 **Version**: 1.0.0  
 **Maintainer**: NVIDIA AI Blueprints Team
 

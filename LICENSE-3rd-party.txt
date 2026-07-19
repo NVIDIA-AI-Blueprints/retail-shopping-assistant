@@ -102,6 +102,9 @@ below.
    langgraph-checkpoint 4.1.1
    Copyright (c) 2022 Harrison Chase
 
+   langgraph-checkpoint-redis 0.5.1
+   Copyright (c) 2023 Redis, Inc.
+
    langgraph-prebuilt 1.0.12
    Copyright (c) 2022 Harrison Chase
 
@@ -125,6 +128,12 @@ below.
 
    pytz 2025.2
    Copyright (c) 2003-2019 Stuart Bishop
+
+   redis 7.4.1
+   Copyright (c) 2022-2023, Redis, inc.
+
+   redisvl 0.23.0
+   Copyright (c) 2023 Redis
 
    PyYAML 6.0.2
    Copyright (c) 2017-2021 Ingy döt Net

@@ -45,19 +45,26 @@ class _StubRuntime:
 
     def __init__(self, response_text: str = "ok") -> None:
         self.response_text = response_text
+        self.agent_diagnostics: Dict[str, Any] = {}
         self.astream_calls: List[Any] = []
         self.ainvoke_calls: List[Any] = []
 
-    async def astream(self, state: State, identity):
-        self.astream_calls.append((state, identity))
+    async def astream(self, state: State, identity, persona_snapshot=None):
+        self.astream_calls.append((state, identity, persona_snapshot))
         for piece in ["hello ", "world"]:
             yield piece
 
-    async def ainvoke(self, state: State, identity) -> Dict[str, Any]:
-        self.ainvoke_calls.append((state, identity))
+    async def ainvoke(
+        self,
+        state: State,
+        identity,
+        persona_snapshot=None,
+    ) -> Dict[str, Any]:
+        self.ainvoke_calls.append((state, identity, persona_snapshot))
         return {
             "response": self.response_text,
             "timings": {"chatter": 0.1, "memory": 0.01},
+            "agent_diagnostics": self.agent_diagnostics,
         }
 
     def catalog_capabilities(self) -> CatalogCapabilities:
@@ -201,6 +208,29 @@ class TestTimingEndpoint:
         assert "total" in body["timings"]
         assert body["timings"]["total"] > 0
         assert body["model_usage"] == {}
+        assert body["agent_diagnostics"] == {}
+
+    def test_returns_agent_diagnostics_additively(
+        self, main_module, client: TestClient
+    ) -> None:
+        main_module._test_runtime.agent_diagnostics = {
+            "skill_files_read": ["/shopper/outfit-styling/SKILL.md"],
+            "tool_calls": [],
+            "rejected_tool_calls": [],
+            "duplicate_tool_calls": [],
+            "final_termination_reason": "completed",
+            "partial_graph_messages": [],
+        }
+
+        response = client.post(
+            "/query/timing",
+            json={"user_id": 1, "query": "hello"},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["agent_diagnostics"] == (
+            main_module._test_runtime.agent_diagnostics
+        )
 
 
 class TestStreamEndpoint:
@@ -241,7 +271,7 @@ class TestStreamEndpoint:
                 pass
 
         assert runtime.astream_calls
-        state_arg, _ = runtime.astream_calls[-1]
+        state_arg, _, _ = runtime.astream_calls[-1]
         assert state_arg.image.startswith("data:image/jpeg")
         assert "media" in state_arg.query.lower()
 
@@ -270,7 +300,7 @@ class TestStreamEndpoint:
                 pass
 
         assert runtime.astream_calls
-        state_arg, _ = runtime.astream_calls[-1]
+        state_arg, _, _ = runtime.astream_calls[-1]
         assert state_arg.image == ""
         assert state_arg.query == "The user submitted visual media without additional text."
         assert state_arg.media[0]["type"] == "video"
@@ -313,12 +343,43 @@ class TestStreamEndpoint:
         )
 
         assert response.status_code == 200
-        _, identity = main_module._test_runtime.ainvoke_calls[-1]
+        _, identity, _ = main_module._test_runtime.ainvoke_calls[-1]
         assert identity.session_id == "session-a"
         assert identity.conversation_id == "conversation-a"
         assert identity.cart_id == "cart-a"
         assert identity.context_user_id != 1
         assert identity.cart_user_id != 1
+
+    def test_optional_persona_reaches_timing_runtime(
+        self, main_module, client: TestClient
+    ) -> None:
+        persona = {"preferred_colors": ["sage", "cream"]}
+
+        response = client.post(
+            "/query/timing",
+            json={"user_id": 1, "query": "hello", "persona": persona},
+        )
+
+        assert response.status_code == 200
+        _, _, persona_snapshot = main_module._test_runtime.ainvoke_calls[-1]
+        assert persona_snapshot == persona
+
+    def test_optional_persona_reaches_stream_runtime(
+        self, main_module, client: TestClient
+    ) -> None:
+        persona = {"style": "minimal"}
+
+        with client.stream(
+            "POST",
+            "/query/stream",
+            json={"user_id": 1, "query": "hello", "persona": persona},
+        ) as stream_response:
+            for _ in stream_response.iter_lines():
+                pass
+
+        assert stream_response.status_code == 200
+        _, _, persona_snapshot = main_module._test_runtime.astream_calls[-1]
+        assert persona_snapshot == persona
 
 
 class TestRequestIdentity:
@@ -367,6 +428,174 @@ class TestRequestIdentity:
 
         assert identity.context_user_id != 42
         assert identity.cart_user_id == 42
+
+
+class TestCheckpointerConfiguration:
+    def test_memory_store_builds_memory_saver(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from langgraph.checkpoint.memory import MemorySaver
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        monkeypatch.setenv("CHECKPOINT_STORE", "memory")
+
+        assert isinstance(runtime_mod._build_checkpointer(), MemorySaver)
+
+    def test_redis_store_builds_async_redis_saver(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        redis_module = ModuleType("langgraph.checkpoint.redis.aio")
+
+        class FakeAsyncRedisSaver:
+            def __init__(self, **kwargs) -> None:
+                self.kwargs = kwargs
+
+        redis_module.AsyncRedisSaver = FakeAsyncRedisSaver
+        monkeypatch.setitem(
+            sys.modules,
+            "langgraph.checkpoint.redis.aio",
+            redis_module,
+        )
+        monkeypatch.setenv("CHECKPOINT_STORE", "redis")
+        monkeypatch.setenv("CHECKPOINT_REDIS_URL", "redis://checkpoint:6379/2")
+        monkeypatch.setenv("CHECKPOINT_TTL_SECONDS", "86400")
+
+        checkpointer = runtime_mod._build_checkpointer()
+
+        assert isinstance(checkpointer, FakeAsyncRedisSaver)
+        assert checkpointer.kwargs == {
+            "redis_url": "redis://checkpoint:6379/2",
+            "ttl": {"default_ttl": 1440.0},
+        }
+
+    @pytest.mark.asyncio
+    async def test_async_checkpointer_setup_runs_once(self, base_config) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        class FakeAsyncCheckpointer:
+            def __init__(self) -> None:
+                self.setup_calls = 0
+
+            async def asetup(self) -> None:
+                self.setup_calls += 1
+
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+        checkpointer = FakeAsyncCheckpointer()
+        runtime._checkpointer = checkpointer
+        runtime._checkpointer_ready = False
+
+        await runtime._ensure_checkpointer_ready()
+        await runtime._ensure_checkpointer_ready()
+
+        assert checkpointer.setup_calls == 1
+
+    @pytest.mark.asyncio
+    async def test_async_checkpointer_resets_failed_thread(self, base_config) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        deleted_threads = []
+
+        class FakeAsyncCheckpointer:
+            async def adelete_thread(self, thread_id: str) -> None:
+                deleted_threads.append(thread_id)
+
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+        runtime._checkpointer = FakeAsyncCheckpointer()
+        identity = runtime_mod.RequestIdentity(
+            session_id="session-a",
+            conversation_id="conversation-a",
+            cart_id="cart-a",
+            context_user_id=111,
+            cart_user_id=222,
+            request_id="request-a",
+        )
+
+        await runtime._reset_agent_thread(identity)
+
+        assert deleted_threads == ["conversation-a"]
+
+
+class TestPersonaPrompt:
+    def test_persona_block_formats_truthy_values(self) -> None:
+        from chain_server.src.deepagents_runtime import _format_persona_block
+
+        block = _format_persona_block(
+            {"style": "minimal", "preferred_colors": ["sage"], "empty": ""}
+        )
+
+        assert block.startswith("SHOPPER CONTEXT (read-only, loaded at turn start):")
+        assert "  style: minimal" in block
+        assert "  preferred_colors: ['sage']" in block
+        assert "empty" not in block
+        assert "Do not treat it as catalog truth" in block
+
+    def test_system_prompt_includes_only_current_persona(
+        self, base_config
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+        capabilities = CatalogCapabilities(catalog_id="test")
+
+        first = runtime._system_prompt(
+            capabilities,
+            persona_snapshot={"style": "minimal"},
+        )
+        second = runtime._system_prompt(
+            capabilities,
+            persona_snapshot={"style": "romantic"},
+        )
+        absent = runtime._system_prompt(capabilities, persona_snapshot=None)
+        empty = runtime._system_prompt(capabilities, persona_snapshot={})
+
+        assert first.startswith("SHOPPER CONTEXT")
+        assert "  style: minimal" in first
+        assert second.startswith("SHOPPER CONTEXT")
+        assert "  style: romantic" in second
+        assert "  style: minimal" not in second
+        assert not absent.startswith("SHOPPER CONTEXT")
+        assert not empty.startswith("SHOPPER CONTEXT")
+
+
+class TestCartFormatting:
+    def test_remove_result_preserves_existing_message_shape(self) -> None:
+        from chain_server.src.deepagents_runtime import _format_cart_remove_result
+
+        formatted = _format_cart_remove_result(
+            CartMutationResult(ok=True, message="Removed from cart."),
+            fallback="Removed one item from cart.",
+        )
+
+        assert formatted == "Removed from cart."
+
+    def test_update_result_formats_shared_cart_lines(self) -> None:
+        from chain_server.src.deepagents_runtime import _format_update_cart_result
+
+        line = CartLine(
+            cart_line_id="Silk Dress",
+            product_id="prod_123",
+            display_name="Silk Dress",
+            quantity=2,
+            unit_price=Money(amount=49.99),
+        )
+        result = CartMutationResult(
+            ok=True,
+            changed_line=line,
+            cart=CommerceCart(
+                user_id="42",
+                lines=[line],
+                subtotal=Money(amount=99.98),
+            ),
+        )
+
+        formatted = _format_update_cart_result(result)
+
+        assert formatted.startswith("CART UPDATED")
+        assert "Silk Dress → qty 2" in formatted
+        assert "Silk Dress | Silk Dress | qty 2 | USD 49.99" in formatted
+        assert "SUBTOTAL: USD 99.98" in formatted
 
 
 class TestDeepAgentsRuntimeScopes:
@@ -610,6 +839,19 @@ class TestDeepAgentsRuntimeRefs:
         capabilities = CatalogCapabilities(
             catalog_id="custom",
             retrieval_modes=["text"],
+            filters={
+                "price": CatalogFilterCapability(
+                    type="number",
+                    operators=["gte", "lte"],
+                    source_fields=["price"],
+                ),
+                "primary_color": CatalogFilterCapability(
+                    type="enum",
+                    operators=["in"],
+                    source_fields=["primary_color"],
+                    values=["beige", "black"],
+                ),
+            },
             taxonomy=CatalogTaxonomyCapabilities(
                 category_field="department",
                 subcategory_field="product_type",
@@ -636,50 +878,119 @@ class TestDeepAgentsRuntimeRefs:
 
         assert set(schema_model.model_fields) == {
             "semantic_query",
+            "taxonomy_status",
             "taxonomy",
             "required_constraints",
+            "scope_complete",
             "search_mode",
         }
         assert set(schema["required"]) == {
             "semantic_query",
+            "taxonomy_status",
             "taxonomy",
             "required_constraints",
+            "scope_complete",
         }
+        assert schema["properties"]["taxonomy_status"]["enum"] == [
+            "exact_requested_type",
+            "member_of_requested_umbrella",
+            "agent_selected_type",
+            "no_direct_catalog_match",
+            "image_only",
+        ]
+        taxonomy_status_description = schema["properties"]["taxonomy_status"][
+            "description"
+        ]
+        assert "explicitly requested concrete product type" in (
+            taxonomy_status_description
+        )
+        assert "Never use it for an outfit, occasion, season, weather need" in (
+            taxonomy_status_description
+        )
+        assert "Do you have water-resistant bags?" in schema["properties"][
+            "required_constraints"
+        ]["description"]
+        assert "cart action still must run" in schema["properties"][
+            "scope_complete"
+        ]["description"]
         assert "semantic_queries" not in schema["properties"]
         taxonomy_ref = schema["properties"]["taxonomy"]["$ref"]
         taxonomy_schema = schema["$defs"][taxonomy_ref.rsplit("/", 1)[-1]]
+        constraints_ref = schema["properties"]["required_constraints"]["$ref"]
+        constraints_schema = schema["$defs"][constraints_ref.rsplit("/", 1)[-1]]
+        assert "no_direct_catalog_match" in schema["properties"]["taxonomy"][
+            "description"
+        ]
         assert set(taxonomy_schema["required"]) == {"category", "subcategory"}
+        assert "no_direct_catalog_match" in taxonomy_schema["properties"][
+            "category"
+        ]["description"]
+        assert "no_direct_catalog_match" in taxonomy_schema["properties"][
+            "subcategory"
+        ]["description"]
         assert taxonomy_schema["properties"]["category"]["items"]["enum"] == [
             "bags",
             "footwear",
         ]
+        assert taxonomy_schema["properties"]["category"]["maxItems"] == 1
         assert taxonomy_schema["properties"]["subcategory"]["items"]["enum"] == [
             "boots",
             "clutches",
             "satchels",
         ]
+        assert set(constraints_schema["properties"]) == {
+            "price",
+            "primary_color",
+            "unadvertised_requirements",
+        }
         assert {"const": "text", "type": "string"} in schema["properties"][
             "search_mode"
         ]["anyOf"]
 
         complete_request = {
             "semantic_query": "stylish evening bag",
+            "taxonomy_status": "member_of_requested_umbrella",
             "taxonomy": {
                 "category": ["bags"],
                 "subcategory": ["clutches"],
             },
             "required_constraints": {},
+            "scope_complete": True,
         }
         request = schema_model.model_validate(complete_request)
         assert request.taxonomy.category == ["bags"]
         assert request.taxonomy.subcategory == ["clutches"]
+
+        constrained_request = schema_model.model_validate(
+            {
+                **complete_request,
+                "required_constraints": {
+                    "price": {"max": 100},
+                    "primary_color": ["beige"],
+                },
+            }
+        )
+        assert constrained_request.required_constraints.primary_color == ["beige"]
+        with pytest.raises(ValueError, match="Extra inputs are not permitted"):
+            schema_model.model_validate(
+                {
+                    **complete_request,
+                    "required_constraints": {"color": ["beige"]},
+                }
+            )
 
         with pytest.raises(ValueError):
             schema_model.model_validate(
                 {**complete_request, "search_mode": "typo-mode"}
             )
 
-        for missing_field in ("semantic_query", "taxonomy", "required_constraints"):
+        for missing_field in (
+            "semantic_query",
+            "taxonomy_status",
+            "taxonomy",
+            "required_constraints",
+            "scope_complete",
+        ):
             with pytest.raises(ValueError):
                 schema_model.model_validate(
                     {
@@ -696,6 +1007,16 @@ class TestDeepAgentsRuntimeRefs:
                     "taxonomy": {"category": ["bags"], "subcategory": ["wallets"]},
                 }
             )
+        with pytest.raises(ValueError, match="at most 1 item"):
+            schema_model.model_validate(
+                {
+                    **complete_request,
+                    "taxonomy": {
+                        "category": ["bags", "footwear"],
+                        "subcategory": ["clutches", "boots"],
+                    },
+                }
+            )
         with pytest.raises(ValueError, match="Extra inputs are not permitted"):
             schema_model.model_validate(
                 {
@@ -710,18 +1031,115 @@ class TestDeepAgentsRuntimeRefs:
             schema_model.model_validate(
                 {
                     **complete_request,
+                    "taxonomy_status": "exact_requested_type",
                     "taxonomy": {"category": [], "subcategory": []},
                 }
+            )
+        with pytest.raises(
+            ValueError,
+            match="member_of_requested_umbrella requires an advertised subcategory",
+        ):
+            schema_model.model_validate(
+                {
+                    **complete_request,
+                    "taxonomy": {"category": ["bags"], "subcategory": []},
+                }
+            )
+        selected_type = schema_model.model_validate(
+            {
+                **complete_request,
+                "taxonomy_status": "agent_selected_type",
+                "taxonomy": {
+                    "category": "bags",
+                    "subcategory": "clutches",
+                },
+            }
+        )
+        assert selected_type.taxonomy.category == ["bags"]
+        assert selected_type.taxonomy.subcategory == ["clutches"]
+        selected_role = schema_model.model_validate(
+            {
+                **complete_request,
+                "taxonomy_status": "agent_selected_type",
+                "taxonomy": {
+                    "category": ["bags"],
+                    "subcategory": ["clutches", "satchels"],
+                },
+            }
+        )
+        assert selected_role.taxonomy.subcategory == ["clutches", "satchels"]
+        with pytest.raises(
+            ValueError,
+            match="agent_selected_type requires an advertised subcategory",
+        ):
+            schema_model.model_validate(
+                {
+                    **complete_request,
+                    "taxonomy_status": "agent_selected_type",
+                    "taxonomy": {"category": ["bags"], "subcategory": []},
+                }
+            )
+        with pytest.raises(
+            ValueError,
+            match="text catalog search requires a semantic query",
+        ):
+            schema_model.model_validate(
+                {**complete_request, "semantic_query": ""}
             )
 
         image_only = schema_model.model_validate(
             {
                 "semantic_query": "",
+                "taxonomy_status": "image_only",
                 "taxonomy": {"category": [], "subcategory": []},
                 "required_constraints": {},
+                "scope_complete": True,
             }
         )
         assert image_only.taxonomy.category == []
+        with pytest.raises(
+            ValueError,
+            match="image_only requires an empty semantic query and taxonomy",
+        ):
+            schema_model.model_validate(
+                {
+                    **complete_request,
+                    "taxonomy_status": "image_only",
+                }
+            )
+
+        no_direct_match = schema_model.model_validate(
+            {
+                "semantic_query": "casual sneakers",
+                "taxonomy_status": "no_direct_catalog_match",
+                "taxonomy": {"category": [], "subcategory": []},
+                "required_constraints": {},
+                "scope_complete": True,
+            }
+        )
+        assert no_direct_match.taxonomy_status == "no_direct_catalog_match"
+        with pytest.raises(
+            ValueError,
+            match="no_direct_catalog_match cannot include required constraints",
+        ):
+            schema_model.model_validate(
+                {
+                    **no_direct_match.model_dump(),
+                    "required_constraints": {
+                        "unadvertised_requirements": ["denim"]
+                    },
+                }
+            )
+        with pytest.raises(
+            ValueError,
+            match="no_direct_catalog_match requires empty taxonomy arrays",
+        ):
+            schema_model.model_validate(
+                {
+                    **complete_request,
+                    "taxonomy_status": "no_direct_catalog_match",
+                }
+            )
 
     @pytest.mark.parametrize("legacy_field", ["filters", "strictness"])
     def test_search_catalog_tool_input_rejects_legacy_constraint_fields(
@@ -744,8 +1162,10 @@ class TestDeepAgentsRuntimeRefs:
             schema_model.model_validate(
                 {
                     "semantic_query": "dresses",
+                    "taxonomy_status": "exact_requested_type",
                     "taxonomy": {"category": ["apparel"], "subcategory": []},
                     "required_constraints": {},
+                    "scope_complete": True,
                     legacy_field: (
                         {"price": {"max": 100}}
                         if legacy_field == "filters"
@@ -820,11 +1240,8 @@ class TestDeepAgentsRuntimeRefs:
             "product_type": ["clutches"],
         }
         assert issues == []
-        assert inferred == {
-            "department": ["accessories", "bags"],
-            "product_type": ["clutches"],
-        }
-        assert inferred_issues == []
+        assert inferred == {"product_type": ["clutches"]}
+        assert "multiple owning categories" in inferred_issues[0]
         assert mismatched == {
             "department": ["apparel"],
             "product_type": ["clutches"],
@@ -957,32 +1374,93 @@ class TestDeepAgentsRuntimeRefs:
 
         tools_by_name = {fn.__name__: fn for fn in captured["tools"]}
         assert set(tools_by_name) == {
+            "activate_shopper_skills_tool",
             "search_catalog_tool",
             "get_product_details_tool",
             "get_cart_tool",
             "add_cart_items_tool",
             "remove_cart_item_tool",
+            "update_cart_items_tool",
             "view_cart_total_tool",
+            "get_store_policy_tool",
+            "check_product_availability_tool",
         }
+        activation_schema = tools_by_name[
+            "activate_shopper_skills_tool"
+        ].args_schema.model_json_schema()
+        assert set(activation_schema["properties"]) == {"skill_names"}
+        assert activation_schema["properties"]["skill_names"]["items"]["enum"] == [
+            "budget-shopping",
+            "cart-management",
+            "outfit-styling",
+            "product-discovery",
+            "store-policy-answers",
+        ]
         search_schema = tools_by_name["search_catalog_tool"].args_schema
         assert search_schema is not runtime_mod.SearchCatalogToolInput
         assert set(search_schema.model_fields) == {
             "semantic_query",
+            "taxonomy_status",
             "taxonomy",
             "required_constraints",
+            "scope_complete",
             "search_mode",
         }
         assert (
             tools_by_name["add_cart_items_tool"].args_schema
             is runtime_mod.AddCartItemsToolInput
         )
+        assert (
+            tools_by_name["update_cart_items_tool"].args_schema
+            is runtime_mod._UpdateCartItemsInput
+        )
+        assert (
+            tools_by_name["get_store_policy_tool"].args_schema
+            is runtime_mod._GetStorePolicyInput
+        )
+        assert (
+            tools_by_name["check_product_availability_tool"].args_schema
+            is runtime_mod._CheckAvailabilityInput
+        )
         assert tools_by_name["search_catalog_tool"].return_direct is False
+        assert tools_by_name["activate_shopper_skills_tool"].return_direct is False
         assert tools_by_name["get_product_details_tool"].return_direct is False
         assert tools_by_name["get_cart_tool"].return_direct is False
         assert tools_by_name["add_cart_items_tool"].return_direct is False
+        assert all(tool.return_direct is False for tool in tools_by_name.values())
         assert tools_by_name["remove_cart_item_tool"].return_direct is False
         assert tools_by_name["view_cart_total_tool"].return_direct is False
-        assert captured["skills"] == ["/shopper"]
+        assert "skills" not in captured
+        assert len(captured["middleware"]) == 2
+        skill_gate, tool_loop_control = captured["middleware"]
+        assert isinstance(
+            tool_loop_control,
+            runtime_mod.ToolLoopControlMiddleware,
+        )
+        assert skill_gate._gated_tools == {
+            "search_catalog_tool",
+            "get_product_details_tool",
+            "get_cart_tool",
+            "add_cart_items_tool",
+            "remove_cart_item_tool",
+            "update_cart_items_tool",
+            "view_cart_total_tool",
+            "get_store_policy_tool",
+            "check_product_availability_tool",
+        }
+        activation_result = tools_by_name["activate_shopper_skills_tool"](
+            ["outfit-styling"]
+        )
+        assert activation_result == (
+            "SHOPPER_SKILL_ACTIVATION_COMPLETE: "
+            "/shopper/outfit-styling/SKILL.md"
+        )
+        assert set(skill_gate._skill_files) == {
+            "/shopper/outfit-styling/SKILL.md"
+        }
+        assert "## Conversational Mid-Browse" in next(
+            iter(skill_gate._skill_files.values())
+        )
         assert captured["backend"].cwd == (
             Path(__file__).resolve().parents[3] / "chain_server" / "skills"
         )
@@ -1003,7 +1481,7 @@ class TestDeepAgentsRuntimeRefs:
         assert "`taxonomy.category` and `taxonomy.subcategory`" in (
             captured["system_prompt"]
         )
-        assert "One normalized taxonomy scope can execute only once" in (
+        assert "One normalized taxonomy-and-required-constraint scope" in (
             captured["system_prompt"]
         )
         assert "semantic_queries" not in captured["system_prompt"]
@@ -1031,8 +1509,10 @@ class TestDeepAgentsRuntimeRefs:
         )
         assert "Do not make group-level claims" in captured["system_prompt"]
         assert "Do not enumerate materials" in captured["system_prompt"]
-        assert "Tax, shipping fees, delivery dates" in captured["system_prompt"]
+        assert "Tax, delivery dates" in captured["system_prompt"]
         assert "real-time stock or inventory status" in captured["system_prompt"]
+        assert "require get_store_policy_tool" in captured["system_prompt"]
+        assert "require check_product_availability_tool" in captured["system_prompt"]
         assert "Outdoor-practicality claims require exact support" in (
             captured["system_prompt"]
         )
@@ -1042,6 +1522,55 @@ class TestDeepAgentsRuntimeRefs:
         assert "maximum breathability" in captured["system_prompt"]
         assert "best-in-category performance" in captured["system_prompt"]
         assert "compare only confirmed construction facts" in captured["system_prompt"]
+
+        policy_response = tools_by_name["get_store_policy_tool"](topic="returns")
+        assert policy_response.startswith("STORE POLICY — Return Policy")
+        availability_response = tools_by_name[
+            "check_product_availability_tool"
+        ](product_ref="prod_123", variant_hint="size medium")
+        assert availability_response.startswith("AVAILABILITY (prod_123):")
+        assert "Real-time inventory is not available" in availability_response
+
+        update_requests = []
+
+        def fake_update_cart_item(request, memory_port):
+            update_requests.append((request, memory_port))
+            return CartMutationResult(
+                ok=True,
+                changed_line=CartLine(
+                    cart_line_id=request.cart_line_id,
+                    product_id="prod_123",
+                    display_name="Silk Dress",
+                    quantity=request.quantity,
+                ),
+            )
+
+        monkeypatch.setattr(runtime_mod, "update_cart_item", fake_update_cart_item)
+        monkeypatch.setattr(
+            runtime,
+            "_read_cart",
+            lambda user_id: Cart(
+                contents=[
+                    {
+                        "cart_line_id": "Silk Dress",
+                        "product_id": "prod_123",
+                        "item": "Silk Dress",
+                        "amount": 2,
+                    }
+                ]
+            ),
+        )
+
+        update_response = tools_by_name["update_cart_items_tool"](
+            cart_line_id="Silk Dress",
+            quantity=2,
+        )
+
+        assert update_response.startswith("CART UPDATED")
+        assert "Silk Dress → qty 2" in update_response
+        assert "CART_LINE_ID: Silk Dress" in update_response
+        assert update_requests[0][0].quantity == 2
+        assert update_requests[0][1] == base_config.memory_port
 
     def test_shopper_agent_tool_registry_matches_registered_tool_names(self) -> None:
         registry_path = (
@@ -1066,14 +1595,12 @@ class TestDeepAgentsRuntimeRefs:
             "view_cart_total_tool",
             "add_cart_items_tool",
             "remove_cart_item_tool",
-        }
-        for planned_tool in (
+            "update_cart_items_tool",
             "get_store_policy_tool",
-            "update_cart_item_tool",
-            "load_customer_persona_tool",
-        ):
-            assert f"| `{planned_tool}` |" in registry
-            assert f"| `{planned_tool}` | Planned" in registry
+            "check_product_availability_tool",
+        }
+        assert "| `load_customer_persona_tool` |" in registry
+        assert "| `load_customer_persona_tool` | Planned" in registry
 
     def test_search_catalog_tool_executes_structured_plan(
         self,
@@ -1220,6 +1747,19 @@ class TestDeepAgentsRuntimeRefs:
         )
 
         assert "SEARCH_RESULT_GROUNDING_NOTE" in result
+        assert (
+            'SEARCH_DIRECTION_EVIDENCE: "practical structured work bag"' in result
+        )
+        assert (
+            'SEARCH_FILTER_EVIDENCE: {"color": ["blue"], "price": {"max": 60.0}}'
+            in result
+        )
+        assert (
+            'SEARCH_TAXONOMY_EVIDENCE: {"department": ["bags"], '
+            '"product_type": ["satchels"]}' in result
+        )
+        assert '"department"' not in result.split("SEARCH_FILTER_EVIDENCE:", 1)[1].splitlines()[0]
+        assert '"product_type"' not in result.split("SEARCH_FILTER_EVIDENCE:", 1)[1].splitlines()[0]
         assert "Call get_product_details_tool" in result
         assert "PRODUCT_REF: prod_1" in result
         assert state.retrieved == {"Work Bag": "bag.jpg"}
@@ -1250,16 +1790,59 @@ class TestDeepAgentsRuntimeRefs:
         assert captured_plan["calls"] == 1
 
         required_constraint_failure = tools_by_name["search_catalog_tool"](
-            semantic_query="dresses",
+            semantic_query="denim dresses",
             taxonomy={"category": ["apparel"], "subcategory": ["dresses"]},
-            required_constraints={"composition": "cotton"},
+            required_constraints={
+                "unadvertised_requirements": ["denim"]
+            },
         )
 
         assert "catalog requirement cannot be enforced" in required_constraint_failure
-        assert "'composition' is not an advertised hard filter" in (
+        assert "'denim' is not an advertised hard filter" in (
             required_constraint_failure
         )
         assert captured_plan["calls"] == 1
+
+        inferred_constraint_review = tools_by_name["search_catalog_tool"](
+            semantic_query="rainy day outfit",
+            taxonomy={"category": ["apparel"], "subcategory": ["dresses"]},
+            required_constraints={
+                "unadvertised_requirements": ["water resistance"]
+            },
+            scope_complete=False,
+        )
+
+        assert inferred_constraint_review.startswith(
+            runtime_mod.CONSTRAINT_REVIEW_PREFIX
+        )
+        assert "Re-read the current shopper turn once" in inferred_constraint_review
+        assert captured_plan["calls"] == 1
+
+        no_direct_match_result = tools_by_name["search_catalog_tool"](
+            semantic_query="casual sneakers",
+            taxonomy_status="no_direct_catalog_match",
+            taxonomy={"category": [], "subcategory": []},
+            required_constraints={},
+        )
+
+        assert "No faithful advertised catalog taxonomy" in no_direct_match_result
+        assert "Do not search adjacent product types" in no_direct_match_result
+        assert captured_plan["calls"] == 1
+
+        sporty_bags_result = tools_by_name["search_catalog_tool"](
+            semantic_query="sporty bags",
+            taxonomy_status="exact_requested_type",
+            taxonomy={"category": ["bags"], "subcategory": ["satchels"]},
+            required_constraints={},
+        )
+
+        assert "SEARCH_RESULT_GROUNDING_NOTE" in sporty_bags_result
+        assert captured_plan["plan"].semantic_queries == ["sporty bags"]
+        assert captured_plan["plan"].hard_filters == {
+            "department": ["bags"],
+            "product_type": ["satchels"],
+        }
+        assert captured_plan["calls"] == 2
 
         image_state = State(
             user_id=111,
@@ -1271,13 +1854,16 @@ class TestDeepAgentsRuntimeRefs:
 
         image_result = image_search_tool(
             semantic_query="",
+            taxonomy_status="image_only",
             taxonomy={"category": [], "subcategory": []},
             required_constraints={},
         )
 
         assert "SEARCH_RESULT_GROUNDING_NOTE" in image_result
+        assert "SEARCH_FILTER_EVIDENCE:" not in image_result
         assert "PRODUCT_REF: prod_1" in image_result
         assert captured_plan["plan"].search_mode == "hybrid"
+        assert captured_plan["calls"] == 3
         assert image_state.model_usage["text_embedding"]["status"] == "used"
         assert image_state.model_usage["text_embedding"]["calls"] == 1
         assert image_state.model_usage["image_embedding"]["status"] == "used"
@@ -1351,7 +1937,7 @@ class TestDeepAgentsRuntimeRefs:
             fake_execute_catalog_search,
         )
 
-        base_config.max_catalog_searches_per_turn = 2
+        base_config.max_catalog_searches_per_turn = 3
         runtime = runtime_mod.DeepAgentsRuntime(base_config)
         capability_calls = []
 
@@ -1453,13 +2039,21 @@ class TestDeepAgentsRuntimeRefs:
         assert "already searched" in duplicate_values.lower()
         assert calls == 1
 
+        broader_scope = search_tool(
+            semantic_query="all bags",
+            taxonomy={"category": ["bags"], "subcategory": []},
+            required_constraints={},
+        )
+        assert "PRODUCT_REF: prod_2" in broader_scope
+        assert calls == 2
+
         different_scope = search_tool(
             semantic_query="structured office satchel",
             taxonomy={"category": ["bags"], "subcategory": ["satchels"]},
             required_constraints={},
         )
-        assert "PRODUCT_REF: prod_2" in different_scope
-        assert calls == 2
+        assert "PRODUCT_REF: prod_3" in different_scope
+        assert calls == 3
 
         over_cap = search_tool(
             semantic_query="ankle boots",
@@ -1467,8 +2061,8 @@ class TestDeepAgentsRuntimeRefs:
             required_constraints={},
         )
         assert "STOP_TOOL_USE: Catalog search limit reached" in over_cap
-        assert calls == 2
-        assert state.model_usage["text_embedding"]["calls"] == 2
+        assert calls == 3
+        assert state.model_usage["text_embedding"]["calls"] == 3
         assert capability_calls == [{}]
 
     def test_product_refs_are_cached_by_conversation(
@@ -1590,7 +2184,12 @@ class TestDeepAgentsRuntimeRefs:
                     ]
                 }
 
-        def fake_create_agent(state, identity, turn_capabilities=None):
+        def fake_create_agent(
+            state,
+            identity,
+            turn_capabilities=None,
+            persona_snapshot=None,
+        ):
             captured["state_query"] = state.query
             return FakeAgent()
 
@@ -1612,6 +2211,7 @@ class TestDeepAgentsRuntimeRefs:
         output = await runtime._run_turn(state, identity)
 
         assert output.response.startswith("I can style this under $100")
+        assert output.agent_diagnostics["final_termination_reason"] == "completed"
         user_message = captured["payload"]["messages"][0]["content"]
         assert "USER QUERY: Help me style this" in user_message
         assert captured["config"]["configurable"]["thread_id"] == "conversation-a"
@@ -1646,6 +2246,8 @@ class TestDeepAgentsRuntimeRefs:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
+        from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+        from langgraph.errors import GraphRecursionError
 
         runtime = runtime_mod.DeepAgentsRuntime(base_config)
         identity = runtime_mod.RequestIdentity(
@@ -1658,17 +2260,63 @@ class TestDeepAgentsRuntimeRefs:
         )
         reset_threads: list[str] = []
         persisted: list[str] = []
+        events: list[str] = []
 
         async def fake_analyze(state):
             return ""
 
         class FakeCheckpointer:
             def delete_thread(self, thread_id):
+                events.append("delete")
                 reset_threads.append(thread_id)
 
         class FailingAgent:
             async def ainvoke(self, payload, config):
-                raise RuntimeError("recursion limit")
+                raise GraphRecursionError("recursion limit")
+
+            async def aget_state(self, config):
+                events.append("snapshot")
+                return SimpleNamespace(
+                    values={
+                        "messages": [
+                            HumanMessage(
+                                content="REQUEST ID: request-a\nUSER QUERY: What shoes work?"
+                            ),
+                            AIMessage(
+                                content="",
+                                tool_calls=[
+                                    {
+                                        "id": "skill-activation",
+                                        "name": "activate_shopper_skills_tool",
+                                        "args": {
+                                            "skill_names": ["outfit-styling"]
+                                        },
+                                    }
+                                ],
+                            ),
+                            ToolMessage(
+                                content=(
+                                    "SHOPPER_SKILL_ACTIVATION_COMPLETE: "
+                                    "/shopper/outfit-styling/SKILL.md"
+                                ),
+                                name="activate_shopper_skills_tool",
+                                tool_call_id="skill-activation",
+                            ),
+                            AIMessage(
+                                content="",
+                                tool_calls=[
+                                    {
+                                        "id": "pending-search",
+                                        "name": "search_catalog_tool",
+                                        "args": {
+                                            "semantic_query": "shoes for this outfit"
+                                        },
+                                    }
+                                ],
+                            ),
+                        ]
+                    }
+                )
 
         monkeypatch.setattr(runtime._media_perception, "analyze", fake_analyze)
         monkeypatch.setattr(runtime, "_load_memory", lambda state, identity: None)
@@ -1680,7 +2328,9 @@ class TestDeepAgentsRuntimeRefs:
         monkeypatch.setattr(
             runtime,
             "_create_agent",
-            lambda state, identity, turn_capabilities=None: FailingAgent(),
+            lambda state, identity, turn_capabilities=None, persona_snapshot=None: (
+                FailingAgent()
+            ),
         )
         runtime._checkpointer = FakeCheckpointer()
 
@@ -1705,10 +2355,24 @@ class TestDeepAgentsRuntimeRefs:
         assert output.model_usage["app_llm"]["status"] == "failed"
         assert "deepagents_error" in output.timings
         assert reset_threads == ["conversation-a"]
+        assert events == ["snapshot", "delete"]
+        assert output.agent_diagnostics["final_termination_reason"] == (
+            "recursion_limit"
+        )
+        assert output.agent_diagnostics["skill_files_read"] == [
+            "/shopper/outfit-styling/SKILL.md"
+        ]
+        assert [
+            call["status"] for call in output.agent_diagnostics["tool_calls"]
+        ] == ["completed", "pending"]
+        assert [
+            message["type"]
+            for message in output.agent_diagnostics["partial_graph_messages"]
+        ] == ["ai", "tool", "ai"]
         assert persisted and "Aimee Ankle Strap Sandals" in persisted[-1]
 
     @pytest.mark.asyncio
-    async def test_grounding_rewrite_edits_internal_refs_and_surface_overclaims(
+    async def test_search_only_styling_is_deterministic_and_grounded(
         self,
         base_config,
         monkeypatch: pytest.MonkeyPatch,
@@ -1724,8 +2388,6 @@ class TestDeepAgentsRuntimeRefs:
             cart_user_id=222,
             request_id="request-a",
         )
-        captured: Dict[str, Any] = {}
-
         async def fake_analyze(state):
             return ""
 
@@ -1733,11 +2395,37 @@ class TestDeepAgentsRuntimeRefs:
             async def ainvoke(self, payload, config):
                 return {
                     "messages": [
+                        payload["messages"][0],
+                        {
+                            "role": "assistant",
+                            "content": "",
+                            "tool_calls": [
+                                {
+                                    "id": "activate-styling",
+                                    "name": "activate_shopper_skills_tool",
+                                    "args": {"skill_names": ["outfit-styling"]},
+                                }
+                            ],
+                        },
                         {
                             "role": "tool",
+                            "name": "activate_shopper_skills_tool",
+                            "tool_call_id": "activate-styling",
+                            "content": (
+                                "SHOPPER_SKILL_ACTIVATION_COMPLETE: "
+                                "/shopper/outfit-styling/SKILL.md"
+                            ),
+                        },
+                        {
+                            "role": "tool",
+                            "name": "search_catalog_tool",
                             "content": (
                                 "SEARCH_RESULT_GROUNDING_NOTE: Use search results "
                                 "for candidate names and prices.\n"
+                                "SEARCH_DIRECTION_EVIDENCE: \"practical flat "
+                                "sandals for an outdoor dinner\"\n"
+                                "SEARCH_TAXONOMY_EVIDENCE: "
+                                '{"subcategory": ["sandals"]}\n'
                                 "PRODUCT_REF: prod_sandal\n"
                                 "NAME: Flat Strappy Black Sandals\n"
                                 "PRICE: $49.90 USD\n"
@@ -1761,36 +2449,35 @@ class TestDeepAgentsRuntimeRefs:
                     ]
                 }
 
-        class FakeGroundingModel:
-            def invoke(self, messages):
-                captured["rewrite_messages"] = messages
-                return SimpleNamespace(
-                    content=(
-                        "The **Flat Strappy Black Sandals** are $49.90 and are a "
-                        "candidate for the outfit. I would avoid promising grass, "
-                        "gravel, or all-evening comfort without product details."
-                    ),
-                    usage_metadata={
-                        "input_tokens": 12,
-                        "output_tokens": 10,
-                        "total_tokens": 22,
-                    },
-                )
-
         monkeypatch.setattr(runtime._media_perception, "analyze", fake_analyze)
         monkeypatch.setattr(runtime, "_load_memory", lambda state, identity: None)
         monkeypatch.setattr(runtime, "_persist_context", lambda state, identity: None)
         monkeypatch.setattr(
             runtime,
             "_create_agent",
-            lambda state, identity, turn_capabilities=None: FakeAgent(),
+            lambda state, identity, turn_capabilities=None, persona_snapshot=None: (
+                FakeAgent()
+            ),
         )
-        monkeypatch.setattr(runtime, "_create_chat_model", lambda: FakeGroundingModel())
+        monkeypatch.setattr(
+            runtime,
+            "_create_chat_model",
+            lambda: pytest.fail("search-only styling must not call a rationale model"),
+        )
 
         state = State(
             user_id=111,
             query="Style practical sandals for an outdoor dinner.",
             guardrails=False,
+            context="User: Start with a beige top.",
+            product_results=[
+                {
+                    "product_id": "prod_sandal",
+                    "display_name": "Flat Strappy Black Sandals",
+                    "category": "sandals",
+                    "price": {"amount": 49.9, "currency": "USD"},
+                }
+            ],
         )
 
         output = await runtime._run_turn(state, identity)
@@ -1798,26 +2485,308 @@ class TestDeepAgentsRuntimeRefs:
         assert "PRODUCT_REF" not in output.response
         assert "will not sink" not in output.response
         assert "stay comfortable all evening" not in output.response
-        assert output.response.startswith("The **Flat Strappy Black Sandals**")
-        rewrite_prompt = captured["rewrite_messages"][1]["content"]
-        assert "TOOL EVIDENCE:" in rewrite_prompt
-        assert "DRAFT RESPONSE:" in rewrite_prompt
-        evidence_section = rewrite_prompt.split("DRAFT RESPONSE:", 1)[0]
-        assert "CUSTOMER_SAFE_SEARCH_EVIDENCE" in evidence_section
-        assert "Flat Strappy Black Sandals | price: $49.90 USD | image: available" in (
-            evidence_section
-        )
-        assert "PRODUCT_REF: prod_sandal" not in evidence_section
-        assert "Call get_product_details_tool" not in evidence_section
-        assert output.model_usage["app_llm_grounding_editor"]["status"] == "used"
-        assert output.model_usage["app_llm_grounding_editor"]["calls"] == 1
+        assert "**Flat Strappy Black Sandals** — $49.90 USD" in output.response
+        assert "practical flat sandals for an outdoor dinner" in output.response
+        assert "preference, not a confirmed product fact" in output.response
+        assert "grounded starting pick" in output.response.lower()
+        assert "app_llm_grounding_editor" not in output.model_usage
         assert output.token_usage == {
-            "input_tokens": 22,
-            "output_tokens": 18,
-            "total_tokens": 40,
-            "model_calls": 2,
+            "input_tokens": 10,
+            "output_tokens": 8,
+            "total_tokens": 18,
+            "model_calls": 1,
         }
-        assert "grounding_rewrite" in output.timings
+        assert "grounding_rewrite" not in output.timings
+
+    @pytest.mark.asyncio
+    async def test_internal_skill_result_is_not_a_shopper_response(
+        self,
+        base_config,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+        identity = runtime_mod.RequestIdentity(
+            session_id="session-a",
+            conversation_id="conversation-a",
+            cart_id="cart-a",
+            context_user_id=111,
+            cart_user_id=222,
+            request_id="request-a",
+        )
+
+        class FakeAgent:
+            async def ainvoke(self, payload, config):
+                return {
+                    "messages": [
+                        payload["messages"][0],
+                        {
+                            "role": "assistant",
+                            "content": "",
+                            "tool_calls": [
+                                {
+                                    "id": "activate-styling",
+                                    "name": "activate_shopper_skills_tool",
+                                    "args": {"skill_names": ["outfit-styling"]},
+                                }
+                            ],
+                        },
+                        {
+                            "role": "tool",
+                            "name": "activate_shopper_skills_tool",
+                            "tool_call_id": "activate-styling",
+                            "content": (
+                                "SHOPPER_SKILL_ACTIVATION_COMPLETE: "
+                                "/shopper/outfit-styling/SKILL.md"
+                            ),
+                        },
+                    ]
+                }
+
+        async def fake_analyze(state):
+            return ""
+
+        monkeypatch.setattr(runtime._media_perception, "analyze", fake_analyze)
+        monkeypatch.setattr(runtime, "_load_memory", lambda state, identity: None)
+        monkeypatch.setattr(runtime, "_persist_context", lambda state, identity: None)
+        monkeypatch.setattr(
+            runtime,
+            "_create_agent",
+            lambda state, identity, turn_capabilities=None, persona_snapshot=None: (
+                FakeAgent()
+            ),
+        )
+
+        output = await runtime._run_turn(
+            State(user_id=111, query="Build a summer outfit.", guardrails=False),
+            identity,
+        )
+
+        assert output.response == (
+            "I could not complete that shopping request. Please try again."
+        )
+        assert "SHOPPER_SKILL_ACTIVATION" not in output.response
+        assert output.agent_diagnostics["final_termination_reason"] == (
+            "incomplete_agent_response"
+        )
+
+    def test_search_only_product_discovery_skips_rationale_model(
+        self,
+        base_config,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+        monkeypatch.setattr(
+            runtime,
+            "_create_chat_model",
+            lambda: pytest.fail("product discovery must not generate a rationale"),
+        )
+        state = State(
+            user_id=111,
+            query="Show me bags under $50.",
+            product_results=[
+                {
+                    "product_id": "prod_bag",
+                    "display_name": "Everyday Bag",
+                    "category": "tote bags",
+                    "price": {"amount": 49.9, "currency": "USD"},
+                }
+            ],
+            agent_diagnostics={
+                "skill_files_read": [
+                    "/shopper/product-discovery/SKILL.md",
+                ]
+            },
+        )
+        result = {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "REQUEST ID: current-request",
+                },
+                {
+                    "role": "tool",
+                    "name": "search_catalog_tool",
+                    "content": (
+                        "SEARCH_RESULT_GROUNDING_NOTE: grounded.\n"
+                        'SEARCH_FILTER_EVIDENCE: {"price": {"max": 50}}'
+                    ),
+                },
+            ]
+        }
+
+        response = runtime._build_search_only_response(
+            state,
+            result,
+            request_id="current-request",
+        )
+
+        assert response.startswith("I found 1 catalog candidate.")
+        assert "**Everyday Bag** — $49.90 USD — tote bags" in response
+        assert "Catalog-confirmed filters: price maximum 50." in response
+        assert "Styling direction:" not in response
+
+    def test_multi_search_styling_uses_returned_roles_without_model(
+        self,
+        base_config,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+        monkeypatch.setattr(
+            runtime,
+            "_create_chat_model",
+            lambda: pytest.fail("multi-search direction must be deterministic"),
+        )
+        state = State(
+            user_id=111,
+            query="Build a complete weekend outfit.",
+            product_results=[
+                {
+                    "product_id": "skirt-1",
+                    "display_name": "Skirt One",
+                    "category": "skirts",
+                },
+                {
+                    "product_id": "flat-1",
+                    "display_name": "Flat One",
+                    "category": "flats",
+                },
+            ],
+            agent_diagnostics={
+                "skill_files_read": ["/shopper/outfit-styling/SKILL.md"]
+            },
+        )
+        result = {
+            "messages": [
+                {"role": "user", "content": "REQUEST ID: current-request"},
+                {
+                    "role": "tool",
+                    "name": "search_catalog_tool",
+                    "content": (
+                        "SEARCH_RESULT_GROUNDING_NOTE: skirts\n"
+                        'SEARCH_DIRECTION_EVIDENCE: "a skirt for a weekend look"\n'
+                        "NAME: Skirt One\nCATEGORY: skirts"
+                    ),
+                },
+                {
+                    "role": "tool",
+                    "name": "search_catalog_tool",
+                    "content": (
+                        "SEARCH_RESULT_GROUNDING_NOTE: flats\n"
+                        'SEARCH_DIRECTION_EVIDENCE: "flats for a weekend look"\n'
+                        "NAME: Flat One\nCATEGORY: flats"
+                    ),
+                },
+            ]
+        }
+
+        response = runtime._build_search_only_response(
+            state,
+            result,
+            request_id="current-request",
+        )
+
+        assert response.startswith(
+            "General styling direction: I used separate catalog ranking directions"
+        )
+        assert "a skirt for a weekend look" in response
+        assert "flats for a weekend look" in response
+        assert "**Skirt One** + **Flat One**" in response
+        assert "waterproof" not in response
+
+    def test_no_direct_taxonomy_evidence_forbids_invented_alternatives(
+        self,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        evidence = runtime_mod._customer_safe_tool_evidence(
+            "STOP_TOOL_USE: No faithful advertised catalog taxonomy matches "
+            "the requested product type in 'casual sneakers'. Do not search "
+            "adjacent product types."
+        )
+
+        assert evidence.startswith("CUSTOMER_SAFE_NO_MATCH_EVIDENCE:")
+        assert "No retrieval ran" in evidence
+        assert "Do not name alternatives" in evidence
+        assert "STOP_TOOL_USE" not in evidence
+        assert "casual sneakers" not in evidence
+        assert "do not name alternatives unless" in (
+            runtime_mod._GROUNDING_EDITOR_SYSTEM_PROMPT.lower()
+        )
+
+    def test_no_direct_taxonomy_response_is_fixed_and_current_turn_scoped(
+        self,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        result = {
+            "messages": [
+                {"role": "user", "content": "REQUEST ID: earlier-request"},
+                {
+                    "role": "tool",
+                    "content": (
+                        "STOP_TOOL_USE: No faithful advertised catalog taxonomy "
+                        "matches casual sneakers."
+                    ),
+                },
+                {"role": "user", "content": "REQUEST ID: current-request"},
+                {"role": "assistant", "content": "A later answer."},
+            ]
+        }
+
+        assert runtime_mod._no_direct_taxonomy_response(
+            result,
+            request_id="current-request",
+        ) is None
+
+        result["messages"].append(
+            {
+                "role": "tool",
+                "content": (
+                    "STOP_TOOL_USE: No faithful advertised catalog taxonomy "
+                    "matches casual sneakers."
+                ),
+            }
+        )
+        assert runtime_mod._no_direct_taxonomy_response(
+            result,
+            request_id="current-request",
+        ) == runtime_mod._NO_DIRECT_TAXONOMY_RESPONSE
+
+    def test_unsupported_requirement_response_is_fixed_and_current_turn_scoped(
+        self,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        result = {
+            "messages": [
+                {"role": "user", "content": "REQUEST ID: earlier-request"},
+                {
+                    "role": "tool",
+                    "content": (
+                        "The requested catalog requirement cannot be enforced: "
+                        "'water_resistant' is not an advertised hard filter."
+                    ),
+                },
+                {"role": "user", "content": "REQUEST ID: current-request"},
+            ]
+        }
+
+        assert runtime_mod._unsupported_requirement_response(
+            result,
+            request_id="current-request",
+        ) is None
+
+        result["messages"].append(result["messages"][1])
+        assert runtime_mod._unsupported_requirement_response(
+            result,
+            request_id="current-request",
+        ) == runtime_mod._UNSUPPORTED_REQUIREMENT_RESPONSE
 
     @pytest.mark.asyncio
     async def test_grounding_rewrite_can_be_disabled(
@@ -1859,7 +2828,9 @@ class TestDeepAgentsRuntimeRefs:
         monkeypatch.setattr(
             runtime,
             "_create_agent",
-            lambda state, identity, turn_capabilities=None: FakeAgent(),
+            lambda state, identity, turn_capabilities=None, persona_snapshot=None: (
+                FakeAgent()
+            ),
         )
         monkeypatch.setattr(runtime, "_create_chat_model", fail_chat_model)
 
@@ -1916,6 +2887,12 @@ class TestDeepAgentsRuntimeRefs:
                     "role": "tool",
                     "content": (
                         "SEARCH_RESULT_GROUNDING_NOTE: Use search results.\n"
+                        "SEARCH_TAXONOMY_EVIDENCE: "
+                        '{"category": ["footwear"], '
+                        '"subcategory": ["flats", "sandals"]}\n'
+                        "SEARCH_FILTER_EVIDENCE: "
+                        '{"heel_type": ["flat", "kitten", "block"], '
+                        '"primary_color": ["black"]}\n'
                         "PRODUCT_REF: prod_ocean\n"
                         "NAME: Ocean Breeze Maxi Dress\n"
                         "CATEGORY: dress\n"
@@ -1938,12 +2915,162 @@ class TestDeepAgentsRuntimeRefs:
         assert "CUSTOMER_SAFE_SEARCH_EVIDENCE" in evidence
         assert "Treat names as display names, not attribute evidence" in evidence
         assert "group claims require product-detail evidence for every item" in evidence
+        assert "Every product below passed each filter predicate" in evidence
+        assert '"primary_color": ["black"]' in evidence
+        assert '"heel_type": ["flat", "kitten", "block"]' in evidence
+        assert "multi-value list confirms only membership in the set" in evidence
+        assert "ADVERTISED_SEARCH_TAXONOMY" in evidence
+        assert '"subcategory": ["flats", "sandals"]' in evidence
+        assert "Do not describe an unlisted product type as advertised" in evidence
+        assert "Do not omit a returned product or override a confirmed filter" in (
+            runtime_mod._GROUNDING_EDITOR_SYSTEM_PROMPT
+        )
+        assert "answer the styling question rather than returning a raw" in (
+            runtime_mod._GROUNDING_EDITOR_SYSTEM_PROMPT
+        )
+        assert "never derive it" in runtime_mod._GROUNDING_EDITOR_SYSTEM_PROMPT
         assert "Ocean Breeze Maxi Dress | category: dress | price: $189.99 USD" in (
             evidence
         )
         assert "Gazelle Gingham Dress | category: dress | price: $149.99 USD" in (
             evidence
         )
+
+    def test_skill_activation_content_is_not_commerce_grounding_evidence(
+        self,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        result = {
+            "messages": [
+                {
+                    "role": "tool",
+                    "name": "activate_shopper_skills_tool",
+                    "content": (
+                        "SHOPPER_SKILL_ACTIVATION_COMPLETE: "
+                        "/shopper/outfit-styling/SKILL.md"
+                    ),
+                },
+                {
+                    "role": "tool",
+                    "name": "read_file",
+                    "content": "# Outfit Styling\nUse styling judgment.",
+                },
+            ]
+        }
+
+        evidence = runtime_mod._collect_tool_grounding_evidence(
+            result,
+            max_chars=12000,
+        )
+
+        assert evidence == ""
+
+    def test_assistant_claims_are_not_treated_as_tool_evidence(self) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        result = {
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": (
+                        "PRODUCT_REF: prod_sandal\n"
+                        "This product is water-resistant and comfortable all day."
+                    ),
+                }
+            ]
+        }
+
+        assert runtime_mod._collect_tool_grounding_evidence(
+            result,
+            max_chars=12000,
+        ) == ""
+
+    def test_grounding_evidence_is_scoped_to_the_current_turn(self) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        result = {
+            "messages": [
+                {"role": "user", "content": "REQUEST ID: prior-request"},
+                {
+                    "role": "tool",
+                    "content": (
+                        "SEARCH_RESULT_GROUNDING_NOTE: Use search results.\n"
+                        "PRODUCT_REF: prior\nNAME: Prior Blouse\n"
+                        "CATEGORY: blouses\nPRICE: $49.99 USD"
+                    ),
+                },
+                {"role": "user", "content": "REQUEST ID: current-request"},
+                {
+                    "role": "tool",
+                    "content": (
+                        "SEARCH_RESULT_GROUNDING_NOTE: Use search results.\n"
+                        "PRODUCT_REF: current\nNAME: Current Sandals\n"
+                        "CATEGORY: sandals\nPRICE: $59.99 USD"
+                    ),
+                },
+            ]
+        }
+
+        evidence = runtime_mod._collect_tool_grounding_evidence(
+            result,
+            max_chars=12000,
+            request_id="current-request",
+        )
+
+        assert "Current Sandals" in evidence
+        assert "Prior Blouse" not in evidence
+
+    def test_grounding_evidence_without_current_request_marker_fails_closed(
+        self,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        result = {
+            "messages": [
+                {
+                    "role": "tool",
+                    "content": (
+                        "SEARCH_RESULT_GROUNDING_NOTE: Use search results.\n"
+                        "PRODUCT_REF: prior\nNAME: Prior Blouse\n"
+                        "CATEGORY: blouses\nPRICE: $49.99 USD"
+                    ),
+                }
+            ]
+        }
+
+        assert runtime_mod._collect_tool_grounding_evidence(
+            result,
+            max_chars=12000,
+            request_id="missing-request",
+        ) == ""
+
+    def test_search_only_filter_statements_preserve_set_semantics(self) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        result = {
+            "messages": [
+                {"role": "user", "content": "REQUEST ID: current-request"},
+                {
+                    "role": "tool",
+                    "name": "search_catalog_tool",
+                    "content": (
+                        "SEARCH_RESULT_GROUNDING_NOTE: grounded.\n"
+                        "SEARCH_FILTER_EVIDENCE: "
+                        '{"heel_type": ["flat", "kitten", "block"], '
+                        '"primary_color": ["black"]}'
+                    ),
+                },
+            ]
+        }
+
+        assert runtime_mod._confirmed_search_filter_statements(
+            result,
+            request_id="current-request",
+        ) == [
+            "heel type is one of flat, kitten, block",
+            "primary color is black",
+        ]
 
     def test_explicit_product_matching_allows_specific_abbreviated_names(self) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod

@@ -16,6 +16,8 @@ from shared.commerce_contracts import (
     CatalogValueCapability,
     Cart,
     CartLine,
+    CheckProductAvailabilityInput,
+    CheckProductAvailabilityResult,
     Money,
     ProductSummary,
     SearchCatalogInput,
@@ -128,3 +130,20 @@ def test_search_input_rejects_client_supplied_embedding_vectors() -> None:
         SearchCatalogInput.model_validate(
             {"query": "travel pants", "embedding": [0.1, 0.2]}
         )
+
+
+def test_product_availability_contract_uses_shared_availability_values() -> None:
+    request = CheckProductAvailabilityInput(
+        product_ref="prod_123",
+        variant_hint="size medium",
+    )
+    result = CheckProductAvailabilityResult(
+        ok=True,
+        product_ref=request.product_ref,
+        availability="unknown",
+        message="Inventory is unavailable.",
+    )
+
+    assert request.variant_hint == "size medium"
+    assert result.availability == "unknown"
+    assert result.meta.idempotency_key is None

@@ -60,7 +60,9 @@ The Retail Shopping Assistant is an AI-powered blueprint that provides a compreh
 
 ### Architecture
 
-![Shopping Assistant Diagram](notebook/shopping-assistant-diagram.jpg)
+![Shopper Deep Agent architecture](docs/images/shopper-agent-architecture.svg)
+
+[Open the architecture diagram at full size](docs/images/shopper-agent-architecture.svg).
 
 The application follows a microservices architecture:
 - **Chain Server**: Deep Agents SDK orchestration with five registered shopper

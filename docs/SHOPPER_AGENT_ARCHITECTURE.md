@@ -4,6 +4,12 @@ This document is the short architectural map of the serving shopper agent. It
 shows where product truth is published, how skills control model behavior, and
 which tools connect the agent to application services.
 
+## Architecture at a Glance
+
+![Shopper Deep Agent architecture](images/shopper-agent-architecture.svg)
+
+[Open the full-size SVG](images/shopper-agent-architecture.svg).
+
 ## Architectural Boundaries
 
 | Boundary | Owns | Does not own |
@@ -28,18 +34,6 @@ The catalog starts from two operator-published files:
   record fields, ordered taxonomy fields, and whether each field supports hard
   filtering, semantic retrieval, or product details. It does not duplicate
   catalog values.
-
-```mermaid
-flowchart LR
-    A[Product JSONL] --> C[Validated CatalogSnapshot]
-    B[Field-role sidecar] --> C
-    C --> D[Published capabilities]
-    C --> E[Embedding indexes in Milvus]
-    C --> F[Product detail endpoint]
-    D --> G[Generated search schema and validator]
-    G --> H[Catalog retrieval and hard filtering]
-    E --> H
-```
 
 One validated snapshot supplies capabilities, product details, and the data
 indexed in Milvus. `GET /capabilities` publishes the exact current taxonomy,
@@ -70,18 +64,6 @@ The detailed contracts and implementation live in:
 - [Chain capability cache](../chain_server/src/catalog_capabilities.py)
 
 ## 2. One Shopper Turn
-
-```mermaid
-flowchart LR
-    A[Request and conversation ID] --> B[Load context, cart, persona, capabilities]
-    B --> C[Forced skill activation]
-    C --> D[Inject complete selected skill files]
-    D --> E[Model selects a commerce tool]
-    E --> F[Validate request and control tool loop]
-    F --> G[Catalog, memory, or policy source]
-    G --> E
-    E --> H[Ground response and persist state]
-```
 
 1. The runtime scopes the request, loads recent context and the authoritative
    cart from the memory service, and uses `conversation_id` as the LangGraph

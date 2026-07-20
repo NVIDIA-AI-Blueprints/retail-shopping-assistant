@@ -33,6 +33,7 @@ from chain_server.src.skill_activation import (
     SKILL_ACTIVATION_COMPLETE,
     SKILL_ACTIVATION_REQUIRED,
     SKILL_ACTIVATION_TOOL_NAME,
+    SKILL_TOOL_NOT_GRANTED,
     ShopperSkillActivationError,
     ShopperSkillActivationMiddleware,
 )
@@ -45,7 +46,33 @@ from shared.commerce_contracts import (
 
 
 REQUEST_ID = "request-a"
-GATED_TOOLS = frozenset({"search_catalog_tool"})
+SKILL_TOOL_GRANTS = {
+    "budget-shopping": frozenset(),
+    "cart-management": frozenset(
+        {
+            "add_cart_items_tool",
+            "get_cart_tool",
+            "remove_cart_item_tool",
+            "update_cart_items_tool",
+            "view_cart_total_tool",
+        }
+    ),
+    "outfit-styling": frozenset(
+        {
+            "check_product_availability_tool",
+            "get_product_details_tool",
+            "search_catalog_tool",
+        }
+    ),
+    "product-discovery": frozenset(
+        {
+            "check_product_availability_tool",
+            "get_product_details_tool",
+            "search_catalog_tool",
+        }
+    ),
+    "store-policy-answers": frozenset({"get_store_policy_tool"}),
+}
 
 
 class _RecordingToolModel(BaseChatModel):
@@ -137,16 +164,33 @@ def search_catalog_tool(query: str) -> str:
     return query
 
 
+@tool
+def get_product_details_tool(product_ref: str) -> str:
+    """Read product details."""
+
+    return product_ref
+
+
+@tool
+def add_cart_items_tool(product_ref: str) -> str:
+    """Add a product to the cart."""
+
+    return product_ref
+
+
 def _middleware() -> ShopperSkillActivationMiddleware:
     return ShopperSkillActivationMiddleware(
         request_id=REQUEST_ID,
-        gated_tools=GATED_TOOLS,
         skill_descriptions={
+            "budget-shopping": "Use as a budget modifier.",
+            "cart-management": "Use for cart operations.",
             "outfit-styling": (
                 "Use for outfit completion and conversational mid-browse styling."
             ),
             "product-discovery": "Use for browsing without styling intent.",
+            "store-policy-answers": "Use for store policies.",
         },
+        skill_tool_grants=SKILL_TOOL_GRANTS,
     )
 
 
@@ -198,12 +242,22 @@ def test_activation_schema_allows_standalone_cart_and_policy_skills() -> None:
     ).skill_names == ["store-policy-answers"]
 
 
-def _model_request(messages: list[Any] | None = None) -> ModelRequest:
+def _model_request(
+    messages: list[Any] | None = None,
+    *,
+    tools: list[BaseTool] | None = None,
+) -> ModelRequest:
     messages = messages or [HumanMessage(content=f"REQUEST ID: {REQUEST_ID}")]
     return ModelRequest(
         model=cast(Any, object()),
         messages=messages,
-        tools=[activate_shopper_skills_tool, search_catalog_tool],
+        tools=tools
+        or [
+            activate_shopper_skills_tool,
+            search_catalog_tool,
+            get_product_details_tool,
+            add_cart_items_tool,
+        ],
         state={"messages": messages},
     )
 
@@ -243,7 +297,13 @@ def _tool_request(name: str, messages: list[Any]) -> ToolCallRequest:
     tool = (
         activate_shopper_skills_tool
         if name == SKILL_ACTIVATION_TOOL_NAME
-        else search_catalog_tool
+        else {
+            "add_cart_items_tool": add_cart_items_tool,
+            "remove_cart_item_tool": add_cart_items_tool,
+            "update_cart_items_tool": add_cart_items_tool,
+            "get_product_details_tool": get_product_details_tool,
+            "search_catalog_tool": search_catalog_tool,
+        }[name]
     )
     return ToolCallRequest(
         tool_call={
@@ -342,13 +402,15 @@ def test_active_phase_injects_complete_skill_and_exposes_commerce() -> None:
                 "Preserve the accepted beige top.\n"
                 "## Unsupported Commerce Details"
             )
-        }
+        },
+        ["outfit-styling"],
     )
 
     prepared = _capture_request(middleware, _model_request(_activated_messages()))
 
     assert [candidate.name for candidate in prepared.tools] == [
-        "search_catalog_tool"
+        "search_catalog_tool",
+        "get_product_details_tool",
     ]
     assert prepared.tool_choice is None
     assert prepared.model_settings["parallel_tool_calls"] is False
@@ -360,7 +422,8 @@ def test_active_phase_injects_complete_skill_and_exposes_commerce() -> None:
 def test_active_phase_rejects_multiple_shopping_tools_in_one_model_step() -> None:
     middleware = _middleware()
     middleware.activate(
-        {"/shopper/product-discovery/SKILL.md": "# Product Discovery"}
+        {"/shopper/product-discovery/SKILL.md": "# Product Discovery"},
+        ["product-discovery"],
     )
 
     with pytest.raises(
@@ -462,16 +525,86 @@ def test_previous_turn_activation_does_not_unlock_current_turn() -> None:
 
 
 def test_current_turn_activation_unlocks_commerce() -> None:
+    middleware = _middleware()
+    middleware.activate(
+        {"/shopper/outfit-styling/SKILL.md": "# Outfit Styling"},
+        ["outfit-styling"],
+    )
     request = _tool_request("search_catalog_tool", _activated_messages())
     expected = ToolMessage(content="catalog result", tool_call_id="search-call")
     handled: list[ToolCallRequest] = []
 
-    result = _middleware().wrap_tool_call(
+    result = middleware.wrap_tool_call(
         request,
         lambda prepared: handled.append(prepared) or expected,
     )
 
     assert handled == [request]
+    assert result is expected
+
+
+@pytest.mark.parametrize(
+    "tool_name",
+    [
+        "add_cart_items_tool",
+        "remove_cart_item_tool",
+        "update_cart_items_tool",
+    ],
+)
+def test_outfit_styling_rejects_cart_mutation_before_execution(
+    tool_name: str,
+) -> None:
+    middleware = _middleware()
+    middleware.activate(
+        {"/shopper/outfit-styling/SKILL.md": "# Outfit Styling"},
+        ["outfit-styling"],
+    )
+    request = _tool_request(tool_name, _activated_messages())
+    handled: list[ToolCallRequest] = []
+
+    result = middleware.wrap_tool_call(request, handled.append)
+
+    assert handled == []
+    assert isinstance(result, ToolMessage)
+    assert str(result.content).startswith(SKILL_TOOL_NOT_GRANTED)
+
+
+def test_product_discovery_exposes_catalog_tools_but_not_cart_mutation() -> None:
+    middleware = _middleware()
+    middleware.activate(
+        {"/shopper/product-discovery/SKILL.md": "# Product Discovery"},
+        ["product-discovery"],
+    )
+
+    prepared = _capture_request(middleware, _model_request(_activated_messages()))
+
+    assert [candidate.name for candidate in prepared.tools] == [
+        "search_catalog_tool",
+        "get_product_details_tool",
+    ]
+    request = _tool_request("add_cart_items_tool", _activated_messages())
+    handled: list[ToolCallRequest] = []
+    result = middleware.wrap_tool_call(request, handled.append)
+    assert handled == []
+    assert isinstance(result, ToolMessage)
+    assert str(result.content).startswith(SKILL_TOOL_NOT_GRANTED)
+
+
+def test_cart_management_exposes_cart_mutation_but_not_catalog_search() -> None:
+    middleware = _middleware()
+    middleware.activate(
+        {"/shopper/cart-management/SKILL.md": "# Cart Management"},
+        ["cart-management"],
+    )
+    messages = _activated_messages()
+    prepared = _capture_request(middleware, _model_request(messages))
+
+    assert [candidate.name for candidate in prepared.tools] == [
+        "add_cart_items_tool"
+    ]
+    request = _tool_request("add_cart_items_tool", messages)
+    expected = ToolMessage(content="cart updated", tool_call_id="add-call")
+    result = middleware.wrap_tool_call(request, lambda _: expected)
     assert result is expected
 
 
@@ -485,7 +618,7 @@ def test_activation_tool_is_always_allowed() -> None:
 
 
 @pytest.mark.asyncio
-async def test_compiled_agent_loads_full_skill_before_exposing_commerce(
+async def test_compiled_agent_loads_skill_and_blocks_ungranted_tool(
     base_config: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -533,7 +666,7 @@ async def test_compiled_agent_loads_full_skill_before_exposing_commerce(
                     }
                 ],
             ),
-            AIMessage(content="Your cart is empty."),
+            AIMessage(content="I can help with products for this outfit."),
         ],
     )
     runtime = DeepAgentsRuntime(base_config)
@@ -590,14 +723,27 @@ async def test_compiled_agent_loads_full_skill_before_exposing_commerce(
     assert retry_call["tool_choice"] == SKILL_ACTIVATION_TOOL_NAME
     assert SKILL_ACTIVATION_TOOL_NAME not in shopping_call["tools"]
     assert "search_catalog_tool" in shopping_call["tools"]
-    assert "get_cart_tool" in shopping_call["tools"]
+    assert "get_product_details_tool" in shopping_call["tools"]
+    assert "check_product_availability_tool" in shopping_call["tools"]
+    assert "get_cart_tool" not in shopping_call["tools"]
+    assert "add_cart_items_tool" not in shopping_call["tools"]
     assert "read_file" in shopping_call["tools"]
     assert "## Active Shopper Skills" in shopping_call["system_prompt"]
     assert "# Outfit Styling" in shopping_call["system_prompt"]
     assert "# Product Discovery" not in shopping_call["system_prompt"]
     assert "## Conversational Mid-Browse" in shopping_call["system_prompt"]
     assert "## Unsupported Commerce Details" in shopping_call["system_prompt"]
-    assert result["messages"][-1].content == "Your cart is empty."
+    rejected = [
+        message
+        for message in result["messages"]
+        if isinstance(message, ToolMessage)
+        and message.name == "get_cart_tool"
+    ]
+    assert len(rejected) == 1
+    assert str(rejected[0].content).startswith(SKILL_TOOL_NOT_GRANTED)
+    assert result["messages"][-1].content == (
+        "I can help with products for this outfit."
+    )
 
 
 @pytest.mark.asyncio

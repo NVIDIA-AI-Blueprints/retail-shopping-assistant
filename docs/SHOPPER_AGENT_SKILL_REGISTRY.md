@@ -10,15 +10,21 @@ shopper-facing UI copy.
 ## Current Runtime Boundary
 
 The runtime sources of truth are
-`chain_server/src/deepagents_runtime.py::DeepAgentsRuntime._create_agent` and
-`chain_server/src/skill_activation.py::ShopperSkillActivationMiddleware`. The
+`chain_server/src/tool_policy.py` for registry and immutable execution policy,
+`chain_server/src/skill_activation.py::ShopperSkillActivationMiddleware` for
+per-turn binding, and
+`chain_server/src/deepagents_runtime.py::DeepAgentsRuntime._create_agent` for
+registered wrapper wiring. The
 assistant uses a `FilesystemBackend` rooted at `chain_server/skills` in virtual
 mode. In the container image, `chain_server/Dockerfile` copies that directory
 to `/app/skills`.
 
 At turn setup, the runtime validates each registered `SKILL.md` frontmatter
-`name`, `description`, and `response_guidance`, then reads the complete static
-files server-side. `description` drives semantic activation;
+`name`, `description`, `response_guidance`, `role`, optional
+`exclusive_group`, and `tools_granted`, then reads the complete static files
+server-side. Every frontmatter skill/tool pair must match the independent
+immutable tool policy exactly; startup fails on drift. `description` drives
+semantic activation;
 `response_guidance` is reviewed shopper-facing fallback framing when a search
 result has no pre-retrieval `shopper_guidance`. The activation prompt and enum
 are generated from that current validated registry. The runtime intentionally does
@@ -43,7 +49,9 @@ Every shopper turn uses two model phases inside the same Deep Agents run:
    that semantically covers the complete current intent.
 2. The runtime validates the selected names, injects the complete selected
    `SKILL.md` contents into the system context, removes the activation tool, and
-   exposes the nine shopper commerce tools for the next model step.
+   exposes only the union of those skills' `tools_granted` for the next model
+   step. Every app-owned shopping dispatch independently rechecks both that
+   union and the immutable policy before invoking its handler.
 
 Selection is model-owned semantic interpretation over the current conversation
 and skill descriptions, not a deterministic keyword router. Loading and prompt
@@ -68,9 +76,11 @@ The boundary fails closed. If selection or file loading fails, no shopper
 commerce tools are exposed. A commerce call issued in the same model response
 as activation is rejected, because activation takes effect only after its tool
 result is present in the current turn. An activation from an earlier turn does
-not unlock the current turn. The runtime also validates the activation-phase
-model response, so provider noncompliance cannot silently terminate the turn
-with shopper prose instead of an activation call.
+not unlock the current turn. After activation, an ungranted app-owned shopping
+call is rejected before its handler with `SHOPPER_SKILL_TOOL_NOT_GRANTED` and
+the `skill_tool_not_granted` diagnostic reason. The runtime also validates the
+activation-phase model response, so provider noncompliance cannot silently
+terminate the turn with shopper prose instead of an activation call.
 
 This invariant adds one bounded model step to every turn. The static file load
 and injection add no model call. The extra step is the deliberate latency and
@@ -160,13 +170,13 @@ evidence/truncation and those catalog scope outcomes from diagnostics.
 
 ## Registered Skills
 
-| Skill | Source | Status | Primary entry modes |
-| --- | --- | --- | --- |
-| `product-discovery` | `chain_server/skills/shopper/product-discovery/SKILL.md` | Registered | Primary procedure for general search, category browsing, filter-driven discovery without styling intent |
-| `outfit-styling` | `chain_server/skills/shopper/outfit-styling/SKILL.md` | Registered | Primary procedure for anchor product, no-anchor styling, cart styling, conversational mid-browse, and terse item-only follow-ups within an active outfit task |
-| `cart-management` | `chain_server/skills/shopper/cart-management/SKILL.md` | Registered | Explicit cart reads, adds, removals, quantity updates |
-| `budget-shopping` | `chain_server/skills/shopper/budget-shopping/SKILL.md` | Registered | Modifier for stated price ceilings, budget bundles, cart budget checks |
-| `store-policy-answers` | `chain_server/skills/shopper/store-policy-answers/SKILL.md` | Registered | Returns, shipping, sizing, payment, price matching, gift cards |
+| Skill | Source | Status | Role | Tools granted | Primary entry modes |
+| --- | --- | --- | --- | --- | --- |
+| `product-discovery` | `chain_server/skills/shopper/product-discovery/SKILL.md` | Registered | `primary` / `product_procedure` | Search, details, availability | General search, category browsing, filter-driven discovery without styling intent |
+| `outfit-styling` | `chain_server/skills/shopper/outfit-styling/SKILL.md` | Registered | `primary` / `product_procedure` | Search, details, availability | Anchor/no-anchor styling, conversational mid-browse, and terse follow-ups within an active outfit task; combine with cart management for cart-aware styling |
+| `cart-management` | `chain_server/skills/shopper/cart-management/SKILL.md` | Registered | `standalone` | Cart read, total, add, remove, update | Explicit cart reads and mutations, alone or beside a product procedure |
+| `budget-shopping` | `chain_server/skills/shopper/budget-shopping/SKILL.md` | Registered | `modifier` | None | Stated price ceilings and budget bundles; combine with cart management for cart-total checks |
+| `store-policy-answers` | `chain_server/skills/shopper/store-policy-answers/SKILL.md` | Registered | `standalone` | Policy lookup | Returns, shipping, sizing, payment, price matching, and gift cards |
 
 ## `product-discovery`
 
@@ -233,8 +243,10 @@ combined with `outfit-styling`.
 
 Purpose: explicit cart reads, additions, removals, and quantity changes.
 
-- Requires explicit mutation intent and tool-provided product or cart-line
-  references.
+- Its instructions require explicit mutation intent and tool-provided product
+  or cart-line references. Slice 0 enforces the skill grant and refs, but
+  server-owned current-turn mutation intent authorization remains a later
+  slice.
 - Reads current cart state before removal or quantity updates.
 - Treats mutation results as authoritative and reports partial failures.
 
@@ -244,7 +256,8 @@ Purpose: modify the applicable discovery or styling procedure when the shopper
 states a price ceiling or bundle budget.
 
 - Treats the stated ceiling as a hard search constraint.
-- Shows running recommendation costs and uses cart tools for actual cart totals.
+- Shows running recommendation costs. Activate `cart-management` alongside it
+  when the turn also needs an actual cart total; this modifier grants no tools.
 - Reports when a complete set cannot fit instead of hiding over-budget options.
 
 ## `store-policy-answers`
@@ -274,13 +287,13 @@ Tool boundary:
   search; the graph checkpoint does not contain this separate cache.
 - Product-detail reads are capped per turn; once the cap is reached the agent
   should stop tool calling and answer from evidence already collected.
-- Uses cart read and cart total tools for cart styling and budget checks.
-- Cart outfit checks should read cart state and avoid unnecessary catalog search
-  for items already in the cart.
-- Uses cart mutation tools only when the shopper explicitly asks to add or
-  remove items and the normal cart tool preconditions are satisfied.
-- Multi-item outfit adds use the batched add tool with selected `PRODUCT_REF`
-  values, then report exact added and failed items.
+- Activates `cart-management` alongside styling when a turn needs cart reads,
+  totals, or mutations; `outfit-styling` itself grants only catalog search,
+  details, and availability.
+- Cart outfit checks should read cart state through the combined skill set and
+  avoid unnecessary catalog search for items already in the cart.
+- Multi-item outfit adds use the cart skill's batched add tool with selected
+  `PRODUCT_REF` values, then report exact added and failed items.
 - Styling approval does not imply cart consent; the add scope must match the
   items explicitly included in the shopper's add request.
 - Ambiguous add scope should produce one concise clarification, not a guessed
@@ -389,15 +402,18 @@ When changing the skill:
 
 1. Keep the frontmatter `name` stable unless changing runtime behavior on
    purpose.
-2. Prefer catalog-agnostic behavior rules over hard-coded product names.
-3. Validate the skill file with the skill validator.
-4. Run unit tests that assert the skill is registered and that applicable turns
-   select and inject it before shopper commerce tools are exposed.
-5. Restart or redeploy the chain server so the container/process sees the
+2. Keep `role`, optional `exclusive_group`, and `tools_granted` aligned with
+   `tool_policy.py`; any grant change must update both sources in one change.
+3. Prefer catalog-agnostic behavior rules over hard-coded product names.
+4. Validate the skill file and exact policy/grant pairs.
+5. Run unit tests that assert the skill is registered, applicable turns select
+   and inject it, only its grant union is model-visible, and direct dispatch of
+   an ungranted tool is rejected.
+6. Restart or redeploy the chain server so the container/process sees the
    current file.
-6. Verify the activation registry reflects current frontmatter and descriptions;
+7. Verify the activation registry reflects current frontmatter and descriptions;
    it is regenerated from current files rather than checkpointed per thread.
-7. Run the `style_guide` Challenger/Judge evaluation before treating behavior
+8. Run the `style_guide` Challenger/Judge evaluation before treating behavior
    changes as ready.
 
 If a new deployment uses a materially different catalog, regenerate or adjust

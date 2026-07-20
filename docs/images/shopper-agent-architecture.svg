@@ -104,21 +104,21 @@
       <tspan x="889" dy="0">Product discovery · Outfit styling</tspan>
       <tspan x="889" dy="24">Budget shopping · Cart management</tspan>
       <tspan x="889" dy="24">Store policy answers</tspan>
-      <tspan x="889" dy="24">Complete selected SKILL.md files</tspan>
-      <tspan x="889" dy="24">injected before commerce tools</tspan>
+      <tspan x="889" dy="24">Role + exact tools_granted</tspan>
+      <tspan x="889" dy="24">Selected files + grant union</tspan>
     </text>
   </g>
 
   <g>
     <rect x="1104" y="444" width="404" height="226" rx="14" class="built"/>
     <rect x="1104" y="444" width="404" height="9" rx="4" class="built-bar"/>
-    <text x="1306" y="485" text-anchor="middle" class="box-title">Nine commerce tools</text>
+    <text x="1306" y="485" text-anchor="middle" class="box-title">Nine-tool registry · selected subset</text>
     <text x="1306" y="515" text-anchor="middle" class="box-text">
       <tspan x="1306" dy="0">Catalog: search · details · availability</tspan>
       <tspan x="1306" dy="24">Cart: read · total · add · remove · update</tspan>
       <tspan x="1306" dy="24">Policy: controlled lookup</tspan>
-      <tspan x="1306" dy="30">Skills guide selection; wrappers enforce</tspan>
-      <tspan x="1306" dy="24">refs, filters, intent, and mutations</tspan>
+      <tspan x="1306" dy="30">Frontmatter + policy bind visibility</tspan>
+      <tspan x="1306" dy="24">Dispatch rechecks grants before handlers</tspan>
       <tspan x="1306" dy="24">Availability remains unknown</tspan>
     </text>
   </g>
@@ -173,5 +173,5 @@
   <path d="M 1104 797 L 1080 797 Q 1070 797 1070 842 L 207 842 Q 162 842 162 797 L 162 628" class="flow"/>
   <text x="260" y="836" class="arrow-label">grounded response · next turn retains conversation scope</text>
 
-  <text x="70" y="892" class="note">Skills are behavioral guidance, not per-tool ACLs. Memory and trends guide judgment but never override catalog or tool evidence; persona is deferred.</text>
+  <text x="70" y="892" class="note">Skills provide behavior plus deterministic tool grants. Explicit mutation-intent authorization is planned; memory never overrides catalog or tool evidence.</text>
 </svg>

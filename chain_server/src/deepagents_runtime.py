@@ -58,8 +58,13 @@ from .skill_activation import (
     SKILL_ACTIVATION_COMPLETE,
     SKILL_ACTIVATION_REQUIRED,
     SKILL_ACTIVATION_TOOL_NAME,
+    SKILL_TOOL_NOT_GRANTED,
     ShopperSkillActivationError,
     ShopperSkillActivationMiddleware,
+)
+from .tool_policy import (
+    load_shopper_skill_registry as _shopper_skill_registry,
+    validate_registered_tool_names,
 )
 from .tool_loop_control import (
     CONSTRAINT_REVIEW_PREFIX,
@@ -512,10 +517,6 @@ def _agent_selected_scope_is_advertised(
 
     requested = _normalize_product_text(requested_product_type or "")
     payload = taxonomy.model_dump() if isinstance(taxonomy, BaseModel) else taxonomy
-    categories = {
-        _normalize_product_text(value)
-        for value in (payload.get("category") or [])
-    }
     subcategories = {
         _normalize_product_text(value)
         for value in (payload.get("subcategory") or [])
@@ -1349,14 +1350,6 @@ def _required_constraints_input_model(
     )
 
 
-@dataclass(frozen=True)
-class _ShopperSkill:
-    path: str
-    description: str
-    response_guidance: str
-    content: str
-
-
 class _ShopperSkillActivationInput(BaseModel):
     """Shared composition rules for dynamic shopper-skill activation."""
 
@@ -1381,53 +1374,6 @@ class _ShopperSkillActivationInput(BaseModel):
                 "outfit-styling or product-discovery"
             )
         return self
-
-
-def _shopper_skill_registry(
-    skills_root: Path | None,
-) -> dict[str, _ShopperSkill]:
-    """Load validated shopper skill names, virtual paths, and full content."""
-
-    if skills_root is None:
-        raise RuntimeError("Shopper skills root is unavailable.")
-    import yaml
-
-    registry: dict[str, _ShopperSkill] = {}
-    for skill_path in sorted((skills_root / "shopper").glob("*/SKILL.md")):
-        content = skill_path.read_text(encoding="utf-8")
-        if not content.startswith("---\n") or "\n---\n" not in content:
-            raise RuntimeError(f"Invalid skill frontmatter: {skill_path.name}")
-        frontmatter, body = content.removeprefix("---\n").split("\n---\n", 1)
-        metadata = yaml.safe_load(frontmatter)
-        if not isinstance(metadata, dict):
-            raise RuntimeError(f"Invalid shopper skill: {skill_path.parent.name}")
-        name = str(metadata.get("name") or "")
-        raw_description = metadata.get("description")
-        description = (
-            raw_description.strip() if isinstance(raw_description, str) else ""
-        )
-        raw_response_guidance = metadata.get("response_guidance")
-        response_guidance = (
-            raw_response_guidance.strip()
-            if isinstance(raw_response_guidance, str)
-            else ""
-        )
-        if (
-            name != skill_path.parent.name
-            or not description
-            or not response_guidance
-            or not body.strip()
-        ):
-            raise RuntimeError(f"Invalid shopper skill: {skill_path.parent.name}")
-        registry[name] = _ShopperSkill(
-            path=f"/shopper/{name}/SKILL.md",
-            description=description,
-            response_guidance=response_guidance,
-            content=content,
-        )
-    if not registry:
-        raise RuntimeError("No registered shopper skills were found.")
-    return registry
 
 
 def _skill_activation_input_model(
@@ -3209,17 +3155,23 @@ class DeepAgentsRuntime:
             get_store_policy_tool,
             check_product_availability_tool,
         ]
-        skill_gate = ShopperSkillActivationMiddleware(
-            request_id=identity.request_id,
-            gated_tools=frozenset(
+        validate_registered_tool_names(
+            {
                 str(
                     getattr(candidate, "name", None)
                     or getattr(candidate, "__name__", "")
                 )
                 for candidate in shopping_tools
-            ),
+            }
+        )
+        skill_gate = ShopperSkillActivationMiddleware(
+            request_id=identity.request_id,
             skill_descriptions={
                 name: skill.description
+                for name, skill in skill_registry.items()
+            },
+            skill_tool_grants={
+                name: skill.tools_granted
                 for name, skill in skill_registry.items()
             },
         )
@@ -3250,7 +3202,7 @@ class DeepAgentsRuntime:
                     skill_registry[name].path: skill_registry[name].content
                     for name in selected_names
                 }
-                activated = skill_gate.activate(selected_files)
+                activated = skill_gate.activate(selected_files, selected_names)
             except (KeyError, ValueError):
                 skill_gate.fail()
                 return (
@@ -4292,6 +4244,7 @@ def _business_tool_result_contents(messages: list[Any]) -> list[str]:
             (
                 SKILL_ACTIVATION_COMPLETE,
                 SKILL_ACTIVATION_REQUIRED,
+                SKILL_TOOL_NOT_GRANTED,
                 "SHOPPER_SKILL_ACTIVATION_FAILED:",
             )
         ):
@@ -4368,6 +4321,7 @@ def _tool_call_status(
 def _tool_rejection_reason(content: str) -> str | None:
     markers = (
         (SKILL_ACTIVATION_REQUIRED, "skill_activation_required"),
+        (SKILL_TOOL_NOT_GRANTED, "skill_tool_not_granted"),
         ("SHOPPER_SKILL_ACTIVATION_FAILED:", "skill_activation_failed"),
         (
             "STOP_TOOL_USE: This catalog taxonomy and constraint scope was already searched",
@@ -4646,6 +4600,7 @@ def _extract_final_text(result: Any) -> str:
                     (
                         SKILL_ACTIVATION_COMPLETE,
                         SKILL_ACTIVATION_REQUIRED,
+                        SKILL_TOOL_NOT_GRANTED,
                         "SHOPPER_SKILL_ACTIVATION_FAILED:",
                     )
                 ):
@@ -5569,6 +5524,7 @@ def _is_tool_evidence_message(message: Any, content: str) -> bool:
         (
             SKILL_ACTIVATION_COMPLETE,
             SKILL_ACTIVATION_REQUIRED,
+            SKILL_TOOL_NOT_GRANTED,
             "SHOPPER_SKILL_ACTIVATION_FAILED:",
         )
     ):

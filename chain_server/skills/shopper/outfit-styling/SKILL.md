@@ -2,6 +2,12 @@
 name: outfit-styling
 description: Customer-facing fashion styling and style-led fashion selection. Use instead of product-discovery when the shopper asks to build, complete, validate, compare, balance, or refine an outfit, or wants a fashion piece chosen for a style or vibe such as a statement piece. Keep using it throughout that active outfit-building thread and any style-led single-piece thread, including terse item-only follow-ups that rely on the active outfit goal. Budget-shopping may accompany it only as a modifier.
 response_guidance: Use these candidates as starting points for the shopper's stated or directly referenced outfit direction. Compare their color relationship, proportion, and formality with the rest of the look; verify product-specific attributes before choosing.
+role: primary
+exclusive_group: product_procedure
+tools_granted:
+  - search_catalog_tool
+  - get_product_details_tool
+  - check_product_availability_tool
 ---
 
 # Outfit Styling

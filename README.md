@@ -46,9 +46,9 @@ The Retail Shopping Assistant is an AI-powered blueprint that provides a compreh
   preserves graph state while one chain-server process remains alive;
   product-result refs remain a separate process-local cache
 - 📚 **Enforced Shopper Skills**: Every turn first semantically selects and
-  fully loads the smallest applicable skill set before shopping tools become
-  available; product work uses one discovery or styling primary, with budget
-  guidance only when the shopper states a budget
+  fully loads the smallest applicable skill set; each selected `SKILL.md`
+  declares its role and tool grants, only their grant union becomes
+  model-visible, and dispatch rechecks the grant before execution
 - 🖼️ **Visual Search**: Upload images to find similar products
 - 🎥 **Optional VLM Media Perception**: Enable a VLM role to analyze image and video uploads in shopping context
 - 💬 **Conversational AI**: Natural language interactions
@@ -67,9 +67,10 @@ The Retail Shopping Assistant is an AI-powered blueprint that provides a compreh
 
 The application follows a microservices architecture:
 - **Chain Server**: Deep Agents SDK orchestration with five registered shopper
-  skills, a required per-turn activation phase, nine deterministic shopping
-  tools, capability-derived search schemas, bounded search-schema repair,
-  grounded response assembly, and a process-local conversation checkpointer
+  skills, a required per-turn activation phase, a nine-tool registry with
+  deterministic per-skill binding, capability-derived search schemas, bounded
+  search-schema repair, grounded response assembly, and a process-local
+  conversation checkpointer
 - **Catalog Retriever**: Generative-LLM-free text/image embedding search, hard
   filtering, normalized COSINE relevance scores, and deterministic result
   ranking
@@ -415,6 +416,7 @@ The Brev deployment guide walks you through the entire process from creating a L
 - **[Catalog Architecture](docs/CATALOG_REFACTOR_PLAN.md)**: Start here for JSONL ingest, lifecycle-cached capabilities, compact agent discovery, validation, and retrieval
 - **[Commerce Contracts](docs/COMMERCE_CONTRACTS.md)**: Internal product, cart, and commerce tool contracts
 - **[Shopper Agent Architecture](docs/SHOPPER_AGENT_ARCHITECTURE.md)**: Clean map of the published catalog, turn flow, skills, tools, and memory boundaries
+- **[Shopper Agent Leadership Note](docs/SHOPPER_AGENT_LEADERSHIP_NOTE.md)**: Concise request flow, memory ownership, worked styling example, and prioritized next steps
 - **[Shopper Agent Tool Registry](docs/SHOPPER_AGENT_TOOL_REGISTRY.md)**: Registered Deep Agents tools for the shopper-serving agent
 - **[Shopper Agent Skill Registry](docs/SHOPPER_AGENT_SKILL_REGISTRY.md)**: Registered Deep Agents skills and markdown tuning loop
 - **[Deep Agents Migration Plan](docs/DEEP_AGENTS_MIGRATION_PLAN.md)**: SDK migration, session isolation, tools, skills, and scaling notes

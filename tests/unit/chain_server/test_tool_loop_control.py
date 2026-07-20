@@ -24,6 +24,7 @@ from chain_server.src.tool_loop_control import (
     _normalize_scope,
 )
 from chain_server.src.skill_activation import ShopperSkillActivationMiddleware
+from chain_server.src.tool_policy import SHOPPING_TOOL_POLICIES
 
 
 @tool
@@ -636,13 +637,27 @@ def test_constraint_repair_cannot_reopen_with_scope_modifiers() -> None:
 
 def test_search_repair_keeps_active_skill_instructions() -> None:
     loop_control = ToolLoopControlMiddleware()
+    skill_tool_grants = {
+        skill_name: frozenset(
+            tool_name
+            for tool_name, policy in SHOPPING_TOOL_POLICIES.items()
+            if skill_name in policy.allowed_skills_any_of
+        )
+        for skill_name in {
+            skill_name
+            for policy in SHOPPING_TOOL_POLICIES.values()
+            for skill_name in policy.allowed_skills_any_of
+        }
+    }
+    skill_tool_grants["budget-shopping"] = frozenset()
     skill_gate = ShopperSkillActivationMiddleware(
         request_id="request-a",
-        gated_tools=frozenset({"search_catalog_tool"}),
         skill_descriptions={"outfit-styling": "Style an outfit."},
+        skill_tool_grants=skill_tool_grants,
     )
     skill_gate.activate(
-        {"/shopper/outfit-styling/SKILL.md": "STYLE-SPECIFIC-INSTRUCTION"}
+        {"/shopper/outfit-styling/SKILL.md": "STYLE-SPECIFIC-INSTRUCTION"},
+        ["outfit-styling"],
     )
     invalid_call = AIMessage(
         content="",

@@ -22,6 +22,47 @@ REGISTERED_SKILL_PATHS = {
 }
 SKILL_PATH = REGISTERED_SKILL_PATHS["outfit-styling"]
 TRENDS_PATH = SHOPPER_SKILLS_ROOT / "trends-current.md"
+EXPECTED_SKILL_POLICY = {
+    "budget-shopping": {
+        "role": "modifier",
+        "exclusive_group": None,
+        "tools_granted": [],
+    },
+    "cart-management": {
+        "role": "standalone",
+        "exclusive_group": None,
+        "tools_granted": [
+            "get_cart_tool",
+            "add_cart_items_tool",
+            "remove_cart_item_tool",
+            "update_cart_items_tool",
+            "view_cart_total_tool",
+        ],
+    },
+    "outfit-styling": {
+        "role": "primary",
+        "exclusive_group": "product_procedure",
+        "tools_granted": [
+            "search_catalog_tool",
+            "get_product_details_tool",
+            "check_product_availability_tool",
+        ],
+    },
+    "product-discovery": {
+        "role": "primary",
+        "exclusive_group": "product_procedure",
+        "tools_granted": [
+            "search_catalog_tool",
+            "get_product_details_tool",
+            "check_product_availability_tool",
+        ],
+    },
+    "store-policy-answers": {
+        "role": "standalone",
+        "exclusive_group": None,
+        "tools_granted": ["get_store_policy_tool"],
+    },
+}
 
 
 def _read_skill_path(path: Path) -> tuple[dict, str]:
@@ -71,6 +112,13 @@ def test_registered_shopper_skills_have_valid_frontmatter() -> None:
         assert frontmatter["name"] == name
         assert 0 < len(frontmatter["description"]) <= 1024
         assert 0 < len(frontmatter["response_guidance"]) <= 1024
+        assert frontmatter["role"] == EXPECTED_SKILL_POLICY[name]["role"]
+        assert frontmatter.get("exclusive_group") == (
+            EXPECTED_SKILL_POLICY[name]["exclusive_group"]
+        )
+        assert frontmatter["tools_granted"] == (
+            EXPECTED_SKILL_POLICY[name]["tools_granted"]
+        )
         assert 0 < len(name) <= 64
         assert not name.startswith("-")
         assert not name.endswith("-")

@@ -1837,16 +1837,17 @@ class TestDeepAgentsRuntimeRefs:
             tool_loop_control,
             runtime_mod.ToolLoopControlMiddleware,
         )
-        assert skill_gate._gated_tools == {
+        assert skill_gate._skill_tool_grants["outfit-styling"] == {
             "search_catalog_tool",
             "get_product_details_tool",
+            "check_product_availability_tool",
+        }
+        assert skill_gate._skill_tool_grants["cart-management"] == {
             "get_cart_tool",
             "add_cart_items_tool",
             "remove_cart_item_tool",
             "update_cart_items_tool",
             "view_cart_total_tool",
-            "get_store_policy_tool",
-            "check_product_availability_tool",
         }
         activation_result = tools_by_name["activate_shopper_skills_tool"](
             ["outfit-styling"],
@@ -1857,6 +1858,11 @@ class TestDeepAgentsRuntimeRefs:
         )
         assert set(skill_gate._skill_files) == {
             "/shopper/outfit-styling/SKILL.md"
+        }
+        assert skill_gate._granted_tools == {
+            "search_catalog_tool",
+            "get_product_details_tool",
+            "check_product_availability_tool",
         }
         assert "## Conversational Mid-Browse" in next(
             iter(skill_gate._skill_files.values())

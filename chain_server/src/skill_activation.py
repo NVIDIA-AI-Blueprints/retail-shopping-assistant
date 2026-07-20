@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Collection, Mapping
 from threading import Lock
 from typing import Any
 
@@ -17,12 +17,23 @@ from langchain.agents.middleware.types import (
 from langchain_core.messages import ContentBlock, SystemMessage, ToolMessage
 from langgraph.prebuilt.tool_node import ToolCallRequest
 
+from .tool_policy import (
+    SHOPPING_TOOL_POLICIES,
+    granted_tools_for_skills,
+    tool_is_granted,
+    validate_skill_tool_grants,
+)
+
 
 SKILL_ACTIVATION_TOOL_NAME = "activate_shopper_skills_tool"
 SKILL_ACTIVATION_COMPLETE = "SHOPPER_SKILL_ACTIVATION_COMPLETE:"
 SKILL_ACTIVATION_REQUIRED = (
     "SKILL_ACTIVATION_REQUIRED: Shopper skills must be selected and loaded "
     "before any shopping tool can run. Retry after activation completes."
+)
+SKILL_TOOL_NOT_GRANTED = (
+    "SHOPPER_SKILL_TOOL_NOT_GRANTED: The active shopper skills do not grant "
+    "this tool. Continue using only the tools available for this turn."
 )
 
 
@@ -63,27 +74,46 @@ class ShopperSkillActivationMiddleware(AgentMiddleware):
         self,
         *,
         request_id: str,
-        gated_tools: frozenset[str],
         skill_descriptions: Mapping[str, str],
+        skill_tool_grants: Mapping[str, Collection[str]],
     ) -> None:
         self._request_id = request_id
-        self._gated_tools = gated_tools
         self._skill_descriptions = dict(skill_descriptions)
+        self._skill_tool_grants = {
+            name: frozenset(tool_names)
+            for name, tool_names in skill_tool_grants.items()
+        }
+        validate_skill_tool_grants(self._skill_tool_grants)
         self._status = "pending"
         self._skill_files: dict[str, str] = {}
+        self._selected_skills: frozenset[str] = frozenset()
+        self._granted_tools: frozenset[str] = frozenset()
         self._lock = Lock()
 
-    def activate(self, skill_files: Mapping[str, str]) -> bool:
+    def activate(
+        self,
+        skill_files: Mapping[str, str],
+        selected_skills: Collection[str],
+    ) -> bool:
         """Store complete selected skill files for later model steps."""
 
         if not skill_files or any(
             not content.strip() for content in skill_files.values()
         ):
             raise ValueError("Activated skill files must contain instructions.")
+        selected = frozenset(selected_skills)
+        if not selected:
+            raise ValueError("At least one shopper skill must be selected.")
+        granted_tools = granted_tools_for_skills(
+            selected,
+            self._skill_tool_grants,
+        )
         with self._lock:
             if self._status != "pending":
                 return False
             self._skill_files = dict(skill_files)
+            self._selected_skills = selected
+            self._granted_tools = granted_tools
             self._status = "active"
         return True
 
@@ -123,9 +153,10 @@ class ShopperSkillActivationMiddleware(AgentMiddleware):
     ) -> Any:
         """Reject a synchronous shopping call without prior activation."""
 
-        if self._tool_call_is_allowed(request):
+        rejection = self._tool_call_rejection(request)
+        if rejection is None:
             return handler(request)
-        return _activation_required_message(request)
+        return _tool_rejection_message(request, rejection)
 
     async def awrap_tool_call(
         self,
@@ -134,23 +165,37 @@ class ShopperSkillActivationMiddleware(AgentMiddleware):
     ) -> Any:
         """Reject an asynchronous shopping call without prior activation."""
 
-        if self._tool_call_is_allowed(request):
+        rejection = self._tool_call_rejection(request)
+        if rejection is None:
             return await handler(request)
-        return _activation_required_message(request)
+        return _tool_rejection_message(request, rejection)
 
     def _prepare_model_request(self, request: ModelRequest) -> ModelRequest:
         with self._lock:
             status = self._status
             skill_files = dict(self._skill_files)
+            selected_skills = self._selected_skills
+            granted_tools = self._granted_tools
         if status == "active":
             tools = [
                 candidate
                 for candidate in request.tools
-                if _tool_name(candidate) != SKILL_ACTIVATION_TOOL_NAME
+                if _tool_is_visible(
+                    _tool_name(candidate),
+                    selected_skills,
+                    granted_tools,
+                )
             ]
+            tool_choice = request.tool_choice
+            if isinstance(tool_choice, str) and not _tool_is_visible(
+                tool_choice,
+                selected_skills,
+                granted_tools,
+            ):
+                tool_choice = None
             return request.override(
                 tools=tools,
-                tool_choice=request.tool_choice,
+                tool_choice=tool_choice,
                 model_settings={
                     **request.model_settings,
                     "parallel_tool_calls": False,
@@ -195,13 +240,25 @@ class ShopperSkillActivationMiddleware(AgentMiddleware):
             ),
         )
 
-    def _tool_call_is_allowed(self, request: ToolCallRequest) -> bool:
+    def _tool_call_rejection(self, request: ToolCallRequest) -> str | None:
         tool_name = str(request.tool_call.get("name") or "")
         if tool_name == SKILL_ACTIVATION_TOOL_NAME:
-            return True
-        if tool_name not in self._gated_tools:
-            return True
-        return _has_current_turn_activation(request.state, self._request_id)
+            return None
+        if tool_name not in SHOPPING_TOOL_POLICIES:
+            return None
+        if not _has_current_turn_activation(request.state, self._request_id):
+            return SKILL_ACTIVATION_REQUIRED
+        with self._lock:
+            status = self._status
+            selected_skills = self._selected_skills
+            granted_tools = self._granted_tools
+        if status != "active" or not tool_is_granted(
+            tool_name,
+            selected_skills,
+            granted_tools,
+        ):
+            return SKILL_TOOL_NOT_GRANTED
+        return None
 
     def _validate_model_response(self, response: ModelResponse) -> None:
         with self._lock:
@@ -211,7 +268,7 @@ class ShopperSkillActivationMiddleware(AgentMiddleware):
                 tool_call
                 for message in response.result
                 for tool_call in _value(message, "tool_calls") or []
-                if _value(tool_call, "name") in self._gated_tools
+                if _value(tool_call, "name") in SHOPPING_TOOL_POLICIES
             ]
             if len(shopping_calls) > 1:
                 raise ShopperSkillActivationError(
@@ -288,9 +345,12 @@ def _previous_selected_skills(
     return ()
 
 
-def _activation_required_message(request: ToolCallRequest) -> ToolMessage:
+def _tool_rejection_message(
+    request: ToolCallRequest,
+    content: str,
+) -> ToolMessage:
     return ToolMessage(
-        content=SKILL_ACTIVATION_REQUIRED,
+        content=content,
         name=str(request.tool_call.get("name") or "unknown"),
         tool_call_id=str(request.tool_call.get("id") or ""),
     )
@@ -361,6 +421,16 @@ def _tool_name(candidate: Any) -> str:
         function = candidate.get("function") or {}
         return str(candidate.get("name") or function.get("name") or "")
     return str(getattr(candidate, "name", ""))
+
+
+def _tool_is_visible(
+    tool_name: str,
+    selected_skills: Collection[str],
+    granted_tools: Collection[str],
+) -> bool:
+    if tool_name == SKILL_ACTIVATION_TOOL_NAME:
+        return False
+    return tool_is_granted(tool_name, selected_skills, granted_tools)
 
 
 def _value(value: Any, name: str) -> Any:

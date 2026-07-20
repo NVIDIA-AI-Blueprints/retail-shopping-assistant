@@ -2,6 +2,9 @@
 name: store-policy-answers
 description: Store policy questions about returns, shipping, sizing, payment, price matching, and gift cards. Use when the shopper asks about policies, not products.
 response_guidance: Policy answers use only configured retailer content. If a topic is unavailable, the response says so and directs the shopper to the retailer's help center.
+role: standalone
+tools_granted:
+  - get_store_policy_tool
 ---
 
 # Store Policy Answers

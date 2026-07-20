@@ -21,7 +21,7 @@ Top-level orchestration is via `docker-compose.yaml`; optional local NIM model c
 3. Chain server request flow:
    - `DeepAgentsRuntime` loads scoped context and the authoritative cart from the memory service and uses `conversation_id` as its checkpoint thread. Caller-supplied persona data is not injected into model context.
    - Optional input guardrails run before model/tool work; attached media is analyzed through the configured perception client.
-   - Every turn begins with a required model step that semantically selects the smallest applicable set from five registered shopper skills. Product work uses exactly one primary procedure: product discovery or outfit styling. Budget shopping is a modifier only when the shopper states a budget; cart and policy requests may use their standalone skills. The runtime injects the complete selected files, then exposes nine catalog, product-detail, cart, policy, and availability tools. Pre-activation and same-batch shopping calls are execution-blocked.
+   - Every turn begins with a required model step that semantically selects the smallest applicable set from five registered shopper skills. Product work uses exactly one primary procedure: product discovery or outfit styling. Budget shopping is a modifier only when the shopper states a budget; cart and policy requests may use their standalone skills. The runtime injects the complete selected files and exposes only the union of their declared `tools_granted`; dispatch independently rechecks the selected skills, grant union, and immutable tool policy. Pre-activation, same-batch, and ungranted shopping calls are execution-blocked.
    - Catalog capabilities generate the tool's exact taxonomy values and non-taxonomy required-constraint properties. The model selects from that schema; deterministic code validates and maps the structured values but does not interpret shopper language. Each text search carries `requested_product_type`: the shortest product noun or true umbrella from the shopper's current turn or direct antecedent, excluding color, material, fit, occasion, weather, and style modifiers. For `agent_selected_type`, it is the chosen advertised role noun. It is provenance, not taxonomy or ranking text, and is `null` only for `image_only`. A genuinely open role selects and names exactly one advertised subcategory. Each call has at most one category. A concrete type with no faithful advertised match stops without retrieval using empty taxonomy and no hard constraints.
    - Every search also carries required pre-retrieval `shopper_guidance`: one concise, product-agnostic sentence authored under the active skill. A nonempty `unadvertised_requirements` lane consumes that distinct scope's one search repair for model-owned review: retain a directly stated objective must-have, or remove only an inferred season, weather, occasion, or subjective preference. Deterministic code does not classify shopper prose. A repair cannot change a shopper-named scope noun, and an open-role repair remains `agent_selected_type`. A successful partial search may continue with another valid role and its own one-repair opportunity, but no scope receives two repairs; the configured turn cap remains three successful searches.
    - Cart mutations require explicit product/cart-line refs. Grounding reads actual tool-role messages, separates current-request evidence from prior-turn evidence, and never treats an assistant draft as evidence. Successful searches preserve the taxonomy-independent semantic query as internal ranking evidence, the pre-retrieval `shopper_guidance` as product-agnostic response framing, and each confirmed filter set with the products from that search. Completed successful search-only turns use that guidance without a final-synthesis model call; static skill `response_guidance` is fallback. Deterministic code groups each search's guidance, returned names, prices, categories, and confirmed filters, plus a neutral continuation for incomplete successful evidence. Scoped zero-result evidence cannot establish absence outside its exact taxonomy and filters.
@@ -35,6 +35,8 @@ Top-level orchestration is via `docker-compose.yaml`; optional local NIM model c
 ## 3) Source Map (Where to Change What)
 
 - Serving agent orchestration and registered tools: `chain_server/src/deepagents_runtime.py`
+- Shopper-skill registry, frontmatter validation, and immutable tool policy: `chain_server/src/tool_policy.py`
+- Per-turn skill activation, model-visible tool binding, and dispatch grant gate: `chain_server/src/skill_activation.py`
 - API contract and SSE endpoint: `chain_server/src/main.py`
 - Catalog capability cache/prompt projection: `chain_server/src/catalog_capabilities.py`
 - Catalog intent validation/execution: `chain_server/src/catalog_request.py`, `chain_server/src/catalog_execution.py`
@@ -241,9 +243,12 @@ Key env vars:
 - Tool calling against the local NIM requires `--enable-auto-tool-choice --tool-call-parser llama3_json` passthrough args. Without them, requests with `tool_choice="auto"` 400.
 - The Deep Agents model first selects shopper skills through the internal
   activation control tool. Only after the runtime injects the complete selected
-  files may it choose among the nine shopping tools; there is no serving
+  files may it choose from the union of their declared tool grants; dispatch
+  rechecks that union against the immutable policy. There is no serving
   planner/retriever/chatter graph. Media analysis and the cached catalog
-  contract are included in its turn context.
+  contract are included in its turn context. This Slice 0 grant gate does not
+  yet prove explicit current-turn cart mutation intent; that authorization
+  boundary remains planned.
 - The model owns semantic selection of exact advertised taxonomy values. The
   runtime-generated schema also exposes exact advertised non-taxonomy
   constraints. Deterministic code validates and maps those values; it does not

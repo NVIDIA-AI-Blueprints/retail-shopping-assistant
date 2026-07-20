@@ -1,7 +1,14 @@
 ---
 name: cart-management
-description: Cart reads, item add, remove, and quantity update. Use when the shopper explicitly manages their cart outside of a styling or discovery flow.
+description: Cart reads, item add, remove, and quantity update. Use whenever the shopper asks to inspect or manage their cart, including alongside a styling or product-discovery request.
 response_guidance: Cart changes and resulting quantities are shown only after the cart service confirms them. Partial failures remain explicit.
+role: standalone
+tools_granted:
+  - get_cart_tool
+  - add_cart_items_tool
+  - remove_cart_item_tool
+  - update_cart_items_tool
+  - view_cart_total_tool
 ---
 
 # Cart Management

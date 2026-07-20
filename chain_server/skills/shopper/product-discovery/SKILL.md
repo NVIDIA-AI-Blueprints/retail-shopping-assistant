@@ -2,6 +2,12 @@
 name: product-discovery
 description: General product search, filter-driven browsing, and category exploration as the primary procedure for non-styling requests. Use for standalone search and browse requests. Do not use it inside an active outfit-building or styling thread, even when the current turn asks for one product type. Do not activate alongside outfit-styling; budget-shopping may accompany it only as a modifier.
 response_guidance: These candidates match the searched product role and any confirmed constraints shown below. Check details before relying on material, fit, care, or other product-specific attributes.
+role: primary
+exclusive_group: product_procedure
+tools_granted:
+  - search_catalog_tool
+  - get_product_details_tool
+  - check_product_availability_tool
 ---
 
 # Product Discovery

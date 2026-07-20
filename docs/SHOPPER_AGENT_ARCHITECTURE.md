@@ -10,12 +10,15 @@ which tools connect the agent to application services.
 
 [Open the full-size SVG](images/shopper-agent-architecture.svg).
 
+For the concise executive flow, worked example, and prioritized follow-up work,
+see the [Shopper Agent Leadership Note](SHOPPER_AGENT_LEADERSHIP_NOTE.md).
+
 ## Architectural Boundaries
 
 | Boundary | Owns | Does not own |
 | --- | --- | --- |
 | Published catalog | Product records, taxonomy, filter values, field roles, prices, details, and retrieval results | Shopper intent, styling judgment, cart state, or inventory |
-| Deep Agents runtime | Semantic intent, skill selection, tool selection, and styling judgment | Product facts, policy facts, or cart truth |
+| Deep Agents runtime | Semantic intent, skill selection, deterministic selected-skill tool grants, tool selection, and styling judgment | Product facts, policy facts, or cart truth |
 | Memory and checkpointer | Recent conversation context, process-local graph checkpoints, and authoritative cart state | Catalog facts, shared product-ref authorization, or permission to invent stale product details |
 
 A model-authored semantic query is an internal **ranking preference**, not a
@@ -110,12 +113,16 @@ The detailed contracts and implementation live in:
    terse item-only follow-up inside an active outfit-building or style-led
    single-piece thread remains an `outfit-styling` task.
 3. The runtime validates the selection and injects the complete selected
-   `SKILL.md` files. Commerce tools become available only on the next model
-   step; activation therefore cannot be bypassed or batched with shopping work.
-   Each skill's required frontmatter also supplies declarative
+   `SKILL.md` files. Each file declares `role`, optional `exclusive_group`, and
+   `tools_granted`; only the union of those grants becomes model-visible on the
+   next step. Activation therefore cannot be bypassed or batched with shopping
+   work. Each skill's required frontmatter also supplies declarative
    `response_guidance`: reviewed shopper-facing fallback framing for a search
    call whose tool evidence contains no `shopper_guidance`.
-4. The model chooses among nine commerce tools. Before retrieval, every search
+4. The model chooses only from the selected skills' granted tools. Every
+   app-owned shopping dispatch independently rechecks both the frontmatter grant
+   union and the immutable execution policy before its handler can run. Before
+   retrieval, every search
    except `image_only` and `no_direct_catalog_match` includes one nonempty,
    product-agnostic `shopper_guidance` sentence authored under the active skill;
    those two statuses require empty guidance. Catalog requests pass through the
@@ -258,30 +265,36 @@ requires a fresh search.
 
 The serving implementation is split across the
 [Deep Agents runtime](../chain_server/src/deepagents_runtime.py),
+[shopper tool policy](../chain_server/src/tool_policy.py),
 [skill activation boundary](../chain_server/src/skill_activation.py), and
 [tool-loop controller](../chain_server/src/tool_loop_control.py).
 
 ## 3. Skills and Their Tools
 
-Five shopper skills are registered. This table is a behavioral map, not a
-per-skill authorization list: after successful activation, all nine commerce
-tools are technically exposed. Skill instructions guide the model, while tool
-schemas and wrappers independently enforce refs, intent, filters, and mutation
-preconditions.
+Five shopper skills are registered. Their frontmatter grants are an
+authorization boundary: the model sees only the union for the current selected
+skills, and dispatch checks the same grant against an independent immutable
+policy. Tool schemas and wrappers still enforce refs, filters, service state,
+and mutation preconditions.
 
-| Skill | Use | Expected tools |
-| --- | --- | --- |
-| [`product-discovery`](../chain_server/skills/shopper/product-discovery/SKILL.md) | Primary procedure for non-styling search, browse, filters, and product facts | `search_catalog_tool`, `get_product_details_tool`, `check_product_availability_tool` |
-| [`outfit-styling`](../chain_server/skills/shopper/outfit-styling/SKILL.md) | Primary procedure for building, completing, comparing, balancing, or refining a look | `search_catalog_tool`, `get_product_details_tool`, `check_product_availability_tool`, `get_cart_tool`, `view_cart_total_tool`; cart mutation tools only with explicit cart intent |
-| [`budget-shopping`](../chain_server/skills/shopper/budget-shopping/SKILL.md) | Modifier when the shopper states a price ceiling or bundle budget | `search_catalog_tool`, `get_product_details_tool`, `check_product_availability_tool`, `get_cart_tool`, `view_cart_total_tool` |
-| [`cart-management`](../chain_server/skills/shopper/cart-management/SKILL.md) | Explicit cart reads, adds, removals, and quantity changes | `get_cart_tool`, `view_cart_total_tool`, `add_cart_items_tool`, `remove_cart_item_tool`, `update_cart_items_tool` |
-| [`store-policy-answers`](../chain_server/skills/shopper/store-policy-answers/SKILL.md) | Returns, shipping, sizing, payment, price matching, and gift cards | `get_store_policy_tool` |
+| Skill | Role | Use | Granted tools |
+| --- | --- | --- | --- |
+| [`product-discovery`](../chain_server/skills/shopper/product-discovery/SKILL.md) | `primary`, `product_procedure` | Non-styling search, browse, filters, and product facts | `search_catalog_tool`, `get_product_details_tool`, `check_product_availability_tool` |
+| [`outfit-styling`](../chain_server/skills/shopper/outfit-styling/SKILL.md) | `primary`, `product_procedure` | Build, complete, compare, balance, or refine a look | `search_catalog_tool`, `get_product_details_tool`, `check_product_availability_tool` |
+| [`budget-shopping`](../chain_server/skills/shopper/budget-shopping/SKILL.md) | `modifier` | Add budget procedure when the shopper states a price ceiling or bundle budget | None; combine with the applicable product or cart skill |
+| [`cart-management`](../chain_server/skills/shopper/cart-management/SKILL.md) | `standalone` | Cart reads, adds, removals, and quantity changes, alone or beside product work | `get_cart_tool`, `view_cart_total_tool`, `add_cart_items_tool`, `remove_cart_item_tool`, `update_cart_items_tool` |
+| [`store-policy-answers`](../chain_server/skills/shopper/store-policy-answers/SKILL.md) | `standalone` | Returns, shipping, sizing, payment, price matching, and gift cards | `get_store_policy_tool` |
 
 `product-discovery` and `outfit-styling` are mutually exclusive primary
 procedures. `budget-shopping` modifies the applicable primary only when the
 shopper states a budget. A genuine multi-intent turn activates every needed
 skill once; for example, styling under a budget with an explicit add request
 uses `outfit-styling`, `budget-shopping`, and `cart-management`.
+
+Slice 0 proves selected-skill tool authorization, not explicit mutation intent.
+Selecting `cart-management` currently grants its cart tools; deterministic refs
+and service preconditions still apply, but a server-owned current-turn intent
+authorization object is a later slice.
 
 [trends-current.md](../chain_server/skills/shopper/trends-current.md) is a
 read-only seasonal reference used by `outfit-styling`; it is not a registered

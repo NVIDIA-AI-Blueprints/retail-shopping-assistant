@@ -6,8 +6,12 @@ They are not shopper-facing UI language and should not appear in assistant
 responses.
 
 The runtime sources of truth are
-`chain_server/src/deepagents_runtime.py::DeepAgentsRuntime._create_agent` and
-`chain_server/src/skill_activation.py::ShopperSkillActivationMiddleware`, with
+`chain_server/src/tool_policy.py` for the immutable tool policy and validated
+frontmatter grants,
+`chain_server/src/deepagents_runtime.py::DeepAgentsRuntime._create_agent` for
+wrapper registration, and
+`chain_server/src/skill_activation.py::ShopperSkillActivationMiddleware` for
+model binding and dispatch enforcement, with
 termination policy in
 `chain_server/src/tool_loop_control.py::ToolLoopControlMiddleware`. A tool is
 registered with the shopper-serving Deep Agent only when it appears in the
@@ -22,8 +26,10 @@ phase where the model sees only `activate_shopper_skills_tool`, its use is
 forced, and parallel tool calls are disabled. After the model semantically
 selects the smallest skill set for the complete current intent, the runtime
 validates those names and deterministically injects the full selected
-`SKILL.md` contents. Only then does the next model step receive the nine shopper
-commerce tools.
+`SKILL.md` contents. Only then does the next model step receive the union of
+those skills' declared `tools_granted` from the nine-tool registry. Every
+app-owned shopping dispatch independently rechecks the selected skill, grant
+union, and immutable policy before invoking its handler.
 
 For primary shopper procedure selection, `product-discovery` and
 `outfit-styling` are mutually exclusive. `budget-shopping` is a modifier and is
@@ -71,10 +77,11 @@ no commerce tools. A commerce call placed in the same model response as the
 activation call is rejected, and activation from a prior turn cannot unlock the
 current turn. An activation-phase model response without the required call is
 rejected as `skill_activation_failed`, rather than becoming shopper-facing
-prose. The gate guarantees activation before commerce; it does not
-implement a per-skill tool access-control list. Skill instructions guide which
-of the exposed tools the model should use, while tool schemas and wrappers
-enforce deterministic request and state preconditions.
+prose. A post-activation call outside the selected grant union is rejected
+before its handler with `SHOPPER_SKILL_TOOL_NOT_GRANTED`. Frontmatter grants and
+the independent policy must agree exactly at startup, so unknown or drifted
+skill/tool pairs fail closed. Tool schemas and wrappers continue to enforce
+deterministic request and state preconditions.
 
 This design adds one bounded model step to every turn. Deterministic skill-file
 injection itself adds no model call. The runtime also excludes default Deep
@@ -215,7 +222,8 @@ calls. Search-schema validation failures are recorded as rejected catalog
 requests rather than executed searches. A completed activation records each injected
 `/shopper/<name>/SKILL.md` path in `skill_files_read`; a later successful
 `read_file` of a skill file is recorded there as well. Pre-activation commerce
-rejections use `skill_activation_required`. On graph failure, bounded
+rejections use `skill_activation_required`; post-activation ungranted calls use
+`skill_tool_not_granted`. On graph failure, bounded
 current-turn assistant/tool messages are read from the checkpoint before
 cleanup. Diagnostics also include at most 24 records and 32,000 serialized
 characters of structured current-turn product evidence from successful catalog
@@ -251,11 +259,11 @@ termination reason to `incomplete_agent_response`.
 | Class | Meaning | Rules |
 | --- | --- | --- |
 | `internal_control` | Selects and activates static behavioral instructions; it does not read or mutate commerce state. | Forced once at turn start; cannot be batched with commerce execution. |
-| `read_only_catalog` | Reads catalog-domain data or reports its availability boundary without shopper state mutation. | Broadly available to discovery, styling, visual, comparison, and budget skills. |
+| `read_only_catalog` | Reads catalog-domain data or reports its availability boundary without shopper state mutation. | Granted by product discovery and outfit styling. |
 | `read_only_catalog_cache` | Legacy/cache-only catalog read classification. | No active registered tool uses the cache as product-detail truth. |
-| `read_only_cart` | Reads the authoritative cart for the scoped `cart_id`. | Safe for cart summaries and budget checks. |
-| `computed_read_cart` | Computes over authoritative cart reads. | Do arithmetic in code, not model prose. |
-| `mutating_cart` | Changes cart contents. | Requires explicit shopper intent, valid refs, and service-side success before claiming the change. |
+| `read_only_cart` | Reads the authoritative cart for the scoped `cart_id`. | Granted only by cart management. |
+| `computed_read_cart` | Computes over authoritative cart reads. | Granted only by cart management; do arithmetic in code, not model prose. |
+| `mutating_cart` | Changes cart contents. | Slice 0 requires the cart-management grant, valid refs, and service-side success. Skill instructions require explicit shopper intent, but server-owned current-turn intent authorization is a later slice. |
 | `read_only_policy` | Reads controlled operator-managed policy content. | Never substitute model knowledge when a topic is absent. |
 | `future_high_risk` | Checkout, payment, orders, account changes. | Not registered. Requires stronger auth, idempotency, ownership checks, and confirmation policy before use. |
 
@@ -286,7 +294,7 @@ Outputs:
 
 - A completion marker listing the virtual paths of the selected skill files.
 - On the next model step, the complete selected files are injected into system
-  context and the nine shopper commerce tools become available.
+  context and only their `tools_granted` union becomes available.
 
 Side effects:
 
@@ -303,11 +311,15 @@ Failure behavior:
 - Same-batch commerce calls are rejected with
   `skill_activation_required`; a successful activation from an earlier request
   does not satisfy the current turn.
+- A post-activation tool outside the selected grant union is rejected with
+  `SHOPPER_SKILL_TOOL_NOT_GRANTED` and diagnostic reason
+  `skill_tool_not_granted`.
 
 Current limitations:
 
-- The activation gate enforces the two-phase ordering boundary, not the
-  advisory per-skill/tool mapping later in this document.
+- The activation gate enforces both the two-phase ordering boundary and the
+  selected skills' exact tool grants. Explicit mutation-intent authorization is
+  not part of Slice 0.
 - The required selection phase adds one bounded model step to each turn.
 
 ### `search_catalog_tool`
@@ -492,11 +504,10 @@ Failure behavior:
   runtime clears the failed thread checkpoint and returns a grounded partial
   product summary instead of a generic shopper-facing error.
 
-Relevant activated skill roles (behavioral guidance, not a runtime ACL):
+Skills that grant this tool:
 
 - `product-discovery`
 - `outfit-styling`
-- `budget-shopping`
 
 Current limitations:
 
@@ -556,11 +567,10 @@ Failure behavior:
 - Returns guidance to search again when the cached ref is absent from the
   active catalog snapshot.
 
-Relevant activated skill roles (behavioral guidance, not a runtime ACL):
+Skills that grant this tool:
 
 - `product-discovery`
 - `outfit-styling`
-- `budget-shopping`
 
 Current limitations:
 
@@ -595,11 +605,9 @@ Failure behavior:
 
 - Returns an empty cart if the cart read fails through the wrapper.
 
-Relevant activated skill roles (behavioral guidance, not a runtime ACL):
+Skills that grant this tool:
 
-- `budget-shopping`
 - `cart-management`
-- `outfit-styling`
 
 Current limitations:
 
@@ -632,11 +640,9 @@ Failure behavior:
 
 - Reports an empty cart total when no cart lines are available.
 
-Relevant activated skill roles (behavioral guidance, not a runtime ACL):
+Skills that grant this tool:
 
-- `budget-shopping`
 - `cart-management`
-- `outfit-styling`
 
 Current limitations:
 
@@ -700,7 +706,7 @@ Failure behavior:
 - Partial success is allowed and must be described accurately in the final
   assistant response.
 
-Relevant activated skill roles (behavioral guidance, not a runtime ACL):
+Skills that grant this tool:
 
 - `cart-management`
 
@@ -746,7 +752,7 @@ Failure behavior:
 - Returns a clear missing-line or mutation failure message and must not be
   described as success.
 
-Relevant activated skill roles (behavioral guidance, not a runtime ACL):
+Skills that grant this tool:
 
 - `cart-management`
 
@@ -794,7 +800,7 @@ Failure behavior:
   `cart_update_failed` for transport/server failure, and
   `cart_response_invalid` for malformed service output.
 
-Relevant activated skill roles (behavioral guidance, not a runtime ACL):
+Skills that grant this tool:
 
 - `cart-management`
 
@@ -835,7 +841,7 @@ Failure behavior:
   operator-placeholder marker. The assistant should relay that the policy is
   unavailable and direct the shopper to the retailer's help center.
 
-Relevant activated skill roles (behavioral guidance, not a runtime ACL):
+Skills that grant this tool:
 
 - `store-policy-answers`
 
@@ -876,11 +882,10 @@ Failure behavior:
 - None for a well-formed request. The stub never converts catalog presence
   into an inventory claim.
 
-Relevant activated skill roles (behavioral guidance, not a runtime ACL):
+Skills that grant this tool:
 
 - `product-discovery`
 - `outfit-styling`
-- `budget-shopping`
 
 Current limitations:
 
@@ -888,21 +893,20 @@ Current limitations:
 
 ## Skill Access Matrix
 
-This matrix documents which shopper commerce tools each activated skill may
-guide the agent to use. It is a behavioral map, not a deterministic per-skill
-authorization policy. The runtime enforces that at least one registered skill
-is selected and fully injected before any of the nine commerce tools can run;
-it does not filter those tools according to the selected row. Tool schemas and
-wrappers continue to enforce deterministic preconditions independently. Only
-skills listed as registered in
+This matrix is the deterministic per-skill authorization contract. The model
+sees only the union of the current selected skills' grants, and every app-owned
+shopping dispatch rechecks the grant against the independent immutable policy.
+Unknown or ungranted calls fail closed before their handlers. Tool schemas and
+wrappers continue to enforce deterministic request and state preconditions.
+Only skills listed as registered in
 [Shopper Agent Skill Registry](SHOPPER_AGENT_SKILL_REGISTRY.md) are eligible for
 activation.
 
-| Skill | Tools this skill may guide |
+| Skill | Tools granted |
 | --- | --- |
 | `product-discovery` | `search_catalog_tool`, `get_product_details_tool`, `check_product_availability_tool` |
-| `outfit-styling` | `search_catalog_tool`, `get_product_details_tool`, `check_product_availability_tool`, `get_cart_tool`, `view_cart_total_tool`; cart mutation tools only when explicit cart intent is present |
-| `budget-shopping` | `search_catalog_tool`, `get_product_details_tool`, `check_product_availability_tool`, `get_cart_tool`, `view_cart_total_tool` |
+| `outfit-styling` | `search_catalog_tool`, `get_product_details_tool`, `check_product_availability_tool` |
+| `budget-shopping` | None (`tools_granted: []`) |
 | `cart-management` | `get_cart_tool`, `view_cart_total_tool`, `add_cart_items_tool`, `remove_cart_item_tool`, `update_cart_items_tool` |
 | `store-policy-answers` | `get_store_policy_tool` |
 
@@ -910,8 +914,9 @@ Multi-intent turns should select and inject every needed skill during the one
 activation step. For example, a request to "find shoes and a bag for this
 outfit under $120 and add the shoes" combines outfit styling, budget shopping,
 and cart management, not product discovery. The cart mutation still
-happens only after a valid product ref is selected and explicit add intent is
-present.
+happens only after a valid product ref is selected. The skill instructions
+require explicit add intent; deterministic execution-time intent authorization
+is planned for a later slice.
 
 ## Not Registered Today
 
@@ -944,9 +949,12 @@ added to the Deep Agents runtime:
    model response. Cart reads, totals, and mutations should normally return to
    the model so multi-step cart requests can finish before the shopper-facing
    answer.
-10. Unit coverage proving the tool is registered, is unavailable before
-    current-turn activation, and produces or consumes required refs correctly
-    after activation.
+10. Matching entries in the granting skills' `tools_granted` frontmatter and
+    `tool_policy.py`; exact startup validation must reject drift in either
+    direction.
+11. Unit coverage proving registration, pre-activation rejection, model-visible
+    allow/deny binding, direct-dispatch rejection for ungranted skills, and
+    required ref production or consumption after an allowed activation.
 
 Mutating tools also need explicit user intent, idempotency design, ownership
 checks, and retry behavior. Checkout, payment, order, account, and profile-write

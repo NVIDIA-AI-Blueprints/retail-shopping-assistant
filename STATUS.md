@@ -14,8 +14,12 @@ The current working tree extends the shopper-serving Deep Agent architecture:
 - five shopper skills are registered for product discovery, outfit styling,
   cart management, budget shopping, and controlled store-policy answers. A
   required first model step selects the smallest applicable set each turn; the
-  runtime then injects the complete selected files before exposing shopping
-  tools. The previous turn's selected names are a read-only continuity signal
+  runtime then injects the complete selected files. Their frontmatter declares
+  `role`, optional `exclusive_group`, and `tools_granted`; only the selected
+  grant union becomes model-visible, and dispatch rechecks it against an
+  independent immutable policy before invoking a shopping handler. Registry
+  tools, frontmatter grant pairs, and policy pairs must match exactly at startup.
+  The previous turn's selected names are a read-only continuity signal
   for that fresh semantic decision; they neither force routing nor unlock tools.
   Terse item-only follow-ups inside an active outfit-building or style-led
   single-piece thread still select `outfit-styling` from conversation context.
@@ -26,9 +30,10 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   without a response-editor or final-synthesis model call. Selection and
   response metadata are regenerated from current files rather than retained in
   the conversation checkpoint;
-- the runtime has nine shopper-facing tool boundaries plus one internal skill
-  activation control tool. The new shopping tools cover cart quantity update,
-  controlled policy lookup, and an honest availability stub;
+- the runtime has a nine-tool shopper registry plus one internal skill
+  activation control tool. A turn receives only the tools granted by its
+  selected skills. The shopping tools cover cart quantity update, controlled
+  policy lookup, and an honest availability stub;
 - memory-service database sessions are request-scoped and always returned to
   the SQLAlchemy pool after successful and failed API requests;
 - dependency resolution retains `deepagents==0.6.12`, `langchain==1.3.11`,
@@ -44,7 +49,9 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   bounded no-direct/zero-result catalog scope outcomes, and final termination.
   Failed graph messages are captured from the current checkpoint before cleanup
   deletes it. Pre-activation and same-batch shopping calls are execution-blocked
-  and reported as `skill_activation_required`.
+  and reported as `skill_activation_required`; post-activation calls outside
+  the selected grant union are blocked as `skill_tool_not_granted` before their
+  handlers run.
 
 The schema-driven catalog refactor is implemented:
 
@@ -229,22 +236,23 @@ lives in [Schema-Driven Catalog Architecture](docs/CATALOG_REFACTOR_PLAN.md).
 
 ## Verification
 
-- Full offline unit suite: 845 passed with one pre-existing
-  `StarletteDeprecationWarning` in 6.39 seconds.
+- Full offline unit suite: 854 passed with one pre-existing
+  `StarletteDeprecationWarning` in 6.11 seconds.
 - Focused checkpoint coverage: 8 passed, including default and explicit memory
   mode, fail-fast rejection of every other store, and failed-thread cleanup.
-- Focused skill-activation coverage includes a compiled Deep Agents loop and
-  verifies forced activation-only binding, fresh registry descriptions,
-  complete selected-file injection, all-nine-tool exposure only afterward,
-  current-request isolation, same-batch execution rejection, and fail-closed
-  behavior.
+- Focused Slice 0 policy and activation coverage in the full suite verifies
+  exact registry/frontmatter/policy agreement, forced activation-only binding,
+  complete selected-file injection, model visibility for each selected grant
+  union, direct-dispatch allow/deny behavior, current-request isolation,
+  same-batch rejection, and preservation of non-shopping `read_file` access.
 - Agent observability coverage verifies current-turn skill activation, model-issued
   tool-call order and arguments, rejection/duplicate classification, pending
   calls, additive API/SSE propagation, snapshot-before-delete failure handling,
   and product evidence scope, provenance, size bounds, and truncation.
 - Focused evaluator coverage: 62 collected/passed in the full suite, including strict evidence allowlisting,
   aggregate-size rejection, legacy defaults, and turn-scoped Judge propagation.
-- Focused shopper-skill registry tests: 13 passed.
+- Focused shopper-skill registry coverage validates all five `role` and
+  `tools_granted` declarations.
 - Focused runtime, commerce-adapter, and memory-service modules: 165
   collected/passed in the full suite.
 - Current capability API response: 147,792 bytes; compact LLM projection:
@@ -261,33 +269,42 @@ lives in [Schema-Driven Catalog Architecture](docs/CATALOG_REFACTOR_PLAN.md).
   exact idempotency replay, conflicting-key rejection, delete/add/retry safety,
   disabled policy content, persona omission, service health, and Compose
   configuration.
-- The exact commit-readiness working tree was evaluated as
-  `architecture_updates_commit_ready_final14_20260720` and promoted to the
-  canonical local `current_wip` archive. It completed all 48 shopper turns with
-  48 Judge results and 48 timing records. Judge average was 3.4375/5;
-  distribution was 2: 9, 3: 9, and 4: 30. Thirty of 48 turns (62.5%) scored at
-  least 4.
-- Mean / median / p95 / maximum latency was 4.718s / 4.257s / 9.085s /
-  11.978s. All 48 turns included agent diagnostics and terminated `completed`;
-  no generic invalid-search fallback, request/graph error, partial graph-message
-  loss, or Judge failure was observed. One duplicate scope was blocked only
-  after successful current-turn evidence had been retained.
-- The run recorded 34 bounded catalog rejections: 27 invalid requests, three
-  no-advertised-taxonomy matches, two unsupported hard constraints, one
-  duplicate scope, and one constraint review. Eight repaired calls reported
-  finite restoration metadata: six restored `search_mode` and two restored
-  `scope_complete`.
-- Against the immediately preceding canonical WIP, Judge average improved from
-  3.3333 to 3.4375 and score-4-or-better coverage rose from 25/48 to 30/48.
-  Mean / median / p95 / maximum latency improved from 7.785s / 5.729s /
-  23.822s / 41.261s to 4.718s / 4.257s / 9.085s / 11.978s.
+- The clean Slice 0 working tree was evaluated as
+  `slice0_clean_candidate_20260720` and promoted to the canonical local
+  `current_wip` archive. It completed all 48 shopper turns with 48 Judge results
+  and 48 timing records. Judge average was 3.4167/5; distribution was 2: 12,
+  3: 7, 4: 26, and 5: 3. Twenty-nine of 48 turns (60.42%) scored at least 4.
+- Mean / median / p95 / maximum latency was 4.513s / 3.704s / 9.135s /
+  17.257s. All 48 turns included agent diagnostics and terminated `completed`;
+  no request/graph error, generic fallback, partial graph-message loss,
+  ungranted-tool dispatch, or Judge failure was observed.
+- The run recorded 26 bounded catalog rejections: 16 invalid requests, six
+  unsupported constraints, three constraint reviews, and one stop-tool-use
+  outcome. One valid catalog search still completed on every turn.
+- Against the preserved immediately preceding good WIP, Judge average moved
+  from 3.4375 to 3.4167 (-1 Judge point across 48 turns) and
+  score-4-or-better coverage moved from 30/48 to 29/48. Mean and median latency
+  improved from 4.718s / 4.257s to 4.513s / 3.704s; p95 was effectively flat
+  at 9.085s / 9.135s, while maximum latency moved from 11.978s to 17.257s.
 - Against `previous_committed` / Staging, Judge average improved from 3.2083 to
-  3.4375 and score-4-or-better coverage rose from 23/48 to 30/48. Mean / median /
+  3.4167 and score-4-or-better coverage rose from 23/48 to 29/48. Mean / median /
   p95 / maximum latency improved from 14.922s / 8.863s / 57.367s / 94.609s to
-  4.718s / 4.257s / 9.085s / 11.978s.
+  4.513s / 3.704s / 9.135s / 17.257s.
+- A targeted live two-turn flow activated only `product-discovery` for browse,
+  then only `cart-management` for an explicit add using the prior
+  `PRODUCT_REF`; the add completed successfully. The fixed suite contains no
+  cart mutation, so this flow and the offline allow/deny tests provide the cart
+  binding evidence.
+- Two earlier Slice 0 cohorts are excluded from quality comparison and retained
+  only as local diagnostics: one hosted completion emitted an anomalous 32,781
+  output tokens with no graph message, and one hosted request never returned
+  before the 120-second client timeout. Replaying the affected turn completed
+  normally; the clean cohort followed a service restart and separated target
+  collection from judging.
 
-The Staging comparison remains qualified because the catalog treatment changed;
-the prior-WIP comparison is directly comparable. Catalog-sensitive Golden drift
+The Staging comparison remains qualified because the catalog and broader dirty
+WIP treatment changed; the adjacent good-WIP comparison is the closest Slice 0
+signal. Catalog-sensitive Golden drift
 still applies: existing beige skirts and pastel tops contradict older absence
 answers, so raw scores are not a standalone catalog-quality verdict.
 
@@ -335,9 +352,12 @@ turn may still require a narrower rerun when the omitted fact is material to the
 score.
 
 Mandatory activation adds one bounded app-model step to every Deep Agents turn.
-It guarantees that shopping cannot run before a complete skill file is loaded;
-the semantic choice among registered skills remains model-selected and is now
-explicit in `agent_diagnostics.skill_files_read`.
+It guarantees that shopping cannot run before a complete skill file is loaded,
+then limits model visibility and dispatch to the selected `tools_granted` union.
+The semantic choice among registered skills remains model-selected and is
+explicit in `agent_diagnostics.skill_files_read`. Slice 0 does not yet prove
+explicit current-turn mutation intent: selecting `cart-management` grants its
+mutators, while server-owned intent authorization remains a later slice.
 
 The corrected contract guarantees validation and enforcement of the scope and
 must-haves the agent supplies. It cannot prove that a language model copied

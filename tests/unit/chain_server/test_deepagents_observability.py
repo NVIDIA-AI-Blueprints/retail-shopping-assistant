@@ -21,7 +21,10 @@ from chain_server.src.skill_activation import (
     SKILL_ACTIVATION_REQUIRED,
     SKILL_ACTIVATION_TOOL_NAME,
 )
-from chain_server.src.tool_loop_control import SEARCH_VALIDATION_ERROR_PREFIX
+from chain_server.src.tool_loop_control import (
+    SEARCH_VALIDATION_ERROR_PREFIX,
+    SERVER_RESTORED_TOOL_CALL_FIELDS,
+)
 
 
 def test_tool_trace_preserves_model_order_arguments_skills_and_duplicates() -> None:
@@ -45,7 +48,9 @@ def test_tool_trace_preserves_model_order_arguments_skills_and_duplicates() -> N
                 {
                     "id": "skill-activation",
                     "name": SKILL_ACTIVATION_TOOL_NAME,
-                    "args": {"skill_names": ["outfit-styling"]},
+                    "args": {
+                        "skill_names": ["outfit-styling"],
+                    },
                 }
             ],
         ),
@@ -173,6 +178,135 @@ def test_tool_trace_records_pre_activation_execution_rejection() -> None:
     assert diagnostics["skill_files_read"] == []
 
 
+def test_tool_trace_records_native_repair_scope_rejection() -> None:
+    messages = [
+        HumanMessage(content="REQUEST ID: request-repair-scope"),
+        AIMessage(
+            content="I couldn't establish a reliable catalog match.",
+            additional_kwargs={
+                "server_rejected_tool_calls": [
+                    {
+                        "id": "changed-repair",
+                        "name": "search_catalog_tool",
+                        "args": {"requested_product_type": "tote_bags"},
+                        "rejection_reason": "repair_scope_changed",
+                    }
+                ]
+            },
+        ),
+    ]
+
+    diagnostics = _collect_agent_diagnostics(
+        messages,
+        request_id="request-repair-scope",
+        final_termination_reason="completed",
+    )
+
+    assert diagnostics["tool_calls"] == [
+        {
+            "sequence": 1,
+            "tool_name": "search_catalog_tool",
+            "arguments": {"requested_product_type": "tote_bags"},
+            "status": "rejected",
+            "rejection_reason": "repair_scope_changed",
+        }
+    ]
+    assert diagnostics["rejected_tool_calls"] == [1]
+
+
+def test_tool_trace_records_bounded_server_restored_fields() -> None:
+    messages = [
+        HumanMessage(content="REQUEST ID: request-repair-restore"),
+        AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "id": "restored-repair",
+                    "name": "search_catalog_tool",
+                    "args": {
+                        "requested_product_type": "sneakers",
+                        "taxonomy_status": "agent_selected_type",
+                    },
+                }
+            ],
+            additional_kwargs={
+                SERVER_RESTORED_TOOL_CALL_FIELDS: [
+                    {
+                        "tool_call_id": "restored-repair",
+                        "fields": ["requested_product_type", "taxonomy_status"],
+                    }
+                ]
+            },
+        ),
+        ToolMessage(
+            content="catalog results",
+            name="search_catalog_tool",
+            tool_call_id="restored-repair",
+        ),
+    ]
+
+    diagnostics = _collect_agent_diagnostics(
+        messages,
+        request_id="request-repair-restore",
+        final_termination_reason="completed",
+    )
+
+    assert diagnostics["tool_calls"] == [
+        {
+            "sequence": 1,
+            "tool_name": "search_catalog_tool",
+            "arguments": {
+                "requested_product_type": "sneakers",
+                "taxonomy_status": "agent_selected_type",
+            },
+            "status": "completed",
+            "restored_fields": ["requested_product_type", "taxonomy_status"],
+        }
+    ]
+
+
+def test_tool_trace_preserves_bounded_catalog_scope_outcome() -> None:
+    messages = [
+        HumanMessage(content="REQUEST ID: request-scope"),
+        AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "id": "no-direct",
+                    "name": "search_catalog_tool",
+                    "args": {
+                        "requested_product_type": "tailored trousers",
+                        "taxonomy_status": "no_direct_catalog_match",
+                    },
+                }
+            ],
+        ),
+        ToolMessage(
+            content=(
+                "STOP_TOOL_USE: No faithful advertised catalog taxonomy "
+                "matches the requested product type 'tailored trousers'.\n\n"
+                'CATALOG_SCOPE_OUTCOME: {"outcome": '
+                '"no_direct_catalog_match", "requested_product_type": '
+                '"tailored trousers"}'
+            ),
+            tool_call_id="no-direct",
+        ),
+    ]
+
+    diagnostics = _collect_agent_diagnostics(
+        messages,
+        request_id="request-scope",
+        final_termination_reason="completed",
+    )
+
+    assert diagnostics["catalog_scope_outcomes"] == [
+        {
+            "outcome": "no_direct_catalog_match",
+            "requested_product_type": "tailored trousers",
+        }
+    ]
+
+
 def test_tool_trace_distinguishes_rejected_error_and_pending_calls() -> None:
     messages = [
         HumanMessage(content="REQUEST ID: request-b"),
@@ -268,6 +402,398 @@ def test_tool_trace_classifies_search_schema_errors_as_rejected() -> None:
     assert diagnostics["rejected_tool_calls"] == [1]
 
 
+def test_product_evidence_contains_only_successful_current_turn_product_tools() -> None:
+    messages = [
+        HumanMessage(content="REQUEST ID: old-request"),
+        AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "id": "old-search",
+                    "name": "search_catalog_tool",
+                    "args": {"semantic_query": "old products"},
+                }
+            ],
+        ),
+        ToolMessage(
+            content=(
+                "SEARCH_RESULT_GROUNDING_NOTE\n"
+                "PRODUCT_REF: old-product\n"
+                "NAME: Old Product"
+            ),
+            tool_call_id="old-search",
+        ),
+        HumanMessage(content="REQUEST ID: evidence-request"),
+        AIMessage(
+            content="private reasoning must not be copied",
+            tool_calls=[
+                {
+                    "id": "search",
+                    "name": "search_catalog_tool",
+                    "args": {
+                        "semantic_query": "coordinate with beige top from last week"
+                    },
+                },
+                {
+                    "id": "detail",
+                    "name": "get_product_details_tool",
+                    "args": {"product_ref": "prod-1"},
+                },
+                {
+                    "id": "failed-detail",
+                    "name": "get_product_details_tool",
+                    "args": {"product_ref": "error-product"},
+                },
+                {
+                    "id": "cart",
+                    "name": "get_cart_tool",
+                    "args": {},
+                },
+            ],
+        ),
+        ToolMessage(
+            content=(
+                "SEARCH_RESULT_GROUNDING_NOTE\n"
+                "SEARCH_DIRECTION_EVIDENCE: "
+                '"coordinate with beige top from last week"\n'
+                "SEARCH_FILTER_EVIDENCE: "
+                '{"color": ["beige"], "price": {"max": 100}}\n'
+                "SEARCH_TAXONOMY_EVIDENCE: "
+                '{"category": ["bottoms"], "subcategory": ["pants"]}\n'
+                "PRODUCT_REF: prod-1\n"
+                "NAME: Sand Trousers\n"
+                "CATEGORY: bottoms\n"
+                "PRICE: $49.00 USD\n"
+                "IMAGE_URL: https://catalog.invalid/prod-1.png\n"
+                "PRODUCT_REF: prod-2\n"
+                "NAME: Cream Pants\n"
+                "CATEGORY: bottoms\n"
+                "PRICE: $59.00 USD"
+            ),
+            name="search_catalog_tool",
+            tool_call_id="search",
+        ),
+        ToolMessage(
+            content=(
+                "PRODUCT_DETAIL_GROUNDING_NOTE\n"
+                "PRODUCT_REF: prod-1\n"
+                "NAME: Sand Trousers\n"
+                "CATEGORY: bottoms\n"
+                "BRAND: Example Brand\n"
+                "PRICE: $49.00 USD\n"
+                "DETAILS:\n"
+                "- material: cotton\n"
+                "- care: machine wash"
+            ),
+            name="get_product_details_tool",
+            tool_call_id="detail",
+        ),
+        ToolMessage(
+            content=(
+                "PRODUCT_DETAIL_GROUNDING_NOTE\n"
+                "PRODUCT_REF: error-product\n"
+                "NAME: Error Product"
+            ),
+            name="get_product_details_tool",
+            tool_call_id="failed-detail",
+            status="error",
+        ),
+        ToolMessage(
+            content=(
+                "SEARCH_RESULT_GROUNDING_NOTE\n"
+                "PRODUCT_REF: ignored-cart-product\n"
+                "NAME: Ignored Cart Product"
+            ),
+            name="get_cart_tool",
+            tool_call_id="cart",
+        ),
+    ]
+
+    diagnostics = _collect_agent_diagnostics(
+        messages,
+        request_id="evidence-request",
+        final_termination_reason="completed",
+    )
+
+    assert diagnostics["product_evidence"] == [
+        {
+            "product_ref": "prod-1",
+            "product_name": "Sand Trousers",
+            "source_tool": "search_catalog_tool",
+            "evidence_type": "search_result",
+            "facts": {
+                "category": "bottoms",
+                "price": "$49.00 USD",
+                "image_available": True,
+            },
+            "search_scope": {
+                "taxonomy": {
+                    "category": ["bottoms"],
+                    "subcategory": ["pants"],
+                },
+                "confirmed_filters": {
+                    "color": ["beige"],
+                    "price": {"max": 100},
+                },
+            },
+        },
+        {
+            "product_ref": "prod-2",
+            "product_name": "Cream Pants",
+            "source_tool": "search_catalog_tool",
+            "evidence_type": "search_result",
+            "facts": {
+                "category": "bottoms",
+                "price": "$59.00 USD",
+                "image_available": False,
+            },
+            "search_scope": {
+                "taxonomy": {
+                    "category": ["bottoms"],
+                    "subcategory": ["pants"],
+                },
+                "confirmed_filters": {
+                    "color": ["beige"],
+                    "price": {"max": 100},
+                },
+            },
+        },
+        {
+            "product_ref": "prod-1",
+            "product_name": "Sand Trousers",
+            "source_tool": "get_product_details_tool",
+            "evidence_type": "product_detail",
+            "facts": {
+                "category": "bottoms",
+                "brand": "Example Brand",
+                "price": "$49.00 USD",
+                "image_available": False,
+                "material": "cotton",
+                "care": "machine wash",
+            },
+        },
+    ]
+    serialized = json.dumps(diagnostics["product_evidence"])
+    assert "coordinate with beige top from last week" not in serialized
+    assert "private reasoning must not be copied" not in serialized
+    assert "https://catalog.invalid" not in serialized
+    assert "old-product" not in serialized
+    assert "error-product" not in serialized
+    assert "ignored-cart-product" not in serialized
+    assert diagnostics["product_evidence_truncated"] is False
+
+
+def test_product_evidence_keeps_each_search_scope_with_its_products() -> None:
+    messages = [
+        HumanMessage(content="REQUEST ID: scoped-searches"),
+        AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "id": "red-apparel",
+                    "name": "search_catalog_tool",
+                    "args": {"semantic_query": "red tops"},
+                },
+                {
+                    "id": "black-footwear",
+                    "name": "search_catalog_tool",
+                    "args": {"semantic_query": "black shoes"},
+                },
+            ],
+        ),
+        ToolMessage(
+            content=(
+                "SEARCH_RESULT_GROUNDING_NOTE\n"
+                'SEARCH_FILTER_EVIDENCE: {"color": ["red"]}\n'
+                "SEARCH_TAXONOMY_EVIDENCE: "
+                '{"category": ["apparel"], "subcategory": ["tops"]}\n'
+                "PRODUCT_REF: red-top\n"
+                "NAME: Red Top\n"
+                "CATEGORY: apparel"
+            ),
+            tool_call_id="red-apparel",
+        ),
+        ToolMessage(
+            content=(
+                "SEARCH_RESULT_GROUNDING_NOTE\n"
+                'SEARCH_FILTER_EVIDENCE: {"color": ["black"]}\n'
+                "SEARCH_TAXONOMY_EVIDENCE: "
+                '{"category": ["footwear"], "subcategory": ["shoes"]}\n'
+                "PRODUCT_REF: black-shoe\n"
+                "NAME: Black Shoe\n"
+                "CATEGORY: footwear"
+            ),
+            tool_call_id="black-footwear",
+        ),
+    ]
+
+    diagnostics = _collect_agent_diagnostics(
+        messages,
+        request_id="scoped-searches",
+        final_termination_reason="completed",
+    )
+
+    evidence = diagnostics["product_evidence"]
+    assert [record["product_ref"] for record in evidence] == [
+        "red-top",
+        "black-shoe",
+    ]
+    assert evidence[0]["search_scope"] == {
+        "taxonomy": {"category": ["apparel"], "subcategory": ["tops"]},
+        "confirmed_filters": {"color": ["red"]},
+    }
+    assert evidence[1]["search_scope"] == {
+        "taxonomy": {"category": ["footwear"], "subcategory": ["shoes"]},
+        "confirmed_filters": {"color": ["black"]},
+    }
+    assert diagnostics["product_evidence_truncated"] is False
+
+
+def test_product_evidence_bounds_facts_and_strings() -> None:
+    long_value = "v" * 600
+    detail_fields = "\n".join(
+        f"- field-{index}: {long_value}" for index in range(45)
+    )
+    messages = [
+        HumanMessage(content="REQUEST ID: bounded-request"),
+        AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "id": "bounded-detail",
+                    "name": "get_product_details_tool",
+                    "args": {"product_ref": "long-product"},
+                },
+                {
+                    "id": "bounded-search",
+                    "name": "search_catalog_tool",
+                    "args": {"semantic_query": "products"},
+                },
+            ],
+        ),
+        ToolMessage(
+            content=(
+                "PRODUCT_DETAIL_GROUNDING_NOTE\n"
+                f"PRODUCT_REF: {'r' * 600}\n"
+                f"NAME: {'n' * 600}\n"
+                f"CATEGORY: {long_value}\n"
+                "BRAND: Example\n"
+                "PRICE: $1.00 USD\n"
+                "DETAILS:\n"
+                f"{detail_fields}"
+            ),
+            tool_call_id="bounded-detail",
+        ),
+        ToolMessage(
+            content=(
+                "SEARCH_RESULT_GROUNDING_NOTE\n"
+                f'SEARCH_FILTER_EVIDENCE: {{"style": "{long_value}"}}\n'
+                f'SEARCH_TAXONOMY_EVIDENCE: {{"category": ["{long_value}"]}}\n'
+                "PRODUCT_REF: scoped-product\n"
+                "NAME: Scoped Product"
+            ),
+            tool_call_id="bounded-search",
+        ),
+    ]
+
+    diagnostics = _collect_agent_diagnostics(
+        messages,
+        request_id="bounded-request",
+        final_termination_reason="completed",
+    )
+
+    evidence = diagnostics["product_evidence"]
+    assert len(evidence) == 2
+    assert len(evidence[0]["product_ref"]) == 500
+    assert len(evidence[0]["product_name"]) == 500
+    assert len(evidence[0]["facts"]) == 40
+    assert len(evidence[0]["facts"]["category"]) == 500
+    assert len(evidence[0]["facts"]["field-0"]) == 500
+    assert len(evidence[1]["search_scope"]["taxonomy"]["category"][0]) == 500
+    assert len(evidence[1]["search_scope"]["confirmed_filters"]["style"]) == 500
+    assert diagnostics["product_evidence_truncated"] is False
+
+
+def test_product_evidence_reports_record_limit_truncation() -> None:
+    products = "\n".join(
+        f"PRODUCT_REF: product-{index}\nNAME: Product {index}"
+        for index in range(25)
+    )
+    messages = [
+        HumanMessage(content="REQUEST ID: record-limit"),
+        AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "id": "many-products",
+                    "name": "search_catalog_tool",
+                    "args": {"semantic_query": "products"},
+                }
+            ],
+        ),
+        ToolMessage(
+            content=f"SEARCH_RESULT_GROUNDING_NOTE\n{products}",
+            tool_call_id="many-products",
+        ),
+    ]
+
+    diagnostics = _collect_agent_diagnostics(
+        messages,
+        request_id="record-limit",
+        final_termination_reason="completed",
+    )
+
+    assert len(diagnostics["product_evidence"]) == 24
+    assert diagnostics["product_evidence_truncated"] is True
+
+
+def test_product_evidence_reports_serialized_size_truncation() -> None:
+    long_value = "v" * 600
+    detail_fields = "\n".join(
+        f"- field-{index}: {long_value}" for index in range(45)
+    )
+    products = "\n".join(
+        (
+            f"PRODUCT_REF: large-{index}\n"
+            f"NAME: Large Product {index}\n"
+            "CATEGORY: apparel\n"
+            "BRAND: Example\n"
+            "PRICE: $1.00 USD\n"
+            "DETAILS:\n"
+            f"{detail_fields}"
+        )
+        for index in range(2)
+    )
+    messages = [
+        HumanMessage(content="REQUEST ID: aggregate-limit"),
+        AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "id": "large-details",
+                    "name": "get_product_details_tool",
+                    "args": {"product_ref": "large-0"},
+                }
+            ],
+        ),
+        ToolMessage(
+            content=f"PRODUCT_DETAIL_GROUNDING_NOTE\n{products}",
+            tool_call_id="large-details",
+        ),
+    ]
+
+    diagnostics = _collect_agent_diagnostics(
+        messages,
+        request_id="aggregate-limit",
+        final_termination_reason="completed",
+    )
+
+    evidence = diagnostics["product_evidence"]
+    assert len(json.dumps(evidence, sort_keys=True, default=str)) <= 32_000
+    assert [record["product_ref"] for record in evidence] == ["large-0"]
+    assert diagnostics["product_evidence_truncated"] is True
+
+
 @pytest.mark.asyncio
 async def test_stream_metrics_include_agent_diagnostics(
     base_config,
@@ -281,6 +807,8 @@ async def test_stream_metrics_include_agent_diagnostics(
         "tool_calls": [],
         "rejected_tool_calls": [],
         "duplicate_tool_calls": [],
+        "product_evidence": [],
+        "product_evidence_truncated": False,
         "final_termination_reason": "completed",
         "partial_graph_messages": [],
     }

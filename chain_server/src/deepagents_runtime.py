@@ -12,9 +12,11 @@ import json
 import logging
 import os
 from pathlib import Path
+import re
 from threading import Lock
 import time
 from typing import Any, AsyncIterator, Literal
+import unicodedata
 import uuid
 
 from langgraph.checkpoint.memory import MemorySaver
@@ -61,8 +63,13 @@ from .skill_activation import (
 )
 from .tool_loop_control import (
     CONSTRAINT_REVIEW_PREFIX,
+    EXPLICIT_ALTERNATIVE_CORRECTION_PREFIX,
+    SEARCH_BUDGET_EXHAUSTED_PREFIX,
+    SEARCH_SCOPE_COMPLETE_PREFIX,
     SEARCH_VALIDATION_ERROR_PREFIX,
+    SERVER_RESTORED_TOOL_CALL_FIELDS,
     ToolLoopControlMiddleware,
+    _SERVER_REJECTED_TOOL_CALLS,
 )
 from shared.commerce_contracts import (
     AddCartItemInput,
@@ -84,47 +91,40 @@ from shared.commerce_contracts import (
 
 
 logger = logging.getLogger(__name__)
+_SHOPPER_SKILLS_ENV = "SHOPPER_SKILLS_ROOT"
+_SHARED_CONFIG_ROOT_ENV = "SHARED_CONFIG_ROOT"
+_STORE_POLICIES_RELATIVE_PATH = Path("chain_server/store_policies.yaml")
 
 
 def _build_checkpointer():
-    """Return a LangGraph checkpointer based on ``CHECKPOINT_STORE``.
+    """Return the process-local LangGraph checkpointer."""
 
-    ``memory`` is the development/test default. ``redis`` selects the async
-    Redis saver used by this runtime's ``ainvoke`` path.
-    """
-
-    store = os.environ.get("CHECKPOINT_STORE", "memory").lower()
-    if store == "redis":
-        try:
-            from langgraph.checkpoint.redis.aio import AsyncRedisSaver
-        except ImportError as exc:
-            raise ImportError(
-                "CHECKPOINT_STORE=redis requires langgraph-checkpoint-redis. "
-                "Install it or set CHECKPOINT_STORE=memory."
-            ) from exc
-        url = os.environ.get(
-            "CHECKPOINT_REDIS_URL", "redis://localhost:6379/0"
-        )
-        ttl_seconds = int(os.environ.get("CHECKPOINT_TTL_SECONDS", "86400"))
-        return AsyncRedisSaver(
-            redis_url=url,
-            ttl={"default_ttl": ttl_seconds / 60},
+    store = os.environ.get("CHECKPOINT_STORE", "memory").strip().lower()
+    if store != "memory":
+        raise ValueError(
+            "CHECKPOINT_STORE currently supports only 'memory'. "
+            f"Received: {store!r}."
         )
     return MemorySaver()
 
 
-def _format_persona_block(persona: dict[str, Any]) -> str:
-    """Format a persona snapshot as a read-only system prompt block."""
+def _store_policies_path() -> Path:
+    """Resolve controlled policy content outside the agent-readable skill root."""
 
-    lines = ["SHOPPER CONTEXT (read-only, loaded at turn start):"]
-    for key, value in persona.items():
-        if value:
-            lines.append(f"  {key}: {value}")
-    lines.append(
-        "Use this context to guide search queries and styling judgment. "
-        "Do not treat it as catalog truth or override tool results with it."
+    configured_root = os.environ.get(_SHARED_CONFIG_ROOT_ENV, "").strip()
+    if configured_root:
+        return Path(configured_root) / _STORE_POLICIES_RELATIVE_PATH
+
+    deployed_path = Path("/app/shared/configs") / _STORE_POLICIES_RELATIVE_PATH
+    if deployed_path.is_file():
+        return deployed_path
+
+    return (
+        Path(__file__).resolve().parents[2]
+        / "shared"
+        / "configs"
+        / _STORE_POLICIES_RELATIVE_PATH
     )
-    return "\n".join(lines)
 
 
 try:
@@ -132,7 +132,6 @@ try:
 except Exception:  # pragma: no cover - dependency import is validated at runtime.
     _FilesystemBackend = None
 
-_SHOPPER_SKILLS_ENV = "SHOPPER_SKILLS_ROOT"
 _SEARCH_RESULT_GROUNDING_NOTE = (
     "SEARCH_RESULT_GROUNDING_NOTE: Use search results for candidate names, prices, "
     "categories, image availability, confirmed filters listed in "
@@ -143,15 +142,32 @@ _SEARCH_RESULT_GROUNDING_NOTE = (
     "grass, gravel, or best-in-category performance from names or search snippets. "
     "Do not override a confirmed filter based on words in a display name."
 )
+_SEARCH_NO_MATCH_GROUNDING_NOTE = (
+    "SEARCH_NO_MATCH_GROUNDING_NOTE: Zero products matched this exact "
+    "advertised taxonomy and filter scope. This result does not establish "
+    "whether products exist in a different, unsearched, or unadvertised "
+    "product type."
+)
 _SEARCH_FILTER_EVIDENCE_PREFIX = "SEARCH_FILTER_EVIDENCE:"
 _SEARCH_TAXONOMY_EVIDENCE_PREFIX = "SEARCH_TAXONOMY_EVIDENCE:"
 _SEARCH_DIRECTION_EVIDENCE_PREFIX = "SEARCH_DIRECTION_EVIDENCE:"
+_SEARCH_GUIDANCE_EVIDENCE_PREFIX = "SEARCH_GUIDANCE_EVIDENCE:"
+_CATALOG_SCOPE_OUTCOME_PREFIX = "CATALOG_SCOPE_OUTCOME:"
+_MAX_DIAGNOSTIC_PRODUCT_EVIDENCE = 24
+_MAX_DIAGNOSTIC_PRODUCT_FACTS = 40
+_MAX_DIAGNOSTIC_PRODUCT_STRING_CHARS = 500
+_MAX_DIAGNOSTIC_PRODUCT_EVIDENCE_CHARS = 32_000
 _SEARCH_SCOPE_COMPLETE_NOTE = (
     "SEARCH_SCOPE_COMPLETE: The shopper's current request can now be answered "
     "from this search and existing turn evidence. Answer now. Do not search an "
     "adjacent category or substitute merely because search budget remains. Use "
     "the direct antecedent from recent discussion as the styling anchor; an item "
     "does not need to be in the cart to receive styling advice."
+)
+_SEARCH_BUDGET_EXHAUSTED_NOTE = (
+    f"{SEARCH_BUDGET_EXHAUSTED_PREFIX} No additional catalog searches are "
+    "available this turn. Continue with any requested non-search action, or "
+    "answer honestly from the grounded products already returned."
 )
 _PRODUCT_DETAIL_GROUNDING_NOTE = (
     "PRODUCT_DETAIL_GROUNDING_NOTE: This detail result exposes only "
@@ -166,6 +182,11 @@ _UNSUPPORTED_SEARCH_MODE_MESSAGE = (
 _NO_DIRECT_TAXONOMY_RESPONSE = (
     "The catalog doesn't advertise a product type that directly matches this "
     "request. Would you like me to search a different advertised product type?"
+)
+_REJECTED_CATALOG_SEARCH_RESPONSE = (
+    "I couldn't complete a valid catalog search for that request, so I don't "
+    "have catalog results to show. Please try again or ask me to search a "
+    "different advertised product type."
 )
 _UNSUPPORTED_REQUIREMENT_RESPONSE = (
     "I can't guarantee that requirement from the catalog information available "
@@ -194,11 +215,15 @@ Rules:
 - CURRENT-TURN TOOL EVIDENCE is the only evidence for a search or mutation in
   this turn. PRIOR-TURN TOOL EVIDENCE may support direct references to products
   previously shown, but it does not prove that a new search or mutation ran.
-- If TOOL EVIDENCE says there is no direct advertised taxonomy match, do not
-  claim a search ran or returned products. Say only that the requested product
-  type is not advertised, then ask whether to search a different advertised
-  type. Do not name alternatives unless their exact taxonomy values appear in
-  TOOL EVIDENCE.
+- If TOOL EVIDENCE says there is no direct advertised taxonomy match for one
+  requested role, do not claim a search ran for that role. Report that role's
+  gap, preserve any other successful current-turn role, and ask whether to
+  search a different advertised type. Do not name alternatives unless their
+  exact taxonomy values appear in TOOL EVIDENCE.
+- A scoped zero-result search proves only that its exact advertised taxonomy
+  and filter scope returned no products. It does not prove that a different,
+  unsearched, or unadvertised product type is absent, and it never supports a
+  catalog-wide availability claim.
 - Use RECENT DISCUSSION to resolve direct references such as "that" and
   "those." A discussed product or styling anchor does not need to be in CURRENT
   CART. RECENT DISCUSSION cannot establish whether the current search succeeded
@@ -220,14 +245,21 @@ Rules:
   value; multiple allowed values prove only membership in the set, not which
   value each product has. Do not infer adjacent attributes that the evidence
   does not name.
-- Do not omit a returned product or override a confirmed filter merely because
-  words in its display name appear to conflict. If that visible conflict matters
+- For styling, preserve a concise candidate set and the draft's grounded styling
+  rationale. Do not omit or override a confirmed filter merely because words in
+  a display name appear to conflict. If that visible conflict matters
   to the request, flag it as catalog information worth verifying rather than
   resolving it from the name.
 - For each search-only candidate, delete descriptive sentences that merely
   restate or interpret words in the display name. Keep the name, price,
   category/role, confirmed filters, and a modest reason tied to the shopper's
   stated goal.
+- In a search-only response, copy a candidate's display name only as its exact
+  title. Do not shorten it into an attribute, classify or group candidates by
+  words appearing in their names, or use those words as the reason one
+  candidate differs from another. Without product details, give one concise
+  group-level styling rationale based on the shopper's goal, advertised role,
+  and confirmed filters instead of item-specific attribute rationales.
 - Advertised search-taxonomy evidence lists the valid product types used by that
   search. Do not call an unlisted product type advertised or offer it as an
   advertised alternative.
@@ -312,8 +344,527 @@ class CatalogTaxonomyToolInput(BaseModel):
         return list(dict.fromkeys(value)) if isinstance(value, list) else value
 
 
-class SearchCatalogToolInput(BaseModel):
-    """Stable shape narrowed to catalog-specific enums for each agent turn."""
+def _singularize_product_word(word: str) -> str:
+    """Conservatively singularize one normalized product-type word."""
+
+    if word.endswith("ies") and len(word) > 3:
+        return f"{word[:-3]}y"
+    if word.endswith(("sses", "shes", "ches", "xes", "zes")):
+        return word[:-2]
+    if word.endswith("s") and not word.endswith("ss") and len(word) > 1:
+        return word[:-1]
+    return word
+
+
+def _normalize_product_text(value: str) -> str:
+    """Normalize product-type text for deterministic lexical comparison."""
+
+    normalized = unicodedata.normalize("NFKC", value).casefold()
+    normalized = normalized.replace("&", " and ").replace("/", " or ")
+    words = re.findall(r"[^\W_]+", normalized.replace("_", " "))
+    return " ".join(_singularize_product_word(word) for word in words)
+
+
+def _has_alternative_connector(value: str) -> bool:
+    """Return whether a product phrase joins explicit alternatives."""
+
+    normalized = _normalize_product_text(value)
+    return bool(re.search(r"\b(?:and|or)\b", normalized))
+
+
+def _text_mentions_product_type(text: str, product_type: str) -> bool:
+    """Return whether text names a normalized product-type form."""
+
+    normalized_text = _normalize_product_text(text)
+    padded_text = f" {normalized_text} "
+    normalized_product_type = _normalize_product_text(product_type)
+    return bool(normalized_product_type) and (
+        f" {normalized_product_type} " in padded_text
+    )
+
+
+def _requirement_word_stem(word: str) -> str:
+    """Return a conservative stem for literal requirement provenance."""
+
+    for suffix in ("ance", "ence", "ancy", "ency", "ant", "ent", "ing", "ed"):
+        if word.endswith(suffix) and len(word) > len(suffix) + 3:
+            return word[: -len(suffix)]
+    return _singularize_product_word(word)
+
+
+def _shopper_stated_requirement(query: str, requirement: str) -> bool:
+    """Return whether a proposed requirement is grounded in the current turn."""
+
+    normalized_query = unicodedata.normalize("NFKC", query).casefold()
+    query_words = {
+        _requirement_word_stem(word)
+        for word in re.findall(r"[^\W_]+", normalized_query)
+    }
+    requirement_words = {
+        _requirement_word_stem(word)
+        for word in re.findall(
+            r"[^\W_]+",
+            unicodedata.normalize("NFKC", requirement).casefold(),
+        )
+    }
+    return bool(requirement_words) and requirement_words.issubset(query_words)
+
+
+def _product_scope_key(value: str | None) -> str:
+    """Return the full normalized product phrase preserved across repair."""
+
+    return _normalize_product_text(value or "")
+
+
+def _generic_shopper_guidance(requested_product_type: str | None) -> str:
+    """Return safe guidance after an inferred attribute is removed."""
+
+    product_type = (requested_product_type or "products").replace("_", " ")
+    return f"Finding {product_type} for the shopper's request."
+
+
+_UNSUPPORTED_GUIDANCE_PATTERN = re.compile(
+    r"\b(?:waterproof|water[ -]?resistant|weather[ -]?safe|bug[ -]?safe|"
+    r"wet (?:surfaces?|grounds?|conditions?)|grass|gravel|all[ -]?day|best[ -]?in[ -]?category|"
+    r"maximally|outdoor (?:surfaces?|walking)|"
+    r"(?:handles?|suitable for|works? well (?:for|in)|secure for|stay secure for)"
+    r"[^.]{0,32}(?:rain|wet weather|outdoor))\b",
+    flags=re.IGNORECASE,
+)
+
+
+def _safe_shopper_guidance(
+    shopper_guidance: str,
+    requested_product_type: str | None,
+) -> str:
+    """Remove unsupported performance language from pre-search guidance."""
+
+    if _UNSUPPORTED_GUIDANCE_PATTERN.search(shopper_guidance):
+        return _generic_shopper_guidance(requested_product_type)
+    return shopper_guidance
+
+
+def _unsupported_requirement_message(requirements: list[str]) -> str:
+    """Return the shopper-facing failure for unsupported hard requirements."""
+
+    return (
+        "The requested catalog requirement cannot be enforced: "
+        + ", ".join(
+            f"'{requirement}' is not an advertised hard filter"
+            for requirement in requirements
+        )
+        + ". Ask the shopper whether to treat it as a preference."
+    )
+
+
+def _recent_shopper_statements(context: str, *, limit: int = 4) -> str:
+    """Extract prior shopper text without exposing assistant responses."""
+
+    statements = re.findall(
+        r"(?:^|\n)User:\s*(.*?)(?=\nAssistant:|\nUser:|\Z)",
+        context or "",
+        flags=re.DOTALL,
+    )
+    compact = [" ".join(statement.split()) for statement in statements]
+    return "\n".join(statement for statement in compact[-limit:] if statement)
+
+
+def _shopper_stated_product_scope(
+    query: str,
+    context: str,
+    product_scope_key: str,
+) -> bool:
+    """Return whether current or recent shopper text states a product scope."""
+
+    shopper_text = "\n".join(
+        value for value in (query, _recent_shopper_statements(context)) if value
+    )
+    return _text_mentions_product_type(shopper_text, product_scope_key)
+
+
+def _resolved_agent_selected_product_type(
+    *,
+    query: str,
+    context: str,
+    requested_product_type: str | None,
+    taxonomy_status: str,
+    taxonomy: BaseModel | dict[str, Any],
+) -> str | None:
+    """Derive open-role provenance from the agent's single taxonomy choice."""
+
+    if taxonomy_status != "agent_selected_type":
+        return requested_product_type
+    scope_key = _product_scope_key(requested_product_type)
+    if scope_key and _shopper_stated_product_scope(query, context, scope_key):
+        return requested_product_type
+    payload = taxonomy.model_dump() if isinstance(taxonomy, BaseModel) else taxonomy
+    subcategories = payload.get("subcategory") or []
+    if len(subcategories) == 1:
+        return str(subcategories[0])
+    return requested_product_type
+
+
+def _agent_selected_scope_is_advertised(
+    requested_product_type: str | None,
+    taxonomy: BaseModel | dict[str, Any],
+) -> bool:
+    """Check that an open-role choice names its advertised taxonomy scope."""
+
+    requested = _normalize_product_text(requested_product_type or "")
+    payload = taxonomy.model_dump() if isinstance(taxonomy, BaseModel) else taxonomy
+    categories = {
+        _normalize_product_text(value)
+        for value in (payload.get("category") or [])
+    }
+    subcategories = {
+        _normalize_product_text(value)
+        for value in (payload.get("subcategory") or [])
+    }
+    return len(subcategories) == 1 and requested in subcategories
+
+
+def _advertised_subcategories_for_selection(
+    taxonomy: BaseModel | dict[str, Any],
+    capabilities: CatalogCapabilities,
+) -> list[str]:
+    """Return advertised role choices within the selected category."""
+
+    payload = taxonomy.model_dump() if isinstance(taxonomy, BaseModel) else taxonomy
+    selected_categories = payload.get("category") or []
+    categories = capabilities.taxonomy.categories
+    category_names = selected_categories or list(categories)
+    return sorted(
+        {
+            subcategory
+            for category_name in category_names
+            if (category := categories.get(category_name)) is not None
+            for subcategory in category.subcategories
+        }
+    )
+
+
+def _advertised_taxonomy_value(
+    requested_product_type: str | None,
+    capabilities: CatalogCapabilities,
+) -> str | None:
+    """Return the matching advertised taxonomy value, if one exists."""
+
+    requested = _normalize_product_text(requested_product_type or "")
+    for category_name, category in capabilities.taxonomy.categories.items():
+        if requested == _normalize_product_text(category_name):
+            return category_name
+        for subcategory_name in category.subcategories:
+            if requested == _normalize_product_text(subcategory_name):
+                return subcategory_name
+    return None
+
+
+def _advertised_scope_match(
+    requested_product_type: str | None,
+    capabilities: CatalogCapabilities,
+) -> tuple[str, str, str, str] | None:
+    """Return the longest advertised exact or suffix scope match."""
+
+    raw_requested = requested_product_type or ""
+    requested = _normalize_product_text(raw_requested)
+    suffix_match_allowed = not _has_alternative_connector(raw_requested)
+    matches: list[tuple[str, str, str, str]] = []
+    for category_name, category in capabilities.taxonomy.categories.items():
+        normalized_category = _normalize_product_text(category_name)
+        if requested == normalized_category or (
+            suffix_match_allowed
+            and requested.endswith(f" {normalized_category}")
+        ):
+            matches.append(
+                ("category", category_name, category_name, normalized_category)
+            )
+        for subcategory_name in category.subcategories:
+            normalized_subcategory = _normalize_product_text(subcategory_name)
+            if requested == normalized_subcategory or (
+                suffix_match_allowed
+                and requested.endswith(f" {normalized_subcategory}")
+            ):
+                matches.append(
+                    (
+                        "subcategory",
+                        subcategory_name,
+                        category_name,
+                        normalized_subcategory,
+                    )
+                )
+    return max(
+        matches,
+        key=lambda match: (len(match[3].split()), len(match[3])),
+        default=None,
+    )
+
+
+def _same_product_scope(
+    first: str,
+    second: str,
+    capabilities: CatalogCapabilities,
+) -> bool:
+    """Compare full product scopes without conflating advertised siblings."""
+
+    if first == second:
+        return True
+    if _has_alternative_connector(first):
+        return False
+    first_advertised = _advertised_taxonomy_value(first, capabilities)
+    if first_advertised:
+        return False
+    advertised_match = _advertised_scope_match(first, capabilities)
+    if advertised_match:
+        return second == advertised_match[3]
+    return first.endswith(f" {second}")
+
+
+def _explicit_advertised_alternatives(
+    requested_product_type: str | None,
+    capabilities: CatalogCapabilities,
+) -> tuple[str, list[str]] | None:
+    """Resolve literal advertised alternatives owned by one category."""
+
+    normalized = _normalize_product_text(requested_product_type or "")
+    parts = re.split(r"\b(?:and|or)\b", normalized)
+    if len(parts) < 2 or any(not part.strip() for part in parts):
+        return None
+
+    matches: list[tuple[str, str]] = []
+    for part in parts:
+        normalized_part = part.strip()
+        part_matches = [
+            (category_name, subcategory_name)
+            for category_name, category in capabilities.taxonomy.categories.items()
+            for subcategory_name in category.subcategories
+            if normalized_part == _normalize_product_text(subcategory_name)
+        ]
+        if len(part_matches) != 1:
+            return None
+        matches.append(part_matches[0])
+
+    category_names = {category_name for category_name, _ in matches}
+    subcategories = list(dict.fromkeys(name for _, name in matches))
+    if len(category_names) != 1 or len(subcategories) != len(matches):
+        return None
+    return matches[0][0], subcategories
+
+
+def _explicit_advertised_alternatives_in_text(
+    text: str,
+    capabilities: CatalogCapabilities,
+) -> tuple[str, list[str]] | None:
+    """Find one literal advertised alternative pair in shopper text."""
+
+    normalized = _normalize_product_text(text)
+    matches: list[tuple[str, list[str]]] = []
+    for category_name, category in capabilities.taxonomy.categories.items():
+        subcategories = list(category.subcategories)
+        for first in subcategories:
+            normalized_first = _normalize_product_text(first)
+            for second in subcategories:
+                if first == second:
+                    continue
+                normalized_second = _normalize_product_text(second)
+                pattern = (
+                    rf"(?<!\w){re.escape(normalized_first)}\s+"
+                    rf"(?:and|or)\s+{re.escape(normalized_second)}(?!\w)"
+                )
+                if re.search(pattern, normalized):
+                    matches.append((category_name, [first, second]))
+    return matches[0] if len(matches) == 1 else None
+
+
+def _advertised_alternative_selection_issue(
+    requested_product_type: str | None,
+    alternatives: tuple[str, list[str]],
+    taxonomy_status: str,
+    taxonomy: BaseModel | dict[str, Any],
+) -> str | None:
+    """Require an exact taxonomy projection for literal alternatives."""
+
+    category_name, advertised_subcategories = alternatives
+    payload = taxonomy.model_dump() if isinstance(taxonomy, BaseModel) else taxonomy
+    selected_categories = {
+        _normalize_product_text(value)
+        for value in (payload.get("category") or [])
+    }
+    selected_subcategories = {
+        _normalize_product_text(value)
+        for value in (payload.get("subcategory") or [])
+    }
+    expected_subcategories = {
+        _normalize_product_text(value) for value in advertised_subcategories
+    }
+    requested_parts = {
+        part.strip()
+        for part in re.split(
+            r"\b(?:and|or)\b",
+            _normalize_product_text(requested_product_type or ""),
+        )
+        if part.strip()
+    }
+    category_matches = selected_categories in (
+        set(),
+        {_normalize_product_text(category_name)},
+    )
+    if (
+        requested_parts == expected_subcategories
+        and taxonomy_status == "member_of_requested_umbrella"
+        and category_matches
+        and selected_subcategories == expected_subcategories
+    ):
+        return None
+    return (
+        "The current shopper request names exact advertised alternatives "
+        f"{advertised_subcategories!r} in category '{category_name}'. "
+        "Set requested_product_type to include every named alternative. Select "
+        "every named alternative exactly once and no other subcategory, using "
+        "member_of_requested_umbrella."
+    )
+
+
+def _alternative_candidate_limit(
+    alternatives: tuple[str, list[str]] | None,
+    capabilities: CatalogCapabilities,
+    default: int,
+) -> int:
+    """Fetch enough ranked candidates to cover literal alternatives."""
+
+    if alternatives is None:
+        return default
+    category_name, subcategories = alternatives
+    category = capabilities.taxonomy.categories[category_name]
+    product_count = sum(
+        category.subcategories[name].product_count for name in subcategories
+    )
+    return min(50, max(default, len(subcategories), product_count))
+
+
+def _products_with_alternative_coverage(
+    products: list[ProductSummary],
+    alternatives: tuple[str, list[str]] | None,
+    limit: int,
+) -> list[ProductSummary]:
+    """Keep rank order while reserving one result per returned alternative."""
+
+    if alternatives is None or len(products) <= limit:
+        return products
+    _, subcategories = alternatives
+    selected_indexes: set[int] = set()
+    for subcategory in subcategories:
+        normalized_subcategory = _normalize_product_text(subcategory)
+        match = next(
+            (
+                index
+                for index, product in enumerate(products)
+                if _normalize_product_text(product.category or "")
+                == normalized_subcategory
+            ),
+            None,
+        )
+        if match is not None:
+            selected_indexes.add(match)
+
+    for index in range(len(products)):
+        if len(selected_indexes) >= max(limit, len(subcategories)):
+            break
+        selected_indexes.add(index)
+    return [products[index] for index in sorted(selected_indexes)]
+
+
+def _advertised_taxonomy_scope_issue(
+    requested_product_type: str | None,
+    taxonomy_status: str,
+    taxonomy: BaseModel | dict[str, Any],
+    capabilities: CatalogCapabilities,
+) -> str | None:
+    """Enforce capability-owned relations for exact advertised scopes."""
+
+    alternatives = _explicit_advertised_alternatives(
+        requested_product_type,
+        capabilities,
+    )
+    if alternatives is not None:
+        return _advertised_alternative_selection_issue(
+            requested_product_type,
+            alternatives,
+            taxonomy_status,
+            taxonomy,
+        )
+
+    advertised_match = _advertised_scope_match(
+        requested_product_type,
+        capabilities,
+    )
+    if advertised_match is None:
+        return None
+    scope_kind, advertised_name, category_name, _ = advertised_match
+    payload = taxonomy.model_dump() if isinstance(taxonomy, BaseModel) else taxonomy
+    selected_categories = payload.get("category") or []
+    selected_subcategories = payload.get("subcategory") or []
+    normalized_category = _normalize_product_text(category_name)
+    normalized_selected_categories = {
+        _normalize_product_text(value) for value in selected_categories
+    }
+    normalized_selected_subcategories = {
+        _normalize_product_text(value) for value in selected_subcategories
+    }
+    if scope_kind == "category":
+        category = capabilities.taxonomy.categories[category_name]
+        owned_subcategories = {
+            _normalize_product_text(value) for value in category.subcategories
+        }
+        selected_owned_children = (
+            bool(normalized_selected_subcategories)
+            and normalized_selected_subcategories.issubset(owned_subcategories)
+            and normalized_selected_categories in (set(), {normalized_category})
+        )
+        if taxonomy_status == "exact_requested_type" and selected_owned_children:
+            return (
+                f"Requested product type '{requested_product_type}' binds to "
+                f"advertised category '{advertised_name}', while the selected "
+                "taxonomy contains only its advertised children. Preserve that "
+                "taxonomy and change only taxonomy_status to "
+                "member_of_requested_umbrella."
+            )
+        exact_category = (
+            taxonomy_status == "exact_requested_type"
+            and not normalized_selected_subcategories
+            and normalized_selected_categories == {normalized_category}
+        )
+        owned_children = (
+            taxonomy_status
+            in {"member_of_requested_umbrella", "agent_selected_type"}
+            and selected_owned_children
+        )
+        if exact_category or owned_children:
+            return None
+        return (
+            f"Requested product type '{requested_product_type}' binds to advertised "
+            f"category '{advertised_name}'. Select that category directly or only "
+            "its advertised children; do not substitute another category."
+        )
+    selected_matches = (
+        len(selected_subcategories) == 1
+        and _normalize_product_text(selected_subcategories[0])
+        == _normalize_product_text(advertised_name)
+        and normalized_selected_categories in (set(), {normalized_category})
+    )
+    if selected_matches and taxonomy_status in {
+        "exact_requested_type",
+        "agent_selected_type",
+    }:
+        return None
+    return (
+        f"Requested product type '{requested_product_type}' binds to advertised "
+        f"subcategory '{advertised_name}'. Select only that exact subcategory; "
+        "do not substitute an advertised sibling."
+    )
+
+
+class SearchCatalogToolArguments(BaseModel):
+    """Agent-facing search arguments narrowed to the active catalog schema."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -326,6 +877,31 @@ class SearchCatalogToolInput(BaseModel):
             "empty string only for an image-only search."
         ),
     )
+    shopper_guidance: str = Field(
+        ...,
+        max_length=400,
+        description=(
+            "One concise, product-agnostic shopper-facing sentence written under "
+            "the active skill before search results are known. Connect this "
+            "product role to the shopper's stated goal or direct antecedent. Do "
+            "not name unselected or unavailable product types, name or describe "
+            "candidate products, assert product attributes, or mention tools, "
+            "schemas, filters, evidence, or identifiers. Use an empty string for "
+            "image-only or no-direct requests."
+        ),
+    )
+    requested_product_type: str | None = Field(
+        ...,
+        description=(
+            "Shortest product noun or umbrella phrase for this focused role, "
+            "resolved from the shopper's current turn or direct antecedent. "
+            "Exclude color, material, fit, occasion, weather, and style modifiers: "
+            "'formal tops' and 'relaxed-fit tops' both use 'tops'. For a genuinely "
+            "open role selected by the agent, use the chosen advertised role noun. "
+            "This is provenance, not catalog taxonomy or a ranking query. Use null "
+            "only for image-only search."
+        ),
+    )
     taxonomy_status: Literal[
         "exact_requested_type",
         "member_of_requested_umbrella",
@@ -336,8 +912,8 @@ class SearchCatalogToolInput(BaseModel):
         ...,
         description=(
             "Direction-aware semantic relation to the shopper's requested product "
-            "type. Use 'exact_requested_type' only when every selected taxonomy "
-            "value means the same product type the shopper named. Use "
+            "type. Use 'exact_requested_type' when the selected taxonomy directly "
+            "represents the requested focused role. Use "
             "'member_of_requested_umbrella' when the shopper named a true umbrella "
             "or explicit alternatives and every selected value is a faithful child "
             "or named alternative; do not "
@@ -348,9 +924,13 @@ class SearchCatalogToolInput(BaseModel):
             "kind of bottom; a flat or sandal is not a kind of sneaker even though "
             "all are footwear. Use 'agent_selected_type' only when a broad "
             "styling or discovery request names no concrete product type; choose "
-            "one focused role in one category and include every advertised "
-            "subcategory that serves that role. Never use it to "
-            "replace an explicitly requested unavailable type. Use "
+            "one exact advertised subcategory as the focused starting role. "
+            "Evaluate every product role named "
+            "in the current turn independently. If the shopper names a product "
+            "type for a role, including as an alternative, confirmation, "
+            "comparison, or follow-up, 'agent_selected_type' is forbidden for "
+            "that role. Never use it to replace an explicitly requested "
+            "unavailable type. Use "
             "'no_direct_catalog_match' only for an explicitly requested concrete "
             "product type when only parent, adjacent, or substitute types exist. "
             "Decide that from the product type alone and send no required "
@@ -369,8 +949,9 @@ class SearchCatalogToolInput(BaseModel):
             "Required catalog-derived taxonomy selection. Allowed category and "
             "subcategory values come from the active catalog capabilities. Every "
             "selected value must be the requested product type or a child of an "
-            "umbrella the shopper actually named, except for one exact leaf chosen "
-            "under agent_selected_type for a broad request. Never select a parent "
+            "umbrella the shopper actually named, except for advertised values "
+            "serving one focused role chosen under agent_selected_type. Never "
+            "select a parent "
             "or sibling as a substitute. For example, skirts may satisfy bottoms; "
             "dresses may not."
         ),
@@ -387,7 +968,9 @@ class SearchCatalogToolInput(BaseModel):
             "filters and an explicit lane for directly stated requirements it "
             "cannot enforce. Season, weather, occasion, and subjective style/vibe "
             "context remain semantic direction unless the shopper directly "
-            "requires an objective product attribute."
+            "requires an objective product attribute. A defining material is a "
+            "must-have: for 'Any denim skirts available?', put 'denim' in "
+            "unadvertised_requirements when composition is not a hard filter."
         ),
     )
     scope_complete: bool = Field(
@@ -409,6 +992,10 @@ class SearchCatalogToolInput(BaseModel):
         description="Optional search mode from Catalog capabilities.",
     )
 
+
+class SearchCatalogToolInput(SearchCatalogToolArguments):
+    """Runtime-validated catalog search request."""
+
     @model_validator(mode="after")
     def text_search_has_taxonomy_scope(self) -> "SearchCatalogToolInput":
         if len(set(self.taxonomy.category)) > 1:
@@ -417,6 +1004,32 @@ class SearchCatalogToolInput(BaseModel):
             self.taxonomy.category or self.taxonomy.subcategory
         )
         has_query = bool(self.semantic_query.strip())
+        has_shopper_guidance = bool(self.shopper_guidance.strip())
+        requested_product_type = (
+            self.requested_product_type.strip()
+            if isinstance(self.requested_product_type, str)
+            else ""
+        )
+        if self.taxonomy_status in {
+            "image_only",
+            "no_direct_catalog_match",
+        }:
+            if has_shopper_guidance:
+                raise ValueError(
+                    f"{self.taxonomy_status} requires empty shopper_guidance"
+                )
+        elif not has_shopper_guidance:
+            raise ValueError(
+                "catalog retrieval requires non-empty shopper_guidance"
+            )
+        if self.taxonomy_status != "image_only" and not requested_product_type:
+            raise ValueError(
+                f"{self.taxonomy_status} requires a requested product type"
+            )
+        if self.taxonomy_status == "image_only" and requested_product_type:
+            raise ValueError(
+                "image_only requires requested_product_type=null"
+            )
         if self.taxonomy_status == "no_direct_catalog_match":
             if has_taxonomy:
                 raise ValueError(
@@ -431,7 +1044,25 @@ class SearchCatalogToolInput(BaseModel):
                 if isinstance(self.required_constraints, BaseModel)
                 else self.required_constraints
             )
-            if any(value not in (None, "", [], {}) for value in constraints.values()):
+            repeated_product_types = constraints.get(
+                "unadvertised_requirements",
+                [],
+            )
+            requested_product_words = _normalize_product_text(
+                requested_product_type
+            ).split()
+            has_other_constraint = any(
+                value not in (None, "", [], {})
+                for name, value in constraints.items()
+                if name != "unadvertised_requirements"
+            )
+            has_distinct_requirement = any(
+                not requested_product_words
+                or requested_product_words[-1]
+                not in _normalize_product_text(str(value)).split()
+                for value in repeated_product_types
+            )
+            if has_other_constraint or has_distinct_requirement:
                 raise ValueError(
                     "no_direct_catalog_match cannot include required constraints"
                 )
@@ -463,6 +1094,44 @@ class SearchCatalogToolInput(BaseModel):
         return self
 
 
+def _exact_taxonomy_issue(
+    requested_product_type: str,
+    taxonomy: BaseModel | dict[str, Any],
+) -> str | None:
+    """Return a coherence issue for an exact taxonomy claim."""
+
+    payload = taxonomy.model_dump() if isinstance(taxonomy, BaseModel) else taxonomy
+    categories = payload.get("category") or []
+    subcategories = payload.get("subcategory") or []
+    requested_matches_category = not subcategories and any(
+        _normalize_product_text(requested_product_type)
+        == _normalize_product_text(category)
+        for category in categories
+    )
+    if requested_matches_category:
+        return None
+
+    selected_product_types = subcategories or categories
+    if len(selected_product_types) != 1:
+        return (
+            "exact_requested_type requires one matching taxonomy value unless "
+            "the shopper requested the selected category. Use "
+            "member_of_requested_umbrella only when every selected value is a "
+            "true child; otherwise use no_direct_catalog_match"
+        )
+    selected_product_type = selected_product_types[0]
+    if _normalize_product_text(requested_product_type) == _normalize_product_text(
+        selected_product_type
+    ):
+        return None
+    return (
+        "a single exact_requested_type taxonomy value requires "
+        "requested_product_type to match that product type. Use "
+        "member_of_requested_umbrella only when every selected value is a true "
+        "child of the requested type; otherwise use no_direct_catalog_match"
+    )
+
+
 class _CatalogNumberConstraint(BaseModel):
     """Inclusive numeric range accepted by catalog hard filters."""
 
@@ -482,7 +1151,9 @@ class _CatalogNumberConstraint(BaseModel):
 
 def _search_catalog_tool_input_model(
     capabilities: CatalogCapabilities,
-) -> type[SearchCatalogToolInput]:
+    *,
+    validate_scope: bool = True,
+) -> type[SearchCatalogToolArguments]:
     """Create one tool schema whose enums come from the active catalog."""
 
     taxonomy = capabilities.taxonomy
@@ -530,8 +1201,12 @@ def _search_catalog_tool_input_model(
         capabilities,
     )
     return create_model(
-        "CatalogSearchInput",
-        __base__=SearchCatalogToolInput,
+        "CatalogSearchInput" if validate_scope else "CatalogSearchToolArguments",
+        __base__=(
+            SearchCatalogToolInput
+            if validate_scope
+            else SearchCatalogToolArguments
+        ),
         taxonomy=(
             taxonomy_model,
             Field(
@@ -545,8 +1220,7 @@ def _search_catalog_tool_input_model(
                     " Every value must be a kind of the requested scope: skirts "
                     "may satisfy bottoms; dresses may not. For a broad request "
                     "that names no product type, agent_selected_type chooses one "
-                    "focused role in one category and includes every advertised "
-                    "subcategory that serves that role."
+                    "exact advertised subcategory as the focused starting role."
                 ),
             ),
         ),
@@ -568,7 +1242,13 @@ def _search_catalog_tool_input_model(
                     "put broad season, weather, occasion, or subjective style/vibe "
                     "context here unless the shopper directly requires a product "
                     "attribute. 'Rainy day outfit' does not require water "
-                    "resistance; 'water-resistant bags' does."
+                    "resistance; 'water-resistant bags' does. Recommendation "
+                    "adjectives such as comfortable, relaxed, soft, breathable, "
+                    "lightweight, casual, dressy, bold, bright, vibrant, or "
+                    "sporty are always semantic ranking preferences, not "
+                    "objective hard filters. Before calling the tool, compare "
+                    "every target-product modifier with this advertised schema "
+                    "and include every exact matching filter value."
                 ),
             ),
         ),
@@ -650,7 +1330,13 @@ def _required_constraints_input_model(
                 "style/vibe context: 'rainy day outfit' produces an empty list. "
                 "Use ['water resistance'] for 'water-resistant bags' because that "
                 "turn directly states the product requirement. Never omit or "
-                "soften a directly stated requirement. "
+                "soften a directly stated objective requirement. Subjective "
+                "recommendation adjectives such as comfortable, relaxed, soft, "
+                "breathable, lightweight, casual, dressy, bold, bright, vibrant, "
+                "or sporty always stay semantic; never put them in this field. "
+                "Before calling the tool, include every exact advertised filter "
+                "value that modifies the target product; do not leave this object "
+                "empty when one applies. "
                 "In an 'A or B' request, do not put the "
                 "supported advertised branch here."
             ),
@@ -667,6 +1353,7 @@ def _required_constraints_input_model(
 class _ShopperSkill:
     path: str
     description: str
+    response_guidance: str
     content: str
 
 
@@ -719,11 +1406,23 @@ def _shopper_skill_registry(
         description = (
             raw_description.strip() if isinstance(raw_description, str) else ""
         )
-        if name != skill_path.parent.name or not description or not body.strip():
+        raw_response_guidance = metadata.get("response_guidance")
+        response_guidance = (
+            raw_response_guidance.strip()
+            if isinstance(raw_response_guidance, str)
+            else ""
+        )
+        if (
+            name != skill_path.parent.name
+            or not description
+            or not response_guidance
+            or not body.strip()
+        ):
             raise RuntimeError(f"Invalid shopper skill: {skill_path.parent.name}")
         registry[name] = _ShopperSkill(
             path=f"/shopper/{name}/SKILL.md",
             description=description,
+            response_guidance=response_guidance,
             content=content,
         )
     if not registry:
@@ -949,8 +1648,6 @@ class DeepAgentsRuntime:
     def __init__(self, config: Any) -> None:
         self.config = config
         self._checkpointer = _build_checkpointer()
-        self._checkpointer_ready = not hasattr(self._checkpointer, "asetup")
-        self._checkpointer_setup_lock = asyncio.Lock()
         self._profile_registered = False
         self._product_refs: dict[str, dict[str, ProductSummary]] = {}
         self._media_perception = MediaPerceptionClient(config)
@@ -968,13 +1665,8 @@ class DeepAgentsRuntime:
         self,
         state: State,
         identity: RequestIdentity,
-        persona_snapshot: dict[str, Any] | None = None,
     ) -> AsyncIterator[str]:
-        output = await self._run_turn(
-            state,
-            identity,
-            persona_snapshot=persona_snapshot,
-        )
+        output = await self._run_turn(state, identity)
         products = output.product_results or []
         if products:
             yield json.dumps(
@@ -1004,13 +1696,8 @@ class DeepAgentsRuntime:
         self,
         state: State,
         identity: RequestIdentity,
-        persona_snapshot: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        output = await self._run_turn(
-            state,
-            identity,
-            persona_snapshot=persona_snapshot,
-        )
+        output = await self._run_turn(state, identity)
         return {
             "response": output.response,
             "images": output.retrieved or {},
@@ -1025,7 +1712,6 @@ class DeepAgentsRuntime:
         self,
         state: State,
         identity: RequestIdentity,
-        persona_snapshot: dict[str, Any] | None = None,
     ) -> State:
         start = time.monotonic()
         state.user_id = identity.context_user_id
@@ -1061,7 +1747,6 @@ class DeepAgentsRuntime:
             return state
 
         turn_capabilities = await asyncio.to_thread(self._catalog_capabilities.get)
-        await self._ensure_checkpointer_ready()
         invoke_config = {
             "configurable": {"thread_id": identity.conversation_id},
             "recursion_limit": self.config.deepagents_recursion_limit,
@@ -1072,7 +1757,6 @@ class DeepAgentsRuntime:
                 state,
                 identity,
                 turn_capabilities,
-                persona_snapshot=persona_snapshot,
             )
             input_message = self._build_user_message(state, identity)
             result = await agent.ainvoke(
@@ -1177,7 +1861,6 @@ class DeepAgentsRuntime:
         state: State,
         identity: RequestIdentity,
         turn_capabilities: CatalogCapabilities | None = None,
-        persona_snapshot: dict[str, Any] | None = None,
     ):
         from deepagents import (
             GeneralPurposeSubagentProfile,
@@ -1215,24 +1898,92 @@ class DeepAgentsRuntime:
         state.retrieved = retrieved
         self._append_cached_cart_images(retrieved, state.cart, identity)
         search_input_model = _search_catalog_tool_input_model(turn_capabilities)
+        search_tool_arguments_model = _search_catalog_tool_input_model(
+            turn_capabilities,
+            validate_scope=False,
+        )
+        constraint_input_model = search_input_model.model_fields[
+            "required_constraints"
+        ].annotation
         catalog_searches_this_turn = 0
         searched_catalog_scopes: list[dict[str, Any]] = []
+        searched_shopper_scopes: set[tuple[str, str]] = set()
         catalog_tool_lock = Lock()
         product_detail_reads_this_turn = 0
+        failed_repair_scope_key: str | None = None
+        failed_agent_selected_scope = False
+        failed_constraint_scope_key: str | None = None
+        constraint_reviewed_scopes: set[str] = set()
+        pending_constraint_reviews: dict[str, dict[str, Any]] = {}
+        pending_taxonomy_constraints: dict[str, Any] | None = None
+        pending_no_direct_constraint_clear = False
+        pending_schema_requirements: list[str] = []
 
-        @tool(args_schema=search_input_model, return_direct=False)
+        def _lock_taxonomy_constraint_values(
+            scope_key: str | None,
+            constraints: dict[str, Any],
+            *,
+            allow_no_direct_clear: bool = False,
+        ) -> str:
+            """Store canonical hard constraints for one taxonomy repair."""
+
+            nonlocal pending_taxonomy_constraints
+            nonlocal pending_no_direct_constraint_clear
+            constraints = _normalized_scope_value(constraints)
+            constraints.pop("unadvertised_requirements", None)
+            pending_taxonomy_constraints = constraints
+            pending_no_direct_constraint_clear = allow_no_direct_clear
+            if allow_no_direct_clear:
+                return (
+                    " If the repaired taxonomy_status remains "
+                    "no_direct_catalog_match, clear advertised "
+                    "required_constraints as that status requires. If the "
+                    "repair changes to a retrieving taxonomy_status, preserve "
+                    "all validated advertised required_constraints exactly."
+                )
+            if not constraints:
+                return (
+                    " The rejected call had no advertised required_constraints. "
+                    "Keep advertised required_constraints empty on repair. "
+                    "Change only taxonomy_status, taxonomy, or an explicitly "
+                    "identified ungrounded product scope."
+                )
+            return (
+                " Preserve all already validated advertised "
+                "required_constraints exactly on repair. Change only "
+                "taxonomy_status, taxonomy, or an explicitly identified "
+                "ungrounded product scope."
+            )
+
+        def _lock_taxonomy_constraints(
+            scope_key: str | None,
+            request: SearchCatalogToolArguments,
+        ) -> str:
+            """Preserve validated hard constraints across one taxonomy repair."""
+
+            return _lock_taxonomy_constraint_values(
+                scope_key,
+                request.required_constraints.model_dump(exclude_none=True),
+            )
+
+        @tool(args_schema=search_tool_arguments_model, return_direct=False)
         def search_catalog_tool(
             semantic_query: str,
+            requested_product_type: str | None,
             taxonomy: BaseModel | dict[str, Any],
             required_constraints: BaseModel | dict[str, Any],
+            shopper_guidance: str = "",
             scope_complete: bool = True,
             taxonomy_status: str = "exact_requested_type",
             search_mode: str | None = None,
         ) -> str:
             """Find products by description, category, or price. Use for browse,
             search, and recommendation requests. Set taxonomy_status to
-            'exact_requested_type' only when selected values mean the same product
-            type the shopper named. Use 'member_of_requested_umbrella' only when
+            'exact_requested_type' when the selected taxonomy directly represents
+            the requested focused role. For a single selected value, the requested
+            type must name that value; the semantic query may focus on soft
+            ranking direction. Use
+            'member_of_requested_umbrella' only when
             the shopper named an umbrella or explicit alternatives and every
             selected value is its faithful child or named alternative;
             never reverse that relationship because the requested type belongs to
@@ -1240,9 +1991,10 @@ class DeepAgentsRuntime:
             shopper's requested scope: a skirt is a kind of bottom; a flat or
             sandal is not a kind of sneaker. For a broad styling or discovery
             request that names no concrete product type, use 'agent_selected_type'
-            and choose one focused role in one category, including every advertised
-            subcategory that serves that role. Never use
-            it to replace a concrete unavailable type. Use 'no_direct_catalog_match' only
+            and choose one exact advertised subcategory as the focused starting
+            role. Never use
+            it for a role whose type the shopper named, including an alternative,
+            confirmation, comparison, or follow-up. Use 'no_direct_catalog_match' only
             for an explicitly requested concrete product type when only parent,
             adjacent, or substitute types exist. Never use it for an outfit,
             occasion, season, weather need, style/vibe, or product attribute. Set
@@ -1264,7 +2016,8 @@ class DeepAgentsRuntime:
             Copy every attribute that defines the requested products into
             required_constraints. Use only advertised filter properties directly;
             put any defining requirement not in the schema into
-            unadvertised_requirements. For "Do you have water-resistant bags?",
+            unadvertised_requirements. For "Any denim skirts available?", use
+            {"unadvertised_requirements": ["denim"]}. For "Do you have water-resistant bags?",
             use {"unadvertised_requirements": ["water resistance"]}, not a soft
             semantic preference. Broad season, weather, occasion, and subjective
             style/vibe context stays in semantic_query unless the shopper directly
@@ -1272,7 +2025,14 @@ class DeepAgentsRuntime:
             current turn states them for the target products; do not copy an
             anchor's color or material onto a complementary role. "Rainy day
             outfit" does not imply a
-            water-resistance requirement. For alternatives joined by "or", search
+            water-resistance requirement. Treat comfortable, relaxed, soft,
+            breathable, lightweight, casual, dressy, bold, bright, vibrant, and
+            sporty as semantic recommendation preferences, never objective hard
+            filters. Before calling this tool, compare every target-product
+            modifier with the advertised required_constraints schema and include
+            every exact matching filter value; do not leave the object empty when
+            one applies.
+            For alternatives joined by "or", search
             a faithful advertised branch and explain any unavailable branch; do not
             put the supported branch in unadvertised_requirements.
             When the shopper names an umbrella or explicit alternatives, use
@@ -1280,73 +2040,673 @@ class DeepAgentsRuntime:
             one call; do not narrow it with agent_selected_type.
             Do NOT repeat a search with the same taxonomy and hard constraints;
             semantic paraphrases do not create a new scope.
+
+            Every call also supplies shopper_guidance: one concise,
+            product-agnostic sentence connecting the searched role to the
+            shopper's stated goal or direct antecedent. Write it before results
+            are known. Do not name or describe candidate products or expose
+            internal search mechanics, and do not name product types outside the
+            selected advertised scope. Use an empty string for image-only and
+            no-direct requests.
+
+            Always set requested_product_type to the shortest product-type phrase
+            for this role. Keep only the product noun or umbrella and exclude color,
+            material, fit, occasion, weather, and style modifiers. For example,
+            "formal tops" and "relaxed-fit tops" both use "tops". For
+            agent_selected_type, use the advertised role noun you selected. Set it
+            to null only for image-only search. It is not a catalog enum or semantic
+            query.
             """
 
             nonlocal catalog_searches_this_turn
+            nonlocal failed_agent_selected_scope
+            nonlocal failed_constraint_scope_key
+            nonlocal failed_repair_scope_key
+            nonlocal pending_no_direct_constraint_clear
+            nonlocal pending_taxonomy_constraints
+            nonlocal pending_schema_requirements
             capabilities = turn_capabilities
             if capabilities.catalog_id == "unavailable" and not capabilities.filters:
                 return "Catalog search is unavailable. Please try again."
 
+            shopper_explicit_alternatives = (
+                _explicit_advertised_alternatives_in_text(
+                    state.query,
+                    capabilities,
+                )
+            )
+            requested_product_type = _resolved_agent_selected_product_type(
+                query=state.query,
+                context=state.context,
+                requested_product_type=requested_product_type,
+                taxonomy_status=taxonomy_status,
+                taxonomy=taxonomy,
+            )
+            candidate_scope_key = _product_scope_key(requested_product_type)
+            locked_repair_scope = (
+                failed_constraint_scope_key or failed_repair_scope_key
+            )
+            repairing_same_scope = bool(
+                locked_repair_scope
+                and (
+                    candidate_scope_key == failed_constraint_scope_key
+                    if failed_constraint_scope_key
+                    else _same_product_scope(
+                        locked_repair_scope,
+                        candidate_scope_key,
+                        capabilities,
+                    )
+                )
+            )
+            if (
+                locked_repair_scope
+                and not repairing_same_scope
+            ):
+                expected_scope_key = locked_repair_scope
+                return (
+                    SEARCH_VALIDATION_ERROR_PREFIX
+                    + "A catalog search repair cannot replace product scope "
+                    f"'{expected_scope_key}' "
+                    f"with '{candidate_scope_key or 'none'}'. Preserve the "
+                    "requested_product_type and repair taxonomy_status or "
+                    "taxonomy instead."
+                )
+            if (
+                failed_agent_selected_scope
+                and taxonomy_status != "agent_selected_type"
+            ):
+                return (
+                    SEARCH_VALIDATION_ERROR_PREFIX
+                    + "This open-role repair must preserve "
+                    "taxonomy_status='agent_selected_type' and choose exactly "
+                    "one advertised subcategory for the role."
+                )
+
+            taxonomy_payload = (
+                taxonomy.model_dump()
+                if isinstance(taxonomy, BaseModel)
+                else taxonomy
+            )
+            constraint_payload = (
+                required_constraints.model_dump()
+                if isinstance(required_constraints, BaseModel)
+                else required_constraints
+            )
+            shopper_stated_scope = bool(
+                candidate_scope_key
+                and _shopper_stated_product_scope(
+                    state.query,
+                    state.context,
+                    candidate_scope_key,
+                )
+            )
+            raw_unadvertised_requirements = (
+                constraint_payload.get("unadvertised_requirements", [])
+                if isinstance(constraint_payload, dict)
+                else []
+            )
+            stated_unadvertised_requirements = (
+                [
+                    requirement
+                    for requirement in raw_unadvertised_requirements
+                    if isinstance(requirement, str)
+                    and _shopper_stated_requirement(state.query, requirement)
+                ]
+                if isinstance(raw_unadvertised_requirements, list)
+                else []
+            )
+            if (
+                isinstance(raw_unadvertised_requirements, list)
+                and raw_unadvertised_requirements
+                and (shopper_stated_scope or stated_unadvertised_requirements)
+            ):
+                return _unsupported_requirement_message(
+                    raw_unadvertised_requirements
+                )
             try:
                 request = search_input_model.model_validate(
                     {
                         "semantic_query": semantic_query,
+                        "shopper_guidance": shopper_guidance,
+                        "requested_product_type": requested_product_type,
                         "taxonomy_status": taxonomy_status,
-                        "taxonomy": (
-                            taxonomy.model_dump()
-                            if isinstance(taxonomy, BaseModel)
-                            else taxonomy
-                        ),
-                        "required_constraints": (
-                            required_constraints.model_dump()
-                            if isinstance(required_constraints, BaseModel)
-                            else required_constraints
-                        ),
+                        "taxonomy": taxonomy_payload,
+                        "required_constraints": constraint_payload,
                         "scope_complete": scope_complete,
                         "search_mode": search_mode,
                     }
                 )
             except ValidationError as exc:
+                validation_errors = [
+                    {
+                        "loc": list(error.get("loc") or ()),
+                        "type": str(error.get("type") or "validation_error"),
+                        "msg": str(error.get("msg") or "Invalid value"),
+                    }
+                    for error in exc.errors(include_url=False)
+                ]
+                taxonomy_error = any(
+                    any(
+                        marker in (
+                            str(error.get("loc", ""))
+                            + " "
+                            + str(error.get("msg", ""))
+                        )
+                        .replace("_", " ")
+                        .casefold()
+                        for marker in (
+                            "taxonomy",
+                            "category",
+                            "subcategory",
+                            "requested product type",
+                        )
+                    )
+                    for error in validation_errors
+                )
+                repair_guidance = ""
+                canonical_agent_selected_scope = bool(
+                    candidate_scope_key
+                    and taxonomy_status == "agent_selected_type"
+                    and _agent_selected_scope_is_advertised(
+                        requested_product_type,
+                        taxonomy,
+                    )
+                )
+                if shopper_stated_scope or canonical_agent_selected_scope:
+                    failed_repair_scope_key = candidate_scope_key
+                    failed_agent_selected_scope = False
+                elif taxonomy_error and taxonomy_status == "agent_selected_type":
+                    failed_agent_selected_scope = True
+                if candidate_scope_key and taxonomy_error:
+                    if (
+                        taxonomy_status == "agent_selected_type"
+                        and not shopper_stated_scope
+                    ):
+                        advertised_choices = _advertised_subcategories_for_selection(
+                            taxonomy,
+                            capabilities,
+                        )
+                        repair_guidance = (
+                            " For an open-role agent_selected_type search, choose "
+                            "exactly one advertised subcategory and copy it into "
+                            "requested_product_type. Choose exactly one of these "
+                            "currently advertised subcategories: "
+                            + json.dumps(advertised_choices, ensure_ascii=False)
+                            + "."
+                        )
+                        constraints = (
+                            required_constraints.model_dump(exclude_none=True)
+                            if isinstance(required_constraints, BaseModel)
+                            else required_constraints
+                        )
+                        proposed_requirements = constraints.get(
+                            "unadvertised_requirements",
+                            [],
+                        )
+                        if proposed_requirements:
+                            pending_schema_requirements = list(
+                                proposed_requirements
+                            )
+                            repair_guidance += (
+                                " The rejected call proposed "
+                                "unadvertised_requirements "
+                                + json.dumps(
+                                    proposed_requirements,
+                                    ensure_ascii=False,
+                                )
+                                + ". Preserve only an objective product attribute "
+                                "directly stated for the selected role; remove one "
+                                "inferred from season, weather, occasion, or style."
+                            )
+                constraint_lock = ""
+                try:
+                    validated_constraints = constraint_input_model.model_validate(
+                        constraint_payload
+                    )
+                except ValidationError:
+                    pass
+                else:
+                    constraint_lock = _lock_taxonomy_constraint_values(
+                        candidate_scope_key,
+                        validated_constraints.model_dump(exclude_none=True),
+                        allow_no_direct_clear=(
+                            taxonomy_status == "no_direct_catalog_match"
+                        ),
+                    )
                 return (
-                    "The catalog search request does not match current capabilities: "
-                    f"{exc.errors(include_url=False)}"
+                    SEARCH_VALIDATION_ERROR_PREFIX
+                    + "The catalog search request does not match current "
+                    f"capabilities: {validation_errors}"
+                    + repair_guidance
+                    + constraint_lock
                 )
 
-            if request.taxonomy_status == "no_direct_catalog_match":
-                return (
-                    "STOP_TOOL_USE: No faithful advertised catalog taxonomy "
-                    f"matches the requested product type in '{request.semantic_query}'. "
-                    "Do not search adjacent product types. Tell the shopper the "
-                    "requested type is not advertised and ask before offering an "
-                    "alternative."
-                )
-
-            normalized_constraints = request.required_constraints.model_dump(
+            all_constraints = request.required_constraints.model_dump(
                 exclude_none=True,
             )
+            normalized_advertised_constraints = _normalized_scope_value(
+                all_constraints
+            )
+            normalized_advertised_constraints.pop(
+                "unadvertised_requirements",
+                None,
+            )
+            if (
+                pending_taxonomy_constraints is not None
+                and not (
+                    pending_no_direct_constraint_clear
+                    and request.taxonomy_status == "no_direct_catalog_match"
+                )
+                and normalized_advertised_constraints
+                != pending_taxonomy_constraints
+            ):
+                return (
+                    SEARCH_VALIDATION_ERROR_PREFIX
+                    + "A taxonomy repair must preserve previously validated "
+                    "advertised required_constraints exactly. Change only "
+                    "taxonomy_status, taxonomy, or an explicitly identified "
+                    "ungrounded product scope."
+                )
+            if pending_taxonomy_constraints is not None:
+                pending_taxonomy_constraints = None
+                pending_no_direct_constraint_clear = False
+            normalized_constraints = dict(all_constraints)
             unadvertised_requirements = normalized_constraints.pop(
                 "unadvertised_requirements",
                 [],
             )
-            if unadvertised_requirements:
-                if not request.scope_complete:
+            shopper_stated_scope = bool(
+                candidate_scope_key
+                and _shopper_stated_product_scope(
+                    state.query,
+                    state.context,
+                    candidate_scope_key,
+                )
+            )
+            if unadvertised_requirements and shopper_stated_scope:
+                return _unsupported_requirement_message(
+                    unadvertised_requirements
+                )
+
+            if shopper_explicit_alternatives is not None:
+                shopper_alternative_issue = (
+                    _advertised_alternative_selection_issue(
+                        request.requested_product_type,
+                        shopper_explicit_alternatives,
+                        request.taxonomy_status,
+                        request.taxonomy,
+                    )
+                )
+                if shopper_alternative_issue:
+                    _, advertised_subcategories = shopper_explicit_alternatives
+                    alternative_scope_key = _product_scope_key(
+                        " or ".join(advertised_subcategories)
+                    )
+                    failed_repair_scope_key = alternative_scope_key
+                    failed_agent_selected_scope = False
                     return (
-                        f"{CONSTRAINT_REVIEW_PREFIX} A partial multi-role search "
-                        "cannot infer an unsupported hard requirement from broad "
-                        "season, weather, occasion, or style context. Re-read the "
-                        "current shopper turn once. If the product requirement was "
-                        "directly stated, stop and explain that it cannot be "
-                        "guaranteed. Otherwise remove the inferred requirement and "
-                        "retry one focused advertised role."
+                        SEARCH_VALIDATION_ERROR_PREFIX
+                        + EXPLICIT_ALTERNATIVE_CORRECTION_PREFIX
+                        + " "
+                        + shopper_alternative_issue
+                        + _lock_taxonomy_constraints(
+                            alternative_scope_key,
+                            request,
+                        )
+                    )
+
+            advertised_taxonomy_issue = _advertised_taxonomy_scope_issue(
+                request.requested_product_type,
+                request.taxonomy_status,
+                request.taxonomy,
+                capabilities,
+            )
+            if advertised_taxonomy_issue:
+                if shopper_stated_scope:
+                    failed_repair_scope_key = candidate_scope_key
+                    failed_agent_selected_scope = False
+                return (
+                    SEARCH_VALIDATION_ERROR_PREFIX
+                    + advertised_taxonomy_issue
+                    + _lock_taxonomy_constraints(candidate_scope_key, request)
+                    + (
+                        " Preserve the shopper-stated requested_product_type."
+                        if shopper_stated_scope
+                        else " The rejected requested_product_type was not "
+                        "shopper-stated. Re-read the current shopper request "
+                        "and correct it rather than preserving this scope."
+                    )
+                )
+
+            if pending_schema_requirements and not unadvertised_requirements:
+                request = request.model_copy(
+                    update={
+                        "shopper_guidance": _generic_shopper_guidance(
+                            request.requested_product_type
+                        )
+                    }
+                )
+                pending_schema_requirements = []
+            pending_constraint_review = pending_constraint_reviews.get(
+                candidate_scope_key
+            )
+            if pending_constraint_review and (
+                request.taxonomy_status
+                != pending_constraint_review["taxonomy_status"]
+                or request.taxonomy.model_dump()
+                != pending_constraint_review["taxonomy"]
+                or request.scope_complete
+                != pending_constraint_review["scope_complete"]
+                or request.search_mode != pending_constraint_review["search_mode"]
+                or normalized_constraints
+                != pending_constraint_review["required_constraints"]
+            ):
+                return (
+                    SEARCH_VALIDATION_ERROR_PREFIX
+                    + "A constraint-provenance repair must preserve "
+                    "requested_product_type, taxonomy_status, taxonomy, "
+                    "scope_complete, search_mode, and all "
+                    "advertised required constraints exactly. Change only the "
+                    "reviewed unadvertised requirement wording or remove an "
+                    "inferred requirement; the soft semantic query may be "
+                    "corrected within the preserved product scope."
+                )
+            agent_selected_issue: str | None = None
+            agent_selected_shopper_scope = False
+            if (
+                request.taxonomy_status == "agent_selected_type"
+                and (
+                    _shopper_stated_product_scope(
+                        state.query,
+                        state.context,
+                        candidate_scope_key,
+                    )
+                    or not _agent_selected_scope_is_advertised(
+                        request.requested_product_type,
+                        request.taxonomy,
+                    )
+                )
+            ):
+                agent_selected_shopper_scope = bool(
+                    candidate_scope_key
+                    and _shopper_stated_product_scope(
+                        state.query,
+                        state.context,
+                        candidate_scope_key,
+                    )
+                )
+                if agent_selected_shopper_scope:
+                    payload = request.taxonomy.model_dump()
+                    selected_values = (
+                        payload.get("subcategory")
+                        or payload.get("category")
+                        or []
+                    )
+                    advertised_match = _advertised_scope_match(
+                        request.requested_product_type,
+                        capabilities,
+                    )
+                    exact_selected_scope = bool(
+                        advertised_match
+                        and len(selected_values) == 1
+                        and _normalize_product_text(selected_values[0])
+                        == _normalize_product_text(advertised_match[1])
+                    )
+                    repair_status = (
+                        "Change only taxonomy_status to exact_requested_type."
+                        if exact_selected_scope
+                        else (
+                            "If every selected value is a kind of the named "
+                            "scope, change only taxonomy_status to "
+                            "member_of_requested_umbrella; do not narrow to one "
+                            "child or report no direct match."
+                        )
+                    )
+                    agent_selected_issue = (
+                        "The shopper named requested_product_type "
+                        f"'{request.requested_product_type}', so "
+                        "agent_selected_type is forbidden. Preserve that "
+                        "requested_product_type and these selected advertised "
+                        "values on repair: "
+                        + json.dumps(selected_values, sort_keys=True)
+                        + ". "
+                        + repair_status
+                    )
+                else:
+                    advertised_choices = _advertised_subcategories_for_selection(
+                        request.taxonomy,
+                        capabilities,
+                    )
+                    agent_selected_issue = (
+                        "An open-role agent_selected_type search must select "
+                        "exactly one advertised subcategory and copy that exact "
+                        "subcategory into requested_product_type. Do not use a "
+                        "parent category or an unadvertised role. Choose exactly "
+                        "one of these currently advertised subcategories: "
+                        + json.dumps(advertised_choices, ensure_ascii=False)
+                        + ". Rewrite "
+                        "shopper_guidance for that selected role without "
+                        "asserting an inferred product attribute."
+                    )
+            if agent_selected_issue:
+                if agent_selected_shopper_scope:
+                    failed_repair_scope_key = candidate_scope_key
+                    failed_agent_selected_scope = False
+                elif candidate_scope_key:
+                    failed_agent_selected_scope = True
+                constraint_issue = ""
+                if unadvertised_requirements:
+                    constraint_issue = (
+                        " The same rejected call proposed "
+                        "unadvertised_requirements "
+                        + json.dumps(
+                            unadvertised_requirements,
+                            ensure_ascii=False,
+                        )
+                        + ". Preserve only an objective product attribute "
+                        "directly stated for the selected role. If it was "
+                        "inferred from season, weather, occasion, or style, "
+                        "send an empty list and remove its promise from "
+                        "shopper_guidance."
                     )
                 return (
-                    "The requested catalog requirement cannot be enforced: "
-                    + ", ".join(
-                        f"'{requirement}' is not an advertised hard filter"
-                        for requirement in unadvertised_requirements
-                    )
-                    + ". Ask the shopper whether to treat it as a preference."
+                    SEARCH_VALIDATION_ERROR_PREFIX
+                    + agent_selected_issue
+                    + constraint_issue
+                    + _lock_taxonomy_constraints(candidate_scope_key, request)
                 )
+            failed_agent_selected_scope = False
+
+            if (
+                request.taxonomy_status != "no_direct_catalog_match"
+                and unadvertised_requirements
+            ):
+                stated_requirements = [
+                    requirement
+                    for requirement in unadvertised_requirements
+                    if _shopper_stated_requirement(state.query, requirement)
+                ]
+                shopper_stated_scope = bool(
+                    candidate_scope_key
+                    and _shopper_stated_product_scope(
+                        state.query,
+                        state.context,
+                        candidate_scope_key,
+                    )
+                )
+                if stated_requirements or shopper_stated_scope:
+                    return _unsupported_requirement_message(
+                        unadvertised_requirements
+                    )
+                review_scope = candidate_scope_key or "__unknown__"
+                if review_scope in constraint_reviewed_scopes:
+                    return (
+                        "The requested catalog requirement cannot be enforced: "
+                        "its current-turn provenance could not be established. "
+                        "Ask the shopper to state the exact required attribute "
+                        "or allow it to be treated as a preference."
+                    )
+                constraint_reviewed_scopes.add(review_scope)
+                pending_constraint_reviews[review_scope] = {
+                    "requirements": list(unadvertised_requirements),
+                    "taxonomy_status": request.taxonomy_status,
+                    "taxonomy": request.taxonomy.model_dump(),
+                    "scope_complete": request.scope_complete,
+                    "search_mode": request.search_mode,
+                    "required_constraints": dict(normalized_constraints),
+                }
+                failed_constraint_scope_key = review_scope
+                return (
+                    CONSTRAINT_REVIEW_PREFIX
+                    + "These proposed unadvertised requirements do not match "
+                    "the current shopper turn's normalized wording: "
+                    + json.dumps(unadvertised_requirements, ensure_ascii=False)
+                    + ". Preserve requested_product_type "
+                    + json.dumps(request.requested_product_type)
+                    + ", taxonomy_status "
+                    + json.dumps(request.taxonomy_status)
+                    + ", taxonomy "
+                    + json.dumps(request.taxonomy.model_dump(), sort_keys=True)
+                    + ", and scope_complete "
+                    + json.dumps(request.scope_complete)
+                    + ", search_mode "
+                    + json.dumps(request.search_mode)
+                    + ", and advertised required constraints "
+                    + json.dumps(normalized_constraints, sort_keys=True)
+                    + ". Keep semantic_query within that same product scope; "
+                    "you may remove inferred attribute wording from it"
+                    + ". If the shopper explicitly stated the same objective "
+                    "requirement using different words, replace each value with "
+                    "the shopper's shortest exact wording. Otherwise the model "
+                    "inferred it: remove it from required_constraints and remove "
+                    "the attribute claim from shopper_guidance. Implied weather, "
+                    "occasion, or style goals are not explicit requirements."
+                )
+
+            reviewed_constraint = pending_constraint_reviews.pop(
+                candidate_scope_key,
+                None,
+            )
+            if reviewed_constraint:
+                request = request.model_copy(
+                    update={
+                        "shopper_guidance": _generic_shopper_guidance(
+                            request.requested_product_type
+                        )
+                    }
+                )
+
+            exact_taxonomy_issue = (
+                _exact_taxonomy_issue(
+                    request.requested_product_type or "",
+                    request.taxonomy,
+                )
+                if (
+                    request.taxonomy_status == "exact_requested_type"
+                    and _advertised_scope_match(
+                        request.requested_product_type,
+                        capabilities,
+                    )
+                    is None
+                )
+                else None
+            )
+            if exact_taxonomy_issue:
+                shopper_stated_scope = bool(
+                    candidate_scope_key
+                    and _shopper_stated_product_scope(
+                        state.query,
+                        state.context,
+                        candidate_scope_key,
+                    )
+                )
+                if shopper_stated_scope:
+                    failed_repair_scope_key = candidate_scope_key
+                    failed_agent_selected_scope = False
+                return (
+                    SEARCH_VALIDATION_ERROR_PREFIX
+                    + exact_taxonomy_issue
+                    + _lock_taxonomy_constraints(candidate_scope_key, request)
+                    + (
+                        ". Preserve the shopper-stated requested_product_type "
+                        f"{json.dumps(request.requested_product_type)}."
+                        if shopper_stated_scope
+                        else ". Re-read the current shopper request and correct "
+                        "requested_product_type if the rejected value was not "
+                        "shopper-stated."
+                    )
+                    + " Choose only advertised taxonomy values that faithfully "
+                    "represent that scope. Do not repeat exact_requested_type "
+                    "for this repair. If each selected value is a kind of "
+                    "a shopper-stated umbrella, use "
+                    "member_of_requested_umbrella; otherwise use "
+                    "no_direct_catalog_match rather than an adjacent type."
+                )
+
+            advertised_match = (
+                _advertised_taxonomy_value(
+                    request.requested_product_type,
+                    capabilities,
+                )
+                if request.taxonomy_status == "no_direct_catalog_match"
+                else None
+            )
+            if advertised_match:
+                failed_repair_scope_key = candidate_scope_key
+                failed_agent_selected_scope = False
+                return (
+                    SEARCH_VALIDATION_ERROR_PREFIX
+                    + f"The requested product type '{request.requested_product_type}' "
+                    f"matches advertised taxonomy value '{advertised_match}'. "
+                    "Do not report no direct match; select that advertised value "
+                    "with exact_requested_type."
+                    + _lock_taxonomy_constraints(candidate_scope_key, request)
+                )
+
+            failed_repair_scope_key = None
+            failed_constraint_scope_key = None
+            failed_agent_selected_scope = False
+
+            shopper_scope_key = (
+                (_normalize_product_text(state.query), candidate_scope_key)
+                if candidate_scope_key
+                and _text_mentions_product_type(
+                    state.query,
+                    candidate_scope_key,
+                )
+                else None
+            )
+
+            if request.taxonomy_status == "no_direct_catalog_match":
+                with catalog_tool_lock:
+                    if (
+                        shopper_scope_key is not None
+                        and shopper_scope_key in searched_shopper_scopes
+                    ):
+                        return (
+                            "STOP_TOOL_USE: This shopper-requested product scope "
+                            "was already searched in this turn. Do not search an "
+                            "adjacent taxonomy or report the requested scope as "
+                            "unavailable. Use the result already returned.\n\n"
+                            + _SEARCH_SCOPE_COMPLETE_NOTE
+                        )
+                lines = [
+                    "STOP_TOOL_USE: No faithful advertised catalog taxonomy "
+                    "matches the requested product type "
+                    f"'{request.requested_product_type}'. "
+                    "Do not search adjacent product types. Tell the shopper the "
+                    "requested type is not advertised and ask before offering an "
+                    "alternative.",
+                    _format_catalog_scope_outcome(
+                        {
+                            "outcome": "no_direct_catalog_match",
+                            "requested_product_type": request.requested_product_type,
+                        }
+                    ),
+                ]
+                if request.scope_complete:
+                    lines.append(_SEARCH_SCOPE_COMPLETE_NOTE)
+                return "\n\n".join(lines)
 
             taxonomy_constraints, taxonomy_issues = _taxonomy_hard_constraints(
                 request.taxonomy,
@@ -1390,11 +2750,19 @@ class DeepAgentsRuntime:
                 },
                 search_mode=normalized_search_mode,
             )
+            explicit_alternatives = _explicit_advertised_alternatives(
+                request.requested_product_type,
+                capabilities,
+            )
             plan = build_catalog_search_plan(
                 intent,
                 capabilities,
                 has_image=bool(state.image),
-                top_k=self.config.top_k_retrieve,
+                top_k=_alternative_candidate_limit(
+                    explicit_alternatives,
+                    capabilities,
+                    self.config.top_k_retrieve,
+                ),
             )
             if not plan.should_search:
                 if plan.constraint_issues:
@@ -1422,6 +2790,16 @@ class DeepAgentsRuntime:
                     taxonomy_constraints,
                     normalized_constraints,
                 )
+                if (
+                    shopper_scope_key is not None
+                    and shopper_scope_key in searched_shopper_scopes
+                ):
+                    return (
+                        "STOP_TOOL_USE: This shopper-requested product scope "
+                        "was already searched in this turn. Do not search an "
+                        "adjacent taxonomy. Use the result already returned.\n\n"
+                        + _SEARCH_SCOPE_COMPLETE_NOTE
+                    )
                 if search_scope in searched_catalog_scopes:
                     return (
                         "STOP_TOOL_USE: This catalog taxonomy and constraint scope was already "
@@ -1437,7 +2815,13 @@ class DeepAgentsRuntime:
                         "clarifying question if the available products are not enough."
                     )
                 searched_catalog_scopes.append(search_scope)
+                if shopper_scope_key is not None:
+                    searched_shopper_scopes.add(shopper_scope_key)
                 catalog_searches_this_turn += 1
+                search_budget_exhausted = (
+                    catalog_searches_this_turn
+                    >= self.config.max_catalog_searches_per_turn
+                )
 
             search_start = time.monotonic()
             execution = execute_catalog_search(
@@ -1448,6 +2832,16 @@ class DeepAgentsRuntime:
             )
             catalog_elapsed = time.monotonic() - search_start
             result = execution.result
+            if result.ok:
+                result = result.model_copy(
+                    update={
+                        "products": _products_with_alternative_coverage(
+                            result.products,
+                            explicit_alternatives,
+                            self.config.top_k_retrieve,
+                        )
+                    }
+                )
             with catalog_tool_lock:
                 state.timings["catalog_search"] = max(
                     state.timings.get("catalog_search", 0.0),
@@ -1467,23 +2861,52 @@ class DeepAgentsRuntime:
                             retrieved[product.display_name] = product.image_url
             if not result.ok:
                 return result.error.message if result.error else "Catalog search failed."
-            if not result.products:
-                return "No matching catalog products were found."
 
             confirmed_filters = {
                 name: value
                 for name, value in plan.hard_filters.items()
                 if name not in taxonomy_fields
             }
+            if not result.products:
+                lines = [
+                    _SEARCH_NO_MATCH_GROUNDING_NOTE,
+                    _format_search_taxonomy_evidence(taxonomy_constraints),
+                ]
+                if confirmed_filters:
+                    lines.append(_format_search_filter_evidence(confirmed_filters))
+                lines.append(
+                    _format_catalog_scope_outcome(
+                        {
+                            "outcome": "zero_results",
+                            "requested_product_type": request.requested_product_type,
+                            "taxonomy": taxonomy_constraints,
+                            "confirmed_filters": confirmed_filters,
+                        }
+                    )
+                )
+                if request.scope_complete:
+                    lines.append(_SEARCH_SCOPE_COMPLETE_NOTE)
+                elif search_budget_exhausted:
+                    lines.append(_SEARCH_BUDGET_EXHAUSTED_NOTE)
+                return "\n\n".join(lines)
+
             lines = [
                 _SEARCH_RESULT_GROUNDING_NOTE,
                 _format_search_direction_evidence(request.semantic_query),
+                _format_search_guidance_evidence(
+                    _safe_shopper_guidance(
+                        request.shopper_guidance,
+                        request.requested_product_type,
+                    )
+                ),
                 _format_search_taxonomy_evidence(taxonomy_constraints),
             ]
             if confirmed_filters:
                 lines.append(_format_search_filter_evidence(confirmed_filters))
             if request.scope_complete:
                 lines.append(_SEARCH_SCOPE_COMPLETE_NOTE)
+            elif search_budget_exhausted:
+                lines.append(_SEARCH_BUDGET_EXHAUSTED_NOTE)
             for product in result.products:
                 lines.append(_format_product(product))
             prefix = (
@@ -1737,15 +3160,9 @@ class DeepAgentsRuntime:
             knowledge for a missing policy.
             """
 
-            skills_root = self._shopper_skills_root()
-            policies_path = (
-                skills_root / "shopper" / "store-policy" / "policies.yaml"
-                if skills_root is not None
-                else Path("store-policy/policies.yaml")
-            )
             result = get_store_policy(
                 GetStorePolicyInput(topic=topic),
-                policies_path,
+                _store_policies_path(),
             )
             return _format_policy_result(result)
 
@@ -1809,7 +3226,9 @@ class DeepAgentsRuntime:
         tool_loop_control = ToolLoopControlMiddleware()
 
         @tool(args_schema=skill_activation_input, return_direct=False)
-        def activate_shopper_skills_tool(skill_names: list[str]) -> str:
+        def activate_shopper_skills_tool(
+            skill_names: list[str],
+        ) -> str:
             """Select and load shopper behavior skills for this turn. This is
             the required first step before answering or calling shopping tools.
             Select the smallest set whose registered descriptions cover the
@@ -1822,6 +3241,7 @@ class DeepAgentsRuntime:
             states a budget. Keep outfit-styling as the primary skill throughout
             an active outfit-building thread, including its single-piece follow-up
             searches.
+
             """
 
             selected_names = list(dict.fromkeys(skill_names))
@@ -1847,23 +3267,11 @@ class DeepAgentsRuntime:
         return create_deep_agent(
             model=self._create_chat_model(),
             tools=[activate_shopper_skills_tool, *shopping_tools],
-            system_prompt=self._system_prompt(
-                turn_capabilities,
-                persona_snapshot=persona_snapshot,
-            ),
-            middleware=[skill_gate, tool_loop_control],
+            system_prompt=self._system_prompt(turn_capabilities),
+            middleware=[tool_loop_control, skill_gate],
             backend=skills_backend,
             checkpointer=self._checkpointer,
         )
-
-    async def _ensure_checkpointer_ready(self) -> None:
-        if self._checkpointer_ready:
-            return
-        async with self._checkpointer_setup_lock:
-            if self._checkpointer_ready:
-                return
-            await self._checkpointer.asetup()
-            self._checkpointer_ready = True
 
     async def _reset_agent_thread(self, identity: RequestIdentity) -> None:
         try:
@@ -1896,6 +3304,12 @@ class DeepAgentsRuntime:
         *,
         request_id: str,
     ) -> str:
+        rejected_search_response = _rejected_catalog_search_response(
+            result,
+            request_id=request_id,
+        )
+        if rejected_search_response:
+            return rejected_search_response
         if not getattr(self.config, "grounding_rewrite_enabled", True):
             return _scrub_internal_shopper_language(draft_response)
 
@@ -1913,13 +3327,15 @@ class DeepAgentsRuntime:
             _prior_turn_messages(_result_messages(result), request_id),
             max_chars=max_evidence_chars,
         )
-        if current_evidence and _has_search_only_tool_evidence(
+        search_only = bool(current_evidence) and _has_search_only_tool_evidence(
             result,
             request_id=request_id,
-        ):
-            return self._build_search_only_response(
+        )
+        if search_only:
+            return self._rewrite_search_only_response(
                 state,
                 result,
+                draft_response,
                 request_id=request_id,
             )
         if not draft_response:
@@ -1976,42 +3392,57 @@ class DeepAgentsRuntime:
             rewritten = _content_to_text(rewrite_result)
         return _scrub_internal_shopper_language(rewritten or draft_response)
 
+    def _rewrite_search_only_response(
+        self,
+        state: State,
+        result: Any,
+        draft_response: str,
+        *,
+        request_id: str,
+    ) -> str:
+        """Combine bounded skill guidance with deterministic search facts."""
+
+        shopper_guidance = _search_guidance_evidence(
+            result,
+            request_id=request_id,
+        )
+        return self._build_search_only_response(
+            state,
+            result,
+            request_id=request_id,
+            intro=(
+                "\n".join(shopper_guidance)
+                or self._active_skill_response_guidance(state)
+            ),
+        )
+
+    def _active_skill_response_guidance(self, state: State) -> str:
+        active_paths = set(
+            state.agent_diagnostics.get("skill_files_read", [])
+        )
+        registry = _shopper_skill_registry(self._shopper_skills_root())
+        guidance = [
+            skill.response_guidance
+            for skill in registry.values()
+            if skill.path in active_paths
+        ]
+        return "\n".join(guidance)
+
     def _build_search_only_response(
         self,
         state: State,
         result: Any,
         *,
         request_id: str,
+        intro: str = "",
     ) -> str:
-        """Render search facts deterministically around a fact-free rationale."""
-
-        if "/shopper/outfit-styling/SKILL.md" not in state.agent_diagnostics.get(
-            "skill_files_read",
-            [],
-        ):
-            return _format_search_only_response(
-                state,
-                result,
-                request_id=request_id,
-            )
+        """Return a deterministic facts-only fallback for search evidence."""
 
         return _format_search_only_response(
             state,
             result,
             request_id=request_id,
-            rationale=(
-                _multi_search_direction(
-                    state,
-                    result,
-                    request_id=request_id,
-                )
-                if _successful_search_count(result, request_id=request_id) > 1
-                else _single_search_direction(
-                    state,
-                    result,
-                    request_id=request_id,
-                )
-            ),
+            intro=intro,
         )
 
     def _create_skills_backend(self):
@@ -2037,7 +3468,6 @@ class DeepAgentsRuntime:
     def _system_prompt(
         self,
         capabilities: CatalogCapabilities,
-        persona_snapshot: dict[str, Any] | None = None,
     ) -> str:
         catalog_context = format_catalog_capabilities_for_prompt(capabilities)
         prompt = f"""You are a retail shopping assistant for the products advertised by the active catalog.
@@ -2093,16 +3523,21 @@ Rules:
   shopping use search_catalog_tool. Every call declares `taxonomy_status` as
   `exact_requested_type`, `member_of_requested_umbrella`,
   `agent_selected_type`, `no_direct_catalog_match`, or `image_only`. Exact means
-  every selected value is the same product type the shopper named. Umbrella-member means the shopper
+  the selected taxonomy directly represents the requested focused role. For a
+  single selected value, the requested type must name that value; the semantic
+  query may focus on soft ranking direction. Umbrella-member means the shopper
   named a true umbrella and every selected value is its child. Never reverse
   that relation merely because the requested type belongs to a broader selected
   category. Apply one direction test to every selected value: "is this a kind of
   the product scope the shopper asked for?" A skirt is a kind of bottom; a flat
   or sandal is not a kind of sneaker even though all are footwear. If no value
   qualifies because a broad styling or discovery request did not name a product
-  type, `agent_selected_type` may choose one focused role in one category and
-  include every advertised subcategory that serves that role. It must not replace
-  an explicitly requested unavailable type. If no value
+  type, `agent_selected_type` may choose exactly one advertised subcategory as
+  the focused starting role. It must not replace
+  an explicitly requested unavailable type. Evaluate every product role named
+  in the current turn independently. If the shopper names a product type for a
+  role, including as an alternative, confirmation, comparison, or follow-up,
+  `agent_selected_type` is forbidden for that role. If no value
   qualifies for an explicitly requested concrete product type, use
   `no_direct_catalog_match` with empty taxonomy arrays; that path reports the
   gap without retrieval and has no required constraints. Decide it from the
@@ -2110,9 +3545,15 @@ Rules:
   does not erase an advertised type. Never use that status for an outfit, occasion, season,
   weather need, style/vibe, or product attribute. Never search an adjacent type
   as a substitute.
-- Every search call must include exactly one `semantic_query`, one
-  `taxonomy_status`, one `taxonomy` object, and one `required_constraints`
-  object, plus `scope_complete`. Set `scope_complete` true only when this search
+- Every search call must include exactly one `semantic_query`, one required
+  nullable `requested_product_type`, one product-agnostic `shopper_guidance`,
+  one `taxonomy_status`, one `taxonomy` object, and one `required_constraints`
+  object, plus `scope_complete`.
+  `requested_product_type` is the shortest product noun or true umbrella from
+  the current turn or direct antecedent. Exclude color, material, fit,
+  occasion, weather, and style modifiers; for `agent_selected_type`, use the
+  chosen advertised role noun. It is null only for image-only search. Set
+  `scope_complete` true only when this search
   plus existing turn evidence is enough to answer the shopper's complete current
   request. A recommendation-only one-role request is complete after its one
   inclusive search. Set it false while an explicitly requested product role,
@@ -2126,6 +3567,12 @@ Rules:
   product meaning and soft preferences in `semantic_query`. Use an
   empty string only for image-only search; do not create synonyms, paraphrases,
   or query expansions as additional searches.
+- Write `shopper_guidance` before retrieval as one concise sentence connecting
+  the selected role to the shopper's stated goal or direct antecedent. It may
+  express product-agnostic styling judgment, but it must not name or describe
+  candidate products, name product types outside the selected advertised scope,
+  or mention internal search mechanics. Use an empty string for image-only and
+  no-direct requests.
 - The `taxonomy.category` and `taxonomy.subcategory` arrays contain only the
   exact values allowed by the current tool schema, which is generated from the
   active Catalog capabilities. List each value once. Use all applicable values
@@ -2157,8 +3604,13 @@ Rules:
   weakening it. Preserve performance requirements such as water resistance or
   machine washability here as well. An attribute that defines the requested
   products is required even without the words "must have." Semantic relevance cannot guarantee
-  a must-have requirement; only explicitly optional or preferred wording makes
-  it soft. Use only advertised filter properties directly. For "Do you have
+  a must-have requirement. Recommendation adjectives such as comfortable,
+  relaxed, soft, breathable, lightweight, casual, dressy, bold, bright,
+  vibrant, or sporty always remain semantic preferences, never objective hard
+  filters. Before every search, compare each modifier on the target product
+  with the advertised filter schema and copy every exact matching value into
+  `required_constraints`; never leave the object empty when one applies. Use only advertised
+  filter properties directly. For "Do you have
   water-resistant bags?", include
   `{{"unadvertised_requirements": ["water resistance"]}}`; do not send an
   empty object.
@@ -2209,9 +3661,11 @@ Rules:
   weather performance, sale status, or a specific shade remain must-haves when
   they define the requested product.
 - For alternatives joined by "or", search the faithful advertised branch and
-  disclose the unavailable branch. Do not reject a supported branch merely
-  because another alternative is unavailable, and never list the supported
-  taxonomy value in `unadvertised_requirements`.
+  preserve every named branch. Search a supported branch with
+  `scope_complete=false` when another branch is unavailable, then report the
+  unavailable branch with one `no_direct_catalog_match` call. Do not reject a
+  supported branch merely because another alternative is unavailable, and never
+  list the supported taxonomy value in `unadvertised_requirements`.
 - When every named alternative is advertised, use
   `member_of_requested_umbrella` and include all of them in one call. Do not use
   `agent_selected_type` to narrow an explicit umbrella or alternatives.
@@ -2354,7 +3808,7 @@ Rules:
   available through the current tools. If asked, say that plainly and direct
   the shopper to checkout or the retailer product page. Do not treat a catalog
   result as proof that an item is in stock or ready to ship.
-- Persona or preference context is guidance only. The current shopper request
+- Previous preference context is guidance only. The current shopper request
   wins when it conflicts with previous preferences.
 - Keep final answers concise and grounded in tool results. Attribute materials,
   comfort, construction, and outdoor-practicality claims to the specific items
@@ -2364,8 +3818,6 @@ Rules:
   unsupported phrases about grass, gravel, water resistance, all-day comfort,
   maximum breathability, or best-in-category performance.
 """
-        if persona_snapshot:
-            return f"{_format_persona_block(persona_snapshot)}\n\n{prompt}"
         return prompt
 
     def _build_user_message(self, state: State, identity: RequestIdentity) -> str:
@@ -2538,6 +3990,9 @@ def _empty_agent_diagnostics(final_termination_reason: str) -> dict[str, Any]:
         "tool_calls": [],
         "rejected_tool_calls": [],
         "duplicate_tool_calls": [],
+        "product_evidence": [],
+        "product_evidence_truncated": False,
+        "catalog_scope_outcomes": [],
         "final_termination_reason": final_termination_reason,
         "partial_graph_messages": [],
     }
@@ -2580,18 +4035,49 @@ def _collect_agent_diagnostics(
     turn_messages = _current_turn_messages(messages, request_id)
     tool_results = _tool_results_by_call_id(turn_messages)
     skill_files_read: list[str] = []
+    successful_product_tool_calls: dict[str, str] = {}
 
     for message in turn_messages:
         if _message_type(message) != "ai":
             continue
-        for raw_call in _value(message, "tool_calls") or []:
+        calls = [
+            (raw_call, None)
+            for raw_call in (_value(message, "tool_calls") or [])
+        ]
+        additional_kwargs = _value(message, "additional_kwargs") or {}
+        restored_fields_by_call: dict[str, list[str]] = {}
+        if isinstance(additional_kwargs, dict):
+            restored_calls = additional_kwargs.get(
+                SERVER_RESTORED_TOOL_CALL_FIELDS
+            )
+            if isinstance(restored_calls, list):
+                for restored_call in restored_calls[:8]:
+                    tool_call_id = str(
+                        _value(restored_call, "tool_call_id") or ""
+                    )
+                    fields = _value(restored_call, "fields")
+                    if not tool_call_id or not isinstance(fields, list):
+                        continue
+                    restored_fields_by_call[tool_call_id] = [
+                        str(field)[:64] for field in fields[:8]
+                    ]
+            calls.extend(
+                (raw_call, str(_value(raw_call, "rejection_reason") or "rejected"))
+                for raw_call in (
+                    additional_kwargs.get(_SERVER_REJECTED_TOOL_CALLS) or []
+                )
+            )
+        for raw_call, forced_rejection_reason in calls:
             call = _normalized_tool_call(raw_call)
             sequence = len(diagnostics["tool_calls"]) + 1
             result_message = tool_results.get(call["tool_call_id"])
-            status, rejection_reason = _tool_call_status(
-                call["tool_name"],
-                result_message,
-            )
+            if forced_rejection_reason:
+                status, rejection_reason = "rejected", forced_rejection_reason
+            else:
+                status, rejection_reason = _tool_call_status(
+                    call["tool_name"],
+                    result_message,
+                )
             entry = {
                 "sequence": sequence,
                 "tool_name": call["tool_name"],
@@ -2600,6 +4086,9 @@ def _collect_agent_diagnostics(
             }
             if rejection_reason:
                 entry["rejection_reason"] = rejection_reason
+            restored_fields = restored_fields_by_call.get(call["tool_call_id"])
+            if restored_fields:
+                entry["restored_fields"] = restored_fields
             if rejection_reason == "duplicate_catalog_scope":
                 entry["duplicate"] = True
                 diagnostics["duplicate_tool_calls"].append(sequence)
@@ -2607,11 +4096,30 @@ def _collect_agent_diagnostics(
                 diagnostics["rejected_tool_calls"].append(sequence)
             diagnostics["tool_calls"].append(entry)
 
+            if (
+                status == "completed"
+                and call["tool_call_id"]
+                and call["tool_name"]
+                in {"search_catalog_tool", "get_product_details_tool"}
+            ):
+                successful_product_tool_calls[call["tool_call_id"]] = call[
+                    "tool_name"
+                ]
+
             for skill_path in _skill_file_paths(call, status):
                 if skill_path not in skill_files_read:
                     skill_files_read.append(skill_path)
 
     diagnostics["skill_files_read"] = skill_files_read
+    product_evidence, product_evidence_truncated = _diagnostic_product_evidence(
+        turn_messages,
+        successful_product_tool_calls,
+    )
+    diagnostics["product_evidence"] = product_evidence
+    diagnostics["product_evidence_truncated"] = product_evidence_truncated
+    diagnostics["catalog_scope_outcomes"] = _diagnostic_catalog_scope_outcomes(
+        turn_messages
+    )
     if preserve_partial_messages:
         partial, truncated = _serialize_partial_graph_messages(turn_messages)
         diagnostics["partial_graph_messages"] = partial
@@ -2675,15 +4183,77 @@ def _no_direct_taxonomy_response(
 ) -> str | None:
     """Return the fixed shopper response for a current-turn no-match result."""
 
-    messages = _current_turn_messages(_result_messages(result), request_id)
-    for message in messages:
-        if _message_type(message) != "tool":
-            continue
-        content = _content_to_text(_value(message, "content"))
+    outcomes = _business_tool_result_contents(
+        _current_turn_messages(_result_messages(result), request_id)
+    )
+    no_direct_outcomes = [
+        content
+        for content in outcomes
         if content.startswith(
             "STOP_TOOL_USE: No faithful advertised catalog taxonomy"
-        ):
-            return _NO_DIRECT_TAXONOMY_RESPONSE
+        )
+    ]
+    repair_or_no_direct = all(
+        content.startswith(
+            (
+                SEARCH_VALIDATION_ERROR_PREFIX,
+                "STOP_TOOL_USE: No faithful advertised catalog taxonomy",
+            )
+        )
+        for content in outcomes
+    )
+    if no_direct_outcomes and repair_or_no_direct:
+        return _NO_DIRECT_TAXONOMY_RESPONSE
+    return None
+
+
+def _rejected_catalog_search_response(
+    result: Any,
+    *,
+    request_id: str,
+) -> str | None:
+    """Fail closed when every current-turn business call is a rejected search."""
+
+    messages = _current_turn_messages(_result_messages(result), request_id)
+    tool_results = _tool_results_by_call_id(messages)
+    business_calls: list[tuple[str, str]] = []
+    for message in messages:
+        if _message_type(message) != "ai":
+            continue
+        calls = [
+            (raw_call, False)
+            for raw_call in (_value(message, "tool_calls") or [])
+        ]
+        additional_kwargs = _value(message, "additional_kwargs") or {}
+        if isinstance(additional_kwargs, dict):
+            calls.extend(
+                (raw_call, True)
+                for raw_call in (
+                    additional_kwargs.get(_SERVER_REJECTED_TOOL_CALLS) or []
+                )
+            )
+        for raw_call, server_rejected in calls:
+            call = _normalized_tool_call(raw_call)
+            tool_name = call["tool_name"]
+            if tool_name in {SKILL_ACTIVATION_TOOL_NAME, "read_file"}:
+                continue
+            status = (
+                "rejected"
+                if server_rejected
+                else _tool_call_status(
+                    tool_name,
+                    tool_results.get(call["tool_call_id"]),
+                )[0]
+            )
+            business_calls.append((tool_name, status))
+
+    if not business_calls:
+        return None
+    if all(
+        tool_name == "search_catalog_tool" and status == "rejected"
+        for tool_name, status in business_calls
+    ):
+        return _REJECTED_CATALOG_SEARCH_RESPONSE
     return None
 
 
@@ -2694,16 +4264,59 @@ def _unsupported_requirement_response(
 ) -> str | None:
     """Return the fixed shopper response for an unenforceable must-have."""
 
-    messages = _current_turn_messages(_result_messages(result), request_id)
+    outcomes = _business_tool_result_contents(
+        _current_turn_messages(_result_messages(result), request_id)
+    )
+    unsupported_outcomes = [
+        content
+        for content in outcomes
+        if content.startswith(
+            "The requested catalog requirement cannot be enforced:"
+        )
+    ]
+    if unsupported_outcomes and len(unsupported_outcomes) == len(outcomes):
+        return _UNSUPPORTED_REQUIREMENT_RESPONSE
+    return None
+
+
+def _business_tool_result_contents(messages: list[Any]) -> list[str]:
+    """Return non-activation tool outcomes in graph order."""
+
+    outcomes: list[str] = []
     for message in messages:
         if _message_type(message) != "tool":
             continue
+        name = str(_value(message, "name") or "")
         content = _content_to_text(_value(message, "content"))
-        if content.startswith(
-            "The requested catalog requirement cannot be enforced:"
+        if name in {SKILL_ACTIVATION_TOOL_NAME, "read_file"} or content.startswith(
+            (
+                SKILL_ACTIVATION_COMPLETE,
+                SKILL_ACTIVATION_REQUIRED,
+                "SHOPPER_SKILL_ACTIVATION_FAILED:",
+            )
         ):
-            return _UNSUPPORTED_REQUIREMENT_RESPONSE
-    return None
+            continue
+        outcomes.append(content)
+    return outcomes
+
+
+def _has_unsupported_requirement_outcome(
+    result: Any,
+    *,
+    request_id: str,
+) -> bool:
+    """Return whether the current turn contains an unenforceable requirement."""
+
+    return any(
+        _message_type(message) == "tool"
+        and _content_to_text(_value(message, "content")).startswith(
+            "The requested catalog requirement cannot be enforced:"
+        )
+        for message in _current_turn_messages(
+            _result_messages(result),
+            request_id,
+        )
+    )
 
 
 def _tool_results_by_call_id(messages: list[Any]) -> dict[str, Any]:
@@ -2865,6 +4478,157 @@ def _diagnostic_json_value(value: Any) -> Any:
     return str(value)
 
 
+def _diagnostic_product_evidence(
+    messages: list[Any],
+    successful_tool_calls: dict[str, str],
+) -> tuple[list[dict[str, Any]], bool]:
+    """Return bounded product facts from successful current-turn tool results."""
+
+    evidence: list[dict[str, Any]] = []
+    truncated = False
+    aggregate_limit_reached = False
+    for message in messages:
+        if _message_type(message) != "tool":
+            continue
+
+        tool_call_id = str(_value(message, "tool_call_id") or "")
+        source_tool = successful_tool_calls.get(tool_call_id)
+        content = _content_to_text(_value(message, "content"))
+        if source_tool == "search_catalog_tool":
+            if "SEARCH_RESULT_GROUNDING_NOTE" not in content:
+                continue
+            evidence_type = "search_result"
+            search_scope = {
+                "taxonomy": _bounded_product_evidence_value(
+                    _search_taxonomy_evidence(content)
+                ),
+                "confirmed_filters": _bounded_product_evidence_value(
+                    _search_filter_evidence(content)
+                ),
+            }
+        elif source_tool == "get_product_details_tool":
+            if "PRODUCT_DETAIL_GROUNDING_NOTE" not in content:
+                continue
+            evidence_type = "product_detail"
+            search_scope = None
+        else:
+            continue
+
+        for product in _product_evidence_records(content):
+            product_ref = product.get("product_ref")
+            product_name = product.get("name")
+            if not product_ref or not product_name:
+                continue
+            record = {
+                "product_ref": _bounded_product_evidence_value(product_ref),
+                "product_name": _bounded_product_evidence_value(product_name),
+                "source_tool": source_tool,
+                "evidence_type": evidence_type,
+                "facts": _diagnostic_product_facts(product),
+            }
+            if search_scope is not None:
+                record["search_scope"] = search_scope
+            if (
+                len(evidence) >= _MAX_DIAGNOSTIC_PRODUCT_EVIDENCE
+                or aggregate_limit_reached
+            ):
+                truncated = True
+                continue
+            candidate = [*evidence, record]
+            if len(json.dumps(candidate, sort_keys=True, default=str)) > (
+                _MAX_DIAGNOSTIC_PRODUCT_EVIDENCE_CHARS
+            ):
+                truncated = True
+                aggregate_limit_reached = True
+                continue
+            evidence.append(record)
+    return evidence, truncated
+
+
+def _diagnostic_catalog_scope_outcomes(
+    messages: list[Any],
+) -> list[dict[str, Any]]:
+    """Return bounded server-authored outcomes that contain no products."""
+
+    outcomes: list[dict[str, Any]] = []
+    allowed_fields = {
+        "outcome",
+        "requested_product_type",
+        "taxonomy",
+        "confirmed_filters",
+    }
+    for message in messages:
+        if _message_type(message) != "tool":
+            continue
+        outcome = _search_json_evidence(
+            _content_to_text(_value(message, "content")),
+            _CATALOG_SCOPE_OUTCOME_PREFIX,
+        )
+        if (
+            not outcome
+            or not set(outcome).issubset(allowed_fields)
+            or outcome.get("outcome")
+            not in {"no_direct_catalog_match", "zero_results"}
+        ):
+            continue
+        bounded = _bounded_product_evidence_value(outcome)
+        if isinstance(bounded, dict) and bounded not in outcomes:
+            outcomes.append(bounded)
+        if len(outcomes) >= 8:
+            break
+    return outcomes
+
+
+def _diagnostic_product_facts(product: dict[str, Any]) -> dict[str, Any]:
+    """Extract bounded, structured facts from one parsed product record."""
+
+    facts: dict[str, Any] = {}
+    for key in ("category", "brand", "price"):
+        value = product.get(key)
+        if value:
+            facts[key] = _bounded_product_evidence_value(value)
+    facts["image_available"] = bool(product.get("image_url"))
+
+    for raw_detail in product.get("details") or []:
+        if len(facts) >= _MAX_DIAGNOSTIC_PRODUCT_FACTS:
+            break
+        if not isinstance(raw_detail, str) or ":" not in raw_detail:
+            continue
+        name, value = raw_detail.split(":", 1)
+        name = name.strip()
+        value = value.strip()
+        if not name or not value:
+            continue
+        bounded_name = str(_bounded_product_evidence_value(name))
+        if bounded_name not in facts:
+            facts[bounded_name] = _bounded_product_evidence_value(value)
+    return facts
+
+
+def _bounded_product_evidence_value(value: Any, *, depth: int = 0) -> Any:
+    """Bound strings and collections copied into product evidence diagnostics."""
+
+    if isinstance(value, str):
+        return value[:_MAX_DIAGNOSTIC_PRODUCT_STRING_CHARS]
+    if value is None or isinstance(value, (int, float, bool)):
+        return value
+    if depth >= 4:
+        return str(value)[:_MAX_DIAGNOSTIC_PRODUCT_STRING_CHARS]
+    if isinstance(value, dict):
+        return {
+            str(key)[:_MAX_DIAGNOSTIC_PRODUCT_STRING_CHARS]: (
+                _bounded_product_evidence_value(item, depth=depth + 1)
+            )
+            for key, item in list(value.items())[:_MAX_DIAGNOSTIC_PRODUCT_FACTS]
+        }
+    if isinstance(value, (list, tuple)):
+        return [
+            _bounded_product_evidence_value(item, depth=depth + 1)
+            for item in value[:_MAX_DIAGNOSTIC_PRODUCT_FACTS]
+        ]
+    return str(value)[:_MAX_DIAGNOSTIC_PRODUCT_STRING_CHARS]
+
+
 def _extract_final_text(result: Any) -> str:
     if isinstance(result, dict):
         messages = result.get("messages")
@@ -2966,7 +4730,10 @@ def _has_search_only_tool_evidence(result: Any, *, request_id: str) -> bool:
             content
         ):
             has_search_result = True
-    return has_search_result and set(tool_names) == {"search_catalog_tool"}
+    return (
+        has_search_result
+        and set(tool_names) == {"search_catalog_tool"}
+    )
 
 
 def _format_search_only_response(
@@ -2974,189 +4741,281 @@ def _format_search_only_response(
     result: Any,
     *,
     request_id: str,
-    rationale: str = "",
+    products: list[dict[str, Any]] | None = None,
+    intro: str = "",
+    heading: str = "Catalog candidates (verified name, price, and category):",
 ) -> str:
     """Render grounded search facts without interpreting display-name words."""
 
-    products = [
-        product for product in state.product_results if isinstance(product, dict)
-    ]
-    category_counts = _returned_category_counts(state)
-    candidate_count = sum(category_counts.values()) or len(products)
-    if rationale.strip():
-        lines = ["General styling direction: " + rationale.strip(), ""]
+    search_groups = _search_result_groups(result, request_id=request_id)
+    grouped_lines, grouped_names = _grouped_search_response_lines(search_groups)
+    if len(grouped_lines) > 0:
+        lines = grouped_lines
+        displayed_names = grouped_names
     else:
-        noun = "candidate" if candidate_count == 1 else "candidates"
-        lines = [f"I found {candidate_count} catalog {noun}.", ""]
-    lines.extend(("Catalog candidates:", ""))
-    for product in products:
-        name = str(product.get("display_name") or "").strip()
-        if not name:
-            continue
-        parts = [f"**{name}**"]
-        price = _product_result_price(product)
-        if price:
-            parts.append(price)
-        category = str(product.get("category") or "").strip()
-        if category:
-            parts.append(category.replace("_", " "))
-        lines.append("- " + " — ".join(parts))
+        displayed_products = (
+            products
+            if products is not None
+            else [
+                product
+                for product in state.product_results
+                if isinstance(product, dict)
+            ]
+        )
+        candidate_count = len(displayed_products)
+        if intro.strip():
+            lines = [
+                "General guidance (not product-specific facts):",
+                intro.strip(),
+                "",
+            ]
+        else:
+            noun = "candidate" if candidate_count == 1 else "candidates"
+            lines = [f"I found {candidate_count} catalog {noun}.", ""]
+        lines.extend((heading, ""))
+        displayed_names = set()
+        for product in displayed_products:
+            name = str(product.get("display_name") or "").strip()
+            if not name:
+                continue
+            displayed_names.add(name)
+            parts = [f"**{name}**"]
+            price = _product_result_price(product)
+            if price:
+                parts.append(price)
+            category = str(product.get("category") or "").strip()
+            if category:
+                parts.append(category.replace("_", " "))
+            lines.append("- " + " — ".join(parts))
 
-    filter_statements = _confirmed_search_filter_statements(
+    filter_groups = _confirmed_search_filter_groups(
+        result,
+        request_id=request_id,
+        displayed_names=displayed_names,
+    )
+    if filter_groups:
+        lines.extend(("", "Catalog-confirmed filters by search:"))
+        for group in filter_groups:
+            product_names = group["product_names"]
+            scope = (
+                ", ".join(f"**{name}**" for name in product_names)
+                if product_names
+                else "Search candidates"
+            )
+            lines.append(f"- {scope}: {'; '.join(group['statements'])}.")
+    unavailable_types = _no_direct_search_types(
         result,
         request_id=request_id,
     )
-    if filter_statements:
-        lines.extend(("", "Catalog-confirmed filters: " + "; ".join(filter_statements) + "."))
+    if unavailable_types:
+        lines.extend(("", "Unavailable requested catalog types:"))
+        lines.extend(
+            f"- **{product_type}** is not advertised; I did not substitute "
+            "an adjacent product type."
+            for product_type in unavailable_types
+        )
+    if _has_unsupported_requirement_outcome(
+        result,
+        request_id=request_id,
+    ):
+        lines.extend(("", _UNSUPPORTED_REQUIREMENT_RESPONSE))
+    if not _search_scope_is_complete(result, request_id=request_id):
+        lines.extend(
+            (
+                "",
+                (
+                    "This is a partial result set. I can continue with the next "
+                    "requested piece or search scope."
+                ),
+            )
+        )
     lines.extend(
         (
             "",
             (
-                "Product-specific material, construction, length, fit, care, and "
-                "weather performance require a detail check unless confirmed above."
+                "Want a closer comparison? I can verify material, construction, "
+                "length, fit, care, or weather performance for a specific option."
             ),
         )
     )
     return "\n".join(lines)
 
 
-def _successful_search_count(result: Any, *, request_id: str) -> int:
-    """Count current-turn searches that returned grounded candidates."""
+def _search_result_groups(result: Any, *, request_id: str) -> list[dict[str, Any]]:
+    """Return successful search evidence grouped by the call that produced it."""
 
-    return sum(
-        1
-        for message in _current_turn_messages(_result_messages(result), request_id)
-        if _message_type(message) == "tool"
-        and "SEARCH_RESULT_GROUNDING_NOTE"
-        in _content_to_text(_value(message, "content"))
-    )
-
-
-def _single_search_direction(
-    state: State,
-    result: Any,
-    *,
-    request_id: str,
-) -> str:
-    """Describe one styling search without turning preferences into facts."""
-
-    records = _successful_search_records(result, request_id=request_id)
-    if records:
-        record = records[0]
-        direction = (
-            f'I used "{record["direction"]}" as the catalog ranking direction. '
-            "That direction is a preference, not a confirmed product fact."
-        )
-        if record["first_product"]:
-            direction += (
-                " A grounded starting pick from the ranked result is "
-                f'**{record["first_product"]}**.'
-            )
-        return direction
-
-    categories = list(_returned_category_counts(state))
-    category_text = categories[0] if categories else "the selected category"
-    return f"The catalog returned options in {category_text} for this styling step."
-
-
-def _multi_search_direction(
-    state: State,
-    result: Any,
-    *,
-    request_id: str,
-) -> str:
-    """Describe a multi-role result without inferring product attributes."""
-
-    records = _successful_search_records(result, request_id=request_id)
-    if records:
-        directions = "; ".join(
-            f'"{record["direction"]}"' for record in records
-        )
-        text = (
-            "I used separate catalog ranking directions for each requested role: "
-            f"{directions}. These are preferences, not confirmed product facts."
-        )
-        first_products = [
-            record["first_product"]
-            for record in records
-            if record["first_product"]
-        ]
-        if first_products:
-            text += (
-                " One grounded starting combination from those ranked results is "
-                + " + ".join(f"**{name}**" for name in first_products)
-                + "."
-            )
-        return text
-
-    categories = list(_returned_category_counts(state))
-    if not categories:
-        return "The returned options provide a grounded starting point for this look."
-    return (
-        "These returned roles can be combined for the requested look: "
-        + ", ".join(categories)
-        + "."
-    )
-
-
-def _successful_search_records(
-    result: Any,
-    *,
-    request_id: str,
-) -> list[dict[str, str]]:
-    """Read ranking direction and first product from successful searches."""
-
-    records: list[dict[str, str]] = []
+    groups: list[dict[str, Any]] = []
     for message in _current_turn_messages(_result_messages(result), request_id):
         if _message_type(message) != "tool":
             continue
         content = _content_to_text(_value(message, "content"))
         if "SEARCH_RESULT_GROUNDING_NOTE" not in content:
             continue
-        products = _product_evidence_records(content)
-        records.append(
+        guidance = _search_json_evidence(
+            content,
+            _SEARCH_GUIDANCE_EVIDENCE_PREFIX,
+        )
+        groups.append(
             {
-                "direction": _search_direction_evidence(content),
-                "first_product": products[0]["name"] if products else "",
+                "guidance": _scrub_internal_shopper_language(
+                    str(guidance.get("text") or "")
+                ).strip(),
+                "products": _product_evidence_records(content),
+                "taxonomy": _search_taxonomy_evidence(content),
             }
         )
-    return [record for record in records if record["direction"]]
+    return groups
 
 
-def _returned_category_counts(state: State) -> dict[str, int]:
-    """Count current-turn product summaries by their returned category."""
+def _grouped_search_response_lines(
+    groups: list[dict[str, Any]],
+) -> tuple[list[str], set[str]]:
+    """Render multi-search candidates without losing their guidance scope."""
 
-    counts: dict[str, int] = {}
-    for product in state.product_results:
-        if not isinstance(product, dict):
+    if len(groups) < 2 or not all(group.get("guidance") for group in groups):
+        return [], set()
+    lines: list[str] = []
+    displayed_names: set[str] = set()
+    displayed_product_refs: set[str] = set()
+    for index, group in enumerate(groups, start=1):
+        products = [
+            product
+            for product in group.get("products") or []
+            if str(
+                product.get("product_ref")
+                or f"name:{product.get('name') or ''}"
+            )
+            not in displayed_product_refs
+        ]
+        if not products:
             continue
-        category = str(product.get("category") or "").strip()
-        if category:
-            counts[category] = counts.get(category, 0) + 1
-    return dict(sorted(counts.items(), key=lambda item: item[0].casefold()))
+        lines.extend(_format_search_group(group, products, index=index))
+        displayed_product_refs.update(
+            str(
+                product.get("product_ref")
+                or f"name:{product.get('name') or ''}"
+            )
+            for product in products
+        )
+        displayed_names.update(str(product["name"]) for product in products)
+    if lines and not lines[-1]:
+        lines.pop()
+    return lines, displayed_names
 
 
-def _confirmed_search_filter_statements(
-    result: Any,
+def _format_search_group(
+    group: dict[str, Any],
+    products: list[dict[str, Any]],
     *,
-    request_id: str,
+    index: int,
 ) -> list[str]:
-    """Format canonical search filters as shopper-safe predicates."""
+    """Format one search group's bounded guidance and verified products."""
 
-    statements: list[str] = []
-    seen: set[str] = set()
+    taxonomy = group.get("taxonomy") or {}
+    values = taxonomy.get("subcategory") or taxonomy.get("category") or []
+    label = " / ".join(str(value).replace("_", " ") for value in values)
+    title = label.title() if label else f"Product group {index}"
+    lines = [f"**{title}**", "", "General guidance (not product-specific facts):"]
+    lines.extend((str(group["guidance"]), "", "Catalog candidates:", ""))
+    for product in products:
+        parts = [f"**{product['name']}**"]
+        if product.get("price"):
+            parts.append(str(product["price"]))
+        if product.get("category"):
+            parts.append(str(product["category"]).replace("_", " "))
+        lines.append("- " + " — ".join(parts))
+    lines.append("")
+    return lines
+
+
+def _no_direct_search_types(result: Any, *, request_id: str) -> list[str]:
+    """Return current-turn product types with a server-authored no-direct outcome."""
+
+    product_types: list[str] = []
     for message in _current_turn_messages(_result_messages(result), request_id):
         if _message_type(message) != "tool":
             continue
-        filters = _search_filter_evidence(
-            _content_to_text(_value(message, "content"))
+        outcome = _search_json_evidence(
+            _content_to_text(_value(message, "content")),
+            _CATALOG_SCOPE_OUTCOME_PREFIX,
         )
+        if not outcome or outcome.get("outcome") != "no_direct_catalog_match":
+            continue
+        product_type = str(outcome.get("requested_product_type") or "").strip()
+        if product_type and product_type not in product_types:
+            product_types.append(product_type)
+    return product_types
+
+
+def _search_scope_is_complete(result: Any, *, request_id: str) -> bool:
+    """Return whether a current-turn search declared its requested scope complete."""
+
+    return any(
+        _message_type(message) == "tool"
+        and SEARCH_SCOPE_COMPLETE_PREFIX
+        in _content_to_text(_value(message, "content"))
+        for message in _current_turn_messages(_result_messages(result), request_id)
+    )
+
+
+def _search_guidance_evidence(result: Any, *, request_id: str) -> list[str]:
+    """Return bounded pre-search shopper guidance from successful searches."""
+
+    guidance: list[str] = []
+    for message in _current_turn_messages(_result_messages(result), request_id):
+        if _message_type(message) != "tool":
+            continue
+        content = _content_to_text(_value(message, "content"))
+        if "SEARCH_RESULT_GROUNDING_NOTE" not in content:
+            continue
+        payload = _search_json_evidence(
+            content,
+            _SEARCH_GUIDANCE_EVIDENCE_PREFIX,
+        )
+        text = _scrub_internal_shopper_language(
+            str((payload or {}).get("text") or "")
+        ).strip()
+        if text and text not in guidance:
+            guidance.append(text)
+    return guidance
+
+
+def _confirmed_search_filter_groups(
+    result: Any,
+    *,
+    request_id: str,
+    displayed_names: set[str] | None = None,
+) -> list[dict[str, list[str]]]:
+    """Keep canonical filters scoped to products from the same search."""
+
+    groups: list[dict[str, list[str]]] = []
+    for message in _current_turn_messages(_result_messages(result), request_id):
+        if _message_type(message) != "tool":
+            continue
+        content = _content_to_text(_value(message, "content"))
+        filters = _search_filter_evidence(content)
+        statements: list[str] = []
         for name, value in filters.items():
             statement = _format_filter_statement(name, value)
-            if statement and statement not in seen:
-                seen.add(statement)
+            if statement:
                 statements.append(statement)
-    return statements
+        if not statements:
+            continue
+        product_names = [
+            product["name"]
+            for product in _product_evidence_records(content)
+            if product.get("name")
+        ]
+        if displayed_names is not None:
+            product_names = [
+                name for name in product_names if name in displayed_names
+            ]
+            if not product_names:
+                continue
+        groups.append(
+            {"product_names": product_names, "statements": statements}
+        )
+    return groups
 
 
 def _format_filter_statement(name: str, value: Any) -> str:
@@ -3493,16 +5352,46 @@ def _collect_message_grounding_evidence(
 
 
 def _customer_safe_tool_evidence(content: str) -> str:
+    if content.startswith(SEARCH_VALIDATION_ERROR_PREFIX):
+        return (
+            "CUSTOMER_SAFE_INVALID_SEARCH_EVIDENCE: No valid catalog search "
+            "scope was established and no retrieval ran. This does not support "
+            "a product-availability or catalog-absence claim."
+        )
     if content.startswith(
         "STOP_TOOL_USE: No faithful advertised catalog taxonomy"
     ):
         return (
             "CUSTOMER_SAFE_NO_MATCH_EVIDENCE: The active catalog has no direct "
-            "advertised taxonomy match for the shopper's requested product type. "
+            "advertised taxonomy match for this requested product role. "
             "No retrieval ran and no alternative product type was selected. Say "
-            "that plainly and ask permission before searching a different "
-            "advertised type. Do not name alternatives."
+            "that plainly, preserve any successful evidence for other roles, and "
+            "ask permission before searching a different advertised type. Do not "
+            "name alternatives."
         )
+    if "SEARCH_NO_MATCH_GROUNDING_NOTE" in content:
+        taxonomy = _search_taxonomy_evidence(content)
+        confirmed_filters = _search_filter_evidence(content)
+        lines = [
+            (
+                "CUSTOMER_SAFE_SCOPED_NO_MATCH_EVIDENCE: Zero products matched "
+                "only the exact advertised search scope below. This does not "
+                "establish that a different, unsearched, or unadvertised product "
+                "type is absent, and it does not support a catalog-wide "
+                "availability claim."
+            )
+        ]
+        if taxonomy:
+            lines.append(
+                "ADVERTISED_SEARCH_TAXONOMY: "
+                + json.dumps(taxonomy, sort_keys=True)
+            )
+        if confirmed_filters:
+            lines.append(
+                "CONFIRMED_SEARCH_FILTERS: "
+                + json.dumps(confirmed_filters, sort_keys=True)
+            )
+        return "\n".join(lines)
     if "SEARCH_RESULT_GROUNDING_NOTE" in content:
         return _summarize_product_evidence(
             content,
@@ -3581,24 +5470,6 @@ def _search_filter_evidence(content: str) -> dict[str, Any]:
     return _search_json_evidence(content, _SEARCH_FILTER_EVIDENCE_PREFIX)
 
 
-def _search_direction_evidence(content: str) -> str:
-    """Read the semantic ranking preference from one successful search."""
-
-    for raw_line in content.splitlines():
-        line = raw_line.strip()
-        if not line.startswith(_SEARCH_DIRECTION_EVIDENCE_PREFIX):
-            continue
-        payload = line.removeprefix(_SEARCH_DIRECTION_EVIDENCE_PREFIX).strip()
-        try:
-            parsed = json.loads(payload)
-        except json.JSONDecodeError:
-            return ""
-        if isinstance(parsed, str):
-            return " ".join(parsed.split())
-        return ""
-    return ""
-
-
 def _search_taxonomy_evidence(content: str) -> dict[str, Any]:
     """Read the advertised taxonomy marker from one search result."""
 
@@ -3628,6 +5499,7 @@ def _product_evidence_records(content: str) -> list[dict[str, Any]]:
     key_map = {
         "NAME:": "name",
         "CATEGORY:": "category",
+        "BRAND:": "brand",
         "PRICE:": "price",
         "IMAGE_URL:": "image_url",
     }
@@ -3636,7 +5508,7 @@ def _product_evidence_records(content: str) -> list[dict[str, Any]]:
         if line.startswith("PRODUCT_REF:"):
             if current.get("name"):
                 records.append(current)
-            current = {}
+            current = {"product_ref": line.removeprefix("PRODUCT_REF:").strip()}
             reading_details = False
             continue
         if line == "DETAILS:":
@@ -3809,12 +5681,30 @@ def _format_search_direction_evidence(semantic_query: str) -> str:
     )
 
 
+def _format_search_guidance_evidence(shopper_guidance: str) -> str:
+    """Record bounded product-agnostic guidance authored before retrieval."""
+
+    return (
+        f"{_SEARCH_GUIDANCE_EVIDENCE_PREFIX} "
+        + json.dumps({"text": shopper_guidance.strip()}, ensure_ascii=False)
+    )
+
+
 def _format_search_taxonomy_evidence(taxonomy: dict[str, Any]) -> str:
     """Format the advertised taxonomy scope used by a successful search."""
 
     return (
         f"{_SEARCH_TAXONOMY_EVIDENCE_PREFIX} "
         + json.dumps(taxonomy, sort_keys=True, default=str)
+    )
+
+
+def _format_catalog_scope_outcome(outcome: dict[str, Any]) -> str:
+    """Format one bounded non-product catalog outcome for diagnostics."""
+
+    return (
+        f"{_CATALOG_SCOPE_OUTCOME_PREFIX} "
+        + json.dumps(outcome, sort_keys=True, default=str)
     )
 
 

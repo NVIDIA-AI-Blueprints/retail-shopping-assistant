@@ -1,4 +1,6 @@
 # Operator-managed policy content. Replace all placeholder values before production.
+# Set configured to true only after every placeholder has been replaced.
+configured: false
 policies:
   returns:
     title: "Return Policy"

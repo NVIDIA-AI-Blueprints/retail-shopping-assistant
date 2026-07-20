@@ -1,6 +1,7 @@
 ---
 name: budget-shopping
 description: Budget-constrained product search and bundle building. Use when the shopper states a price ceiling or asks to build an outfit or set under a total cost.
+response_guidance: Compare the confirmed prices shown below with the stated budget. Product-specific attributes still require verification.
 ---
 
 # Budget Shopping

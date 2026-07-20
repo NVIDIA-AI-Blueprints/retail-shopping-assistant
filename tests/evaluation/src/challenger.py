@@ -100,6 +100,27 @@ class TargetAgent(Protocol):
 CHALLENGER_TURN_ATTEMPTS = 3
 MAX_SHOPPER_MESSAGE_CHARS = 1200
 MAX_SHOPPER_MESSAGE_LINES = 8
+MAX_PRODUCT_EVIDENCE_RECORDS = 24
+MAX_PRODUCT_EVIDENCE_FIELDS = 40
+MAX_PRODUCT_EVIDENCE_STRING_CHARS = 500
+MAX_PRODUCT_EVIDENCE_SERIALIZED_CHARS = 32_000
+MAX_PRODUCT_EVIDENCE_DEPTH = 4
+MAX_CATALOG_SCOPE_OUTCOMES = 8
+MAX_CATALOG_SCOPE_OUTCOMES_SERIALIZED_CHARS = 8_000
+PRODUCT_EVIDENCE_FIELDS = frozenset(
+    {
+        "product_ref",
+        "product_name",
+        "source_tool",
+        "evidence_type",
+        "facts",
+        "search_scope",
+    }
+)
+PRODUCT_EVIDENCE_SOURCE_TYPES = {
+    "search_catalog_tool": "search_result",
+    "get_product_details_tool": "product_detail",
+}
 EVALUATION_METADATA_KEYS = frozenset(
     {
         "assistant_last",
@@ -204,7 +225,134 @@ class TargetAgentClient:
             "images": data.get("images", {}) or {},
             "cart": data.get("cart", {}) or {},
             "timings": data.get("timings", {}) or {},
+            "product_evidence": _extract_product_evidence(data),
+            "product_evidence_truncated": (
+                _extract_product_evidence_truncated(data)
+            ),
+            "catalog_scope_outcomes": _extract_catalog_scope_outcomes(data),
         }
+
+
+def _extract_product_evidence(data: Mapping[str, Any]) -> list[dict[str, Any]]:
+    diagnostics = data.get("agent_diagnostics")
+    if not isinstance(diagnostics, Mapping):
+        return []
+    evidence = diagnostics.get("product_evidence")
+    if not _valid_product_evidence_list(evidence):
+        return []
+    return evidence
+
+
+def _extract_product_evidence_truncated(data: Mapping[str, Any]) -> bool:
+    diagnostics = data.get("agent_diagnostics")
+    if not isinstance(diagnostics, Mapping):
+        return False
+    evidence = diagnostics.get("product_evidence")
+    if not _valid_product_evidence_list(evidence):
+        return False
+    truncated = diagnostics.get("product_evidence_truncated")
+    return truncated if isinstance(truncated, bool) else False
+
+
+def _extract_catalog_scope_outcomes(
+    data: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    diagnostics = data.get("agent_diagnostics")
+    if not isinstance(diagnostics, Mapping):
+        return []
+    outcomes = diagnostics.get("catalog_scope_outcomes")
+    if (
+        not isinstance(outcomes, list)
+        or len(outcomes) > MAX_CATALOG_SCOPE_OUTCOMES
+        or len(json.dumps(outcomes, sort_keys=True, default=str))
+        > MAX_CATALOG_SCOPE_OUTCOMES_SERIALIZED_CHARS
+    ):
+        return []
+    allowed_fields = {
+        "outcome",
+        "requested_product_type",
+        "taxonomy",
+        "confirmed_filters",
+    }
+    for outcome in outcomes:
+        if (
+            not isinstance(outcome, Mapping)
+            or not set(outcome).issubset(allowed_fields)
+            or outcome.get("outcome")
+            not in {"no_direct_catalog_match", "zero_results"}
+            or not _bounded_product_evidence_value(outcome)
+        ):
+            return []
+    return outcomes
+
+
+def _valid_product_evidence_list(evidence: Any) -> bool:
+    if not isinstance(evidence, list) or len(evidence) > MAX_PRODUCT_EVIDENCE_RECORDS:
+        return False
+    if not all(_valid_product_evidence_record(record) for record in evidence):
+        return False
+    return len(json.dumps(evidence, sort_keys=True, default=str)) <= (
+        MAX_PRODUCT_EVIDENCE_SERIALIZED_CHARS
+    )
+
+
+def _valid_product_evidence_record(record: Any) -> bool:
+    if not isinstance(record, Mapping):
+        return False
+    if not set(record).issubset(PRODUCT_EVIDENCE_FIELDS):
+        return False
+    for field in ("product_ref", "product_name", "source_tool"):
+        value = record.get(field)
+        if (
+            not isinstance(value, str)
+            or not value
+            or len(value) > MAX_PRODUCT_EVIDENCE_STRING_CHARS
+        ):
+            return False
+    source_tool = record["source_tool"]
+    evidence_type = record.get("evidence_type")
+    if (
+        not isinstance(evidence_type, str)
+        or PRODUCT_EVIDENCE_SOURCE_TYPES.get(source_tool) != evidence_type
+    ):
+        return False
+    facts = record.get("facts")
+    if not isinstance(facts, Mapping) or len(facts) > MAX_PRODUCT_EVIDENCE_FIELDS:
+        return False
+    search_scope = record.get("search_scope")
+    if evidence_type == "search_result":
+        if not isinstance(search_scope, Mapping) or set(search_scope) != {
+            "taxonomy",
+            "confirmed_filters",
+        }:
+            return False
+        if not all(isinstance(value, Mapping) for value in search_scope.values()):
+            return False
+    elif "search_scope" in record:
+        return False
+    return _bounded_product_evidence_value(record)
+
+
+def _bounded_product_evidence_value(value: Any, *, depth: int = 0) -> bool:
+    if depth > MAX_PRODUCT_EVIDENCE_DEPTH:
+        return False
+    if isinstance(value, str):
+        return len(value) <= MAX_PRODUCT_EVIDENCE_STRING_CHARS
+    if value is None or isinstance(value, (bool, int, float)):
+        return True
+    if isinstance(value, Mapping):
+        return len(value) <= MAX_PRODUCT_EVIDENCE_FIELDS and all(
+            isinstance(key, str)
+            and len(key) <= MAX_PRODUCT_EVIDENCE_STRING_CHARS
+            and _bounded_product_evidence_value(item, depth=depth + 1)
+            for key, item in value.items()
+        )
+    if isinstance(value, list):
+        return len(value) <= MAX_PRODUCT_EVIDENCE_FIELDS and all(
+            _bounded_product_evidence_value(item, depth=depth + 1)
+            for item in value
+        )
+    return False
 
 
 def load_scenario_contexts(
@@ -912,7 +1060,7 @@ def _main() -> int:
         except ImportError:  # pragma: no cover - direct CLI use.
             from src.judge import judge_run  # type: ignore[no-redef]
 
-        judge_run(config, run_path)
+        judge_run(config, run_path, require_enabled=not args.judge)
     print(f"Saved evaluation run: {run_path}")
     return 0
 

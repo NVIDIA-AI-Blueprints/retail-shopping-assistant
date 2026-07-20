@@ -1,6 +1,7 @@
 ---
 name: cart-management
 description: Cart reads, item add, remove, and quantity update. Use when the shopper explicitly manages their cart outside of a styling or discovery flow.
+response_guidance: Cart changes and resulting quantities are shown only after the cart service confirms them. Partial failures remain explicit.
 ---
 
 # Cart Management

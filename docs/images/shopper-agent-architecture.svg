@@ -24,7 +24,7 @@
   <rect width="1600" height="920" fill="#ffffff"/>
 
   <text x="70" y="56" class="title">Shopper Deep Agent Architecture</text>
-  <text x="70" y="86" class="subtitle">Published catalog truth → mandatory skills → deterministic tools → grounded response and durable state</text>
+  <text x="70" y="86" class="subtitle">Published catalog truth → mandatory skills → deterministic tools → grounded response and scoped state</text>
   <circle cx="1422" cy="55" r="7" fill="#76b900"/>
   <text x="1438" y="61" class="note">Built</text>
 
@@ -79,7 +79,7 @@
     <text x="207" y="527" text-anchor="middle" class="box-title">Shopper / API turn</text>
     <text x="207" y="557" text-anchor="middle" class="box-text">
       <tspan x="207" dy="0">Query + conversation_id</tspan>
-      <tspan x="207" dy="24">Optional advisory persona</tspan>
+      <tspan x="207" dy="24">Session + cart identity</tspan>
       <tspan x="207" dy="24">Optional input guardrails</tspan>
     </text>
   </g>
@@ -128,8 +128,8 @@
     <rect x="382" y="704" width="292" height="9" rx="4" class="built-bar"/>
     <text x="528" y="745" text-anchor="middle" class="box-title">Conversation state</text>
     <text x="528" y="775" text-anchor="middle" class="box-text">
-      <tspan x="528" dy="0">Memory: recent context + cart</tspan>
-      <tspan x="528" dy="24">Graph: MemorySaver or Redis</tspan>
+      <tspan x="528" dy="0">Memory: context + stable cart lines</tspan>
+      <tspan x="528" dy="24">Graph: MemorySaver (process-local)</tspan>
     </text>
   </g>
 
@@ -149,7 +149,7 @@
     <text x="1306" y="745" text-anchor="middle" class="box-title">Grounding boundary</text>
     <text x="1306" y="775" text-anchor="middle" class="box-text">
       <tspan x="1306" dy="0">Tool-role evidence → shopper response</tspan>
-      <tspan x="1306" dy="24">Persist transcript + graph checkpoint</tspan>
+      <tspan x="1306" dy="24">Persist transcript + save graph checkpoint</tspan>
     </text>
   </g>
 
@@ -173,5 +173,5 @@
   <path d="M 1104 797 L 1080 797 Q 1070 797 1070 842 L 207 842 Q 162 842 162 797 L 162 628" class="flow"/>
   <text x="260" y="836" class="arrow-label">grounded response · next turn retains conversation scope</text>
 
-  <text x="70" y="892" class="note">Skills are behavioral guidance, not per-tool ACLs. Persona, memory, and trends guide judgment but never override catalog or tool evidence.</text>
+  <text x="70" y="892" class="note">Skills are behavioral guidance, not per-tool ACLs. Memory and trends guide judgment but never override catalog or tool evidence; persona is deferred.</text>
 </svg>

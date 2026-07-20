@@ -79,7 +79,6 @@ class QueryRequest(BaseModel):
     session_id: Optional[str] = None
     conversation_id: Optional[str] = None
     cart_id: Optional[str] = None
-    persona: Optional[Dict[str, Any]] = None
     context: Optional[str] = ""
     cart: Optional[Cart] = None
     retrieved: Optional[Dict[str, str]] = {}
@@ -158,7 +157,6 @@ async def process_query_stream(request: QueryRequest):
                 async for chunk in assistant_runtime.astream(
                     state,
                     identity,
-                    persona_snapshot=request.persona,
                 ):
                     yield f"data: {chunk}\n\n"
                 yield "data: [DONE]\n\n"
@@ -203,7 +201,6 @@ async def process_query_timing(request: QueryRequest):
         out_state_dict = await assistant_runtime.ainvoke(
             state,
             identity,
-            persona_snapshot=request.persona,
         )
         end_time = time.monotonic()
         

@@ -37,10 +37,12 @@ Current constraints:
 - Registration is not activation. Every turn begins with a forced structured
   selection from those registered names. The runtime deterministically loads
   and injects each selected `SKILL.md` in full before it exposes any shopping
-  tool. Shopping calls issued before activation or in the same model batch are
-  rejected at execution time.
-- The public request body remains backward compatible and accepts an optional
-  caller-supplied read-only `persona` snapshot.
+  tool. The prior turn's selected names are a read-only continuity signal for
+  the next fresh semantic selection; they do not force routing or satisfy the
+  activation gate. Shopping calls issued before activation or in the same model
+  batch are rejected at execution time.
+- Caller-supplied persona data is not injected into model context. Persona
+  support remains deferred until its trust and validation contract is defined.
 - Optional `session_id`, `conversation_id`, and `cart_id` fields are accepted,
   and the bundled UI now sends browser-session identifiers on every turn.
   Legacy callers that send only `user_id` are still mapped to deterministic
@@ -49,17 +51,43 @@ Current constraints:
   high-scale website should move to server-created session, conversation, and
   cart identifiers before broad rollout.
 - The runtime caps Deep Agents recursion and distinct catalog taxonomy scopes
-  per turn. The agent tool accepts one semantic query. Duplicate identity is
+  per turn. The agent tool accepts one taxonomy-independent semantic query and
+  one required pre-retrieval, product-agnostic `shopper_guidance` sentence. It
+  must be nonempty except for `image_only` and `no_direct_catalog_match`, which
+  require empty guidance.
+  Duplicate identity is
   normalized taxonomy plus hard constraints, so paraphrasing cannot repeat the
   same retrieval while a genuinely different hard-filter scope may execute
   within the cap.
 - Cached catalog capabilities generate both the exact taxonomy enum and the
   non-taxonomy required-constraint properties exposed to the model. The agent
-  owns semantic selection from that schema; deterministic code validates and
-  maps the structured selection without interpreting shopper language. One call
-  covers at most one category. `agent_selected_type` may include every
-  advertised subcategory that serves one focused semantic role when a broad
-  request names no concrete type.
+  owns semantic selection through a structural transport schema; runtime then
+  applies a separate strict semantic search model, so cross-field failures reach
+  capability-aware validation and receive exact corrections. The model owns
+  `taxonomy_status`; runtime never semantically rewrites it. Exact advertised
+  category/subcategory coherence comes from the capability contract. Every
+  text search also carries required `requested_product_type` provenance: the
+  shortest product noun or true umbrella from the shopper's current turn or
+  direct antecedent, excluding color, material, fit, occasion, weather, and
+  style modifiers. It is `null` only for image-only search. Literal validation
+  may bind the longest exact advertised suffix in a modifier-bearing phrase,
+  such as `waterproof boots` to `boots`, but disables that shortcut for explicit
+  alternatives containing `and`, `or`, `/`, or `&`; `closed shoes or boots`
+  remains model-owned alternative or umbrella reasoning. One unambiguous literal
+  pair of exact advertised subcategories in the current shopper turn is the
+  bounded exception: runtime requires both model-authored branches under
+  `member_of_requested_umbrella`. The pair uses one catalog execution with a
+  pair-wide candidate window and rank-preserving coverage of each branch when a
+  candidate is returned. Modified, synonymous, ambiguous, and cross-category
+  alternatives remain model-owned. One call covers at most one category.
+  `agent_selected_type` selects exactly one advertised
+  subcategory as the focused starting role when a broad request names no
+  concrete type. It is
+  forbidden for a role whose type the
+  shopper named, including an alternative, confirmation, comparison, or
+  follow-up. Invalid open-role provenance is rejected rather than silently
+  reinterpreted. Runtime retains `agent_selected_type` and derives the duplicate
+  requested-type provenance from the selected advertised subcategory.
 - `no_direct_catalog_match` stops before retrieval when an explicitly requested
   concrete type has no faithful advertised value; it uses empty taxonomy and no
   hard constraints. An unsupported modifier does not erase an advertised type,
@@ -67,19 +95,92 @@ Current constraints:
   must-have absent from the generated schema is retained in
   `unadvertised_requirements`, so it is reported as unenforceable rather than
   weakened into semantic relevance.
-- After the first search-schema validation failure, the runtime exposes one
-  search-only repair step. A partial multi-role search with an unadvertised
-  requirement uses that same step to review the current shopper context once:
-  preserve a directly stated must-have, or remove only an inference from broad
-  season, weather, occasion, or style context. A successful repaired partial
-  search may continue to another valid role, but a second repair is never
-  available. A completed current scope, unsupported requirement, or any
-  `STOP_TOOL_USE` result forces answer synthesis.
+- The server keys one total repair to the full normalized
+  `requested_product_type` phrase and protects distinct advertised siblings from
+  being treated as the same scope. A schema correction or a fresh
+  constraint-provenance review can consume that budget; constraint feedback from
+  an in-flight schema repair closes the loop for synthesis rather than opening a
+  second repair. The isolated request uses a concise, schema-generic system
+  prompt instead of the base runtime prompt; the skill gate appends the complete
+  active shopper-skill instructions. It exposes and forces only
+  `search_catalog_tool` and disables parallel calls. Active responses containing
+  more than one shopping tool call are rejected before execution. It contains
+  only the current shopper message plus bounded, sanitized validator feedback in
+  a separate Human data message. Echoed rejected arguments are stripped; native
+  Pydantic feedback contains only rejected top-level field names, and free-form
+  requested-scope text is not replayed. Invalid AI/tool history and earlier
+  conversation history are absent. For native tool-transport failures, the scope is locked
+  only when current or recent shopper text grounds it; an ungrounded
+  model-generated scope may be corrected. A change to a grounded free-form
+  scope that cannot be reconstructed safely is removed before execution and
+  recorded in `agent_diagnostics` as `repair_scope_changed`. A strict request
+  failure with independently valid constraints snapshots its
+  capability-validated advertised
+  `required_constraints` privately and places that exact finite object,
+  including an explicit empty object, in the isolated feedback. This bounded
+  capability-derived object is the exception to excluding free-form rejected
+  arguments. Before execution, runtime restores every independently valid
+  finite lock: the taxonomy relation, canonical advertised constraints
+  (including an explicit empty object), explicit valid `scope_complete` and
+  `search_mode`, and `requested_product_type` when a singleton exact or
+  agent-selected taxonomy determines it. The model owns only invalid fields.
+  Drift in a restorable lock is corrected in place; bounded tool-call
+  diagnostics expose only affected field names in `restored_fields`. The lock
+  follows accepted modifier removal, list-valued constraints compare
+  canonically, and omitted optional defaults
+  equal explicit empty values. A no-direct repair may clear constraints only
+  while remaining no-direct; changing to retrieval must preserve the original
+  advertised constraints. Native enum failures on
+  `agent_selected_type` include the shopper-named/open-role provenance rule in
+  the same bounded feedback. A shopper-named advertised subtype repairs to
+  `exact_requested_type`; named umbrellas and alternatives repair to
+  `member_of_requested_umbrella`. A valid no-direct outcome after repair keeps
+  the specific not-advertised response. A native failure confined to
+  `required_constraints` adds only its finite, validated taxonomy status and
+  selection to repair feedback; free-form scope, query, and guidance remain
+  excluded while scope is compared privately. Relation drift is restored before
+  the repaired constraint call executes. A native taxonomy failure likewise
+  restores independently valid constraints before execution. A locked boundary
+  that cannot be restored safely remains comparison-protected and closes under
+  the matching `repair_*_changed` reason. Malformed or nonempty free-form
+  `unadvertised_requirements` arguments are never restored; a native
+  schema-invalid call containing one closes without repair. A schema-valid,
+  genuinely open `agent_selected_type` request retains the bounded review for a
+  proposed inferred requirement. Every unadvertised requirement on a
+  shopper-stated product scope fails closed, including when the model uses a
+  synonym rather
+  than the shopper's exact wording. The bounded constraint review is reserved
+  for a proposed inferred requirement on a genuinely open
+  `agent_selected_type` role when the shared repair remains; it freezes
+  requested type, taxonomy status, taxonomy, completion state, `search_mode`,
+  and every advertised hard constraint. Within that preserved hard scope, it
+  may correct only the soft `semantic_query`, the reviewed
+  unadvertised-requirement lane, and its associated guidance; the requirement
+  is either replaced with the shopper's shortest exact wording or removed.
+  Exact wording
+  and unresolved provenance fail closed. Removal scrubs product-attribute
+  guidance while `semantic_query` remains available for ranking. When a runtime
+  semantic open-role schema repair removes its proposed inferred requirement,
+  runtime replaces the submitted pre-search guidance with neutral generic
+  guidance for the selected role. A successful partial search may continue to
+  another valid role with its own one-repair
+  opportunity. When a successful or zero-result search consumes the final
+  configured slot, the result records `SEARCH_BUDGET_EXHAUSTED`; the next model
+  step removes only `search_catalog_tool`. Product-detail, availability, and
+  cart tools plus honest partial synthesis remain available.
+- Dependency resolution retains `deepagents==0.6.12`, `langchain==1.3.11`,
+  `langgraph==1.2.7`, and `langgraph-sdk==0.4.2`. Services that resolve `orjson`
+  pin `3.11.5`, the last upstream release limited to the project's
+  Apache-2.0/MIT policy. Redis checkpoint packages remain absent.
 - Every turn exposes additive agent diagnostics with activated skill-file
   paths, model-issued tool calls and arguments in order, deterministic
-  rejection/duplicate markers, and a final termination reason. When a graph
-  fails, its current-turn assistant/tool messages are read from the latest
-  checkpoint before that checkpoint is deleted.
+  rejection/duplicate markers, bounded structured product evidence from
+  successful current-turn catalog search/detail results, a truncation flag,
+  bounded `catalog_scope_outcomes` for `no_direct_catalog_match` and
+  `zero_results`, and a final termination reason. Per-search scopes remain
+  attached to their own products. When a graph fails, its current-turn
+  assistant/tool messages are read from the latest checkpoint before that
+  checkpoint is deleted.
 - Catalog, cart, policy, and availability tools return to the Deep Agents loop
   so a single shopper turn can complete a compound request before the final
   shopper-facing response.
@@ -87,11 +188,26 @@ Current constraints:
   isolated by the server-owned request marker; prior-turn tool evidence may
   resolve direct references but cannot prove that a new search or mutation ran.
   Every successful search records the model-authored semantic query as
-  `SEARCH_DIRECTION_EVIDENCE`. Search-only styling responses expose that text as
-  ranking preference, never product fact, and nominate the first ranked result
-  or one first result per requested role. Names, prices, categories, and
-  confirmed filters remain deterministic, with no separate rationale model
-  call.
+  independent internal `SEARCH_DIRECTION_EVIDENCE` and the required
+  pre-retrieval, product-agnostic `shopper_guidance` authored under the active
+  skill. Completed successful search-only responses present that guidance
+  without a final-synthesis model call; static skill `response_guidance` is the
+  fallback. Before guidance becomes deterministic shopper-facing evidence, a
+  narrow scrub replaces documented unsupported outdoor/weather guarantee terms
+  with neutral selected-role guidance without changing the semantic query,
+  taxonomy, hard constraints, or retrieval. Covered forms include
+  outdoor-surface or outdoor-walking claims and constructions such as "handle rain," "work well
+  for outdoor surfaces," or "stay secure for outdoor walking," plus `wet
+  conditions` and "works well in wet weather/conditions." Product results,
+  filters, and drafts are not converted into guidance after retrieval.
+  Deterministic code separately
+  renders every name, price, category, and search-scoped filter group, and
+  deduplicates grouped candidates by `product_ref`, not display name.
+  Mixed-outcome turns preserve successful groups when another scope has no
+  direct match or an unsupported requirement. A fixed no-direct or unsupported
+  canned response applies only when that rejection is the sole current-turn
+  business-tool outcome. Scoped zero-result evidence retains the exact
+  advertised taxonomy and filters and cannot establish broader absence.
 - Final-response extraction ignores tool messages, assistant messages that
   still contain tool calls, and internal activation markers. If no
   shopper-facing answer remains, the runtime returns a safe retry response and
@@ -156,8 +272,9 @@ Filesystem and built-in Deep Agents tools:
    The runtime owns complete skill loading and the pre-tool execution gate;
    deterministic tools own validation, state mutation, idempotency, and
    authorization.
-6. Persona data is loaded as a read-only snapshot for the turn unless a later
-   feature explicitly supports profile updates.
+6. Persona data remains unavailable until a trusted source and typed,
+   input-safe untrusted-data boundary are implemented. A future snapshot is
+   read-only for the turn unless a later feature supports profile updates.
 7. Carts are scoped by `cart_id`, not by conversation memory.
 8. Conversation memory is scoped by `conversation_id`, not by customer alone.
 9. Skills describe shopping behavior and domain knowledge. Tools perform
@@ -173,7 +290,7 @@ Filesystem and built-in Deep Agents tools:
 ```text
 POST /query/stream
   -> resolve or create server-owned identity
-  -> load session, conversation, cart, and optional persona snapshot
+  -> load session, conversation, and cart
   -> invoke Deep Agents SDK with thread_id = conversation_id
   -> force structured per-turn skill selection
   -> load and inject complete selected SKILL.md files
@@ -210,15 +327,18 @@ Current bridge implementation keeps the memory service schema unchanged. It
 uses the legacy numeric `user_id` when explicit IDs are absent, derives a
 stable internal key from `conversation_id` for conversation memory when present,
 and derives a separate stable internal key from `cart_id` for cart reads/writes
-when present.
+when present. Cart reads expose the opaque, non-reusable
+`CartItem.cart_line_id` as `CART_LINE_ID`; absolute quantity updates use one
+service `PUT` scoped by that ID and cart owner, with the idempotency record and
+mutation committed atomically.
 
 Product evidence identity is a separate, narrower bridge. The runtime keeps at
 most 50 returned `PRODUCT_REF` values per `conversation_id` in process memory,
 and those refs are valid only for the active catalog snapshot. This cache is not
-part of the LangGraph checkpoint. Redis therefore preserves conversation state
-but does not make product refs portable across replicas or durable across a
-restart. Another replica, cache eviction, restart, or catalog replacement
-requires a fresh search before product details or cart adds.
+part of the LangGraph checkpoint. Both the graph checkpoint and product refs are
+currently process-local, but they remain separate state. Another replica,
+cache eviction, restart, or catalog replacement requires a fresh search before
+product details or cart adds.
 
 ## Session Isolation Requirements
 
@@ -248,14 +368,13 @@ Persona precedence:
 4. Loaded customer persona/profile snapshot.
 5. Model assumptions are not allowed as facts.
 
-Callers may pass one optional `persona` object with `/query/stream` or
-`/query/timing`. The runtime prepends non-empty values as a read-only turn-start
-context block. It does not fetch or mutate the persona and does not expose a
-persona-loading tool. Individual skills should not independently fetch mutable
-persona state, because that creates inconsistent context and hard-to-debug race
-conditions. The runtime treats the object as advisory, caller-provided context;
-it does not authenticate ownership or allowlist fields. Production callers must
-perform both checks upstream before forwarding persona data.
+The current runtime does not accept or inject caller-supplied persona data and
+does not expose a persona-loading tool. A future implementation must use a
+typed, bounded schema, authenticate profile ownership, validate values through
+the input-safety boundary, and present the snapshot explicitly as untrusted
+data rather than system instructions. Individual skills should not
+independently fetch mutable persona state, because that creates inconsistent
+context and hard-to-debug race conditions.
 
 ## Tools
 
@@ -264,19 +383,22 @@ The tool layer is small, typed, and deterministic:
 - `search_catalog`: read-only, stateless product discovery.
 - `get_product_details`: read-only product facts for one product.
 - `get_cart`: read-only cart state for a `cart_id`.
-- `add_cart_item`: mutating cart write with idempotency, using a `PRODUCT_REF`
-  previously returned by product search.
-- `remove_cart_item`: mutating cart write with idempotency, using a
+- `add_cart_item`: mutating cart write using a `PRODUCT_REF` previously returned
+  by product search; its generated key is metadata until add deduplication is
+  implemented in the memory service.
+- `remove_cart_item`: mutating cart write using a
   `CART_LINE_ID` returned by cart reads.
 - `update_cart_item`: mutating cart quantity update using a current
-  `CART_LINE_ID`; quantity `0` removes the line.
+  `CART_LINE_ID`; one absolute-value `PUT` sets the quantity and `0` removes the
+  line. Identical idempotency-key retries replay the stored result; conflicting
+  reuse is rejected without mutation.
 - `view_cart_total`: deterministic arithmetic over cart line prices.
 - `get_store_policy`: read-only controlled policy content.
 - `check_product_availability`: read-only deliberate stub that reports
   `unknown` until live inventory exists.
 
-`load_customer_persona` remains planned. Persona snapshots are caller-supplied
-turn context in the current runtime, not an agent-callable tool.
+`load_customer_persona` and typed turn-start persona snapshots remain planned;
+neither is available in the current runtime.
 
 The active shopper-serving Deep Agents tool registry is documented in
 [Shopper Agent Tool Registry](SHOPPER_AGENT_TOOL_REGISTRY.md). The active skill
@@ -291,33 +413,93 @@ The activation control tool is forced at turn start. After activation, the Deep
 Agent decides when to call a shopping tool; that tool decides whether the call
 is valid and what state changes are allowed.
 
-Tool-loop control is a separate deterministic boundary. A first invalid
-`search_catalog_tool` schema yields one model repair step with only that tool
-available. A successful repaired search may continue when it is explicitly
-partial and another valid role remains, but no second repair is available.
+Tool-loop control is a separate deterministic boundary. It keys one total model
+repair to the full normalized `requested_product_type` phrase and never
+conflates distinct advertised sibling scopes. A schema correction or fresh
+constraint-provenance review can consume that budget. Constraint feedback from
+an in-flight schema repair closes the loop for synthesis. The concise,
+schema-generic prompt replaces the base runtime prompt, and the skill gate
+appends the complete active shopper-skill instructions. The repair exposes and
+forces only the search tool and disables parallel calls. Its message list
+contains only the current shopper message and bounded, sanitized validator
+feedback in a separate Human data message. Echoed rejected arguments are
+stripped, quoted text is explicitly data, and the invalid AI/tool exchange and
+all other history are absent. A successful partial search
+may continue when another valid role remains; the next role receives its own
+repair opportunity, and no scope receives a second repair. For native
+tool-transport failures, the current scope is locked only when current or recent
+shopper text grounds it; an ungrounded model-generated scope may be corrected.
+A grounded free-form scope that cannot be reconstructed safely remains
+comparison-protected and records `repair_scope_changed`. Independently valid
+finite locks are restored before execution, and bounded `restored_fields`
+diagnostics list names only. Runtime validation separately protects
+capability-owned advertised sibling relationships. On a native schema-invalid
+call, malformed or nonempty free-form `unadvertised_requirements` arguments
+remain outside restoration and close without repair; a schema-valid, genuinely
+open `agent_selected_type` request retains the bounded review for a proposed
+inferred requirement.
 After a successful search is marked `scope_complete`, when a requirement or
-taxonomy is unenforceable, or whenever a tool returns `STOP_TOOL_USE`, the next
-model step has no tools and must synthesize from the evidence already collected.
+taxonomy is unenforceable, or whenever a tool returns `STOP_TOOL_USE`, further
+tool use closes. A successful or zero-result search that consumes the final
+configured search slot instead records `SEARCH_BUDGET_EXHAUSTED`; the next
+model step removes only the search tool, preventing a futile additional search
+without blocking product details, availability, cart work, or honest partial
+synthesis. Completed successful search-only evidence renders deterministically;
+mixed-tool paths may receive synthesis from their collected evidence.
 
 The search contract has two explicit no-search boundaries. A concrete requested
 type with no faithful taxonomy value uses `no_direct_catalog_match` and performs
 no retrieval; that status carries empty taxonomy arrays and no hard constraints.
-An unsupported modifier does not erase an otherwise advertised type. A directly
-stated must-have missing from the capability-derived constraint properties is
-carried in `unadvertised_requirements` and returned as unenforceable, while
-subjective style stays semantic. On a partial multi-role search, the runtime
-permits one contextual review before closure so the model can remove only an
-inferred broad-context requirement; a direct product requirement remains
-blocked.
+An unsupported modifier does not erase an otherwise advertised type. Every
+unadvertised requirement on a shopper-stated product scope is returned as
+unenforceable before retrieval, including when the model uses a synonym rather
+than the shopper's exact wording. The bounded constraint review is reserved for
+a proposed inferred requirement on a genuinely open `agent_selected_type` role
+when its shared repair remains. That review preserves requested type, taxonomy
+status, taxonomy, completion state, `search_mode`, and all advertised hard
+constraints. Within that preserved hard scope, it may correct only the soft
+`semantic_query`, the reviewed unadvertised-requirement lane, and its associated
+guidance; the requirement is either replaced with the shopper's shortest exact
+wording or removed. Exact wording and unresolved provenance fail closed.
+Removal scrubs product-attribute guidance. When a runtime semantic
+open-role schema repair removes a proposed inferred requirement, runtime
+replaces the submitted pre-search guidance with neutral generic guidance for
+the selected role.
+
+Every non-image search carries required `requested_product_type` product
+noun/umbrella provenance and pre-retrieval `shopper_guidance` in addition to the
+taxonomy-independent semantic query and structured catalog scope. The provenance
+is the shortest product noun or true umbrella from the
+shopper's current turn or direct antecedent, excluding color, material, fit,
+occasion, weather, and style modifiers; it is not a catalog enum or ranking
+query. Image-only search sets it to `null`. The model owns advertised taxonomy
+selection and `taxonomy_status`; runtime never semantically rewrites the status.
+Capability-owned exact category/subcategory relationships validate the
+selection. `agent_selected_type` is rejected for a shopper-named scope rather
+than silently reinterpreted. For a genuinely open role, the model selects one
+advertised subcategory and runtime derives the duplicate requested-type
+provenance while retaining `agent_selected_type`.
+One unambiguous literal pair of exact advertised subcategories in the current
+shopper turn is validated as a whole: the model-authored request must retain
+both branches under `member_of_requested_umbrella`. It still produces one
+catalog execution, with a widened candidate window and rank-preserving branch
+coverage when each branch returns a candidate. All nonliteral alternative
+reasoning remains model-owned.
 
 Final grounding accepts evidence only from tool-role messages. The current
 request is isolated by its request marker and prior-turn evidence is supplied
-separately for references to products already shown. For search-only turns, code
-renders candidate facts and confirmed filters deterministically. A successful
-search's `SEARCH_DIRECTION_EVIDENCE` is the model-owned semantic ranking
-preference, not a product fact; styling output labels it accordingly and
-nominates the first ranked result for each requested role. No separate rationale
-model is called.
+separately for references to products already shown. Completed successful
+search-only turns present pre-retrieval `shopper_guidance` authored under the
+active skill; static `response_guidance` is the fallback. There is no
+final-synthesis model call. Candidate facts and confirmed filters are rendered
+deterministically, with each search retaining its own guidance, product, and
+filter-evidence group. Grouped candidates deduplicate by `product_ref`, not
+display name. Mixed-outcome turns retain successful product groups when another
+scope has no direct match or an unsupported requirement. Fixed no-direct and
+unsupported canned responses apply only when the rejection is the sole
+current-turn business-tool outcome. A partial successful result set gets a neutral offer to continue with the
+next requested piece or search scope. A zero-result group retains its exact
+scope and supports no claim about other product types or catalog-wide absence.
 
 ## Skills
 
@@ -328,7 +510,9 @@ registered set is:
   filtering without styling intent.
 - `outfit-styling`: fashion styling across anchor product, no-anchor discovery,
   cart styling, conversational mid-browse, and visual requests; it is the
-  primary procedure instead of product discovery when styling is requested.
+  primary procedure instead of product discovery when styling is requested and
+  remains primary for terse item-only follow-ups within that active outfit or
+  style-led single-piece thread.
 - `cart-management`: explicit cart reads and mutations.
 - `budget-shopping`: a modifier for a stated price ceiling or budget bundle.
 - `store-policy-answers`: controlled policy answers through the policy tool.
@@ -348,8 +532,9 @@ The runtime separates three phases:
 The activation prompt and enum come directly from the current validated files
 on every turn. The runtime does not enable the Deep Agents `SkillsMiddleware`
 metadata channel in parallel, because that metadata is checkpointed and can be
-stale for an existing Redis thread after a skill deployment. The filesystem
-middleware remains enabled for read-only reference files.
+stale for an existing checkpoint thread if skill files change while the process
+remains alive. The filesystem middleware remains enabled for read-only
+reference files.
 
 During activation, only `activate_shopper_skills_tool` is visible and tool
 choice is forced to it with parallel calls disabled. After a successful
@@ -409,10 +594,13 @@ Implications:
 - App servers should remain horizontally scalable and mostly stateless.
 - Session, cart, persona, and conversation state must live in shared durable
   stores, not process memory or local files.
-- Deep Agents checkpointing uses Redis in production and is keyed by
-  `conversation_id`. The in-process store is for development and tests only.
-- Redis checkpoint durability does not cover the current process-local product-
-  ref cache. Cross-replica product follow-ups require either a fresh search or a
+- Deep Agents currently uses process-local MemorySaver keyed by
+  `conversation_id`. It loses graph state on restart and does not share threads
+  across workers or replicas. Successful thread histories also remain in heap
+  without a TTL or capacity bound, so it does not yet meet the production
+  scaling assumption above.
+- Graph checkpointing does not cover the separate process-local product-ref
+  cache. Cross-replica product follow-ups require either a fresh search or a
   future shared evidence store with catalog-snapshot identity.
 - Mutating tools must use idempotency keys so retries do not double-add items.
 - Tool calls need timeouts, retry policy, and clear structured failures.
@@ -486,7 +674,11 @@ Implications:
 - Verify product search, image search, cart mutation claims, and grounded
   responses.
 - Give the Judge the actual ordered prior shopper and generated assistant turns
-  and treat that history as authoritative over counterfactual reference-answer
+  plus bounded per-turn structured evidence from successful catalog search and
+  detail messages, its truncation flag, and bounded `catalog_scope_outcomes` for
+  `no_direct_catalog_match` and `zero_results`. Exclude semantic queries, raw
+  tool messages, model reasoning, and every other diagnostic field. Treat
+  generated history as authoritative over counterfactual reference-answer
   assumptions.
 - Compare Deep Agents output against the committed golden integration
   conversations and prior WIP/committed baselines before subsequent quality
@@ -516,52 +708,127 @@ Implications:
   all nine shopping tools.
 - A prior-turn activation, failed activation, or same-batch activation does not
   authorize a current shopping tool call.
+- Prior-turn selected skill names appear only as a read-only continuity signal
+  in the next activation prompt; the model still makes a fresh semantic choice.
 - Activation instructions and skill files require product discovery and outfit
   styling to remain alternative primary procedures and budget shopping to be
-  selected only for a stated budget.
-- An invalid search schema receives at most one search-only repair step. A
-  successful repaired partial search may continue to another valid role, but a
-  second invalid call and every `STOP_TOOL_USE` result force answer synthesis.
+  selected only for a stated budget. Terse item-only follow-ups inside an active
+  outfit or style-led single-piece thread remain styling intent.
+- Each full normalized `requested_product_type` scope receives one total repair,
+  keyed by the server with distinct advertised siblings kept separate. A schema
+  correction or a fresh constraint-provenance review may consume it; constraint
+  feedback from an in-flight schema repair closes for synthesis. The isolated
+  step uses the concise, schema-generic repair-only system prompt, forces only
+  `search_catalog_tool`, and disables parallel calls. Its only messages are the
+  current shopper turn and bounded, sanitized validator feedback in a separate
+  Human data message. Echoed rejected arguments are stripped; invalid AI/tool
+  history and the base runtime prompt are absent; the complete active
+  shopper-skill instructions remain. A successful partial
+  search may continue to another valid role and its own one-repair opportunity,
+  and a second invalid call in the same scope and every `STOP_TOOL_USE` result
+  close the loop. For native transport failures, a repair may change an
+  ungrounded model-generated scope, but not one grounded in current or recent
+  shopper text. Independently valid finite locks are restored before execution
+  and recorded by name in bounded `restored_fields` diagnostics; a grounded
+  free-form scope that cannot be reconstructed safely remains protected by
+  `repair_scope_changed`. On a native schema-invalid call, malformed or nonempty
+  free-form `unadvertised_requirements` arguments close without repair. Successful
+  search-only turns render deterministically; mixed-tool turns synthesize from
+  collected evidence.
 - Taxonomy and required-constraint schemas contain only capability-derived
   advertised fields and values, plus the explicit
   `unadvertised_requirements` lane.
-- Each search has at most one category. `agent_selected_type` may include the
-  advertised subcategories that serve one focused semantic role.
+- Every search schema includes product-agnostic `shopper_guidance` authored
+  before retrieval under the active skill. It must be nonempty except for
+  `image_only` and `no_direct_catalog_match`, which require empty guidance, and
+  it cannot contain candidate facts or internal search mechanics.
+- Every text search requires `requested_product_type` product noun/umbrella
+  provenance: the shortest product noun or true umbrella from the current turn
+  or direct antecedent, excluding color, material, fit, occasion, weather, and
+  style modifiers. For `agent_selected_type`, runtime derives it from the one
+  advertised subcategory selected by the model; image-only search requires it to
+  be `null`. Literal suffix binding can recover an advertised type from a
+  modifier phrase but is disabled for explicit alternatives containing `and`,
+  `or`, `/`, or `&`, leaving their umbrella/alternative interpretation
+  model-owned. For one unambiguous current-turn literal pair whose members are
+  exact advertised subcategories of the same category, runtime requires both
+  model-authored branches under `member_of_requested_umbrella` and executes the
+  pair once. It widens the candidate window and preserves ranking while keeping
+  one returned candidate per branch when available. Modified, synonymous,
+  ambiguous, and cross-category alternatives remain model-owned.
+- Each search has at most one category. `agent_selected_type` selects exactly
+  one advertised subcategory as a focused starting role only when the
+  shopper named no type for that role; alternatives, confirmations,
+  comparisons, and follow-ups count as named types. Invalid open-role
+  provenance is rejected rather than silently reinterpreted; runtime retains
+  `agent_selected_type` and derives its requested type from that subcategory.
 - `no_direct_catalog_match` uses empty taxonomy and no hard constraints; it and
   an unenforceable direct must-have perform no catalog retrieval. Unsupported
   modifiers do not erase an advertised type, and subjective style stays
   semantic.
 - Duplicate search identity is normalized taxonomy plus hard constraints;
   changing only semantic wording cannot repeat a retrieval.
-- A partial multi-role search gets at most one contextual constraint review;
-  direct must-haves remain blocked and broad-context inferences may be removed.
+- A nonempty unadvertised-requirement lane on a shopper-stated product scope
+  fails closed even when the model uses a synonym rather than the shopper's
+  exact wording. The bounded constraint review is reserved for a proposed
+  inferred requirement on a genuinely open `agent_selected_type` role when the
+  scope's shared repair remains; it copies the shopper's shortest
+  exact wording or removes the inferred value while freezing requested type,
+  taxonomy status, taxonomy, completion state, `search_mode`, and all advertised
+  hard constraints. Within that preserved hard scope, only the soft semantic
+  query, reviewed unadvertised-requirement lane, and associated guidance may be
+  corrected. Exact wording and unresolved provenance fail closed. Removal
+  scrubs product-attribute guidance. A runtime semantic open-role schema
+  repair that removes its proposed inferred requirement substitutes neutral
+  generic pre-search guidance for the selected role.
+- A successful or zero-result search that consumes the final configured search
+  slot carries `SEARCH_BUDGET_EXHAUSTED`. The next model step exposes no search
+  tool but retains applicable product-detail, availability, and cart tools plus
+  honest partial synthesis.
 - Grounding accepts only tool-role evidence, isolates current-turn evidence by
   request ID, and cannot treat a prior assistant draft as tool evidence.
-- Search-only output renders candidate facts and recorded ranking direction
-  deterministically, with no separate rationale model step. It labels
-  `SEARCH_DIRECTION_EVIDENCE` as model-owned ranking preference, never product
-  fact, and nominates the first ranked result for each requested role.
+- Completed successful search-only output uses pre-retrieval `shopper_guidance`
+  authored under the active skill, with static `response_guidance` as fallback
+  and no final-synthesis model call. Before that guidance becomes evidence, the
+  runtime replaces documented prohibited outdoor/weather guarantee terms with
+  neutral selected-role guidance without changing search semantics. Covered
+  forms include outdoor-surface or outdoor-walking claims and constructions such
+  as "handle rain," "work well for outdoor surfaces," or "stay secure for
+  outdoor walking," plus `wet conditions` and "works well in wet
+  weather/conditions."
+  Deterministic code renders every candidate,
+  adds a neutral continuation for partial successful evidence, and groups each
+  search's guidance and filters with its originating products. It deduplicates
+  grouped candidates by `product_ref`, not display name, and preserves
+  successful groups across no-direct or unsupported mixed outcomes. Fixed
+  canned responses apply only when that rejection is the sole current-turn
+  business-tool outcome. Scoped zero-result
+  evidence cannot support a different-type or catalog-wide absence claim.
 - Final-response extraction cannot return tool, tool-calling, or internal
   activation text. An otherwise empty answer returns a safe fallback and records
   `incomplete_agent_response`.
 - Diagnostics preserve selected skill paths, ordered arguments, rejected and
-  duplicate calls, termination reason, and bounded partial graph messages on
-  failure.
+  duplicate calls, termination reason, bounded product evidence and truncation,
+  bounded no-product catalog scope outcomes, and bounded partial graph messages
+  on failure. The Judge receives only generated conversation history, product
+  evidence/truncation, and catalog scope outcomes from those diagnostics.
 
 ## Resolved Decisions
 
-- Redis is the primary production store for Deep Agents checkpointing;
-  in-process memory is the development/test default. Select it with
-  `CHECKPOINT_STORE` and configure `CHECKPOINT_REDIS_URL` and
-  `CHECKPOINT_TTL_SECONDS`. This does not persist the current process-local,
-  catalog-snapshot-bound product-ref cache.
+- `CHECKPOINT_STORE=memory` is the only currently supported checkpoint
+  configuration. Non-memory values fail during startup rather than silently
+  falling back to process-local state.
 - Registered skills use `/shopper/<skill>/SKILL.md` under the virtual backend;
   shared read-only references may live directly under `/shopper`.
 
 ## Open Decisions
 
+- Which Apache-2.0/MIT-compatible backend should provide shared, durable Deep
+  Agents checkpoints for production replicas?
 - Should anonymous sessions use cookies, headers, or both?
 - What is the cart TTL for anonymous and logged-in users?
-- Which persona fields should the upstream integration allowlist for each
-  authenticated shopper context?
+- What retention and cleanup policy should apply to cart quantity idempotency
+  records?
+- Which typed persona fields and trusted profile source should a future
+  authenticated integration support?
 - Which tools require human approval or confirmation before mutation?

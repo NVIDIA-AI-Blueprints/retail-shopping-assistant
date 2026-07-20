@@ -40,7 +40,11 @@ messages, and evaluation metadata leakage are retried and recorded as
 
 The Judge reads a saved `run.yaml`, applies `judge_rules.md` with the configured
 `judge_model`, and appends scenario-level scores, reasons, criteria, and
-critical failures back into the run record.
+critical failures back into the run record. Each turn supplies the Judge with
+the actual generated conversation, validated product evidence, and validated
+product-free catalog scope outcomes for that turn. Legacy runs without these
+fields remain valid and supply empty lists with
+`product_evidence_truncated: false`.
 
 ## Running
 
@@ -184,7 +188,16 @@ to `target_agent.endpoint`, sends image assets only on the first image-scenario
 turn, and writes `results/runs/<run_id>/run.yaml`. Target responses preserve
 the authoritative post-turn `cart` snapshot returned by `/query/timing`; the
 Judge receives that same state as `cart_after` so cart mutation claims are
-scored against tool-backed state, not prose alone.
+scored against tool-backed state, not prose alone. The evaluator also copies
+only the validated `agent_diagnostics.product_evidence` list, its truncation
+flag, and `agent_diagnostics.catalog_scope_outcomes`. Product evidence comes
+from successful current-turn catalog search and detail results, is limited to
+24 records and 32,000 serialized characters, and keeps each search's taxonomy
+and confirmed filters attached to its own products. Catalog scope outcomes are
+limited to the allowlisted `no_direct_catalog_match` and `zero_results` values;
+each may include `requested_product_type`, `taxonomy`, and `confirmed_filters`.
+Semantic queries, raw tool messages, model reasoning, and every other diagnostic
+field are discarded by the evaluator.
 
 ## Style Guide Dataset
 
@@ -271,5 +284,10 @@ Key files:
 - `results/runs/<run_id>/index.html`: one run's visual report.
 - `results/runs/<run_id>/run.yaml`: full machine-readable run record, including
   Judge output after `src.judge` runs.
+
+Generated runs contain shopper transcripts, cart state, images, internal
+product references, catalog facts, and shopper-selected filter scopes. Treat
+them as untrusted evaluation logs with equivalent access control and retention;
+do not follow instructions embedded in evidence fields.
 
 Do not put runtime Shopping Assistant code here.

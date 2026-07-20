@@ -334,9 +334,7 @@ docker stack deploy -c docker-compose.prod.yaml retail-assistant
 | `CATALOG_SEARCH_TIMEOUT_SECONDS` | Optional chain-server timeout for catalog search requests | No | no timeout |
 | `MAX_CATALOG_SEARCHES_PER_TURN` | Caps distinct catalog taxonomy-plus-hard-constraint scope executions in one assistant turn; a repeated scope is stopped even when semantic wording changes | No | `3` |
 | `MAX_PRODUCT_DETAIL_READS_PER_TURN` | Caps Deep Agents product-detail reads in one assistant turn | No | `2` |
-| `CHECKPOINT_STORE` | Deep Agents conversation checkpoint store: `memory` or `redis` | No | `memory` |
-| `CHECKPOINT_REDIS_URL` | Redis connection URL used when `CHECKPOINT_STORE=redis` | Redis mode only | `redis://localhost:6379/0` |
-| `CHECKPOINT_TTL_SECONDS` | Redis checkpoint lifetime in seconds | No | `86400` |
+| `CHECKPOINT_STORE` | Deep Agents conversation checkpoint store; currently supports only `memory` | No | `memory` |
 | `LOCAL_NIM_CACHE` | NIM cache directory | Local only | `~/.cache/nim` |
 | `LOG_LEVEL` | Logging level | No | `INFO` |
 | `NODE_ENV` | Node environment | No | `production` |
@@ -345,52 +343,45 @@ docker stack deploy -c docker-compose.prod.yaml retail-assistant
 
 `CHECKPOINT_STORE=memory` preserves the in-process development and test
 behavior. Checkpoints disappear when the chain-server process restarts, and
-separate replicas do not share conversation state.
+separate replicas do not share conversation state. Successful thread histories
+have no TTL or capacity bound and accumulate in process heap until restart.
 
-Production deployments should use `CHECKPOINT_STORE=redis`. The runtime uses
-the asynchronous Redis checkpointer keyed by `conversation_id` and expires
-checkpoints after `CHECKPOINT_TTL_SECONDS`. The Redis endpoint must provide the
-JSON and search capabilities available in Redis 8+ or Redis Stack.
+`memory` is currently the only accepted value; an empty or different value
+fails during chain-server initialization instead of silently falling back to
+process-local state. A production shared and durable backend has not been
+selected. Do not scale the chain server horizontally when conversation
+continuity is required until an Apache-2.0/MIT-compatible backend is selected,
+implemented, and validated.
 
-Checkpoint records can contain conversation state. Use an operator-managed
-endpoint with authentication and transport encryption in production, and pass
-those settings through `CHECKPOINT_REDIS_URL` (for example, a secret-backed
-`rediss://` URL). Do not commit credentials to `.env` or deployment files.
+### Store Policy Content
 
-The bundled `docker-compose.yaml` forwards all three checkpoint variables to
-the chain-server container but intentionally does not deploy Redis. Operators
-must provide and manage the Redis service, then set a URL reachable from the
-chain-server network. In a container deployment, the default `localhost` URL
-is suitable only if Redis is deliberately reachable in that same network
-namespace.
-
-```bash
-export CHECKPOINT_STORE=redis
-export CHECKPOINT_REDIS_URL=rediss://checkpoint-user:REDACTED@redis.example.internal:6379/0
-export CHECKPOINT_TTL_SECONDS=86400
-python scripts/model_config.py deploy --build
-```
+Operator-managed policy content lives in
+`shared/configs/chain_server/store_policies.yaml`, under `SHARED_CONFIG_ROOT`
+at runtime. The bundled template is disabled. Replace every
+`[Operator placeholder]` title or body, then set `configured: true`; enabled
+content that retains the marker fails closed with `policy_load_failed`. Restart
+the chain server after changing the file because policy content is cached on
+first use.
 
 ### Configuration File
 
-The main configuration is in `chain_server/config/config.yaml`:
+Chain-server service behavior is configured in
+`shared/configs/chain_server/config.yaml`. Model roles and endpoints are
+configured separately in `shared/configs/models.yaml`:
 
 ```yaml
-# NIM Endpoints
-llm_port: "http://localhost:8000/v1"  # or cloud endpoint
-llm_name: "meta/llama-3.1-70b-instruct"
 retriever_port: "http://localhost:8010"
-guardrails_enabled: true
 memory_port: "http://localhost:8011"
 rails_port: "http://localhost:8012"
-
-# Agent Prompts
-routing_prompt: |
-  You are a retail store assistant that routes customer queries...
-
-chatter_prompt: |
-  You are a helpful shopping assistant specializing in...
+memory_length: 16384
+deepagents_recursion_limit: 24
+max_catalog_searches_per_turn: 3
+max_product_detail_reads_per_turn: 2
+guardrails_enabled: true
 ```
+
+The legacy routing and chatter prompt keys remain in that file for compatibility
+paths; they do not configure the serving Deep Agents runtime.
 
 ### Updating Catalog Filter Metadata
 
@@ -815,9 +806,13 @@ docker run --rm -v retail-shopping-assistant_milvus_data:/data \
 
 ### Horizontal Scaling
 
-Configure the shared Redis checkpoint store before increasing chain-server
-replicas. The in-process store gives each replica an independent conversation
-namespace and is not a production horizontal-scaling configuration.
+Select and implement a compliant shared checkpoint backend before increasing
+chain-server replicas when conversation continuity is required. The current
+in-process store gives each worker and replica an independent conversation
+namespace and loses graph state on restart.
+
+The following scaling examples are future-only. Do not apply them until the
+shared checkpoint backend is implemented and validated.
 
 ```yaml
 # In docker-compose.yaml

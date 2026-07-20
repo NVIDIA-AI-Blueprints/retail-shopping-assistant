@@ -1,6 +1,7 @@
 ---
 name: outfit-styling
-description: Customer-facing fashion styling and style-led fashion selection. Use instead of product-discovery when the shopper asks to build, complete, validate, compare, balance, or refine an outfit, or wants a fashion piece chosen for a style or vibe such as a statement piece. Keep using it throughout that active outfit-building thread and any style-led single-piece thread, including follow-up searches. Budget-shopping may accompany it only as a modifier.
+description: Customer-facing fashion styling and style-led fashion selection. Use instead of product-discovery when the shopper asks to build, complete, validate, compare, balance, or refine an outfit, or wants a fashion piece chosen for a style or vibe such as a statement piece. Keep using it throughout that active outfit-building thread and any style-led single-piece thread, including terse item-only follow-ups that rely on the active outfit goal. Budget-shopping may accompany it only as a modifier.
+response_guidance: Use these candidates as starting points for the shopper's stated or directly referenced outfit direction. Compare their color relationship, proportion, and formality with the rest of the look; verify product-specific attributes before choosing.
 ---
 
 # Outfit Styling
@@ -9,13 +10,37 @@ Use this skill for fashion styling, outfit composition, and style-aware shopping
 
 ## Mandatory Turn Boundary
 
+- Before every search, split the product noun from its modifiers.
+  `requested_product_type` contains only the shortest shopper-named product noun
+  or umbrella: "formal tops" and "relaxed-fit tops" both use `tops`; color,
+  material, fit, occasion, weather, and style words stay in constraints or the
+  semantic query. For `agent_selected_type`, use the chosen advertised role noun.
+- Build hard constraints only from the current turn's target product. Earlier
+  weather, color, material, or style context may guide the semantic query but
+  never becomes a new hard requirement unless the shopper repeats it for the
+  current target.
+- Immediately before calling the search tool, compare every target-product
+  modifier with the advertised filter schema. Copy each exact advertised value
+  into `required_constraints`; do not send an empty object when one applies.
+  If the shopper explicitly asks for the same or matching attribute, carry the
+  directly referenced anchor's confirmed filter values onto the new target.
+- Before each search, set `shopper_guidance` to one concise, product-agnostic
+  styling sentence connecting the selected role to the shopper's stated goal or
+  direct antecedent. For example, a bottoms follow-up to a beige top should say
+  how the role can balance or complement that beige anchor without describing
+  any candidate product or naming product types outside the selected advertised
+  scope. The guidance is written before results are known.
 - When outfit intent includes a season, weather need, occasion, or style/vibe, call `search_catalog_tool` in the current turn and begin with a grounded partial outfit. Never answer only with clarification questions.
+- A shopper-described or shopper-owned item is a styling anchor, not a request to search for or revalidate that item. Unless the shopper explicitly asks to find that product type, keep it as context and search a complementary role from advertised taxonomy.
+- If a styling anchor lacks enough detail for a precise answer, give one useful provisional direction before asking one concise question. Do not answer with only a questionnaire.
 - For a broad style/vibe request, choose a useful core role only from taxonomy values advertised by the active catalog. Do not translate the vibe into an unadvertised product type or copy a generic example into the tool call.
 - An unspecified request for one style-led piece, such as "a statement piece," does not identify a product role. Ask one concise category or occasion question before searching. This differs from an outfit or complete-look request, where the named vibe, occasion, season, or weather need is enough to start a multi-role plan.
-- A broad outfit, style, or vibe is not a product-type umbrella. When the shopper names no concrete product type, use `agent_selected_type` for one focused role in one category and include every advertised subcategory that serves that role. Use separate calls for additional outfit roles.
+- A broad outfit, style, or vibe is not a product-type umbrella. When the shopper names no concrete product type, use `agent_selected_type` with exactly one advertised subcategory as the focused starting role. Use separate calls for additional outfit roles.
+- Evaluate every product role named in the current turn independently. If the shopper names a type for that role, including as an alternative, confirmation, comparison, or follow-up, `agent_selected_type` is forbidden. Use an exact or umbrella match when faithful; otherwise use `no_direct_catalog_match` without substituting a styling-adjacent type.
+- Preserve that decision in `requested_product_type`: copy only the shortest shopper-named product noun or umbrella for an explicit role; for `agent_selected_type`, use the chosen advertised role noun. Use null only for image-only search.
 - Treat broad weather or occasion context as styling direction, not automatically as a product-attribute guarantee. For example, a "rainy day outfit" or "wet-weather outfit" should start with practical advertised roles and modest reasoning; add water resistance to `unadvertised_requirements` only when the shopper directly requires that attribute for a target product.
-- Subjective style or vibe words remain semantic direction unless the shopper explicitly makes them hard requirements. Objective product attributes such as material, weather performance, sale status, or a specific shade remain must-haves when they define the requested product.
-- For alternatives joined by "or", search the faithful advertised branch and explain the unavailable branch. Do not reject a supported branch because another alternative is unavailable, and do not put the supported taxonomy value in `unadvertised_requirements`.
+- Subjective style or vibe words remain semantic direction unless the shopper explicitly makes them hard requirements. Recommendation adjectives such as comfortable, relaxed, soft, breathable, lightweight, casual, dressy, bold, bright, vibrant, or sporty are semantic preferences unless explicitly non-negotiable. Objective product attributes such as material, weather performance, sale status, or a specific shade remain must-haves when they define the requested product.
+- For alternatives joined by "or", preserve every named branch. Search a supported branch with `scope_complete=false` when another branch is unavailable, then report the unavailable branch with one `no_direct_catalog_match` call. Do not reject a supported branch because another alternative is unavailable, and do not put the supported taxonomy value in `unadvertised_requirements`.
 - Each search covers one catalog category and one focused product role. Include all faithful advertised subtypes for that role in the same call, but never mix apparel, footwear, bags, or other categories in one retrieval. A multi-role outfit uses separate focused calls up to the search cap.
 - A request for a whole or complete outfit remains incomplete until current or directly referenced prior evidence covers multiple complementary roles, or the search cap is reached and the missing role is disclosed. A one-piece dress may be the clothing core, but does not by itself complete an outfit request.
 
@@ -211,9 +236,16 @@ The shopper asks a style question while browsing, comparing, filtering, or refin
 ## Tool Use
 
 - Use `search_catalog_tool` for product discovery, complements, substitutions, budget filters, and image-grounded shopping.
-- Interpret shopper meaning against the active catalog capabilities and choose only exact advertised taxonomy values that faithfully match. Use `exact_requested_type` only when every selected value means the same product type the shopper named. Use `member_of_requested_umbrella` when the shopper names a true umbrella or explicit alternatives, and include every faithful advertised child in the same call; do not reverse that relationship because the requested type belongs to a broader selected category. Apply one direction test to every value: "is this a kind of the product scope the shopper asked for?" A skirt is a kind of bottom; a flat or sandal is not a kind of sneaker even though all are footwear. Use `agent_selected_type` only when an outfit plan needs one role that the shopper did not name, for one focused role in one category with every advertised subtype that serves it. Before using `no_direct_catalog_match`, separate the requested product type from its modifiers: an unavailable attribute does not erase an advertised type, subjective style stays in the semantic query, and a supported alternative branch must still be searched. Use no-direct only when an explicitly requested concrete product type has no direct match, with empty taxonomy arrays and no required constraints so no retrieval runs. Never use it for an outfit, occasion, season, weather need, style/vibe, or product attribute. Do not broaden to its parent category, omit it, or silently substitute another type; report the gap and offer one next direction.
+- Use `exact_requested_type` when the selected taxonomy directly represents the requested focused role. For a single selected value, the requested type must name that value; the semantic query may focus on soft ranking direction. Prefer `member_of_requested_umbrella` when a true shopper-named umbrella spans multiple advertised children, and include only values that are genuinely kinds of that umbrella.
+- On `no_direct_catalog_match`, leave required constraints empty and never copy the requested product type into `unadvertised_requirements`.
+- Interpret shopper meaning against the active catalog capabilities and choose only exact advertised taxonomy values that faithfully match. Use `exact_requested_type` only when every selected value means the same product type the shopper named. Use `member_of_requested_umbrella` when the shopper names a true umbrella or explicit alternatives, and include every faithful advertised child in the same call; do not reverse that relationship because the requested type belongs to a broader selected category. Apply one direction test to every value: "is this a kind of the product scope the shopper asked for?" A skirt is a kind of bottom; a flat or sandal is not a kind of sneaker even though all are footwear. Use `agent_selected_type` only when an outfit plan needs a role that the shopper did not name, selecting exactly one advertised subcategory as the focused starting role. It is forbidden when the shopper named the role's product type, including as an alternative, confirmation, comparison, or follow-up. Before using `no_direct_catalog_match`, separate the requested product type from its modifiers: an unavailable attribute does not erase an advertised type, subjective style stays in the semantic query, and a supported alternative branch must still be searched. Use no-direct only when an explicitly requested concrete product type has no direct match, with empty taxonomy arrays and no required constraints so no retrieval runs. Never use it for an outfit, occasion, season, weather need, style/vibe, or product attribute. Do not broaden to its parent category, omit it, or silently substitute another type; report the gap and offer one next direction.
 - When an umbrella term maps to only one faithful advertised type, search that type once and say which other requested types the catalog does not advertise. Do not add unrelated advertised types merely to increase the result set.
 - Preserve every explicit must-have. Use its exact advertised property in `required_constraints`, or `unadvertised_requirements` when the property is absent; let deterministic validation report what the catalog cannot enforce rather than omitting or weakening it.
+- Treat a defining material as a must-have: "denim skirts" keeps skirts as taxonomy and puts denim in `unadvertised_requirements` when composition is not a hard filter.
+- Keep subjective recommendation adjectives such as comfortable, relaxed,
+  soft, breathable, lightweight, casual, or dressy in semantic ranking only;
+  never put them in `unadvertised_requirements`. A comfy weekend outfit starts
+  with empty hard constraints.
 - When one shopper constraint maps to multiple advertised enum values, include all faithful values in one list and one search rather than retrying one value at a time.
 - Use `get_product_details_tool` for facts about a known `PRODUCT_REF`.
 - Current product details expose only the fields returned by the product detail
@@ -263,6 +295,9 @@ The shopper asks a style question while browsing, comparing, filtering, or refin
 ## Response Style
 
 - Lead with the recommendation or judgment, then give concise reasons grounded in fundamentals or trend intent.
+- For search-only styling, the runtime presents this skill's reviewed,
+  product-agnostic `response_guidance` before grounded candidates. Keep ranking
+  queries and internal search mechanics out of shopper-facing responses.
 - Mention product names and prices only when grounded in tool results.
 - In initial recommendations, keep product descriptions to name, price,
   category or role, and one styling reason. Do not enumerate materials,

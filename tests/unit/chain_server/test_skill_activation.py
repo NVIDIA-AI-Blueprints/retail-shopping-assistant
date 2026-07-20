@@ -105,6 +105,10 @@ class _RecordingToolModel(BaseChatModel):
                 "tool_choice": tool_choice,
                 "settings": tool_settings,
                 "system_prompt": system_prompt,
+                "messages": [
+                    {"type": message.type, "text": message.text}
+                    for message in messages
+                ],
             }
         )
         response = self.responses[self._response_index]
@@ -153,11 +157,11 @@ def test_activation_schema_rejects_two_primary_procedures() -> None:
 
     with pytest.raises(ValueError, match="select exactly one primary procedure"):
         activation_input(
-            skill_names=["outfit-styling", "product-discovery"]
+            skill_names=["outfit-styling", "product-discovery"],
         )
 
     selected = activation_input(
-        skill_names=["outfit-styling", "budget-shopping"]
+        skill_names=["outfit-styling", "budget-shopping"],
     )
     assert selected.skill_names == ["outfit-styling", "budget-shopping"]
 
@@ -171,7 +175,9 @@ def test_activation_schema_requires_primary_for_budget_only() -> None:
         ValueError,
         match="budget-shopping requires exactly one primary procedure",
     ):
-        activation_input(skill_names=["budget-shopping"])
+        activation_input(
+            skill_names=["budget-shopping"],
+        )
 
 
 def test_activation_schema_allows_standalone_cart_and_policy_skills() -> None:
@@ -185,10 +191,10 @@ def test_activation_schema_allows_standalone_cart_and_policy_skills() -> None:
     )
 
     assert activation_input(
-        skill_names=["cart-management"]
+        skill_names=["cart-management"],
     ).skill_names == ["cart-management"]
     assert activation_input(
-        skill_names=["store-policy-answers"]
+        skill_names=["store-policy-answers"],
     ).skill_names == ["store-policy-answers"]
 
 
@@ -219,7 +225,9 @@ def _capture_request(
                             {
                                 "id": "activation-call",
                                 "name": SKILL_ACTIVATION_TOOL_NAME,
-                                "args": {"skill_names": ["outfit-styling"]},
+                                "args": {
+                                    "skill_names": ["outfit-styling"],
+                                },
                             }
                         ],
                     )
@@ -259,7 +267,9 @@ def _activated_messages(request_id: str = REQUEST_ID) -> list[Any]:
                 {
                     "id": "activation-call",
                     "name": SKILL_ACTIVATION_TOOL_NAME,
-                    "args": {"skill_names": ["outfit-styling"]},
+                    "args": {
+                        "skill_names": ["outfit-styling"],
+                    },
                 }
             ],
         ),
@@ -290,6 +300,22 @@ def test_pending_phase_forces_only_the_activation_tool() -> None:
     assert (
         "Do not switch to product discovery merely because the current turn asks"
         in prepared.system_prompt
+    )
+
+
+def test_pending_phase_exposes_prior_skill_as_continuity_signal() -> None:
+    messages = [
+        *_activated_messages("old-request"),
+        HumanMessage(content=f"REQUEST ID: {REQUEST_ID}"),
+    ]
+
+    prepared = _capture_request(_middleware(), _model_request(messages))
+
+    assert "Previous turn's selected shopper skills: outfit-styling" in (
+        prepared.system_prompt
+    )
+    assert "change it only when the shopper changes tasks" in (
+        prepared.system_prompt
     )
 
 
@@ -331,6 +357,40 @@ def test_active_phase_injects_complete_skill_and_exposes_commerce() -> None:
     assert "## Unsupported Commerce Details" in prepared.system_prompt
 
 
+def test_active_phase_rejects_multiple_shopping_tools_in_one_model_step() -> None:
+    middleware = _middleware()
+    middleware.activate(
+        {"/shopper/product-discovery/SKILL.md": "# Product Discovery"}
+    )
+
+    with pytest.raises(
+        ShopperSkillActivationError,
+        match="multiple shopping tools in one step",
+    ):
+        middleware.wrap_model_call(
+            _model_request(_activated_messages()),
+            lambda _: ModelResponse(
+                result=[
+                    AIMessage(
+                        content="",
+                        tool_calls=[
+                            {
+                                "id": "search-a",
+                                "name": "search_catalog_tool",
+                                "args": {"query": "tops"},
+                            },
+                            {
+                                "id": "search-b",
+                                "name": "search_catalog_tool",
+                                "args": {"query": "skirts"},
+                            },
+                        ],
+                    )
+                ]
+            ),
+        )
+
+
 def test_failed_activation_exposes_no_tools() -> None:
     middleware = _middleware()
     middleware.fail()
@@ -351,7 +411,9 @@ def test_same_batch_activation_does_not_unlock_commerce() -> None:
                 {
                     "id": "activation-call",
                     "name": SKILL_ACTIVATION_TOOL_NAME,
-                    "args": {"skill_names": ["outfit-styling"]},
+                    "args": {
+                        "skill_names": ["outfit-styling"],
+                    },
                 },
                 {
                     "id": "search-call",
@@ -444,7 +506,7 @@ async def test_compiled_agent_loads_full_skill_before_exposing_commerce(
                             "skill_names": [
                                 "outfit-styling",
                                 "product-discovery",
-                            ]
+                            ],
                         },
                     }
                 ],
@@ -455,7 +517,9 @@ async def test_compiled_agent_loads_full_skill_before_exposing_commerce(
                     {
                         "id": "activate-skill",
                         "name": SKILL_ACTIVATION_TOOL_NAME,
-                        "args": {"skill_names": ["outfit-styling"]},
+                        "args": {
+                            "skill_names": ["outfit-styling"],
+                        },
                     }
                 ],
             ),
@@ -547,6 +611,7 @@ async def test_compiled_agent_allows_one_invalid_taxonomy_repair_then_synthesize
     base_config.llm_name = model_name
     invalid_search = {
         "semantic_query": "pants to coordinate with a beige top",
+        "requested_product_type": "pants",
         "taxonomy_status": "exact_requested_type",
         "taxonomy": {"category": ["apparel"], "subcategory": ["pants"]},
         "required_constraints": {},
@@ -561,7 +626,9 @@ async def test_compiled_agent_allows_one_invalid_taxonomy_repair_then_synthesize
                     {
                         "id": "activate-skill",
                         "name": SKILL_ACTIVATION_TOOL_NAME,
-                        "args": {"skill_names": ["outfit-styling"]},
+                        "args": {
+                            "skill_names": ["outfit-styling"],
+                        },
                     }
                 ],
             ),
@@ -640,5 +707,18 @@ async def test_compiled_agent_allows_one_invalid_taxonomy_repair_then_synthesize
     assert len(model.calls) == 4
     assert model.calls[2]["tools"] == ["search_catalog_tool"]
     assert model.calls[2]["settings"]["parallel_tool_calls"] is False
+    assert "## Catalog Search Repair" in model.calls[2]["system_prompt"]
+    assert "## Active Shopper Skills" in model.calls[2]["system_prompt"]
+    assert "# Outfit Styling" in model.calls[2]["system_prompt"]
+    assert "You are a shopping assistant" not in model.calls[2]["system_prompt"]
+    repair_messages = model.calls[2]["messages"]
+    assert not any(
+        message["type"] in {"ai", "tool"} for message in repair_messages
+    )
+    assert sum(message["type"] == "human" for message in repair_messages) == 2
+    assert "USER QUERY: What pants go with the beige top?" in (
+        repair_messages[-2]["text"]
+    )
+    assert "CATALOG VALIDATOR FEEDBACK" in repair_messages[-1]["text"]
     assert model.calls[3]["tools"] == []
     assert result["messages"][-1].content.startswith("I don't see pants")

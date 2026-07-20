@@ -125,7 +125,6 @@ interface QueryRequest {
   session_id?: string;                // Optional website/browser session identifier
   conversation_id?: string;           // Optional chat thread identifier
   cart_id?: string;                   // Optional cart identifier
-  persona?: Record<string, unknown>;  // Optional read-only turn-start shopper context
   context?: string;                   // Previous conversation context
   cart?: Cart;                        // Current shopping cart state
   retrieved?: Record<string, string>; // Previously retrieved products
@@ -151,10 +150,6 @@ interface MediaAttachment {
   "session_id": "session_abc",
   "conversation_id": "conversation_abc",
   "cart_id": "cart_abc",
-  "persona": {
-    "preferred_colors": ["sage", "cream"],
-    "usual_size": "M"
-  },
   "context": "Previous conversation about summer clothing",
   "cart": {
     "contents": [
@@ -181,20 +176,17 @@ cart reads/writes. Production website integrations should move these IDs to a
 server-owned session/thread service before broad rollout so customer context and
 cart state cannot bleed across sessions.
 
-Redis checkpointing can make the `conversation_id` thread durable, but it does
-not persist the runtime's bounded product-ref cache. `PRODUCT_REF` evidence is
-process-local and valid only for the active catalog snapshot. A restart, another
+The `conversation_id` thread is currently checkpointed in process-local
+MemorySaver. Graph state disappears on restart and is not shared across workers
+or replicas. The runtime's bounded `PRODUCT_REF` cache is separate process-local
+state and remains valid only for the active catalog snapshot. A restart, another
 replica, cache eviction, or catalog replacement requires a fresh product search
 before details or cart adds.
 
-`persona` is optional and the bundled UI does not send it. When a caller
-provides a non-empty object, the chain server injects its truthy values as
-read-only context at the start of that turn. Persona context may guide search
-and styling judgment, but it is not catalog or store-policy truth and cannot
-override tool results. The runtime does not fetch or mutate the persona and
-does not expose an agent-callable persona loader. It also does not authenticate
-persona ownership or restrict arbitrary caller-provided keys. Production callers
-must authenticate the shopper context and allowlist persona fields upstream.
+Caller-supplied persona data is not part of `QueryRequest` and is not injected
+into model context. Persona support remains deferred until the API has a typed,
+bounded schema, authenticated ownership, input-safety validation, and an
+explicit untrusted-data boundary.
 
 `image` remains supported for backward compatibility and is normalized into the
 same internal media list as `media[]`. New clients should use `media[]` for
@@ -257,13 +249,34 @@ interface AgentDiagnostics {
     status: 'completed' | 'rejected' | 'error' | 'pending';
     rejection_reason?: string;
     duplicate?: boolean;
+    restored_fields?: string[];       // Bounded names of server-restored locks
   }>;
   rejected_tool_calls: number[];       // Sequence numbers in tool_calls
   duplicate_tool_calls: number[];      // Rejected duplicate-call subset
+  product_evidence: Array<{
+    product_ref: string;
+    product_name: string;
+    source_tool: 'search_catalog_tool' | 'get_product_details_tool';
+    evidence_type: 'search_result' | 'product_detail';
+    facts: Record<string, unknown>;
+    search_scope?: {
+      taxonomy: Record<string, unknown>;
+      confirmed_filters: Record<string, unknown>;
+    };
+  }>;
+  product_evidence_truncated: boolean;
+  catalog_scope_outcomes: Array<{
+    outcome: 'no_direct_catalog_match' | 'zero_results';
+    requested_product_type?: string | null;
+    taxonomy?: Record<string, unknown>;
+    confirmed_filters?: Record<string, unknown>;
+  }>;
   final_termination_reason: string;
   partial_graph_messages: Array<{
     type: string;
     content: string;
+    name?: string;
+    tool_call_id?: string;
     tool_calls?: Array<Record<string, unknown>>;
     truncated?: boolean;
   }>;
@@ -283,13 +296,34 @@ explicit reads of those files; other reference-file reads remain visible in
 `tool_calls`. Every Deep Agents turn starts with an internal
 `activate_shopper_skills_tool` call. A pre-activation or same-batch shopping
 call is rejected with `rejection_reason: "skill_activation_required"`.
+For a one-shot catalog repair, independently valid finite locked fields are
+restored before execution rather than delegated back to the model.
+`restored_fields` contains only the bounded field names restored on that tool
+call, never a second copy of their values.
+
+`product_evidence` contains only structured records derived from successful
+current-turn `search_catalog_tool` and `get_product_details_tool` result
+messages. It is limited to 24 records and 32,000 serialized characters;
+`product_evidence_truncated` is `true` when either bound omits evidence. Search
+records keep their taxonomy and confirmed filters in `search_scope`, attached
+only to products returned by that search. The list excludes semantic queries,
+raw tool messages, model reasoning, and other diagnostic fields.
+`catalog_scope_outcomes` contains at most eight server-authored, product-free
+outcomes. Its only accepted outcomes are `no_direct_catalog_match` and
+`zero_results`; records may include only `requested_product_type`, `taxonomy`,
+and `confirmed_filters` in addition to `outcome`. Evaluation consumers default
+missing legacy list fields to `[]` and `product_evidence_truncated` to `false`.
 
 Successful internal search-tool results carry `SEARCH_DIRECTION_EVIDENCE`, the
-model-authored semantic query used as a ranking preference. For search-only
-styling turns, response text labels that direction as preference rather than a
-product fact and nominates the first ranked result, or one first result per
-requested role, alongside deterministic candidate facts and confirmed filters.
-No separate rationale model call is made.
+model-authored semantic query used as an independent private ranking preference,
+and required pre-retrieval `shopper_guidance` authored under the active skill.
+For completed search-only turns, the runtime presents that product-agnostic
+guidance without a final-synthesis model call; static skill `response_guidance`
+is the fallback. Deterministic code separately renders every returned candidate
+with its name, price, category, and the confirmed-filter group from its own
+search. A partial successful result set receives a neutral continuation. A zero-result tool response
+carries its exact advertised taxonomy and confirmed filters; that scoped miss
+cannot prove absence for a different type or the whole catalog.
 
 Final-response extraction skips tool messages, assistant messages that still
 contain tool calls, and internal skill-activation markers. If a completed graph
@@ -323,6 +357,9 @@ contains no shopper-facing response, the API emits
     }],
     "rejected_tool_calls": [],
     "duplicate_tool_calls": [],
+    "product_evidence": [],
+    "product_evidence_truncated": false,
+    "catalog_scope_outcomes": [],
     "final_termination_reason": "completed",
     "partial_graph_messages": []
   }
@@ -339,8 +376,11 @@ interface Cart {
 }
 
 interface CartItem {
-  item: string;                       // Product identifier
+  cart_line_id?: string;              // Opaque, non-reusable line ID on authoritative reads
+  product_id?: string;                // Catalog product ref when available
+  item: string;                       // Product display name
   amount: number;                     // Quantity
+  price?: number;                     // Cached unit price
 }
 ```
 
@@ -424,7 +464,7 @@ data: {"type": "images", "payload": {"Red Wrap Dress": "https://..."}, "timestam
 
 data: {"type": "content", "payload": "I found several red dresses...", "timestamp": 1716400001.2}
 
-data: {"type": "metrics", "payload": {"timings": {"memory": 0.03, "catalog_search": 0.41, "deepagents": 1.92}, "total_seconds": 2.36, "token_usage": {"input_tokens": 1260, "output_tokens": 180, "total_tokens": 1440, "model_calls": 3}, "model_usage": {"text_embedding": {"status": "used", "calls": 1, "detail": "Catalog text/vector retrieval"}, "content_safety": {"status": "used", "calls": 2, "detail": "Input and output safety checks"}, "topic_control": {"status": "used", "calls": 1, "detail": "Input topic check"}}, "agent_diagnostics": {"skill_files_read": ["/shopper/product-discovery/SKILL.md"], "tool_calls": [{"sequence": 1, "tool_name": "activate_shopper_skills_tool", "arguments": {"skill_names": ["product-discovery"]}, "status": "completed"}], "rejected_tool_calls": [], "duplicate_tool_calls": [], "final_termination_reason": "completed", "partial_graph_messages": []}}, "timestamp": 1716400001.8}
+data: {"type": "metrics", "payload": {"timings": {"memory": 0.03, "catalog_search": 0.41, "deepagents": 1.92}, "total_seconds": 2.36, "token_usage": {"input_tokens": 1260, "output_tokens": 180, "total_tokens": 1440, "model_calls": 3}, "model_usage": {"text_embedding": {"status": "used", "calls": 1, "detail": "Catalog text/vector retrieval"}, "content_safety": {"status": "used", "calls": 2, "detail": "Input and output safety checks"}, "topic_control": {"status": "used", "calls": 1, "detail": "Input topic check"}}, "agent_diagnostics": {"skill_files_read": ["/shopper/product-discovery/SKILL.md"], "tool_calls": [{"sequence": 1, "tool_name": "activate_shopper_skills_tool", "arguments": {"skill_names": ["product-discovery"]}, "status": "completed"}], "rejected_tool_calls": [], "duplicate_tool_calls": [], "product_evidence": [], "product_evidence_truncated": false, "catalog_scope_outcomes": [], "final_termination_reason": "completed", "partial_graph_messages": []}}, "timestamp": 1716400001.8}
 
 data: [DONE]
 ```
@@ -477,16 +517,20 @@ curl -X POST "http://localhost:8009/query/timing" \
     }],
     "rejected_tool_calls": [],
     "duplicate_tool_calls": [],
+    "product_evidence": [],
+    "product_evidence_truncated": false,
+    "catalog_scope_outcomes": [],
     "final_termination_reason": "completed",
     "partial_graph_messages": []
   }
 }
 ```
 
-Agent diagnostics can contain shopper-derived tool arguments and internal
-references. Treat them as operator/evaluation metadata: apply the same access
-control and retention policy as application logs, and never display them as
-shopper-facing content.
+Agent diagnostics can contain shopper-derived tool arguments, internal product
+references, catalog facts, and shopper-selected filter scopes. Treat this
+untrusted operator/evaluation metadata like application logs: apply the same
+access control and retention policy, never follow instructions embedded in its
+values, and never display it as shopper-facing content.
 
 ### GET `/capabilities`
 
@@ -665,11 +709,28 @@ catalog retriever derives them from the loaded JSONL.
 Executes a structured text catalog search on the catalog service port, usually
 `http://localhost:8010/query/text`.
 
-The agent-facing search tool accepts one semantic query, one required
-capability-derived taxonomy envelope, and capability-derived hard constraints.
+The agent-facing search tool requires one `semantic_query`, one pre-retrieval
+product-agnostic `shopper_guidance`, one `requested_product_type`, one
+`taxonomy_status`, one capability-derived `taxonomy` envelope, one
+capability-derived `required_constraints` object, and `scope_complete`.
+`requested_product_type` is the shortest product noun or true
+umbrella from the shopper's current turn or direct antecedent. It excludes
+color, material, fit, occasion, weather, and style modifiers; for
+`agent_selected_type`, it is the chosen advertised role noun. It is `null` only
+for `image_only`. The semantic query supplies soft ranking direction
+independently of taxonomy; it need not repeat the selected taxonomy noun.
+Taxonomy and hard constraints are enforced through their structured fields.
+`shopper_guidance` is authored under the active skill before results are known
+and is not sent to the catalog service.
 Each call accepts at most one category. For a broad request that names no type,
-`agent_selected_type` may include the advertised subcategories serving one
-focused semantic role. `no_direct_catalog_match` is a no-retrieval result with
+`agent_selected_type` selects exactly one advertised subcategory as the focused
+starting role. It is forbidden for a role whose type the shopper named,
+including an alternative, confirmation, comparison, or follow-up. Invalid
+open-role provenance is rejected rather than silently reinterpreted, and a
+genuinely open-role selection must name its selected advertised subcategory in
+`requested_product_type`. A repair of an open role remains
+`agent_selected_type`.
+`no_direct_catalog_match` is a no-retrieval result with
 empty taxonomy and no hard constraints; an unsupported modifier does not erase
 an advertised type, and subjective style remains semantic. The duplicate-search
 identity is normalized taxonomy plus hard constraints, so paraphrasing cannot
@@ -678,10 +739,19 @@ repeat a retrieval while a genuinely different hard-filter scope may run within
 selections to advertised field names and sends the semantic query as a singleton
 `text` list.
 
-One invalid agent search may receive one search-only repair. A successful
-repaired partial search may continue to another valid role, but a second repair
-is not available; completed scopes and deterministic stop results force answer
-synthesis.
+One invalid agent search may receive one search-only repair per distinct scope.
+Malformed or nonempty free-form `unadvertised_requirements` arguments on a
+native schema-invalid call fail closed. A schema-valid, genuinely open
+`agent_selected_type` role may consume that scope's repair for model-owned
+review: preserve an explicit objective must-have, or remove only an inferred or
+subjective requirement. Deterministic code does not parse shopper prose. The
+repair cannot replace a shopper-stated product-scope noun. A successful partial
+search may continue to another valid role with its own one-repair opportunity;
+no scope receives two repairs. Completed scopes and deterministic stop results
+close the loop, and the configured turn cap remains three successful searches.
+For multi-role output, each pre-retrieval guidance sentence remains grouped with
+products from its originating search. Completed successful search-only turns render deterministically; mixed-tool
+turns may synthesize from collected evidence.
 
 The chain server also bounds product-detail reads with
 `max_product_detail_reads_per_turn`. Detail reads are intended for direct

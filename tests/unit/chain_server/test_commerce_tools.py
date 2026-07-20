@@ -21,12 +21,8 @@ from chain_server.src.commerce_tools import (
 )
 from shared.commerce_contracts import (
     AddCartItemInput,
-    Cart,
-    CartLine,
-    CartMutationResult,
     CheckProductAvailabilityInput,
     GetCartInput,
-    GetCartResult,
     GetProductDetailsInput,
     GetStorePolicyInput,
     Money,
@@ -41,9 +37,18 @@ class FakeSession:
         self.response = response
         self.exc = exc
         self.calls = []
+        self.put_calls = []
 
     def post(self, url, json, timeout):
         self.calls.append({"url": url, "json": json, "timeout": timeout})
+        if self.exc:
+            raise self.exc
+        return self.response
+
+    def put(self, url, json, timeout):
+        call = {"url": url, "json": json, "timeout": timeout}
+        self.calls.append(call)
+        self.put_calls.append(call)
         if self.exc:
             raise self.exc
         return self.response
@@ -340,8 +345,18 @@ def test_get_cart_maps_memory_rows_to_contract_cart() -> None:
             {
                 "user_id": 42,
                 "cart": [
-                    {"item": "Silk Dress", "amount": 2, "price": 49.99},
-                    {"item": "Leather Bag", "amount": 1, "price": 199.0},
+                    {
+                        "cart_line_id": "17",
+                        "item": "Silk Dress",
+                        "amount": 2,
+                        "price": 49.99,
+                    },
+                    {
+                        "cart_line_id": "23",
+                        "item": "Leather Bag",
+                        "amount": 1,
+                        "price": 199.0,
+                    },
                 ],
             }
         )
@@ -356,6 +371,7 @@ def test_get_cart_maps_memory_rows_to_contract_cart() -> None:
     assert result.ok is True
     assert session.calls[0]["url"] == "http://memory-retriever:8011/user/42/cart"
     assert result.cart.user_id == "42"
+    assert result.cart.lines[0].cart_line_id == "17"
     assert result.cart.lines[0].display_name == "Silk Dress"
     assert result.cart.lines[0].unit_price.amount == 49.99
     assert result.cart.subtotal.amount == 298.98
@@ -413,49 +429,25 @@ def test_remove_cart_item_posts_memory_payload_and_returns_message() -> None:
     assert result.meta.idempotency_key == "cart-remove-1"
 
 
-def test_update_cart_item_replaces_existing_quantity(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls = []
-    cart = Cart(
-        user_id="42",
-        lines=[
-            CartLine(
-                cart_line_id="Silk Dress",
-                product_id="prod_123",
-                display_name="Silk Dress",
-                quantity=2,
-                unit_price=Money(amount=49.99),
-                image_url="/images/silk-dress.jpg",
-            )
-        ],
+def test_update_cart_item_sets_quantity_in_one_request() -> None:
+    session = FakeSession(
+        FakeResponse(
+            {
+                "cart_line": {
+                    "cart_line_id": "17",
+                    "item": "Silk Dress",
+                    "amount": 4,
+                    "price": 49.99,
+                },
+                "message": "Updated 'Silk Dress' to quantity 4.",
+            }
+        )
     )
 
-    def fake_get_cart(request, memory_retriever_url, **kwargs):
-        calls.append(("get", request, memory_retriever_url, kwargs))
-        return GetCartResult(ok=True, cart=cart)
-
-    def fake_remove_cart_item(request, memory_retriever_url, **kwargs):
-        calls.append(("remove", request, memory_retriever_url, kwargs))
-        return CartMutationResult(ok=True)
-
-    def fake_add_cart_item(request, memory_retriever_url, **kwargs):
-        calls.append(("add", request, memory_retriever_url, kwargs))
-        return CartMutationResult(ok=True, changed_line=cart.lines[0])
-
-    monkeypatch.setattr(commerce_tools_mod, "get_cart", fake_get_cart)
-    monkeypatch.setattr(
-        commerce_tools_mod,
-        "remove_cart_item",
-        fake_remove_cart_item,
-    )
-    monkeypatch.setattr(commerce_tools_mod, "add_cart_item", fake_add_cart_item)
-
-    session = object()
     result = update_cart_item(
         UpdateCartItemInput(
             user_id="42",
-            cart_line_id="Silk Dress",
+            cart_line_id="17",
             quantity=4,
             idempotency_key="cart-update-1",
         ),
@@ -465,114 +457,104 @@ def test_update_cart_item_replaces_existing_quantity(
     )
 
     assert result.ok is True
-    assert [call[0] for call in calls] == ["get", "remove", "add"]
-    remove_request = calls[1][1]
-    assert remove_request.quantity == 2
-    assert remove_request.product_id == "prod_123"
-    assert remove_request.display_name == "Silk Dress"
-    assert remove_request.idempotency_key == "cart-update-1-remove"
-    add_request = calls[2][1]
-    assert add_request.quantity == 4
-    assert add_request.product_id == "prod_123"
-    assert add_request.display_name == "Silk Dress"
-    assert add_request.unit_price.amount == 49.99
-    assert add_request.image_url == "/images/silk-dress.jpg"
-    assert add_request.idempotency_key == "cart-update-1-add"
-    assert all(call[3] == {"timeout_seconds": 7, "session": session} for call in calls)
+    assert session.calls == [
+        {
+            "url": "http://memory-retriever:8011/user/42/cart/17/quantity",
+            "json": {
+                "quantity": 4,
+                "idempotency_key": "cart-update-1",
+            },
+            "timeout": 7,
+        }
+    ]
+    assert session.put_calls == session.calls
+    assert result.changed_line.cart_line_id == "17"
+    assert result.changed_line.display_name == "Silk Dress"
+    assert result.changed_line.quantity == 4
+    assert result.changed_line.unit_price.amount == 49.99
+    assert result.message == "Updated 'Silk Dress' to quantity 4."
+    assert result.meta.idempotency_key == "cart-update-1"
 
 
-def test_update_cart_item_quantity_zero_removes_complete_line(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    removed = []
-    cart = Cart(
-        user_id="42",
-        lines=[
-            CartLine(
-                cart_line_id="Silk Dress",
-                product_id="prod_123",
-                display_name="Silk Dress",
-                quantity=3,
-            )
-        ],
-    )
-
-    monkeypatch.setattr(
-        commerce_tools_mod,
-        "get_cart",
-        lambda *args, **kwargs: GetCartResult(ok=True, cart=cart),
-    )
-
-    def fake_remove_cart_item(request, *args, **kwargs):
-        removed.append(request)
-        return CartMutationResult(ok=True)
-
-    monkeypatch.setattr(
-        commerce_tools_mod,
-        "remove_cart_item",
-        fake_remove_cart_item,
-    )
-    monkeypatch.setattr(
-        commerce_tools_mod,
-        "add_cart_item",
-        lambda *args, **kwargs: pytest.fail("quantity zero must not re-add the line"),
+def test_update_cart_item_quantity_zero_uses_same_endpoint() -> None:
+    session = FakeSession(
+        FakeResponse(
+            {
+                "cart_line": {
+                    "cart_line_id": "17",
+                    "item": "Silk Dress",
+                    "amount": 0,
+                    "price": 49.99,
+                },
+                "message": "Updated 'Silk Dress' to quantity 0.",
+            }
+        )
     )
 
     result = update_cart_item(
         UpdateCartItemInput(
             user_id="42",
-            cart_line_id="Silk Dress",
+            cart_line_id="17",
             quantity=0,
             idempotency_key="cart-update-remove",
         ),
         "http://memory-retriever:8011",
+        session=session,
     )
 
     assert result.ok is True
     assert result.changed_line is None
-    assert len(removed) == 1
-    assert removed[0].quantity == 3
-    assert removed[0].idempotency_key == "cart-update-remove"
+    assert session.calls == [
+        {
+            "url": "http://memory-retriever:8011/user/42/cart/17/quantity",
+            "json": {
+                "quantity": 0,
+                "idempotency_key": "cart-update-remove",
+            },
+            "timeout": 10,
+        }
+    ]
+    assert session.put_calls == session.calls
+    assert result.meta.idempotency_key == "cart-update-remove"
 
 
-def test_update_cart_item_returns_structured_error_for_unknown_line(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    cart = Cart(
-        user_id="42",
-        lines=[
-            CartLine(
-                cart_line_id="Silk Dress",
-                product_id="prod_123",
-                display_name="Silk Dress",
-                quantity=1,
-            )
-        ],
-    )
-    monkeypatch.setattr(
-        commerce_tools_mod,
-        "get_cart",
-        lambda *args, **kwargs: GetCartResult(ok=True, cart=cart),
-    )
-    monkeypatch.setattr(
-        commerce_tools_mod,
-        "remove_cart_item",
-        lambda *args, **kwargs: pytest.fail("unknown lines must not be removed"),
-    )
-    monkeypatch.setattr(
-        commerce_tools_mod,
-        "add_cart_item",
-        lambda *args, **kwargs: pytest.fail("unknown lines must not be added"),
-    )
-
+def test_update_cart_item_rejects_mismatched_zero_quantity_response() -> None:
     result = update_cart_item(
         UpdateCartItemInput(
             user_id="42",
-            cart_line_id="Unknown Line",
+            cart_line_id="17",
+            quantity=0,
+            idempotency_key="cart-update-remove",
+        ),
+        "http://memory-retriever:8011",
+        session=FakeSession(
+            FakeResponse(
+                {
+                    "cart_line": {
+                        "cart_line_id": "17",
+                        "item": "Silk Dress",
+                        "amount": 2,
+                        "price": 49.99,
+                    }
+                }
+            )
+        ),
+    )
+
+    assert result.ok is False
+    assert result.error.code == "cart_response_invalid"
+
+
+def test_update_cart_item_returns_structured_error_for_unknown_line() -> None:
+    result = update_cart_item(
+        UpdateCartItemInput(
+            user_id="42",
+            cart_line_id="999",
             quantity=2,
             idempotency_key="cart-update-missing",
         ),
         "http://memory-retriever:8011",
+        session=FakeSession(FakeResponse({}, status_code=404)),
     )
 
     assert result.ok is False
@@ -581,17 +563,88 @@ def test_update_cart_item_returns_structured_error_for_unknown_line(
     assert result.meta.idempotency_key == "cart-update-missing"
 
 
+def test_update_cart_item_returns_retryable_error_on_request_failure() -> None:
+    result = update_cart_item(
+        UpdateCartItemInput(
+            user_id="42",
+            cart_line_id="17",
+            quantity=4,
+            idempotency_key="cart-update-failed",
+        ),
+        "http://memory-retriever:8011",
+        session=FakeSession(exc=requests.Timeout("timed out")),
+    )
+
+    assert result.ok is False
+    assert result.error.code == "cart_update_failed"
+    assert result.error.retryable is True
+    assert result.meta.idempotency_key == "cart-update-failed"
+
+
+def test_update_cart_item_returns_nonretryable_error_for_client_failure() -> None:
+    result = update_cart_item(
+        UpdateCartItemInput(
+            user_id="42",
+            cart_line_id="17",
+            quantity=4,
+            idempotency_key="cart-update-rejected",
+        ),
+        "http://memory-retriever:8011",
+        session=FakeSession(FakeResponse({}, status_code=422)),
+    )
+
+    assert result.ok is False
+    assert result.error.code == "cart_update_failed"
+    assert result.error.message == "Cart quantity update was rejected."
+    assert result.error.retryable is False
+    assert result.error.details == {"status_code": 422}
+
+
+def test_update_cart_item_returns_retryable_error_for_server_failure() -> None:
+    result = update_cart_item(
+        UpdateCartItemInput(
+            user_id="42",
+            cart_line_id="17",
+            quantity=4,
+            idempotency_key="cart-update-server-failed",
+        ),
+        "http://memory-retriever:8011",
+        session=FakeSession(FakeResponse({}, status_code=503)),
+    )
+
+    assert result.ok is False
+    assert result.error.code == "cart_update_failed"
+    assert result.error.retryable is True
+
+
+def _write_configured_policies(tmp_path: Path) -> Path:
+    topics = (
+        "returns",
+        "shipping",
+        "sizing",
+        "payment",
+        "price_match",
+        "gift_cards",
+    )
+    lines = ["configured: true", "policies:"]
+    for topic in topics:
+        lines.extend(
+            (
+                f"  {topic}:",
+                f'    title: "Configured {topic} policy"',
+                f'    body: "Configured content for {topic}."',
+            )
+        )
+    policies_path = tmp_path / "policies.yaml"
+    policies_path.write_text("\n".join(lines), encoding="utf-8")
+    return policies_path
+
+
 def test_get_store_policy_loads_all_configured_topics(
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    policies_path = (
-        Path(__file__).resolve().parents[3]
-        / "chain_server"
-        / "skills"
-        / "shopper"
-        / "store-policy"
-        / "policies.yaml"
-    )
+    policies_path = _write_configured_policies(tmp_path)
     monkeypatch.setattr(commerce_tools_mod, "_POLICY_CACHE", None)
 
     for topic in (
@@ -611,17 +664,58 @@ def test_get_store_policy_loads_all_configured_topics(
         assert "last_updated" not in type(result.policy).model_fields
 
 
-def test_get_store_policy_returns_error_for_unknown_topic(
+def test_get_store_policy_fails_closed_for_bundled_template(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     policies_path = (
         Path(__file__).resolve().parents[3]
+        / "shared"
+        / "configs"
         / "chain_server"
-        / "skills"
-        / "shopper"
-        / "store-policy"
-        / "policies.yaml"
+        / "store_policies.yaml"
     )
+    monkeypatch.setattr(commerce_tools_mod, "_POLICY_CACHE", None)
+
+    result = get_store_policy(GetStorePolicyInput(topic="returns"), policies_path)
+
+    assert result.ok is False
+    assert result.policy is None
+    assert result.error.code == "policy_not_configured"
+    assert "retailer's help center" in result.error.message
+
+
+def test_get_store_policy_rejects_enabled_operator_placeholder(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    policies_path = tmp_path / "store_policies.yaml"
+    policies_path.write_text(
+        "\n".join(
+            (
+                "configured: true",
+                "policies:",
+                "  returns:",
+                '    title: "Return Policy"',
+                '    body: "[Operator placeholder] Replace this policy."',
+            )
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(commerce_tools_mod, "_POLICY_CACHE", None)
+
+    result = get_store_policy(GetStorePolicyInput(topic="returns"), policies_path)
+
+    assert result.ok is False
+    assert result.policy is None
+    assert result.error.code == "policy_load_failed"
+    assert "operator placeholders" in result.error.details["error"]
+
+
+def test_get_store_policy_returns_error_for_unknown_topic(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    policies_path = _write_configured_policies(tmp_path)
     monkeypatch.setattr(commerce_tools_mod, "_POLICY_CACHE", None)
 
     result = get_store_policy(
@@ -648,6 +742,21 @@ def test_get_store_policy_returns_error_when_file_is_missing(
     assert result.ok is False
     assert result.error.code == "policy_load_failed"
     assert result.error.message == "Policy file could not be loaded."
+
+
+def test_get_store_policy_cache_does_not_reload_at_runtime(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    policies_path = _write_configured_policies(tmp_path)
+    monkeypatch.setattr(commerce_tools_mod, "_POLICY_CACHE", None)
+
+    first = get_store_policy(GetStorePolicyInput(topic="returns"), policies_path)
+    policies_path.write_text("configured: false\npolicies: {}\n", encoding="utf-8")
+    second = get_store_policy(GetStorePolicyInput(topic="returns"), policies_path)
+
+    assert first.ok is True
+    assert second == first
 
 
 def test_check_product_availability_returns_consistent_unknown_result() -> None:

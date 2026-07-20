@@ -273,6 +273,21 @@ def _judge_scenario_payload(scenario: Mapping[str, Any]) -> dict[str, Any]:
                 "assistant_error": target.get("error"),
                 "returned_images": target.get("images"),
                 "cart_after": target.get("cart"),
+                "product_evidence": (
+                    target.get("product_evidence")
+                    if isinstance(target.get("product_evidence"), list)
+                    else []
+                ),
+                "product_evidence_truncated": (
+                    target.get("product_evidence_truncated")
+                    if isinstance(target.get("product_evidence_truncated"), bool)
+                    else False
+                ),
+                "catalog_scope_outcomes": (
+                    target.get("catalog_scope_outcomes")
+                    if isinstance(target.get("catalog_scope_outcomes"), list)
+                    else []
+                ),
             }
         )
 

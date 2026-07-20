@@ -218,6 +218,7 @@ export interface AgentToolCallDiagnostic {
   status: 'completed' | 'rejected' | 'error' | 'pending';
   rejection_reason?: string;
   duplicate?: boolean;
+  restored_fields?: string[];
 }
 
 export interface AgentPartialMessageDiagnostic {
@@ -229,11 +230,35 @@ export interface AgentPartialMessageDiagnostic {
   truncated?: boolean;
 }
 
+export interface AgentProductEvidenceSearchScope {
+  taxonomy: Record<string, unknown>;
+  confirmed_filters: Record<string, unknown>;
+}
+
+export interface AgentProductEvidenceDiagnostic {
+  product_ref: string;
+  product_name: string;
+  source_tool: 'search_catalog_tool' | 'get_product_details_tool';
+  evidence_type: 'search_result' | 'product_detail';
+  facts: Record<string, unknown>;
+  search_scope?: AgentProductEvidenceSearchScope;
+}
+
+export interface AgentCatalogScopeOutcomeDiagnostic {
+  outcome: 'no_direct_catalog_match' | 'zero_results';
+  requested_product_type?: string | null;
+  taxonomy?: Record<string, unknown>;
+  confirmed_filters?: Record<string, unknown>;
+}
+
 export interface AgentDiagnostics {
   skill_files_read: string[];
   tool_calls: AgentToolCallDiagnostic[];
   rejected_tool_calls: number[];
   duplicate_tool_calls: number[];
+  product_evidence: AgentProductEvidenceDiagnostic[];
+  product_evidence_truncated: boolean;
+  catalog_scope_outcomes: AgentCatalogScopeOutcomeDiagnostic[];
   final_termination_reason: string;
   partial_graph_messages: AgentPartialMessageDiagnostic[];
   partial_graph_messages_truncated?: boolean;

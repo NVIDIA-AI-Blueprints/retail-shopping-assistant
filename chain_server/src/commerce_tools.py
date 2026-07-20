@@ -8,11 +8,9 @@ return shared commerce contracts so current LangGraph agents, future Deep
 Agents tools, and later protocol adapters can share the same typed boundary.
 """
 
-# KNOWN LIMITATION — Cart line identity:
-# The memory service uses display_name as the cart line key. CART_LINE_IDs
-# returned by cart tools are display name aliases, not stable IDs. Two items
-# with similar names can conflict. This will be resolved when the memory
-# service returns stable server-generated line IDs.
+# Cart reads expose the memory service's opaque CartItem.cart_line_id as
+# CART_LINE_ID. Legacy add/remove endpoints still address lines by display_name;
+# absolute quantity updates use the stable ID through the dedicated endpoint.
 
 from __future__ import annotations
 
@@ -51,8 +49,9 @@ from shared.commerce_contracts import (
 )
 
 
-_POLICY_CACHE: dict[str, StorePolicy] | None = None
+_POLICY_CACHE: tuple[bool, dict[str, StorePolicy]] | None = None
 _POLICY_CACHE_LOCK = Lock()
+_POLICY_PLACEHOLDER_MARKER = "[operator placeholder]"
 
 
 def search_catalog(
@@ -375,113 +374,153 @@ def update_cart_item(
     timeout_seconds: float = 10,
     session: Any | None = None,
 ) -> CartMutationResult:
-    """Update the quantity of an existing cart line.
+    """Set an existing cart line's absolute quantity in one service request."""
 
-    Quantity zero removes the line. The adapter removes the complete current
-    line before optionally adding the requested quantity because the memory
-    service does not have a dedicated update endpoint.
-    """
-
-    cart_result = get_cart(
-        GetCartInput(user_id=request.user_id),
-        memory_retriever_url,
-        timeout_seconds=timeout_seconds,
-        session=session,
-    )
-    if not cart_result.ok or cart_result.cart is None:
-        return CartMutationResult(
-            ok=False,
-            error=CommerceError(
-                code="cart_read_failed",
-                message="Could not read cart before update.",
+    http = session or requests
+    cart_line_id = quote(request.cart_line_id, safe="")
+    try:
+        response = http.put(
+            (
+                f"{memory_retriever_url.rstrip('/')}/user/{request.user_id}"
+                f"/cart/{cart_line_id}/quantity"
             ),
-            meta=ToolMeta(idempotency_key=request.idempotency_key),
+            json={
+                "quantity": request.quantity,
+                "idempotency_key": request.idempotency_key,
+            },
+            timeout=timeout_seconds,
+        )
+        status_code = getattr(response, "status_code", None)
+        if status_code == 404:
+            return _cart_update_failure(
+                request,
+                "cart_line_not_found",
+                f"CART_LINE_ID '{request.cart_line_id}' not found. "
+                "Call get_cart_tool to get current line IDs.",
+            )
+        if isinstance(status_code, int) and 400 <= status_code < 500:
+            return _cart_update_failure(
+                request,
+                "cart_update_failed",
+                "Cart quantity update was rejected.",
+                details={"status_code": status_code},
+            )
+        response.raise_for_status()
+        data = response.json()
+    except requests.RequestException as exc:
+        return _cart_update_failure(
+            request,
+            "cart_update_failed",
+            "Cart quantity update failed.",
+            retryable=True,
+            exception=exc,
+        )
+    except ValueError as exc:
+        return _cart_update_failure(
+            request,
+            "cart_response_invalid",
+            "Cart update returned an invalid response.",
+            exception=exc,
+        )
+    return _cart_update_result(request, data)
+
+
+def _cart_update_result(
+    request: UpdateCartItemInput,
+    data: Any,
+) -> CartMutationResult:
+    cart_line_data = data.get("cart_line") if isinstance(data, dict) else None
+    if not isinstance(cart_line_data, dict) or str(
+        cart_line_data.get("cart_line_id") or ""
+    ) != request.cart_line_id:
+        return _cart_update_failure(
+            request,
+            "cart_response_invalid",
+            "Cart update returned an invalid response.",
+        )
+    if _int_or_default(cart_line_data.get("amount"), -1) != request.quantity:
+        return _cart_update_failure(
+            request,
+            "cart_response_invalid",
+            "Cart update returned an invalid response.",
         )
 
-    line = next(
-        (
-            line
-            for line in cart_result.cart.lines
-            if line.cart_line_id == request.cart_line_id
-        ),
-        None,
-    )
-    if line is None:
-        return CartMutationResult(
-            ok=False,
-            error=CommerceError(
-                code="cart_line_not_found",
-                message=(
-                    f"CART_LINE_ID '{request.cart_line_id}' not found. "
-                    "Call get_cart_tool to get current line IDs."
-                ),
-            ),
-            meta=ToolMeta(idempotency_key=request.idempotency_key),
-        )
-
-    remove_key = request.idempotency_key
+    changed_line = None
     if request.quantity > 0:
-        remove_key = f"{request.idempotency_key}-remove"
-    remove_result = remove_cart_item(
-        RemoveCartItemInput(
-            user_id=request.user_id,
-            cart_line_id=request.cart_line_id,
-            idempotency_key=remove_key,
-            quantity=line.quantity,
-            product_id=line.product_id,
-            display_name=line.display_name,
-        ),
-        memory_retriever_url,
-        timeout_seconds=timeout_seconds,
-        session=session,
-    )
-    if not remove_result.ok:
-        return CartMutationResult(
-            ok=False,
-            error=remove_result.error,
-            meta=ToolMeta(idempotency_key=request.idempotency_key),
-        )
-    if request.quantity == 0:
-        return CartMutationResult(
-            ok=True,
-            message=remove_result.message,
-            meta=ToolMeta(idempotency_key=request.idempotency_key),
-        )
+        changed_line = _cart_line_from_memory_item(cart_line_data)
+        if changed_line is None:
+            return _cart_update_failure(
+                request,
+                "cart_response_invalid",
+                "Cart update returned an invalid response.",
+            )
 
-    return add_cart_item(
-        AddCartItemInput(
-            user_id=request.user_id,
-            product_id=line.product_id,
-            quantity=request.quantity,
-            idempotency_key=f"{request.idempotency_key}-add",
-            display_name=line.display_name,
-            unit_price=line.unit_price,
-            image_url=line.image_url,
-        ),
-        memory_retriever_url,
-        timeout_seconds=timeout_seconds,
-        session=session,
+    return CartMutationResult(
+        ok=True,
+        changed_line=changed_line,
+        message=str(data.get("message") or ""),
+        meta=ToolMeta(idempotency_key=request.idempotency_key),
     )
 
 
-def _load_policies(policies_path: str | Path) -> dict[str, StorePolicy]:
+def _cart_update_failure(
+    request: UpdateCartItemInput,
+    code: str,
+    message: str,
+    *,
+    retryable: bool = False,
+    exception: Exception | None = None,
+    details: dict[str, Any] | None = None,
+) -> CartMutationResult:
+    error_details = dict(details or {})
+    if exception is not None:
+        error_details["error"] = str(exception)
+    return CartMutationResult(
+        ok=False,
+        error=CommerceError(
+            code=code,
+            message=message,
+            retryable=retryable,
+            details=error_details,
+        ),
+        meta=ToolMeta(idempotency_key=request.idempotency_key),
+    )
+
+
+def _load_policies(
+    policies_path: str | Path,
+) -> tuple[bool, dict[str, StorePolicy]]:
     global _POLICY_CACHE
     with _POLICY_CACHE_LOCK:
         if _POLICY_CACHE is None:
             import yaml
 
             with open(policies_path, "r") as policy_file:
-                data = yaml.safe_load(policy_file)
-            _POLICY_CACHE = {
-                topic: StorePolicy(
-                    policy_id=topic,
-                    topic=topic,
-                    title=policy["title"],
-                    body=policy["body"],
-                    source_uri=policy.get("source_uri"),
-                )
-                for topic, policy in (data.get("policies") or {}).items()
-            }
+                data = yaml.safe_load(policy_file) or {}
+            configured = data.get("configured") is True
+            policy_rows = data.get("policies") or {}
+            policies: dict[str, StorePolicy] = {}
+            if configured:
+                if any(
+                    _POLICY_PLACEHOLDER_MARKER
+                    in str(policy.get(field) or "").casefold()
+                    for policy in policy_rows.values()
+                    for field in ("title", "body")
+                ):
+                    raise ValueError(
+                        "Configured store policies still contain operator placeholders."
+                    )
+                policies = {
+                    topic: StorePolicy(
+                        policy_id=topic,
+                        topic=topic,
+                        title=policy["title"],
+                        body=policy["body"],
+                        source_uri=policy.get("source_uri"),
+                    )
+                    for topic, policy in policy_rows.items()
+                }
+            _POLICY_CACHE = (configured, policies)
     return _POLICY_CACHE
 
 
@@ -496,7 +535,7 @@ def get_store_policy(
     """
 
     try:
-        policies = _load_policies(policies_path)
+        configured, policies = _load_policies(policies_path)
     except Exception as exc:
         return GetStorePolicyResult(
             ok=False,
@@ -504,6 +543,18 @@ def get_store_policy(
                 code="policy_load_failed",
                 message="Policy file could not be loaded.",
                 details={"error": str(exc)},
+            ),
+        )
+
+    if not configured:
+        return GetStorePolicyResult(
+            ok=False,
+            error=CommerceError(
+                code="policy_not_configured",
+                message=(
+                    "Store policies are not configured for this deployment. "
+                    "Direct the shopper to the retailer's help center."
+                ),
             ),
         )
 
@@ -636,7 +687,7 @@ def _cart_line_from_memory_item(item: dict[str, Any]) -> CartLine | None:
 
     price = _float_or_default(item.get("price"), None)
     return CartLine(
-        cart_line_id=display_name,
+        cart_line_id=str(item.get("cart_line_id") or display_name),
         product_id=str(item.get("product_id") or display_name),
         display_name=display_name,
         quantity=quantity,

@@ -70,6 +70,7 @@ def test_registered_shopper_skills_have_valid_frontmatter() -> None:
 
         assert frontmatter["name"] == name
         assert 0 < len(frontmatter["description"]) <= 1024
+        assert 0 < len(frontmatter["response_guidance"]) <= 1024
         assert 0 < len(name) <= 64
         assert not name.startswith("-")
         assert not name.endswith("-")
@@ -155,6 +156,8 @@ def test_shopper_skills_keep_taxonomy_selection_semantic_and_catalog_owned() -> 
     for body in (styling_body, discovery_body):
         assert "do not broaden to" in body.lower()
         assert "silently substitute" in body
+        assert "alternative, confirmation, comparison, or follow-up" in body
+        assert "`agent_selected_type` is forbidden" in body
         assert "separate the requested product type from its modifiers" in body
         assert "subjective style stays in the semantic query" in body
         assert "supported alternative branch must still be searched" in body
@@ -184,16 +187,23 @@ def test_primary_shopper_skills_cover_search_and_followup_contracts() -> None:
     assert '"Do you have water-resistant bags?"' in discovery_body
     assert "## Mandatory Constraint Boundary" in discovery_body
     assert "an empty object is not faithful" in discovery_body
-    assert "Only wording that explicitly makes an attribute optional" in (
+    assert "Subjective recommendation adjectives always remain semantic" in (
         discovery_body
     )
+    assert "never objective hard filters" in discovery_body
     for body in (styling_body, discovery_body):
         assert "explicitly requested concrete product type" in body
         assert "Never use it for an outfit, occasion, season, weather need" in body
         assert "in `required_constraints`" in body
+        assert "compare every target-product\n  modifier" in body
+        assert "do not send an empty object when one applies" in body
+        assert "bold, bright, vibrant" in body
         assert "multiple advertised enum values" in body
         assert "named antecedent" in body
         assert "shared confirmed constraint" in body
+
+    assert "same or matching attribute" in styling_body
+    assert "confirmed filter values onto the new target" in styling_body
 
 
 def test_outfit_styling_scopes_incremental_requests_and_substitutions() -> None:
@@ -217,6 +227,10 @@ def test_outfit_styling_scopes_incremental_requests_and_substitutions() -> None:
 
 def test_outfit_styling_skill_documents_fact_inference_boundary() -> None:
     _, body = _read_skill()
+    normalized_body = " ".join(body.split())
+
+    assert "product-agnostic `response_guidance`" in normalized_body
+    assert "before grounded candidates" in normalized_body
 
     assert "Shopper wording is context, not catalog truth" in body
     assert "do not show them to the shopper" in body

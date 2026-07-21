@@ -53,6 +53,7 @@ SKILL_TOOL_GRANTS = {
             "add_cart_items_tool",
             "get_cart_tool",
             "remove_cart_item_tool",
+            "resolve_conversation_products_tool",
             "update_cart_items_tool",
             "view_cart_total_tool",
         }
@@ -61,6 +62,7 @@ SKILL_TOOL_GRANTS = {
         {
             "check_product_availability_tool",
             "get_product_details_tool",
+            "resolve_conversation_products_tool",
             "search_catalog_tool",
         }
     ),
@@ -68,6 +70,7 @@ SKILL_TOOL_GRANTS = {
         {
             "check_product_availability_tool",
             "get_product_details_tool",
+            "resolve_conversation_products_tool",
             "search_catalog_tool",
         }
     ),
@@ -635,65 +638,6 @@ def test_invented_catalog_constraint_is_rejected_before_execution() -> None:
     assert handled == []
     assert isinstance(result, ToolMessage)
     assert str(result.content).startswith("CATALOG_CALL_NOT_AUTHORIZED:")
-
-
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="Historical product reference resolution remains a later memory slice.",
-)
-def test_ambiguous_product_reference_requires_clarification() -> None:
-    """Two prior bag candidates cannot authorize a guessed cart target."""
-
-    middleware = _middleware()
-    middleware.activate(
-        {"/shopper/cart-management/SKILL.md": "# Cart Management"},
-        ["cart-management"],
-    )
-    # These messages describe the scenario only. Future resolution must use
-    # ledger-backed authorization rather than parsing tool-message prose.
-    prior_results = [
-        HumanMessage(content="REQUEST ID: prior-request\nUSER QUERY: Show me bags"),
-        AIMessage(
-            content="",
-            tool_calls=[
-                {
-                    "id": "prior-search",
-                    "name": "search_catalog_tool",
-                    "args": {"semantic_query": "bags"},
-                }
-            ],
-        ),
-        ToolMessage(
-            content=(
-                "PRODUCT_REF: bag-a\nNAME: Work Bag\n\n"
-                "PRODUCT_REF: bag-b\nNAME: Canvas Tote"
-            ),
-            name="search_catalog_tool",
-            tool_call_id="prior-search",
-        ),
-    ]
-    messages = [
-        *prior_results,
-        *_activated_messages(
-            skill_name="cart-management",
-            query="Add that bag",
-        ),
-    ]
-    request = _tool_request(
-        "add_cart_items_tool",
-        messages,
-        {"items": [{"product_ref": "bag-a"}]},
-    )
-    handled: list[ToolCallRequest] = []
-
-    result = middleware.wrap_tool_call(request, handled.append)
-
-    assert handled == []
-    assert isinstance(result, ToolMessage)
-    rejection = str(result.content).casefold()
-    assert "reference" in rejection
-    assert "clarif" in rejection
 
 
 def test_cart_management_exposes_cart_mutation_but_not_catalog_search() -> None:

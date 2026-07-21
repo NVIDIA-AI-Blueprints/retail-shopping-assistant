@@ -29,6 +29,11 @@ from chain_server.src.conversation_memory import (
     TurnReplayOutput,
     TurnStartResult,
 )
+from chain_server.src.conversation_products import (
+    ConversationProductMatch,
+    ProductReferenceResolution,
+    ResolveConversationProductsResult,
+)
 from shared.commerce_contracts import Cart as CommerceCart
 from shared.commerce_contracts import (
     CartLine,
@@ -118,6 +123,29 @@ def _install_conversation_memory_stub(runtime) -> _ConversationMemoryStub:
     stub = _ConversationMemoryStub()
     runtime._conversation_memory = stub
     return stub
+
+
+def _resolved_conversation_products(
+    *products: ProductSummary,
+) -> ResolveConversationProductsResult:
+    return ResolveConversationProductsResult(
+        results=[
+            ProductReferenceResolution(
+                reference_id=product.product_id,
+                status="resolved",
+                matches=[
+                    ConversationProductMatch(
+                        product=product,
+                        candidate_set_id="test-set",
+                        turn_sequence=1,
+                        position=position,
+                    )
+                ],
+                match_count=1,
+            )
+            for position, product in enumerate(products, start=1)
+        ]
+    )
 
 
 @pytest.fixture
@@ -458,6 +486,37 @@ class TestRequestIdentity:
 
         assert first.request_id != second.request_id
 
+    def test_checkpoint_thread_is_request_scoped(self) -> None:
+        from chain_server.src.deepagents_runtime import create_request_identity
+
+        first = create_request_identity(
+            legacy_user_id=42,
+            conversation_id="conversation-a",
+            request_id="request-a",
+        )
+        second = create_request_identity(
+            legacy_user_id=42,
+            conversation_id="conversation-a",
+            request_id="request-b",
+        )
+
+        assert first.checkpoint_thread_id == '["conversation-a","request-a"]'
+        assert second.checkpoint_thread_id == '["conversation-a","request-b"]'
+
+        collision_left = create_request_identity(
+            legacy_user_id=42,
+            conversation_id="a:b",
+            request_id="c",
+        )
+        collision_right = create_request_identity(
+            legacy_user_id=42,
+            conversation_id="a",
+            request_id="b:c",
+        )
+        assert collision_left.checkpoint_thread_id != (
+            collision_right.checkpoint_thread_id
+        )
+
     def test_cart_scope_can_survive_across_conversations(self) -> None:
         from chain_server.src.deepagents_runtime import create_request_identity
 
@@ -527,7 +586,7 @@ class TestCheckpointerConfiguration:
             runtime_mod._build_checkpointer()
 
     @pytest.mark.asyncio
-    async def test_async_checkpointer_resets_failed_thread(self, base_config) -> None:
+    async def test_async_checkpointer_deletes_turn_checkpoint(self, base_config) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
 
         deleted_threads = []
@@ -547,9 +606,9 @@ class TestCheckpointerConfiguration:
             request_id="request-a",
         )
 
-        await runtime._reset_agent_thread(identity)
+        await runtime._delete_turn_checkpoint(identity)
 
-        assert deleted_threads == ["conversation-a"]
+        assert deleted_threads == ['["conversation-a","request-a"]']
 
 
 class TestSystemPrompt:
@@ -700,7 +759,22 @@ class TestDeepAgentsRuntimeScopes:
                             "status": "completed",
                         }
                     ],
-                    "projection": {},
+                    "projection": {
+                        "product_reference_index": [
+                            {
+                                "candidate_set_id": "set-a",
+                                "turn_seq": 1,
+                                "products": [
+                                    {
+                                        "ref": "bag-a",
+                                        "name": "Blue Bag",
+                                        "category": "bags",
+                                        "position": 1,
+                                    }
+                                ],
+                            }
+                        ]
+                    },
                     "cart": [
                         {
                             "cart_line_id": "line-a",
@@ -725,6 +799,8 @@ class TestDeepAgentsRuntimeScopes:
         assert memory.start_calls[0]["cart_user_id"] == 222
         assert memory.start_calls[0]["request_id"] == "request-a"
         assert "User: Show me a bag" in state.context
+        assert "HISTORICAL PRODUCT INDEX (read-only)" in state.context
+        assert "set=set-a turn=1: 1:Blue Bag [bags] <bag-a>" in state.context
         assert state.cart.contents[0]["cart_line_id"] == "line-a"
         assert memory.finalize_calls[0]["conversation_id"] == "conversation-a"
         assert memory.finalize_calls[0]["turn_id"] == "turn-a"
@@ -887,17 +963,26 @@ class TestDeepAgentsRuntimeScopes:
             raise asyncio.CancelledError
 
         monkeypatch.setattr(runtime, "_execute_turn", cancel_turn)
+        state = State(
+            user_id=111,
+            query="hello",
+            guardrails=False,
+            product_results=[
+                {
+                    "product_id": "unsent-product",
+                    "display_name": "Unsent Product",
+                }
+            ],
+        )
 
         with pytest.raises(asyncio.CancelledError):
-            await runtime._run_turn(
-                State(user_id=111, query="hello", guardrails=False),
-                identity,
-            )
+            await runtime._run_turn(state, identity)
 
         assert len(memory.finalize_calls) == 1
         assert memory.finalize_calls[0]["status"] == "failed"
         assert memory.finalize_calls[0]["termination_reason"] == ("request_cancelled")
         assert "check your cart" in memory.finalize_calls[0]["assistant_text"]
+        assert memory.finalize_calls[0]["output"].product_results == []
 
     @pytest.mark.asyncio
     async def test_finalize_failure_preserves_response_and_checkpoint(
@@ -2121,16 +2206,39 @@ class TestDeepAgentsRuntimeRefs:
             cart_user_id=222,
             request_id="request-a",
         )
-        runtime._remember_products(
-            identity,
-            [
-                ProductSummary(
-                    product_id="prod_123",
-                    display_name="Silk Dress",
-                    category="dresses",
-                    attributes={"taxonomy": {"category": "apparel"}},
-                )
-            ],
+        product = ProductSummary(
+            product_id="prod_123",
+            display_name="Silk Dress",
+            category="dresses",
+            attributes={"taxonomy": {"category": "apparel"}},
+        )
+        resolution_result = {
+            "value": ResolveConversationProductsResult(
+                results=[
+                    ProductReferenceResolution(
+                        reference_id="dress",
+                        status="resolved",
+                        matches=[
+                            ConversationProductMatch(
+                                product=product,
+                                candidate_set_id="set-a",
+                                turn_sequence=1,
+                                position=1,
+                            )
+                        ],
+                        match_count=1,
+                    )
+                ]
+            )
+        }
+        resolution_requests = []
+
+        def resolve_conversation_products(*args):
+            resolution_requests.append(args)
+            return resolution_result["value"]
+
+        runtime._conversation_products = SimpleNamespace(
+            resolve=resolve_conversation_products
         )
 
         runtime._create_agent(State(user_id=111, query="hello"), identity)
@@ -2140,6 +2248,7 @@ class TestDeepAgentsRuntimeRefs:
             "activate_shopper_skills_tool",
             "search_catalog_tool",
             "get_product_details_tool",
+            "resolve_conversation_products_tool",
             "get_cart_tool",
             "add_cart_items_tool",
             "remove_cart_item_tool",
@@ -2188,6 +2297,10 @@ class TestDeepAgentsRuntimeRefs:
             tools_by_name["check_product_availability_tool"].args_schema
             is runtime_mod._CheckAvailabilityInput
         )
+        assert (
+            tools_by_name["resolve_conversation_products_tool"].args_schema
+            is runtime_mod.ResolveConversationProductsRequest
+        )
         assert tools_by_name["search_catalog_tool"].return_direct is False
         assert tools_by_name["activate_shopper_skills_tool"].return_direct is False
         assert tools_by_name["get_product_details_tool"].return_direct is False
@@ -2207,6 +2320,7 @@ class TestDeepAgentsRuntimeRefs:
             "search_catalog_tool",
             "get_product_details_tool",
             "check_product_availability_tool",
+            "resolve_conversation_products_tool",
         }
         assert skill_gate._skill_tool_grants["cart-management"] == {
             "get_cart_tool",
@@ -2214,6 +2328,7 @@ class TestDeepAgentsRuntimeRefs:
             "remove_cart_item_tool",
             "update_cart_items_tool",
             "view_cart_total_tool",
+            "resolve_conversation_products_tool",
         }
         activation_result = tools_by_name["activate_shopper_skills_tool"](
             ["outfit-styling"],
@@ -2229,6 +2344,7 @@ class TestDeepAgentsRuntimeRefs:
             "search_catalog_tool",
             "get_product_details_tool",
             "check_product_availability_tool",
+            "resolve_conversation_products_tool",
         }
         selected = runtime_mod._shopper_skill_registry(
             runtime._shopper_skills_root()
@@ -2307,6 +2423,10 @@ class TestDeepAgentsRuntimeRefs:
         policy_response = tools_by_name["get_store_policy_tool"](topic="returns")
         assert policy_response.startswith("POLICY NOT AVAILABLE:")
         assert "not configured for this deployment" in policy_response
+        resolution_response = tools_by_name[
+            "resolve_conversation_products_tool"
+        ](references=[{"reference_id": "dress", "product_ref": "prod_123"}])
+        assert "REFERENCE dress: RESOLVED" in resolution_response
         availability_response = tools_by_name[
             "check_product_availability_tool"
         ](product_ref="prod_123", variant_hint="size medium")
@@ -2318,7 +2438,53 @@ class TestDeepAgentsRuntimeRefs:
         assert "PRODUCT_REF 'missing_ref' is unknown in this conversation" in (
             missing_availability_response
         )
-        assert "Search the catalog first" in missing_availability_response
+        assert "resolve the earlier product first" in missing_availability_response
+
+        resolution_result["value"] = ResolveConversationProductsResult(
+            results=[
+                ProductReferenceResolution(
+                    reference_id="bag",
+                    status="ambiguous",
+                    matches=[
+                        ConversationProductMatch(
+                            product=ProductSummary(
+                                product_id="bag-a",
+                                display_name="Work Bag",
+                            ),
+                            candidate_set_id="set-bags",
+                            turn_sequence=2,
+                            position=1,
+                        ),
+                        ConversationProductMatch(
+                            product=ProductSummary(
+                                product_id="bag-b",
+                                display_name="Canvas Tote",
+                            ),
+                            candidate_set_id="set-bags",
+                            turn_sequence=2,
+                            position=2,
+                        ),
+                    ],
+                    match_count=2,
+                )
+            ]
+        )
+        clarification = tools_by_name["resolve_conversation_products_tool"](
+            references=[{"reference_id": "bag", "category": "bags"}]
+        )
+        assert clarification.startswith(
+            "STOP_TOOL_USE: Historical product resolution limit reached"
+        )
+        assert len(resolution_requests) == 1
+
+        def fail_product_read(*_args, **_kwargs):
+            raise AssertionError("ambiguous resolution cannot authorize a product")
+
+        monkeypatch.setattr(runtime_mod, "get_product_details", fail_product_read)
+        blocked_add = tools_by_name["add_cart_items_tool"](
+            items=[{"product_ref": "bag-a", "quantity": 1}]
+        )
+        assert "resolve the earlier product first" in blocked_add
 
         update_requests = []
 
@@ -2380,6 +2546,7 @@ class TestDeepAgentsRuntimeRefs:
         assert registered_tools == {
             "search_catalog_tool",
             "get_product_details_tool",
+            "resolve_conversation_products_tool",
             "get_cart_tool",
             "view_cart_total_tool",
             "add_cart_items_tool",
@@ -3917,72 +4084,23 @@ class TestDeepAgentsRuntimeRefs:
         assert state.model_usage["text_embedding"]["calls"] == 3
         assert capability_calls == [{}]
 
-    def test_product_refs_are_cached_by_conversation(
-        self,
-        base_config,
-    ) -> None:
+    def test_cart_images_are_hydrated_from_turn_product_evidence(self) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
 
-        runtime = runtime_mod.DeepAgentsRuntime(base_config)
-        identity_a = runtime_mod.RequestIdentity(
-            session_id="session-a",
-            conversation_id="conversation-a",
-            cart_id="cart-a",
-            context_user_id=111,
-            cart_user_id=222,
-            request_id="request-a",
-        )
-        identity_b = runtime_mod.RequestIdentity(
-            session_id="session-b",
-            conversation_id="conversation-b",
-            cart_id="cart-b",
-            context_user_id=333,
-            cart_user_id=444,
-            request_id="request-b",
-        )
-        product = ProductSummary(
-            product_id="prod_123",
-            display_name="Silk Dress",
-            price=Money(amount=49.99),
-        )
-
-        runtime._remember_products(identity_a, [product])
-
-        assert runtime._product_from_ref(identity_a, "prod_123") == product
-        assert runtime._product_from_ref(identity_b, "prod_123") is None
-
-    def test_cached_cart_images_are_rehydrated_from_product_refs(
-        self,
-        base_config,
-    ) -> None:
-        from chain_server.src import deepagents_runtime as runtime_mod
-
-        runtime = runtime_mod.DeepAgentsRuntime(base_config)
-        identity = runtime_mod.RequestIdentity(
-            session_id="session-a",
-            conversation_id="conversation-a",
-            cart_id="cart-a",
-            context_user_id=111,
-            cart_user_id=222,
-            request_id="request-a",
-        )
-        runtime._remember_products(
-            identity,
-            [
-                ProductSummary(
-                    product_id="prod_tote",
-                    display_name="Linen Canvas Tote Bag",
-                    price=Money(amount=59.99),
-                    image_url="/images/Linen_Canvas_Tote_Bag.jpg",
-                )
-            ],
+        products = (
+            ProductSummary(
+                product_id="prod_tote",
+                display_name="Linen Canvas Tote Bag",
+                price=Money(amount=59.99),
+                image_url="/images/Linen_Canvas_Tote_Bag.jpg",
+            ),
         )
         retrieved: dict[str, str] = {}
         cart = Cart(
             contents=[
                 {
                     "cart_line_id": "Linen Canvas Tote Bag",
-                    "product_id": "Linen Canvas Tote Bag",
+                    "product_id": "prod_tote",
                     "item": "Linen Canvas Tote Bag",
                     "amount": 1,
                     "price": 59.99,
@@ -3990,7 +4108,11 @@ class TestDeepAgentsRuntimeRefs:
             ]
         )
 
-        runtime._append_cached_cart_images(retrieved, cart, identity)
+        runtime_mod.DeepAgentsRuntime._append_product_images(
+            retrieved,
+            cart,
+            products,
+        )
 
         assert retrieved == {
             "Linen Canvas Tote Bag": "/images/Linen_Canvas_Tote_Bag.jpg"
@@ -4064,7 +4186,9 @@ class TestDeepAgentsRuntimeRefs:
         assert output.agent_diagnostics["final_termination_reason"] == "completed"
         user_message = captured["payload"]["messages"][0]["content"]
         assert "USER QUERY: Help me style this" in user_message
-        assert captured["config"]["configurable"]["thread_id"] == "conversation-a"
+        assert captured["config"]["configurable"]["thread_id"] == (
+            '["conversation-a","request-a"]'
+        )
 
     def test_partial_product_results_response_is_grounded(self) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
@@ -4198,7 +4322,7 @@ class TestDeepAgentsRuntimeRefs:
         assert "**Aimee Ankle Strap Sandals** — shoes — $59.99 USD" in output.response
         assert output.model_usage["app_llm"]["status"] == "failed"
         assert "deepagents_error" in output.timings
-        assert reset_threads == ["conversation-a"]
+        assert reset_threads == ['["conversation-a","request-a"]']
         assert events == ["snapshot", "delete"]
         assert output.agent_diagnostics["final_termination_reason"] == (
             "recursion_limit"
@@ -4222,6 +4346,8 @@ class TestDeepAgentsRuntimeRefs:
         assert conversation_memory.finalize_calls[-1]["termination_reason"] == (
             "recursion_limit"
         )
+        replay_output = conversation_memory.finalize_calls[-1]["output"]
+        assert replay_output.product_results[0].product_id == "prod_1"
 
     @pytest.mark.asyncio
     async def test_search_only_styling_uses_reviewed_skill_guidance(
@@ -5853,7 +5979,7 @@ class TestDeepAgentsRuntimeRefs:
         assert "I don't have fabric composition" in scrubbed
         assert "because I need an exact match" in scrubbed
 
-    def test_add_cart_items_tool_requires_cached_refs_and_batches_adds(
+    def test_add_cart_items_tool_requires_turn_refs_and_batches_adds(
         self,
         base_config,
         monkeypatch: pytest.MonkeyPatch,
@@ -5983,14 +6109,23 @@ class TestDeepAgentsRuntimeRefs:
             ),
         )
 
+        runtime._conversation_products = SimpleNamespace(
+            resolve=lambda *_: _resolved_conversation_products(product, bag)
+        )
         runtime._create_agent(State(user_id=111, query="hello"), identity)
-        add_tool = {fn.__name__: fn for fn in captured["tools"]}["add_cart_items_tool"]
+        tools_by_name = {fn.__name__: fn for fn in captured["tools"]}
+        add_tool = tools_by_name["add_cart_items_tool"]
 
         missing = add_tool(items=[{"product_ref": "missing", "quantity": 1}])
-        assert "Search the catalog first" in missing
+        assert "resolve the earlier product first" in missing
         assert added == []
 
-        runtime._remember_products(identity, [product, bag])
+        tools_by_name["resolve_conversation_products_tool"](
+            references=[
+                {"reference_id": "prod_flats", "product_ref": "prod_flats"},
+                {"reference_id": "prod_bag", "product_ref": "prod_bag"},
+            ]
+        )
         added_response = add_tool(
             items=[
                 {
@@ -6078,7 +6213,13 @@ class TestDeepAgentsRuntimeRefs:
 
         monkeypatch.setattr(runtime_mod, "get_product_details", fake_product_details)
 
-        runtime._remember_products(identity, [luminous, green])
+        runtime._conversation_products = SimpleNamespace(
+            resolve=lambda *_: _resolved_conversation_products(
+                product,
+                luminous,
+                green,
+            )
+        )
         runtime._create_agent(
             State(
                 user_id=111,
@@ -6092,6 +6233,19 @@ class TestDeepAgentsRuntimeRefs:
         add_tool = {fn.__name__: fn for fn in captured["tools"]}[
             "add_cart_items_tool"
         ]
+        resolver_tool = {fn.__name__: fn for fn in captured["tools"]}[
+            "resolve_conversation_products_tool"
+        ]
+        resolver_tool(
+            references=[
+                {"reference_id": "prod_flats", "product_ref": "prod_flats"},
+                {
+                    "reference_id": "prod_luminous",
+                    "product_ref": "prod_luminous",
+                },
+                {"reference_id": "prod_green", "product_ref": "prod_green"},
+            ]
+        )
         blocked_response = add_tool(
             items=[
                 {
@@ -6125,7 +6279,7 @@ class TestDeepAgentsRuntimeRefs:
         assert "expected 'Luminous Lace Blouse Sweater'" in mismatch_response
         assert "resolves to 'Green Meadow Sweater Top'" in mismatch_response
 
-    def test_product_details_tool_reads_cached_product_ref(
+    def test_product_details_tool_reads_turn_product_ref(
         self,
         base_config,
         monkeypatch: pytest.MonkeyPatch,
@@ -6185,19 +6339,17 @@ class TestDeepAgentsRuntimeRefs:
             cart_user_id=222,
             request_id="request-a",
         )
-        runtime._remember_products(
-            identity,
-            [
-                ProductSummary(
-                    product_id="prod_123",
-                    display_name="Work Bag",
-                    description="structured tote",
-                    category="bag",
-                    price=Money(amount=59.0),
-                    image_url="/images/work_bag.jpg",
-                    attributes={"catalog_text": "Work Bag | structured tote | bag"},
-                )
-            ],
+        product = ProductSummary(
+            product_id="prod_123",
+            display_name="Work Bag",
+            description="structured tote",
+            category="bag",
+            price=Money(amount=59.0),
+            image_url="/images/work_bag.jpg",
+            attributes={"catalog_text": "Work Bag | structured tote | bag"},
+        )
+        runtime._conversation_products = SimpleNamespace(
+            resolve=lambda *_: _resolved_conversation_products(product)
         )
 
         monkeypatch.setattr(
@@ -6221,6 +6373,9 @@ class TestDeepAgentsRuntimeRefs:
         state = State(user_id=111, query="tell me more")
         runtime._create_agent(state, identity)
         tools_by_name = {fn.__name__: fn for fn in captured["tools"]}
+        tools_by_name["resolve_conversation_products_tool"](
+            references=[{"reference_id": "prod_123", "product_ref": "prod_123"}]
+        )
 
         details = tools_by_name["get_product_details_tool"]("prod_123")
         missing = tools_by_name["get_product_details_tool"]("Work Bag")
@@ -6326,18 +6481,23 @@ class TestDeepAgentsRuntimeRefs:
             cart_user_id=222,
             request_id="request-a",
         )
-        runtime._remember_products(
-            identity,
-            [
-                ProductSummary(product_id="prod_1", display_name="Skirt One"),
-                ProductSummary(product_id="prod_2", display_name="Skirt Two"),
-            ],
+        products = (
+            ProductSummary(product_id="prod_1", display_name="Skirt One"),
+            ProductSummary(product_id="prod_2", display_name="Skirt Two"),
+        )
+        runtime._conversation_products = SimpleNamespace(
+            resolve=lambda *_: _resolved_conversation_products(*products)
         )
 
         runtime._create_agent(State(user_id=111, query="compare these"), identity)
-        detail_tool = {fn.__name__: fn for fn in captured["tools"]}[
-            "get_product_details_tool"
-        ]
+        tools_by_name = {fn.__name__: fn for fn in captured["tools"]}
+        tools_by_name["resolve_conversation_products_tool"](
+            references=[
+                {"reference_id": "prod_1", "product_ref": "prod_1"},
+                {"reference_id": "prod_2", "product_ref": "prod_2"},
+            ]
+        )
+        detail_tool = tools_by_name["get_product_details_tool"]
 
         first = detail_tool("prod_1")
         second = detail_tool("prod_2")

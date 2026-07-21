@@ -20,14 +20,14 @@ controlled by the activation and loop-control phases described below.
 
 ## Current Runtime Boundary
 
-The active Deep Agents runtime registers nine app-owned shopper commerce tools
+The active Deep Agents runtime registers ten app-owned shopper commerce tools
 plus one internal activation control tool. Every turn begins in an activation
 phase where the model sees only `activate_shopper_skills_tool`, its use is
 forced, and parallel tool calls are disabled. After the model semantically
 selects the smallest skill set for the complete current intent, the runtime
 validates those names and deterministically injects the full selected
 `SKILL.md` contents. Only then does the next model step receive the union of
-those skills' declared `tools_granted` from the nine-tool registry. Every
+those skills' declared `tools_granted` from the ten-tool registry. Every
 app-owned shopping dispatch independently rechecks the selected skill, grant
 union, and immutable policy before invoking its handler.
 
@@ -247,7 +247,8 @@ termination reason to `incomplete_agent_response`.
 | --- | --- | --- | --- |
 | `activate_shopper_skills_tool` | `internal_control` | Validated static shopper-skill registry | Registered; required first step |
 | `search_catalog_tool` | `read_only_catalog` | Catalog retriever | Registered |
-| `get_product_details_tool` | `read_only_catalog` | Active catalog snapshot; process-local conversation cache authorizes the ref | Registered |
+| `get_product_details_tool` | `read_only_catalog` | Active catalog snapshot; request-local evidence authorizes the ref | Registered |
+| `resolve_conversation_products_tool` | `read_only_conversation` | Durable same-conversation presented-product events | Registered |
 | `get_cart_tool` | `read_only_cart` | Memory cart service | Registered |
 | `view_cart_total_tool` | `computed_read_cart` | Memory cart service plus cached line prices | Registered |
 | `add_cart_items_tool` | `mutating_cart` | Memory cart service | Registered |
@@ -263,6 +264,7 @@ termination reason to `incomplete_agent_response`.
 | `internal_control` | Selects and activates static behavioral instructions; it does not read or mutate commerce state. | Forced once at turn start; cannot be batched with commerce execution. |
 | `read_only_catalog` | Reads catalog-domain data or reports its availability boundary without shopper state mutation. | Granted by product discovery and outfit styling. |
 | `read_only_catalog_cache` | Legacy/cache-only catalog read classification. | No active registered tool uses the cache as product-detail truth. |
+| `read_only_conversation` | Resolves typed product references against durable products actually presented in this conversation. | Granted only by product discovery, outfit styling, and cart management; 0 or many matches require clarification. |
 | `read_only_cart` | Reads the authoritative cart for the scoped `cart_id`. | Granted only by cart management. |
 | `computed_read_cart` | Computes over authoritative cart reads. | Granted only by cart management; do arithmetic in code, not model prose. |
 | `mutating_cart` | Changes cart contents. | Slice 0 requires the cart-management grant, valid refs, and service-side success. Skill instructions require explicit shopper intent, but server-owned current-turn intent authorization is a later slice. |
@@ -465,13 +467,12 @@ categories and keeps every
 
 Side effects:
 
-- Caches returned `PRODUCT_REF` values inside the scoped conversation for later
-  product details or cart add calls.
-- Cached refs let later product-detail or cart calls resolve a previously found
-  product without another catalog search. Each shopper turn still runs the
-  assistant model.
-- The cache holds at most 50 refs per conversation and is process-local. The
-  graph checkpoint does not persist or replicate it.
+- Adds returned `PRODUCT_REF` values to request-local evidence for later detail,
+  availability, or cart-add calls in the same turn.
+- If the terminal response sends those products as ordered product cards,
+  durable finalization derives a `candidate_set_presented` event and updates the
+  compact same-conversation reference index. Search candidates that are not
+  presented do not enter that memory.
 - Records catalog timing and model-usage metadata.
 
 Failure behavior:
@@ -517,23 +518,24 @@ Current limitations:
 
 - Returned product IDs are source `record_id` values. The current feed does not
   guarantee those generated IDs across catalog replacements.
-- A restart, another replica, cache eviction, or catalog replacement requires a
-  fresh search before a ref can authorize details or cart adds.
+- Durable resolution is exact and same-conversation only. Catalog revision is
+  recorded when available but not yet used to invalidate an old reference; an
+  absent or changed active product still requires a fresh search.
 - Broad multi-item outfit turns share the distinct taxonomy-scope budget.
 
 ### `get_product_details_tool`
 
-Purpose: Read deeper facts for a known product returned by
-`search_catalog_tool`.
+Purpose: Read deeper facts for a known product established in current-request
+evidence by search or unique historical resolution.
 
 Inputs:
 
-- `product_ref`: A `PRODUCT_REF` from a prior catalog search in the same
-  conversation.
+- `product_ref`: A `PRODUCT_REF` from current-turn search or a unique result from
+  `resolve_conversation_products_tool`.
 
 Preconditions:
 
-- The ref must exist in the current conversation's product-ref cache.
+- The ref must exist in request-local product evidence.
 - The agent must not pass display names as refs.
 - The per-turn product-detail read cap applies. When reached, the tool returns
   a `STOP_TOOL_USE` instruction so the agent answers from details already read.
@@ -548,9 +550,8 @@ Outputs:
   as factual detail evidence.
 - Product image URLs are appended to the runtime retrieved-image map so the UI
   can show images for detail follow-ups without requiring a repeat search.
-- Cart items are rehydrated from the conversation's cached product refs when
-  possible, so a later "show that image again" turn can return the image after
-  the item has been added to cart.
+- Product images from current request evidence are added to the response map
+  when available.
 
 Typical use:
 
@@ -568,7 +569,7 @@ Side effects:
 Failure behavior:
 
 - Returns guidance to search the catalog first when the ref is unknown.
-- Returns guidance to search again when the cached ref is absent from the
+- Returns guidance to search again when an evidence-backed ref is absent from the
   active catalog snapshot.
 
 Skills that grant this tool:
@@ -580,9 +581,69 @@ Current limitations:
 
 - Source IDs in the current feed are generated and are not guaranteed across
   catalog replacements. Lookup is deterministic within the active snapshot.
-- Ref authorization is process-local, bounded, and separate from graph
-  checkpoint state; a restart, another replica, or eviction requires a fresh
-  search.
+- Historical authorization requires one unique durable same-conversation
+  resolution in the current request. The resolver does not perform fuzzy
+  matching or enforce catalog-revision freshness.
+
+### `resolve_conversation_products_tool`
+
+Purpose: Resolve one or more products the shopper refers to from earlier
+product-card output in the same conversation.
+
+Inputs:
+
+- `references`: A nonempty typed batch. Each descriptor has a caller label
+  `reference_id` and one or more exact selectors: `product_ref`, `display_name`,
+  `category`, `turn_sequence`, or `candidate_set_id`.
+- `ordinal`: Optional one-based position; valid only with a turn sequence or
+  candidate-set ID.
+
+Preconditions:
+
+- Use only when the needed product is not already established by current-turn
+  search or another unique resolution.
+- Use exact values exposed in the read-only historical-product index. Do not
+  submit free-form prose or use the tool to browse.
+- The runtime permits one batched call per turn. A second call returns
+  `STOP_TOOL_USE` without contacting the memory service.
+- The active skill must be `product-discovery`, `outfit-styling`, or
+  `cart-management`.
+
+Outputs:
+
+- One independent `resolved`, `ambiguous`, or `not_found` result per descriptor.
+- A resolved result includes exactly one product plus its candidate-set ID,
+  turn sequence, one-based position, and recorded catalog revision.
+- Ambiguous and missing results explicitly require shopper clarification. Up to
+  five matches are returned for clarification while `match_count` retains the
+  full count.
+
+Side effects:
+
+- Only a unique resolved product is added to request-local evidence, where
+  detail, availability, or cart-add tools can use it.
+- No persistent state is mutated. The memory service performs no catalog,
+  embedding, or model call.
+
+Failure behavior:
+
+- Service or payload failure returns a clarification instruction; the runtime
+  does not guess or silently search for a substitute.
+- Zero or multiple matches do not authorize any product.
+
+Skills that grant this tool:
+
+- `product-discovery`
+- `outfit-styling`
+- `cart-management`
+
+Current limitations:
+
+- Matching is exact after trimming and case normalization; no fuzzy or semantic
+  matching is implemented.
+- Resolution is limited to durable presented-product events in one conversation.
+- Preferences, sentiment, active anchors, cross-conversation history, and
+  stale-catalog-revision invalidation are not implemented.
 
 ### `get_cart_tool`
 
@@ -670,15 +731,16 @@ Inputs:
 Preconditions:
 
 - Shopper must explicitly ask to add, buy, or put the item in the cart.
-- Each product must have been returned by catalog search in this conversation.
+- Each product must be in current-request evidence from search or one unique
+  durable same-conversation resolution.
 - The agent must pass `PRODUCT_REF` values, not display names.
 - The selected `PRODUCT_REF` must resolve to the intended
   `expected_display_name` when provided.
 - Cart mutation scope must match the explicit add request. Styling approval or
   product selection is not enough to add an item unless the shopper also asks
   to add, buy, or put it in the cart.
-- When the current add request contains exact cached product names or
-  sufficiently specific abbreviated cached names, the tool blocks requested
+- When the current add request contains exact evidence-backed product names or
+  sufficiently specific abbreviated evidence-backed names, the tool blocks requested
   refs outside that named set before mutating the cart. This prevents a wrong
   remembered ref from adding a different item than the shopper asked for.
 - Pronouns such as "those" should resolve only to the products named in the add
@@ -706,7 +768,7 @@ Failure behavior:
 
 - Unknown refs and service failures are reported per item.
 - Expected-name mismatches and explicit-scope mismatches are blocked before any
-  cart mutation in that call; the model can retry with the correct cached ref
+  cart mutation in that call; the model can retry with the correct resolved ref
   or ask a clarification.
 - Partial success is allowed and must be described accurately in the final
   assistant response.
@@ -911,10 +973,10 @@ activation.
 
 | Skill | Tools granted |
 | --- | --- |
-| `product-discovery` | `search_catalog_tool`, `get_product_details_tool`, `check_product_availability_tool` |
-| `outfit-styling` | `search_catalog_tool`, `get_product_details_tool`, `check_product_availability_tool` |
+| `product-discovery` | `search_catalog_tool`, `get_product_details_tool`, `check_product_availability_tool`, `resolve_conversation_products_tool` |
+| `outfit-styling` | `search_catalog_tool`, `get_product_details_tool`, `check_product_availability_tool`, `resolve_conversation_products_tool` |
 | `budget-shopping` | None (`tools_granted: []`) |
-| `cart-management` | `get_cart_tool`, `view_cart_total_tool`, `add_cart_items_tool`, `remove_cart_item_tool`, `update_cart_items_tool` |
+| `cart-management` | `get_cart_tool`, `view_cart_total_tool`, `add_cart_items_tool`, `remove_cart_item_tool`, `update_cart_items_tool`, `resolve_conversation_products_tool` |
 | `store-policy-answers` | `get_store_policy_tool` |
 
 Multi-intent turns should select and inject every needed skill during the one

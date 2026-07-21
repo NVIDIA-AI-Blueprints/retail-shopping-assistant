@@ -61,6 +61,15 @@ from .conversation_memory import (
     TurnStartResult,
     format_conversation_context,
 )
+from .conversation_products import (
+    ConversationProductsClient,
+    ConversationProductsError,
+    ProductEvidence,
+    ProductReferenceDescriptor,
+    ResolveConversationProductsRequest,
+    format_historical_product_index,
+    format_product_resolution,
+)
 from .media_perception import MediaPerceptionClient
 from .skill_activation import (
     SKILL_ACTIVATION_COMPLETE,
@@ -1538,8 +1547,8 @@ class AddCartItemsToolInput(BaseModel):
         ...,
         min_length=1,
         description=(
-            "One or more catalog products to add. Each product must use a "
-            "PRODUCT_REF returned by search_catalog_tool."
+            "One or more products to add. Each must use a PRODUCT_REF "
+            "established by current-turn search or historical-product resolution."
         ),
     )
 
@@ -1567,7 +1576,10 @@ class _GetStorePolicyInput(BaseModel):
 
 class _CheckAvailabilityInput(BaseModel):
     product_ref: str = Field(
-        description="PRODUCT_REF from a prior catalog search in this conversation."
+        description=(
+            "PRODUCT_REF established by current-turn search or historical-product "
+            "resolution."
+        )
     )
     variant_hint: str | None = Field(
         default=None,
@@ -1589,6 +1601,13 @@ class RequestIdentity:
     @property
     def legacy_user_id(self) -> int:
         return self.context_user_id
+
+    @property
+    def checkpoint_thread_id(self) -> str:
+        return json.dumps(
+            [self.conversation_id, self.request_id],
+            separators=(",", ":"),
+        )
 
 
 def _conversation_turn_status(termination_reason: str) -> FinalTurnStatus:
@@ -1614,13 +1633,13 @@ class DeepAgentsRuntime:
         self.config = config
         self._checkpointer = _build_checkpointer()
         self._profile_registered = False
-        self._product_refs: dict[str, dict[str, ProductSummary]] = {}
         self._media_perception = MediaPerceptionClient(config)
         self._catalog_capabilities = CatalogCapabilitiesClient(
             config.retriever_port,
             timeout_seconds=config.catalog_search_timeout_seconds,
         )
         self._conversation_memory = ConversationMemoryClient(config.memory_port)
+        self._conversation_products = ConversationProductsClient(config.memory_port)
 
     def catalog_capabilities(self) -> CatalogCapabilities:
         """Return the process-lifecycle catalog capability contract."""
@@ -1683,6 +1702,7 @@ class DeepAgentsRuntime:
         state.agent_diagnostics = _empty_agent_diagnostics("not_started")
         turn = self._start_conversation_turn(state, identity)
         if turn is not None and turn.replayed:
+            await self._delete_turn_checkpoint(identity)
             return self._restore_replayed_turn(state, turn)
         if turn is None and state.response:
             return state
@@ -1696,27 +1716,35 @@ class DeepAgentsRuntime:
                         "This request was interrupted. Please check your cart "
                         "before retrying."
                     )
-                self._finalize_conversation_turn(
+                finalized = self._finalize_conversation_turn(
                     state,
                     identity,
                     turn,
                     status="failed",
                     termination_reason="request_cancelled",
+                    present_products=False,
                 )
+                if finalized:
+                    await self._delete_turn_checkpoint(identity)
             raise
         except Exception:
             if turn is not None:
-                self._finalize_conversation_turn(
+                finalized = self._finalize_conversation_turn(
                     state,
                     identity,
                     turn,
                     status="failed",
                     termination_reason="unexpected_runtime_error",
+                    present_products=False,
                 )
+                if finalized:
+                    await self._delete_turn_checkpoint(identity)
             raise
 
         if turn is not None:
-            self._finalize_conversation_turn(state, identity, turn)
+            finalized = self._finalize_conversation_turn(state, identity, turn)
+            if finalized:
+                await self._delete_turn_checkpoint(identity)
         return output
 
     async def _execute_turn(
@@ -1756,7 +1784,7 @@ class DeepAgentsRuntime:
 
         turn_capabilities = await asyncio.to_thread(self._catalog_capabilities.get)
         invoke_config = {
-            "configurable": {"thread_id": identity.conversation_id},
+            "configurable": {"thread_id": identity.checkpoint_thread_id},
             "recursion_limit": self.config.deepagents_recursion_limit,
         }
         agent = None
@@ -1821,7 +1849,6 @@ class DeepAgentsRuntime:
             if capture_error:
                 state.agent_diagnostics["partial_graph_capture_error"] = capture_error
             logger.exception("DeepAgentsRuntime failed")
-            await self._reset_agent_thread(identity)
             fallback_response = _partial_product_results_response(state)
             state.response = fallback_response or (
                 "I encountered an error while helping with your shopping request. "
@@ -1889,7 +1916,6 @@ class DeepAgentsRuntime:
         )
         retrieved: dict[str, str] = {}
         state.retrieved = retrieved
-        self._append_cached_cart_images(retrieved, state.cart, identity)
         search_input_model = _search_catalog_tool_input_model(turn_capabilities)
         search_tool_arguments_model = _search_catalog_tool_input_model(
             turn_capabilities,
@@ -1911,6 +1937,9 @@ class DeepAgentsRuntime:
         pending_taxonomy_constraints: dict[str, Any] | None = None
         pending_no_direct_constraint_clear = False
         pending_schema_requirements: list[str] = []
+        product_evidence = ProductEvidence()
+        product_resolution_used = False
+        product_resolution_lock = Lock()
 
         def _lock_taxonomy_constraint_values(
             scope_key: str | None,
@@ -2002,8 +2031,8 @@ class DeepAgentsRuntime:
             that?" are complete after their one-role searches.
             An unavailable type inside a one-role umbrella does not make the scope
             partial. Do NOT search an adjacent category or substitute
-            after a result. Do NOT use if the product was already found in this conversation
-            (use get_product_details_tool).
+            after a result. Do NOT use if the product was presented earlier in
+            this conversation; resolve it, then use get_product_details_tool.
             Each call covers at most one catalog category. Include all faithful
             subtypes for one requested role, but never mix categories in one call.
             Copy every attribute that defines the requested products into
@@ -2847,7 +2876,7 @@ class DeepAgentsRuntime:
                     fallback_attempted=execution.fallback_attempted,
                 )
                 if result.ok and result.products:
-                    self._remember_products(identity, result.products)
+                    product_evidence.add(result.products)
                     _append_product_results(state, result.products)
                     for product in result.products:
                         if product.image_url:
@@ -2919,15 +2948,20 @@ class DeepAgentsRuntime:
 
             cart = self._read_cart(identity.cart_user_id)
             state.cart = cart
-            self._append_cached_cart_images(retrieved, cart, identity)
+            self._append_product_images(
+                retrieved,
+                cart,
+                product_evidence.values(),
+            )
             return _format_cart(cart)
 
         @tool(return_direct=False)
         def get_product_details_tool(product_ref: str) -> str:
             """Get detailed facts (material, care, dimensions, closures) for a
-            product already found in this conversation. Requires a PRODUCT_REF
-            from search — not a product name. Do NOT call for initial
-            recommendations. Stop immediately if STOP_TOOL_USE is returned.
+            product established in this turn by search or historical-product
+            resolution. Requires a PRODUCT_REF — not a product name. Do NOT call
+            for initial recommendations. Stop immediately if STOP_TOOL_USE is
+            returned.
             """
 
             nonlocal product_detail_reads_this_turn
@@ -2943,11 +2977,11 @@ class DeepAgentsRuntime:
                 )
             product_detail_reads_this_turn += 1
 
-            cached_product = self._product_from_ref(identity, product_ref)
+            cached_product = product_evidence.get(product_ref)
             if cached_product is None:
                 return (
                     f"No product with PRODUCT_REF '{product_ref}' is available. "
-                    "Search the catalog first and use the PRODUCT_REF from the result."
+                    "Search this turn or resolve the earlier product first."
                 )
             detail_result = get_product_details(
                 GetProductDetailsInput(product_id=cached_product.product_id),
@@ -2972,11 +3006,52 @@ class DeepAgentsRuntime:
                 retrieved[product.display_name] = product.image_url
             return _format_product_details(product)
 
+        @tool(args_schema=ResolveConversationProductsRequest, return_direct=False)
+        def resolve_conversation_products_tool(
+            references: list[ProductReferenceDescriptor],
+        ) -> str:
+            """Resolve products the shopper refers to from earlier in this
+            conversation. Use only when a needed product was not established
+            in the current turn. Submit exact descriptors from the historical
+            product index. If a reference is missing or ambiguous, ask one
+            concise clarification; do not guess or search for a substitute.
+            """
+
+            nonlocal product_resolution_used
+            with product_resolution_lock:
+                if product_resolution_used:
+                    return (
+                        "STOP_TOOL_USE: Historical product resolution limit "
+                        "reached for this turn. Use the first resolution result "
+                        "and ask one concise clarification if needed."
+                    )
+                product_resolution_used = True
+
+            try:
+                result = self._conversation_products.resolve(
+                    identity.conversation_id,
+                    references,
+                )
+            except (ConversationProductsError, ValidationError):
+                return (
+                    "REFERENCE RESOLUTION UNAVAILABLE: Ask which earlier product "
+                    "the shopper means; do not guess or search for a substitute."
+                )
+            product_evidence.add_resolutions(result.results)
+            for resolution in result.results:
+                if resolution.status != "resolved":
+                    continue
+                product = resolution.matches[0].product
+                if product.image_url:
+                    retrieved[product.display_name] = product.image_url
+            return format_product_resolution(result)
+
         @tool(args_schema=AddCartItemsToolInput, return_direct=False)
         def add_cart_items_tool(items: list[AddCartItemsToolItemInput]) -> str:
             """Add products to the cart. Use ONLY on explicit shopper intent to
             add, buy, or put items in the cart. Requires PRODUCT_REF values from
-            search — not names. Call once with all items, not once per item.
+            current-turn search or historical-product resolution — not names.
+            Call once with all items, not once per item.
             """
 
             try:
@@ -2986,16 +3061,15 @@ class DeepAgentsRuntime:
             if not requested_items:
                 return "Cart add failed: provide at least one PRODUCT_REF to add."
 
-            refs = self._product_refs.get(identity.conversation_id, {})
             resolved: list[tuple[str, ProductSummary, int]] = []
             failed: list[str] = []
             blocked: list[str] = []
             for product_ref, request in requested_items.items():
-                product = self._product_from_ref(identity, product_ref)
+                product = product_evidence.get(product_ref)
                 if product is None:
                     failed.append(
-                        f"- PRODUCT_REF '{product_ref}': Search the catalog first "
-                        "and use the PRODUCT_REF from the result."
+                        f"- PRODUCT_REF '{product_ref}': Search this turn or "
+                        "resolve the earlier product first."
                     )
                     continue
                 expected_name = request.get("expected_display_name") or ""
@@ -3042,12 +3116,16 @@ class DeepAgentsRuntime:
                 _cart_add_scope_failures(
                     state.query,
                     [(product_ref, product) for product_ref, product, _ in resolved],
-                    refs.values(),
+                    product_evidence.values(),
                 )
             )
             if blocked:
                 state.cart = self._read_cart(identity.cart_user_id)
-                self._append_cached_cart_images(retrieved, state.cart, identity)
+                self._append_product_images(
+                    retrieved,
+                    state.cart,
+                    product_evidence.values(),
+                )
                 return _format_cart_add_result([], failed + blocked, state.cart)
 
             added: list[str] = []
@@ -3078,7 +3156,11 @@ class DeepAgentsRuntime:
                     failed.append(f"- PRODUCT_REF '{product_ref}': {message}")
 
             state.cart = self._read_cart(identity.cart_user_id)
-            self._append_cached_cart_images(retrieved, state.cart, identity)
+            self._append_product_images(
+                retrieved,
+                state.cart,
+                product_evidence.values(),
+            )
             return _format_cart_add_result(added, failed, state.cart)
 
         @tool(return_direct=False)
@@ -3106,7 +3188,11 @@ class DeepAgentsRuntime:
                 self.config.memory_port,
             )
             state.cart = self._read_cart(identity.cart_user_id)
-            self._append_cached_cart_images(retrieved, state.cart, identity)
+            self._append_product_images(
+                retrieved,
+                state.cart,
+                product_evidence.values(),
+            )
             return _format_cart_remove_result(
                 result,
                 fallback=f"Removed {quantity} {line['item']} from cart.",
@@ -3133,7 +3219,11 @@ class DeepAgentsRuntime:
                 self.config.memory_port,
             )
             state.cart = self._read_cart(identity.cart_user_id)
-            self._append_cached_cart_images(retrieved, state.cart, identity)
+            self._append_product_images(
+                retrieved,
+                state.cart,
+                product_evidence.values(),
+            )
             return _format_update_cart_result(result, state.cart)
 
         @tool(args_schema=_GetStorePolicyInput, return_direct=False)
@@ -3168,17 +3258,18 @@ class DeepAgentsRuntime:
         ) -> str:
             """Check whether a specific product is available or in stock. Use
             ONLY when the shopper explicitly asks about availability, stock,
-            or a specific size. Requires a PRODUCT_REF from search. Do
-            NOT use for browsing. The deterministic stub reports general
-            availability, sized availability for apparel and footwear, and
-            one-size availability for other product categories.
+            or a specific size. Requires a PRODUCT_REF established by search or
+            historical-product resolution. Do NOT use for browsing. The
+            deterministic stub reports general availability, sized availability
+            for apparel and footwear, and one-size availability for other
+            product categories.
             """
 
-            product = self._product_from_ref(identity, product_ref)
+            product = product_evidence.get(product_ref)
             if product is None:
                 return (
                     f"PRODUCT_REF '{product_ref}' is unknown in this conversation. "
-                    "Search the catalog first and use the PRODUCT_REF from the result."
+                    "Search this turn or resolve the earlier product first."
                 )
             result = check_product_availability(
                 CheckProductAvailabilityInput(
@@ -3198,12 +3289,17 @@ class DeepAgentsRuntime:
 
             cart = self._read_cart(identity.cart_user_id)
             state.cart = cart
-            self._append_cached_cart_images(retrieved, cart, identity)
+            self._append_product_images(
+                retrieved,
+                cart,
+                product_evidence.values(),
+            )
             return _format_cart_total(cart)
 
         shopping_tools = [
             search_catalog_tool,
             get_product_details_tool,
+            resolve_conversation_products_tool,
             get_cart_tool,
             add_cart_items_tool,
             remove_cart_item_tool,
@@ -3282,15 +3378,15 @@ class DeepAgentsRuntime:
             checkpointer=self._checkpointer,
         )
 
-    async def _reset_agent_thread(self, identity: RequestIdentity) -> None:
+    async def _delete_turn_checkpoint(self, identity: RequestIdentity) -> None:
         try:
             delete_thread = getattr(self._checkpointer, "adelete_thread", None)
             if delete_thread is not None:
-                await delete_thread(identity.conversation_id)
+                await delete_thread(identity.checkpoint_thread_id)
             else:
-                self._checkpointer.delete_thread(identity.conversation_id)
+                self._checkpointer.delete_thread(identity.checkpoint_thread_id)
         except Exception as exc:  # pragma: no cover - cleanup is best effort.
-            logger.warning("Could not reset Deep Agents thread after failure: %s", exc)
+            logger.warning("Could not delete Deep Agents turn checkpoint: %s", exc)
 
     def _create_chat_model(self):
         from langchain_openai import ChatOpenAI
@@ -3799,7 +3895,8 @@ Rules:
 - For an explicit cart swap, finish the whole swap before the final response:
   remove the rejected cart line, add the selected replacement when a valid
   PRODUCT_REF is already available, then summarize the updated cart. If the
-  replacement has not been searched in this conversation, search first.
+  replacement is from an earlier turn, resolve it first. Search only for a new
+  replacement that has not already been presented.
 - If cart mutation scope is ambiguous, ask one concise clarification before
   calling any cart mutation tool. Example: "Do you want me to add just the bag,
   layer, and earrings, or the full outfit including the dress and sandals?"
@@ -3809,15 +3906,17 @@ Rules:
   items in the cart yet, then give provisional styling advice from the named
   items without claiming cart truth. Search at most once for a missing piece
   only after identifying the gap.
-- Use PRODUCT_REF from search_catalog_tool when adding items. Do not pass
-  display names as product_ref values to add_cart_items_tool. Include
+- Use PRODUCT_REF established by current-turn search or
+  resolve_conversation_products_tool when adding items. Do not pass display
+  names as product_ref values to add_cart_items_tool. Include
   expected_display_name for each item so the tool can verify that the selected
   PRODUCT_REF resolves to the shopper-facing product name you intend to add.
 - When the shopper asks to add multiple selected products, call
   add_cart_items_tool once with an item list. The tool may report partial
   success; the final answer must clearly distinguish added items from failures.
-- Use PRODUCT_REF from search_catalog_tool when requesting product details. Do
-  not pass display names to get_product_details_tool.
+- Use PRODUCT_REF established by current-turn search or historical-product
+  resolution when requesting product details. Do not pass display names to
+  get_product_details_tool.
 - Use internal identifiers only in tool calls. Do not expose PRODUCT_REF or
   CART_LINE_ID in customer-facing responses.
 - Use CART_LINE_ID from CURRENT CART or get_cart_tool when removing an item. Do
@@ -3863,36 +3962,17 @@ Rules:
             f"RECENT DISCUSSION:\n{state.context or '(none)'}"
         )
 
-    def _remember_products(
-        self, identity: RequestIdentity, products: list[ProductSummary]
-    ) -> None:
-        refs = self._product_refs.setdefault(identity.conversation_id, {})
-        for product in products:
-            refs[product.product_id] = product
-        while len(refs) > 50:
-            refs.pop(next(iter(refs)))
-
-    def _product_from_ref(
-        self, identity: RequestIdentity, product_ref: str
-    ) -> ProductSummary | None:
-        return self._product_refs.get(identity.conversation_id, {}).get(
-            (product_ref or "").strip()
-        )
-
-    def _append_cached_cart_images(
-        self,
+    @staticmethod
+    def _append_product_images(
         retrieved: dict[str, str],
         cart: Cart,
-        identity: RequestIdentity,
+        products: tuple[ProductSummary, ...],
     ) -> None:
-        if not cart.contents:
-            return
-        refs = self._product_refs.get(identity.conversation_id, {})
-        if not refs:
+        if not cart.contents or not products:
             return
 
         products_by_key: dict[str, ProductSummary] = {}
-        for product in refs.values():
+        for product in products:
             products_by_key[product.product_id] = product
             products_by_key[product.display_name] = product
 
@@ -3984,6 +4064,13 @@ Rules:
             turn.recent_turns,
             max_chars=max(1000, int(self.config.memory_length)),
         )
+        historical_products = format_historical_product_index(
+            turn.projection.product_reference_index
+        )
+        if historical_products:
+            state.context = "\n\n".join(
+                value for value in (state.context, historical_products) if value
+            )
         state.cart = Cart(
             contents=[
                 item.model_dump(mode="json", exclude_none=True) for item in turn.cart
@@ -4022,7 +4109,8 @@ Rules:
         *,
         status: FinalTurnStatus | None = None,
         termination_reason: str | None = None,
-    ) -> None:
+        present_products: bool = True,
+    ) -> bool:
         """Persist one terminal turn without changing its shopper response."""
 
         reason = termination_reason or str(
@@ -4031,10 +4119,11 @@ Rules:
         final_status = status or _conversation_turn_status(reason)
         state.agent_diagnostics["final_termination_reason"] = reason
         start = time.monotonic()
+        finalized = False
         try:
             output = TurnReplayOutput(
-                product_results=state.product_results,
-                retrieved=state.retrieved,
+                product_results=(state.product_results if present_products else []),
+                retrieved=(state.retrieved if present_products else {}),
                 agent_diagnostics=state.agent_diagnostics,
             )
             self._conversation_memory.finalize_turn(
@@ -4047,6 +4136,7 @@ Rules:
                 termination_reason=reason,
                 output=output,
             )
+            finalized = True
         except (ConversationMemoryError, ValidationError) as exc:
             logger.error("Failed to finalize durable conversation turn: %s", exc)
             error_code = getattr(
@@ -4067,6 +4157,7 @@ Rules:
             state.timings["memory"] = state.timings.get("memory", 0.0) + (
                 time.monotonic() - start
             )
+        return finalized
 
     def _check_safety(self, mode: str, user_id: int, text: str) -> tuple[bool, bool]:
         endpoint = "input" if mode == "input" else "output"
@@ -5936,9 +6027,9 @@ def _normalize_cart_add_tool_items(
 def _cart_add_scope_failures(
     user_query: str,
     requested_products: list[tuple[str, ProductSummary]],
-    cached_products: Any,
+    available_products: Any,
 ) -> list[str]:
-    explicitly_named = _explicitly_named_products(user_query, cached_products)
+    explicitly_named = _explicitly_named_products(user_query, available_products)
     if not explicitly_named:
         return []
 
@@ -5952,13 +6043,16 @@ def _cart_add_scope_failures(
         failures.append(
             f"- PRODUCT_REF '{product_ref}': selected '{product.display_name}' is "
             "outside the current explicit add request. The current request names: "
-            f"{_format_cached_product_refs(explicitly_named)}. Retry with matching "
+            f"{_format_product_refs(explicitly_named)}. Retry with matching "
             "PRODUCT_REF values only, or ask a clarification."
         )
     return failures
 
 
-def _explicitly_named_products(text: str, cached_products: Any) -> list[ProductSummary]:
+def _explicitly_named_products(
+    text: str,
+    available_products: Any,
+) -> list[ProductSummary]:
     normalized_text = _normalize_product_name(text)
     if not normalized_text:
         return []
@@ -5966,7 +6060,7 @@ def _explicitly_named_products(text: str, cached_products: Any) -> list[ProductS
     padded_text = f" {normalized_text} "
     matches: list[ProductSummary] = []
     seen: set[str] = set()
-    products = list(cached_products)
+    products = list(available_products)
     for product in products:
         normalized_name = _normalize_product_name(product.display_name)
         if not normalized_name:
@@ -6059,7 +6153,7 @@ def _product_name_tokens_match(
     return len(overlap) >= required
 
 
-def _format_cached_product_refs(products: list[ProductSummary]) -> str:
+def _format_product_refs(products: list[ProductSummary]) -> str:
     return ", ".join(
         f"{product.display_name} (PRODUCT_REF: {product.product_id})"
         for product in products

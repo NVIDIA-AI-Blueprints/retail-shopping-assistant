@@ -46,9 +46,10 @@ The Retail Shopping Assistant is an AI-powered blueprint that provides a compreh
   starts every turn before agent work, finalizes its terminal outcome, and
   exactly replays finalized requests from ordered shopper/assistant records;
   rotating attempt tokens reject late finalizers after interrupted-turn recovery
-- 💭 **Process-Local Graph Context**: Conversation-scoped MemorySaver
-  preserves exact graph/tool state while one chain-server process remains
-  alive; product-result refs remain a separate process-local cache
+- 💭 **Durable Product Continuity**: Finalized product-card output becomes
+  ordered `candidate_set_presented` evidence in SQLite; a typed resolver can
+  recover one exact earlier product or require clarification without another
+  catalog search or model call
 - 📚 **Enforced Shopper Skills**: Every turn first semantically selects and
   fully loads the smallest applicable skill set; each selected `SKILL.md`
   declares its role and tool grants, only their grant union becomes
@@ -71,17 +72,18 @@ The Retail Shopping Assistant is an AI-powered blueprint that provides a compreh
 
 The application follows a microservices architecture:
 - **Chain Server**: Deep Agents SDK orchestration with five registered shopper
-  skills, a required per-turn activation phase, a nine-tool registry with
+  skills, a required per-turn activation phase, a ten-tool registry with
   deterministic per-skill binding, capability-derived search schemas, bounded
   search-schema repair, a category-aware no-I/O availability stub for known
-  product refs, grounded response assembly, and a process-local conversation
-  checkpointer
+  product refs, typed same-conversation product resolution, grounded response
+  assembly, and a request-scoped process-local checkpointer
 - **Catalog Retriever**: Generative-LLM-free text/image embedding search, hard
   filtering, normalized COSINE relevance scores, and deterministic result
   ranking
 - **Memory Retriever**: Ordered durable turns with start/finalize and exact
-  replay, bounded recent-turn reads, stable cart-line IDs, atomically idempotent
-  add/remove/quantity mutations, and request-scoped database sessions
+  replay, bounded recent-turn reads, presented-product events and a compact
+  reference index, stable cart-line IDs, atomically idempotent add/remove/
+  quantity mutations, and request-scoped database sessions
 - **Guardrails**: Content safety and moderation
 - **UI**: React-based frontend interface
 
@@ -159,7 +161,9 @@ The resolved chain-server agent stack remains `deepagents==0.6.12`,
 `orjson==3.11.5` is pinned in every service requirement set that resolves it as
 the last upstream release limited to the project's Apache-2.0/MIT license
 policy. Redis checkpoint packages remain absent; the runtime supports only
-process-local `CHECKPOINT_STORE=memory`.
+process-local `CHECKPOINT_STORE=memory`. Each graph thread is request-scoped
+with a collision-safe pair of conversation ID and request ID, deleted after
+successful durable finalization, and retained only when finalization fails.
 
 For the serving-agent flow, see
 [Shopper Agent Architecture](docs/SHOPPER_AGENT_ARCHITECTURE.md). The
@@ -301,15 +305,22 @@ shopper/assistant turns, the authoritative cart, and a service-issued attempt
 token. Only the latest abandoned turn can reopen; reopening retains its request
 identity but rotates the attempt token, so a late finalize cannot overwrite the
 retry. Those recent turns replace the legacy rolling context blob, while the
-existing conversation-scoped graph checkpoint continues to preserve exact
-message and tool continuity in the current process. Product refs remembered for
-same-conversation follow-ups remain process-local, bounded, and valid only for
-the active catalog snapshot. A process restart, another replica, cache eviction,
-or catalog replacement therefore still requires a fresh search before product
-details or cart adds.
-Durable raw turns do not yet provide structured historical-reference resolution
-such as "show me the bag from last week." Persona data is not accepted as turn
-context until a typed, bounded, authenticated profile contract is designed.
+memory service also returns a compact index of products actually presented as
+ordered cards on earlier turns. When a needed product is not established in the
+current request, the selected discovery, styling, or cart skill may make one
+typed batch resolution call. An exact single match becomes request-local
+evidence for details, availability, or cart add; zero or multiple matches require
+clarification and never authorize a guess. Resolution is limited to the current
+conversation and does not add fuzzy matching, embeddings, cross-conversation
+memory, preference/sentiment memory, or catalog-revision revalidation.
+
+LangGraph `MemorySaver` now holds only one request's working graph state under a
+collision-safe pair of conversation ID and request ID. It is deleted only after
+durable finalization succeeds; a finalize failure preserves that checkpoint.
+The compact historical-product index is capped at 16,384 characters, and its
+typed batch resolver can run at most once per turn. Persona data is not accepted
+as turn context until a typed, bounded, authenticated profile contract is
+designed.
 
 Catalog values are never copied into agent or catalog code. After replacing the
 JSONL or sidecar, restart and verify the catalog service first, then restart and

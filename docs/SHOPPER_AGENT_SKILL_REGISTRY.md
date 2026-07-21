@@ -174,9 +174,9 @@ evidence/truncation and those catalog scope outcomes from diagnostics.
 
 | Skill | Source | Status | Role | Tools granted | Primary entry modes |
 | --- | --- | --- | --- | --- | --- |
-| `product-discovery` | `chain_server/skills/shopper/product-discovery/SKILL.md` | Registered | `primary` / `product_procedure` | Search, details, availability | General search, category browsing, filter-driven discovery without styling intent |
-| `outfit-styling` | `chain_server/skills/shopper/outfit-styling/SKILL.md` | Registered | `primary` / `product_procedure` | Search, details, availability | Build, complete, or refine a look; coordinate a requested piece with an anchor; use cart evidence only when cart management is also active |
-| `cart-management` | `chain_server/skills/shopper/cart-management/SKILL.md` | Registered | `standalone` | Cart read, total, add, remove, update | Explicit cart reads and mutations, alone or beside a product procedure |
+| `product-discovery` | `chain_server/skills/shopper/product-discovery/SKILL.md` | Registered | `primary` / `product_procedure` | Search, details, availability, same-conversation product resolution | General search, category browsing, filter-driven discovery without styling intent |
+| `outfit-styling` | `chain_server/skills/shopper/outfit-styling/SKILL.md` | Registered | `primary` / `product_procedure` | Search, details, availability, same-conversation product resolution | Build, complete, or refine a look; coordinate a requested piece with an anchor; use cart evidence only when cart management is also active |
+| `cart-management` | `chain_server/skills/shopper/cart-management/SKILL.md` | Registered | `standalone` | Cart read, total, add, remove, update, same-conversation product resolution | Explicit cart reads and mutations, alone or beside a product procedure |
 | `budget-shopping` | `chain_server/skills/shopper/budget-shopping/SKILL.md` | Registered | `modifier` | None | Stated price ceilings and budget bundles; combine with cart management for cart-total checks |
 | `store-policy-answers` | `chain_server/skills/shopper/store-policy-answers/SKILL.md` | Registered | `standalone` | Policy lookup | Returns, shipping, sizing, payment, price matching, and gift cards |
 
@@ -240,6 +240,11 @@ combined with `outfit-styling`.
 - Keeps subjective style in semantic direction. Repeating taxonomy plus the
   same hard constraints is a duplicate even when `semantic_query` changes.
 - Uses the availability tool rather than treating catalog results as inventory.
+- Uses the historical resolver only when a needed product is not already
+  established in the current turn. A unique exact match becomes request-local
+  evidence; missing or ambiguous results require clarification rather than a
+  substitute search. Batch all needed references because the runtime permits
+  this resolver at most once per turn.
 
 ## `cart-management`
 
@@ -250,6 +255,9 @@ Purpose: explicit cart reads, additions, removals, and quantity changes.
   server-owned current-turn mutation intent authorization remains a later
   slice.
 - Reads current cart state before removal or quantity updates.
+- Resolves an earlier presented product before an add only when the product is
+  absent from current-turn evidence. Missing or ambiguous matches do not
+  authorize a mutation.
 - Treats mutation results as authoritative and reports partial failures.
 
 ## `budget-shopping`
@@ -287,17 +295,19 @@ The skill owns:
 - keeping product facts separate from styling judgment; and
 - using the seasonal trend reference only as optional framing.
 
-The skill grants only catalog search, product details, and availability. Search
-results support name, price, category, and image availability; other product
-attributes require detail evidence. Catalog presence is never treated as stock.
+The skill grants catalog search, product details, availability, and typed
+same-conversation product resolution. Search results support name, price,
+category, and image availability; other product attributes require detail
+evidence. Catalog presence is never treated as stock.
 
 For a named follow-up role, the skill keeps the anchor as context and searches
 only that role. Confirmed anchor attributes guide coordination, but do not
 become requirements on a complementary piece unless the shopper explicitly
-asks for the same or a matching value. For an ambiguous anchor or historical
-reference, the skill instructs the model to ask one clarification rather than
-guess. Durable enforcement is deferred to the historical-reference-resolution
-slice.
+asks for the same or a matching value. When a needed earlier product is absent
+from current-turn evidence, the skill can submit exact descriptors from the
+read-only historical-product index. The durable resolver returns 0/1/many;
+missing and ambiguous references require one clarification, and only a unique
+match can authorize a downstream tool.
 
 Cart and budget responsibilities stay with their owning skills. When
 `cart-management` is co-active, confirmed cart lines may be styling anchors;

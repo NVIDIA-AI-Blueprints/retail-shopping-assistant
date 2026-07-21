@@ -37,6 +37,7 @@ EXPECTED_SKILL_POLICY = {
             "remove_cart_item_tool",
             "update_cart_items_tool",
             "view_cart_total_tool",
+            "resolve_conversation_products_tool",
         ],
     },
     "outfit-styling": {
@@ -46,6 +47,7 @@ EXPECTED_SKILL_POLICY = {
             "search_catalog_tool",
             "get_product_details_tool",
             "check_product_availability_tool",
+            "resolve_conversation_products_tool",
         ],
     },
     "product-discovery": {
@@ -55,6 +57,7 @@ EXPECTED_SKILL_POLICY = {
             "search_catalog_tool",
             "get_product_details_tool",
             "check_product_availability_tool",
+            "resolve_conversation_products_tool",
         ],
     },
     "store-policy-answers": {

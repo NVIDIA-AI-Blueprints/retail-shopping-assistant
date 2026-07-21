@@ -22,6 +22,13 @@ from .models import (
     ConversationProjection,
     ConversationTurn,
 )
+from .product_references import (
+    PRESENTED_PRODUCTS_EVENT_KEY,
+    ProductResolutionRequest,
+    append_presented_products_event,
+    rebuild_product_reference_index,
+    resolve_product_references,
+)
 
 
 DEFAULT_ABANDONED_SECONDS = 300
@@ -83,6 +90,8 @@ class TurnFinalizeRequest(BaseModel):
         keys = [event.event_key for event in self.events]
         if len(keys) != len(set(keys)):
             raise ValueError("event_key values must be unique within a turn")
+        if PRESENTED_PRODUCTS_EVENT_KEY in keys:
+            raise ValueError("event_key is reserved for runtime product cards")
         return self
 
 
@@ -443,7 +452,16 @@ def _finalize_turn(
 
     now = time.time()
     _append_events(db, turn, request.events, now)
+    db.flush()
+    append_presented_products_event(
+        db,
+        turn,
+        request.output.product_results if request.output is not None else [],
+        created_at=now,
+    )
+    db.flush()
     projection = _get_or_create_projection(db, conversation_id)
+    rebuild_product_reference_index(db, projection)
     projection.version += 1
     projection.last_turn_id = turn.turn_id
     turn.assistant_text = request.assistant_text
@@ -560,6 +578,15 @@ def create_conversation_router(get_db) -> APIRouter:
         except Exception:
             db.rollback()
             raise
+
+    @router.post("/conversations/{conversation_id}/products/resolve")
+    def resolve_conversation_products(
+        conversation_id: str,
+        request: ProductResolutionRequest,
+        db=Depends(get_db),
+    ):
+        _validate_conversation_id(conversation_id)
+        return resolve_product_references(db, conversation_id, request)
 
     @router.delete("/conversations/{conversation_id}")
     def delete_conversation(conversation_id: str, db=Depends(get_db)):

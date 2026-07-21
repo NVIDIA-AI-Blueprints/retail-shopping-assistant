@@ -41,6 +41,7 @@ def test_policy_covers_all_registered_shopping_tools() -> None:
         "get_product_details_tool",
         "get_store_policy_tool",
         "remove_cart_item_tool",
+        "resolve_conversation_products_tool",
         "search_catalog_tool",
         "update_cart_items_tool",
         "view_cart_total_tool",
@@ -54,6 +55,11 @@ def test_policy_covers_all_registered_shopping_tools() -> None:
         "remove_cart_item_tool",
         "update_cart_items_tool",
     }
+    resolver = SHOPPING_TOOL_POLICIES["resolve_conversation_products_tool"]
+    assert resolver.risk == "read"
+    assert resolver.allowed_skills_any_of == frozenset(
+        {"cart-management", "outfit-styling", "product-discovery"}
+    )
 
 
 def test_frontmatter_grants_and_execution_policy_must_match() -> None:
@@ -90,6 +96,7 @@ def test_selected_skills_receive_only_their_declared_union() -> None:
         {
             "check_product_availability_tool",
             "get_product_details_tool",
+            "resolve_conversation_products_tool",
             "search_catalog_tool",
         }
     )

@@ -23,9 +23,9 @@ entrypoint.
 
 Current constraints:
 
-- The Deep Agents adapter exposes nine thin request-scoped shopping tools over
-  deterministic catalog, cart, policy, and availability functions, plus one
-  internal skill-activation control tool.
+- The Deep Agents adapter exposes ten thin request-scoped shopping tools over
+  deterministic catalog, conversation-product, cart, policy, and availability
+  functions, plus one internal skill-activation control tool.
 - Five shopper-facing skills are discovered under
   `chain_server/skills/shopper/`: product discovery, outfit styling, cart
   management, budget shopping, and store-policy answers.
@@ -53,17 +53,22 @@ Current constraints:
   or failed. An exact finalized request replay skips model/tool execution and
   returns stored response output. Each start returns a service-issued attempt
   token that finalization must echo. A start failure prevents agent execution;
-  a generic finalize failure preserves the grounded response and conversation
+  a generic finalize failure preserves the grounded response and request
   checkpoint and adds an operator diagnostic.
 - The legacy rolling context blob is no longer the serving continuity source;
-  bounded durable shopper/assistant turns replace it. Conversation-scoped
-  MemorySaver remains active in Slice 4 so same-process exact graph/tool
-  continuity does not regress. Product refs remain a separate process-local,
-  catalog-snapshot-bound cache.
-- Conversation projection tables and the event vocabulary are schema only in
-  Slice 4. The runtime does not derive active anchors, effective preferences,
-  product-reference indexes, or historical-reference decisions. Request-scoped
-  checkpoint cutover is deferred until Slice 5 implements that projection.
+  bounded durable shopper/assistant turns replace it. Finalized ordered product
+  cards also create durable `candidate_set_presented` events and a compact
+  per-conversation index. One typed batch resolver returns 0/1/many exact
+  matches; only one match becomes request-local product evidence. The compact
+  index keeps the newest complete candidate sets within 16,384 serialized
+  characters, and runtime permits at most one batched resolver call per turn.
+- MemorySaver is request-scoped under a collision-safe pair of conversation ID
+  and request ID, deleted only after successful durable finalization, and preserved on finalize failure. It
+  remains process-local but no longer supplies cross-turn shopper memory or
+  product-ref authorization.
+- Active anchors and effective preferences remain reserved projection lanes.
+  This slice does not add preference/sentiment extraction, fuzzy or embedding
+  matching, cross-conversation lookup, or stale-catalog-revision handling.
 - The compatibility mapping is not the final production identity design. A
   high-scale website should move to server-created session, conversation, and
   cart identifiers before broad rollout.
@@ -359,24 +364,28 @@ sequence. Reopening preserves `request_id` but rotates `attempt_id`, so a late
 finalize from the older attempt is rejected rather than overwriting the retry.
 
 Product evidence identity is a separate, narrower bridge. The runtime keeps at
-most 50 returned `PRODUCT_REF` values per `conversation_id` in process memory,
-and those refs are valid only for the active catalog snapshot. This cache is not
-part of the LangGraph checkpoint. Both the graph checkpoint and product refs are
-currently process-local, but they remain separate state. Another replica,
-cache eviction, restart, or catalog replacement requires a fresh search before
-product details or cart adds.
+most one request's returned or uniquely resolved `PRODUCT_REF` values in
+request-local evidence. Ordered product cards from a finalized turn are stored
+as durable same-conversation events. The typed resolver can restore a unique
+earlier product after restart or on another worker; ambiguous and missing
+references do not authorize details, availability, or cart adds. This evidence
+is not part of the LangGraph checkpoint. Product IDs remain valid only within
+the catalog's identity guarantees, and stale-revision invalidation is not yet
+implemented.
 
 ## Session Isolation Requirements
 
 - A request without a valid server session gets a new `session_id`.
 - A request without a valid conversation gets a new `conversation_id`.
-- Deep Agents checkpointing, memory, and filesystem state use
-  `conversation_id` as the thread key.
+- Deep Agents working checkpoint state uses a collision-safe pair of conversation
+  ID and request ID as the thread key. Durable conversation memory uses
+  `conversation_id`.
 - Durable raw turn, replay-output, and event rows use `conversation_id` plus
   ordered sequence and unique `request_id` identities. Each active execution is
   fenced by a memory-service-issued `attempt_id`.
-- Product-ref authorization is process-local and snapshot-bound; it is not
-  recovered from the checkpoint.
+- Product-ref authorization is request-local and is established by current-turn
+  search or one unique durable same-conversation resolution. It is not recovered
+  from the checkpoint.
 - Customer profile lookup uses `customer_id`, but profile lookup must not merge
   conversation state across sessions.
 - Anonymous sessions must not be addressable by guessable numeric IDs.
@@ -623,11 +632,12 @@ For this retail assistant:
 The rule is: Deep Agents context is useful for reasoning and skill discovery;
 commerce truth belongs in application services and databases.
 
-Durable raw transcript is not the same as structured memory. Slice 4 stores
-shopper/assistant text, bounded replay output, and ordered event envelopes, but
-does not interpret its reserved projection lanes. Slice 5 owns anchors,
-preferences, product-reference resolution, and the eventual request-scoped
-checkpoint cutover.
+Durable raw transcript is not the same as structured memory. The current Slice 5
+boundary interprets only products actually sent as ordered cards: it stores one
+candidate-set event, maintains a compact reference index, and resolves exact
+typed descriptors to 0/1/many matches. Active anchors, preferences, sentiment,
+fuzzy lookup, embeddings, and cross-conversation memory remain outside this
+minimal design.
 
 ## Scaling Assumptions
 
@@ -642,17 +652,17 @@ Implications:
 - Slice 4 is a deliberate single-replica stepping stone: Compose persists the
   memory-service SQLite database on `memory-data`, but SQLite remains one local
   writer and is not the shared multi-replica production store described above.
-- Deep Agents currently uses process-local MemorySaver keyed by
-  `conversation_id`. It loses graph state on restart and does not share threads
-  across workers or replicas. Successful thread histories also remain in heap
-  without a TTL or capacity bound, so it does not yet meet the production
-  scaling assumption above.
-- Graph checkpointing does not cover the separate process-local product-ref
-  cache. Cross-replica product follow-ups require either a fresh search or a
-  future shared evidence store with catalog-snapshot identity.
-- Bounded raw turns can be loaded after a chain-server restart, but without the
-  Slice 5 product-reference projection they cannot restore exact tool evidence
-  or authorize stale product refs.
+- Deep Agents uses process-local MemorySaver keyed by a collision-safe pair of
+  conversation ID and request ID. It holds one request's working graph state and
+  is deleted after successful durable finalization. It is retained only when
+  finalization fails and still disappears on process restart; it is not shopper
+  memory and need not be shared for cross-turn continuity.
+- Same-conversation product follow-ups use durable presented-product events and
+  deterministic resolution. A unique match enters the current request's
+  evidence; zero or many matches require clarification.
+- Catalog revision is recorded when supplied but not yet enforced. A stable
+  cross-catalog identity or revision invalidation is required before old refs
+  can be guaranteed across catalog replacement.
 - Mutating tools use owner-scoped idempotency keys so retries do not apply a
   cart change twice.
 - Tool calls need timeouts, retry policy, and clear structured failures.
@@ -722,6 +732,21 @@ Implications:
 
 ### Slice 5: Deep Agents Runtime Parity
 
+- Persist one `candidate_set_presented` event only from finalized ordered
+  product-card output; never from hidden search candidates or assistant prose.
+- Maintain a compact per-conversation product-reference index while retaining
+  the full authoritative product payload in durable events. Keep the newest
+  complete candidate sets within a 16,384-character serialized cap.
+- Add one exact typed batch resolver available only to product discovery,
+  outfit styling, and cart management. Return 0/1/many deterministically; add
+  only a unique result to request-local evidence and require clarification for
+  zero or many. Enforce at most one batched resolver call per turn.
+- Scope MemorySaver to a collision-safe pair of conversation ID and request ID;
+  delete it only after successful durable finalization and preserve it on
+  finalize failure.
+- Do not add model calls, catalog changes, preferences, sentiment, active-anchor
+  inference, fuzzy/embedding lookup, cross-conversation memory, or stale-
+  revision enforcement in this slice.
 - Run existing unit tests.
 - Run targeted Challenger scenarios.
 - Verify product search, image search, cart mutation claims, and grounded
@@ -751,6 +776,13 @@ Implications:
 - Two customers ask similar questions; context does not bleed.
 - Same customer has two sessions; conversation context does not bleed.
 - Same session has multiple turns; context is preserved.
+- Only finalized ordered product-card output creates durable reference evidence.
+- Exact typed historical resolution returns 0/1/many; only one match enters
+  request-local evidence, while zero or many require clarification.
+- A chain-server restart does not remove durable same-conversation presented-
+  product evidence.
+- Graph thread IDs combine conversation and request identity; successful durable
+  finalize deletes the thread, while finalize failure preserves it.
 - Persona A and Persona B do not cross-contaminate.
 - Cart writes affect only the intended `cart_id`.
 - Retried cart mutation with the same idempotency key applies once.
@@ -872,23 +904,23 @@ Implications:
 - `CHECKPOINT_STORE=memory` is the only currently supported checkpoint
   configuration. Non-memory values fail during startup rather than silently
   falling back to process-local state.
-- Slice 4 keeps MemorySaver conversation-scoped. Request-scoped checkpoint
-  threads are deferred until Slice 5 preserves structured product-reference
-  evidence.
+- MemorySaver is request-scoped with a collision-safe pair of conversation ID
+  and request ID. The runtime deletes it after successful durable finalization and preserves it after a
+  finalize failure. Durable turns and presented-product events, not the graph
+  checkpoint, provide cross-turn continuity.
 - Durable turns use one memory-service SQLite replica with transactional start,
   terminal finalize, exact finalized replay, a bounded recent-turn snapshot,
   latest-sequence-only abandoned reopen, rotating attempt tokens, and
   operator-owned retention. A stale finalize is rejected; the runtime emits a
   safe superseded-attempt response, while a generic finalize outage preserves
-  the grounded response. Projection and event interpretation are not enabled in
-  Slice 4.
+  the grounded response. Finalized ordered product cards produce durable
+  `candidate_set_presented` events and a compact reference index; the typed
+  same-conversation resolver adds only unique matches to request-local evidence.
 - Registered skills use `/shopper/<skill>/SKILL.md` under the virtual backend;
   shared read-only references may live directly under `/shopper`.
 
 ## Open Decisions
 
-- Which Apache-2.0/MIT-compatible backend should provide shared, durable Deep
-  Agents checkpoints for production replicas?
 - Which shared multi-writer store should replace single-replica SQLite for
   durable turns in a horizontally scaled deployment?
 - What retention and deletion policy should apply to durable raw turns, replay

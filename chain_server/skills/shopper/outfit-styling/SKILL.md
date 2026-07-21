@@ -8,6 +8,7 @@ tools_granted:
   - search_catalog_tool
   - get_product_details_tool
   - check_product_availability_tool
+  - resolve_conversation_products_tool
 ---
 
 # Outfit Styling
@@ -49,6 +50,9 @@ internal reasoning to the shopper.
 
 ## Anchors And Conversation Continuity
 
+- Use `resolve_conversation_products_tool` only for an earlier product not
+  established this turn. Zero or multiple matches require one concise
+  clarification; never guess, search for a substitute, or mutate the cart.
 - Use the direct antecedent unless the shopper clearly reaches further back.
   Keep the accepted dress in "I like that dress; find different shoes" and
   search only for replacement shoes.

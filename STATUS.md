@@ -10,11 +10,15 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   guardrail/model/tool work, returns bounded finalized raw turns plus the
   authoritative cart, and finalizes every completed, blocked, or failed
   outcome. An exact retry of a finalized request replays its stored response
-  without another model turn. Conversation-scoped MemorySaver remains the
-  process-local graph checkpointer to avoid same-conversation reference
-  regression; graph state and the separate product-ref cache still disappear
-  on restart and are not shared across replicas. Request-scoped checkpoints and
-  structured historical-reference resolution remain Slice 5 work;
+  without another model turn. Finalized ordered product cards create durable
+  `candidate_set_presented` events and a compact reference index. One exact
+  typed batch resolver returns 0/1/many same-conversation matches; only a unique
+  match becomes request-local evidence, while zero or many require
+  clarification. MemorySaver is request-scoped with a collision-safe pair of
+  conversation ID and request ID, deleted after successful durable
+  finalization, and preserved on finalize failure. The compact reference index
+  is capped at 16,384 characters and resolution is enforced at most once per
+  turn;
 - five shopper skills are registered for product discovery, outfit styling,
   cart management, budget shopping, and controlled store-policy answers. A
   required first model step selects the smallest applicable set each turn; the
@@ -29,9 +33,11 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   single-piece thread still select `outfit-styling` from conversation context.
   Outfit styling is a focused fashion procedure for anchors, clarification,
   color, proportion, silhouette, formality, occasion, texture, and response
-  judgment. It retains only search, details, and availability grants; catalog
-  transport and validation remain with the catalog boundary, while cart work
-  requires the cart skill.
+  judgment. It retains search, details, availability, and same-conversation
+  product-resolution grants; catalog transport and validation remain with the
+  catalog boundary, while cart work requires the cart skill. Product discovery
+  and cart management also grant the resolver for their own historical product
+  references.
   Each skill also declares product-agnostic `response_guidance` in
   frontmatter as a fallback. Each catalog call supplies required pre-retrieval
   `shopper_guidance` authored under the active skill. Completed successful
@@ -39,12 +45,12 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   then the grounding editor; deterministic candidate formatting remains the
   fail-closed fallback when synthesis or editing cannot produce an answer. Selection and
   response metadata are regenerated from current files rather than retained in
-  the conversation checkpoint;
-- the runtime has a nine-tool shopper registry plus one internal skill
+  the request checkpoint;
+- the runtime has a ten-tool shopper registry plus one internal skill
   activation control tool. A turn receives only the tools granted by its
   selected skills. The shopping tools cover cart quantity update, controlled
-  policy lookup, and a category-aware no-I/O availability stub for known
-  conversation product refs;
+  policy lookup, a category-aware no-I/O availability stub, and deterministic
+  durable same-conversation product resolution;
 - memory-service schema migrations, turn start/finalize/replay, bounded
   recent-turn reads, and cart snapshots use transactional SQLite operations;
   stale active turns are recovered during startup and atomically at the next
@@ -52,7 +58,9 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   ID for cart idempotency but rotates a service-issued attempt token. A stale
   finalize is rejected and converted to a safe response without stale products;
   other finalize outages preserve the grounded response and add
-  `memory_finalize_error`. Cancelled runtime turns are finalized before
+  `memory_finalize_error` while retaining the request checkpoint. Successful
+  finalization atomically records presented products and then deletes the
+  checkpoint. Cancelled runtime turns are finalized before
   cancellation propagates; database sessions remain request-scoped and are
   always returned to the SQLAlchemy pool after successful and failed API
   requests;
@@ -260,6 +268,15 @@ The newest focused gate is recorded first. Older Slice 0, Slice 2, and Slice 3
 results remain below as comparison points; generated quality and timing
 artifacts stay in the required local archive rather than versioned source.
 
+- Focused Slice 5 durable-product gate: 77 passed and 1 existing expected
+  failure. Coverage includes server-derived `candidate_set_presented` events,
+  compact projection rebuilds, exact 0/1/many typed resolution, strict
+  clarification, skill grants and immutable policy, request-local evidence, and
+  restart-safe memory-service lookup. The 14 focused runtime lifecycle tests
+  also pass for collision-safe conversation/request checkpoint isolation,
+  deletion only after successful durable finalization, and preservation on
+  finalize failure.
+  No full offline suite or live/Judge evaluation has been run for this slice.
 - Focused Slice 4 durable-turn gate: 74 passed in 2.85 seconds. Coverage joins
   the new start/finalize/replay and crash-recovery boundary, existing memory
   cart behavior, the typed chain-server client, and serving lifecycle tests.
@@ -274,8 +291,8 @@ artifacts stay in the required local archive rather than versioned source.
   was run for this narrow deterministic stub change.
 - Focused Slice 2 skill/authorization gate after restarting the local runtime:
   34 passed and 2 strict expected failures in 2.89 seconds, with one pre-existing
-  `StarletteDeprecationWarning`. The expected failures continue to track
-  constraint provenance and structured historical-reference resolution.
+  `StarletteDeprecationWarning`. At that slice, the expected failures tracked
+  constraint provenance and not-yet-built historical-reference resolution.
 - Targeted `conv_5.yaml` styling continuity gate: all five turns activated only
   `outfit-styling`, exposed only the current `skill_names` activation field,
   completed without fallback, and were judged 3.2/5
@@ -294,10 +311,10 @@ artifacts stay in the required local archive rather than versioned source.
   pre-Slice-0 good WIP scenario (3.8/5 and 5.892 seconds mean). The current
   48-turn Slice 3 comparison is recorded below.
 
-- Current Slice 3 full offline unit suite: 861 passed, 2 strict expected
+- Historical Slice 3 full offline unit suite: 861 passed, 2 strict expected
   failures, and one pre-existing `StarletteDeprecationWarning` in 7.90 seconds.
-  The remaining expected failures track constraint provenance and structured
-  historical-reference resolution.
+  At that point the expected failures tracked constraint provenance and
+  not-yet-built historical-reference resolution.
 - Focused Slice 3 cart transaction suite: 78 passed with the same pre-existing
   warning. It covers caller-stable request IDs, adapter propagation, exact
   add/remove/update replay, conflicting-key rejection, stable cart-line removal,
@@ -313,9 +330,9 @@ artifacts stay in the required local archive rather than versioned source.
   same-batch rejection, and preservation of non-shopping `read_file` access.
 - The tests-only Slice 1 boundary originally froze five cases. Browse-only cart
   rejection passes through Slice 0, and add/remove replay now pass through the
-  Slice 3 transaction boundary. Invented filter provenance and ambiguous
-  historical reference clarification remain strict expected failures for their
-  separate slices.
+  Slice 3 transaction boundary. The minimal Slice 5 resolver now covers exact
+  historical 0/1/many matching and clarification; invented filter provenance
+  remains separate work.
 - Agent observability coverage verifies current-turn skill activation, model-issued
   tool-call order and arguments, rejection/duplicate classification, pending
   calls, additive API/SSE propagation, snapshot-before-delete failure handling,
@@ -405,18 +422,19 @@ The store-policy YAML contains explicit operator placeholders and defaults to
 them and explicitly enables the file. Durable shopper/assistant turns now live
 in the single-replica memory-service SQLite database on the Compose
 `memory-data` volume. Transcript retention/TTL and a shared multi-writer memory
-store remain open production decisions. Stored event envelopes and projection
-tables have no active anchor, preference, product-reference, or historical
-resolver semantics in Slice 4.
+store remain open production decisions. Finalized product-card output now
+creates durable presented-product events and a compact reference index. Active
+anchors and preferences remain reserved and unused.
 
-Deep Agents graph checkpoints remain conversation-scoped and process-local.
-They disappear on chain-server restart, are not shared across replicas, and
-have no TTL or capacity bound. Successful graph histories stay in heap until
-restart. Selecting an Apache-2.0/MIT-compatible production shared graph backend
-remains open; request-scoped checkpoint cutover is deferred until Slice 5 can
-preserve durable product-reference evidence. Repository-wide allowlist
-compliance remains a separate audit because the pre-existing dependency set
-contains additional license notices unrelated to checkpointing.
+Deep Agents graph checkpoints are request-scoped and process-local. They use a
+collision-safe pair of conversation ID and request ID, disappear on chain-server
+restart, and are not shared across replicas. Successful durable finalization deletes them; a
+finalize failure deliberately preserves the incomplete request checkpoint. The
+checkpoint is no longer shopper memory, so the production scale decision is a
+shared multi-writer replacement for the single SQLite memory service rather
+than a shared graph-history store. Repository-wide allowlist compliance remains
+a separate audit because the pre-existing dependency set contains additional
+license notices unrelated to checkpointing.
 Cart reads now expose an opaque, non-reusable `cart_line_id` as
 `CART_LINE_ID`, including an idempotent migration for existing databases.
 Adds persist the catalog `product_id`; remove and absolute-quantity update use
@@ -432,11 +450,12 @@ availability, echoes a requested size for apparel and footwear, and treats
 other product categories as one-size. Unknown or expired refs require a fresh
 catalog search. Live stock counts and variant inventory remain future work.
 
-Same-conversation `PRODUCT_REF` evidence is held in a bounded process-local
-cache and is valid only for the active catalog snapshot. It is separate from
-the process-local graph checkpoint. A restart, another replica, cache eviction,
-or catalog replacement therefore requires a fresh search before details or cart
-adds.
+`PRODUCT_REF` authorization exists only in request-local evidence. Current-turn
+search adds it directly; one unique durable same-conversation resolution can
+restore an earlier presented product after restart or on another worker.
+Missing or ambiguous references never authorize a downstream tool. Matching is
+exact, catalog revision is not yet enforced, and catalog replacement can still
+require a fresh search.
 Persona support remains intentionally unavailable until a trusted profile
 source and typed validation contract are defined.
 
@@ -470,14 +489,14 @@ The runtime rejects duplicate taxonomy values, partially incompatible
 category/subcategory sets, and taxonomy fields that are not scalar enum hard
 filters.
 
-In the preserved Slice 0 run, nine turns scored 2. Most are safe no-match or unenforceable answers where
-older Goldens prefer speculative adjacent products. One concrete conversation
-gap remains: after a denim-skirt request correctly failed closed, the next turn's
-“that skirt” resolved to an older maxi-skirt candidate instead of triggering a
-clarification. Products and filter evidence stayed grounded, but ambiguous
-long-conversation referent resolution remains Slice 5 work. Durable raw turns
-alone do not resolve it; it requires explicit structured conversation-state
-semantics, not taxonomy inference or weaker catalog boundaries.
+In the preserved Slice 0 run, nine turns scored 2. Most are safe no-match or
+unenforceable answers where older Goldens prefer speculative adjacent products.
+One observed gap motivated Slice 5: after a denim-skirt request correctly failed
+closed, the next turn's “that skirt” resolved to an older maxi-skirt candidate.
+The new durable resolver deterministically returns zero, one, or many exact
+matches and authorizes only one, so missing or ambiguous references now require
+clarification. Focused tests cover that boundary; a full live/Judge rerun has
+not yet been performed.
 
 The raw Judge score should not be described as an unqualified catalog-quality
 gain until catalog-dependent Goldens are reconciled with the active inventory.

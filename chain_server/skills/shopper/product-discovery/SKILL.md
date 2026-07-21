@@ -8,6 +8,7 @@ tools_granted:
   - search_catalog_tool
   - get_product_details_tool
   - check_product_availability_tool
+  - resolve_conversation_products_tool
 ---
 
 # Product Discovery
@@ -39,6 +40,9 @@ Use for search, browse, and filter requests. Do not expose skill names or tool n
 ## Operating Principles
 
 - Use this as the single primary procedure for non-styling discovery; do not combine it with outfit-styling. Budget-shopping may accompany it only as a modifier.
+- Use `resolve_conversation_products_tool` only for an earlier product not
+  established this turn. Zero or multiple matches require one concise
+  clarification; never guess, search for a substitute, or mutate the cart.
 - Use `exact_requested_type` when the selected taxonomy directly represents the requested focused role. For a single selected value, the requested type must name that value; the semantic query may focus on soft ranking direction. Prefer `member_of_requested_umbrella` when a true shopper-named umbrella spans multiple advertised children, and include only values that are genuinely kinds of that umbrella.
 - On `no_direct_catalog_match`, leave required constraints empty and never copy the requested product type into `unadvertised_requirements`.
 - An objective attribute that defines the requested products is a must-have even when the shopper does not say the words "must have." For example, "Do you have water-resistant bags?" makes water resistance required. Subjective recommendation adjectives always remain semantic ranking direction.

@@ -9,6 +9,7 @@ tools_granted:
   - remove_cart_item_tool
   - update_cart_items_tool
   - view_cart_total_tool
+  - resolve_conversation_products_tool
 ---
 
 # Cart Management
@@ -17,10 +18,14 @@ Handle explicit cart operations. Do not expose tool names or internal identifier
 
 ## Add Intent Rules
 
+- Use `resolve_conversation_products_tool` only for an earlier product not
+  established this turn. Zero or multiple matches require one concise
+  clarification; never guess, search for a substitute, or mutate the cart.
 - Call `add_cart_items_tool` only when the shopper explicitly says to add, buy, or put an item in the cart.
 - Styling approval, product discussion, or "I like it" is NOT add intent.
 - If the add scope is ambiguous ("add those", "add them all"), ask one concise clarification naming the candidates before calling the tool.
-- Pass `PRODUCT_REF` values from prior search in this conversation — never product names.
+- Pass `PRODUCT_REF` values established by current-turn search or successful
+  historical-product resolution — never product names.
 - For multiple items, call `add_cart_items_tool` once with the full list.
 
 ## Remove and Update Rules

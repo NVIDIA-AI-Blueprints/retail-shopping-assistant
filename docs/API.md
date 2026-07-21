@@ -184,22 +184,31 @@ finalize call. Reusing the request ID with different shopper text or media is a
 conflict. The same request ID also derives stable cart-mutation idempotency keys.
 
 The bundled UI creates browser-session identifiers and sends them on every
-turn. When supplied, `conversation_id` scopes both the durable raw turn records
-and the existing Deep Agents graph thread, while `cart_id` scopes cart
-reads/writes. Production website integrations should move these IDs to a
+turn. When supplied, `conversation_id` scopes durable raw turns, presented-
+product evidence, and historical resolution; `cart_id` scopes cart reads/writes.
+The Deep Agents working graph is request-scoped under a collision-safe pair of
+conversation ID and request ID, not used as durable shopper memory, and deleted
+after successful turn finalization. Production website integrations should move these IDs to a
 server-owned session/thread service before broad rollout so customer context
 and cart state cannot bleed across sessions.
 
 Durable ordered shopper/assistant turns live in the single-replica
 memory-service SQLite database. At turn start the runtime consumes a bounded set
-of finalized recent turns in place of the legacy rolling context blob. Exact
-graph/tool messages remain in conversation-scoped, process-local MemorySaver;
-they disappear on chain-server restart and are not shared across workers or
-replicas. The bounded `PRODUCT_REF` cache is separate process-local state and
-remains valid only for the active catalog snapshot. A restart, another replica,
-cache eviction, or catalog replacement therefore still requires a fresh product
-search before details or cart adds. Durable raw turns do not implement the
-planned structured historical-reference resolver.
+of finalized recent turns and a compact product-reference projection in place
+of the legacy rolling context blob. Products enter durable reference evidence
+only when they appear in the finalized ordered `product_results` sent as product
+cards. The selected discovery, styling, or cart skill may conditionally resolve
+typed references against those events. Exactly one match becomes request-local
+evidence; zero or multiple matches require clarification and do not authorize a
+detail, availability, or cart tool. The deterministic resolver adds no separate
+model or catalog call.
+
+`MemorySaver` remains process-local and is not shared across workers or
+replicas, but its graph thread now exists only for one request. It is deleted
+after successful durable finalization and preserved if finalization fails. The
+durable resolver is same-conversation only and does not implement fuzzy or
+embedding matching, preferences, sentiment, active anchors, cross-conversation
+lookup, or stale-catalog-revision handling.
 
 Caller-supplied persona data is not part of `QueryRequest` and is not injected
 into model context. Persona support remains deferred until the API has a typed,
@@ -308,7 +317,7 @@ interface AgentDiagnostics {
 `final_termination_reason: "memory_start_failed"` means the required durable
 start failed before guardrail/model/tool work. A generic finalize transport or
 service failure does not replace grounded shopper text; it sets
-`memory_finalize_error` and preserves the conversation checkpoint for recovery.
+`memory_finalize_error` and preserves the request checkpoint for recovery.
 A superseded attempt is the deliberate exception: its stale response is replaced
 with the safe attempt-fencing response described below.
 
@@ -462,7 +471,7 @@ another model/tool turn. The public SSE frame shapes are unchanged.
 Every unblocked Deep Agents turn includes one bounded activation model step
 before normal shopping-tool selection. That step selects registered shopper
 skills; the runtime injects their complete instructions before exposing the
-nine shopping tools. It is included in `token_usage.model_calls` and
+ten shopping tools. It is included in `token_usage.model_calls` and
 `agent_diagnostics`.
 
 Token-level Deep Agents streaming is a known limitation for this PR and is
@@ -795,10 +804,11 @@ The chain server also bounds product-detail reads with
 product fact questions and shortlisted comparisons, not for enriching every
 initial outfit recommendation.
 
-When a cart item matches a product ref cached in the active conversation, the
-chain server can return that product image again on later cart or comparison
-turns without forcing another catalog search, provided the same process still
-holds the ref and the catalog snapshot has not changed.
+When a cart item matches current-request product evidence, the chain server can
+return that product image in a cart or comparison turn. A later turn can obtain
+that evidence from one unique durable same-conversation resolution without
+forcing another catalog search; missing, ambiguous, or stale active-catalog refs
+require clarification or a fresh search.
 
 **Request Body:**
 ```json
@@ -943,7 +953,21 @@ distinguished safely.
     "version": 3,
     "active_anchors": [],
     "effective_preferences": [],
-    "product_reference_index": [],
+    "product_reference_index": [
+      {
+        "candidate_set_id": "candidate-set-event-id",
+        "turn_seq": 3,
+        "catalog_revision": "catalog-fingerprint",
+        "products": [
+          {
+            "ref": "product-123",
+            "name": "Beige Ribbed Top",
+            "category": "apparel",
+            "position": 1
+          }
+        ]
+      }
+    ],
     "last_turn_id": "prior-turn-id"
   },
   "cart": [],
@@ -953,15 +977,18 @@ distinguished safely.
 }
 ```
 
-`projection` is reserved Slice 5 schema in this release. Its anchor,
-preference, and product-reference lanes are not populated or used for
-historical resolution. On an exact retry of a finalized turn, `replayed` is
-`true` and the response includes stored `assistant_text`, `termination_reason`,
-and `output` (`product_results`, `retrieved`, and `agent_diagnostics`). The chain
-server returns that stored output without agent execution. Reusing a request ID
-with different input, retrying a still-started turn, or starting another turn
-while the conversation has an active turn returns HTTP 409. A start transport or
-conflict failure prevents agent work.
+`projection.product_reference_index` is a compact, bounded index of ordered
+product-card sets derived from durable `candidate_set_presented` events. The
+runtime uses it as read-only context for typed historical resolution; the
+authoritative full product payload remains in the event. The active-anchor and
+preference lanes remain reserved and unused. Its serialized value is capped at
+16,384 characters by retaining the newest complete candidate sets. On an exact retry of a finalized
+turn, `replayed` is `true` and the response includes stored `assistant_text`,
+`termination_reason`, and `output` (`product_results`, `retrieved`, and
+`agent_diagnostics`). The chain server returns that stored output without agent
+execution. Reusing a request ID with different input, retrying a still-started
+turn, or starting another turn while the conversation has an active turn returns
+HTTP 409. A start transport or conflict failure prevents agent work.
 
 At memory-service startup and atomically before each new turn start, turns left
 in `started` longer than `MEMORY_TURN_ABANDON_SECONDS` are changed to
@@ -974,8 +1001,13 @@ expiration process.
 ### Memory Retriever POST `/conversations/{conversation_id}/turns/{turn_id}/finalize`
 
 Finalizes a started turn transaction as `completed`, `blocked`, or `failed`.
-The request and any ordered event envelopes commit atomically with the replay
-output.
+The request, any ordered event envelopes, and the compact projection commit
+atomically with the replay output. When finalized `output.product_results`
+contains referenceable product cards, the service derives one ordered
+`candidate_set_presented` event from that server-controlled output. Empty,
+failed, or non-presented candidates do not enter the reference index.
+The `runtime-presented-products` event key is reserved; caller-supplied events
+using it are rejected with HTTP 422.
 
 ```json
 {
@@ -1013,11 +1045,73 @@ After an abandoned turn is reopened, a late finalize from its old attempt is
 rejected with HTTP 409 `turn_attempt_superseded`; the chain server returns a safe
 superseded-attempt response instead of exposing the stale answer or products. A
 generic finalize transport or service failure still preserves the already
-grounded response and records `memory_finalize_error`. Different final data, a
+grounded response, its request-scoped graph checkpoint, and records
+`memory_finalize_error`. After successful durable finalization, the chain server
+deletes the request-scoped checkpoint identified by that collision-safe
+conversation/request pair. Different final data, a
 request-ID mismatch, duplicate event keys, or an invalid status transition also
 returns a conflict and rolls back the transaction. Event envelopes are stored
-in logical order for later work; Slice 4 does not interpret them into
-preferences, anchors, selections, or historical references.
+in logical order. Active anchors, preferences, and selections remain reserved;
+only presented-product candidate sets currently update a projection.
+
+### Memory Retriever POST `/conversations/{conversation_id}/products/resolve`
+
+Deterministically resolves a nonempty batch of typed product descriptors against
+that conversation's durable `candidate_set_presented` events. This is an
+internal memory-service API. It performs no catalog, embedding, or model call.
+
+```json
+{
+  "references": [
+    {
+      "reference_id": "chosen_top",
+      "display_name": "Beige Ribbed Top",
+      "turn_sequence": 3
+    }
+  ]
+}
+```
+
+Selectors may include `product_ref`, exact `display_name`, exact `category`,
+`turn_sequence`, or `candidate_set_id`. `ordinal` is one-based and requires a
+turn sequence or candidate-set ID. Matching is case-insensitive after trimming;
+there is no fuzzy or semantic matching. The service accepts at most 20
+descriptors per request.
+
+```json
+{
+  "results": [
+    {
+      "reference_id": "chosen_top",
+      "status": "resolved",
+      "match_count": 1,
+      "matches": [
+        {
+          "product": {
+            "product_id": "product-123",
+            "display_name": "Beige Ribbed Top",
+            "category": "apparel",
+            "image_url": null,
+            "price": null,
+            "availability": "unknown"
+          },
+          "candidate_set_id": "candidate-set-event-id",
+          "turn_sequence": 3,
+          "position": 1,
+          "catalog_revision": "catalog-fingerprint"
+        }
+      ]
+    }
+  ]
+}
+```
+
+Each result is `resolved`, `ambiguous`, or `not_found`. Only a unique match is
+added to the chain server's request-local product evidence. Ambiguous and
+missing results return bounded candidates for a concise clarification and never
+authorize a guessed product. The shopper runtime permits at most one batched
+resolver-tool call per turn; a second call is stopped. The current slice does
+not invalidate stored evidence when `catalog_revision` changes.
 
 ### Memory Retriever DELETE `/conversations/{conversation_id}`
 

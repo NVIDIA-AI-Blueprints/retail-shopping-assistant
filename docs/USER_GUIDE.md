@@ -102,12 +102,19 @@ AI: "For a wedding, I suggest starting with..."
 ### Conversation Continuity
 
 Within the active conversation, the assistant receives a bounded set of
-finalized prior shopper/assistant turns and also retains its exact graph/tool
-context while the same chain-server process is alive. If a reference is
-ambiguous, clarify the product instead of assuming. Durable raw turns do not yet
-provide structured historical resolution for requests such as "show me the bag
-from last week," and a process restart can require a fresh product search before
-details or cart adds.
+finalized prior shopper/assistant turns plus a compact index of products that
+were actually shown as cards. If an earlier product is needed, the applicable
+discovery, styling, or cart skill can resolve exact product, turn, candidate-set,
+or position details against that same conversation. One match can support a
+detail, availability, or cart action; no match or multiple matches causes a
+clarifying question instead of a guess. This continuity survives a chain-server
+restart because it is stored by the memory service.
+
+The resolver does not search across conversations or infer preferences,
+sentiment, or fuzzy descriptions. A request such as "show me the bag from last
+week" works only if it refers to a product presented in this same conversation
+and is specific enough to resolve uniquely. Catalog replacements can still
+require a fresh product search.
 
 ## 🔍 Product Search
 

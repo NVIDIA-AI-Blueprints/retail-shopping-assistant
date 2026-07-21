@@ -32,19 +32,27 @@ The main design decision is separation:
 The stacked commerce-tool work now has runtime wiring through the Deep Agents
 SDK adapter:
 
-- `DeepAgentsRuntime` registers nine request-scoped tools: catalog search,
-  product details, cart read, cart total, cart add, cart remove, cart quantity
-  update, store-policy lookup, and product availability. These use the internal
-  commerce adapters plus deterministic cart-total calculation.
+- `DeepAgentsRuntime` registers ten request-scoped tools: catalog search,
+  product details, same-conversation product resolution, cart read, cart total,
+  cart add, cart remove, cart quantity update, store-policy lookup, and product
+  availability. These use the internal commerce adapters plus deterministic
+  cart-total calculation.
 - Deep Agents cart mutation tools use explicit refs: `PRODUCT_REF` values
   returned by catalog search for add operations, and `CART_LINE_ID` values
   returned by cart reads for remove operations. They do not perform hidden
   product-name lookup or fuzzy cart-line matching.
 - Deep Agents product details lookup uses explicit `PRODUCT_REF` values from a
-  prior catalog search in the same conversation, then reads the active catalog
-  through `GET /products/{product_id}`. It is not a second broad search path.
-  Authorization of that ref is a bounded process-local cache separate from the
-  graph checkpoint.
+  current-turn search or a unique durable same-conversation resolution, then
+  reads the active catalog through `GET /products/{product_id}`. It is not a
+  second broad search path. Authorization exists only in request-local product
+  evidence, not the graph checkpoint.
+- Finalized ordered product-card output creates one durable
+  `candidate_set_presented` event and refreshes a compact per-conversation
+  reference index. The typed resolver returns 0/1/many matches; only one match
+  enters request-local evidence. It performs no catalog, embedding, or separate
+  model call, zero/many results require clarification, and the runtime permits
+  one batched resolver call per turn. The compact index keeps the newest
+  complete candidate sets within 16,384 serialized characters.
 - All wrapper tools return results to the agent loop so compound discovery,
   policy, availability, and cart requests can finish before the final
   shopper-facing response.
@@ -230,10 +238,12 @@ Catalog search maps the source `record_id` into `ProductSummary.product_id`;
 Milvus primary keys and product names are never commerce identities. The
 current feed's generated IDs are only guaranteed within the active catalog
 snapshot. Detail reads and cart adds verify refs against that snapshot and
-require a fresh search when a ref is stale. The runtime remembers at most 50
-refs per conversation in process memory. The graph checkpoint does not contain
-this cache, so a restart, another replica, eviction, or catalog replacement
-also requires a fresh search.
+require a fresh search when a ref is stale. The runtime keeps refs only in
+request-local evidence. A later turn can recover one exact product from durable
+product-card events in the same conversation, including after a chain-server
+restart. The current resolver does not perform fuzzy matching,
+cross-conversation lookup, or catalog-revision invalidation, so an absent or
+changed active product still requires a fresh search.
 
 ### Policy And Availability Boundaries
 
@@ -248,8 +258,9 @@ agent-readable skills root, so policy content is available only through the
 controlled policy tool.
 
 `check_product_availability` makes no catalog or inventory call. The runtime
-first resolves the supplied ref from its conversation-scoped product cache and
-rejects an unknown or expired ref. For a known product, the helper returns
+first resolves the supplied ref from request-local product evidence and rejects
+an unknown ref. That evidence comes from current-turn search or one unique
+same-conversation historical resolution. For a known product, the helper returns
 `availability="in_stock"`: it echoes a requested size for catalog
 taxonomy categories `apparel` and `footwear`, treats every other category as
 one-size, and gives a general availability answer when no hint is supplied.

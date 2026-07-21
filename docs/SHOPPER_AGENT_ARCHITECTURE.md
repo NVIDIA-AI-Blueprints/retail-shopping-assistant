@@ -19,8 +19,8 @@ see the [Shopper Agent Leadership Note](SHOPPER_AGENT_LEADERSHIP_NOTE.md).
 | --- | --- | --- |
 | Published catalog | Product records, taxonomy, filter values, field roles, prices, details, and retrieval results | Shopper intent, styling judgment, cart state, or inventory |
 | Deep Agents runtime | Semantic intent, skill selection, deterministic selected-skill tool grants, tool selection, and styling judgment | Product facts, policy facts, or cart truth |
-| Memory service | Ordered durable shopper/assistant turns, exact finalized replay, bounded recent-turn reads, authoritative cart state, and atomic mutation replay records | Catalog facts, model reasoning, or structured historical-reference semantics |
-| Graph checkpointer | Conversation-scoped exact graph/tool context within one chain-server process | Durable transcript storage, cross-replica context, or product-ref authorization |
+| Memory service | Ordered durable shopper/assistant turns, exact finalized replay, bounded recent-turn reads, presented-product events and compact index, deterministic same-conversation reference resolution, authoritative cart state, and atomic mutation replay records | Catalog facts, model reasoning, preferences, sentiment, active anchors, or cross-conversation memory |
+| Graph checkpointer | Request-scoped working graph/tool state within one chain-server process | Durable transcript storage, cross-turn shopper memory, cross-replica context, or product-ref authorization |
 
 A model-authored semantic query is an internal **ranking preference**, not a
 product fact or shopper-facing explanation. Only catalog tool evidence can
@@ -105,10 +105,10 @@ The detailed contracts and implementation live in:
 
 1. The runtime scopes the request and starts a durable memory-service turn before
    guardrail, model, or tool work. That transaction returns bounded finalized
-   raw turns, the authoritative cart, and an opaque execution `attempt_id`. The
-   raw turns replace the legacy rolling context blob; the runtime continues to
-   use `conversation_id` as the LangGraph checkpoint thread so same-process
-   graph/tool continuity is unchanged in Slice 4.
+   raw turns, a compact historical-product index, the authoritative cart, and an
+   opaque execution `attempt_id`. The raw turns replace the legacy rolling
+   context blob. LangGraph working state is isolated to this request under
+   a collision-safe pair of conversation ID and request ID.
 2. The first model step can call only `activate_shopper_skills_tool`. It selects
    the smallest registered skill set for the current intent. The prior turn's
    selected skill names are included only as a read-only continuity signal for
@@ -126,6 +126,12 @@ The detailed contracts and implementation live in:
 4. The model chooses only from the selected skills' granted tools. Every
    app-owned shopping dispatch independently rechecks both the frontmatter grant
    union and the immutable execution policy before its handler can run. Before
+   a detail, availability, or cart operation uses a product from an earlier
+   turn, the selected discovery, styling, or cart skill may call the typed
+   historical resolver once with one or more exact descriptors from the compact
+   index. Its 0/1/many result requires clarification for zero or many; only one
+   match enters request-local product evidence. Resolution is deterministic and
+   makes no catalog, embedding, or separate model call. Before
    retrieval, every search
    except `image_only` and `no_direct_catalog_match` includes one nonempty,
    product-agnostic `shopper_guidance` sentence authored under the active skill;
@@ -251,24 +257,30 @@ The detailed contracts and implementation live in:
    from the stale attempt is rejected and becomes a safe superseded-attempt
    response with no stale products or images. Other finalize failures do not
    replace an already grounded response; diagnostics record
-   `memory_finalize_error`, and the conversation checkpoint is preserved.
+   `memory_finalize_error`, and the request checkpoint is preserved.
    Memory-service operations are transactional, and database sessions are
    request-scoped and returned to the SQLAlchemy pool after every request.
 
-   Deep Agents graph state remains in conversation-scoped, process-local
-   MemorySaver. Graph checkpoints disappear on restart, are not shared across
-   workers or replicas, and have no TTL or capacity bound. Successful histories
-   therefore remain in process heap until restart. `CHECKPOINT_STORE=memory` is
-   the only supported mode; a compliant production shared graph backend remains
-   an open decision.
+   Finalization derives one `candidate_set_presented` event only from the
+   ordered product cards in the terminal replay output, then rebuilds the compact
+   product-reference projection in the same transaction. After that durable
+   commit succeeds, the runtime deletes the request-scoped MemorySaver thread.
+   `CHECKPOINT_STORE=memory` is the only supported mode. The checkpointer remains
+   process-local but is no longer shopper memory; it survives only a finalize
+   failure and otherwise ends with the request.
 
 The durable transcript contains raw shopper/assistant text plus bounded replay
 output and ordered event envelopes. It does not contain raw media, model
-reasoning, or the full graph/tool transcript. The projection tables and event
-vocabulary are Slice 5 schema only: active anchors, effective preferences,
-product-reference indexes, and historical-reference resolution are not
-implemented. Request-scoped checkpoint cutover is also deferred to Slice 5;
-the current checkpoint remains keyed by `conversation_id`.
+reasoning, or the full graph/tool transcript. Product-card output now populates
+durable `candidate_set_presented` events and a bounded compact product-reference
+index. The projection keeps the newest complete candidate sets within 16,384
+serialized characters. A typed batch resolver matches exact product ref,
+display name, category, turn, candidate set, and one-based position within the
+current conversation. It is enforced at most once per turn and returns
+`resolved`, `ambiguous`, or `not_found`; only a unique result becomes
+request-local evidence. Active anchors and effective preferences remain
+reserved. Fuzzy/embedding lookup, preference or sentiment extraction,
+cross-conversation lookup, and stale-catalog-revision handling are not included.
 
 The resolved agent dependency boundary remains `deepagents==0.6.12`,
 `langchain==1.3.11`, `langgraph==1.2.7`, and `langgraph-sdk==0.4.2`.
@@ -282,10 +294,11 @@ runtime returns a safe retry response and records `incomplete_agent_response`.
 Operator diagnostics also include bounded `catalog_scope_outcomes` for
 no-direct and zero-result scopes.
 
-Product refs used for follow-up detail reads and cart adds are a separate,
-bounded process-local cache. They are separate from the process-local graph
-checkpoint, so a restart, another replica, eviction, or catalog replacement
-requires a fresh search.
+Product refs used for detail, availability, and cart-add calls live only in the
+current request's evidence set. Current-turn search adds them directly; a
+unique durable historical resolution can add an earlier presented product.
+Ambiguous or missing references never authorize a downstream tool. The current
+slice records catalog revision metadata but does not reject stale revisions.
 
 Cart transaction safety is owned by the memory service. Adds use catalog
 `product_id`; removes and quantity updates use opaque `cart_line_id`. Each
@@ -295,11 +308,13 @@ replays and conflicting key reuse cannot change the cart.
 The serving implementation is split across the
 [Deep Agents runtime](../chain_server/src/deepagents_runtime.py),
 [conversation-memory client](../chain_server/src/conversation_memory.py),
+[conversation-product boundary](../chain_server/src/conversation_products.py),
 [shopper tool policy](../chain_server/src/tool_policy.py),
 [skill activation boundary](../chain_server/src/skill_activation.py), and
 [tool-loop controller](../chain_server/src/tool_loop_control.py). The durable
 SQLite boundary is implemented by the memory service's
 [conversation API](../memory_retriever/src/conversations.py),
+[product-reference resolver](../memory_retriever/src/product_references.py),
 [models](../memory_retriever/src/models.py), and
 [migrations](../memory_retriever/src/migrations.py).
 
@@ -313,10 +328,10 @@ and mutation preconditions.
 
 | Skill | Role | Use | Granted tools |
 | --- | --- | --- | --- |
-| [`product-discovery`](../chain_server/skills/shopper/product-discovery/SKILL.md) | `primary`, `product_procedure` | Non-styling search, browse, filters, and product facts | `search_catalog_tool`, `get_product_details_tool`, `check_product_availability_tool` |
-| [`outfit-styling`](../chain_server/skills/shopper/outfit-styling/SKILL.md) | `primary`, `product_procedure` | Build, complete, compare, balance, or refine a look | `search_catalog_tool`, `get_product_details_tool`, `check_product_availability_tool` |
+| [`product-discovery`](../chain_server/skills/shopper/product-discovery/SKILL.md) | `primary`, `product_procedure` | Non-styling search, browse, filters, and product facts | `search_catalog_tool`, `get_product_details_tool`, `check_product_availability_tool`, `resolve_conversation_products_tool` |
+| [`outfit-styling`](../chain_server/skills/shopper/outfit-styling/SKILL.md) | `primary`, `product_procedure` | Build, complete, compare, balance, or refine a look | `search_catalog_tool`, `get_product_details_tool`, `check_product_availability_tool`, `resolve_conversation_products_tool` |
 | [`budget-shopping`](../chain_server/skills/shopper/budget-shopping/SKILL.md) | `modifier` | Add budget procedure when the shopper states a price ceiling or bundle budget | None; combine with the applicable product or cart skill |
-| [`cart-management`](../chain_server/skills/shopper/cart-management/SKILL.md) | `standalone` | Cart reads, adds, removals, and quantity changes, alone or beside product work | `get_cart_tool`, `view_cart_total_tool`, `add_cart_items_tool`, `remove_cart_item_tool`, `update_cart_items_tool` |
+| [`cart-management`](../chain_server/skills/shopper/cart-management/SKILL.md) | `standalone` | Cart reads, adds, removals, and quantity changes, alone or beside product work | `get_cart_tool`, `view_cart_total_tool`, `add_cart_items_tool`, `remove_cart_item_tool`, `update_cart_items_tool`, `resolve_conversation_products_tool` |
 | [`store-policy-answers`](../chain_server/skills/shopper/store-policy-answers/SKILL.md) | `standalone` | Returns, shipping, sizing, payment, price matching, and gift cards | `get_store_policy_tool` |
 
 `product-discovery` and `outfit-styling` are mutually exclusive primary
@@ -347,6 +362,7 @@ skill and is not catalog truth.
 | Tool group | Tools | Source of truth |
 | --- | --- | --- |
 | Catalog | `search_catalog_tool`, `get_product_details_tool` | Active published catalog snapshot |
+| Conversation products | `resolve_conversation_products_tool` | Durable same-conversation `candidate_set_presented` events in the memory service |
 | Availability boundary | `check_product_availability_tool` | Known-ref, category-aware no-I/O application stub; live inventory remains unavailable |
 | Cart | `get_cart_tool`, `view_cart_total_tool`, `add_cart_items_tool`, `remove_cart_item_tool`, `update_cart_items_tool` | Memory service cart |
 | Policy | `get_store_policy_tool` | Operator-managed policy YAML |

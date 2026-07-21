@@ -372,14 +372,17 @@ editor.
 
 Current generated IDs are safe only within the active snapshot because the
 feed does not guarantee cross-catalog stability. Detail reads and cart adds
-verify both cached ID and display name against the active catalog; stale or
-reused refs require a fresh search. Transient catalog failures leave the cart
-unchanged and are not described as product removal.
+verify both request-evidence ID and display name against the active catalog;
+stale or reused refs require a fresh search. Transient catalog failures leave
+the cart unchanged and are not described as product removal.
 
-The cache that authorizes same-conversation refs is bounded and process-local;
-it is separate from the process-local graph checkpoint. A restart, another
-replica, eviction, or catalog replacement requires a fresh search before
-details or cart adds.
+The chain server authorizes refs only from current-request evidence: either a
+search in that request or one unique exact resolution from durable product-card
+events in the same conversation. That resolver survives chain-server restart
+and makes no catalog call. It records catalog revision metadata when supplied
+but does not yet enforce revision freshness, so catalog replacement can still
+require a fresh search before details or cart adds. This does not change the
+catalog service or its stateless request boundary.
 
 An internal fingerprint covers the JSONL, sidecar, embedding model names,
 image-search state, local image bytes when image search is enabled, and

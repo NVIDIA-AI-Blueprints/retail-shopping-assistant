@@ -64,6 +64,16 @@ SHOPPING_TOOL_POLICIES: Mapping[str, ToolPolicy] = MappingProxyType(
             ),
             risk="read",
         ),
+        "resolve_conversation_products_tool": ToolPolicy(
+            allowed_skills_any_of=frozenset(
+                {
+                    "cart-management",
+                    "outfit-styling",
+                    "product-discovery",
+                }
+            ),
+            risk="read",
+        ),
         "get_cart_tool": ToolPolicy(
             allowed_skills_any_of=frozenset({"cart-management"}),
             risk="read",

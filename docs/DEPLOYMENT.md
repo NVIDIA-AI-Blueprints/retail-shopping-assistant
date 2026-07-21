@@ -374,26 +374,35 @@ durable transcript, cart, and mutation replay records.
 
 Stored turns contain shopper/assistant text plus bounded replay output and
 ordered event envelopes. Raw uploaded media, model reasoning, and the full graph
-message/tool transcript are not stored there. Projection columns and event
-vocabulary are reserved for Slice 5; this release does not derive preferences,
-anchors, product-reference indexes, or historical-reference resolution.
+message/tool transcript are not stored there. On finalization, ordered product
+cards are also stored as a `candidate_set_presented` event and folded into a
+compact product-reference projection. The deterministic resolver can recover a
+unique typed reference from those same-conversation events after a chain-server
+restart or on another worker; zero or multiple matches require clarification.
+The projection keeps the newest complete candidate sets within a 16,384-
+character serialized cap, and the serving runtime permits at most one batched
+resolver call per turn.
+Preferences, sentiment, active anchors, fuzzy/embedding lookup, and
+cross-conversation resolution are not implemented. Catalog revisions are
+recorded when supplied but are not yet used to invalidate stored evidence.
 
 ### Graph Checkpointing
 
 `CHECKPOINT_STORE=memory` preserves the in-process development and test
-behavior. The checkpoint remains keyed by `conversation_id` in Slice 4 so exact
-same-process graph/tool continuity is unchanged. Checkpoints disappear when the
-chain-server process restarts, and separate replicas do not share graph state.
-Successful thread histories have no TTL or capacity bound and accumulate in
-process heap until restart.
+behavior. Each graph thread is keyed by a collision-safe pair of conversation
+ID and request ID and holds only one request's working Deep Agents state. The runtime deletes it after the
+durable turn finalizes successfully. A finalize failure preserves that request's
+checkpoint for diagnosis or retry instead of discarding the incomplete attempt.
+Checkpoints still disappear when the chain-server process restarts and are not
+shared across replicas, but they are no longer the source of shopper memory or
+product-reference authorization.
 
 `memory` is currently the only accepted value; an empty or different value
 fails during chain-server initialization instead of silently falling back to
-process-local state. A production shared and durable backend has not been
-selected. Do not scale the chain server horizontally when exact graph/tool
-continuity is required until an Apache-2.0/MIT-compatible backend is selected,
-implemented, and validated. Request-scoped checkpoint cutover is deferred until
-Slice 5 can preserve structured product-reference evidence.
+process-local state. The durable memory-service turn record, not the graph
+checkpoint, supplies cross-turn continuity. A shared graph backend is therefore
+not required for this request-scoped design; production durability and scale
+remain bounded by the single-replica SQLite memory service.
 
 ### Store Policy Content
 
@@ -865,16 +874,15 @@ turns or carts must survive teardown.
 
 ### Horizontal Scaling
 
-Two boundaries block horizontal conversation scaling. Select and implement a
-compliant shared graph checkpoint backend before increasing chain-server
-replicas when exact tool/message continuity is required: current MemorySaver
-gives each worker and replica an independent graph namespace and loses state on
-restart. Separately, the memory service uses one local SQLite writer. Replace it
-with a validated shared/multi-writer store before increasing memory-service
-replicas.
+The request-scoped MemorySaver does not carry shopper memory between turns, so
+it does not itself block additional chain-server workers. Each in-flight request
+still completes on one worker. The remaining durable-state limit is the memory
+service's single local SQLite writer. Replace it with a validated shared/
+multi-writer store before increasing memory-service replicas.
 
-The following scaling examples are future-only. Do not apply them until the
-shared checkpoint backend is implemented and validated.
+The following scaling example is future-only. Do not apply it as a complete
+production topology until shared durable memory, server-owned identity, and
+traffic testing are in place.
 
 ```yaml
 # In docker-compose.yaml

@@ -37,5 +37,5 @@ Handle explicit cart operations. Do not expose tool names or internal identifier
 
 ## What This Skill Does Not Cover
 
-- Tax, checkout, order status, and transaction-specific shipping fees or delivery estimates are not available through the assistant. Use `get_store_policy_tool` for controlled shipping policy questions.
+- Tax, checkout, order status, and transaction-specific fees or delivery estimates are outside cart management; supported retailer policy questions require `store-policy-answers`.
 - Do not claim items are reserved or secured in cart.

@@ -23,6 +23,11 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   for that fresh semantic decision; they neither force routing nor unlock tools.
   Terse item-only follow-ups inside an active outfit-building or style-led
   single-piece thread still select `outfit-styling` from conversation context.
+  Outfit styling is a focused fashion procedure for anchors, clarification,
+  color, proportion, silhouette, formality, occasion, texture, and response
+  judgment. It retains only search, details, and availability grants; catalog
+  transport and validation remain with the catalog boundary, while cart work
+  requires the cart skill.
   Each skill also declares product-agnostic `response_guidance` in
   frontmatter as a fallback. Each catalog call supplies required pre-retrieval
   `shopper_guidance` authored under the active skill. Completed successful
@@ -236,6 +241,27 @@ lives in [Schema-Driven Catalog Architecture](docs/CATALOG_REFACTOR_PLAN.md).
 
 ## Verification
 
+The broad results below are the preserved committed Slice 0 baseline. Slice 2
+uses the focused contract and targeted styling gates recorded separately here;
+the complete suite and broad Judge cohort remain release-readiness gates.
+
+- Focused Slice 2 skill/authorization gate: 34 passed and 2 strict expected
+  failures in 2.03 seconds, with one pre-existing
+  `StarletteDeprecationWarning`. The expected failures continue to track
+  constraint provenance and durable historical-reference resolution.
+- Targeted `conv_5.yaml` styling continuity gate: all five turns activated only
+  `outfit-styling`, completed without fallback, and were judged 3.4/5
+  (scores: 4, 3, 3, 3, 4). Mean turn latency was 4.457 seconds. The critical
+  "What bottoms go well with that?" turn retained the beige-top anchor, searched
+  only bottoms, and scored 3/5; the remaining Judge criticism was narrow
+  category breadth rather than lost context or unsupported claims.
+- The targeted result is a qualified improvement over the matching committed
+  Slice 0 scenario (2.8/5 and 7.717 seconds mean) and Staging scenario (3.2/5
+  and 11.064 seconds mean). It remains below the older pre-Slice-0 good WIP
+  scenario (3.8/5 and 5.892 seconds mean), so it is not presented as an
+  unqualified quality gain. The complete 48-turn comparison is deferred to the
+  release-readiness gate.
+
 - Full offline unit suite: 854 passed, 4 strict expected failures, and one
   pre-existing `StarletteDeprecationWarning` in 5.76 seconds.
 - Focused checkpoint coverage: 8 passed, including default and explicit memory
@@ -248,8 +274,11 @@ lives in [Schema-Driven Catalog Architecture](docs/CATALOG_REFACTOR_PLAN.md).
 - The tests-only Slice 1 regression boundary freezes five cases: browse-only
   cart rejection already passes through Slice 0; invented filter provenance,
   ambiguous historical reference clarification, add replay, and remove replay
-  are strict expected failures assigned to Slices 2, 3, and 5. An unexpected
-  pass fails the suite until the marker is removed.
+  remain strict expected failures. Add/remove replay belongs to the cart
+  transaction slice and ambiguous history belongs to reference resolution.
+  Filter provenance remains an unresolved semantic-assurance decision; this
+  skill-boundary slice does not claim to solve it. An unexpected pass fails the
+  suite until the marker is removed.
 - Agent observability coverage verifies current-turn skill activation, model-issued
   tool-call order and arguments, rejection/duplicate classification, pending
   calls, additive API/SSE propagation, snapshot-before-delete failure handling,
@@ -313,7 +342,7 @@ signal. Catalog-sensitive Golden drift
 still applies: existing beige skirts and pastel tops contradict older absence
 answers, so raw scores are not a standalone catalog-quality verdict.
 
-The current full run covers the deterministic search-only renderer, noun-only
+The preserved Slice 0 full run covers the deterministic search-only renderer, noun-only
 product-type provenance, one-repair search boundary, finite preservation of
 independently valid repair fields, review-blocker fixes, and turn-scoped Judge
 evidence. Search-only answers stayed inside names, prices, roles, and confirmed
@@ -373,11 +402,15 @@ another interpretation/review model call or fixed natural-language rules; both
 were intentionally excluded to avoid added latency and hard-coded language
 logic. The prompt and required tool fields are the chosen minimal boundary.
 
+`product-discovery` still contains transport-oriented catalog instructions.
+That separate cleanup is intentionally deferred so this slice can isolate the
+effect of simplifying `outfit-styling`.
+
 The runtime rejects duplicate taxonomy values, partially incompatible
 category/subcategory sets, and taxonomy fields that are not scalar enum hard
 filters.
 
-Nine turns still scored 2. Most are safe no-match or unenforceable answers where
+In the preserved Slice 0 run, nine turns scored 2. Most are safe no-match or unenforceable answers where
 older Goldens prefer speculative adjacent products. One concrete conversation
 gap remains: after a denim-skirt request correctly failed closed, the next turn's
 “that skirt” resolved to an older maxi-skirt candidate instead of triggering a

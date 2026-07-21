@@ -173,7 +173,7 @@ evidence/truncation and those catalog scope outcomes from diagnostics.
 | Skill | Source | Status | Role | Tools granted | Primary entry modes |
 | --- | --- | --- | --- | --- | --- |
 | `product-discovery` | `chain_server/skills/shopper/product-discovery/SKILL.md` | Registered | `primary` / `product_procedure` | Search, details, availability | General search, category browsing, filter-driven discovery without styling intent |
-| `outfit-styling` | `chain_server/skills/shopper/outfit-styling/SKILL.md` | Registered | `primary` / `product_procedure` | Search, details, availability | Anchor/no-anchor styling, conversational mid-browse, and terse follow-ups within an active outfit task; combine with cart management for cart-aware styling |
+| `outfit-styling` | `chain_server/skills/shopper/outfit-styling/SKILL.md` | Registered | `primary` / `product_procedure` | Search, details, availability | Build, complete, or refine a look; coordinate a requested piece with an anchor; use cart evidence only when cart management is also active |
 | `cart-management` | `chain_server/skills/shopper/cart-management/SKILL.md` | Registered | `standalone` | Cart read, total, add, remove, update | Explicit cart reads and mutations, alone or beside a product procedure |
 | `budget-shopping` | `chain_server/skills/shopper/budget-shopping/SKILL.md` | Registered | `modifier` | None | Stated price ceilings and budget bundles; combine with cart management for cart-total checks |
 | `store-policy-answers` | `chain_server/skills/shopper/store-policy-answers/SKILL.md` | Registered | `standalone` | Policy lookup | Returns, shipping, sizing, payment, price matching, and gift cards |
@@ -271,124 +271,40 @@ Purpose: controlled answers for the six supported store-policy topics.
 
 ## `outfit-styling`
 
-Purpose: customer-facing fashion styling that can build, complete, validate,
-compare, refine, or budget outfits from product context, cart context, uploaded
-images, or mid-browse questions. This is the primary procedure for styling
-intent and is not combined with `product-discovery`. It remains primary for
-terse item-only follow-ups that rely on the active outfit or style-led
-single-piece goal.
+Purpose: customer-facing fashion judgment for building, completing, comparing,
+balancing, or refining a look. It remains the primary procedure through an
+active styling thread, including terse follow-ups that rely on an established
+anchor or outfit goal. It is not combined with `product-discovery`.
 
-Tool boundary:
+The skill owns:
 
-- Uses catalog search for grounded product recommendations and substitutions.
-- Uses product details only for known `PRODUCT_REF` values.
-- Treats remembered refs as same-process, active-snapshot evidence. A restart,
-  another replica, cache eviction, or catalog replacement requires a fresh
-  search; the graph checkpoint does not contain this separate cache.
-- Product-detail reads are capped per turn; once the cap is reached the agent
-  should stop tool calling and answer from evidence already collected.
-- Activates `cart-management` alongside styling when a turn needs cart reads,
-  totals, or mutations; `outfit-styling` itself grants only catalog search,
-  details, and availability.
-- Cart outfit checks should read cart state through the combined skill set and
-  avoid unnecessary catalog search for items already in the cart.
-- Multi-item outfit adds use the cart skill's batched add tool with selected
-  `PRODUCT_REF` values, then report exact added and failed items.
-- Styling approval does not imply cart consent; the add scope must match the
-  items explicitly included in the shopper's add request.
-- Ambiguous add scope should produce one concise clarification, not a guessed
-  cart mutation.
-- Does not own catalog facts, pricing, inventory, cart state, checkout, or
-  profile persistence.
+- deciding whether to proceed or ask one concise styling clarification;
+- preserving accepted anchors and changing only the requested piece or quality;
+- coordinating color, proportion, silhouette, formality, occasion, and texture;
+- connecting each grounded candidate to the anchor or outfit goal;
+- keeping product facts separate from styling judgment; and
+- using the seasonal trend reference only as optional framing.
 
-Behavior boundary:
+The skill grants only catalog search, product details, and availability. Search
+results support name, price, category, and image availability; other product
+attributes require detail evidence. Catalog presence is never treated as stock.
 
-- Supports multi-intent requests such as styling plus budget, styling plus
-  cart review, image styling plus search, or comparison plus value judgment.
-- Selects exact advertised taxonomy values semantically; examples and fashion
-  formulas are not catalog taxonomy. Catalog capabilities also generate the
-  allowed non-taxonomy constraint properties. A structural agent-facing schema
-  transports the selection to the strict runtime semantic validator so
-  cross-field defects receive capability-derived feedback. The model owns
-  `taxonomy_status`; runtime never semantically rewrites it. Exact advertised
-  category/subcategory coherence is capability-owned.
-- Supplies required `requested_product_type` product noun/umbrella provenance on
-  text searches. It uses the shortest product noun or true umbrella from the
-  current request or direct antecedent, excludes color, material, fit, occasion,
-  weather, and style modifiers. For `agent_selected_type`, runtime derives this
-  duplicate provenance from the selected advertised subcategory. Image-only
-  search uses `null`.
-- Authors required, nonempty pre-retrieval `shopper_guidance` under this skill
-  for taxonomy-scoped searches, connecting the selected role to the current
-  outfit goal or direct antecedent without naming candidates, asserting product
-  attributes, or exposing search mechanics. `image_only` and
-  `no_direct_catalog_match` require empty guidance.
-- Keeps each call to one advertised category and one focused product role. When
-  the shopper names no concrete type, `agent_selected_type` selects exactly one
-  advertised subcategory as the starting role. Runtime retains
-  `agent_selected_type` and derives its requested-type provenance. It is
-  rejected for a shopper-named scope rather than silently reinterpreted.
-- Reports a requested product type with no advertised match before offering an
-  adjacent direction. That path uses empty taxonomy and no hard constraints,
-  performs no retrieval, and does not broaden, omit, or silently substitute the
-  missing type. An unsupported modifier does not erase an advertised type.
-- Places a product must-have that the catalog does not advertise in
-  `unadvertised_requirements`. Every such requirement on a shopper-stated
-  product scope fails closed before retrieval, including when the model uses a
-  synonym rather than the shopper's exact wording. The bounded review is
-  reserved for a proposed inferred requirement on a genuinely open
-  `agent_selected_type` role when its shared repair budget remains. The review
-  freezes requested type, taxonomy status, taxonomy, completion state,
-  `search_mode`, and every advertised hard constraint. Within that preserved
-  hard scope, it may correct only the soft `semantic_query`, the reviewed
-  unadvertised-requirement lane, and its associated guidance; the requirement
-  is either replaced with the shopper's shortest exact wording or removed.
-  Exact wording and unresolved provenance fail closed; constraint feedback after
-  a schema repair closes the loop for synthesis. Removal scrubs product-attribute
-  guidance. A later valid
-  role receives its own single repair opportunity after a successful partial
-  search.
-- Keeps subjective style and anchor facts as semantic styling context unless the
-  current request explicitly applies the same value to the target product.
-- Treats normalized taxonomy plus hard constraints as the duplicate-search
-  identity; semantic paraphrasing alone cannot justify another retrieval.
-- Separates catalog facts from styling inference. Shopper wording is context,
-  not product evidence, and material or comfort claims should be attributed
-  item by item unless the whole outfit is supported by catalog evidence.
-- Treats product names as display names, not attribute evidence. Length, color,
-  print, material, fit, care, construction, and group-level claims require
-  product-detail evidence.
-- Keeps internal `PRODUCT_REF` and `CART_LINE_ID` values out of shopper-facing
-  responses.
-- Avoids grouping leather, rubber, metal, or generic canvas under natural-fiber
-  claims; material summaries should stay item-specific.
-- Uses product-detail reads before detailed comparison tables or claims about
-  material, dimensions, pockets, closures, care, comfort, or outdoor
-  practicality.
-- Does not use product-detail reads just to enrich the first no-anchor outfit
-  recommendation. Initial outfit building should search by item role, author
-  product-agnostic `shopper_guidance` before retrieval, and let deterministic
-  response code render names, prices, categories, and confirmed filters.
-- Keeps initial recommendations lightweight: product name, price, role, and one
-  styling reason. Detailed specs require product-detail reads and a shopper need
-  for that detail.
-- Does not claim tax, transaction-specific shipping fees, delivery estimates,
-  or real-time stock status. Controlled shipping policy content comes from the
-  policy tool.
-- Keeps outdoor-practicality language modest unless the catalog explicitly
-  supports stronger claims such as grass/gravel stability, water resistance,
-  all-day comfort, or weather safety.
-- Avoids category-wide superlatives such as maximum breathability or best grip
-  unless all relevant catalog options have been checked with product details.
-- Asks at most one concise clarifying question when no anchor, occasion, vibe,
-  category, budget, image, or cart context exists.
-- Keeps shopper-owned wardrobe items separate from catalog products.
-- Does not expose skill names, tool names, entry-mode names, or internal
-  routing language in shopper responses.
-- Non-search-only tool-backed drafts pass through the grounding editor, which
-  sees a customer-safe evidence summary rather than raw catalog marketing copy.
-  Completed successful search-only responses instead use pre-retrieval
-  `shopper_guidance` plus deterministic tool-owned facts.
+For a named follow-up role, the skill keeps the anchor as context and searches
+only that role. Confirmed anchor attributes guide coordination, but do not
+become requirements on a complementary piece unless the shopper explicitly
+asks for the same or a matching value. For an ambiguous anchor or historical
+reference, the skill instructs the model to ask one clarification rather than
+guess. Durable enforcement is deferred to the historical-reference-resolution
+slice.
+
+Cart and budget responsibilities stay with their owning skills. When
+`cart-management` is co-active, confirmed cart lines may be styling anchors;
+`outfit-styling` does not direct cart reads or mutations. When
+`budget-shopping` is co-active, styling honors the ceiling using confirmed
+prices; it does not own cart totals.
+
+The skill does not own catalog taxonomy, tool transport fields, repair loops,
+runtime response assembly, cart state, policy, memory, inventory, or checkout.
 
 ## Tuning Loop
 
@@ -413,8 +329,9 @@ When changing the skill:
    current file.
 7. Verify the activation registry reflects current frontmatter and descriptions;
    it is regenerated from current files rather than checkpointed per thread.
-8. Run the `style_guide` Challenger/Judge evaluation before treating behavior
-   changes as ready.
+8. Run the focused skill and activation contract tests, then the smallest
+   affected scripted multi-turn styling scenario and its targeted Judge.
+   Reserve the complete suite and broad Judge cohort for release readiness.
 
 If a new deployment uses a materially different catalog, regenerate or adjust
 catalog-dependent style evaluation fixtures before judging. The skill should

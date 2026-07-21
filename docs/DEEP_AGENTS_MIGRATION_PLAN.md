@@ -508,18 +508,20 @@ registered set is:
 
 - `product-discovery`: the primary procedure for general search, browse, and
   filtering without styling intent.
-- `outfit-styling`: fashion styling across anchor product, no-anchor discovery,
-  cart styling, conversational mid-browse, and visual requests; it is the
-  primary procedure instead of product discovery when styling is requested and
-  remains primary for terse item-only follow-ups within that active outfit or
-  style-led single-piece thread.
+- `outfit-styling`: fashion judgment across anchors, complete looks,
+  conversational follow-ups, and visual requests; it is the primary procedure
+  instead of product discovery when styling is requested and remains primary
+  for terse item-only follow-ups within that active thread. Cart-aware styling
+  uses cart evidence supplied by a co-active `cart-management` skill.
 - `cart-management`: explicit cart reads and mutations.
 - `budget-shopping`: a modifier for a stated price ceiling or budget bundle.
 - `store-policy-answers`: controlled policy answers through the policy tool.
 
-Skills may guide tool use, explain constraints, and provide examples. They
-should not own cart mutation, pricing, inventory, profile persistence, or order
-creation.
+Skills should contain domain procedure and judgment. Tool schemas own transport,
+and runtime policy owns enforcement. Skills should not own cart mutation,
+pricing, inventory, profile persistence, or order creation. Slice 2 applies
+this boundary to `outfit-styling`; cleanup of `product-discovery` remains
+deferred.
 
 The runtime separates three phases:
 
@@ -538,14 +540,15 @@ reference files.
 
 During activation, only `activate_shopper_skills_tool` is visible and tool
 choice is forced to it with parallel calls disabled. After a successful
-activation, that control tool is removed and the nine shopping tools become
-visible. The execution middleware independently requires a successful
-activation message for the current `request_id`; therefore a model cannot
-bypass the boundary by emitting an unadvertised shopping call or by placing
-activation and shopping calls in one batch. A load failure exposes no shopping
-tools and fails closed. The middleware also rejects a direct activation-phase
-answer with final termination reason `skill_activation_failed`, so named tool
-choice is not the only enforcement layer.
+activation, that control tool is removed and only the selected skills' grant
+union becomes visible. The execution middleware independently rechecks the same
+grant and requires a successful activation message for the current
+`request_id`; therefore a model cannot bypass the boundary by emitting an
+unadvertised shopping call or by placing activation and shopping calls in one
+batch. A load failure exposes no shopping tools and fails closed. The
+middleware also rejects a direct activation-phase answer with final termination
+reason `skill_activation_failed`, so named tool choice is not the only
+enforcement layer.
 
 When a discovery or styling procedure applies, activation selects exactly one
 of `product-discovery` and `outfit-styling`. `budget-shopping` is added only for
@@ -704,8 +707,8 @@ Implications:
 - Search remains stateless and does not receive customer/session/cart context.
 - Chatter does not claim cart changes unless a tool reports success.
 - The first model step exposes only the forced skill-activation control tool.
-- A successful activation injects the complete selected file before exposing
-  all nine shopping tools.
+- A successful activation injects every complete selected file before exposing
+  only those skills' combined tool grants.
 - A prior-turn activation, failed activation, or same-batch activation does not
   authorize a current shopping tool call.
 - Prior-turn selected skill names appear only as a read-only continuity signal

@@ -172,11 +172,12 @@ from conversation text.
 
 ## Recommendation
 
-Ship the regression boundary and explicit turn authorization next, then build
-the structured conversation-reference ledger and durable transcript on that
-execution contract. The trap is adding more keyword taxonomy mappings or
-increasingly specific prompt rules: that would couple language interpretation
-to catalog structure and make each new skill harder to extend safely.
+First simplify and validate the styling-skill boundary. Then deliver cart-only
+authorization, cart idempotency, durable turn/event storage, and historical
+reference resolution as separate slices. The catalog remains unchanged. The
+trap is adding keyword taxonomy mappings or increasingly specific prompt rules:
+that would couple language interpretation to catalog structure and make each
+new skill harder to extend safely.
 
 For implementation detail, see the
 [Shopper Agent Architecture](SHOPPER_AGENT_ARCHITECTURE.md),

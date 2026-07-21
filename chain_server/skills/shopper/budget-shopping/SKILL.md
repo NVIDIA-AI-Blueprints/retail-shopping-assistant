@@ -14,7 +14,7 @@ Handle firm-budget requests. Do not expose skill names or tool names in response
 
 - Treat a stated price ceiling as a hard constraint. Pass it as `required_constraints.price.max` in catalog search.
 - Do not recommend over-budget items framed as "just a bit more" or "worth considering."
-- Keep a running suggested subtotal when recommending multiple items. Use `view_cart_total_tool` for actual cart totals — do not compute from memory.
+- When recommending multiple products, compare only confirmed prices. Actual cart totals belong to `cart-management`.
 
 ## When the Budget Is Tight
 

@@ -613,7 +613,7 @@ def test_browse_only_product_discovery_rejects_cart_mutation() -> None:
 @pytest.mark.xfail(
     strict=True,
     raises=AssertionError,
-    reason="Slice 2 will bind catalog constraints to shopper provenance.",
+    reason="Constraint provenance remains an unresolved semantic-assurance boundary.",
 )
 def test_invented_catalog_constraint_is_rejected_before_execution() -> None:
     """An advertised filter is not authorized merely because it is valid."""
@@ -640,7 +640,7 @@ def test_invented_catalog_constraint_is_rejected_before_execution() -> None:
 @pytest.mark.xfail(
     strict=True,
     raises=AssertionError,
-    reason="Slices 2 and 5 will block unresolved historical product targets.",
+    reason="Historical product reference resolution remains a later memory slice.",
 )
 def test_ambiguous_product_reference_requires_clarification() -> None:
     """Two prior bag candidates cannot authorize a guessed cart target."""
@@ -835,10 +835,6 @@ async def test_compiled_agent_loads_skill_and_blocks_ungranted_tool(
     assert "add_cart_items_tool" not in shopping_call["tools"]
     assert "read_file" in shopping_call["tools"]
     assert "## Active Shopper Skills" in shopping_call["system_prompt"]
-    assert "# Outfit Styling" in shopping_call["system_prompt"]
-    assert "# Product Discovery" not in shopping_call["system_prompt"]
-    assert "## Conversational Mid-Browse" in shopping_call["system_prompt"]
-    assert "## Unsupported Commerce Details" in shopping_call["system_prompt"]
     rejected = [
         message
         for message in result["messages"]

@@ -1864,9 +1864,10 @@ class TestDeepAgentsRuntimeRefs:
             "get_product_details_tool",
             "check_product_availability_tool",
         }
-        assert "## Conversational Mid-Browse" in next(
-            iter(skill_gate._skill_files.values())
-        )
+        selected = runtime_mod._shopper_skill_registry(
+            runtime._shopper_skills_root()
+        )["outfit-styling"]
+        assert skill_gate._skill_files == {selected.path: selected.content}
         assert captured["backend"].cwd == (
             Path(__file__).resolve().parents[3] / "chain_server" / "skills"
         )

@@ -291,6 +291,14 @@ shopper states a budget. A genuine multi-intent turn activates every needed
 skill once; for example, styling under a budget with an explicit add request
 uses `outfit-styling`, `budget-shopping`, and `cart-management`.
 
+The styling skill owns fashion procedure and clarification: anchors, color,
+proportion, silhouette, formality, occasion, texture, and concise explanation.
+The catalog publishes the advertised taxonomy and filter contract. The
+capability-aware runtime validates and maps submitted constraints before the
+catalog service performs deterministic retrieval and filtering. Cart reads and
+mutations are available to styling only through a co-active `cart-management`
+skill.
+
 Slice 0 proves selected-skill tool authorization, not explicit mutation intent.
 Selecting `cart-management` currently grants its cart tools; deterministic refs
 and service preconditions still apply, but a server-owned current-turn intent

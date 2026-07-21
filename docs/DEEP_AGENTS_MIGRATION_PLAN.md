@@ -47,6 +47,23 @@ Current constraints:
   and the bundled UI now sends browser-session identifiers on every turn.
   Legacy callers that send only `user_id` are still mapped to deterministic
   compatibility identifiers.
+- A single memory-service SQLite replica starts an ordered durable turn before
+  guardrail, model, or tool work and returns bounded finalized raw turns plus
+  the authoritative cart. Every new turn is finalized as completed, blocked,
+  or failed. An exact finalized request replay skips model/tool execution and
+  returns stored response output. Each start returns a service-issued attempt
+  token that finalization must echo. A start failure prevents agent execution;
+  a generic finalize failure preserves the grounded response and conversation
+  checkpoint and adds an operator diagnostic.
+- The legacy rolling context blob is no longer the serving continuity source;
+  bounded durable shopper/assistant turns replace it. Conversation-scoped
+  MemorySaver remains active in Slice 4 so same-process exact graph/tool
+  continuity does not regress. Product refs remain a separate process-local,
+  catalog-snapshot-bound cache.
+- Conversation projection tables and the event vocabulary are schema only in
+  Slice 4. The runtime does not derive active anchors, effective preferences,
+  product-reference indexes, or historical-reference decisions. Request-scoped
+  checkpoint cutover is deferred until Slice 5 implements that projection.
 - The compatibility mapping is not the final production identity design. A
   high-scale website should move to server-created session, conversation, and
   cart identifiers before broad rollout.
@@ -292,7 +309,8 @@ Filesystem and built-in Deep Agents tools:
 ```text
 POST /query/stream
   -> resolve or create server-owned identity
-  -> load session, conversation, and cart
+  -> start durable conversation turn; load bounded finalized turns, cart, and attempt token
+  -> replay stored finalized output and stop, when request identity matches
   -> invoke Deep Agents SDK with thread_id = conversation_id
   -> force structured per-turn skill selection
   -> load and inject complete selected SKILL.md files
@@ -301,8 +319,8 @@ POST /query/stream
   -> select and validate exact advertised values or stop on a no-retrieval path
   -> tools call catalog and cart services or controlled policy/availability boundaries
   -> ground current-turn results separately from prior-turn tool evidence
+  -> finalize durable turn as completed, blocked, or failed with the current attempt token
   -> stream assistant response back to the UI
-  -> persist conversation state under the correct scope
 ```
 
 The first migration preserves the existing endpoint shape. The bundled UI sends
@@ -319,7 +337,8 @@ that do not send them.
 | `conversation_id` | One chat thread and Deep Agents `thread_id`. | TTL-bound or user-visible thread | Never across unrelated sessions |
 | `cart_id` | Active cart being mutated. | Cart lifecycle policy | May follow a customer across sessions |
 | `persona_id` | Optional persona/profile source. | Durable or scenario-bound | Never across unrelated customers |
-| `request_id` | One submitted turn. | Short-lived | Unique per turn |
+| `request_id` | One submitted turn and exact replay identity. | Durable with the turn-retention policy | Unique per turn |
+| `attempt_id` | Service-issued execution fence for one start attempt; rotated on an allowed abandoned retry. | Until terminal finalize or a newer attempt | Returned by start; echoed only to finalize that attempt |
 
 Server-side generation is the first step. Later, explicit session and
 conversation APIs can expose these identifiers for multi-thread website
@@ -329,10 +348,15 @@ The current bridge uses the legacy numeric `user_id` when explicit IDs are
 absent, derives a stable internal key from `conversation_id` for conversation
 memory when present, and derives a separate stable internal key from `cart_id`
 for cart reads/writes when present. Callers may provide one bounded `request_id`
-per turn; otherwise the server generates it. Cart adds persist catalog
+per turn; otherwise the server generates it. The memory service stores a digest
+of shopper text and ordered media hashes under that ID. Matching finalized
+retries replay exactly; changed input conflicts. Cart adds persist catalog
 `product_id`, while reads expose the opaque, non-reusable
 `CartItem.cart_line_id` as `CART_LINE_ID` for remove and quantity update. All
-three mutation paths commit with one owner-scoped idempotency record.
+three mutation paths commit with one owner-scoped idempotency record. A retry may
+reopen an abandoned turn only when it remains the conversation's latest
+sequence. Reopening preserves `request_id` but rotates `attempt_id`, so a late
+finalize from the older attempt is rejected rather than overwriting the retry.
 
 Product evidence identity is a separate, narrower bridge. The runtime keeps at
 most 50 returned `PRODUCT_REF` values per `conversation_id` in process memory,
@@ -348,6 +372,9 @@ product details or cart adds.
 - A request without a valid conversation gets a new `conversation_id`.
 - Deep Agents checkpointing, memory, and filesystem state use
   `conversation_id` as the thread key.
+- Durable raw turn, replay-output, and event rows use `conversation_id` plus
+  ordered sequence and unique `request_id` identities. Each active execution is
+  fenced by a memory-service-issued `attempt_id`.
 - Product-ref authorization is process-local and snapshot-bound; it is not
   recovered from the checkpoint.
 - Customer profile lookup uses `customer_id`, but profile lookup must not merge
@@ -355,6 +382,9 @@ product details or cart adds.
 - Anonymous sessions must not be addressable by guessable numeric IDs.
 - Resetting the chat creates a new conversation. It should not automatically
   clear the customer's durable cart unless the user explicitly clears cart.
+- Deleting a durable conversation removes its turn, event, and reserved
+  projection rows. It does not delete cart, cart-mutation replay, or legacy user
+  context rows.
 - Same customer in two active browser sessions gets separate conversation
   memory unless the product explicitly opens the same conversation thread.
 
@@ -579,6 +609,9 @@ For this retail assistant:
 - Use filesystem-backed or store-backed skills for static domain behavior,
   instructions, and examples.
 - Use Deep Agents conversation state for per-thread working context.
+- Use the memory-service SQLite turn store for ordered raw shopper/assistant
+  history and exact finalized replay in a single-replica deployment. The
+  bounded recent-turn snapshot replaces the legacy rolling context blob.
 - Do not use local files as the production source of truth for customer
   profiles, carts, prices, inventory, orders, or payment state.
 - Do not share a writable filesystem namespace across customers.
@@ -590,6 +623,12 @@ For this retail assistant:
 The rule is: Deep Agents context is useful for reasoning and skill discovery;
 commerce truth belongs in application services and databases.
 
+Durable raw transcript is not the same as structured memory. Slice 4 stores
+shopper/assistant text, bounded replay output, and ordered event envelopes, but
+does not interpret its reserved projection lanes. Slice 5 owns anchors,
+preferences, product-reference resolution, and the eventual request-scoped
+checkpoint cutover.
+
 ## Scaling Assumptions
 
 This system should be able to grow toward a high-traffic retail site, including
@@ -600,6 +639,9 @@ Implications:
 - App servers should remain horizontally scalable and mostly stateless.
 - Session, cart, persona, and conversation state must live in shared durable
   stores, not process memory or local files.
+- Slice 4 is a deliberate single-replica stepping stone: Compose persists the
+  memory-service SQLite database on `memory-data`, but SQLite remains one local
+  writer and is not the shared multi-replica production store described above.
 - Deep Agents currently uses process-local MemorySaver keyed by
   `conversation_id`. It loses graph state on restart and does not share threads
   across workers or replicas. Successful thread histories also remain in heap
@@ -608,6 +650,9 @@ Implications:
 - Graph checkpointing does not cover the separate process-local product-ref
   cache. Cross-replica product follow-ups require either a fresh search or a
   future shared evidence store with catalog-snapshot identity.
+- Bounded raw turns can be loaded after a chain-server restart, but without the
+  Slice 5 product-reference projection they cannot restore exact tool evidence
+  or authorize stale product refs.
 - Mutating tools use owner-scoped idempotency keys so retries do not apply a
   cart change twice.
 - Tool calls need timeouts, retry policy, and clear structured failures.
@@ -827,6 +872,16 @@ Implications:
 - `CHECKPOINT_STORE=memory` is the only currently supported checkpoint
   configuration. Non-memory values fail during startup rather than silently
   falling back to process-local state.
+- Slice 4 keeps MemorySaver conversation-scoped. Request-scoped checkpoint
+  threads are deferred until Slice 5 preserves structured product-reference
+  evidence.
+- Durable turns use one memory-service SQLite replica with transactional start,
+  terminal finalize, exact finalized replay, a bounded recent-turn snapshot,
+  latest-sequence-only abandoned reopen, rotating attempt tokens, and
+  operator-owned retention. A stale finalize is rejected; the runtime emits a
+  safe superseded-attempt response, while a generic finalize outage preserves
+  the grounded response. Projection and event interpretation are not enabled in
+  Slice 4.
 - Registered skills use `/shopper/<skill>/SKILL.md` under the virtual backend;
   shared read-only references may live directly under `/shopper`.
 
@@ -834,6 +889,10 @@ Implications:
 
 - Which Apache-2.0/MIT-compatible backend should provide shared, durable Deep
   Agents checkpoints for production replicas?
+- Which shared multi-writer store should replace single-replica SQLite for
+  durable turns in a horizontally scaled deployment?
+- What retention and deletion policy should apply to durable raw turns, replay
+  output, and event envelopes?
 - Should anonymous sessions use cookies, headers, or both?
 - What is the cart TTL for anonymous and logged-in users?
 - What retention and cleanup policy should apply to cart mutation idempotency

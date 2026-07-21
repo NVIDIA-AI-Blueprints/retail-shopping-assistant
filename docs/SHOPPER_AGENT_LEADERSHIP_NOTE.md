@@ -14,30 +14,34 @@ The shopper agent now has clean boundaries:
 
 This gives us a scalable way to add skills and tools without rebuilding the
 agent. Slice 0 establishes the tool-binding foundation. The next investment is
-the regression boundary and explicit server-owned turn authorization; the
-structured reference ledger and durable transcript follow on that safe base.
+the regression boundary and explicit server-owned turn authorization. Durable
+raw turn storage now provides the audit/replay foundation; the structured
+historical-reference resolver remains a separate Slice 5.
 
 ## Current Request Flow
 
 ```mermaid
 flowchart LR
     A[Shopper request] --> B[Turn state and identity]
-    B --> C[Load conversation and cart]
+    B --> C[Start durable turn; load recent turns and cart]
     C --> D[Activate skills and bind grants]
     D --> E[Model proposes typed tool call]
     E --> F[Authorize and validate]
     F --> G[Catalog, cart, or policy owner]
-    G --> H[Grounded response and state save]
+    G --> H[Grounded response and durable finalize]
 ```
 
-1. **Scope the turn.** The API creates one request identity containing session,
-   conversation, and cart identifiers. The transient turn state contains the
-   current query, media, recent context, authoritative cart, results, timing,
-   and operator diagnostics.
-2. **Load continuity.** The memory service reads the bounded conversation text
-   and cart from SQLite. LangGraph separately loads the conversation's graph
-   messages from process-local `MemorySaver` using `conversation_id` as the
-   thread ID.
+1. **Scope and start the turn.** The API creates one request identity containing
+   session, conversation, cart, and request identifiers. Before guardrails,
+   model, or tool work, the memory service transaction creates the ordered
+   durable turn and returns an opaque attempt token, or exactly replays a
+   matching finalized request.
+2. **Load continuity.** A new turn start returns bounded finalized raw
+   shopper/assistant turns and the authoritative cart from SQLite. Those turns
+   replace the legacy rolling context blob. LangGraph separately loads the
+   conversation's exact graph/tool messages from process-local `MemorySaver`
+   using `conversation_id` as the thread ID; this key remains unchanged in
+   Slice 4.
 3. **Load the data contract.** The chain server reuses its process-lifetime
    catalog-capability snapshot. That contract advertises the exact taxonomy,
    hard filters, ranges, and retrieval modes available from the current catalog.
@@ -58,10 +62,14 @@ flowchart LR
    service. Policy lookup reads disabled-by-default operator content. The
    availability tool is a deterministic no-I/O stub for known product refs; it
    applies a fixed sized-versus-one-size category rule.
-8. **Return and remember grounded evidence.** The response boundary uses only
-   current tool evidence for new results or mutations. It emits diagnostics,
-   persists a bounded transcript through the memory service, and checkpoints
-   the graph for the next turn.
+8. **Finalize and return grounded evidence.** The response boundary uses only
+   current tool evidence for new results or mutations. It finalizes the durable
+   turn with the current attempt token as completed, blocked, or failed with
+   replay output and ordered event envelopes, then emits the response and
+   diagnostics. Only the latest abandoned turn can reopen, and its token rotates;
+   a stale finalizer receives a safe response with no stale products. A generic
+   finalize outage keeps the grounded response and conversation checkpoint and
+   adds an operator diagnostic.
 
 ## Where Data and State Live
 
@@ -69,7 +77,7 @@ flowchart LR
 | --- | --- | --- |
 | Product JSONL + schema sidecar | Product records, taxonomy roles, filter roles, prices, and details | Operator-published catalog snapshot |
 | Milvus | Vector candidates for the active catalog snapshot | Rebuilt or reused from the catalog fingerprint |
-| Memory-service SQLite | Bounded conversation text, authoritative cart, product/cart-line identity, and atomic mutation replay | Service-owned persistence; shared only through that service |
+| Memory-service SQLite | Ordered raw shopper/assistant turns, exact finalized replay, bounded recent-turn reads, authoritative cart, product/cart-line identity, and atomic mutation replay | Named-volume persistence for one memory-service replica; retention is operator-owned |
 | LangGraph `MemorySaver` | Exact graph messages and tool state keyed by `conversation_id` | Process-local; lost on restart and not shared across replicas |
 | Product-ref cache | Recently returned product refs used by details and cart adds | Bounded and process-local; valid only for the active catalog snapshot |
 | Turn `State` | Query, media, context, cart, current evidence, timings, and diagnostics | Transient for one request |
@@ -77,9 +85,15 @@ flowchart LR
 
 Memory is guidance, not truth. A remembered statement that an item was added or
 is available cannot override the current cart or a current catalog result.
-Same-process, same-conversation follow-ups generally work today. A restart,
-another replica, or a cross-session request such as “show me the bag from last
-week” is not yet a supported guarantee.
+Raw turns now survive a chain-server restart through the memory service, but
+exact graph/tool state and product refs do not. Same-process,
+same-conversation follow-ups generally work today. Another replica or a
+cross-session request such as “show me the bag from last week” is not yet a
+supported guarantee.
+
+The event vocabulary and projection columns created with the durable schema do
+not yet interpret preferences, anchors, selections, or product references.
+They are reserved for Slice 5 and are not active model context.
 
 ## Example: “What Bottoms Go With That Beige Top?”
 
@@ -125,12 +139,13 @@ shopper requested a particular mutation. That narrower authorization boundary,
 invented-constraint assurance, and ambiguous historical references remain
 separate work.
 
-### 2. Add a structured conversation-reference ledger
+### 2. Build the Slice 5 structured historical resolver
 
-Store a compact record for each turn containing candidate groups, product refs,
-product roles, shared confirmed filters, shopper selections, and explicit
-no-result or unsupported outcomes. Use it to give the model unambiguous
-reference context before skill and tool selection.
+Slice 4 stores ordered raw turns, replay output, and event envelopes. Slice 5
+must interpret grounded candidate groups, product refs, product roles, shared
+confirmed filters, shopper selections, and explicit no-result or unsupported
+outcomes into a bounded projection. Only then should request-scoped checkpoints
+replace the current conversation-scoped MemorySaver.
 
 The immediate correctness rule is simple: if the direct antecedent produced no
 product, “that item” is unresolved. Ask a concise clarification instead of
@@ -171,12 +186,13 @@ from conversation text.
 
 ## Recommendation
 
-The styling boundary is focused and cart idempotency is now memory-service
-owned. Deliver cart-only intent authorization, durable turn/event storage, and
-historical reference resolution as separate slices. The catalog remains
-unchanged. The trap is adding keyword taxonomy mappings or increasingly
-specific prompt rules: that would couple language interpretation to catalog
-structure and make each new skill harder to extend safely.
+The styling boundary is focused, cart idempotency is memory-service owned, and
+durable raw turn start/finalize/replay is built for one SQLite replica. Deliver
+cart-only intent authorization, Slice 5 historical reference resolution, and a
+shared production graph/memory design as separate work. The catalog remains
+unchanged. The trap is treating raw transcript persistence as resolved product
+reference semantics or adding keyword taxonomy mappings and increasingly
+specific prompt rules; both would make each new skill harder to extend safely.
 
 For implementation detail, see the
 [Shopper Agent Architecture](SHOPPER_AGENT_ARCHITECTURE.md),

@@ -53,6 +53,14 @@ from .commerce_tools import (
     remove_cart_item,
     update_cart_item,
 )
+from .conversation_memory import (
+    ConversationMemoryClient,
+    ConversationMemoryError,
+    FinalTurnStatus,
+    TurnReplayOutput,
+    TurnStartResult,
+    format_conversation_context,
+)
 from .media_perception import MediaPerceptionClient
 from .skill_activation import (
     SKILL_ACTIVATION_COMPLETE,
@@ -1583,6 +1591,17 @@ class RequestIdentity:
         return self.context_user_id
 
 
+def _conversation_turn_status(termination_reason: str) -> FinalTurnStatus:
+    if termination_reason in {
+        "input_guardrail_blocked",
+        "output_guardrail_blocked",
+    }:
+        return "blocked"
+    if termination_reason == "completed":
+        return "completed"
+    return "failed"
+
+
 class DeepAgentsRuntime:
     """Small adapter around the Deep Agents SDK.
 
@@ -1601,6 +1620,7 @@ class DeepAgentsRuntime:
             config.retriever_port,
             timeout_seconds=config.catalog_search_timeout_seconds,
         )
+        self._conversation_memory = ConversationMemoryClient(config.memory_port)
 
     def catalog_capabilities(self) -> CatalogCapabilities:
         """Return the process-lifecycle catalog capability contract."""
@@ -1659,10 +1679,52 @@ class DeepAgentsRuntime:
         state: State,
         identity: RequestIdentity,
     ) -> State:
-        start = time.monotonic()
         state.user_id = identity.context_user_id
         state.agent_diagnostics = _empty_agent_diagnostics("not_started")
-        self._load_memory(state, identity)
+        turn = self._start_conversation_turn(state, identity)
+        if turn is not None and turn.replayed:
+            return self._restore_replayed_turn(state, turn)
+        if turn is None and state.response:
+            return state
+
+        try:
+            output = await self._execute_turn(state, identity)
+        except asyncio.CancelledError:
+            if turn is not None:
+                if not state.response:
+                    state.response = (
+                        "This request was interrupted. Please check your cart "
+                        "before retrying."
+                    )
+                self._finalize_conversation_turn(
+                    state,
+                    identity,
+                    turn,
+                    status="failed",
+                    termination_reason="request_cancelled",
+                )
+            raise
+        except Exception:
+            if turn is not None:
+                self._finalize_conversation_turn(
+                    state,
+                    identity,
+                    turn,
+                    status="failed",
+                    termination_reason="unexpected_runtime_error",
+                )
+            raise
+
+        if turn is not None:
+            self._finalize_conversation_turn(state, identity, turn)
+        return output
+
+    async def _execute_turn(
+        self,
+        state: State,
+        identity: RequestIdentity,
+    ) -> State:
+        start = time.monotonic()
 
         if state.guardrails:
             safety_start = time.monotonic()
@@ -1767,14 +1829,6 @@ class DeepAgentsRuntime:
             )
             _record_language_model_failure(state)
             state.timings["deepagents_error"] = time.monotonic() - start
-            if fallback_response:
-                state.context = self._updated_context(
-                    state.context,
-                    state.query,
-                    state.response,
-                    media_analysis=state.media_analysis,
-                )
-                self._persist_context(state, identity)
             return state
 
         if state.guardrails:
@@ -1792,13 +1846,6 @@ class DeepAgentsRuntime:
                     "final_termination_reason"
                 ] = "output_guardrail_blocked"
 
-        state.context = self._updated_context(
-            state.context,
-            state.query,
-            state.response,
-            media_analysis=state.media_analysis,
-        )
-        self._persist_context(state, identity)
         state.timings["deepagents"] = time.monotonic() - start
         return state
 
@@ -3025,7 +3072,9 @@ class DeepAgentsRuntime:
                         f"(PRODUCT_REF: {product.product_id})"
                     )
                 else:
-                    message = result.error.message if result.error else "Cart add failed."
+                    message = (
+                        result.error.message if result.error else "Cart add failed."
+                    )
                     failed.append(f"- PRODUCT_REF '{product_ref}': {message}")
 
             state.cart = self._read_cart(identity.cart_user_id)
@@ -3871,32 +3920,153 @@ Rules:
             ]
         )
 
-    def _load_memory(self, state: State, identity: RequestIdentity) -> None:
+    def _start_conversation_turn(
+        self,
+        state: State,
+        identity: RequestIdentity,
+    ) -> TurnStartResult | None:
+        """Start one durable turn and apply its context/cart snapshot."""
+
         start = time.monotonic()
         try:
-            memory_response = requests.get(
-                f"{self.config.memory_port}/user/{identity.context_user_id}/context",
-                timeout=10,
+            turn = self._conversation_memory.start_turn(
+                identity.conversation_id,
+                request_id=identity.request_id,
+                shopper_text=state.query,
+                media=state.media,
+                cart_user_id=identity.cart_user_id,
             )
-            memory_response.raise_for_status()
-            cart = self._read_cart(identity.cart_user_id)
-            state.context = memory_response.json().get("context") or ""
-            state.cart = cart
-        except requests.RequestException as exc:
-            logger.error("Failed to load memory for Deep Agents turn: %s", exc)
+        except (ConversationMemoryError, ValidationError) as exc:
+            logger.error("Failed to start durable conversation turn: %s", exc)
             state.context = ""
             state.cart = Cart()
-        state.timings["memory"] = time.monotonic() - start
+            if getattr(exc, "status_code", None) == 409:
+                error_code = getattr(exc, "code", "memory_turn_conflict")
+                if error_code in {"turn_in_progress", "conversation_turn_in_progress"}:
+                    state.response = (
+                        "This conversation is still processing another request. "
+                        "Please retry shortly."
+                    )
+                elif error_code == "turn_abandoned":
+                    state.response = (
+                        "That earlier request was interrupted. Please retry with "
+                        "a new request."
+                    )
+                elif error_code == "turn_superseded":
+                    state.response = (
+                        "That interrupted request was superseded by a newer turn. "
+                        "Please continue from the latest conversation state."
+                    )
+                else:
+                    state.response = (
+                        "That request identifier was already used for different "
+                        "input. Please retry with a new request."
+                    )
+                state.agent_diagnostics = _empty_agent_diagnostics(error_code)
+            else:
+                state.response = (
+                    "I cannot safely load this conversation right now. "
+                    "Please retry shortly."
+                )
+                state.agent_diagnostics = _empty_agent_diagnostics(
+                    "memory_start_failed"
+                )
+                state.agent_diagnostics["memory_start_error"] = getattr(
+                    exc,
+                    "code",
+                    "memory_start_payload_invalid",
+                )
+            return None
+        finally:
+            state.timings["memory"] = time.monotonic() - start
 
-    def _persist_context(self, state: State, identity: RequestIdentity) -> None:
-        try:
-            requests.post(
-                f"{self.config.memory_port}/user/{identity.context_user_id}/context/replace",
-                json={"new_context": state.context},
-                timeout=10,
+        state.context = format_conversation_context(
+            turn.recent_turns,
+            max_chars=max(1000, int(self.config.memory_length)),
+        )
+        state.cart = Cart(
+            contents=[
+                item.model_dump(mode="json", exclude_none=True) for item in turn.cart
+            ]
+        )
+        return turn
+
+    def _restore_replayed_turn(
+        self,
+        state: State,
+        turn: TurnStartResult,
+    ) -> State:
+        """Restore a finalized turn without repeating model or tool work."""
+
+        state.response = turn.assistant_text or (
+            "That earlier request did not complete. Please retry with a new request."
+        )
+        if turn.output is not None:
+            state.product_results = [
+                product.model_dump(mode="json")
+                for product in turn.output.product_results
+            ]
+            state.retrieved = dict(turn.output.retrieved)
+            state.agent_diagnostics = dict(turn.output.agent_diagnostics)
+        else:
+            state.agent_diagnostics = _empty_agent_diagnostics(
+                turn.termination_reason or "durable_turn_replayed"
             )
-        except requests.RequestException as exc:
-            logger.error("Failed to persist Deep Agents context: %s", exc)
+        return state
+
+    def _finalize_conversation_turn(
+        self,
+        state: State,
+        identity: RequestIdentity,
+        turn: TurnStartResult,
+        *,
+        status: FinalTurnStatus | None = None,
+        termination_reason: str | None = None,
+    ) -> None:
+        """Persist one terminal turn without changing its shopper response."""
+
+        reason = termination_reason or str(
+            state.agent_diagnostics.get("final_termination_reason") or "completed"
+        )
+        final_status = status or _conversation_turn_status(reason)
+        state.agent_diagnostics["final_termination_reason"] = reason
+        start = time.monotonic()
+        try:
+            output = TurnReplayOutput(
+                product_results=state.product_results,
+                retrieved=state.retrieved,
+                agent_diagnostics=state.agent_diagnostics,
+            )
+            self._conversation_memory.finalize_turn(
+                identity.conversation_id,
+                turn.turn_id,
+                request_id=identity.request_id,
+                attempt_id=turn.attempt_id,
+                assistant_text=state.response,
+                status=final_status,
+                termination_reason=reason,
+                output=output,
+            )
+        except (ConversationMemoryError, ValidationError) as exc:
+            logger.error("Failed to finalize durable conversation turn: %s", exc)
+            error_code = getattr(
+                exc,
+                "code",
+                "memory_finalize_payload_invalid",
+            )
+            state.agent_diagnostics["memory_finalize_error"] = error_code
+            if error_code == "turn_attempt_superseded":
+                state.response = (
+                    "This request was superseded by a newer attempt. "
+                    "Please use the latest response."
+                )
+                state.product_results = []
+                state.retrieved = {}
+                state.agent_diagnostics["final_termination_reason"] = error_code
+        finally:
+            state.timings["memory"] = state.timings.get("memory", 0.0) + (
+                time.monotonic() - start
+            )
 
     def _check_safety(self, mode: str, user_id: int, text: str) -> tuple[bool, bool]:
         endpoint = "input" if mode == "input" else "output"
@@ -3916,21 +4086,6 @@ Rules:
         if not responses:
             return True, True
         return responses[0].get("content") == text, True
-
-    def _updated_context(
-        self,
-        old_context: str,
-        query: str,
-        response: str,
-        *,
-        media_analysis: str = "",
-    ) -> str:
-        media_line = f"\nMedia analysis: {media_analysis}" if media_analysis else ""
-        new_context = (
-            f"{old_context}\nUser: {query}{media_line}\nAssistant: {response}"
-        ).strip()
-        max_chars = max(1000, int(self.config.memory_length))
-        return new_context[-max_chars:]
 
 
 def create_request_identity(

@@ -335,23 +335,65 @@ docker stack deploy -c docker-compose.prod.yaml retail-assistant
 | `MAX_CATALOG_SEARCHES_PER_TURN` | Caps distinct catalog taxonomy-plus-hard-constraint scope executions in one assistant turn; a repeated scope is stopped even when semantic wording changes | No | `3` |
 | `MAX_PRODUCT_DETAIL_READS_PER_TURN` | Caps Deep Agents product-detail reads in one assistant turn | No | `2` |
 | `CHECKPOINT_STORE` | Deep Agents conversation checkpoint store; currently supports only `memory` | No | `memory` |
+| `MEMORY_DATABASE_URL` | SQLite URL for durable raw turns and cart state; Compose supplies the named-volume path | No | Compose: `sqlite:////data/context.db` |
+| `MEMORY_SQLITE_BUSY_TIMEOUT_MS` | SQLite lock wait for the single memory-service writer | No | `5000` |
+| `MEMORY_TURN_ABANDON_SECONDS` | Age at which startup or the next turn start marks an unfinished `started` turn abandoned | No | `300` |
+| `MEMORY_RECENT_TURNS` | Maximum finalized raw turns returned at the next durable turn start | No | `8` |
 | `LOCAL_NIM_CACHE` | NIM cache directory | Local only | `~/.cache/nim` |
 | `LOG_LEVEL` | Logging level | No | `INFO` |
 | `NODE_ENV` | Node environment | No | `production` |
 
-### Conversation Checkpointing
+### Durable Conversation Turns
+
+Compose runs one memory-service SQLite replica at
+`sqlite:////data/context.db` and mounts the `memory-data` named volume at
+`/data`. The chain server starts a durable row before guardrail/model/tool work,
+receives bounded finalized shopper/assistant turns plus the authoritative cart,
+and finalizes the row as `completed`, `blocked`, or `failed`. An exact retry of
+a finalized request replays the stored response and output without another
+model turn.
+
+`MEMORY_DATABASE_URL` accepts SQLite URLs only. The busy timeout must be
+non-negative, the abandoned-turn threshold must be positive, and
+`MEMORY_RECENT_TURNS` is bounded by the service to 1–50 records.
+
+SQLite uses WAL mode, foreign-key enforcement, and the configured busy timeout.
+This is a single-writer, single-memory-service deployment boundary, not a shared
+multi-replica conversation store. At memory-service startup and before each
+turn start, unfinished rows older than `MEMORY_TURN_ABANDON_SECONDS` become
+`abandoned`; there is no continuous expiration worker. An exact abandoned
+request retry reopens the same durable turn only when it is still the latest
+conversation sequence, preserving the request ID used by cart idempotency while
+rotating its service-issued `attempt_id`. Older abandoned turns are superseded.
+A finalize must echo the current attempt token, so a late worker cannot overwrite
+a reopened attempt; the chain server replaces that stale result with a safe
+superseded-attempt response. Other finalize outages preserve the grounded
+response and add `memory_finalize_error`. Operators must define transcript
+retention and backup policy. Deleting the `memory-data` volume deletes the
+durable transcript, cart, and mutation replay records.
+
+Stored turns contain shopper/assistant text plus bounded replay output and
+ordered event envelopes. Raw uploaded media, model reasoning, and the full graph
+message/tool transcript are not stored there. Projection columns and event
+vocabulary are reserved for Slice 5; this release does not derive preferences,
+anchors, product-reference indexes, or historical-reference resolution.
+
+### Graph Checkpointing
 
 `CHECKPOINT_STORE=memory` preserves the in-process development and test
-behavior. Checkpoints disappear when the chain-server process restarts, and
-separate replicas do not share conversation state. Successful thread histories
-have no TTL or capacity bound and accumulate in process heap until restart.
+behavior. The checkpoint remains keyed by `conversation_id` in Slice 4 so exact
+same-process graph/tool continuity is unchanged. Checkpoints disappear when the
+chain-server process restarts, and separate replicas do not share graph state.
+Successful thread histories have no TTL or capacity bound and accumulate in
+process heap until restart.
 
 `memory` is currently the only accepted value; an empty or different value
 fails during chain-server initialization instead of silently falling back to
 process-local state. A production shared and durable backend has not been
-selected. Do not scale the chain server horizontally when conversation
+selected. Do not scale the chain server horizontally when exact graph/tool
 continuity is required until an Apache-2.0/MIT-compatible backend is selected,
-implemented, and validated.
+implemented, and validated. Request-scoped checkpoint cutover is deferred until
+Slice 5 can preserve structured product-reference evidence.
 
 ### Store Policy Content
 
@@ -777,7 +819,22 @@ docker run --rm -v retail-shopping-assistant_milvus_data:/data \
 # Restore volumes
 docker run --rm -v retail-shopping-assistant_milvus_data:/data \
   -v $(pwd):/backup alpine tar xzf /backup/milvus_backup.tar.gz -C /data
+
+# Back up memory-service SQLite while its writer is stopped
+docker compose stop memory-retriever
+docker run --rm -v retail-shopping-assistant_memory-data:/data \
+  -v $(pwd):/backup alpine tar czf /backup/memory-data_backup.tar.gz -C /data .
+docker compose start memory-retriever
+
+# Restore memory-service SQLite while its writer is stopped
+docker compose stop memory-retriever
+docker run --rm -v retail-shopping-assistant_memory-data:/data \
+  -v $(pwd):/backup alpine tar xzf /backup/memory-data_backup.tar.gz -C /data
+docker compose start memory-retriever
 ```
+
+`docker compose down -v` removes `memory-data`; back it up first when durable
+turns or carts must survive teardown.
 
 ## 🔒 Security Considerations
 
@@ -793,6 +850,8 @@ docker run --rm -v retail-shopping-assistant_milvus_data:/data \
 - Encrypt sensitive data at rest
 - Use secure API keys
 - Implement access controls
+- Treat durable shopper/assistant turns and replay diagnostics as customer data;
+  restrict database and backup access and define retention/deletion policy
 - Regular security updates
 
 ### Container Security
@@ -806,10 +865,13 @@ docker run --rm -v retail-shopping-assistant_milvus_data:/data \
 
 ### Horizontal Scaling
 
-Select and implement a compliant shared checkpoint backend before increasing
-chain-server replicas when conversation continuity is required. The current
-in-process store gives each worker and replica an independent conversation
-namespace and loses graph state on restart.
+Two boundaries block horizontal conversation scaling. Select and implement a
+compliant shared graph checkpoint backend before increasing chain-server
+replicas when exact tool/message continuity is required: current MemorySaver
+gives each worker and replica an independent graph namespace and loses state on
+restart. Separately, the memory service uses one local SQLite writer. Replace it
+with a validated shared/multi-writer store before increasing memory-service
+replicas.
 
 The following scaling examples are future-only. Do not apply them until the
 shared checkpoint backend is implemented and validated.

@@ -65,8 +65,13 @@ services:
     environment:
       - MILVUS_HOST=milvus
       - MILVUS_PORT=19530
+      - MEMORY_DATABASE_URL=${MEMORY_DATABASE_URL:-sqlite:////data/context.db}
+      - MEMORY_SQLITE_BUSY_TIMEOUT_MS=${MEMORY_SQLITE_BUSY_TIMEOUT_MS:-5000}
+      - MEMORY_TURN_ABANDON_SECONDS=${MEMORY_TURN_ABANDON_SECONDS:-300}
+      - MEMORY_RECENT_TURNS=${MEMORY_RECENT_TURNS:-8}
     volumes:
       - ./shared:/app/shared
+      - memory-data:/data
     depends_on:
       milvus:
         condition: service_healthy
@@ -207,3 +212,6 @@ networks:
     driver: bridge
     name: retail-shopping-assistant_shopping-network
     external: false
+
+volumes:
+  memory-data:

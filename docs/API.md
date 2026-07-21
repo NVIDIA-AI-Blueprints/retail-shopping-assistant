@@ -36,6 +36,10 @@ The catalog retriever is an internal service at `http://localhost:8010`. See
 [Catalog Architecture](CATALOG_REFACTOR_PLAN.md) for the ingest, capability,
 agent-discovery, and validation flow.
 
+The memory retriever is an internal single-replica service at
+`http://localhost:8011`. Its durable-turn endpoints are documented below for
+operators and service integrations; they are not browser-facing APIs.
+
 ## 🔐 Authentication
 
 Currently, the API does not require authentication for local deployments. For production deployments, consider implementing API key authentication or OAuth2.
@@ -125,7 +129,7 @@ interface QueryRequest {
   session_id?: string;                // Optional website/browser session identifier
   conversation_id?: string;           // Optional chat thread identifier
   cart_id?: string;                   // Optional cart identifier
-  request_id?: string;                // Optional stable ID for retrying this turn
+  request_id?: string;                // Optional stable ID for exact whole-turn replay
   context?: string;                   // Previous conversation context
   cart?: Cart;                        // Current shopping cart state
   retrieved?: Record<string, string>; // Previously retrieved products
@@ -172,22 +176,30 @@ interface MediaAttachment {
 `session_id`, `conversation_id`, `cart_id`, and `request_id` are optional for
 backward compatibility. When the scoped IDs are omitted, the server maps the
 legacy `user_id` to internal compatibility identifiers; when `request_id` is
-omitted, it generates a new UUID for the turn. A caller retrying the same turn
-should reuse its request ID so any repeated cart mutation reuses the same
-idempotency key. This does not yet replay the whole assistant response; durable
-turn replay belongs to the conversation-storage slice. The bundled UI creates
-browser-session identifiers and sends them on every turn. When supplied,
-`conversation_id` scopes the Deep Agents thread and conversation memory, while
-`cart_id` scopes cart reads/writes. Production website integrations should move
-these IDs to a server-owned session/thread service before broad rollout so
-customer context and cart state cannot bleed across sessions.
+omitted, it generates a new UUID for the turn. A caller retrying the same exact
+turn should reuse its request ID. The memory service stores the request digest
+with the durable turn: an identical finalized retry replays the stored response,
+products, retrieved images, and diagnostics without model/tool work or another
+finalize call. Reusing the request ID with different shopper text or media is a
+conflict. The same request ID also derives stable cart-mutation idempotency keys.
 
-The `conversation_id` thread is currently checkpointed in process-local
-MemorySaver. Graph state disappears on restart and is not shared across workers
-or replicas. The runtime's bounded `PRODUCT_REF` cache is separate process-local
-state and remains valid only for the active catalog snapshot. A restart, another
-replica, cache eviction, or catalog replacement requires a fresh product search
-before details or cart adds.
+The bundled UI creates browser-session identifiers and sends them on every
+turn. When supplied, `conversation_id` scopes both the durable raw turn records
+and the existing Deep Agents graph thread, while `cart_id` scopes cart
+reads/writes. Production website integrations should move these IDs to a
+server-owned session/thread service before broad rollout so customer context
+and cart state cannot bleed across sessions.
+
+Durable ordered shopper/assistant turns live in the single-replica
+memory-service SQLite database. At turn start the runtime consumes a bounded set
+of finalized recent turns in place of the legacy rolling context blob. Exact
+graph/tool messages remain in conversation-scoped, process-local MemorySaver;
+they disappear on chain-server restart and are not shared across workers or
+replicas. The bounded `PRODUCT_REF` cache is separate process-local state and
+remains valid only for the active catalog snapshot. A restart, another replica,
+cache eviction, or catalog replacement therefore still requires a fresh product
+search before details or cart adds. Durable raw turns do not implement the
+planned structured historical-reference resolver.
 
 Caller-supplied persona data is not part of `QueryRequest` and is not injected
 into model context. Persona support remains deferred until the API has a typed,
@@ -289,8 +301,16 @@ interface AgentDiagnostics {
   partial_graph_messages_truncated?: boolean;
   partial_graph_capture_error?: string;
   diagnostic_collection_error?: string;
+  memory_finalize_error?: string;
 }
 ```
+
+`final_termination_reason: "memory_start_failed"` means the required durable
+start failed before guardrail/model/tool work. A generic finalize transport or
+service failure does not replace grounded shopper text; it sets
+`memory_finalize_error` and preserves the conversation checkpoint for recovery.
+A superseded attempt is the deliberate exception: its stale response is replaced
+with the safe attempt-fencing response described below.
 
 Successful turns leave `partial_graph_messages` empty. Before a failed graph
 checkpoint is deleted, the runtime reads its latest state and preserves up to
@@ -433,6 +453,12 @@ running. The endpoint currently emits product metadata, image payloads,
 completed turn response text, and timing/token-usage/agent diagnostic metrics
 after the Deep Agents turn finishes.
 
+Before guardrails or agent work, the chain server starts a durable conversation
+turn and receives bounded finalized recent turns plus the authoritative cart.
+It finalizes that turn as `completed`, `blocked`, or `failed` before emitting the
+terminal SSE frames. An exact finalized retry replays the stored output without
+another model/tool turn. The public SSE frame shapes are unchanged.
+
 Every unblocked Deep Agents turn includes one bounded activation model step
 before normal shopping-tool selection. That step selects registered shopper
 skills; the runtime injects their complete instructions before exposing the
@@ -482,7 +508,10 @@ adds one more text-embedding call.
 
 ### POST `/query/timing`
 
-Processes a query and returns detailed timing information for performance analysis.
+Processes a query and returns detailed timing information for performance
+analysis. It uses the same durable start, terminal finalize, and exact finalized
+replay lifecycle as `/query/stream`; the public `QueryResponse` shape is
+unchanged.
 
 **Request Body:** `QueryRequest`
 
@@ -873,6 +902,135 @@ search round-trips exactly through this endpoint. A missing ID returns HTTP 404.
   },
   "variants": [],
   "source_uri": null
+}
+```
+
+### Memory Retriever POST `/conversations/{conversation_id}/turn/start`
+
+Starts one durable turn transaction before guardrail, model, or tool work. The
+memory service accepts one active turn per conversation and assigns its ordered
+`sequence`. It returns the authoritative cart and at most
+`MEMORY_RECENT_TURNS` prior finalized raw turns. Raw media is not stored; the
+request digest includes ordered media content hashes so exact retries can be
+distinguished safely.
+
+```json
+{
+  "request_id": "request_abc",
+  "shopper_text": "Show me black flats",
+  "cart_user_id": 123,
+  "request_digest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "catalog_revision": "catalog-fingerprint"
+}
+```
+
+```json
+{
+  "turn_id": "8e40575d5e5a4dbca34e1d08a2cb1692",
+  "attempt_id": "bd77b851b3494e37a764e3dfa7500208",
+  "sequence": 4,
+  "replayed": false,
+  "status": "started",
+  "recent_turns": [
+    {
+      "sequence": 3,
+      "shopper_text": "Show me a beige top",
+      "assistant_text": "Here are the grounded beige options.",
+      "status": "completed"
+    }
+  ],
+  "projection": {
+    "version": 3,
+    "active_anchors": [],
+    "effective_preferences": [],
+    "product_reference_index": [],
+    "last_turn_id": "prior-turn-id"
+  },
+  "cart": [],
+  "assistant_text": null,
+  "termination_reason": null,
+  "output": null
+}
+```
+
+`projection` is reserved Slice 5 schema in this release. Its anchor,
+preference, and product-reference lanes are not populated or used for
+historical resolution. On an exact retry of a finalized turn, `replayed` is
+`true` and the response includes stored `assistant_text`, `termination_reason`,
+and `output` (`product_results`, `retrieved`, and `agent_diagnostics`). The chain
+server returns that stored output without agent execution. Reusing a request ID
+with different input, retrying a still-started turn, or starting another turn
+while the conversation has an active turn returns HTTP 409. A start transport or
+conflict failure prevents agent work.
+
+At memory-service startup and atomically before each new turn start, turns left
+in `started` longer than `MEMORY_TURN_ABANDON_SECONDS` are changed to
+`abandoned`. An exact retry may reopen an abandoned turn only while it is the
+latest sequence in that conversation. The service keeps its turn ID, sequence,
+and request ID but rotates the opaque `attempt_id`; an older abandoned turn is
+superseded and cannot be reopened. This is not a continuous background
+expiration process.
+
+### Memory Retriever POST `/conversations/{conversation_id}/turns/{turn_id}/finalize`
+
+Finalizes a started turn transaction as `completed`, `blocked`, or `failed`.
+The request and any ordered event envelopes commit atomically with the replay
+output.
+
+```json
+{
+  "request_id": "request_abc",
+  "attempt_id": "bd77b851b3494e37a764e3dfa7500208",
+  "assistant_text": "Here are the black flats I found.",
+  "status": "completed",
+  "termination_reason": "completed",
+  "events": [],
+  "output": {
+    "product_results": [],
+    "retrieved": {},
+    "agent_diagnostics": {
+      "final_termination_reason": "completed"
+    }
+  }
+}
+```
+
+```json
+{
+  "turn_id": "8e40575d5e5a4dbca34e1d08a2cb1692",
+  "attempt_id": "bd77b851b3494e37a764e3dfa7500208",
+  "sequence": 4,
+  "replayed": false,
+  "status": "completed",
+  "assistant_text": "Here are the black flats I found.",
+  "termination_reason": "completed"
+}
+```
+
+The caller must echo the `attempt_id` returned by start. An identical finalize
+retry for the current attempt returns the same receipt with `replayed: true`.
+After an abandoned turn is reopened, a late finalize from its old attempt is
+rejected with HTTP 409 `turn_attempt_superseded`; the chain server returns a safe
+superseded-attempt response instead of exposing the stale answer or products. A
+generic finalize transport or service failure still preserves the already
+grounded response and records `memory_finalize_error`. Different final data, a
+request-ID mismatch, duplicate event keys, or an invalid status transition also
+returns a conflict and rolls back the transaction. Event envelopes are stored
+in logical order for later work; Slice 4 does not interpret them into
+preferences, anchors, selections, or historical references.
+
+### Memory Retriever DELETE `/conversations/{conversation_id}`
+
+Deletes that conversation's durable turns, cascaded event envelopes, and
+reserved projection row. It deliberately does not delete cart rows, cart
+mutation replay rows, or the legacy user/context row.
+
+```json
+{
+  "conversation_id": "conversation_abc",
+  "deleted_turns": 4,
+  "deleted_events": 0,
+  "deleted_projection": true
 }
 ```
 

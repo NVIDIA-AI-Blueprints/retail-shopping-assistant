@@ -19,7 +19,8 @@ see the [Shopper Agent Leadership Note](SHOPPER_AGENT_LEADERSHIP_NOTE.md).
 | --- | --- | --- |
 | Published catalog | Product records, taxonomy, filter values, field roles, prices, details, and retrieval results | Shopper intent, styling judgment, cart state, or inventory |
 | Deep Agents runtime | Semantic intent, skill selection, deterministic selected-skill tool grants, tool selection, and styling judgment | Product facts, policy facts, or cart truth |
-| Memory and checkpointer | Recent conversation context, process-local graph checkpoints, authoritative cart state, and atomic mutation replay records | Catalog facts, shared product-ref authorization, or permission to invent stale product details |
+| Memory service | Ordered durable shopper/assistant turns, exact finalized replay, bounded recent-turn reads, authoritative cart state, and atomic mutation replay records | Catalog facts, model reasoning, or structured historical-reference semantics |
+| Graph checkpointer | Conversation-scoped exact graph/tool context within one chain-server process | Durable transcript storage, cross-replica context, or product-ref authorization |
 
 A model-authored semantic query is an internal **ranking preference**, not a
 product fact or shopper-facing explanation. Only catalog tool evidence can
@@ -102,9 +103,12 @@ The detailed contracts and implementation live in:
 
 ## 2. One Shopper Turn
 
-1. The runtime scopes the request, loads recent context and the authoritative
-   cart from the memory service, and uses `conversation_id` as the LangGraph
-   checkpoint thread.
+1. The runtime scopes the request and starts a durable memory-service turn before
+   guardrail, model, or tool work. That transaction returns bounded finalized
+   raw turns, the authoritative cart, and an opaque execution `attempt_id`. The
+   raw turns replace the legacy rolling context blob; the runtime continues to
+   use `conversation_id` as the LangGraph checkpoint thread so same-process
+   graph/tool continuity is unchanged in Slice 4.
 2. The first model step can call only `activate_shopper_skills_tool`. It selects
    the smallest registered skill set for the current intent. The prior turn's
    selected skill names are included only as a read-only continuity signal for
@@ -238,14 +242,33 @@ The detailed contracts and implementation live in:
    catalog searches and no current product evidence exists, a fixed retry
    response bypasses model-based editing so prior evidence cannot be recast as
    results from the rejected search.
-6. The runtime persists a bounded recent transcript to the memory service and
-   the Deep Agents graph state to process-local MemorySaver. Memory-service
-   database sessions are request-scoped and returned to the SQLAlchemy pool
-   after every request. Graph checkpoints
-   disappear on restart, are not shared across workers or replicas, and have no
-   TTL or capacity bound. Successful histories therefore remain in process heap
-   until restart. `CHECKPOINT_STORE=memory` is the only supported mode; a
-   compliant production shared backend remains an open decision.
+6. The runtime finalizes the durable turn as `completed`, `blocked`, or `failed`
+   on every terminal path. An exact retry of a finalized request replays stored
+   assistant text, products, retrieved images, and diagnostics without another
+   model/tool turn or finalize call. A start failure runs no agent work. A
+   finalize must echo the current attempt token. Only the latest-sequence
+   abandoned turn can reopen, and doing so rotates that token; a late finalize
+   from the stale attempt is rejected and becomes a safe superseded-attempt
+   response with no stale products or images. Other finalize failures do not
+   replace an already grounded response; diagnostics record
+   `memory_finalize_error`, and the conversation checkpoint is preserved.
+   Memory-service operations are transactional, and database sessions are
+   request-scoped and returned to the SQLAlchemy pool after every request.
+
+   Deep Agents graph state remains in conversation-scoped, process-local
+   MemorySaver. Graph checkpoints disappear on restart, are not shared across
+   workers or replicas, and have no TTL or capacity bound. Successful histories
+   therefore remain in process heap until restart. `CHECKPOINT_STORE=memory` is
+   the only supported mode; a compliant production shared graph backend remains
+   an open decision.
+
+The durable transcript contains raw shopper/assistant text plus bounded replay
+output and ordered event envelopes. It does not contain raw media, model
+reasoning, or the full graph/tool transcript. The projection tables and event
+vocabulary are Slice 5 schema only: active anchors, effective preferences,
+product-reference indexes, and historical-reference resolution are not
+implemented. Request-scoped checkpoint cutover is also deferred to Slice 5;
+the current checkpoint remains keyed by `conversation_id`.
 
 The resolved agent dependency boundary remains `deepagents==0.6.12`,
 `langchain==1.3.11`, `langgraph==1.2.7`, and `langgraph-sdk==0.4.2`.
@@ -271,9 +294,14 @@ replays and conflicting key reuse cannot change the cart.
 
 The serving implementation is split across the
 [Deep Agents runtime](../chain_server/src/deepagents_runtime.py),
+[conversation-memory client](../chain_server/src/conversation_memory.py),
 [shopper tool policy](../chain_server/src/tool_policy.py),
 [skill activation boundary](../chain_server/src/skill_activation.py), and
-[tool-loop controller](../chain_server/src/tool_loop_control.py).
+[tool-loop controller](../chain_server/src/tool_loop_control.py). The durable
+SQLite boundary is implemented by the memory service's
+[conversation API](../memory_retriever/src/conversations.py),
+[models](../memory_retriever/src/models.py), and
+[migrations](../memory_retriever/src/migrations.py).
 
 ## 3. Skills and Their Tools
 

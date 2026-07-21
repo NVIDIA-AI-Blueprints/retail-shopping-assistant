@@ -99,6 +99,16 @@ You: "Help me build an outfit for a wedding"
 AI: "For a wedding, I suggest starting with..."
 ```
 
+### Conversation Continuity
+
+Within the active conversation, the assistant receives a bounded set of
+finalized prior shopper/assistant turns and also retains its exact graph/tool
+context while the same chain-server process is alive. If a reference is
+ambiguous, clarify the product instead of assuming. Durable raw turns do not yet
+provide structured historical resolution for requests such as "show me the bag
+from last week," and a process restart can require a fresh product search before
+details or cart adds.
+
 ## 🔍 Product Search
 
 ### Text-Based Search
@@ -428,10 +438,16 @@ retrieval results. More specific descriptions usually improve semantic
 matching.
 
 **Q: Can I save my preferences?**
-A: Currently, preferences are not saved between sessions. Each session starts fresh.
+A: Typed preferences are not extracted or saved between sessions. Conversation
+text may be retained as part of the durable turn transcript, but this release
+does not convert it into a reusable preference profile.
 
 **Q: Is my data private?**
-A: Yes, your conversations and uploaded images are processed locally and not stored permanently.
+A: The deployment processes data within its configured services. Shopper and
+assistant text is stored in the operator-controlled memory-service SQLite
+database so turns can be replayed and recent conversation can be loaded. Raw
+uploaded media is not stored in that transcript. Operators are responsible for
+database access, backup, retention, and deletion policy.
 
 ### Shopping Cart
 
@@ -442,7 +458,11 @@ A: There's no limit to the number of items you can add to your cart.
 A: Yes, you can ask to change quantities or remove items from your cart.
 
 **Q: Does the cart persist between sessions?**
-A: No, the cart is session-based and will be cleared when you refresh or close the page.
+A: The cart is stored by the memory service. Refreshing the same browser tab
+keeps its browser-scoped identity and cart. Closing that tab or starting a new
+browser session creates a new bundled-UI identity, so the old cart is not
+automatically reopened even though its database row may remain until operator
+cleanup.
 
 **Q: Can I see the total price?**
 A: Yes, you can ask "What's my total?" or "How much is in my cart?" to see the total price.

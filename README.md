@@ -42,9 +42,13 @@ The Retail Shopping Assistant is an AI-powered blueprint that provides a compreh
   deterministic embedding retrieval and ranking
 - 🛒 **Deterministic Cart Management**: Read, add, remove, update quantities,
   and compute subtotals through typed tools
-- 🧠 **Process-Local Conversation Checkpoints**: In-process MemorySaver
-  preserves graph state while one chain-server process remains alive;
-  product-result refs remain a separate process-local cache
+- 🧠 **Durable Turn Transcript**: A single memory-service SQLite replica
+  starts every turn before agent work, finalizes its terminal outcome, and
+  exactly replays finalized requests from ordered shopper/assistant records;
+  rotating attempt tokens reject late finalizers after interrupted-turn recovery
+- 💭 **Process-Local Graph Context**: Conversation-scoped MemorySaver
+  preserves exact graph/tool state while one chain-server process remains
+  alive; product-result refs remain a separate process-local cache
 - 📚 **Enforced Shopper Skills**: Every turn first semantically selects and
   fully loads the smallest applicable skill set; each selected `SKILL.md`
   declares its role and tool grants, only their grant union becomes
@@ -75,8 +79,9 @@ The application follows a microservices architecture:
 - **Catalog Retriever**: Generative-LLM-free text/image embedding search, hard
   filtering, normalized COSINE relevance scores, and deterministic result
   ranking
-- **Memory Retriever**: User context, stable cart-line IDs, atomically
-  idempotent add/remove/quantity mutations, and request-scoped database sessions
+- **Memory Retriever**: Ordered durable turns with start/finalize and exact
+  replay, bounded recent-turn reads, stable cart-line IDs, atomically idempotent
+  add/remove/quantity mutations, and request-scoped database sessions
 - **Guardrails**: Content safety and moderation
 - **UI**: React-based frontend interface
 
@@ -291,12 +296,20 @@ shopper-facing answer, the runtime returns a safe retry response and records the
 termination reason as `incomplete_agent_response` rather than exposing internal
 content.
 
-Product refs remembered for same-conversation follow-ups are process-local,
-bounded, and valid only for the active catalog snapshot. They are separate from
-the process-local graph checkpoint. A process restart, another replica, cache
-eviction, or catalog replacement therefore requires a fresh search before
-product details or cart adds. Persona data is not accepted as turn context
-until a typed, bounded, authenticated profile contract is designed.
+At turn start, the memory service returns a bounded set of finalized raw
+shopper/assistant turns, the authoritative cart, and a service-issued attempt
+token. Only the latest abandoned turn can reopen; reopening retains its request
+identity but rotates the attempt token, so a late finalize cannot overwrite the
+retry. Those recent turns replace the legacy rolling context blob, while the
+existing conversation-scoped graph checkpoint continues to preserve exact
+message and tool continuity in the current process. Product refs remembered for
+same-conversation follow-ups remain process-local, bounded, and valid only for
+the active catalog snapshot. A process restart, another replica, cache eviction,
+or catalog replacement therefore still requires a fresh search before product
+details or cart adds.
+Durable raw turns do not yet provide structured historical-reference resolution
+such as "show me the bag from last week." Persona data is not accepted as turn
+context until a typed, bounded, authenticated profile contract is designed.
 
 Catalog values are never copied into agent or catalog code. After replacing the
 JSONL or sidecar, restart and verify the catalog service first, then restart and
@@ -348,9 +361,12 @@ The exact published response is documented in
    Set `NVIDIA_API_KEY` in the file. The env file is a sourceable shell file;
    sourcing it also sets `COMPOSE_DISABLE_ENV_FILE=1` so Docker Compose uses
    the exported shell environment instead of auto-parsing repo-root `.env`.
-   `CHECKPOINT_STORE=memory` is the only supported checkpoint configuration.
-   Checkpoints disappear on restart and are not shared across replicas; the
-   production durable backend remains an open decision described in the
+   `CHECKPOINT_STORE=memory` is the only supported graph-checkpoint
+   configuration. Graph checkpoints disappear on chain-server restart and are
+   not shared across replicas. Separately, Compose stores the single-replica
+   memory-service SQLite database at `/data/context.db` on the `memory-data`
+   named volume. A production shared graph backend and multi-replica memory
+   design remain open decisions described in the
    [Deployment Guide](docs/DEPLOYMENT.md).
 
 5. **Validate and deploy**:

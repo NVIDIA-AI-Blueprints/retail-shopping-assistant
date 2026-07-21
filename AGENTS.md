@@ -7,7 +7,7 @@ This file is a working guide for coding agents and contributors in this reposito
 Retail Shopping Assistant is a multi-service application with:
 - `chain_server`: FastAPI + Deep Agents SDK orchestration over deterministic catalog and cart tools.
 - `catalog_retriever`: FastAPI service for text/image embedding retrieval against Milvus.
-- `memory_retriever`: FastAPI + SQLite service for per-user context and cart state, including stable cart-line IDs and atomically idempotent add/remove/quantity mutations.
+- `memory_retriever`: FastAPI + single-replica SQLite service for ordered durable conversation turns, exact finalized-turn replay, stable cart-line IDs, and atomically idempotent add/remove/quantity mutations.
 - `guardrails`: FastAPI wrapper around NeMo Guardrails input/output safety checks.
 - `ui`: React + TypeScript chat UI using SSE streaming.
 - `shared`: Shared YAML configs, JSONL catalog data/role sidecars, and image assets.
@@ -19,13 +19,13 @@ Top-level orchestration is via `docker-compose.yaml`; optional local NIM model c
 1. UI posts to `/api/query/stream` (nginx proxy on port `3000`).
 2. Nginx routes `/api/*` to `chain-server:8009`.
 3. Chain server request flow:
-   - `DeepAgentsRuntime` loads scoped context and the authoritative cart from the memory service and uses `conversation_id` as its checkpoint thread. Caller-supplied persona data is not injected into model context.
+   - `DeepAgentsRuntime` first starts a durable turn in the memory service, which returns bounded finalized raw turns and the authoritative cart. It still uses `conversation_id` as the process-local checkpoint thread. Caller-supplied persona data is not injected into model context.
    - Optional input guardrails run before model/tool work; attached media is analyzed through the configured perception client.
    - Every turn begins with a required model step that semantically selects the smallest applicable set from five registered shopper skills. Product work uses exactly one primary procedure: product discovery or outfit styling. Budget shopping is a modifier only when the shopper states a budget; cart and policy requests may use their standalone skills. The runtime injects the complete selected files and exposes only the union of their declared `tools_granted`; dispatch independently rechecks the selected skills, grant union, and immutable tool policy. Pre-activation, same-batch, and ungranted shopping calls are execution-blocked.
    - Catalog capabilities generate the tool's exact taxonomy values and non-taxonomy required-constraint properties. The model selects from that schema; deterministic code validates and maps the structured values but does not interpret shopper language. Each text search carries `requested_product_type`: the shortest product noun or true umbrella from the shopper's current turn or direct antecedent, excluding color, material, fit, occasion, weather, and style modifiers. For `agent_selected_type`, it is the chosen advertised role noun. It is provenance, not taxonomy or ranking text, and is `null` only for `image_only`. A genuinely open role selects and names exactly one advertised subcategory. Each call has at most one category. A concrete type with no faithful advertised match stops without retrieval using empty taxonomy and no hard constraints.
    - Every search also carries required pre-retrieval `shopper_guidance`: one concise, product-agnostic sentence authored under the active skill. A nonempty `unadvertised_requirements` lane consumes that distinct scope's one search repair for model-owned review: retain a directly stated objective must-have, or remove only an inferred season, weather, occasion, or subjective preference. Deterministic code does not classify shopper prose. A repair cannot change a shopper-named scope noun, and an open-role repair remains `agent_selected_type`. A successful partial search may continue with another valid role and its own one-repair opportunity, but no scope receives two repairs; the configured turn cap remains three successful searches.
    - Cart mutations require explicit product/cart-line refs. Grounding reads actual tool-role messages, separates current-request evidence from prior-turn evidence, and never treats an assistant draft as evidence. Successful searches preserve the taxonomy-independent semantic query as internal ranking evidence, the pre-retrieval `shopper_guidance` as product-agnostic response framing, and each confirmed filter set with the products from that search. A completed search gets one final tools-disabled model step under the active skill, followed by the grounding editor. If that draft or editor is unavailable, deterministic fallback uses search guidance, static skill `response_guidance`, returned names, prices, categories, and search-scoped confirmed filters. Scoped zero-result evidence cannot establish absence outside its exact taxonomy and filters.
-   - Optional output guardrails run, updated context is persisted, and products, images, content, metrics, and operator-facing agent diagnostics are emitted over SSE. Diagnostics include bounded current-turn product evidence from successful catalog search and detail results plus bounded `catalog_scope_outcomes` for no-direct and zero-result scopes; each search scope remains attached to its own products. Final-text extraction skips tool, tool-calling, and internal activation messages; if no shopper-facing answer exists, the runtime returns a safe fallback with `incomplete_agent_response`. On graph failure, bounded current-turn messages are captured before checkpoint cleanup.
+   - Optional output guardrails run, then the memory service finalizes the durable turn as completed, blocked, or failed before products, images, content, metrics, and operator-facing agent diagnostics are emitted over SSE. An exact retry of a finalized request replays its stored response without model/tool work. Diagnostics include bounded current-turn product evidence from successful catalog search and detail results plus bounded `catalog_scope_outcomes` for no-direct and zero-result scopes; each search scope remains attached to its own products. Final-text extraction skips tool, tool-calling, and internal activation messages; if no shopper-facing answer exists, the runtime returns a safe fallback with `incomplete_agent_response`. On graph failure, bounded current-turn messages are captured before checkpoint cleanup.
 4. For product discovery, chain server calls catalog retriever:
    - `/query/text` for text-only.
    - `/query/image` for text + image.
@@ -37,6 +37,7 @@ Top-level orchestration is via `docker-compose.yaml`; optional local NIM model c
 - Serving agent orchestration and registered tools: `chain_server/src/deepagents_runtime.py`
 - Shopper-skill registry, frontmatter validation, and immutable tool policy: `chain_server/src/tool_policy.py`
 - Per-turn skill activation, model-visible tool binding, and dispatch grant gate: `chain_server/src/skill_activation.py`
+- Durable conversation-turn client and wire contracts: `chain_server/src/conversation_memory.py`
 - API contract and SSE endpoint: `chain_server/src/main.py`
 - Catalog capability cache/prompt projection: `chain_server/src/catalog_capabilities.py`
 - Catalog intent validation/execution: `chain_server/src/catalog_request.py`, `chain_server/src/catalog_execution.py`
@@ -53,9 +54,11 @@ Top-level orchestration is via `docker-compose.yaml`; optional local NIM model c
 - Embedding retrieval, deterministic ranking, and filtering: `catalog_retriever/src/retriever.py`
 - Image/base64 helpers: `catalog_retriever/src/utils.py`
 
-- Memory API and SQLite schema (`CartItem` includes catalog `product_id`, opaque
-  `cart_line_id`, and `price`; `cart_mutations` owns atomic replay):
-  `memory_retriever/src/main.py`
+- Memory API entrypoint: `memory_retriever/src/main.py`
+- SQLite configuration and schema: `memory_retriever/src/database.py`,
+  `memory_retriever/src/models.py`, `memory_retriever/src/migrations.py`
+- Durable turn start/finalize/replay boundary:
+  `memory_retriever/src/conversations.py`
 
 - Guardrails API: `guardrails/src/main.py`
 - Guardrails engine/wiring: `guardrails/src/rails.py`
@@ -184,6 +187,8 @@ Key env vars:
 - `IMAGE_EMBED_BASE_URL`, `IMAGE_EMBED_MODEL`
 - `RAILS_BASE_URL`, `RAILS_CONTENT_BASE_URL`, `RAILS_TOPIC_BASE_URL`
 - `CHECKPOINT_STORE` (currently supports only `memory`)
+- `MEMORY_DATABASE_URL`, `MEMORY_SQLITE_BUSY_TIMEOUT_MS`
+- `MEMORY_TURN_ABANDON_SECONDS`, `MEMORY_RECENT_TURNS`
 - `CATALOG_DATA_SOURCE`, `CATALOG_SCHEMA_SOURCE`
 - `SHARED_CONFIG_ROOT` (local runner / non-container config root)
 - `SHARED_ROOT` (local runner / non-container shared asset root)
@@ -195,12 +200,31 @@ Key env vars:
   - Actual backend service port is `8009` in compose.
   - External app entrypoint is usually `http://localhost:3000` through nginx.
 - UI API base URL defaults to `/api` (nginx path), but local runner overrides it to `http://localhost:8009`.
-- Memory store is SQLite in-container (`context.db`); data lifecycle depends on container persistence.
-- Deep Agents checkpoints use in-process MemorySaver. Checkpoints disappear on
-  chain-server restart, accumulate in heap for the process lifetime, and are
-  not shared across workers or replicas. `CHECKPOINT_STORE=memory` is currently
-  the only supported value; a compliant production shared backend remains an
-  open decision.
+- The memory service stores ordered shopper/assistant turns and cart state in a
+  single-replica SQLite database. Compose uses
+  `sqlite:////data/context.db` on the `memory-data` named volume; deleting that
+  volume deletes the stored transcript and cart state.
+- Stale active turns are recovered at startup and atomically at the next turn
+  start. An exact abandoned retry reopens only the latest conversation sequence,
+  preserves its request ID for cart idempotency, and rotates its service-issued
+  attempt token. Older abandoned turns remain superseded.
+- Every serving turn starts durably before guardrail/model/tool work and is
+  finalized exactly once as completed, blocked, or failed. An exact retry of a
+  finalized request replays its response. Finalize must echo the current attempt
+  token: a stale attempt is rejected and becomes a safe superseded-attempt
+  response without stale products or images. A start failure runs no agent work;
+  a non-fencing finalize failure preserves the grounded response, records
+  `memory_finalize_error`, and keeps the graph checkpoint.
+- Deep Agents graph state still uses conversation-scoped, in-process
+  MemorySaver. It disappears on chain-server restart, accumulates in heap for
+  the process lifetime, and is not shared across workers or replicas.
+  `CHECKPOINT_STORE=memory` is the only supported value; a compliant production
+  shared graph backend remains an open decision.
+- Durable raw turns contain shopper/assistant text plus bounded replay and
+  ordered event envelopes. They do not store raw media, model reasoning, or the
+  complete graph/tool transcript. Projection tables and event vocabulary are
+  reserved schema only: preference, anchor, product-reference, and historical
+  resolver semantics remain unimplemented until Slice 5.
 - `CartItem` rows carry catalog `product_id`, opaque `cart_line_id`, and `price`
   fields. Startup migrations add missing fields to older SQLite databases. The
   deterministic `view_cart_total` tool uses stored prices instead of letting

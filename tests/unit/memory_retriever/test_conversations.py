@@ -1,0 +1,710 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+"""Focused tests for durable conversation storage."""
+
+from __future__ import annotations
+
+import time
+from collections.abc import Iterator
+
+import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+
+from memory_retriever.src import main as memory_main
+
+
+@pytest.fixture
+def conversation_db(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
+    test_engine = memory_main.build_engine(
+        "sqlite:///:memory:",
+        poolclass=StaticPool,
+    )
+    session_factory = sessionmaker(bind=test_engine, expire_on_commit=False)
+    monkeypatch.setattr(memory_main, "engine", test_engine)
+    monkeypatch.setattr(memory_main, "SessionLocal", session_factory)
+
+    with TestClient(memory_main.app) as client:
+        yield client
+
+    memory_main.Base.metadata.drop_all(bind=test_engine)
+    test_engine.dispose()
+
+
+def _start_turn(
+    client: TestClient,
+    conversation_id: str,
+    *,
+    request_id: str,
+    shopper_text: str = "Show me a bag",
+    cart_user_id: int = 7,
+    request_digest: str | None = None,
+):
+    return client.post(
+        f"/conversations/{conversation_id}/turn/start",
+        json={
+            "request_id": request_id,
+            "shopper_text": shopper_text,
+            "cart_user_id": cart_user_id,
+            "request_digest": request_digest or f"digest:{request_id}",
+            "catalog_revision": "catalog-v1",
+        },
+    )
+
+
+def _finalize_turn(
+    client: TestClient,
+    conversation_id: str,
+    turn_id: str,
+    *,
+    request_id: str,
+    attempt_id: str,
+    assistant_text: str = "Here is a bag.",
+    status: str = "completed",
+    events: list[dict] | None = None,
+    output: dict | None = None,
+):
+    return client.post(
+        f"/conversations/{conversation_id}/turns/{turn_id}/finalize",
+        json={
+            "request_id": request_id,
+            "attempt_id": attempt_id,
+            "assistant_text": assistant_text,
+            "status": status,
+            "termination_reason": status,
+            "events": events or [],
+            "output": output,
+        },
+    )
+
+
+def test_start_returns_recent_turns_projection_and_authoritative_cart(
+    conversation_db: TestClient,
+) -> None:
+    added = conversation_db.post(
+        "/user/7/cart/add",
+        json={
+            "product_id": "bag-1",
+            "item": "Structured Bag",
+            "amount": 1,
+            "price": 45.0,
+            "idempotency_key": "add-bag-1",
+        },
+    )
+    first = _start_turn(
+        conversation_db,
+        "conversation-a",
+        request_id="request-1",
+    )
+
+    assert first.status_code == 200
+    assert first.json() == {
+        "turn_id": first.json()["turn_id"],
+        "attempt_id": first.json()["attempt_id"],
+        "sequence": 1,
+        "replayed": False,
+        "status": "started",
+        "recent_turns": [],
+        "projection": {
+            "version": 0,
+            "active_anchors": [],
+            "effective_preferences": [],
+            "product_reference_index": [],
+            "last_turn_id": None,
+        },
+        "cart": [added.json()["cart_line"]],
+        "assistant_text": None,
+        "termination_reason": None,
+        "output": None,
+    }
+    assert (
+        _finalize_turn(
+            conversation_db,
+            "conversation-a",
+            first.json()["turn_id"],
+            request_id="request-1",
+            attempt_id=first.json()["attempt_id"],
+        ).status_code
+        == 200
+    )
+
+    second = _start_turn(
+        conversation_db,
+        "conversation-a",
+        request_id="request-2",
+        shopper_text="Show me shoes",
+    )
+
+    assert second.status_code == 200
+    assert second.json()["sequence"] == 2
+    assert second.json()["recent_turns"] == [
+        {
+            "sequence": 1,
+            "shopper_text": "Show me a bag",
+            "assistant_text": "Here is a bag.",
+            "status": "completed",
+        }
+    ]
+
+
+def test_start_is_idempotent_and_rejects_active_or_conflicting_reuse(
+    conversation_db: TestClient,
+) -> None:
+    started = _start_turn(
+        conversation_db,
+        "conversation-idempotent",
+        request_id="request-1",
+    )
+    active_replay = _start_turn(
+        conversation_db,
+        "conversation-idempotent",
+        request_id="request-1",
+    )
+    another_request = _start_turn(
+        conversation_db,
+        "conversation-idempotent",
+        request_id="request-2",
+    )
+
+    assert active_replay.status_code == 409
+    assert active_replay.json()["detail"] == "turn_in_progress"
+    assert another_request.status_code == 409
+    assert another_request.json()["detail"] == "conversation_turn_in_progress"
+
+    finalized = _finalize_turn(
+        conversation_db,
+        "conversation-idempotent",
+        started.json()["turn_id"],
+        request_id="request-1",
+        attempt_id=started.json()["attempt_id"],
+        output={
+            "product_results": [{"product_ref": "bag-1"}],
+            "retrieved": {"Structured Bag": "/images/bag.png"},
+            "agent_diagnostics": {"final_termination_reason": "completed"},
+        },
+    )
+    replay = _start_turn(
+        conversation_db,
+        "conversation-idempotent",
+        request_id="request-1",
+    )
+    conflict = _start_turn(
+        conversation_db,
+        "conversation-idempotent",
+        request_id="request-1",
+        shopper_text="Different request",
+    )
+
+    assert finalized.status_code == 200
+    assert replay.status_code == 200
+    assert replay.json()["replayed"] is True
+    assert replay.json()["status"] == "completed"
+    assert replay.json()["assistant_text"] == "Here is a bag."
+    assert replay.json()["output"] == {
+        "product_results": [{"product_ref": "bag-1"}],
+        "retrieved": {"Structured Bag": "/images/bag.png"},
+        "agent_diagnostics": {"final_termination_reason": "completed"},
+    }
+    assert conflict.status_code == 409
+
+
+def test_finalize_persists_ordered_events_and_replays_exactly(
+    conversation_db: TestClient,
+) -> None:
+    started = _start_turn(
+        conversation_db,
+        "conversation-events",
+        request_id="request-events",
+    ).json()
+    events = [
+        {
+            "event_key": "candidate-set-1",
+            "event_type": "candidate_set_presented",
+            "source_kind": "catalog",
+            "source_ref": "search-1",
+            "payload": {"products": [{"ref": "bag-1", "name": "Bag One"}]},
+        },
+        {
+            "event_key": "detail-1",
+            "event_type": "product_detail_confirmed",
+            "source_kind": "catalog",
+            "source_ref": "bag-1",
+            "payload": {"material": "cotton"},
+        },
+    ]
+    first = _finalize_turn(
+        conversation_db,
+        "conversation-events",
+        started["turn_id"],
+        request_id="request-events",
+        attempt_id=started["attempt_id"],
+        events=events,
+    )
+    replay = _finalize_turn(
+        conversation_db,
+        "conversation-events",
+        started["turn_id"],
+        request_id="request-events",
+        attempt_id=started["attempt_id"],
+        events=events,
+    )
+    conflict = _finalize_turn(
+        conversation_db,
+        "conversation-events",
+        started["turn_id"],
+        request_id="request-events",
+        attempt_id=started["attempt_id"],
+        assistant_text="A different answer.",
+        events=events,
+    )
+
+    assert first.status_code == 200
+    assert replay.json() == {**first.json(), "replayed": True}
+    assert conflict.status_code == 409
+    with memory_main.SessionLocal() as db:
+        stored_events = (
+            db.query(memory_main.ConversationEvent)
+            .order_by(memory_main.ConversationEvent.logical_order)
+            .all()
+        )
+        projection = db.query(memory_main.ConversationProjection).one()
+        assert [event.event_key for event in stored_events] == [
+            "candidate-set-1",
+            "detail-1",
+        ]
+        assert [event.logical_order for event in stored_events] == [1, 2]
+        assert projection.version == 1
+        assert projection.last_turn_id == started["turn_id"]
+        assert projection.product_reference_index_json == "[]"
+
+
+def test_finalize_rejects_extra_output_and_unlinked_cart_events(
+    conversation_db: TestClient,
+) -> None:
+    started = _start_turn(
+        conversation_db,
+        "conversation-invalid-finalize",
+        request_id="request-invalid-finalize",
+    ).json()
+    path = (
+        "/conversations/conversation-invalid-finalize/turns/"
+        f"{started['turn_id']}/finalize"
+    )
+    base_payload = {
+        "request_id": "request-invalid-finalize",
+        "attempt_id": started["attempt_id"],
+        "assistant_text": "Done.",
+        "status": "completed",
+        "termination_reason": "completed",
+        "events": [],
+    }
+
+    extra_output = conversation_db.post(
+        path,
+        json={
+            **base_payload,
+            "output": {
+                "product_results": [],
+                "retrieved": {},
+                "agent_diagnostics": {},
+                "unsupported": True,
+            },
+        },
+    )
+    unlinked_cart_event = conversation_db.post(
+        path,
+        json={
+            **base_payload,
+            "events": [
+                {
+                    "event_key": "cart-1",
+                    "event_type": "cart_mutation_committed",
+                    "source_kind": "cart",
+                    "payload": {},
+                }
+            ],
+        },
+    )
+
+    assert extra_output.status_code == 422
+    assert unlinked_cart_event.status_code == 422
+    with memory_main.SessionLocal() as db:
+        assert db.query(memory_main.ConversationTurn).one().status == "started"
+
+
+def test_start_reopens_exact_abandoned_request_in_place(
+    conversation_db: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MEMORY_TURN_ABANDON_SECONDS", "10")
+    started = _start_turn(
+        conversation_db,
+        "conversation-stale-retry",
+        request_id="request-stale",
+    ).json()
+    with memory_main.SessionLocal() as db:
+        turn = (
+            db.query(memory_main.ConversationTurn)
+            .filter_by(turn_id=started["turn_id"])
+            .one()
+        )
+        turn.started_at = time.time() - 60
+        turn.completed_at = time.time() - 30
+        turn.assistant_text = "Partial answer"
+        turn.termination_reason = "partial_failure"
+        turn.finalize_digest = "partial-finalize"
+        turn.output_json = '{"partial":true}'
+        db.commit()
+    assert memory_main._sweep_abandoned_turns(timeout_seconds=10) == 1
+    with memory_main.SessionLocal() as db:
+        abandoned = db.query(memory_main.ConversationTurn).one()
+        assert abandoned.status == "abandoned"
+        assert abandoned.termination_reason == "startup_abandoned_turn_sweep"
+
+    retried = _start_turn(
+        conversation_db,
+        "conversation-stale-retry",
+        request_id="request-stale",
+    )
+
+    assert retried.status_code == 200
+    assert retried.json()["turn_id"] == started["turn_id"]
+    assert retried.json()["attempt_id"] != started["attempt_id"]
+    assert retried.json()["sequence"] == 1
+    assert retried.json()["replayed"] is False
+    assert retried.json()["status"] == "started"
+    assert retried.json()["assistant_text"] is None
+    assert retried.json()["termination_reason"] is None
+    assert retried.json()["output"] is None
+    with memory_main.SessionLocal() as db:
+        turn = db.query(memory_main.ConversationTurn).one()
+        assert turn.completed_at is None
+        assert turn.finalize_digest is None
+    stale_finalize = _finalize_turn(
+        conversation_db,
+        "conversation-stale-retry",
+        started["turn_id"],
+        request_id="request-stale",
+        attempt_id=started["attempt_id"],
+    )
+    current_finalize = _finalize_turn(
+        conversation_db,
+        "conversation-stale-retry",
+        started["turn_id"],
+        request_id="request-stale",
+        attempt_id=retried.json()["attempt_id"],
+    )
+
+    assert stale_finalize.status_code == 409
+    assert stale_finalize.json()["detail"] == "turn_attempt_superseded"
+    assert current_finalize.status_code == 200
+
+
+def test_start_abandons_stale_other_request_and_advances_sequence(
+    conversation_db: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MEMORY_TURN_ABANDON_SECONDS", "10")
+    started = _start_turn(
+        conversation_db,
+        "conversation-stale-replacement",
+        request_id="request-stale",
+    ).json()
+    with memory_main.SessionLocal() as db:
+        turn = (
+            db.query(memory_main.ConversationTurn)
+            .filter_by(turn_id=started["turn_id"])
+            .one()
+        )
+        turn.started_at = time.time() - 60
+        db.commit()
+
+    replacement = _start_turn(
+        conversation_db,
+        "conversation-stale-replacement",
+        request_id="request-replacement",
+    )
+    assert (
+        _finalize_turn(
+            conversation_db,
+            "conversation-stale-replacement",
+            replacement.json()["turn_id"],
+            request_id="request-replacement",
+            attempt_id=replacement.json()["attempt_id"],
+        ).status_code
+        == 200
+    )
+    superseded_retry = _start_turn(
+        conversation_db,
+        "conversation-stale-replacement",
+        request_id="request-stale",
+    )
+
+    assert replacement.status_code == 200
+    assert replacement.json()["sequence"] == 2
+    assert replacement.json()["recent_turns"][0]["status"] == "abandoned"
+    assert superseded_retry.status_code == 409
+    assert superseded_retry.json()["detail"] == "turn_superseded"
+    with memory_main.SessionLocal() as db:
+        abandoned = (
+            db.query(memory_main.ConversationTurn)
+            .filter_by(turn_id=started["turn_id"])
+            .one()
+        )
+        assert abandoned.status == "abandoned"
+        assert abandoned.termination_reason == "turn_start_abandoned_timeout"
+
+
+def test_stale_retry_reuses_cart_mutation_idempotency_key(
+    conversation_db: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MEMORY_TURN_ABANDON_SECONDS", "10")
+    request_id = "request-cart-crash"
+    started = _start_turn(
+        conversation_db,
+        "conversation-cart-crash",
+        request_id=request_id,
+    ).json()
+    mutation = {
+        "product_id": "bag-1",
+        "item": "Structured Bag",
+        "amount": 1,
+        "price": 45.0,
+        "idempotency_key": f"{request_id}:add:bag-1:1",
+    }
+    first_add = conversation_db.post("/user/7/cart/add", json=mutation)
+    with memory_main.SessionLocal() as db:
+        turn = (
+            db.query(memory_main.ConversationTurn)
+            .filter_by(turn_id=started["turn_id"])
+            .one()
+        )
+        turn.started_at = time.time() - 60
+        db.commit()
+
+    retried = _start_turn(
+        conversation_db,
+        "conversation-cart-crash",
+        request_id=request_id,
+    )
+    repeated_add = conversation_db.post("/user/7/cart/add", json=mutation)
+
+    assert first_add.status_code == 200
+    assert retried.status_code == 200
+    assert retried.json()["turn_id"] == started["turn_id"]
+    assert repeated_add.status_code == 200
+    assert repeated_add.json() == first_add.json()
+    assert conversation_db.get("/user/7/cart").json()["cart"][0]["amount"] == 1
+    with memory_main.SessionLocal() as db:
+        assert db.query(memory_main.CartMutation).count() == 1
+
+
+def test_delete_cascades_conversation_rows_but_preserves_cart_and_context(
+    conversation_db: TestClient,
+) -> None:
+    conversation_db.post("/user/7/context/replace", json={"new_context": "legacy"})
+    conversation_db.post(
+        "/user/7/cart/add",
+        json={
+            "product_id": "bag-1",
+            "item": "Structured Bag",
+            "amount": 1,
+            "idempotency_key": "keep-cart",
+        },
+    )
+    started = _start_turn(
+        conversation_db,
+        "conversation-delete",
+        request_id="request-delete",
+    ).json()
+    _finalize_turn(
+        conversation_db,
+        "conversation-delete",
+        started["turn_id"],
+        request_id="request-delete",
+        attempt_id=started["attempt_id"],
+        events=[
+            {
+                "event_key": "event-delete",
+                "event_type": "candidate_set_presented",
+                "source_kind": "catalog",
+                "payload": {},
+            }
+        ],
+    )
+
+    deleted = conversation_db.delete("/conversations/conversation-delete")
+
+    assert deleted.status_code == 200
+    assert deleted.json() == {
+        "conversation_id": "conversation-delete",
+        "deleted_turns": 1,
+        "deleted_events": 1,
+        "deleted_projection": True,
+    }
+    with memory_main.SessionLocal() as db:
+        assert db.query(memory_main.ConversationTurn).count() == 0
+        assert db.query(memory_main.ConversationEvent).count() == 0
+        assert db.query(memory_main.ConversationProjection).count() == 0
+        assert db.query(memory_main.CartMutation).count() == 1
+    assert conversation_db.get("/user/7/cart").json()["cart"][0]["item"] == (
+        "Structured Bag"
+    )
+    assert conversation_db.get("/user/7/context").json()["context"] == "legacy"
+
+
+def test_versioned_migrations_upgrade_legacy_schema_once_without_data_loss(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    legacy_engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    with legacy_engine.begin() as connection:
+        connection.execute(
+            text(
+                "CREATE TABLE cart_items ("
+                "id INTEGER PRIMARY KEY, user_id INTEGER, item TEXT, amount INTEGER)"
+            )
+        )
+        connection.execute(
+            text(
+                "INSERT INTO cart_items (id, user_id, item, amount) "
+                "VALUES (1, 7, 'Legacy Bag', 1)"
+            )
+        )
+        connection.execute(
+            text(
+                "CREATE TABLE conversation_turns ("
+                "turn_id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, "
+                "sequence INTEGER NOT NULL, request_id TEXT NOT NULL, "
+                "request_digest TEXT NOT NULL, finalize_digest TEXT, "
+                "cart_user_id INTEGER NOT NULL, shopper_text TEXT NOT NULL, "
+                "assistant_text TEXT, status TEXT NOT NULL, "
+                "termination_reason TEXT, catalog_revision TEXT, "
+                "started_at REAL NOT NULL, completed_at REAL)"
+            )
+        )
+        connection.execute(
+            text(
+                "INSERT INTO conversation_turns ("
+                "turn_id, conversation_id, sequence, request_id, "
+                "request_digest, cart_user_id, shopper_text, status, started_at"
+                ") VALUES ("
+                "'legacy-turn', 'legacy-conversation', 1, 'legacy-request', "
+                "'legacy-digest', 7, 'Remember this', 'completed', 1.0)"
+            )
+        )
+    monkeypatch.setattr(memory_main, "engine", legacy_engine)
+    monkeypatch.setattr(
+        memory_main,
+        "SessionLocal",
+        sessionmaker(bind=legacy_engine, expire_on_commit=False),
+    )
+
+    memory_main._run_schema_migrations()
+    memory_main._run_schema_migrations()
+
+    with legacy_engine.connect() as connection:
+        versions = (
+            connection.execute(
+                text("SELECT version FROM schema_migrations ORDER BY version")
+            )
+            .scalars()
+            .all()
+        )
+        row = connection.execute(
+            text(
+                "SELECT item, cart_line_id, product_id, price "
+                "FROM cart_items WHERE id = 1"
+            )
+        ).one()
+        attempt_id = connection.execute(
+            text(
+                "SELECT attempt_id FROM conversation_turns "
+                "WHERE turn_id = 'legacy-turn'"
+            )
+        ).scalar_one()
+        tables = set(
+            connection.execute(
+                text("SELECT name FROM sqlite_master WHERE type = 'table'")
+            ).scalars()
+        )
+
+    assert versions == [1, 2, 3, 4]
+    assert row[0] == "Legacy Bag"
+    assert len(row[1]) == 32
+    assert row[2:] == (None, None)
+    assert len(attempt_id) == 32
+    assert {
+        "conversation_turns",
+        "conversation_events",
+        "conversation_projection",
+    } <= tables
+    legacy_engine.dispose()
+
+
+def test_file_database_reopens_with_sqlite_safety_settings(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "memory.db"
+    database_url = f"sqlite:///{database_path}"
+    first_engine = memory_main.build_engine(database_url, busy_timeout_ms=2500)
+    monkeypatch.setattr(memory_main, "engine", first_engine)
+    monkeypatch.setattr(
+        memory_main,
+        "SessionLocal",
+        sessionmaker(bind=first_engine, expire_on_commit=False),
+    )
+    memory_main._run_schema_migrations()
+    with memory_main.SessionLocal() as db:
+        db.add(
+            memory_main.ConversationTurn(
+                turn_id="durable-turn",
+                conversation_id="durable-conversation",
+                sequence=1,
+                request_id="durable-request",
+                request_digest="durable-digest",
+                cart_user_id=7,
+                shopper_text="Remember this",
+                status="completed",
+                assistant_text="Remembered.",
+                started_at=1.0,
+                completed_at=2.0,
+            )
+        )
+        db.commit()
+    first_engine.dispose()
+
+    reopened_engine = memory_main.build_engine(database_url, busy_timeout_ms=2500)
+    monkeypatch.setattr(memory_main, "engine", reopened_engine)
+    monkeypatch.setattr(
+        memory_main,
+        "SessionLocal",
+        sessionmaker(bind=reopened_engine, expire_on_commit=False),
+    )
+    memory_main._run_schema_migrations()
+
+    with reopened_engine.connect() as connection:
+        assert connection.exec_driver_sql("PRAGMA journal_mode").scalar_one() == "wal"
+        assert connection.exec_driver_sql("PRAGMA foreign_keys").scalar_one() == 1
+        assert connection.exec_driver_sql("PRAGMA busy_timeout").scalar_one() == 2500
+        assert (
+            connection.execute(
+                text("SELECT assistant_text FROM conversation_turns")
+            ).scalar_one()
+            == "Remembered."
+        )
+        assert (
+            connection.execute(
+                text("SELECT COUNT(*) FROM schema_migrations")
+            ).scalar_one()
+            == 4
+        )
+    reopened_engine.dispose()

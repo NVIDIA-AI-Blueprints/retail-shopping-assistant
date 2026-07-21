@@ -10,6 +10,7 @@ a lightweight stub before importing the module.
 
 from __future__ import annotations
 
+import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import importlib
 from pathlib import Path
@@ -22,6 +23,12 @@ import pytest
 from fastapi.testclient import TestClient
 
 from chain_server.src.agenttypes import Cart, State
+from chain_server.src.conversation_memory import (
+    ConversationMemoryError,
+    ConversationProjection,
+    TurnReplayOutput,
+    TurnStartResult,
+)
 from shared.commerce_contracts import Cart as CommerceCart
 from shared.commerce_contracts import (
     CartLine,
@@ -79,6 +86,38 @@ class _StubRuntime:
                 )
             },
         )
+
+
+class _ConversationMemoryStub:
+    """In-memory turn boundary for runtime-focused tests."""
+
+    def __init__(self, start_result: TurnStartResult | None = None) -> None:
+        self.start_result = start_result or TurnStartResult(
+            turn_id="turn-a",
+            attempt_id="attempt-a",
+            sequence=1,
+            recent_turns=[],
+            projection=ConversationProjection(),
+            cart=[],
+        )
+        self.start_calls: List[Dict[str, Any]] = []
+        self.finalize_calls: List[Dict[str, Any]] = []
+
+    def start_turn(self, conversation_id: str, **kwargs):
+        self.start_calls.append({"conversation_id": conversation_id, **kwargs})
+        return self.start_result
+
+    def finalize_turn(self, conversation_id: str, turn_id: str, **kwargs):
+        self.finalize_calls.append(
+            {"conversation_id": conversation_id, "turn_id": turn_id, **kwargs}
+        )
+        return SimpleNamespace(replayed=False)
+
+
+def _install_conversation_memory_stub(runtime) -> _ConversationMemoryStub:
+    stub = _ConversationMemoryStub()
+    runtime._conversation_memory = stub
+    return stub
 
 
 @pytest.fixture
@@ -631,11 +670,9 @@ class TestCartFormatting:
 
 
 class TestDeepAgentsRuntimeScopes:
-    def test_load_and_persist_memory_use_context_scope_while_cart_uses_cart_scope(
+    def test_turn_lifecycle_uses_conversation_scope_and_authoritative_cart_scope(
         self,
         base_config,
-        fake_response_cls,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
 
@@ -649,34 +686,332 @@ class TestDeepAgentsRuntimeScopes:
             request_id="request-a",
         )
         state = State(user_id=999, query="hello", guardrails=False)
-        cart_user_ids: List[int] = []
-        get_urls: List[str] = []
-        post_urls: List[str] = []
+        memory = _ConversationMemoryStub(
+            TurnStartResult.model_validate(
+                {
+                    "turn_id": "turn-a",
+                    "attempt_id": "attempt-a",
+                    "sequence": 2,
+                    "recent_turns": [
+                        {
+                            "sequence": 1,
+                            "shopper_text": "Show me a bag",
+                            "assistant_text": "Here is one bag.",
+                            "status": "completed",
+                        }
+                    ],
+                    "projection": {},
+                    "cart": [
+                        {
+                            "cart_line_id": "line-a",
+                            "product_id": "bag-a",
+                            "item": "Bag",
+                            "amount": 1,
+                            "price": 20.0,
+                        }
+                    ],
+                }
+            )
+        )
+        runtime._conversation_memory = memory
 
-        def fake_get(url: str, timeout: int):
-            get_urls.append(url)
-            return fake_response_cls({"context": "prior context"})
+        turn = runtime._start_conversation_turn(state, identity)
+        assert turn is not None
+        state.response = "Done"
+        state.agent_diagnostics = runtime_mod._empty_agent_diagnostics("completed")
+        runtime._finalize_conversation_turn(state, identity, turn)
 
-        def fake_post(url: str, json: Dict[str, str], timeout: int):
-            post_urls.append(url)
-            return fake_response_cls({"message": "ok"})
+        assert memory.start_calls[0]["conversation_id"] == "conversation-a"
+        assert memory.start_calls[0]["cart_user_id"] == 222
+        assert memory.start_calls[0]["request_id"] == "request-a"
+        assert "User: Show me a bag" in state.context
+        assert state.cart.contents[0]["cart_line_id"] == "line-a"
+        assert memory.finalize_calls[0]["conversation_id"] == "conversation-a"
+        assert memory.finalize_calls[0]["turn_id"] == "turn-a"
+        assert memory.finalize_calls[0]["attempt_id"] == "attempt-a"
 
-        def fake_read_cart(user_id: int) -> Cart:
-            cart_user_ids.append(user_id)
-            return Cart(contents=[{"item": "Bag", "amount": 1, "price": 20.0}])
+    @pytest.mark.asyncio
+    async def test_finalized_replay_skips_agent_work(
+        self,
+        base_config,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
 
-        monkeypatch.setattr(runtime_mod.requests, "get", fake_get)
-        monkeypatch.setattr(runtime_mod.requests, "post", fake_post)
-        monkeypatch.setattr(runtime, "_read_cart", fake_read_cart)
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+        identity = runtime_mod.RequestIdentity(
+            session_id="session-a",
+            conversation_id="conversation-a",
+            cart_id="cart-a",
+            context_user_id=111,
+            cart_user_id=222,
+            request_id="request-a",
+        )
+        replay_output = TurnReplayOutput(
+            product_results=[
+                ProductSummary(
+                    product_id="bag-a",
+                    display_name="Blue Bag",
+                    category="bags",
+                )
+            ],
+            retrieved={"Blue Bag": "/images/blue-bag.jpg"},
+            agent_diagnostics={"final_termination_reason": "completed"},
+        )
+        memory = _ConversationMemoryStub(
+            TurnStartResult(
+                turn_id="turn-a",
+                attempt_id="attempt-a",
+                sequence=1,
+                replayed=True,
+                status="completed",
+                assistant_text="Here is the saved result.",
+                output=replay_output,
+            )
+        )
+        runtime._conversation_memory = memory
 
-        runtime._load_memory(state, identity)
-        runtime._persist_context(state, identity)
+        async def fail_execute(*_args, **_kwargs):
+            raise AssertionError("finalized replay must skip agent work")
 
-        assert get_urls == [f"{base_config.memory_port}/user/111/context"]
-        assert post_urls == [f"{base_config.memory_port}/user/111/context/replace"]
-        assert cart_user_ids == [222]
-        assert state.context == "prior context"
-        assert state.cart.contents == [{"item": "Bag", "amount": 1, "price": 20.0}]
+        monkeypatch.setattr(runtime, "_execute_turn", fail_execute)
+
+        output = await runtime._run_turn(
+            State(user_id=111, query="same request", guardrails=False),
+            identity,
+        )
+
+        assert output.response == "Here is the saved result."
+        assert output.product_results[0]["product_id"] == "bag-a"
+        assert output.retrieved == {"Blue Bag": "/images/blue-bag.jpg"}
+        assert memory.finalize_calls == []
+
+    @pytest.mark.asyncio
+    async def test_input_guardrail_block_finalizes_once(
+        self,
+        base_config,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+        memory = _install_conversation_memory_stub(runtime)
+        identity = runtime_mod.RequestIdentity(
+            session_id="session-a",
+            conversation_id="conversation-a",
+            cart_id="cart-a",
+            context_user_id=111,
+            cart_user_id=222,
+            request_id="request-a",
+        )
+        monkeypatch.setattr(runtime, "_check_safety", lambda *_args: (False, True))
+
+        output = await runtime._run_turn(
+            State(user_id=111, query="blocked", guardrails=True),
+            identity,
+        )
+
+        assert output.response == base_config.unsafe_message
+        assert len(memory.finalize_calls) == 1
+        assert memory.finalize_calls[0]["status"] == "blocked"
+        assert memory.finalize_calls[0]["termination_reason"] == (
+            "input_guardrail_blocked"
+        )
+
+    @pytest.mark.asyncio
+    async def test_turn_start_failure_skips_agent_work(
+        self,
+        base_config,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+        identity = runtime_mod.RequestIdentity(
+            session_id="session-a",
+            conversation_id="conversation-a",
+            cart_id="cart-a",
+            context_user_id=111,
+            cart_user_id=222,
+            request_id="request-a",
+        )
+
+        class FailingMemory:
+            def start_turn(self, *_args, **_kwargs):
+                raise ConversationMemoryError(
+                    "memory_service_unavailable",
+                    "unavailable",
+                    status_code=503,
+                    retryable=True,
+                )
+
+        runtime._conversation_memory = FailingMemory()
+
+        async def fail_execute(*_args, **_kwargs):
+            raise AssertionError("agent work must not run without a durable turn")
+
+        monkeypatch.setattr(runtime, "_execute_turn", fail_execute)
+
+        output = await runtime._run_turn(
+            State(user_id=111, query="hello", guardrails=False),
+            identity,
+        )
+
+        assert output.agent_diagnostics["final_termination_reason"] == (
+            "memory_start_failed"
+        )
+        assert output.agent_diagnostics["memory_start_error"] == (
+            "memory_service_unavailable"
+        )
+
+    @pytest.mark.asyncio
+    async def test_cancelled_turn_is_finalized_before_cancellation_propagates(
+        self,
+        base_config,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+        memory = _install_conversation_memory_stub(runtime)
+        identity = runtime_mod.RequestIdentity(
+            session_id="session-a",
+            conversation_id="conversation-a",
+            cart_id="cart-a",
+            context_user_id=111,
+            cart_user_id=222,
+            request_id="request-a",
+        )
+
+        async def cancel_turn(*_args, **_kwargs):
+            raise asyncio.CancelledError
+
+        monkeypatch.setattr(runtime, "_execute_turn", cancel_turn)
+
+        with pytest.raises(asyncio.CancelledError):
+            await runtime._run_turn(
+                State(user_id=111, query="hello", guardrails=False),
+                identity,
+            )
+
+        assert len(memory.finalize_calls) == 1
+        assert memory.finalize_calls[0]["status"] == "failed"
+        assert memory.finalize_calls[0]["termination_reason"] == ("request_cancelled")
+        assert "check your cart" in memory.finalize_calls[0]["assistant_text"]
+
+    @pytest.mark.asyncio
+    async def test_finalize_failure_preserves_response_and_checkpoint(
+        self,
+        base_config,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+
+        class FailingFinalizeMemory(_ConversationMemoryStub):
+            def finalize_turn(self, conversation_id: str, turn_id: str, **kwargs):
+                self.finalize_calls.append(
+                    {
+                        "conversation_id": conversation_id,
+                        "turn_id": turn_id,
+                        **kwargs,
+                    }
+                )
+                raise ConversationMemoryError(
+                    "memory_service_unavailable",
+                    "unavailable",
+                    status_code=503,
+                    retryable=True,
+                )
+
+        memory = FailingFinalizeMemory()
+        runtime._conversation_memory = memory
+        deleted_threads: list[str] = []
+        runtime._checkpointer = SimpleNamespace(
+            delete_thread=deleted_threads.append,
+        )
+        identity = runtime_mod.RequestIdentity(
+            session_id="session-a",
+            conversation_id="conversation-a",
+            cart_id="cart-a",
+            context_user_id=111,
+            cart_user_id=222,
+            request_id="request-a",
+        )
+
+        async def complete_turn(state, _identity):
+            state.response = "Grounded response."
+            state.agent_diagnostics = runtime_mod._empty_agent_diagnostics("completed")
+            return state
+
+        monkeypatch.setattr(runtime, "_execute_turn", complete_turn)
+
+        output = await runtime._run_turn(
+            State(user_id=111, query="hello", guardrails=False),
+            identity,
+        )
+
+        assert output.response == "Grounded response."
+        assert output.agent_diagnostics["memory_finalize_error"] == (
+            "memory_service_unavailable"
+        )
+        assert deleted_threads == []
+
+    def test_superseded_attempt_does_not_return_its_unstored_response(
+        self,
+        base_config,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+
+        class SupersededMemory(_ConversationMemoryStub):
+            def finalize_turn(self, *_args, **_kwargs):
+                raise ConversationMemoryError(
+                    "turn_attempt_superseded",
+                    "superseded",
+                    status_code=409,
+                )
+
+        runtime._conversation_memory = SupersededMemory()
+        identity = runtime_mod.RequestIdentity(
+            session_id="session-a",
+            conversation_id="conversation-a",
+            cart_id="cart-a",
+            context_user_id=111,
+            cart_user_id=222,
+            request_id="request-a",
+        )
+        state = State(
+            user_id=111,
+            query="hello",
+            response="Unstored stale response.",
+            product_results=[
+                {
+                    "product_id": "stale-product",
+                    "display_name": "Stale product",
+                }
+            ],
+            retrieved={"Stale product": "/images/stale.png"},
+            agent_diagnostics=runtime_mod._empty_agent_diagnostics("completed"),
+        )
+
+        runtime._finalize_conversation_turn(
+            state,
+            identity,
+            runtime._conversation_memory.start_result,
+        )
+
+        assert state.response == (
+            "This request was superseded by a newer attempt. "
+            "Please use the latest response."
+        )
+        assert state.product_results == []
+        assert state.retrieved == {}
+        assert state.agent_diagnostics["memory_finalize_error"] == (
+            "turn_attempt_superseded"
+        )
 
 
 class TestDeepAgentsRuntimeTokenUsage:
@@ -3710,8 +4045,7 @@ class TestDeepAgentsRuntimeRefs:
             return FakeAgent()
 
         monkeypatch.setattr(runtime._media_perception, "analyze", fake_analyze)
-        monkeypatch.setattr(runtime, "_load_memory", lambda state, identity: None)
-        monkeypatch.setattr(runtime, "_persist_context", lambda state, identity: None)
+        _install_conversation_memory_stub(runtime)
         monkeypatch.setattr(runtime, "_create_agent", fake_create_agent)
         monkeypatch.setattr(runtime_mod, "add_cart_item", fake_add_cart_item)
 
@@ -3775,7 +4109,6 @@ class TestDeepAgentsRuntimeRefs:
             request_id="request-a",
         )
         reset_threads: list[str] = []
-        persisted: list[str] = []
         events: list[str] = []
 
         async def fake_analyze(state):
@@ -3835,12 +4168,7 @@ class TestDeepAgentsRuntimeRefs:
                 )
 
         monkeypatch.setattr(runtime._media_perception, "analyze", fake_analyze)
-        monkeypatch.setattr(runtime, "_load_memory", lambda state, identity: None)
-        monkeypatch.setattr(
-            runtime,
-            "_persist_context",
-            lambda state, identity: persisted.append(state.context),
-        )
+        conversation_memory = _install_conversation_memory_stub(runtime)
         monkeypatch.setattr(
             runtime,
             "_create_agent",
@@ -3885,7 +4213,15 @@ class TestDeepAgentsRuntimeRefs:
             message["type"]
             for message in output.agent_diagnostics["partial_graph_messages"]
         ] == ["ai", "tool", "ai"]
-        assert persisted and "Aimee Ankle Strap Sandals" in persisted[-1]
+        assert conversation_memory.finalize_calls
+        assert (
+            "Aimee Ankle Strap Sandals"
+            in conversation_memory.finalize_calls[-1]["assistant_text"]
+        )
+        assert conversation_memory.finalize_calls[-1]["status"] == "failed"
+        assert conversation_memory.finalize_calls[-1]["termination_reason"] == (
+            "recursion_limit"
+        )
 
     @pytest.mark.asyncio
     async def test_search_only_styling_uses_reviewed_skill_guidance(
@@ -3991,8 +4327,7 @@ class TestDeepAgentsRuntimeRefs:
                 }
 
         monkeypatch.setattr(runtime._media_perception, "analyze", fake_analyze)
-        monkeypatch.setattr(runtime, "_load_memory", lambda state, identity: None)
-        monkeypatch.setattr(runtime, "_persist_context", lambda state, identity: None)
+        _install_conversation_memory_stub(runtime)
         monkeypatch.setattr(
             runtime,
             "_create_agent",
@@ -4481,8 +4816,7 @@ class TestDeepAgentsRuntimeRefs:
             return ""
 
         monkeypatch.setattr(runtime._media_perception, "analyze", fake_analyze)
-        monkeypatch.setattr(runtime, "_load_memory", lambda state, identity: None)
-        monkeypatch.setattr(runtime, "_persist_context", lambda state, identity: None)
+        _install_conversation_memory_stub(runtime)
         monkeypatch.setattr(
             runtime._catalog_capabilities,
             "get",
@@ -4651,8 +4985,7 @@ class TestDeepAgentsRuntimeRefs:
             return ""
 
         monkeypatch.setattr(runtime._media_perception, "analyze", fake_analyze)
-        monkeypatch.setattr(runtime, "_load_memory", lambda state, identity: None)
-        monkeypatch.setattr(runtime, "_persist_context", lambda state, identity: None)
+        _install_conversation_memory_stub(runtime)
         monkeypatch.setattr(
             runtime,
             "_create_agent",
@@ -5178,8 +5511,7 @@ class TestDeepAgentsRuntimeRefs:
             raise AssertionError("grounding editor should not run")
 
         monkeypatch.setattr(runtime._media_perception, "analyze", fake_analyze)
-        monkeypatch.setattr(runtime, "_load_memory", lambda state, identity: None)
-        monkeypatch.setattr(runtime, "_persist_context", lambda state, identity: None)
+        _install_conversation_memory_stub(runtime)
         monkeypatch.setattr(
             runtime,
             "_create_agent",

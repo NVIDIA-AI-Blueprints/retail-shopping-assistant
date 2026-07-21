@@ -1,122 +1,73 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from contextlib import asynccontextmanager
+import json
+import time
+
 from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import Column, Float, Integer, String, create_engine, text
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
 from typing import Optional
-from hashlib import sha256
-import json
-import logging
-import time
-from uuid import uuid4
 
-DATABASE_URL = "sqlite:///./context.db"
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
-SessionLocal = sessionmaker(bind=engine)
-Base = declarative_base()
+from .conversations import create_conversation_router, sweep_abandoned_turns
+from .database import Base, DATABASE_URL, SessionLocal, build_engine, engine
+from .migrations import (
+    cart_mutation_digest,
+    ensure_cart_line_id_column,
+    ensure_price_column,
+    ensure_product_id_column,
+    migrate_quantity_idempotency,
+    run_schema_migrations,
+)
+from .models import (
+    CartItem,
+    CartMutation,
+    CartQuantityIdempotency,
+    ConversationEvent,
+    ConversationProjection,
+    ConversationTurn,
+    SchemaMigration,
+    User,
+    new_cart_line_id,
+)
+
+
+__all__ = (
+    "Base",
+    "CartItem",
+    "CartMutation",
+    "CartQuantityIdempotency",
+    "ConversationEvent",
+    "ConversationProjection",
+    "ConversationTurn",
+    "DATABASE_URL",
+    "SchemaMigration",
+    "User",
+    "build_engine",
+)
 
 
 def _new_cart_line_id() -> str:
-    return uuid4().hex
-
-
-class User(Base):
-    __tablename__ = "users"
-    id = Column(Integer, primary_key=True, index=True)
-    context = Column(String, default="")
-
-class CartItem(Base):
-    __tablename__ = "cart_items"
-    id = Column(Integer, primary_key=True, index=True)
-    cart_line_id = Column(
-        String,
-        default=_new_cart_line_id,
-        nullable=False,
-        unique=True,
-        index=True,
-    )
-    user_id = Column(Integer, index=True)
-    product_id = Column(String, nullable=True, index=True)
-    item = Column(String)
-    amount = Column(Integer)
-    price = Column(Float, nullable=True)
-
-
-class CartQuantityIdempotency(Base):
-    """Legacy quantity-only ledger retained as a migration source."""
-
-    __tablename__ = "cart_quantity_idempotency"
-    idempotency_key = Column(String, primary_key=True)
-    user_id = Column(Integer, nullable=False)
-    cart_line_id = Column(String, nullable=False)
-    quantity = Column(Integer, nullable=False)
-    response_body = Column(String, nullable=False)
-
-
-class CartMutation(Base):
-    __tablename__ = "cart_mutations"
-    user_id = Column(Integer, primary_key=True)
-    idempotency_key = Column(String, primary_key=True)
-    operation = Column(String, nullable=False)
-    canonical_digest = Column(String, nullable=False)
-    stable_target_id = Column(String, nullable=False)
-    response_body = Column(String, nullable=False)
+    return new_cart_line_id()
 
 
 def _ensure_price_column() -> None:
     """Idempotently add the price column for databases created before it existed."""
-    with engine.connect() as conn:
-        columns = conn.execute(text("PRAGMA table_info(cart_items)")).fetchall()
-        if not any(col[1] == "price" for col in columns):
-            try:
-                conn.execute(text("ALTER TABLE cart_items ADD COLUMN price REAL"))
-                conn.commit()
-                logging.info("memory-retriever | added price column to cart_items")
-            except Exception as exc:
-                logging.warning(f"memory-retriever | could not add price column: {exc}")
+    with engine.begin() as connection:
+        ensure_price_column(connection)
 
 
 def _ensure_cart_line_id_column() -> None:
     """Add and backfill opaque cart-line IDs for existing SQLite databases."""
-
-    with engine.begin() as conn:
-        columns = conn.execute(text("PRAGMA table_info(cart_items)")).fetchall()
-        if not any(col[1] == "cart_line_id" for col in columns):
-            conn.execute(text("ALTER TABLE cart_items ADD COLUMN cart_line_id TEXT"))
-        rows = conn.execute(
-            text(
-                "SELECT id FROM cart_items "
-                "WHERE cart_line_id IS NULL OR cart_line_id = ''"
-            )
-        ).fetchall()
-        for row in rows:
-            conn.execute(
-                text(
-                    "UPDATE cart_items SET cart_line_id = :cart_line_id "
-                    "WHERE id = :id"
-                ),
-                {"cart_line_id": _new_cart_line_id(), "id": row[0]},
-            )
-        conn.execute(
-            text(
-                "CREATE UNIQUE INDEX IF NOT EXISTS ix_cart_items_cart_line_id "
-                "ON cart_items (cart_line_id)"
-            )
-        )
+    with engine.begin() as connection:
+        ensure_cart_line_id_column(connection)
 
 
 def _ensure_product_id_column() -> None:
     """Idempotently add catalog product identity to existing cart rows."""
-
-    with engine.connect() as conn:
-        columns = conn.execute(text("PRAGMA table_info(cart_items)")).fetchall()
-        if not any(col[1] == "product_id" for col in columns):
-            conn.execute(text("ALTER TABLE cart_items ADD COLUMN product_id TEXT"))
-            conn.commit()
+    with engine.begin() as connection:
+        ensure_product_id_column(connection)
 
 
 def _cart_mutation_digest(
@@ -124,56 +75,29 @@ def _cart_mutation_digest(
     stable_target_id: str,
     request_body: dict,
 ) -> str:
-    canonical = json.dumps(
-        {
-            "operation": operation,
-            "stable_target_id": stable_target_id,
-            "request_body": request_body,
-        },
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    return sha256(canonical.encode("utf-8")).hexdigest()
+    return cart_mutation_digest(operation, stable_target_id, request_body)
 
 
 def _migrate_quantity_idempotency() -> None:
     """Copy existing quantity replay records into the unified ledger once."""
-
-    with engine.begin() as conn:
-        rows = conn.execute(
-            text(
-                "SELECT idempotency_key, user_id, cart_line_id, quantity, "
-                "response_body FROM cart_quantity_idempotency"
-            )
-        ).mappings()
-        for row in rows:
-            conn.execute(
-                text(
-                    "INSERT OR IGNORE INTO cart_mutations "
-                    "(user_id, idempotency_key, operation, canonical_digest, "
-                    "stable_target_id, response_body) VALUES "
-                    "(:user_id, :idempotency_key, 'update', :canonical_digest, "
-                    ":stable_target_id, :response_body)"
-                ),
-                {
-                    "user_id": row["user_id"],
-                    "idempotency_key": row["idempotency_key"],
-                    "canonical_digest": _cart_mutation_digest(
-                        "update",
-                        row["cart_line_id"],
-                        {"quantity": row["quantity"]},
-                    ),
-                    "stable_target_id": row["cart_line_id"],
-                    "response_body": row["response_body"],
-                },
-            )
+    with engine.begin() as connection:
+        migrate_quantity_idempotency(connection)
 
 
-Base.metadata.create_all(bind=engine)
-_ensure_price_column()
-_ensure_cart_line_id_column()
-_ensure_product_id_column()
-_migrate_quantity_idempotency()
+def _run_schema_migrations() -> None:
+    run_schema_migrations(engine)
+
+
+def _sweep_abandoned_turns(
+    *,
+    now: float | None = None,
+    timeout_seconds: int | None = None,
+) -> int:
+    return sweep_abandoned_turns(
+        SessionLocal,
+        now=now,
+        timeout_seconds=timeout_seconds,
+    )
 
 
 class ContextUpdate(BaseModel):
@@ -195,7 +119,14 @@ class CartQuantityUpdate(BaseModel):
     quantity: int = Field(ge=0)
     idempotency_key: str = Field(..., min_length=1)
 
-app = FastAPI()
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    _run_schema_migrations()
+    _sweep_abandoned_turns()
+    yield
+
+
+app = FastAPI(lifespan=_lifespan)
 
 def get_db():
     db = SessionLocal()
@@ -203,6 +134,9 @@ def get_db():
         yield db
     finally:
         db.close()
+
+app.include_router(create_conversation_router(get_db))
+
 
 def _cart_item_dict(item: CartItem) -> dict:
     result = {

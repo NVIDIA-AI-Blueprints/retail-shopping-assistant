@@ -160,6 +160,29 @@ class TestCartFlows:
             }
         ]
 
+    @pytest.mark.xfail(
+        strict=True,
+        raises=AssertionError,
+        reason="Slice 3 will enforce add idempotency in the memory service.",
+    )
+    def test_duplicate_add_with_same_key_mutates_once(
+        self,
+        client: TestClient,
+    ) -> None:
+        payload = {
+            "item": "Silk Dress",
+            "amount": 1,
+            "price": 49.99,
+            "idempotency_key": "add-silk-once",
+        }
+
+        first = client.post("/user/1/cart/add", json=payload)
+        replay = client.post("/user/1/cart/add", json=payload)
+
+        assert replay.json() == first.json()
+        cart = client.get("/user/1/cart").json()["cart"]
+        assert cart[0]["amount"] == 1
+
     def test_add_updates_price_when_newer_provided(
         self, client: TestClient
     ) -> None:
@@ -203,6 +226,32 @@ class TestCartFlows:
         )
         assert response.status_code == 200
 
+        cart = client.get("/user/1/cart").json()["cart"]
+        assert cart[0]["amount"] == 2
+
+    @pytest.mark.xfail(
+        strict=True,
+        raises=AssertionError,
+        reason="Slice 3 will replay remove results without a second mutation.",
+    )
+    def test_remove_with_same_key_replays_original_mutation(
+        self,
+        client: TestClient,
+    ) -> None:
+        client.post(
+            "/user/1/cart/add",
+            json={"item": "Silk Dress", "amount": 3, "price": 49.99},
+        )
+        payload = {
+            "item": "Silk Dress",
+            "amount": 1,
+            "idempotency_key": "remove-silk-once",
+        }
+
+        first = client.post("/user/1/cart/remove", json=payload)
+        replay = client.post("/user/1/cart/remove", json=payload)
+
+        assert replay.json() == first.json()
         cart = client.get("/user/1/cart").json()["cart"]
         assert cart[0]["amount"] == 2
 

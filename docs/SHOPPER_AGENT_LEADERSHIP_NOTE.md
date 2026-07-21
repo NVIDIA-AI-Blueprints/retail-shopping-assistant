@@ -115,13 +115,16 @@ contract, and the catalog supplies product truth.
 
 ## What Comes Next
 
-### 1. Lock regression coverage, then add explicit turn authorization
+### 1. Add explicit turn authorization against the locked regressions
 
-First preserve the known browse-only, mixed-intent, and cart-mutation failure
-cases as regression tests. Then compile model proposals into a server-owned,
-immutable authorization object and require an authorized intent at dispatch.
-The current Slice 0 gate proves that only `cart-management` can expose cart
-mutators; it does not yet prove that the shopper requested a mutation.
+Slice 1 now preserves the known unauthorized-mutation, invented-constraint,
+idempotency-replay, duplicate-add, and ambiguous-reference cases. The
+browse-only mutation case already passes through Slice 0; four strict expected
+failures identify the later slice that must make each guarantee real. Next,
+compile model proposals into a server-owned, immutable authorization object and
+require an authorized intent at dispatch. The current Slice 0 gate proves that
+only `cart-management` can expose cart mutators; it does not yet prove that the
+shopper requested a mutation.
 
 ### 2. Add a structured conversation-reference ledger
 

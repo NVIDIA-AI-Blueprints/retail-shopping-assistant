@@ -293,7 +293,11 @@ def _capture_request(
     return captured[0]
 
 
-def _tool_request(name: str, messages: list[Any]) -> ToolCallRequest:
+def _tool_request(
+    name: str,
+    messages: list[Any],
+    args: dict[str, Any] | None = None,
+) -> ToolCallRequest:
     tool = (
         activate_shopper_skills_tool
         if name == SKILL_ACTIVATION_TOOL_NAME
@@ -309,7 +313,7 @@ def _tool_request(name: str, messages: list[Any]) -> ToolCallRequest:
         tool_call={
             "id": f"{name}-call",
             "name": name,
-            "args": {},
+            "args": args or {},
             "type": "tool_call",
         },
         tool=tool,
@@ -318,9 +322,17 @@ def _tool_request(name: str, messages: list[Any]) -> ToolCallRequest:
     )
 
 
-def _activated_messages(request_id: str = REQUEST_ID) -> list[Any]:
+def _activated_messages(
+    request_id: str = REQUEST_ID,
+    *,
+    skill_name: str = "outfit-styling",
+    query: str | None = None,
+) -> list[Any]:
+    request_text = f"REQUEST ID: {request_id}"
+    if query:
+        request_text += f"\nUSER QUERY: {query}"
     return [
-        HumanMessage(content=f"REQUEST ID: {request_id}"),
+        HumanMessage(content=request_text),
         AIMessage(
             content="",
             tool_calls=[
@@ -328,7 +340,7 @@ def _activated_messages(request_id: str = REQUEST_ID) -> list[Any]:
                     "id": "activation-call",
                     "name": SKILL_ACTIVATION_TOOL_NAME,
                     "args": {
-                        "skill_names": ["outfit-styling"],
+                        "skill_names": [skill_name],
                     },
                 }
             ],
@@ -336,7 +348,7 @@ def _activated_messages(request_id: str = REQUEST_ID) -> list[Any]:
         ToolMessage(
             content=(
                 f"{SKILL_ACTIVATION_COMPLETE} "
-                "/shopper/outfit-styling/SKILL.md"
+                f"/shopper/{skill_name}/SKILL.md"
             ),
             name=SKILL_ACTIVATION_TOOL_NAME,
             tool_call_id="activation-call",
@@ -569,25 +581,119 @@ def test_outfit_styling_rejects_cart_mutation_before_execution(
     assert str(result.content).startswith(SKILL_TOOL_NOT_GRANTED)
 
 
-def test_product_discovery_exposes_catalog_tools_but_not_cart_mutation() -> None:
+def test_browse_only_product_discovery_rejects_cart_mutation() -> None:
     middleware = _middleware()
     middleware.activate(
         {"/shopper/product-discovery/SKILL.md": "# Product Discovery"},
         ["product-discovery"],
     )
+    messages = _activated_messages(
+        skill_name="product-discovery",
+        query="Show me casual black shoes",
+    )
 
-    prepared = _capture_request(middleware, _model_request(_activated_messages()))
+    prepared = _capture_request(middleware, _model_request(messages))
 
     assert [candidate.name for candidate in prepared.tools] == [
         "search_catalog_tool",
         "get_product_details_tool",
     ]
-    request = _tool_request("add_cart_items_tool", _activated_messages())
+    request = _tool_request(
+        "add_cart_items_tool",
+        messages,
+        {"items": [{"product_ref": "shoe-a"}]},
+    )
     handled: list[ToolCallRequest] = []
     result = middleware.wrap_tool_call(request, handled.append)
     assert handled == []
     assert isinstance(result, ToolMessage)
     assert str(result.content).startswith(SKILL_TOOL_NOT_GRANTED)
+
+
+@pytest.mark.xfail(
+    strict=True,
+    raises=AssertionError,
+    reason="Slice 2 will bind catalog constraints to shopper provenance.",
+)
+def test_invented_catalog_constraint_is_rejected_before_execution() -> None:
+    """An advertised filter is not authorized merely because it is valid."""
+
+    middleware = _middleware()
+    middleware.activate(
+        {"/shopper/outfit-styling/SKILL.md": "# Outfit Styling"},
+        ["outfit-styling"],
+    )
+    request = _tool_request(
+        "search_catalog_tool",
+        _activated_messages(query="Heels or flats for this look?"),
+        {"required_constraints": {"color": ["black"]}},
+    )
+    handled: list[ToolCallRequest] = []
+
+    result = middleware.wrap_tool_call(request, handled.append)
+
+    assert handled == []
+    assert isinstance(result, ToolMessage)
+    assert str(result.content).startswith("CATALOG_CALL_NOT_AUTHORIZED:")
+
+
+@pytest.mark.xfail(
+    strict=True,
+    raises=AssertionError,
+    reason="Slices 2 and 5 will block unresolved historical product targets.",
+)
+def test_ambiguous_product_reference_requires_clarification() -> None:
+    """Two prior bag candidates cannot authorize a guessed cart target."""
+
+    middleware = _middleware()
+    middleware.activate(
+        {"/shopper/cart-management/SKILL.md": "# Cart Management"},
+        ["cart-management"],
+    )
+    # These messages describe the scenario only. Future resolution must use
+    # ledger-backed authorization rather than parsing tool-message prose.
+    prior_results = [
+        HumanMessage(content="REQUEST ID: prior-request\nUSER QUERY: Show me bags"),
+        AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "id": "prior-search",
+                    "name": "search_catalog_tool",
+                    "args": {"semantic_query": "bags"},
+                }
+            ],
+        ),
+        ToolMessage(
+            content=(
+                "PRODUCT_REF: bag-a\nNAME: Work Bag\n\n"
+                "PRODUCT_REF: bag-b\nNAME: Canvas Tote"
+            ),
+            name="search_catalog_tool",
+            tool_call_id="prior-search",
+        ),
+    ]
+    messages = [
+        *prior_results,
+        *_activated_messages(
+            skill_name="cart-management",
+            query="Add that bag",
+        ),
+    ]
+    request = _tool_request(
+        "add_cart_items_tool",
+        messages,
+        {"items": [{"product_ref": "bag-a"}]},
+    )
+    handled: list[ToolCallRequest] = []
+
+    result = middleware.wrap_tool_call(request, handled.append)
+
+    assert handled == []
+    assert isinstance(result, ToolMessage)
+    rejection = str(result.content).casefold()
+    assert "reference" in rejection
+    assert "clarif" in rejection
 
 
 def test_cart_management_exposes_cart_mutation_but_not_catalog_search() -> None:

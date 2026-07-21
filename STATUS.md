@@ -1,6 +1,6 @@
 # Project Status
 
-Updated: 2026-07-20
+Updated: 2026-07-21
 
 ## Current Milestone
 
@@ -236,8 +236,8 @@ lives in [Schema-Driven Catalog Architecture](docs/CATALOG_REFACTOR_PLAN.md).
 
 ## Verification
 
-- Full offline unit suite: 854 passed with one pre-existing
-  `StarletteDeprecationWarning` in 6.11 seconds.
+- Full offline unit suite: 854 passed, 4 strict expected failures, and one
+  pre-existing `StarletteDeprecationWarning` in 5.76 seconds.
 - Focused checkpoint coverage: 8 passed, including default and explicit memory
   mode, fail-fast rejection of every other store, and failed-thread cleanup.
 - Focused Slice 0 policy and activation coverage in the full suite verifies
@@ -245,6 +245,11 @@ lives in [Schema-Driven Catalog Architecture](docs/CATALOG_REFACTOR_PLAN.md).
   complete selected-file injection, model visibility for each selected grant
   union, direct-dispatch allow/deny behavior, current-request isolation,
   same-batch rejection, and preservation of non-shopping `read_file` access.
+- The tests-only Slice 1 regression boundary freezes five cases: browse-only
+  cart rejection already passes through Slice 0; invented filter provenance,
+  ambiguous historical reference clarification, add replay, and remove replay
+  are strict expected failures assigned to Slices 2, 3, and 5. An unexpected
+  pass fails the suite until the marker is removed.
 - Agent observability coverage verifies current-turn skill activation, model-issued
   tool-call order and arguments, rejection/duplicate classification, pending
   calls, additive API/SSE propagation, snapshot-before-delete failure handling,

@@ -74,8 +74,8 @@ The application follows a microservices architecture:
 - **Catalog Retriever**: Generative-LLM-free text/image embedding search, hard
   filtering, normalized COSINE relevance scores, and deterministic result
   ranking
-- **Memory Retriever**: User context, stable cart-line IDs, atomic absolute
-  quantity updates, and request-scoped database sessions
+- **Memory Retriever**: User context, stable cart-line IDs, atomically
+  idempotent add/remove/quantity mutations, and request-scoped database sessions
 - **Guardrails**: Content safety and moderation
 - **UI**: React-based frontend interface
 

@@ -378,7 +378,20 @@ def test_get_cart_maps_memory_rows_to_contract_cart() -> None:
 
 
 def test_add_cart_item_posts_memory_payload_and_returns_message() -> None:
-    session = FakeSession(FakeResponse({"message": "added 2 Silk Dress"}))
+    session = FakeSession(
+        FakeResponse(
+            {
+                "cart_line": {
+                    "cart_line_id": "line-17",
+                    "product_id": "prod_123",
+                    "item": "Silk Dress",
+                    "amount": 2,
+                    "price": 49.99,
+                },
+                "message": "added 2 Silk Dress",
+            }
+        )
+    )
 
     result = add_cart_item(
         AddCartItemInput(
@@ -396,22 +409,38 @@ def test_add_cart_item_posts_memory_payload_and_returns_message() -> None:
     assert result.ok is True
     assert session.calls[0]["url"] == "http://memory-retriever:8011/user/42/cart/add"
     assert session.calls[0]["json"] == {
+        "product_id": "prod_123",
         "item": "Silk Dress",
         "amount": 2,
         "price": 49.99,
+        "idempotency_key": "cart-add-1",
     }
+    assert result.changed_line.cart_line_id == "line-17"
     assert result.changed_line.product_id == "prod_123"
     assert result.message == "added 2 Silk Dress"
     assert result.meta.idempotency_key == "cart-add-1"
 
 
 def test_remove_cart_item_posts_memory_payload_and_returns_message() -> None:
-    session = FakeSession(FakeResponse({"message": "removed 1 Silk Dress"}))
+    session = FakeSession(
+        FakeResponse(
+            {
+                "cart_line": {
+                    "cart_line_id": "line-17",
+                    "product_id": "prod_123",
+                    "item": "Silk Dress",
+                    "amount": 1,
+                    "price": 49.99,
+                },
+                "message": "removed 1 Silk Dress",
+            }
+        )
+    )
 
     result = remove_cart_item(
         RemoveCartItemInput(
             user_id="42",
-            cart_line_id="Silk Dress",
+            cart_line_id="line-17",
             product_id="prod_123",
             display_name="Silk Dress",
             quantity=1,
@@ -423,7 +452,12 @@ def test_remove_cart_item_posts_memory_payload_and_returns_message() -> None:
 
     assert result.ok is True
     assert session.calls[0]["url"] == "http://memory-retriever:8011/user/42/cart/remove"
-    assert session.calls[0]["json"] == {"item": "Silk Dress", "amount": 1}
+    assert session.calls[0]["json"] == {
+        "cart_line_id": "line-17",
+        "amount": 1,
+        "idempotency_key": "cart-remove-1",
+    }
+    assert result.changed_line.cart_line_id == "line-17"
     assert result.changed_line.product_id == "prod_123"
     assert result.message == "removed 1 Silk Dress"
     assert result.meta.idempotency_key == "cart-remove-1"

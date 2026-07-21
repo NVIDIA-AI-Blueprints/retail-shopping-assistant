@@ -90,8 +90,8 @@ SDK adapter:
   including error paths, so sustained multi-turn traffic returns connections
   to the pool deterministically.
 - Cart reads map the opaque, non-reusable `CartItem.cart_line_id` to
-  `CART_LINE_ID`. Quantity update sends one absolute-quantity `PUT` to that
-  line; positive values update it in one transaction and `0` deletes it.
+  `CART_LINE_ID`. Adds identify products by catalog `product_id`; remove and
+  absolute-quantity update identify existing rows by `cart_line_id`.
 - Store policy is loaded from
   `shared/configs/chain_server/store_policies.yaml` and cached for the process
   lifetime. The bundled template fails closed until an operator replaces its
@@ -139,12 +139,12 @@ The first tool contract set is:
 | `RemoveCartItemInput` / `CartMutationResult` | Mutating | Remove an explicit cart line by `cart_line_id`. |
 
 Mutating inputs require `idempotency_key` so agent retries and future protocol
-adapters retain a stable request identity. Quantity updates commit their
-idempotency record and absolute-value mutation atomically; identical retries
-replay the stored result, while reuse for a different mutation is rejected.
-Add and remove still echo the key in tool metadata without server-side
-deduplication. Quantity-update idempotency records currently persist for the
-SQLite database lifetime; retention and cleanup policy remain follow-up work.
+adapters retain a stable request identity. Add, remove, and quantity update use
+one owner-scoped replay ledger and commit the cart change plus replay record
+atomically. Identical retries return the stored result; reuse for a different
+operation, target, or quantity is rejected before mutation. Records currently
+persist for the SQLite database lifetime; retention and cleanup policy remain
+follow-up work.
 
 ### Stateless Catalog Search
 
@@ -270,12 +270,11 @@ change any shared commerce request or result model.
 
 ## Remaining Direction
 
-The active Deep Agents runtime now uses these wrappers. Cart reads expose the
-memory service's opaque, non-reusable `cart_line_id` as `CART_LINE_ID`, and
-absolute quantity updates atomically enforce idempotency. Remaining commerce
-identity work is to obtain an upstream product-ID guarantee and persist source
-product IDs and variants in the cart service instead of relying on display
-names for stored products.
+The active Deep Agents runtime now uses these wrappers. Cart adds persist the
+catalog `product_id`; cart reads expose the memory service's opaque,
+non-reusable `cart_line_id` as `CART_LINE_ID`; and all registered mutation paths
+atomically enforce idempotency. Remaining commerce identity work is variant-
+level cart identity and a bounded retention policy for replay records.
 Legacy `RetrieverAgent` and `CartAgent` code remains for compatibility tests but
 is not the serving entrypoint.
 

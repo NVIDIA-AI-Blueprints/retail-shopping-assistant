@@ -79,6 +79,11 @@ class QueryRequest(BaseModel):
     session_id: Optional[str] = None
     conversation_id: Optional[str] = None
     cart_id: Optional[str] = None
+    request_id: Optional[str] = Field(
+        default=None,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+    )
     context: Optional[str] = ""
     cart: Optional[Cart] = None
     retrieved: Optional[Dict[str, str]] = {}
@@ -149,6 +154,7 @@ async def process_query_stream(request: QueryRequest):
             session_id=request.session_id,
             conversation_id=request.conversation_id,
             cart_id=request.cart_id,
+            request_id=request.request_id,
         )
         
         async def send_updates():
@@ -194,6 +200,7 @@ async def process_query_timing(request: QueryRequest):
             session_id=request.session_id,
             conversation_id=request.conversation_id,
             cart_id=request.cart_id,
+            request_id=request.request_id,
         )
         
         # Process query and collect timing data

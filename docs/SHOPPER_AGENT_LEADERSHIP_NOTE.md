@@ -68,7 +68,7 @@ flowchart LR
 | --- | --- | --- |
 | Product JSONL + schema sidecar | Product records, taxonomy roles, filter roles, prices, and details | Operator-published catalog snapshot |
 | Milvus | Vector candidates for the active catalog snapshot | Rebuilt or reused from the catalog fingerprint |
-| Memory-service SQLite | Bounded conversation text, authoritative cart, cart-line IDs, and quantity-update idempotency | Service-owned persistence; shared only through that service |
+| Memory-service SQLite | Bounded conversation text, authoritative cart, product/cart-line identity, and atomic mutation replay | Service-owned persistence; shared only through that service |
 | LangGraph `MemorySaver` | Exact graph messages and tool state keyed by `conversation_id` | Process-local; lost on restart and not shared across replicas |
 | Product-ref cache | Recently returned product refs used by details and cart adds | Bounded and process-local; valid only for the active catalog snapshot |
 | Turn `State` | Query, media, context, cart, current evidence, timings, and diagnostics | Transient for one request |
@@ -117,14 +117,12 @@ contract, and the catalog supplies product truth.
 
 ### 1. Add explicit turn authorization against the locked regressions
 
-Slice 1 now preserves the known unauthorized-mutation, invented-constraint,
-idempotency-replay, duplicate-add, and ambiguous-reference cases. The
-browse-only mutation case already passes through Slice 0; four strict expected
-failures identify the later slice that must make each guarantee real. Next,
-compile model proposals into a server-owned, immutable authorization object and
-require an authorized intent at dispatch. The current Slice 0 gate proves that
-only `cart-management` can expose cart mutators; it does not yet prove that the
-shopper requested a mutation.
+Slice 3 closes the mutation-retry cases with one memory-service transaction
+boundary for add, remove, and quantity update. Slice 0 proves that only
+`cart-management` can expose cart mutators; it does not yet prove that the
+shopper requested a particular mutation. That narrower authorization boundary,
+invented-constraint assurance, and ambiguous historical references remain
+separate work.
 
 ### 2. Add a structured conversation-reference ledger
 
@@ -172,12 +170,12 @@ from conversation text.
 
 ## Recommendation
 
-First simplify and validate the styling-skill boundary. Then deliver cart-only
-authorization, cart idempotency, durable turn/event storage, and historical
-reference resolution as separate slices. The catalog remains unchanged. The
-trap is adding keyword taxonomy mappings or increasingly specific prompt rules:
-that would couple language interpretation to catalog structure and make each
-new skill harder to extend safely.
+The styling boundary is focused and cart idempotency is now memory-service
+owned. Deliver cart-only intent authorization, durable turn/event storage, and
+historical reference resolution as separate slices. The catalog remains
+unchanged. The trap is adding keyword taxonomy mappings or increasingly
+specific prompt rules: that would couple language interpretation to catalog
+structure and make each new skill harder to extend safely.
 
 For implementation detail, see the
 [Shopper Agent Architecture](SHOPPER_AGENT_ARCHITECTURE.md),

@@ -436,9 +436,32 @@ def _install_http_stubs(
         recorder.calls.append(("POST", url, json))
         # Which memory endpoint is being invoked?
         if url.endswith("/cart/add"):
-            return _FakeResponse({"message": add_message}, status=add_status)
+            return _FakeResponse(
+                {
+                    "cart_line": {
+                        "cart_line_id": "line-added",
+                        "product_id": json["product_id"],
+                        "item": json["item"],
+                        "amount": json["amount"],
+                        "price": json.get("price"),
+                    },
+                    "message": add_message,
+                },
+                status=add_status,
+            )
         if url.endswith("/cart/remove"):
-            return _FakeResponse({"message": remove_message}, status=remove_status)
+            return _FakeResponse(
+                {
+                    "cart_line": {
+                        "cart_line_id": json["cart_line_id"],
+                        "item": "Silk Dress",
+                        "amount": 0,
+                        "price": 49.99,
+                    },
+                    "message": remove_message,
+                },
+                status=remove_status,
+            )
         return _FakeResponse({"status": "ok"})
 
     # Install the session stub. We overwrite the two methods individually
@@ -503,7 +526,11 @@ class TestAddRemoveCart:
         assert len(add_calls) == 1
         _, url, payload = add_calls[0]
         assert url.endswith("/user/42/cart/add")
-        assert payload == {"item": "Silk Dress", "amount": 2, "price": 49.99}
+        assert payload["product_id"] == "Silk Dress"
+        assert payload["item"] == "Silk Dress"
+        assert payload["amount"] == 2
+        assert payload["price"] == 49.99
+        assert payload["idempotency_key"]
 
     def test_add_reports_catalog_miss(
         self, cart_agent: CartAgent, monkeypatch: pytest.MonkeyPatch
@@ -529,6 +556,15 @@ class TestAddRemoveCart:
     ) -> None:
         recorder = _install_http_stubs(
             monkeypatch,
+            cart_before=[
+                {
+                    "cart_line_id": "line-silk",
+                    "product_id": "Silk Dress",
+                    "item": "Silk Dress",
+                    "amount": 1,
+                    "price": 49.99,
+                }
+            ],
             remove_message="removed 1 Silk Dress",
         )
 
@@ -538,7 +574,9 @@ class TestAddRemoveCart:
         remove_calls = [c for c in recorder.calls if c[1].endswith("/cart/remove")]
         _, url, payload = remove_calls[0]
         assert url.endswith("/user/7/cart/remove")
-        assert payload == {"item": "Silk Dress", "amount": 1}
+        assert payload["cart_line_id"] == "line-silk"
+        assert payload["amount"] == 1
+        assert payload["idempotency_key"]
 
     def test_remove_reports_catalog_miss(
         self, cart_agent: CartAgent, monkeypatch: pytest.MonkeyPatch
@@ -696,7 +734,15 @@ class TestCartAgentInvoke:
     ) -> None:
         _install_http_stubs(
             monkeypatch,
-            cart_before=[],
+            cart_before=[
+                {
+                    "cart_line_id": "line-silk",
+                    "product_id": "Silk Dress",
+                    "item": "Silk Dress",
+                    "amount": 1,
+                    "price": 49.99,
+                }
+            ],
             remove_message="removed 1 Silk Dress",
         )
         _install_llm_tool_response(
@@ -831,13 +877,29 @@ def _install_bulk_http_stubs(
             item = json.get("item", "item")
             amount = json.get("amount", 1)
             return _FakeResponse(
-                {"message": f"added {amount} of '{item}' to cart"}
+                {
+                    "cart_line": {
+                        "cart_line_id": f"line-{json['product_id']}",
+                        "product_id": json["product_id"],
+                        "item": item,
+                        "amount": amount,
+                        "price": json.get("price"),
+                    },
+                    "message": f"added {amount} of '{item}' to cart",
+                }
             )
         if url.endswith("/cart/remove"):
-            item = json.get("item", "item")
             amount = json.get("amount", 1)
             return _FakeResponse(
-                {"message": f"removed {amount} of '{item}' from cart"}
+                {
+                    "cart_line": {
+                        "cart_line_id": json["cart_line_id"],
+                        "item": "removed item",
+                        "amount": 0,
+                        "price": None,
+                    },
+                    "message": f"removed {amount} from cart",
+                }
             )
         return _FakeResponse({"status": "ok"})
 
@@ -1022,6 +1084,22 @@ class TestBulkCartDispatch:
                     "texts": ["Leather Bag | bag | accessory\nPRICE: 99.99"],
                 },
             },
+            cart_after=[
+                {
+                    "cart_line_id": "line-silk",
+                    "product_id": "Silk Dress",
+                    "item": "Silk Dress",
+                    "amount": 1,
+                    "price": 49.99,
+                },
+                {
+                    "cart_line_id": "line-bag",
+                    "product_id": "Leather Bag",
+                    "item": "Leather Bag",
+                    "amount": 2,
+                    "price": 99.99,
+                },
+            ],
         )
         _install_llm_tool_response(
             cart_agent,
@@ -1040,9 +1118,11 @@ class TestBulkCartDispatch:
         remove_posts = [
             payload for _, url, payload in recorder.calls if url.endswith("/cart/remove")
         ]
-        assert [(p.get("item"), p.get("amount")) for p in remove_posts] == [
-            ("Silk Dress", 1),
-            ("Leather Bag", 2),
+        assert [
+            (p.get("cart_line_id"), p.get("amount")) for p in remove_posts
+        ] == [
+            ("line-silk", 1),
+            ("line-bag", 2),
         ]
 
     def test_bulk_add_handles_empty_items_gracefully(

@@ -340,6 +340,7 @@ class TestStreamEndpoint:
                 "session_id": "session-a",
                 "conversation_id": "conversation-a",
                 "cart_id": "cart-a",
+                "request_id": "request-a",
             },
         )
 
@@ -348,6 +349,7 @@ class TestStreamEndpoint:
         assert identity.session_id == "session-a"
         assert identity.conversation_id == "conversation-a"
         assert identity.cart_id == "cart-a"
+        assert identity.request_id == "request-a"
         assert identity.context_user_id != 1
         assert identity.cart_user_id != 1
 
@@ -398,6 +400,24 @@ class TestRequestIdentity:
         assert identity.context_user_id == 42
         assert identity.cart_user_id == 42
         assert identity.legacy_user_id == 42
+
+    def test_explicit_request_id_is_preserved(self) -> None:
+        from chain_server.src.deepagents_runtime import create_request_identity
+
+        identity = create_request_identity(
+            legacy_user_id=42,
+            request_id="request-a",
+        )
+
+        assert identity.request_id == "request-a"
+
+    def test_missing_request_id_generates_a_new_value(self) -> None:
+        from chain_server.src.deepagents_runtime import create_request_identity
+
+        first = create_request_identity(legacy_user_id=42)
+        second = create_request_identity(legacy_user_id=42)
+
+        assert first.request_id != second.request_id
 
     def test_cart_scope_can_survive_across_conversations(self) -> None:
         from chain_server.src.deepagents_runtime import create_request_identity

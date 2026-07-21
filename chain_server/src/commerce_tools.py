@@ -9,8 +9,8 @@ Agents tools, and later protocol adapters can share the same typed boundary.
 """
 
 # Cart reads expose the memory service's opaque CartItem.cart_line_id as
-# CART_LINE_ID. Legacy add/remove endpoints still address lines by display_name;
-# absolute quantity updates use the stable ID through the dedicated endpoint.
+# CART_LINE_ID. Add requests use catalog product identity; remove and absolute
+# quantity requests use the stable cart-line ID.
 
 from __future__ import annotations
 
@@ -264,7 +264,12 @@ def add_cart_item(
     """Add one item to the shopper cart through the memory service adapter."""
 
     display_name = request.display_name or request.product_id
-    payload: dict[str, Any] = {"item": display_name, "amount": request.quantity}
+    payload: dict[str, Any] = {
+        "product_id": request.product_id,
+        "item": display_name,
+        "amount": request.quantity,
+        "idempotency_key": request.idempotency_key,
+    }
     if request.unit_price is not None:
         payload["price"] = request.unit_price.amount
 
@@ -298,17 +303,19 @@ def add_cart_item(
             meta=ToolMeta(idempotency_key=request.idempotency_key),
         )
 
+    changed_line = _cart_line_from_memory_item(data.get("cart_line") or {})
+    if changed_line is None or changed_line.product_id != request.product_id:
+        return CartMutationResult(
+            ok=False,
+            error=CommerceError(
+                code="cart_response_invalid",
+                message="Cart add returned an invalid response.",
+            ),
+            meta=ToolMeta(idempotency_key=request.idempotency_key),
+        )
     return CartMutationResult(
         ok=True,
-        changed_line=CartLine(
-            cart_line_id=display_name,
-            product_id=request.product_id,
-            display_name=display_name,
-            quantity=request.quantity,
-            variant_id=request.variant_id,
-            unit_price=request.unit_price,
-            image_url=request.image_url,
-        ),
+        changed_line=changed_line,
         message=str(data.get("message") or ""),
         meta=ToolMeta(idempotency_key=request.idempotency_key),
     )
@@ -328,7 +335,11 @@ def remove_cart_item(
     try:
         response = http.post(
             f"{memory_retriever_url.rstrip('/')}/user/{request.user_id}/cart/remove",
-            json={"item": display_name, "amount": request.quantity},
+            json={
+                "cart_line_id": request.cart_line_id,
+                "amount": request.quantity,
+                "idempotency_key": request.idempotency_key,
+            },
             timeout=timeout_seconds,
         )
         response.raise_for_status()
@@ -354,14 +365,32 @@ def remove_cart_item(
             meta=ToolMeta(idempotency_key=request.idempotency_key),
         )
 
+    cart_line_data = data.get("cart_line") if isinstance(data, dict) else None
+    changed_line = None
+    if isinstance(cart_line_data, dict):
+        response_line_id = str(cart_line_data.get("cart_line_id") or "")
+        if response_line_id != request.cart_line_id:
+            return CartMutationResult(
+                ok=False,
+                error=CommerceError(
+                    code="cart_response_invalid",
+                    message="Cart remove returned an invalid response.",
+                ),
+                meta=ToolMeta(idempotency_key=request.idempotency_key),
+            )
+        changed_line = _cart_line_from_memory_item(cart_line_data)
+    else:
+        return CartMutationResult(
+            ok=False,
+            error=CommerceError(
+                code="cart_response_invalid",
+                message="Cart remove returned an invalid response.",
+            ),
+            meta=ToolMeta(idempotency_key=request.idempotency_key),
+        )
     return CartMutationResult(
         ok=True,
-        changed_line=CartLine(
-            cart_line_id=request.cart_line_id,
-            product_id=request.product_id or display_name,
-            display_name=display_name,
-            quantity=request.quantity,
-        ),
+        changed_line=changed_line,
         message=str(data.get("message") or ""),
         meta=ToolMeta(idempotency_key=request.idempotency_key),
     )

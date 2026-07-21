@@ -616,8 +616,8 @@ Skills that grant this tool:
 Current limitations:
 
 - `CART_LINE_ID` is the memory service's opaque, non-reusable cart-line ID.
-- Stored source product IDs, variants, and inventory are future work; the
-  legacy add/remove endpoints still identify stored products by display name.
+- Source product IDs are persisted for serving-path adds. Variants and inventory
+  remain future work.
 
 ### `view_cart_total_tool`
 
@@ -698,7 +698,8 @@ Side effects:
 
 - Mutates the scoped cart through the memory cart service.
 - Reads the cart again after mutation and updates `state.cart`.
-- Uses a runtime-generated idempotency key.
+- Uses a runtime-generated idempotency key backed by the memory service's
+  owner-scoped mutation ledger.
 - Duplicate refs in one call are aggregated before mutation.
 
 Failure behavior:
@@ -716,9 +717,8 @@ Skills that grant this tool:
 
 Current limitations:
 
-- The idempotency key is generated and echoed in metadata, but the current
-  memory service adapter does not enforce deduplication yet.
 - Variant, inventory, and checkout validation are not part of this tool.
+- Mutation replay records currently persist for the SQLite database lifetime.
 
 ### `remove_cart_item_tool`
 
@@ -749,7 +749,8 @@ Side effects:
 - Reads the current cart to validate the line.
 - Mutates the scoped cart through the memory cart service.
 - Reads the cart again after mutation and updates `state.cart`.
-- Uses a runtime-generated idempotency key.
+- Uses a runtime-generated idempotency key backed by the memory service's
+  owner-scoped mutation ledger.
 
 Failure behavior:
 
@@ -762,8 +763,7 @@ Skills that grant this tool:
 
 Current limitations:
 
-- The idempotency key is generated and echoed in metadata, but the current
-  memory service adapter does not enforce deduplication yet.
+- Mutation replay records currently persist for the SQLite database lifetime.
 
 ### `update_cart_items_tool`
 
@@ -794,7 +794,7 @@ Side effects:
 - Commits the mutation and its idempotency record together. Repeating the same
   key and mutation replays the stored result; conflicting key reuse is rejected
   without a remove-then-add sequence.
-- Idempotency records currently persist for the SQLite database lifetime;
+- Mutation replay records currently persist for the SQLite database lifetime;
   retention and cleanup policy remain follow-up work.
 
 Failure behavior:
@@ -810,8 +810,8 @@ Skills that grant this tool:
 
 Current limitations:
 
-- The cart service still stores display names rather than source product IDs or
-  variants; this does not affect stable line targeting for quantity updates.
+- Variant-level cart identity remains future work; this does not affect stable
+  line targeting for quantity updates.
 
 ### `get_store_policy_tool`
 

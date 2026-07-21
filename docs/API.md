@@ -125,6 +125,7 @@ interface QueryRequest {
   session_id?: string;                // Optional website/browser session identifier
   conversation_id?: string;           // Optional chat thread identifier
   cart_id?: string;                   // Optional cart identifier
+  request_id?: string;                // Optional stable ID for retrying this turn
   context?: string;                   // Previous conversation context
   cart?: Cart;                        // Current shopping cart state
   retrieved?: Record<string, string>; // Previously retrieved products
@@ -150,6 +151,7 @@ interface MediaAttachment {
   "session_id": "session_abc",
   "conversation_id": "conversation_abc",
   "cart_id": "cart_abc",
+  "request_id": "request_abc",
   "context": "Previous conversation about summer clothing",
   "cart": {
     "contents": [
@@ -167,14 +169,18 @@ interface MediaAttachment {
 }
 ```
 
-`session_id`, `conversation_id`, and `cart_id` are optional for backward
-compatibility. When they are omitted, the server maps the legacy `user_id` to
-internal compatibility identifiers. The bundled UI creates browser-session
-identifiers and sends them on every turn. When supplied, `conversation_id`
-scopes the Deep Agents thread and conversation memory, while `cart_id` scopes
-cart reads/writes. Production website integrations should move these IDs to a
-server-owned session/thread service before broad rollout so customer context and
-cart state cannot bleed across sessions.
+`session_id`, `conversation_id`, `cart_id`, and `request_id` are optional for
+backward compatibility. When the scoped IDs are omitted, the server maps the
+legacy `user_id` to internal compatibility identifiers; when `request_id` is
+omitted, it generates a new UUID for the turn. A caller retrying the same turn
+should reuse its request ID so any repeated cart mutation reuses the same
+idempotency key. This does not yet replay the whole assistant response; durable
+turn replay belongs to the conversation-storage slice. The bundled UI creates
+browser-session identifiers and sends them on every turn. When supplied,
+`conversation_id` scopes the Deep Agents thread and conversation memory, while
+`cart_id` scopes cart reads/writes. Production website integrations should move
+these IDs to a server-owned session/thread service before broad rollout so
+customer context and cart state cannot bleed across sessions.
 
 The `conversation_id` thread is currently checkpointed in process-local
 MemorySaver. Graph state disappears on restart and is not shared across workers

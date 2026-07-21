@@ -189,6 +189,8 @@ class CartAgent():
         if result.ok and result.cart:
             cart_data = [
                 {
+                    "cart_line_id": line.cart_line_id,
+                    "product_id": line.product_id,
                     "item": line.display_name,
                     "amount": line.quantity,
                     "price": line.unit_price.amount if line.unit_price else None,
@@ -322,10 +324,24 @@ class CartAgent():
 
         catalog_item_name = match["name"]
         product = match["product"]
+        cart = self._get_cart(user_id)
+        lines = [
+            line
+            for line in cart.contents
+            if line.get("product_id") == product.product_id
+        ]
+        if not lines:
+            lines = [
+                line
+                for line in cart.contents
+                if line.get("item") == catalog_item_name
+            ]
+        if len(lines) != 1 or not lines[0].get("cart_line_id"):
+            return f"No such item ({catalog_item_name}) could be found in the cart."
         result = remove_cart_item(
             RemoveCartItemInput(
                 user_id=str(user_id),
-                cart_line_id=catalog_item_name,
+                cart_line_id=str(lines[0]["cart_line_id"]),
                 product_id=product.product_id,
                 display_name=catalog_item_name,
                 quantity=quantity,

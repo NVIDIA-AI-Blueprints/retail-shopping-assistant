@@ -19,7 +19,7 @@ see the [Shopper Agent Leadership Note](SHOPPER_AGENT_LEADERSHIP_NOTE.md).
 | --- | --- | --- |
 | Published catalog | Product records, taxonomy, filter values, field roles, prices, details, and retrieval results | Shopper intent, styling judgment, cart state, or inventory |
 | Deep Agents runtime | Semantic intent, skill selection, deterministic selected-skill tool grants, tool selection, and styling judgment | Product facts, policy facts, or cart truth |
-| Memory and checkpointer | Recent conversation context, process-local graph checkpoints, and authoritative cart state | Catalog facts, shared product-ref authorization, or permission to invent stale product details |
+| Memory and checkpointer | Recent conversation context, process-local graph checkpoints, authoritative cart state, and atomic mutation replay records | Catalog facts, shared product-ref authorization, or permission to invent stale product details |
 
 A model-authored semantic query is an internal **ranking preference**, not a
 product fact or shopper-facing explanation. Only catalog tool evidence can
@@ -263,6 +263,11 @@ Product refs used for follow-up detail reads and cart adds are a separate,
 bounded process-local cache. They are separate from the process-local graph
 checkpoint, so a restart, another replica, eviction, or catalog replacement
 requires a fresh search.
+
+Cart transaction safety is owned by the memory service. Adds use catalog
+`product_id`; removes and quantity updates use opaque `cart_line_id`. Each
+mutation commits with its owner-scoped idempotency record, so an identical retry
+replays and conflicting key reuse cannot change the cart.
 
 The serving implementation is split across the
 [Deep Agents runtime](../chain_server/src/deepagents_runtime.py),

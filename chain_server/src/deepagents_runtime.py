@@ -3931,6 +3931,7 @@ def create_request_identity(
     session_id: str | None = None,
     conversation_id: str | None = None,
     cart_id: str | None = None,
+    request_id: str | None = None,
 ) -> RequestIdentity:
     """Create scoped request identity while preserving legacy user_id behavior."""
 
@@ -3947,7 +3948,7 @@ def create_request_identity(
             else legacy_user_id
         ),
         cart_user_id=_stable_numeric_id("cart", cart_id) if cart_id else legacy_user_id,
-        request_id=str(uuid.uuid4()),
+        request_id=request_id or str(uuid.uuid4()),
     )
 
 

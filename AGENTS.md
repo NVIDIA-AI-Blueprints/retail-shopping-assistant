@@ -7,7 +7,7 @@ This file is a working guide for coding agents and contributors in this reposito
 Retail Shopping Assistant is a multi-service application with:
 - `chain_server`: FastAPI + Deep Agents SDK orchestration over deterministic catalog and cart tools.
 - `catalog_retriever`: FastAPI service for text/image embedding retrieval against Milvus.
-- `memory_retriever`: FastAPI + SQLite service for per-user context and cart state, including stable cart-line IDs and atomic quantity updates.
+- `memory_retriever`: FastAPI + SQLite service for per-user context and cart state, including stable cart-line IDs and atomically idempotent add/remove/quantity mutations.
 - `guardrails`: FastAPI wrapper around NeMo Guardrails input/output safety checks.
 - `ui`: React + TypeScript chat UI using SSE streaming.
 - `shared`: Shared YAML configs, JSONL catalog data/role sidecars, and image assets.
@@ -53,8 +53,9 @@ Top-level orchestration is via `docker-compose.yaml`; optional local NIM model c
 - Embedding retrieval, deterministic ranking, and filtering: `catalog_retriever/src/retriever.py`
 - Image/base64 helpers: `catalog_retriever/src/utils.py`
 
-- Memory API and SQLite schema (`CartItem` includes an opaque `cart_line_id`
-  and `price`, with idempotent migrations): `memory_retriever/src/main.py`
+- Memory API and SQLite schema (`CartItem` includes catalog `product_id`, opaque
+  `cart_line_id`, and `price`; `cart_mutations` owns atomic replay):
+  `memory_retriever/src/main.py`
 
 - Guardrails API: `guardrails/src/main.py`
 - Guardrails engine/wiring: `guardrails/src/rails.py`
@@ -200,18 +201,20 @@ Key env vars:
   not shared across workers or replicas. `CHECKPOINT_STORE=memory` is currently
   the only supported value; a compliant production shared backend remains an
   open decision.
-- `CartItem` rows carry a `price` column; the deterministic `view_cart_total` tool uses these prices instead of letting the LLM do arithmetic. Older DBs are auto-migrated by `_ensure_price_column`.
+- `CartItem` rows carry catalog `product_id`, opaque `cart_line_id`, and `price`
+  fields. Startup migrations add missing fields to older SQLite databases. The
+  deterministic `view_cart_total` tool uses stored prices instead of letting
+  the LLM do arithmetic.
 - The serving cart tools require a `PRODUCT_REF` from catalog search for adds and
   a `CART_LINE_ID` from cart state for removals. Adds revalidate the product
   against the active catalog before changing memory state.
-- Cart reads expose the memory service's opaque, non-reusable
-  `cart_line_id` as `CART_LINE_ID`. Quantity changes use one
-  absolute-quantity `PUT`; its idempotency key and cart mutation commit in the
-  same SQLite transaction, so identical retries replay once and key conflicts
-  fail without mutation. Quantity-update idempotency records currently persist
-  for the SQLite database lifetime; retention policy remains follow-up work.
-  The legacy add/remove endpoints still store and address products by display
-  name; persisting source product IDs and variants remains future work.
+- Cart adds use catalog `product_id`; removals and quantity changes use the
+  memory service's opaque, non-reusable `cart_line_id`. All three mutations
+  share one owner-scoped idempotency ledger. The cart change and replay record
+  commit in the same SQLite transaction, so identical retries replay once and
+  conflicting key reuse fails without mutation. Mutation records currently
+  persist for the SQLite database lifetime; retention policy remains follow-up
+  work. Variant-level cart identity remains future work.
 - Store-policy content is cached from an operator-managed YAML file. The
   bundled template has `configured: false`, so it fails closed until every
   placeholder is replaced and an operator explicitly enables it. Product

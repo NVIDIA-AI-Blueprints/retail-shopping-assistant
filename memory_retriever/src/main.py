@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from typing import Optional
+from hashlib import sha256
 import json
 import logging
 import time
@@ -39,12 +40,15 @@ class CartItem(Base):
         index=True,
     )
     user_id = Column(Integer, index=True)
+    product_id = Column(String, nullable=True, index=True)
     item = Column(String)
     amount = Column(Integer)
     price = Column(Float, nullable=True)
 
 
 class CartQuantityIdempotency(Base):
+    """Legacy quantity-only ledger retained as a migration source."""
+
     __tablename__ = "cart_quantity_idempotency"
     idempotency_key = Column(String, primary_key=True)
     user_id = Column(Integer, nullable=False)
@@ -53,7 +57,14 @@ class CartQuantityIdempotency(Base):
     response_body = Column(String, nullable=False)
 
 
-Base.metadata.create_all(bind=engine)
+class CartMutation(Base):
+    __tablename__ = "cart_mutations"
+    user_id = Column(Integer, primary_key=True)
+    idempotency_key = Column(String, primary_key=True)
+    operation = Column(String, nullable=False)
+    canonical_digest = Column(String, nullable=False)
+    stable_target_id = Column(String, nullable=False)
+    response_body = Column(String, nullable=False)
 
 
 def _ensure_price_column() -> None:
@@ -98,8 +109,71 @@ def _ensure_cart_line_id_column() -> None:
         )
 
 
+def _ensure_product_id_column() -> None:
+    """Idempotently add catalog product identity to existing cart rows."""
+
+    with engine.connect() as conn:
+        columns = conn.execute(text("PRAGMA table_info(cart_items)")).fetchall()
+        if not any(col[1] == "product_id" for col in columns):
+            conn.execute(text("ALTER TABLE cart_items ADD COLUMN product_id TEXT"))
+            conn.commit()
+
+
+def _cart_mutation_digest(
+    operation: str,
+    stable_target_id: str,
+    request_body: dict,
+) -> str:
+    canonical = json.dumps(
+        {
+            "operation": operation,
+            "stable_target_id": stable_target_id,
+            "request_body": request_body,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _migrate_quantity_idempotency() -> None:
+    """Copy existing quantity replay records into the unified ledger once."""
+
+    with engine.begin() as conn:
+        rows = conn.execute(
+            text(
+                "SELECT idempotency_key, user_id, cart_line_id, quantity, "
+                "response_body FROM cart_quantity_idempotency"
+            )
+        ).mappings()
+        for row in rows:
+            conn.execute(
+                text(
+                    "INSERT OR IGNORE INTO cart_mutations "
+                    "(user_id, idempotency_key, operation, canonical_digest, "
+                    "stable_target_id, response_body) VALUES "
+                    "(:user_id, :idempotency_key, 'update', :canonical_digest, "
+                    ":stable_target_id, :response_body)"
+                ),
+                {
+                    "user_id": row["user_id"],
+                    "idempotency_key": row["idempotency_key"],
+                    "canonical_digest": _cart_mutation_digest(
+                        "update",
+                        row["cart_line_id"],
+                        {"quantity": row["quantity"]},
+                    ),
+                    "stable_target_id": row["cart_line_id"],
+                    "response_body": row["response_body"],
+                },
+            )
+
+
+Base.metadata.create_all(bind=engine)
 _ensure_price_column()
 _ensure_cart_line_id_column()
+_ensure_product_id_column()
+_migrate_quantity_idempotency()
 
 
 class ContextUpdate(BaseModel):
@@ -107,8 +181,15 @@ class ContextUpdate(BaseModel):
 
 class ItemUpdate(BaseModel):
     item: str
-    amount: int
+    amount: int = Field(gt=0)
     price: Optional[float] = None
+    product_id: str = Field(..., min_length=1)
+    idempotency_key: str = Field(..., min_length=1)
+
+class CartRemoveUpdate(BaseModel):
+    amount: int = Field(gt=0)
+    cart_line_id: str = Field(..., min_length=1)
+    idempotency_key: str = Field(..., min_length=1)
 
 class CartQuantityUpdate(BaseModel):
     quantity: int = Field(ge=0)
@@ -124,36 +205,86 @@ def get_db():
         db.close()
 
 def _cart_item_dict(item: CartItem) -> dict:
-    return {
+    result = {
         "cart_line_id": item.cart_line_id,
         "item": item.item,
         "amount": item.amount,
         "price": item.price,
     }
+    if item.product_id:
+        result["product_id"] = item.product_id
+    return result
 
 
-def _replay_cart_quantity_update(
+def _replay_cart_mutation(
     db,
-    idempotency_key: str,
     user_id: int,
-    cart_line_id: str,
-    quantity: int,
+    idempotency_key: str,
+    operation: str,
+    stable_target_id: str,
+    canonical_digest: str,
 ) -> dict | None:
-    record = db.query(CartQuantityIdempotency).filter(
-        CartQuantityIdempotency.idempotency_key == idempotency_key
+    record = db.query(CartMutation).filter(
+        CartMutation.user_id == user_id,
+        CartMutation.idempotency_key == idempotency_key,
     ).first()
     if record is None:
         return None
     if (
-        record.user_id != user_id
-        or record.cart_line_id != cart_line_id
-        or record.quantity != quantity
+        record.operation != operation
+        or record.stable_target_id != stable_target_id
+        or record.canonical_digest != canonical_digest
     ):
         raise HTTPException(
             status_code=409,
             detail="Idempotency key was already used for a different cart mutation",
         )
     return json.loads(record.response_body)
+
+
+def _commit_cart_mutation(
+    db,
+    *,
+    user_id: int,
+    idempotency_key: str,
+    operation: str,
+    stable_target_id: str,
+    canonical_digest: str,
+    response: dict,
+) -> dict:
+    db.add(
+        CartMutation(
+            user_id=user_id,
+            idempotency_key=idempotency_key,
+            operation=operation,
+            stable_target_id=stable_target_id,
+            canonical_digest=canonical_digest,
+            response_body=json.dumps(response),
+        )
+    )
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        replay = _replay_cart_mutation(
+            db,
+            user_id,
+            idempotency_key,
+            operation,
+            stable_target_id,
+            canonical_digest,
+        )
+        if replay is None:
+            raise
+        return replay
+    return response
+
+
+def _cart_item_for_add(db, user_id: int, product_id: str) -> CartItem | None:
+    return db.query(CartItem).filter(
+        CartItem.user_id == user_id,
+        CartItem.product_id == product_id,
+    ).first()
 
 
 @app.get("/user/{user_id}")
@@ -201,41 +332,117 @@ async def add_to_cart(
     item = item_update.item
     amount = item_update.amount
     price = item_update.price
-    cart_item = db.query(CartItem).filter(CartItem.user_id == user_id, CartItem.item == item).first()
-    if cart_item:
-        cart_item.amount += amount
-        # Refresh price if the caller provides a newer value; keep existing otherwise.
-        if price is not None:
-            cart_item.price = price
-    else:
-        cart_item = CartItem(user_id=user_id, item=item, amount=amount, price=price)
-        db.add(cart_item)
-    db.commit()
-    return {
-        "user_id": user_id,
-        "message": f"In response to the user's request, I have added {amount} of '{item}' to their cart."
+    stable_target_id = item_update.product_id
+    canonical_digest = _cart_mutation_digest(
+        "add",
+        stable_target_id,
+        {"amount": amount, "item": item, "price": price},
+    )
+    try:
+        replay = _replay_cart_mutation(
+            db,
+            user_id,
+            item_update.idempotency_key,
+            "add",
+            stable_target_id,
+            canonical_digest,
+        )
+        if replay is not None:
+            return replay
+        cart_item = _cart_item_for_add(db, user_id, item_update.product_id)
+        if cart_item:
+            cart_item.amount += amount
+            if price is not None:
+                cart_item.price = price
+        else:
+            cart_item = CartItem(
+                user_id=user_id,
+                product_id=item_update.product_id,
+                item=item,
+                amount=amount,
+                price=price,
+            )
+            db.add(cart_item)
+        db.flush()
+        response = {
+            "user_id": user_id,
+            "cart_line": _cart_item_dict(cart_item),
+            "message": (
+                f"In response to the user's request, I have added {amount} "
+                f"of '{item}' to their cart."
+            ),
         }
+        return _commit_cart_mutation(
+            db,
+            user_id=user_id,
+            idempotency_key=item_update.idempotency_key,
+            operation="add",
+            stable_target_id=stable_target_id,
+            canonical_digest=canonical_digest,
+            response=response,
+        )
+    except Exception:
+        db.rollback()
+        raise
 
 @app.post("/user/{user_id}/cart/remove")
 async def remove_cart(
     user_id: int,
-    item_update: ItemUpdate,
+    item_update: CartRemoveUpdate,
     db=Depends(get_db),
 ):
-    item = item_update.item
     amount = item_update.amount
-    cart_item = db.query(CartItem).filter(CartItem.user_id == user_id, CartItem.item == item).first()
-    if not cart_item:
-        raise HTTPException(status_code=404, detail="Item not in cart")
-    if cart_item.amount <= amount:
-        db.delete(cart_item)
-    else:
-        cart_item.amount -= amount
-    db.commit()
-    return {
-        "user_id": user_id,
-        "message": f"In response to the user's request, I have removed {amount} of '{item}' from cart."
+    stable_target_id = item_update.cart_line_id
+    canonical_digest = _cart_mutation_digest(
+        "remove",
+        stable_target_id,
+        {"amount": amount},
+    )
+    try:
+        replay = _replay_cart_mutation(
+            db,
+            user_id,
+            item_update.idempotency_key,
+            "remove",
+            stable_target_id,
+            canonical_digest,
+        )
+        if replay is not None:
+            return replay
+        cart_item = db.query(CartItem).filter(
+            CartItem.user_id == user_id,
+            CartItem.cart_line_id == item_update.cart_line_id,
+        ).first()
+        if not cart_item:
+            raise HTTPException(status_code=404, detail="Item not in cart")
+        item = cart_item.item
+        remaining = max(0, cart_item.amount - amount)
+        cart_line = _cart_item_dict(cart_item)
+        cart_line["amount"] = remaining
+        if remaining == 0:
+            db.delete(cart_item)
+        else:
+            cart_item.amount = remaining
+        response = {
+            "user_id": user_id,
+            "cart_line": cart_line,
+            "message": (
+                f"In response to the user's request, I have removed {amount} "
+                f"of '{item}' from cart."
+            ),
         }
+        return _commit_cart_mutation(
+            db,
+            user_id=user_id,
+            idempotency_key=item_update.idempotency_key,
+            operation="remove",
+            stable_target_id=stable_target_id,
+            canonical_digest=canonical_digest,
+            response=response,
+        )
+    except Exception:
+        db.rollback()
+        raise
 
 @app.put("/user/{user_id}/cart/{cart_line_id}/quantity")
 async def update_cart_quantity(
@@ -244,13 +451,19 @@ async def update_cart_quantity(
     quantity_update: CartQuantityUpdate,
     db=Depends(get_db),
 ):
+    canonical_digest = _cart_mutation_digest(
+        "update",
+        cart_line_id,
+        {"quantity": quantity_update.quantity},
+    )
     try:
-        replay = _replay_cart_quantity_update(
+        replay = _replay_cart_mutation(
             db,
-            quantity_update.idempotency_key,
             user_id,
+            quantity_update.idempotency_key,
+            "update",
             cart_line_id,
-            quantity_update.quantity,
+            canonical_digest,
         )
         if replay is not None:
             return replay
@@ -272,30 +485,15 @@ async def update_cart_quantity(
             "cart_line": cart_line,
             "message": f"Updated '{item}' to quantity {quantity_update.quantity}.",
         }
-        db.add(
-            CartQuantityIdempotency(
-                idempotency_key=quantity_update.idempotency_key,
-                user_id=user_id,
-                cart_line_id=cart_line_id,
-                quantity=quantity_update.quantity,
-                response_body=json.dumps(response),
-            )
+        return _commit_cart_mutation(
+            db,
+            user_id=user_id,
+            idempotency_key=quantity_update.idempotency_key,
+            operation="update",
+            stable_target_id=cart_line_id,
+            canonical_digest=canonical_digest,
+            response=response,
         )
-        try:
-            db.commit()
-        except IntegrityError:
-            db.rollback()
-            replay = _replay_cart_quantity_update(
-                db,
-                quantity_update.idempotency_key,
-                user_id,
-                cart_line_id,
-                quantity_update.quantity,
-            )
-            if replay is None:
-                raise
-            return replay
-        return response
     except Exception:
         db.rollback()
         raise

@@ -242,11 +242,9 @@ lives in [Schema-Driven Catalog Architecture](docs/CATALOG_REFACTOR_PLAN.md).
 
 ## Verification
 
-The broad results below are the preserved committed Slice 0 baseline. The
-focused Slice 2 result is the pre-response-boundary comparison point; current
-quality and timing comparisons stay in the required local quality archive
-rather than versioned source. The complete suite and broad Judge cohort remain
-release-readiness gates.
+The current Slice 3 gates are recorded first. Older Slice 0 and focused Slice 2
+results remain below as comparison points; generated quality and timing
+artifacts stay in the required local archive rather than versioned source.
 
 - Focused Slice 2 skill/authorization gate after restarting the local runtime:
   34 passed and 2 strict expected failures in 2.89 seconds, with one pre-existing
@@ -267,11 +265,19 @@ release-readiness gates.
   field. The clean result is 0.4 points above the matching committed Slice 0
   scenario (2.8/5 and 7.717 seconds mean), flat with Staging quality (3.2/5)
   while faster than its 11.064-second mean, and 0.6 points below the older
-  pre-Slice-0 good WIP scenario (3.8/5 and 5.892 seconds mean). The complete
-  48-turn comparison is deferred to the release-readiness gate.
+  pre-Slice-0 good WIP scenario (3.8/5 and 5.892 seconds mean). The current
+  48-turn Slice 3 comparison is recorded below.
 
-- Full offline unit suite: 854 passed, 4 strict expected failures, and one
-  pre-existing `StarletteDeprecationWarning` in 5.76 seconds.
+- Current Slice 3 full offline unit suite: 861 passed, 2 strict expected
+  failures, and one pre-existing `StarletteDeprecationWarning` in 7.90 seconds.
+  The remaining expected failures track constraint provenance and durable
+  historical-reference resolution.
+- Focused Slice 3 cart transaction suite: 78 passed with the same pre-existing
+  warning. It covers caller-stable request IDs, adapter propagation, exact
+  add/remove/update replay, conflicting-key rejection, stable cart-line removal,
+  rollback of every mutation path, and legacy quantity-ledger migration.
+- Directly affected legacy cart-adapter compatibility coverage: 12 passed,
+  including opaque-line resolution before remove and bulk add/remove dispatch.
 - Focused checkpoint coverage: 8 passed, including default and explicit memory
   mode, fail-fast rejection of every other store, and failed-thread cleanup.
 - Focused Slice 0 policy and activation coverage in the full suite verifies
@@ -279,14 +285,11 @@ release-readiness gates.
   complete selected-file injection, model visibility for each selected grant
   union, direct-dispatch allow/deny behavior, current-request isolation,
   same-batch rejection, and preservation of non-shopping `read_file` access.
-- The tests-only Slice 1 regression boundary freezes five cases: browse-only
-  cart rejection already passes through Slice 0; invented filter provenance,
-  ambiguous historical reference clarification, add replay, and remove replay
-  remain strict expected failures. Add/remove replay belongs to the cart
-  transaction slice and ambiguous history belongs to reference resolution.
-  Filter provenance remains an unresolved semantic-assurance decision; this
-  skill-boundary slice does not claim to solve it. An unexpected pass fails the
-  suite until the marker is removed.
+- The tests-only Slice 1 boundary originally froze five cases. Browse-only cart
+  rejection passes through Slice 0, and add/remove replay now pass through the
+  Slice 3 transaction boundary. Invented filter provenance and ambiguous
+  historical reference clarification remain strict expected failures for their
+  separate slices.
 - Agent observability coverage verifies current-turn skill activation, model-issued
   tool-call order and arguments, rejection/duplicate classification, pending
   calls, additive API/SSE propagation, snapshot-before-delete failure handling,
@@ -311,6 +314,18 @@ release-readiness gates.
   exact idempotency replay, conflicting-key rejection, delete/add/retry safety,
   disabled policy content, persona omission, service health, and Compose
   configuration.
+- The current Slice 3 fixed shopping cohort completed all 48 Judge decisions at
+  3.4167/5, exactly matching the preserved Slice 0 WIP average. Score-4-or-better
+  coverage increased from 29/48 to 33/48. Distribution changed from
+  `2: 12, 3: 7, 4: 26, 5: 3` to `1: 4, 2: 7, 3: 4, 4: 31, 5: 2`.
+- Timing is qualified: 46/48 requests produced timing records, with mean / median /
+  p95 / maximum of 13.810s / 12.898s / 25.037s / 30.761s versus
+  4.513s / 3.704s / 9.135s / 17.257s in the preserved Slice 0 WIP. Two target
+  requests hit the explicit 60-second timeout. Per-turn memory stayed near
+  0.007s and the added cart transaction path was not exercised by this
+  read-only fixed suite; the observed latency and timeout regression is in the
+  hosted Deep Agents path and cannot be attributed to the Slice 3 cart boundary.
+  The run is preserved as `current_wip`; it was not patched or rerun.
 - The clean Slice 0 working tree was evaluated as
   `slice0_clean_candidate_20260720` and promoted to the canonical local
   `current_wip` archive. It completed all 48 shopper turns with 48 Judge results
@@ -370,13 +385,13 @@ separate audit because the pre-existing dependency set contains additional
 license notices unrelated to checkpointing.
 Cart reads now expose an opaque, non-reusable `cart_line_id` as
 `CART_LINE_ID`, including an idempotent migration for existing databases.
-Quantity updates use one absolute-value `PUT`; their idempotency ledger and cart
-mutation commit atomically, so identical retries replay and conflicting key
-reuse fails without mutation. The legacy add/remove paths still store products
-by display name and do not enforce their generated idempotency keys server-side.
-Quantity-update idempotency rows and their stored responses currently persist
-for the SQLite database lifetime; retention and cleanup policy remain a
-follow-up.
+Adds persist the catalog `product_id`; remove and absolute-quantity update use
+the cart-line ID. All three mutation paths share one owner-scoped replay ledger
+and commit the cart change plus replay record atomically. Identical retries
+replay, while conflicting key reuse fails without mutation. Mutation records
+and their stored responses currently persist for the SQLite database lifetime;
+retention and cleanup policy remain a follow-up. Variant-level cart identity is
+also deferred.
 Product availability remains `unknown` until a live inventory/variant service
 is integrated.
 

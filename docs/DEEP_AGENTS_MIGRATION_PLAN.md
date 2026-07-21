@@ -324,14 +324,14 @@ Server-side generation is the first step. Later, explicit session and
 conversation APIs can expose these identifiers for multi-thread website
 features.
 
-Current bridge implementation keeps the memory service schema unchanged. It
-uses the legacy numeric `user_id` when explicit IDs are absent, derives a
-stable internal key from `conversation_id` for conversation memory when present,
-and derives a separate stable internal key from `cart_id` for cart reads/writes
-when present. Cart reads expose the opaque, non-reusable
-`CartItem.cart_line_id` as `CART_LINE_ID`; absolute quantity updates use one
-service `PUT` scoped by that ID and cart owner, with the idempotency record and
-mutation committed atomically.
+The current bridge uses the legacy numeric `user_id` when explicit IDs are
+absent, derives a stable internal key from `conversation_id` for conversation
+memory when present, and derives a separate stable internal key from `cart_id`
+for cart reads/writes when present. Callers may provide one bounded `request_id`
+per turn; otherwise the server generates it. Cart adds persist catalog
+`product_id`, while reads expose the opaque, non-reusable
+`CartItem.cart_line_id` as `CART_LINE_ID` for remove and quantity update. All
+three mutation paths commit with one owner-scoped idempotency record.
 
 Product evidence identity is a separate, narrower bridge. The runtime keeps at
 most 50 returned `PRODUCT_REF` values per `conversation_id` in process memory,
@@ -385,10 +385,9 @@ The tool layer is small, typed, and deterministic:
 - `get_product_details`: read-only product facts for one product.
 - `get_cart`: read-only cart state for a `cart_id`.
 - `add_cart_item`: mutating cart write using a `PRODUCT_REF` previously returned
-  by product search; its generated key is metadata until add deduplication is
-  implemented in the memory service.
+  by product search; identical idempotency-key retries replay the stored result.
 - `remove_cart_item`: mutating cart write using a
-  `CART_LINE_ID` returned by cart reads.
+  `CART_LINE_ID` returned by cart reads; identical retries replay once.
 - `update_cart_item`: mutating cart quantity update using a current
   `CART_LINE_ID`; one absolute-value `PUT` sets the quantity and `0` removes the
   line. Identical idempotency-key retries replay the stored result; conflicting
@@ -607,13 +606,15 @@ Implications:
 - Graph checkpointing does not cover the separate process-local product-ref
   cache. Cross-replica product follow-ups require either a fresh search or a
   future shared evidence store with catalog-snapshot identity.
-- Mutating tools must use idempotency keys so retries do not double-add items.
+- Mutating tools use owner-scoped idempotency keys so retries do not apply a
+  cart change twice.
 - Tool calls need timeouts, retry policy, and clear structured failures.
 - Agent turns need strict step limits so one broad request cannot monopolize
   model capacity during traffic spikes.
 - Catalog search should remain stateless and cacheable where possible.
-- Cart writes need ownership checks, optimistic concurrency or transactions,
-  and request idempotency.
+- Cart writes have owner checks, one SQLite transaction for mutation plus replay
+  record, and request idempotency. Multi-writer revision control remains future
+  production work.
 - Returned tool payloads should be compact. Large result sets should be
   summarized or offloaded instead of injected wholesale into context.
 - Observability must include `request_id`, `session_id`, `conversation_id`,
@@ -833,7 +834,7 @@ Implications:
   Agents checkpoints for production replicas?
 - Should anonymous sessions use cookies, headers, or both?
 - What is the cart TTL for anonymous and logged-in users?
-- What retention and cleanup policy should apply to cart quantity idempotency
+- What retention and cleanup policy should apply to cart mutation idempotency
   records?
 - Which typed persona fields and trusted profile source should a future
   authenticated integration support?

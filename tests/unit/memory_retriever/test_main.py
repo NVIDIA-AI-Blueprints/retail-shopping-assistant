@@ -11,6 +11,7 @@ against that engine. Every test gets a fresh database through the
 
 from __future__ import annotations
 
+from itertools import count
 from typing import Iterator
 
 import pytest
@@ -52,6 +53,51 @@ def isolated_memory_db(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
 @pytest.fixture
 def client(isolated_memory_db) -> TestClient:
     return TestClient(memory_main.app)
+
+
+_mutation_sequence = count()
+
+
+def _add_cart(
+    client: TestClient,
+    user_id: int,
+    item: str,
+    amount: int,
+    *,
+    price: float | None = None,
+    product_id: str | None = None,
+) -> object:
+    payload = {
+        "product_id": product_id or f"test:{item}",
+        "item": item,
+        "amount": amount,
+        "idempotency_key": f"test-add-{next(_mutation_sequence)}",
+    }
+    if price is not None:
+        payload["price"] = price
+    return client.post(f"/user/{user_id}/cart/add", json=payload)
+
+
+def _remove_cart(
+    client: TestClient,
+    user_id: int,
+    item: str,
+    amount: int,
+) -> object:
+    matches = [
+        line
+        for line in client.get(f"/user/{user_id}/cart").json()["cart"]
+        if line["item"] == item
+    ]
+    cart_line_id = matches[0]["cart_line_id"] if matches else "missing-line"
+    return client.post(
+        f"/user/{user_id}/cart/remove",
+        json={
+            "cart_line_id": cart_line_id,
+            "amount": amount,
+            "idempotency_key": f"test-remove-{next(_mutation_sequence)}",
+        },
+    )
 
 
 # --------------------------------------------------------------------------->
@@ -123,10 +169,7 @@ class TestCartFlows:
         assert response.json() == {"user_id": 1, "cart": []}
 
     def test_add_single_item(self, client: TestClient) -> None:
-        response = client.post(
-            "/user/1/cart/add",
-            json={"item": "Silk Dress", "amount": 1, "price": 49.99},
-        )
+        response = _add_cart(client, 1, "Silk Dress", 1, price=49.99)
         assert response.status_code == 200
         assert "added 1" in response.json()["message"]
 
@@ -134,42 +177,34 @@ class TestCartFlows:
         assert len(cart_line["cart_line_id"]) == 32
         int(cart_line["cart_line_id"], 16)
         assert cart_line["item"] == "Silk Dress"
+        assert cart_line["product_id"] == "test:Silk Dress"
         assert cart_line["amount"] == 1
         assert cart_line["price"] == 49.99
 
     def test_repeated_add_increments_existing_amount(self, client: TestClient) -> None:
-        client.post(
-            "/user/1/cart/add",
-            json={"item": "Silk Dress", "amount": 1, "price": 49.99},
-        )
+        _add_cart(client, 1, "Silk Dress", 1, price=49.99)
         cart_line_id = client.get("/user/1/cart").json()["cart"][0][
             "cart_line_id"
         ]
-        client.post(
-            "/user/1/cart/add",
-            json={"item": "Silk Dress", "amount": 2, "price": 49.99},
-        )
+        _add_cart(client, 1, "Silk Dress", 2, price=49.99)
 
         cart = client.get("/user/1/cart").json()["cart"]
         assert cart == [
             {
                 "cart_line_id": cart_line_id,
+                "product_id": "test:Silk Dress",
                 "item": "Silk Dress",
                 "amount": 3,
                 "price": 49.99,
             }
         ]
 
-    @pytest.mark.xfail(
-        strict=True,
-        raises=AssertionError,
-        reason="Slice 3 will enforce add idempotency in the memory service.",
-    )
     def test_duplicate_add_with_same_key_mutates_once(
         self,
         client: TestClient,
     ) -> None:
         payload = {
+            "product_id": "prod_silk_dress",
             "item": "Silk Dress",
             "amount": 1,
             "price": 49.99,
@@ -186,14 +221,8 @@ class TestCartFlows:
     def test_add_updates_price_when_newer_provided(
         self, client: TestClient
     ) -> None:
-        client.post(
-            "/user/1/cart/add",
-            json={"item": "Silk Dress", "amount": 1, "price": 49.99},
-        )
-        client.post(
-            "/user/1/cart/add",
-            json={"item": "Silk Dress", "amount": 1, "price": 69.99},
-        )
+        _add_cart(client, 1, "Silk Dress", 1, price=49.99)
+        _add_cart(client, 1, "Silk Dress", 1, price=69.99)
 
         cart = client.get("/user/1/cart").json()["cart"]
         assert cart[0]["price"] == pytest.approx(69.99)
@@ -202,48 +231,38 @@ class TestCartFlows:
     def test_add_without_price_keeps_existing_price(
         self, client: TestClient
     ) -> None:
-        client.post(
-            "/user/1/cart/add",
-            json={"item": "Silk Dress", "amount": 1, "price": 49.99},
-        )
+        _add_cart(client, 1, "Silk Dress", 1, price=49.99)
         # Second call omits price; existing 49.99 should be preserved.
-        client.post(
-            "/user/1/cart/add",
-            json={"item": "Silk Dress", "amount": 1},
-        )
+        _add_cart(client, 1, "Silk Dress", 1)
 
         cart = client.get("/user/1/cart").json()["cart"]
         assert cart[0]["price"] == pytest.approx(49.99)
 
     def test_remove_reduces_amount(self, client: TestClient) -> None:
-        client.post(
-            "/user/1/cart/add",
-            json={"item": "Silk Dress", "amount": 3, "price": 49.99},
-        )
-        response = client.post(
-            "/user/1/cart/remove",
-            json={"item": "Silk Dress", "amount": 1},
-        )
+        _add_cart(client, 1, "Silk Dress", 3, price=49.99)
+        response = _remove_cart(client, 1, "Silk Dress", 1)
         assert response.status_code == 200
 
         cart = client.get("/user/1/cart").json()["cart"]
         assert cart[0]["amount"] == 2
 
-    @pytest.mark.xfail(
-        strict=True,
-        raises=AssertionError,
-        reason="Slice 3 will replay remove results without a second mutation.",
-    )
     def test_remove_with_same_key_replays_original_mutation(
         self,
         client: TestClient,
     ) -> None:
-        client.post(
-            "/user/1/cart/add",
-            json={"item": "Silk Dress", "amount": 3, "price": 49.99},
+        _add_cart(
+            client,
+            1,
+            "Silk Dress",
+            3,
+            price=49.99,
+            product_id="prod_silk_dress",
         )
+        cart_line_id = client.get("/user/1/cart").json()["cart"][0][
+            "cart_line_id"
+        ]
         payload = {
-            "item": "Silk Dress",
+            "cart_line_id": cart_line_id,
             "amount": 1,
             "idempotency_key": "remove-silk-once",
         }
@@ -255,32 +274,84 @@ class TestCartFlows:
         cart = client.get("/user/1/cart").json()["cart"]
         assert cart[0]["amount"] == 2
 
-    def test_remove_deletes_when_amount_exceeded(self, client: TestClient) -> None:
-        client.post(
+    def test_reused_add_key_for_different_product_is_rejected(
+        self,
+        client: TestClient,
+    ) -> None:
+        first = client.post(
             "/user/1/cart/add",
-            json={"item": "Silk Dress", "amount": 2, "price": 49.99},
+            json={
+                "product_id": "prod_silk_dress",
+                "item": "Silk Dress",
+                "amount": 1,
+                "idempotency_key": "shared-add-key",
+            },
         )
-        client.post(
+        conflict = client.post(
+            "/user/1/cart/add",
+            json={
+                "product_id": "prod_leather_bag",
+                "item": "Leather Bag",
+                "amount": 1,
+                "idempotency_key": "shared-add-key",
+            },
+        )
+
+        assert first.status_code == 200
+        assert conflict.status_code == 409
+        assert client.get("/user/1/cart").json()["cart"] == [
+            first.json()["cart_line"]
+        ]
+
+    def test_remove_targets_opaque_line_id_not_display_name(
+        self,
+        client: TestClient,
+    ) -> None:
+        for product_id in ("prod_silk_one", "prod_silk_two"):
+            client.post(
+                "/user/1/cart/add",
+                json={
+                    "product_id": product_id,
+                    "item": "Silk Dress",
+                    "amount": 1,
+                    "idempotency_key": f"add-{product_id}",
+                },
+            )
+        cart = client.get("/user/1/cart").json()["cart"]
+
+        response = client.post(
             "/user/1/cart/remove",
-            json={"item": "Silk Dress", "amount": 5},
+            json={
+                "cart_line_id": cart[0]["cart_line_id"],
+                "amount": 1,
+                "idempotency_key": "remove-first-silk",
+            },
         )
+
+        assert response.status_code == 200
+        assert client.get("/user/1/cart").json()["cart"] == [cart[1]]
+
+    def test_remove_deletes_when_amount_exceeded(self, client: TestClient) -> None:
+        _add_cart(client, 1, "Silk Dress", 2, price=49.99)
+        _remove_cart(client, 1, "Silk Dress", 5)
 
         cart = client.get("/user/1/cart").json()["cart"]
         assert cart == []
 
-    def test_remove_unknown_item_returns_404(self, client: TestClient) -> None:
+    def test_remove_unknown_line_returns_404(self, client: TestClient) -> None:
         response = client.post(
             "/user/1/cart/remove",
-            json={"item": "Ghost", "amount": 1},
+            json={
+                "cart_line_id": "missing-line",
+                "amount": 1,
+                "idempotency_key": "remove-missing-line",
+            },
         )
         assert response.status_code == 404
         assert response.json()["detail"] == "Item not in cart"
 
     def test_update_quantity_sets_absolute_amount(self, client: TestClient) -> None:
-        client.post(
-            "/user/1/cart/add",
-            json={"item": "Silk Dress", "amount": 2, "price": 49.99},
-        )
+        _add_cart(client, 1, "Silk Dress", 2, price=49.99)
         cart_line_id = client.get("/user/1/cart").json()["cart"][0][
             "cart_line_id"
         ]
@@ -293,6 +364,7 @@ class TestCartFlows:
         assert response.status_code == 200
         assert response.json()["cart_line"] == {
             "cart_line_id": cart_line_id,
+            "product_id": "test:Silk Dress",
             "item": "Silk Dress",
             "amount": 4,
             "price": 49.99,
@@ -308,10 +380,7 @@ class TestCartFlows:
         assert cart[0]["amount"] == 4
 
     def test_update_quantity_zero_deletes_line(self, client: TestClient) -> None:
-        client.post(
-            "/user/1/cart/add",
-            json={"item": "Silk Dress", "amount": 2, "price": 49.99},
-        )
+        _add_cart(client, 1, "Silk Dress", 2, price=49.99)
         cart_line_id = client.get("/user/1/cart").json()["cart"][0][
             "cart_line_id"
         ]
@@ -328,10 +397,7 @@ class TestCartFlows:
     def test_deleted_line_id_is_not_reused_and_zero_retry_is_safe(
         self, client: TestClient
     ) -> None:
-        client.post(
-            "/user/1/cart/add",
-            json={"item": "Silk Dress", "amount": 2, "price": 49.99},
-        )
+        _add_cart(client, 1, "Silk Dress", 2, price=49.99)
         first_line_id = client.get("/user/1/cart").json()["cart"][0][
             "cart_line_id"
         ]
@@ -339,10 +405,7 @@ class TestCartFlows:
             f"/user/1/cart/{first_line_id}/quantity",
             json={"quantity": 0, "idempotency_key": "delete-first-line"},
         )
-        client.post(
-            "/user/1/cart/add",
-            json={"item": "Leather Bag", "amount": 1, "price": 99.0},
-        )
+        _add_cart(client, 1, "Leather Bag", 1, price=99.0)
         second_line = client.get("/user/1/cart").json()["cart"][0]
 
         assert second_line["cart_line_id"] != first_line_id
@@ -354,6 +417,7 @@ class TestCartFlows:
         assert retry.status_code == 200
         assert retry.json()["cart_line"] == {
             "cart_line_id": first_line_id,
+            "product_id": "test:Silk Dress",
             "item": "Silk Dress",
             "amount": 0,
             "price": 49.99,
@@ -370,10 +434,7 @@ class TestCartFlows:
     def test_idempotency_key_conflict_does_not_mutate_cart(
         self, client: TestClient
     ) -> None:
-        client.post(
-            "/user/1/cart/add",
-            json={"item": "Silk Dress", "amount": 2, "price": 49.99},
-        )
+        _add_cart(client, 1, "Silk Dress", 2, price=49.99)
         cart_line_id = client.get("/user/1/cart").json()["cart"][0][
             "cart_line_id"
         ]
@@ -395,10 +456,7 @@ class TestCartFlows:
     def test_out_of_order_replay_does_not_revert_newer_quantity(
         self, client: TestClient
     ) -> None:
-        client.post(
-            "/user/1/cart/add",
-            json={"item": "Silk Dress", "amount": 1, "price": 49.99},
-        )
+        _add_cart(client, 1, "Silk Dress", 1, price=49.99)
         cart_line_id = client.get("/user/1/cart").json()["cart"][0][
             "cart_line_id"
         ]
@@ -434,10 +492,7 @@ class TestCartFlows:
     def test_update_quantity_cannot_cross_user_boundary(
         self, client: TestClient
     ) -> None:
-        client.post(
-            "/user/1/cart/add",
-            json={"item": "Silk Dress", "amount": 2, "price": 49.99},
-        )
+        _add_cart(client, 1, "Silk Dress", 2, price=49.99)
         cart_line_id = client.get("/user/1/cart").json()["cart"][0][
             "cart_line_id"
         ]
@@ -453,10 +508,7 @@ class TestCartFlows:
     def test_update_quantity_rejects_negative_amount_without_mutation(
         self, client: TestClient
     ) -> None:
-        client.post(
-            "/user/1/cart/add",
-            json={"item": "Silk Dress", "amount": 2, "price": 49.99},
-        )
+        _add_cart(client, 1, "Silk Dress", 2, price=49.99)
         cart_line = client.get("/user/1/cart").json()["cart"][0]
 
         response = client.put(
@@ -473,10 +525,7 @@ class TestCartFlows:
         client: TestClient,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        client.post(
-            "/user/1/cart/add",
-            json={"item": "Silk Dress", "amount": 2, "price": 49.99},
-        )
+        _add_cart(client, 1, "Silk Dress", 2, price=49.99)
         cart_line_id = client.get("/user/1/cart").json()["cart"][0][
             "cart_line_id"
         ]
@@ -515,15 +564,61 @@ class TestCartFlows:
         assert retry.status_code == 200
         assert client.get("/user/1/cart").json()["cart"][0]["amount"] == 4
 
+    @pytest.mark.parametrize("operation", ["add", "remove"])
+    def test_add_and_remove_roll_back_with_their_replay_record(
+        self,
+        client: TestClient,
+        monkeypatch: pytest.MonkeyPatch,
+        operation: str,
+    ) -> None:
+        if operation == "remove":
+            _add_cart(client, 1, "Silk Dress", 1, price=49.99)
+        before = client.get("/user/1/cart").json()["cart"]
+        if operation == "add":
+            path = "/user/1/cart/add"
+            payload = {
+                "product_id": "prod_silk_dress",
+                "item": "Silk Dress",
+                "amount": 1,
+                "idempotency_key": "rollback-add",
+            }
+        else:
+            path = "/user/1/cart/remove"
+            payload = {
+                "cart_line_id": before[0]["cart_line_id"],
+                "amount": 1,
+                "idempotency_key": "rollback-remove",
+            }
+
+        failing_session = memory_main.SessionLocal()
+        rollback_calls = []
+        original_rollback = failing_session.rollback
+
+        def fail_commit() -> None:
+            raise RuntimeError("commit failed")
+
+        def record_rollback() -> None:
+            rollback_calls.append(True)
+            original_rollback()
+
+        monkeypatch.setattr(failing_session, "commit", fail_commit)
+        monkeypatch.setattr(failing_session, "rollback", record_rollback)
+        with monkeypatch.context() as scoped:
+            scoped.setattr(memory_main, "SessionLocal", lambda: failing_session)
+            with pytest.raises(RuntimeError, match="commit failed"):
+                client.post(path, json=payload)
+
+        assert rollback_calls == [True]
+        assert client.get("/user/1/cart").json()["cart"] == before
+        with memory_main.SessionLocal() as db:
+            assert db.query(memory_main.CartMutation).filter_by(
+                user_id=1,
+                idempotency_key=payload["idempotency_key"],
+            ).first() is None
+
     def test_clear_cart_removes_all_items(self, client: TestClient) -> None:
-        client.post(
-            "/user/1/cart/add",
-            json={"item": "A", "amount": 1, "price": 10.0},
-        )
-        client.post(
-            "/user/1/cart/add",
-            json={"item": "B", "amount": 2, "price": 20.0},
-        )
+        _add_cart(client, 1, "A", 1, price=10.0)
+        _add_cart(client, 1, "B", 2, price=20.0)
 
         response = client.post("/user/1/cart/clear")
         assert response.status_code == 200
@@ -536,14 +631,8 @@ class TestCartFlows:
         assert response.status_code == 404
 
     def test_carts_are_partitioned_per_user(self, client: TestClient) -> None:
-        client.post(
-            "/user/1/cart/add",
-            json={"item": "A", "amount": 1, "price": 10.0},
-        )
-        client.post(
-            "/user/2/cart/add",
-            json={"item": "B", "amount": 1, "price": 20.0},
-        )
+        _add_cart(client, 1, "A", 1, price=10.0)
+        _add_cart(client, 2, "B", 1, price=20.0)
 
         assert client.get("/user/1/cart").json()["cart"][0]["item"] == "A"
         assert client.get("/user/2/cart").json()["cart"][0]["item"] == "B"
@@ -556,6 +645,21 @@ class TestCartFlows:
             json={"amount": 1},
         )
         assert response.status_code == 422
+
+    @pytest.mark.parametrize(
+        "path,payload",
+        [
+            ("/user/1/cart/add", {"item": "Silk Dress", "amount": 1}),
+            ("/user/1/cart/remove", {"cart_line_id": "line-1", "amount": 1}),
+        ],
+    )
+    def test_mutations_require_idempotency_keys(
+        self,
+        client: TestClient,
+        path: str,
+        payload: dict,
+    ) -> None:
+        assert client.post(path, json=payload).status_code == 422
 
 
 def test_cart_line_id_migration_is_idempotent(
@@ -584,7 +688,19 @@ def test_cart_line_id_migration_is_idempotent(
     monkeypatch.setattr(memory_main, "engine", legacy_engine)
 
     memory_main.Base.metadata.create_all(bind=legacy_engine)
+    with legacy_engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO cart_quantity_idempotency "
+                "(idempotency_key, user_id, cart_line_id, quantity, response_body) "
+                "VALUES ('legacy-update', 7, 'legacy-line', 2, "
+                "'{\"user_id\": 7, \"message\": \"updated\"}')"
+            )
+        )
     memory_main._ensure_cart_line_id_column()
+    memory_main._ensure_product_id_column()
+    memory_main._migrate_quantity_idempotency()
+    memory_main._migrate_quantity_idempotency()
     with legacy_engine.connect() as conn:
         first_ids = conn.execute(
             text("SELECT cart_line_id FROM cart_items ORDER BY id")
@@ -593,6 +709,15 @@ def test_cart_line_id_migration_is_idempotent(
         tables = conn.execute(
             text("SELECT name FROM sqlite_master WHERE type = 'table'")
         ).scalars().all()
+        product_columns = conn.execute(
+            text("PRAGMA table_info(cart_items)")
+        ).fetchall()
+        migrated_mutations = conn.execute(
+            text(
+                "SELECT user_id, idempotency_key, operation, stable_target_id "
+                "FROM cart_mutations"
+            )
+        ).fetchall()
 
     memory_main._ensure_cart_line_id_column()
     with legacy_engine.connect() as conn:
@@ -608,6 +733,9 @@ def test_cart_line_id_migration_is_idempotent(
         for row in indexes
     )
     assert "cart_quantity_idempotency" in tables
+    assert "cart_mutations" in tables
+    assert any(column[1] == "product_id" for column in product_columns)
+    assert migrated_mutations == [(7, "legacy-update", "update", "legacy-line")]
     legacy_engine.dispose()
 
 

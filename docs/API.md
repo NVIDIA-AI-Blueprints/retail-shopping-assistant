@@ -317,9 +317,10 @@ missing legacy list fields to `[]` and `product_evidence_truncated` to `false`.
 Successful internal search-tool results carry `SEARCH_DIRECTION_EVIDENCE`, the
 model-authored semantic query used as an independent private ranking preference,
 and required pre-retrieval `shopper_guidance` authored under the active skill.
-For completed search-only turns, the runtime presents that product-agnostic
-guidance without a final-synthesis model call; static skill `response_guidance`
-is the fallback. Deterministic code separately renders every returned candidate
+For completed search-only turns, the runtime runs one tools-disabled synthesis
+under the active skill and grounds the draft against tool-role evidence. Static
+skill `response_guidance` and pre-retrieval guidance support deterministic
+fallback, which separately renders every returned candidate
 with its name, price, category, and the confirmed-filter group from its own
 search. A partial successful result set receives a neutral continuation. A zero-result tool response
 carries its exact advertised taxonomy and confirmed filters; that scoped miss
@@ -750,8 +751,9 @@ search may continue to another valid role with its own one-repair opportunity;
 no scope receives two repairs. Completed scopes and deterministic stop results
 close the loop, and the configured turn cap remains three successful searches.
 For multi-role output, each pre-retrieval guidance sentence remains grouped with
-products from its originating search. Completed successful search-only turns render deterministically; mixed-tool
-turns may synthesize from collected evidence.
+products from its originating search. Completed turns get one tools-disabled
+synthesis from collected evidence; search-only drafts pass through grounding,
+with deterministic rendering as fail-closed fallback.
 
 The chain server also bounds product-detail reads with
 `max_product_detail_reads_per_turn`. Detail reads are intended for direct

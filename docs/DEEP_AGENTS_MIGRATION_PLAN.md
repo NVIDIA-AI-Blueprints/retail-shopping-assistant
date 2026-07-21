@@ -190,9 +190,10 @@ Current constraints:
   Every successful search records the model-authored semantic query as
   independent internal `SEARCH_DIRECTION_EVIDENCE` and the required
   pre-retrieval, product-agnostic `shopper_guidance` authored under the active
-  skill. Completed successful search-only responses present that guidance
-  without a final-synthesis model call; static skill `response_guidance` is the
-  fallback. Before guidance becomes deterministic shopper-facing evidence, a
+  skill. Completed successful search-only responses receive one tools-disabled
+  synthesis under the active skill and then the grounding editor. Static skill
+  `response_guidance` and pre-retrieval guidance support deterministic fallback.
+  Before fallback guidance becomes shopper-facing text, a
   narrow scrub replaces documented unsupported outdoor/weather guarantee terms
   with neutral selected-role guidance without changing the semantic query,
   taxonomy, hard constraints, or retrieval. Covered forms include
@@ -444,8 +445,9 @@ tool use closes. A successful or zero-result search that consumes the final
 configured search slot instead records `SEARCH_BUDGET_EXHAUSTED`; the next
 model step removes only the search tool, preventing a futile additional search
 without blocking product details, availability, cart work, or honest partial
-synthesis. Completed successful search-only evidence renders deterministically;
-mixed-tool paths may receive synthesis from their collected evidence.
+synthesis. Completed turns receive one tools-disabled synthesis from collected
+evidence. Search-only drafts then pass through grounding, with deterministic
+rendering as fail-closed fallback.
 
 The search contract has two explicit no-search boundaries. A concrete requested
 type with no faithful taxonomy value uses `no_direct_catalog_match` and performs
@@ -489,9 +491,9 @@ reasoning remains model-owned.
 Final grounding accepts evidence only from tool-role messages. The current
 request is isolated by its request marker and prior-turn evidence is supplied
 separately for references to products already shown. Completed successful
-search-only turns present pre-retrieval `shopper_guidance` authored under the
-active skill; static `response_guidance` is the fallback. There is no
-final-synthesis model call. Candidate facts and confirmed filters are rendered
+search-only turns receive one tools-disabled synthesis under the active skill,
+then grounding against tool-role evidence. Pre-retrieval `shopper_guidance` and
+static `response_guidance` support deterministic fallback. Candidate facts and confirmed filters are rendered
 deterministically, with each search retaining its own guidance, product, and
 filter-evidence group. Grouped candidates deduplicate by `product_ref`, not
 display name. Mixed-outcome turns retain successful product groups when another
@@ -736,8 +738,8 @@ Implications:
   free-form scope that cannot be reconstructed safely remains protected by
   `repair_scope_changed`. On a native schema-invalid call, malformed or nonempty
   free-form `unadvertised_requirements` arguments close without repair. Successful
-  search-only turns render deterministically; mixed-tool turns synthesize from
-  collected evidence.
+  completed turns receive one tools-disabled synthesis from collected evidence;
+  search-only drafts then pass through grounding with deterministic fallback.
 - Taxonomy and required-constraint schemas contain only capability-derived
   advertised fields and values, plus the explicit
   `unadvertised_requirements` lane.
@@ -790,9 +792,10 @@ Implications:
   honest partial synthesis.
 - Grounding accepts only tool-role evidence, isolates current-turn evidence by
   request ID, and cannot treat a prior assistant draft as tool evidence.
-- Completed successful search-only output uses pre-retrieval `shopper_guidance`
-  authored under the active skill, with static `response_guidance` as fallback
-  and no final-synthesis model call. Before that guidance becomes evidence, the
+- Completed successful search-only output receives one tools-disabled synthesis
+  under the active skill and then grounding against tool-role evidence.
+  Pre-retrieval `shopper_guidance` and static `response_guidance` support
+  deterministic fallback. Before fallback guidance becomes shopper-facing text, the
   runtime replaces documented prohibited outdoor/weather guarantee terms with
   neutral selected-role guidance without changing search semantics. Covered
   forms include outdoor-surface or outdoor-walking claims and constructions such

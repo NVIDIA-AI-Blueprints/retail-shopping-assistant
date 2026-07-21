@@ -159,8 +159,9 @@ schema-valid, genuinely open `agent_selected_type` request retains the bounded
 review for a proposed inferred requirement. A completed scope, an exhausted repair budget,
 or any tool result
 beginning with `STOP_TOOL_USE` removes tools from the following model step and
-closes the loop. Successful search-only turns go directly to deterministic
-rendering; mixed-tool turns synthesize from evidence already collected. When a
+closes the loop. Closed turns get one tools-disabled synthesis from evidence
+already collected. Successful search-only drafts then pass through the
+grounding editor, with deterministic rendering as fail-closed fallback. When a
 runtime semantic open-role schema repair removes a proposed inferred
 requirement, runtime replaces its submitted pre-search guidance with neutral
 generic guidance for the selected role. A successful or zero-result search that
@@ -189,10 +190,11 @@ reference but cannot prove that a new search or mutation ran. For search-only
 turns, successful search results carry `SEARCH_DIRECTION_EVIDENCE`: the
 model-authored semantic query used as an independent internal ranking preference,
 plus required pre-retrieval `shopper_guidance` authored under the active skill.
-The latter is presented without a final-synthesis model call; static skill
-`response_guidance` is the fallback. Results, taxonomy, filters, semantic query,
-and drafts are not converted into guidance after retrieval. Before guidance is
-serialized as deterministic shopper-facing evidence, the runtime replaces a
+A closed search gets one tools-disabled synthesis under that skill and then the
+grounding editor. Static skill `response_guidance` and pre-retrieval guidance
+support deterministic fallback. Results, taxonomy, filters, semantic query,
+and drafts are not converted into evidence after retrieval. Before fallback
+guidance is serialized as shopper-facing text, the runtime replaces a
 sentence containing `waterproof`, `water-resistant`/`water resistant`,
 `weather-safe`/`weather safe`, `bug-safe`/`bug safe`, wet surface(s) or
 ground(s), `wet conditions`, `grass`, `gravel`, `all-day`/`all day`,
@@ -437,10 +439,11 @@ Outputs:
 - The serving agent sends one text query per catalog call. The catalog performs
   no shopper-language interpretation, query expansion, or learned reranking.
 - Successful results carry the pre-retrieval `shopper_guidance` separately from
-  product evidence. For a completed search-only response, the runtime presents
-  that guidance without a final-synthesis model call; static skill
-  `response_guidance` is the fallback. Prohibited outdoor/weather guarantee
-wording is first replaced with neutral selected-role guidance; this does not
+  product evidence. For a completed search-only response, the runtime runs one
+  tools-disabled synthesis under the active skill and grounds the draft against
+  tool-role evidence. Static skill `response_guidance` and pre-retrieval guidance
+  support deterministic fallback. Prohibited outdoor/weather guarantee wording
+is first replaced with neutral selected-role guidance in that fallback; this does not
 alter the query, taxonomy, constraints, or retrieval. This includes
 outdoor-surface or outdoor-walking claims and "handle rain," "work well for
 outdoor surfaces," or "stay secure for outdoor walking" constructions, plus
@@ -498,8 +501,9 @@ Failure behavior:
 - A completed scope, unsupported taxonomy or requirement, repeated scope,
   exhausted detail budget, or other `STOP_TOOL_USE` result closes further tool
   use. Search-budget exhaustion removes only `search_catalog_tool`, as described
-  above. Completed successful search-only evidence renders deterministically;
-  mixed-tool paths may use a tool-disabled synthesis step.
+  above. Completed turns receive one tools-disabled synthesis from collected
+  evidence. Search-only drafts then pass through grounding, with deterministic
+  rendering as fail-closed fallback.
 - If the Deep Agents loop fails after catalog search has returned products, the
   runtime clears the failed thread checkpoint and returns a grounded partial
   product summary instead of a generic shopper-facing error.

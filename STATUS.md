@@ -31,8 +31,9 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   Each skill also declares product-agnostic `response_guidance` in
   frontmatter as a fallback. Each catalog call supplies required pre-retrieval
   `shopper_guidance` authored under the active skill. Completed successful
-  search-only turns display its safe form before deterministic candidate facts,
-  without a response-editor or final-synthesis model call. Selection and
+  search-only turns receive one tools-disabled synthesis under that skill and
+  then the grounding editor; deterministic candidate formatting remains the
+  fail-closed fallback when synthesis or editing cannot produce an answer. Selection and
   response metadata are regenerated from current files rather than retained in
   the conversation checkpoint;
 - the runtime has a nine-tool shopper registry plus one internal skill
@@ -241,26 +242,33 @@ lives in [Schema-Driven Catalog Architecture](docs/CATALOG_REFACTOR_PLAN.md).
 
 ## Verification
 
-The broad results below are the preserved committed Slice 0 baseline. Slice 2
-uses the focused contract and targeted styling gates recorded separately here;
-the complete suite and broad Judge cohort remain release-readiness gates.
+The broad results below are the preserved committed Slice 0 baseline. The
+focused Slice 2 result is the pre-response-boundary comparison point; current
+quality and timing comparisons stay in the required local quality archive
+rather than versioned source. The complete suite and broad Judge cohort remain
+release-readiness gates.
 
-- Focused Slice 2 skill/authorization gate: 34 passed and 2 strict expected
-  failures in 2.03 seconds, with one pre-existing
+- Focused Slice 2 skill/authorization gate after restarting the local runtime:
+  34 passed and 2 strict expected failures in 2.89 seconds, with one pre-existing
   `StarletteDeprecationWarning`. The expected failures continue to track
   constraint provenance and durable historical-reference resolution.
 - Targeted `conv_5.yaml` styling continuity gate: all five turns activated only
-  `outfit-styling`, completed without fallback, and were judged 3.4/5
-  (scores: 4, 3, 3, 3, 4). Mean turn latency was 4.457 seconds. The critical
+  `outfit-styling`, exposed only the current `skill_names` activation field,
+  completed without fallback, and were judged 3.2/5
+  (scores: 4, 3, 3, 2, 4). Mean turn latency was 3.615 seconds. The critical
   "What bottoms go well with that?" turn retained the beige-top anchor, searched
-  only bottoms, and scored 3/5; the remaining Judge criticism was narrow
-  category breadth rather than lost context or unsupported claims.
-- The targeted result is a qualified improvement over the matching committed
-  Slice 0 scenario (2.8/5 and 7.717 seconds mean) and Staging scenario (3.2/5
-  and 11.064 seconds mean). It remains below the older pre-Slice-0 good WIP
-  scenario (3.8/5 and 5.892 seconds mean), so it is not presented as an
-  unqualified quality gain. The complete 48-turn comparison is deferred to the
-  release-readiness gate.
+  the complete advertised bottoms scope, and scored 3/5. That scope currently
+  contains only skirts; the Judge's request for trousers, jeans, and shorts is
+  a Golden/catalog mismatch rather than a taxonomy omission. The shoe follow-up
+  scored 2/5 because its products did not coordinate well with the established
+  beige-top-and-skirt look even though the catalog advertises neutral footwear.
+- An earlier 3.4/5 result is invalid as evidence for this commit: the chain
+  process predated the commit and emitted the removed `intents` activation
+  field. The clean result is 0.4 points above the matching committed Slice 0
+  scenario (2.8/5 and 7.717 seconds mean), flat with Staging quality (3.2/5)
+  while faster than its 11.064-second mean, and 0.6 points below the older
+  pre-Slice-0 good WIP scenario (3.8/5 and 5.892 seconds mean). The complete
+  48-turn comparison is deferred to the release-readiness gate.
 
 - Full offline unit suite: 854 passed, 4 strict expected failures, and one
   pre-existing `StarletteDeprecationWarning` in 5.76 seconds.

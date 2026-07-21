@@ -335,9 +335,10 @@ repair opportunity, but no scope receives two repairs. The configured turn cap
 remains three successful searches. Each successful search-tool result records
 the model-authored semantic query as internal `SEARCH_DIRECTION_EVIDENCE` and
 the pre-retrieval `shopper_guidance` authored under the active skill. For a
-completed successful search-only turn, that guidance is presented with static
-skill `response_guidance` as fallback; no response-editor or final-synthesis
-model call runs. Deterministic code lists all returned candidates, adds a neutral
+completed successful search-only turn, the active skill gets one tools-disabled
+synthesis and the draft passes through the grounding editor. That guidance and
+static skill `response_guidance` support deterministic fallback, which lists all
+returned candidates, adds a neutral
 continuation for partial successful evidence, and groups each pre-retrieval
 guidance sentence and confirmed-filter set with products from its originating
 search. Zero-result output retains

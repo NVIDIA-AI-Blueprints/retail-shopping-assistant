@@ -248,10 +248,11 @@ For a singleton exact taxonomy value, deterministic validation requires
 `requested_product_type` to match the advertised taxonomy value. The semantic
 query is independent soft ranking direction and need not repeat the taxonomy
 noun. Successful search evidence preserves it as a private ranking preference.
-For a completed successful search-only turn, the runtime uses the
-pre-retrieval `shopper_guidance` preserved in the search-tool result; the active
-skill's static `response_guidance` is only a fallback. No final-synthesis model
-call is made. Before guidance becomes deterministic shopper-facing evidence, a
+For a completed successful search-only turn, the runtime allows one final
+tools-disabled synthesis under the active skill and then grounds that draft
+against tool-role evidence. The pre-retrieval `shopper_guidance` and active
+skill's static `response_guidance` support deterministic fallback when synthesis
+or editing cannot produce an answer. Before fallback guidance is serialized, a
 narrow runtime scrub replaces documented unsupported outdoor/weather guarantee
 language with neutral guidance for the selected role. This changes only response
 framing; the semantic query, taxonomy, constraints, and executed search remain

@@ -118,7 +118,7 @@ def test_stop_result_removes_tools_from_next_model_step(content: str) -> None:
     ).tools == []
 
 
-def test_completed_search_scope_skips_redundant_model_synthesis() -> None:
+def test_completed_search_scope_runs_one_tool_closed_synthesis() -> None:
     middleware = ToolLoopControlMiddleware()
     result = _tool_result(
         "SEARCH_RESULT_GROUNDING_NOTE: grounded candidates\n\n"
@@ -128,15 +128,22 @@ def test_completed_search_scope_skips_redundant_model_synthesis() -> None:
         "PRICE: $49.99 USD\n\n"
         "SEARCH_SCOPE_COMPLETE: This search covers every requested role."
     )
+    captured: list[ModelRequest] = []
+
     def handler(request: ModelRequest) -> ModelResponse:
-        pytest.fail("completed search-only scope must bypass the model")
+        captured.append(request)
+        return ModelResponse(result=[AIMessage(content="shopper answer")])
 
     response = middleware.wrap_model_call(
         _model_request(_messages_with_result(result)),
         handler,
     )
 
-    assert response.result[0].content == ""
+    assert len(captured) == 1
+    assert captured[0].tools == []
+    assert captured[0].tool_choice == "none"
+    assert "## Tool Loop Closed" in captured[0].system_prompt
+    assert response.result[0].content == "shopper answer"
 
 
 def test_search_completion_marker_never_enters_next_turn_text() -> None:
@@ -146,12 +153,12 @@ def test_search_completion_marker_never_enters_next_turn_text() -> None:
         "SEARCH_SCOPE_COMPLETE: complete"
     )
 
-    def skipped_handler(request: ModelRequest) -> ModelResponse:
-        pytest.fail("completed search-only scope must bypass the model")
+    def synthesis_handler(request: ModelRequest) -> ModelResponse:
+        return ModelResponse(result=[AIMessage(content="Here are the best options.")])
 
     completed = first_turn.wrap_model_call(
         _model_request(_messages_with_result(result)),
-        skipped_handler,
+        synthesis_handler,
     )
     messages = [
         HumanMessage(content="first turn"),
@@ -166,7 +173,8 @@ def test_search_completion_marker_never_enters_next_turn_text() -> None:
         for message in captured.messages
         if isinstance(message, AIMessage)
     )
-    assert assistant_text == ""
+    assert assistant_text == "Here are the best options."
+    assert "SEARCH_SCOPE_COMPLETE" not in assistant_text
     assert "SEARCH_RESPONSE_READY" not in assistant_text
 
 
@@ -242,7 +250,7 @@ def test_search_budget_exhaustion_removes_only_catalog_search() -> None:
     assert "## Tool Loop Closed" not in prepared.system_prompt
 
 
-def test_stop_after_partial_search_skips_redundant_model_synthesis() -> None:
+def test_stop_after_partial_search_runs_one_tool_closed_synthesis() -> None:
     middleware = ToolLoopControlMiddleware()
     messages = [
         HumanMessage(content="shopper request"),
@@ -257,12 +265,19 @@ def test_stop_after_partial_search_skips_redundant_model_synthesis() -> None:
         ),
     ]
 
+    captured: list[ModelRequest] = []
+
     def handler(request: ModelRequest) -> ModelResponse:
-        pytest.fail("a completed search-only result must bypass the model")
+        captured.append(request)
+        return ModelResponse(result=[AIMessage(content="partial shopper answer")])
 
     response = middleware.wrap_model_call(_model_request(messages), handler)
 
-    assert response.result[0].content == ""
+    assert len(captured) == 1
+    assert captured[0].tools == []
+    assert captured[0].tool_choice == "none"
+    assert "## Tool Loop Closed" in captured[0].system_prompt
+    assert response.result[0].content == "partial shopper answer"
 
 
 def test_closed_loop_strips_a_model_emitted_tool_call() -> None:
@@ -1948,7 +1963,7 @@ async def test_async_stop_result_removes_tools() -> None:
 
 
 @pytest.mark.asyncio
-async def test_async_completed_search_skips_redundant_model_synthesis() -> None:
+async def test_async_completed_search_runs_one_tool_closed_synthesis() -> None:
     middleware = ToolLoopControlMiddleware()
     messages = _messages_with_result(
         _tool_result(
@@ -1957,12 +1972,19 @@ async def test_async_completed_search_skips_redundant_model_synthesis() -> None:
         )
     )
 
+    captured: list[ModelRequest] = []
+
     async def model_handler(request: ModelRequest) -> ModelResponse:
-        pytest.fail("completed search-only scope must bypass the model")
+        captured.append(request)
+        return ModelResponse(result=[AIMessage(content="shopper answer")])
 
     response = await middleware.awrap_model_call(
         _model_request(messages),
         model_handler,
     )
 
-    assert response.result[0].content == ""
+    assert len(captured) == 1
+    assert captured[0].tools == []
+    assert captured[0].tool_choice == "none"
+    assert "## Tool Loop Closed" in captured[0].system_prompt
+    assert response.result[0].content == "shopper answer"

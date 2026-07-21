@@ -3852,6 +3852,7 @@ class TestDeepAgentsRuntimeRefs:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
+        from langchain_core.messages import AIMessage
 
         runtime = runtime_mod.DeepAgentsRuntime(base_config)
         identity = runtime_mod.RequestIdentity(
@@ -3862,8 +3863,26 @@ class TestDeepAgentsRuntimeRefs:
             cart_user_id=222,
             request_id="request-a",
         )
+        editor_calls: list[list[dict[str, str]]] = []
+
         async def fake_analyze(state):
             return ""
+
+        class FakeEditor:
+            def invoke(self, messages):
+                editor_calls.append(messages)
+                return AIMessage(
+                    content=(
+                        "For the beige-top look, start with **Flat Strappy "
+                        "Black Sandals** at $49.90 USD and compare color balance, "
+                        "proportion, and formality before deciding."
+                    ),
+                    usage_metadata={
+                        "input_tokens": 20,
+                        "output_tokens": 12,
+                        "total_tokens": 32,
+                    },
+                )
 
         class FakeAgent:
             async def ainvoke(self, payload, config):
@@ -3916,8 +3935,8 @@ class TestDeepAgentsRuntimeRefs:
                         },
                         {
                             "content": (
-                                "These sandal candidates give the beige-top look "
-                                "a focused way to compare color balance, "
+                                "For the beige-top look, start with Flat Strappy "
+                                "Black Sandals and compare color balance, "
                                 "proportion, and formality."
                             ),
                             "usage_metadata": {
@@ -3942,7 +3961,7 @@ class TestDeepAgentsRuntimeRefs:
         monkeypatch.setattr(
             runtime,
             "_create_chat_model",
-            lambda: pytest.fail("search-only guidance must not call an editor"),
+            lambda: FakeEditor(),
         )
 
         state = State(
@@ -3969,25 +3988,38 @@ class TestDeepAgentsRuntimeRefs:
         assert "$49.90 USD" in output.response
         assert "beige-top look" in output.response
         assert "color balance, proportion, and formality" in output.response
-        assert "This is a partial result set." in output.response
         assert "grounded" not in output.response.lower()
-        assert output.token_usage == {
-            "input_tokens": 10,
-            "output_tokens": 8,
-            "total_tokens": 18,
-            "model_calls": 1,
-        }
-        assert "grounding_rewrite" not in output.timings
-        assert "app_llm_grounding_editor" not in output.model_usage
+        assert len(editor_calls) == 1
+        editor_prompt = editor_calls[0][1]["content"]
+        assert "CURRENT-TURN TOOL EVIDENCE" in editor_prompt
+        assert "Flat Strappy Black Sandals" in editor_prompt
+        assert "DRAFT RESPONSE" in editor_prompt
+        assert "For the beige-top look" in editor_prompt
+        assert output.token_usage["model_calls"] == 2
+        assert "grounding_rewrite" in output.timings
+        assert output.model_usage["app_llm_grounding_editor"]["status"] == "used"
 
-    def test_search_only_response_ignores_product_bearing_draft(
+    def test_search_only_response_grounds_product_bearing_draft(
         self,
         base_config,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
+        from langchain_core.messages import AIMessage
 
         runtime = runtime_mod.DeepAgentsRuntime(base_config)
+        editor_calls: list[list[dict[str, str]]] = []
+
+        class FakeEditor:
+            def invoke(self, messages):
+                editor_calls.append(messages)
+                return AIMessage(
+                    content=(
+                        "**Flat Strappy Black Sandals** are a catalog candidate "
+                        "at $49.90 USD; confirm outdoor suitability separately."
+                    )
+                )
+
         state = State(
             user_id=111,
             query="Style practical sandals for an outdoor dinner.",
@@ -4020,7 +4052,7 @@ class TestDeepAgentsRuntimeRefs:
         monkeypatch.setattr(
             runtime,
             "_create_chat_model",
-            lambda: pytest.fail("search-only guidance must not call an editor"),
+            lambda: FakeEditor(),
         )
 
         response = runtime._rewrite_response_for_grounding(
@@ -4037,7 +4069,75 @@ class TestDeepAgentsRuntimeRefs:
         assert "stay comfortable" not in response
         assert "**Flat Strappy Black Sandals**" in response
         assert "$49.90 USD" in response
-        assert "app_llm_grounding_editor" not in state.model_usage
+        assert len(editor_calls) == 1
+        editor_prompt = editor_calls[0][1]["content"]
+        assert "CURRENT-TURN TOOL EVIDENCE" in editor_prompt
+        assert (
+            "- Flat Strappy Black Sandals | category: sandals | "
+            "price: $49.90 USD"
+        ) in editor_prompt
+        assert "DRAFT RESPONSE" in editor_prompt
+        assert "will not sink in wet grass" in editor_prompt
+        assert state.model_usage["app_llm_grounding_editor"]["status"] == "used"
+
+    def test_search_only_editor_failure_uses_safe_catalog_fallback(
+        self,
+        base_config,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+
+        class FailingEditor:
+            def invoke(self, messages):
+                raise RuntimeError("editor unavailable")
+
+        monkeypatch.setattr(
+            runtime,
+            "_create_chat_model",
+            lambda: FailingEditor(),
+        )
+        state = State(
+            user_id=111,
+            query="Style practical sandals for an outdoor dinner.",
+            product_results=[
+                {
+                    "product_id": "prod_sandal",
+                    "display_name": "Flat Strappy Black Sandals",
+                    "category": "sandals",
+                    "price": {"amount": 49.9, "currency": "USD"},
+                }
+            ],
+        )
+        result = {
+            "messages": [
+                {"role": "user", "content": "REQUEST ID: current-request"},
+                {
+                    "role": "tool",
+                    "name": "search_catalog_tool",
+                    "content": (
+                        "SEARCH_RESULT_GROUNDING_NOTE: grounded.\n"
+                        "PRODUCT_REF: prod_sandal\n"
+                        "NAME: Flat Strappy Black Sandals\n"
+                        "CATEGORY: sandals\n"
+                        "PRICE: $49.90 USD"
+                    ),
+                },
+            ]
+        }
+
+        response = runtime._rewrite_response_for_grounding(
+            state,
+            result,
+            "These sandals will stay comfortable all evening.",
+            request_id="current-request",
+        )
+
+        assert "stay comfortable" not in response
+        assert "**Flat Strappy Black Sandals**" in response
+        assert "$49.90 USD" in response
+        assert state.model_usage["app_llm_grounding_editor"]["status"] == "failed"
 
     def test_search_response_uses_only_activated_skill_guidance(
         self,

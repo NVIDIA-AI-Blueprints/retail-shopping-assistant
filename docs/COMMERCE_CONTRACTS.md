@@ -191,9 +191,9 @@ Every successful search tool result carries `SEARCH_DIRECTION_EVIDENCE`, the
 model-authored `semantic_query` used as an independent private catalog ranking
 preference, and the pre-retrieval `shopper_guidance` authored under the active
 skill. Neither is a confirmed product attribute. Completed search-only
-responses present the product-agnostic guidance, with static skill
-`response_guidance` as fallback, without a response-editor or final-synthesis
-model call. Deterministic code separately lists all returned candidates, adds a
+responses receive one tools-disabled synthesis under the active skill and then
+the grounding editor. Product-agnostic guidance and static skill
+`response_guidance` support deterministic fallback, which lists all returned candidates, adds a
 neutral continuation for partial successful evidence, and groups each search's
 guidance and confirmed filters with its originating products. A zero-result response
 retains its exact advertised taxonomy and confirmed filters, so it cannot

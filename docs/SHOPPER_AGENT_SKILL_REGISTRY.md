@@ -128,18 +128,20 @@ re-ingested as evidence.
 For a completed successful search-only turn, each search carries the
 model-authored semantic query as independent internal `SEARCH_DIRECTION_EVIDENCE`
 and required pre-retrieval `shopper_guidance` authored under the active skill.
-The runtime presents that product-agnostic guidance without another model call;
-static `response_guidance` is the fallback. Candidate results, taxonomy,
-filters, semantic query, and drafts are not turned into guidance after retrieval.
-Before guidance becomes deterministic shopper-facing evidence, a narrow scrub
+The runtime gives the active skill one final tools-disabled synthesis step, then
+grounds that draft against tool-role evidence. Static `response_guidance` and
+the pre-retrieval guidance are used by the deterministic fallback when the
+draft or editor is unavailable. Candidate results, taxonomy, filters, semantic
+query, and drafts are not turned into evidence after retrieval. Before fallback
+guidance becomes shopper-facing text, a narrow scrub
 replaces documented unsupported outdoor/weather guarantee terms with neutral
 selected-role guidance without changing search semantics, taxonomy, hard
 constraints, or retrieval. Covered forms include outdoor-surface or
 outdoor-walking claims and constructions such as "handle rain," "work well for
 outdoor surfaces," or "stay secure for outdoor walking," plus `wet conditions`
 and "works well in wet weather/conditions."
-Deterministic code then renders every candidate name, price, category, and
-search-scoped confirmed-filter group. For multi-role results, it groups each
+Deterministic fallback code then renders every candidate name, price, category,
+and search-scoped confirmed-filter group. For multi-role results, it groups each
 guidance sentence with the products returned by that same search and
 deduplicates candidates by `product_ref`, not display name. Mixed-outcome turns
 preserve successful product groups when another scope has no direct match or an

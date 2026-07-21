@@ -209,10 +209,11 @@ The detailed contracts and implementation live in:
    `search_catalog_tool`. Product-detail, availability, and cart tools plus
    honest partial synthesis remain available.
 5. Tool-role messages are the evidence boundary. For completed successful
-   search-only turns, the runtime presents the pre-retrieval `shopper_guidance`
-   from search evidence, with static skill `response_guidance` as fallback and
-   no final-synthesis model call. Before guidance is serialized as deterministic
-   shopper-facing evidence, a narrow scrub replaces documented unsupported
+   search-only turns, the runtime runs one final tools-disabled synthesis under
+   the active skill, then grounds that draft against tool-role evidence. If the
+   draft or editor is unavailable, pre-retrieval `shopper_guidance` and static
+   skill `response_guidance` feed deterministic fallback. Before fallback
+   guidance is serialized, a narrow scrub replaces documented unsupported
    outdoor/weather guarantee terms with neutral selected-role guidance. It does
    not change the semantic query, taxonomy, constraints, or executed search.
    Covered forms include outdoor-surface or outdoor-walking claims and
@@ -221,7 +222,7 @@ The detailed contracts and implementation live in:
    wet weather/conditions."
    Results, filters, and the assistant draft are not copied into guidance after
    retrieval.
-   Deterministic code separately renders every returned candidate with name,
+   Deterministic fallback code separately renders every returned candidate with name,
    price, category, and only the confirmed filters from that candidate's search.
    Multi-role output groups each guidance sentence with the products from its
    originating search and deduplicates candidates by `product_ref`, not display

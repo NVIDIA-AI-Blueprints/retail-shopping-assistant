@@ -3262,8 +3262,6 @@ class DeepAgentsRuntime:
         )
         if rejected_search_response:
             return rejected_search_response
-        if not getattr(self.config, "grounding_rewrite_enabled", True):
-            return _scrub_internal_shopper_language(draft_response)
 
         max_evidence_chars = getattr(
             self.config,
@@ -3283,15 +3281,22 @@ class DeepAgentsRuntime:
             result,
             request_id=request_id,
         )
-        if search_only:
+        if not getattr(self.config, "grounding_rewrite_enabled", True):
+            if search_only:
+                return self._rewrite_search_only_response(
+                    state,
+                    result,
+                    request_id=request_id,
+                )
+            return _scrub_internal_shopper_language(draft_response)
+        if not draft_response:
+            if not search_only:
+                return draft_response
             return self._rewrite_search_only_response(
                 state,
                 result,
-                draft_response,
                 request_id=request_id,
             )
-        if not draft_response:
-            return draft_response
         if not current_evidence and not prior_evidence:
             return _scrub_internal_shopper_language(draft_response)
 
@@ -3314,7 +3319,7 @@ class DeepAgentsRuntime:
                     {"role": "user", "content": prompt},
                 ]
             )
-        except Exception:  # noqa: BLE001 - response editor must fail open.
+        except Exception:  # noqa: BLE001 - response editor has a safe fallback.
             logger.exception("Grounding response editor failed")
             state.timings["grounding_rewrite"] = time.monotonic() - start
             _add_model_usage(
@@ -3322,8 +3327,18 @@ class DeepAgentsRuntime:
                 "app_llm_grounding_editor",
                 status="failed",
                 calls=1,
-                detail="Final response grounding rewrite failed open",
+                detail=(
+                    "Final response grounding rewrite failed closed"
+                    if search_only
+                    else "Final response grounding rewrite failed open"
+                ),
             )
+            if search_only:
+                return self._rewrite_search_only_response(
+                    state,
+                    result,
+                    request_id=request_id,
+                )
             return _scrub_internal_shopper_language(draft_response)
 
         state.timings["grounding_rewrite"] = time.monotonic() - start
@@ -3342,17 +3357,22 @@ class DeepAgentsRuntime:
         rewritten = _content_to_text(_value(rewrite_result, "content"))
         if not rewritten:
             rewritten = _content_to_text(rewrite_result)
+        if not rewritten and search_only:
+            return self._rewrite_search_only_response(
+                state,
+                result,
+                request_id=request_id,
+            )
         return _scrub_internal_shopper_language(rewritten or draft_response)
 
     def _rewrite_search_only_response(
         self,
         state: State,
         result: Any,
-        draft_response: str,
         *,
         request_id: str,
     ) -> str:
-        """Combine bounded skill guidance with deterministic search facts."""
+        """Return the deterministic fallback for a search-only turn."""
 
         shopper_guidance = _search_guidance_evidence(
             result,

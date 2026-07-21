@@ -79,9 +79,6 @@ class ToolLoopControlMiddleware(AgentMiddleware):
         self._repaired_scopes: set[str] = set()
         self._repair_feedback = ""
         self._synthesis_required = False
-        self._deterministic_search_response_ready = False
-        self._successful_search_result_seen = False
-        self._search_only_tool_results = True
         self._search_budget_exhausted = False
         self._observed_tool_results: set[str] = set()
         self._lock = Lock()
@@ -94,8 +91,6 @@ class ToolLoopControlMiddleware(AgentMiddleware):
         """Control a synchronous model step."""
 
         prepared = self._prepare_model_request(request)
-        if self._take_deterministic_search_response():
-            return ModelResponse(result=[AIMessage(content="")])
         response = handler(prepared)
         response = self._restore_locked_repair_fields(response)
         response = self._reject_changed_native_repair(response)
@@ -109,8 +104,6 @@ class ToolLoopControlMiddleware(AgentMiddleware):
         """Control an asynchronous model step."""
 
         prepared = self._prepare_model_request(request)
-        if self._take_deterministic_search_response():
-            return ModelResponse(result=[AIMessage(content="")])
         response = await handler(prepared)
         response = self._restore_locked_repair_fields(response)
         response = self._reject_changed_native_repair(response)
@@ -206,27 +199,11 @@ class ToolLoopControlMiddleware(AgentMiddleware):
             if not isinstance(content, str):
                 continue
             content = content.strip()
-            tool_name = str(getattr(result, "name", "") or "")
-            if tool_name not in {
-                SEARCH_TOOL_NAME,
-                "activate_shopper_skills_tool",
-                "read_file",
-            }:
-                self._search_only_tool_results = False
-            if "SEARCH_RESULT_GROUNDING_NOTE" in content:
-                self._successful_search_result_seen = True
             if SEARCH_BUDGET_EXHAUSTED_PREFIX in content:
                 self._search_budget_exhausted = True
             if content.startswith(STOP_TOOL_USE_PREFIX):
                 self._clear_in_flight_repair()
-                deterministic_search_response = (
-                    self._successful_search_result_seen
-                    and self._search_only_tool_results
-                )
-                self._deterministic_search_response_ready = (
-                    deterministic_search_response
-                )
-                self._synthesis_required = not deterministic_search_response
+                self._synthesis_required = True
                 continue
             if content.startswith(
                 (UNSUPPORTED_TAXONOMY_PREFIX, UNSUPPORTED_CONSTRAINT_PREFIX)
@@ -240,25 +217,10 @@ class ToolLoopControlMiddleware(AgentMiddleware):
                     "SEARCH_RESULT_GROUNDING_NOTE" not in content
                     or SEARCH_SCOPE_COMPLETE_PREFIX in content
                 ):
-                    deterministic_search_response = (
-                        "SEARCH_RESULT_GROUNDING_NOTE" in content
-                        and SEARCH_SCOPE_COMPLETE_PREFIX in content
-                        and self._search_only_tool_results
-                    )
-                    self._deterministic_search_response_ready = (
-                        deterministic_search_response
-                    )
-                    self._synthesis_required = not deterministic_search_response
+                    self._synthesis_required = True
                 continue
             if SEARCH_SCOPE_COMPLETE_PREFIX in content:
-                deterministic_search_response = (
-                    "SEARCH_RESULT_GROUNDING_NOTE" in content
-                    and self._search_only_tool_results
-                )
-                self._deterministic_search_response_ready = (
-                    deterministic_search_response
-                )
-                self._synthesis_required = not deterministic_search_response
+                self._synthesis_required = True
             elif content.startswith(
                 (SEARCH_VALIDATION_ERROR_PREFIX, CONSTRAINT_REVIEW_PREFIX)
             ):
@@ -507,12 +469,6 @@ class ToolLoopControlMiddleware(AgentMiddleware):
         self._repair_relation_in_flight = None
         self._repair_constraints_in_flight = None
         self._repair_fields_in_flight = None
-
-    def _take_deterministic_search_response(self) -> bool:
-        with self._lock:
-            ready = self._deterministic_search_response_ready
-            self._deterministic_search_response_ready = False
-        return ready
 
     def _enforce_synthesis(self, response: ModelResponse) -> ModelResponse:
         with self._lock:

@@ -1563,7 +1563,7 @@ class _CheckAvailabilityInput(BaseModel):
     )
     variant_hint: str | None = Field(
         default=None,
-        description="Size, color, or variant the shopper asked about.",
+        description="Requested size wording, such as 'size 8'.",
     )
 
 
@@ -3119,16 +3119,24 @@ class DeepAgentsRuntime:
         ) -> str:
             """Check whether a specific product is available or in stock. Use
             ONLY when the shopper explicitly asks about availability, stock,
-            or a specific size/color. Do NOT use for browsing. This tool always
-            returns 'not available through the assistant' — it exists to give
-            an honest answer instead of a guess.
+            or a specific size. Requires a PRODUCT_REF from search. Do
+            NOT use for browsing. The deterministic stub reports general
+            availability, sized availability for apparel and footwear, and
+            one-size availability for other product categories.
             """
 
+            product = self._product_from_ref(identity, product_ref)
+            if product is None:
+                return (
+                    f"PRODUCT_REF '{product_ref}' is unknown in this conversation. "
+                    "Search the catalog first and use the PRODUCT_REF from the result."
+                )
             result = check_product_availability(
                 CheckProductAvailabilityInput(
                     product_ref=product_ref,
                     variant_hint=variant_hint,
-                )
+                ),
+                product,
             )
             return _format_availability_result(result)
 
@@ -3770,16 +3778,16 @@ Rules:
 - Store policy questions about returns, shipping, sizing, payment, price
   matching, or gift cards require get_store_policy_tool. Never substitute model
   knowledge for policy content that the tool does not return.
-- Explicit stock, inventory, size, color, or variant availability questions
+- Explicit stock, inventory, or size availability questions
   require check_product_availability_tool with a PRODUCT_REF from a prior
-  search. Relay its availability limitation rather than guessing.
+  search. Relay its deterministic result rather than guessing from catalog
+  presence.
 - If the shopper asks for anything under a budget without a product type,
   category, occasion, style, outfit goal, or image, ask one concise clarifying
   question instead of guessing.
-- Tax, delivery dates, and real-time stock or inventory status are not
-  available through the current tools. If asked, say that plainly and direct
-  the shopper to checkout or the retailer product page. Do not treat a catalog
-  result as proof that an item is in stock or ready to ship.
+- Tax and delivery dates are not available through the current tools. Do not
+  treat a catalog result alone as proof that an item is in stock or ready to
+  ship; availability claims require check_product_availability_tool.
 - Previous preference context is guidance only. The current shopper request
   wins when it conflicts with previous preferences.
 - Keep final answers concise and grounded in tool results. Attribute materials,

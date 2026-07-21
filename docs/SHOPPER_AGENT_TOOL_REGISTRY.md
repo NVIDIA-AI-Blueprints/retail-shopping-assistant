@@ -858,24 +858,27 @@ Current limitations:
 
 ### `check_product_availability_tool`
 
-Purpose: Give a consistent answer when a shopper asks about stock or a
-specific product variant.
+Purpose: Give a deterministic answer when a shopper asks whether a known
+product or requested size is available.
 
 Inputs:
 
 - `product_ref`: A `PRODUCT_REF` from a prior catalog search in the current
   conversation.
-- `variant_hint`: Optional shopper-named size, color, or variant.
+- `variant_hint`: Optional shopper-named size wording; the field name is retained
+  for compatibility.
 
 Preconditions:
 
-- Use only for an explicit stock, availability, size, color, or variant
+- Use only for an explicit stock, availability, or size
   question about a known product ref.
 
 Outputs:
 
-- `availability="unknown"` and a consistent message directing the shopper to
-  the product page or checkout for confirmation.
+- `availability="in_stock"` for a known product.
+- Without a variant hint, confirms general availability.
+- With a hint, confirms that size for `apparel` and `footwear`;
+  other catalog categories are treated as one-size.
 
 Side effects:
 
@@ -883,8 +886,8 @@ Side effects:
 
 Failure behavior:
 
-- None for a well-formed request. The stub never converts catalog presence
-  into an inventory claim.
+- An unknown or expired `PRODUCT_REF` stops before the helper runs and asks for
+  a fresh catalog search.
 
 Skills that grant this tool:
 
@@ -931,7 +934,7 @@ but they are not registered tools in the active Deep Agents runtime:
 | --- | --- |
 | `load_customer_persona_tool` | Planned. No registered runtime tool. |
 | Cross-catalog durable product identity | Planned; requires an upstream stable ID guarantee. |
-| Live inventory, variant, and size availability lookup | Not implemented; the registered availability stub always returns `unknown`. |
+| Live inventory, variant, and size availability lookup | Not implemented; the registered no-I/O stub reports deterministic availability for known conversation product refs. |
 | Checkout, order, payment, address, or account mutation | Not implemented and should be treated as `future_high_risk`. |
 | Outfit styling tool | Not a tool. Styling is model behavior guided by skills over catalog results. |
 | Media perception tool | Not an agent-callable tool. Media analysis runs before the Deep Agents turn and is passed as context. |

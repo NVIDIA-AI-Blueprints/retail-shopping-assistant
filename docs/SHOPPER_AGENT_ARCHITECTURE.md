@@ -319,7 +319,7 @@ skill and is not catalog truth.
 | Tool group | Tools | Source of truth |
 | --- | --- | --- |
 | Catalog | `search_catalog_tool`, `get_product_details_tool` | Active published catalog snapshot |
-| Availability boundary | `check_product_availability_tool` | Deliberate application stub; always returns `unknown` until inventory exists |
+| Availability boundary | `check_product_availability_tool` | Known-ref, category-aware no-I/O application stub; live inventory remains unavailable |
 | Cart | `get_cart_tool`, `view_cart_total_tool`, `add_cart_items_tool`, `remove_cart_item_tool`, `update_cart_items_tool` | Memory service cart |
 | Policy | `get_store_policy_tool` | Operator-managed policy YAML |
 

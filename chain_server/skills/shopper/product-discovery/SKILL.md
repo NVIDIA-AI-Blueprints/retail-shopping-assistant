@@ -71,8 +71,10 @@ Use for search, browse, and filter requests. Do not expose skill names or tool n
 
 ## Availability
 
-- Do not claim products are in stock. Catalog results are not inventory signals.
-- If the shopper asks about availability, use `check_product_availability_tool`.
+- Do not claim products are in stock from catalog results alone.
+- If the shopper asks about general or size availability, use
+  `check_product_availability_tool` with a known `PRODUCT_REF` and relay its
+  deterministic result.
 
 ## Response Style
 

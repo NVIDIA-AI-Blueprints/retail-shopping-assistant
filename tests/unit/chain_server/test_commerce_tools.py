@@ -26,6 +26,7 @@ from shared.commerce_contracts import (
     GetProductDetailsInput,
     GetStorePolicyInput,
     Money,
+    ProductSummary,
     RemoveCartItemInput,
     SearchCatalogInput,
     UpdateCartItemInput,
@@ -793,20 +794,72 @@ def test_get_store_policy_cache_does_not_reload_at_runtime(
     assert second == first
 
 
-def test_check_product_availability_returns_consistent_unknown_result() -> None:
+def test_check_product_availability_reports_general_availability() -> None:
     result = check_product_availability(
-        CheckProductAvailabilityInput(
-            product_ref="prod_123",
-            variant_hint="blue, size medium",
-        )
+        CheckProductAvailabilityInput(product_ref="prod_123"),
+        ProductSummary(product_id="prod_123", display_name="Everyday Dress"),
     )
 
     assert result.ok is True
     assert result.product_ref == "prod_123"
-    assert result.availability == "unknown"
+    assert result.availability == "in_stock"
+    assert result.message == "Yes, Everyday Dress is available."
+
+
+@pytest.mark.parametrize(
+    ("category", "taxonomy", "display_name", "variant_hint"),
+    [
+        (
+            "dresses",
+            {"category": "apparel"},
+            "Everyday Dress",
+            "size medium",
+        ),
+        ("footwear", {}, "Everyday Flat", "size 8"),
+    ],
+)
+def test_check_product_availability_reports_sized_category_availability(
+    category: str,
+    taxonomy: dict[str, str],
+    display_name: str,
+    variant_hint: str,
+) -> None:
+    result = check_product_availability(
+        CheckProductAvailabilityInput(
+            product_ref="prod_123",
+            variant_hint=variant_hint,
+        ),
+        ProductSummary(
+            product_id="prod_123",
+            display_name=display_name,
+            category=category,
+            attributes={"taxonomy": taxonomy},
+        ),
+    )
+
+    assert result.ok is True
+    assert result.availability == "in_stock"
+    assert result.message == f"Yes, {display_name} is available in {variant_hint}."
+
+
+def test_check_product_availability_reports_one_size_for_other_categories() -> None:
+    result = check_product_availability(
+        CheckProductAvailabilityInput(
+            product_ref="prod_watch",
+            variant_hint="size small",
+        ),
+        ProductSummary(
+            product_id="prod_watch",
+            display_name="Classic Watch",
+            category="watches",
+            attributes={"taxonomy": {"category": "accessories"}},
+        ),
+    )
+
+    assert result.ok is True
+    assert result.availability == "in_stock"
     assert result.message == (
-        "Real-time inventory is not available through the assistant. "
-        "Availability and size can be confirmed on the product page or at checkout."
+        "Classic Watch is one-size-fits-all and is available."
     )
 
 

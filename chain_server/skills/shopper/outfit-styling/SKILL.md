@@ -123,7 +123,8 @@ facts.
   `get_product_details_tool` when the shopper asks for a product fact or the
   styling decision materially depends on one.
 - Use `check_product_availability_tool` only when the shopper asks about stock,
-  availability, size, color, or a variant. Catalog presence is not inventory.
+  general availability, or a size. Catalog presence alone is not an
+  availability result.
 - Keep product facts and styling judgment distinct: say what is confirmed, then
   explain why it should work with the anchor or goal.
 - Keep claims item-specific. Do not promise comfort, durability, weather

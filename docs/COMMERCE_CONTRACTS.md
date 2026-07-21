@@ -95,9 +95,9 @@ SDK adapter:
 - Store policy is loaded from
   `shared/configs/chain_server/store_policies.yaml` and cached for the process
   lifetime. The bundled template fails closed until an operator replaces its
-  placeholders and sets `configured: true`. Product
-  availability is a deliberate no-I/O stub that always reports `unknown`
-  until a live inventory service exists.
+  placeholders and sets `configured: true`. Product availability is a
+  deliberate no-I/O stub for a known conversation product ref. It reports
+  `in_stock` using a fixed category rule; it does not query live inventory.
 
 The runtime Deep Agents tool names, risk classes, skill access boundaries, and
 registered-vs-planned status are tracked separately in
@@ -131,7 +131,7 @@ The first tool contract set is:
 | --- | --- | --- |
 | `SearchCatalogInput` / `SearchCatalogResult` | Read-only | Find products by query, category, filters, and `top_k`. |
 | `GetProductDetailsInput` / `GetProductDetailsResult` | Read-only | Fetch deterministic detail fields for one known product ref from the active catalog snapshot. |
-| `CheckProductAvailabilityInput` / `CheckProductAvailabilityResult` | Read-only | Return the explicit `unknown` availability boundary for a known product ref and optional variant hint. |
+| `CheckProductAvailabilityInput` / `CheckProductAvailabilityResult` | Read-only | Return the deterministic availability-stub result for a known product ref and optional size hint. |
 | `GetCartInput` / `GetCartResult` | Read-only | Read the authoritative cart for a user. |
 | `GetStorePolicyInput` / `GetStorePolicyResult` | Read-only | Fetch controlled store-policy text by topic. |
 | `AddCartItemInput` / `CartMutationResult` | Mutating | Add a product or variant to the cart from an explicit product ref. |
@@ -247,10 +247,14 @@ set it to `true` before any policy can be served. The file is outside the
 agent-readable skills root, so policy content is available only through the
 controlled policy tool.
 
-`check_product_availability` makes no catalog or inventory call. It always
-returns `availability="unknown"` with a consistent shopper-safe message. This
-contract prevents catalog presence from being mistaken for live stock while a
-real inventory and variant service remains out of scope.
+`check_product_availability` makes no catalog or inventory call. The runtime
+first resolves the supplied ref from its conversation-scoped product cache and
+rejects an unknown or expired ref. For a known product, the helper returns
+`availability="in_stock"`: it echoes a requested size for catalog
+taxonomy categories `apparel` and `footwear`, treats every other category as
+one-size, and gives a general availability answer when no hint is supplied.
+This deterministic application contract does not represent live stock counts
+or variant inventory.
 
 ### Diagnostic Boundaries
 

@@ -52,6 +52,7 @@ from shared.commerce_contracts import (
 _POLICY_CACHE: tuple[bool, dict[str, StorePolicy]] | None = None
 _POLICY_CACHE_LOCK = Lock()
 _POLICY_PLACEHOLDER_MARKER = "[operator placeholder]"
+_SIZED_AVAILABILITY_CATEGORIES = frozenset({"apparel", "footwear"})
 
 
 def search_catalog(
@@ -604,22 +605,37 @@ def get_store_policy(
 
 def check_product_availability(
     request: CheckProductAvailabilityInput,
+    product: ProductSummary,
 ) -> CheckProductAvailabilityResult:
-    """Return a consistent availability signal for a known product ref.
+    """Return the configured availability-stub result for a known product.
 
-    The catalog has no live inventory. This stub always returns unknown with a
-    message the agent relays to the shopper. It exists to prevent guessing.
+    Apparel and footwear accept a requested size. Other catalog categories are
+    treated as one-size products. No inventory call is made.
     """
+
+    variant_hint = (request.variant_hint or "").strip()
+    if not variant_hint:
+        message = f"Yes, {product.display_name} is available."
+    elif _availability_category(product) in _SIZED_AVAILABILITY_CATEGORIES:
+        message = f"Yes, {product.display_name} is available in {variant_hint}."
+    else:
+        message = f"{product.display_name} is one-size-fits-all and is available."
 
     return CheckProductAvailabilityResult(
         ok=True,
         product_ref=request.product_ref,
-        availability="unknown",
-        message=(
-            "Real-time inventory is not available through the assistant. "
-            "Availability and size can be confirmed on the product page or at checkout."
-        ),
+        availability="in_stock",
+        message=message,
     )
+
+
+def _availability_category(product: ProductSummary) -> str:
+    taxonomy = product.attributes.get("taxonomy")
+    if isinstance(taxonomy, dict):
+        category = str(taxonomy.get("category") or "").strip().lower()
+        if category:
+            return category
+    return str(product.category or "").strip().lower()
 
 
 def _query_terms(request: SearchCatalogInput) -> list[str]:

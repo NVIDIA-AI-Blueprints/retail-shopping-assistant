@@ -39,7 +39,8 @@ The current working tree extends the shopper-serving Deep Agent architecture:
 - the runtime has a nine-tool shopper registry plus one internal skill
   activation control tool. A turn receives only the tools granted by its
   selected skills. The shopping tools cover cart quantity update, controlled
-  policy lookup, and an honest availability stub;
+  policy lookup, and a category-aware no-I/O availability stub for known
+  conversation product refs;
 - memory-service database sessions are request-scoped and always returned to
   the SQLAlchemy pool after successful and failed API requests;
 - dependency resolution retains `deepagents==0.6.12`, `langchain==1.3.11`,
@@ -242,10 +243,16 @@ lives in [Schema-Driven Catalog Architecture](docs/CATALOG_REFACTOR_PLAN.md).
 
 ## Verification
 
-The current Slice 3 gates are recorded first. Older Slice 0 and focused Slice 2
+The newest focused gate is recorded first. Older Slice 0, Slice 2, and Slice 3
 results remain below as comparison points; generated quality and timing
 artifacts stay in the required local archive rather than versioned source.
 
+- Focused category-aware availability slice: 19 passed. Coverage includes
+  general availability, apparel size, footwear size through the category
+  fallback, one-size accessories, unknown conversation refs, unchanged tool
+  registration, and unchanged skill-policy grants. The runtime test emitted
+  the pre-existing `StarletteDeprecationWarning`. No live or 48-turn evaluation
+  was run for this narrow deterministic stub change.
 - Focused Slice 2 skill/authorization gate after restarting the local runtime:
   34 passed and 2 strict expected failures in 2.89 seconds, with one pre-existing
   `StarletteDeprecationWarning`. The expected failures continue to track
@@ -392,8 +399,11 @@ replay, while conflicting key reuse fails without mutation. Mutation records
 and their stored responses currently persist for the SQLite database lifetime;
 retention and cleanup policy remain a follow-up. Variant-level cart identity is
 also deferred.
-Product availability remains `unknown` until a live inventory/variant service
-is integrated.
+Product availability is currently a deterministic application stub, not live
+inventory. For a known conversation product ref it reports general
+availability, echoes a requested size for apparel and footwear, and treats
+other product categories as one-size. Unknown or expired refs require a fresh
+catalog search. Live stock counts and variant inventory remain future work.
 
 Same-conversation `PRODUCT_REF` evidence is held in a bounded process-local
 cache and is valid only for the active catalog snapshot. It is separate from

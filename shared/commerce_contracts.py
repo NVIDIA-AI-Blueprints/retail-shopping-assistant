@@ -208,7 +208,8 @@ class GetProductDetailsResult(CommerceModel):
 
 class CheckProductAvailabilityInput(CommerceModel):
     product_ref: str = Field(..., min_length=1)
-    variant_hint: str | None = None  # size, color, or variant the shopper named
+    # Field name retained for compatibility; the current stub accepts size wording.
+    variant_hint: str | None = None
 
 
 class CheckProductAvailabilityResult(CommerceModel):

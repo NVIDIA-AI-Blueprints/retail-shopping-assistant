@@ -1786,6 +1786,17 @@ class TestDeepAgentsRuntimeRefs:
             cart_user_id=222,
             request_id="request-a",
         )
+        runtime._remember_products(
+            identity,
+            [
+                ProductSummary(
+                    product_id="prod_123",
+                    display_name="Silk Dress",
+                    category="dresses",
+                    attributes={"taxonomy": {"category": "apparel"}},
+                )
+            ],
+        )
 
         runtime._create_agent(State(user_id=111, query="hello"), identity)
 
@@ -1940,8 +1951,12 @@ class TestDeepAgentsRuntimeRefs:
         )
         assert "Do not make group-level claims" in captured["system_prompt"]
         assert "Do not enumerate materials" in captured["system_prompt"]
-        assert "Tax, delivery dates" in captured["system_prompt"]
-        assert "real-time stock or inventory status" in captured["system_prompt"]
+        assert "Tax and delivery dates are not available" in (
+            captured["system_prompt"]
+        )
+        assert "availability claims require check_product_availability_tool" in (
+            captured["system_prompt"]
+        )
         assert "require get_store_policy_tool" in captured["system_prompt"]
         assert "require check_product_availability_tool" in captured["system_prompt"]
         assert "Outdoor-practicality claims require exact support" in (
@@ -1961,7 +1976,14 @@ class TestDeepAgentsRuntimeRefs:
             "check_product_availability_tool"
         ](product_ref="prod_123", variant_hint="size medium")
         assert availability_response.startswith("AVAILABILITY (prod_123):")
-        assert "Real-time inventory is not available" in availability_response
+        assert "Silk Dress is available in size medium" in availability_response
+        missing_availability_response = tools_by_name[
+            "check_product_availability_tool"
+        ](product_ref="missing_ref")
+        assert "PRODUCT_REF 'missing_ref' is unknown in this conversation" in (
+            missing_availability_response
+        )
+        assert "Search the catalog first" in missing_availability_response
 
         update_requests = []
 

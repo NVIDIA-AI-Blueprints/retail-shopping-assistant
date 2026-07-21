@@ -218,8 +218,10 @@ Key env vars:
 - Store-policy content is cached from an operator-managed YAML file. The
   bundled template has `configured: false`, so it fails closed until every
   placeholder is replaced and an operator explicitly enables it. Product
-  availability is a deliberate stub that always returns `unknown`; catalog
-  presence is not an inventory signal.
+  availability is a deliberate no-I/O stub for known conversation product
+  refs. It reports sized availability for apparel and footwear and one-size
+  availability for other categories; catalog presence alone is not an
+  inventory signal.
 - Catalog retriever fuses candidate lists, deduplicates by product ID, applies
   explicit hard filters (including taxonomy and price), then performs
   deterministic thresholding, similarity ranking, and top-k trimming. The

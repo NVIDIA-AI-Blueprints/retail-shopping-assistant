@@ -69,8 +69,9 @@ The application follows a microservices architecture:
 - **Chain Server**: Deep Agents SDK orchestration with five registered shopper
   skills, a required per-turn activation phase, a nine-tool registry with
   deterministic per-skill binding, capability-derived search schemas, bounded
-  search-schema repair, grounded response assembly, and a process-local
-  conversation checkpointer
+  search-schema repair, a category-aware no-I/O availability stub for known
+  product refs, grounded response assembly, and a process-local conversation
+  checkpointer
 - **Catalog Retriever**: Generative-LLM-free text/image embedding search, hard
   filtering, normalized COSINE relevance scores, and deterministic result
   ranking

@@ -219,8 +219,9 @@ Current constraints:
   conversation memory. Descriptive look-analysis requests are answered from
   `MEDIA ANALYSIS` without catalog retrieval; catalog tools remain authoritative
   for product names and prices when the shopper explicitly asks to find,
-  compare, price-check, or add products. The availability tool reports
-  `unknown` until a live inventory service exists.
+  compare, price-check, or add products. The no-I/O availability stub resolves
+  only known conversation product refs and applies a fixed category rule; it
+  does not query live inventory.
 
 Filesystem and built-in Deep Agents tools:
 
@@ -394,8 +395,9 @@ The tool layer is small, typed, and deterministic:
   reuse is rejected without mutation.
 - `view_cart_total`: deterministic arithmetic over cart line prices.
 - `get_store_policy`: read-only controlled policy content.
-- `check_product_availability`: read-only deliberate stub that reports
-  `unknown` until live inventory exists.
+- `check_product_availability`: read-only deliberate stub that reports general,
+  sized apparel/footwear, or one-size availability for a known conversation
+  product ref without calling live inventory.
 
 `load_customer_persona` and typed turn-start persona snapshots remain planned;
 neither is available in the current runtime.

@@ -56,7 +56,8 @@ flowchart LR
 7. **Call the owning service.** Catalog tools call the catalog retriever, which
    applies hard filters and ranks Milvus candidates. Cart tools call the memory
    service. Policy lookup reads disabled-by-default operator content. The
-   availability tool currently returns an honest `unknown` result.
+   availability tool is a deterministic no-I/O stub for known product refs; it
+   applies a fixed sized-versus-one-size category rule.
 8. **Return and remember grounded evidence.** The response boundary uses only
    current tool evidence for new results or mutations. It emits diagnostics,
    persists a bounded transcript through the memory service, and checkpoints

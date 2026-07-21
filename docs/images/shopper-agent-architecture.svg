@@ -119,7 +119,7 @@
       <tspan x="1306" dy="24">Policy: controlled lookup</tspan>
       <tspan x="1306" dy="30">Frontmatter + policy bind visibility</tspan>
       <tspan x="1306" dy="24">Dispatch rechecks grants before handlers</tspan>
-      <tspan x="1306" dy="24">Availability remains unknown</tspan>
+      <tspan x="1306" dy="24">Availability: category-aware stub</tspan>
     </text>
   </g>
 

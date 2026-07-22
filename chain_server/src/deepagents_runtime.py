@@ -179,6 +179,7 @@ _MAX_DIAGNOSTIC_PRODUCT_EVIDENCE = 24
 _MAX_DIAGNOSTIC_PRODUCT_FACTS = 40
 _MAX_DIAGNOSTIC_PRODUCT_STRING_CHARS = 500
 _MAX_DIAGNOSTIC_PRODUCT_EVIDENCE_CHARS = 32_000
+_PARTIAL_GRAPH_SNAPSHOT_TIMEOUT_SECONDS = 1.0
 _SEARCH_SCOPE_COMPLETE_NOTE = (
     "SEARCH_SCOPE_COMPLETE: The shopper's current request can now be answered "
     "from this search and existing turn evidence. Answer now. Do not search an "
@@ -1795,9 +1796,12 @@ class DeepAgentsRuntime:
                 turn_capabilities,
             )
             input_message = self._build_user_message(state, identity)
-            result = await agent.ainvoke(
-                {"messages": [{"role": "user", "content": input_message}]},
-                config=invoke_config,
+            result = await asyncio.wait_for(
+                agent.ainvoke(
+                    {"messages": [{"role": "user", "content": input_message}]},
+                    config=invoke_config,
+                ),
+                timeout=self.config.deepagents_execution_timeout_seconds,
             )
             draft_response = _extract_final_text(result)
             state.token_usage = _collect_token_usage(result)
@@ -1838,6 +1842,8 @@ class DeepAgentsRuntime:
                 termination_reason = "recursion_limit"
             elif isinstance(exc, ShopperSkillActivationError):
                 termination_reason = "skill_activation_failed"
+            elif isinstance(exc, TimeoutError):
+                termination_reason = "agent_timeout"
             else:
                 termination_reason = "agent_error"
             state.agent_diagnostics = _safe_collect_agent_diagnostics(
@@ -1849,11 +1855,19 @@ class DeepAgentsRuntime:
             if capture_error:
                 state.agent_diagnostics["partial_graph_capture_error"] = capture_error
             logger.exception("DeepAgentsRuntime failed")
-            fallback_response = _partial_product_results_response(state)
-            state.response = fallback_response or (
-                "I encountered an error while helping with your shopping request. "
-                "Please try again."
-            )
+            if termination_reason == "agent_timeout":
+                state.product_results = []
+                state.retrieved = {}
+                state.response = (
+                    "This request took too long to complete. Please retry. If it "
+                    "involved a cart change, check your cart first."
+                )
+            else:
+                fallback_response = _partial_product_results_response(state)
+                state.response = fallback_response or (
+                    "I encountered an error while helping with your shopping request. "
+                    "Please try again."
+                )
             _record_language_model_failure(state)
             state.timings["deepagents_error"] = time.monotonic() - start
             return state
@@ -4235,7 +4249,13 @@ async def _partial_graph_messages(
     if get_state is None:
         return [], "state_snapshot_unavailable"
     try:
-        snapshot = await get_state(invoke_config)
+        snapshot = await asyncio.wait_for(
+            get_state(invoke_config),
+            timeout=_PARTIAL_GRAPH_SNAPSHOT_TIMEOUT_SECONDS,
+        )
+    except TimeoutError:
+        logger.warning("Timed out snapshotting Deep Agents state before cleanup")
+        return [], "state_snapshot_timeout"
     except Exception as exc:  # noqa: BLE001 - diagnostics cannot block cleanup.
         error_type = type(exc).__name__
         logger.warning(

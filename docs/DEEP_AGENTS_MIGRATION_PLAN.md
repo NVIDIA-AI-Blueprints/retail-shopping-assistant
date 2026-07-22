@@ -323,6 +323,7 @@ POST /query/stream
   -> generate taxonomy and required-constraint schemas from catalog capabilities
   -> select and validate exact advertised values or stop on a no-retrieval path
   -> tools call catalog and cart services or controlled policy/availability boundaries
+  -> stop the graph at the configured execution deadline and finalize agent_timeout
   -> ground current-turn results separately from prior-turn tool evidence
   -> finalize durable turn as completed, blocked, or failed with the current attempt token
   -> stream assistant response back to the UI
@@ -666,8 +667,13 @@ Implications:
 - Mutating tools use owner-scoped idempotency keys so retries do not apply a
   cart change twice.
 - Tool calls need timeouts, retry policy, and clear structured failures.
-- Agent turns need strict step limits so one broad request cannot monopolize
-  model capacity during traffic spikes.
+- Agent turns have both a strict graph-step limit and a configurable 45-second
+  execution deadline so one broad or stalled request cannot monopolize model
+  capacity. Successful failed-turn finalization releases the durable
+  conversation turn; pre-graph work, bounded state capture, and finalization are
+  outside the graph deadline, so the client must retain its own request timeout.
+  A finalization outage preserves the checkpoint and remains an explicit retry
+  condition.
 - Catalog search should remain stateless and cacheable where possible.
 - Cart writes have owner checks, one SQLite transaction for mutation plus replay
   record, and request idempotency. Multi-writer revision control remains future
@@ -908,6 +914,10 @@ Implications:
   and request ID. The runtime deletes it after successful durable finalization and preserves it after a
   finalize failure. Durable turns and presented-product events, not the graph
   checkpoint, provide cross-turn continuity.
+- Deep Agents graph execution defaults to 45 seconds through
+  `DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS`. A timeout is finalized as failed with
+  `agent_timeout`, preserves bounded partial diagnostics, clears unsent product
+  output, and releases its request checkpoint only after durable finalization.
 - Durable turns use one memory-service SQLite replica with transactional start,
   terminal finalize, exact finalized replay, a bounded recent-turn snapshot,
   latest-sequence-only abandoned reopen, rotating attempt tokens, and

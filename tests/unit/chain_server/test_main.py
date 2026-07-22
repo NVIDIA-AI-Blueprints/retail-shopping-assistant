@@ -985,6 +985,190 @@ class TestDeepAgentsRuntimeScopes:
         assert memory.finalize_calls[0]["output"].product_results == []
 
     @pytest.mark.asyncio
+    async def test_agent_timeout_finalizes_and_releases_durable_turn(
+        self,
+        base_config,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+        from langchain_core.messages import AIMessage, HumanMessage
+
+        base_config.deepagents_execution_timeout_seconds = 0.01
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+        identity = runtime_mod.RequestIdentity(
+            session_id="session-a",
+            conversation_id="conversation-a",
+            cart_id="cart-a",
+            context_user_id=111,
+            cart_user_id=222,
+            request_id="request-a",
+        )
+        events: list[str] = []
+
+        class TrackingMemory(_ConversationMemoryStub):
+            def __init__(self):
+                super().__init__()
+                self.active = False
+                self.sequence = 0
+
+            def start_turn(self, conversation_id: str, **kwargs):
+                if self.active:
+                    raise ConversationMemoryError(
+                        "conversation_turn_in_progress",
+                        "turn active",
+                        status_code=409,
+                        retryable=True,
+                    )
+                self.active = True
+                self.sequence += 1
+                self.start_result = TurnStartResult(
+                    turn_id=f"turn-{self.sequence}",
+                    attempt_id=f"attempt-{self.sequence}",
+                    sequence=self.sequence,
+                    recent_turns=[],
+                    projection=ConversationProjection(),
+                    cart=[],
+                )
+                return super().start_turn(conversation_id, **kwargs)
+
+            def finalize_turn(self, conversation_id: str, turn_id: str, **kwargs):
+                events.append("finalize")
+                result = super().finalize_turn(conversation_id, turn_id, **kwargs)
+                self.active = False
+                return result
+
+        class SlowAgent:
+            async def ainvoke(self, payload, config):
+                try:
+                    await asyncio.sleep(1)
+                except asyncio.CancelledError:
+                    events.append("cancelled")
+                    raise
+
+            async def aget_state(self, config):
+                events.append("snapshot")
+                return SimpleNamespace(
+                    values={
+                        "messages": [
+                            HumanMessage(
+                                content="REQUEST ID: request-a\nUSER QUERY: hello"
+                            ),
+                            AIMessage(content="Working on it."),
+                        ]
+                    }
+                )
+
+        class TrackingCheckpointer:
+            def delete_thread(self, thread_id):
+                events.append("delete")
+
+        memory = TrackingMemory()
+        runtime._conversation_memory = memory
+        runtime._checkpointer = TrackingCheckpointer()
+        monkeypatch.setattr(runtime._catalog_capabilities, "get", lambda: None)
+        monkeypatch.setattr(
+            runtime,
+            "_create_agent",
+            lambda state, identity, turn_capabilities=None: SlowAgent(),
+        )
+        monkeypatch.setattr(
+            runtime._media_perception,
+            "analyze",
+            lambda state: asyncio.sleep(0, result=""),
+        )
+        state = State(
+            user_id=111,
+            query="hello",
+            guardrails=False,
+            product_results=[
+                {
+                    "product_id": "unsent-product",
+                    "display_name": "Unsent Product",
+                }
+            ],
+            retrieved={"Unsent Product": "/images/unsent.jpg"},
+        )
+
+        output = await runtime._run_turn(state, identity)
+
+        assert output.response == (
+            "This request took too long to complete. Please retry. If it involved "
+            "a cart change, check your cart first."
+        )
+        assert output.product_results == []
+        assert output.retrieved == {}
+        assert output.agent_diagnostics["final_termination_reason"] == (
+            "agent_timeout"
+        )
+        assert output.agent_diagnostics["partial_graph_messages"] == [
+            {"type": "ai", "content": "Working on it."}
+        ]
+        assert output.model_usage["app_llm"]["status"] == "failed"
+        assert events == ["cancelled", "snapshot", "finalize", "delete"]
+        assert len(memory.finalize_calls) == 1
+        assert memory.finalize_calls[0]["status"] == "failed"
+        assert memory.finalize_calls[0]["termination_reason"] == "agent_timeout"
+        assert memory.finalize_calls[0]["attempt_id"] == "attempt-1"
+        assert memory.finalize_calls[0]["output"].product_results == []
+        assert memory.finalize_calls[0]["output"].retrieved == {}
+
+        async def complete_turn(state, identity):
+            state.response = "The next turn completed."
+            state.agent_diagnostics = runtime_mod._empty_agent_diagnostics("completed")
+            return state
+
+        monkeypatch.setattr(runtime, "_execute_turn", complete_turn)
+        second_output = await runtime._run_turn(
+            State(user_id=111, query="next", guardrails=False),
+            runtime_mod.RequestIdentity(
+                session_id="session-a",
+                conversation_id="conversation-a",
+                cart_id="cart-a",
+                context_user_id=111,
+                cart_user_id=222,
+                request_id="request-b",
+            ),
+        )
+
+        assert second_output.response == "The next turn completed."
+        assert len(memory.start_calls) == 2
+        assert len(memory.finalize_calls) == 2
+        assert memory.active is False
+
+    @pytest.mark.asyncio
+    async def test_partial_graph_snapshot_timeout_is_bounded(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        cancelled = False
+
+        class HangingSnapshotAgent:
+            async def aget_state(self, config):
+                nonlocal cancelled
+                try:
+                    await asyncio.sleep(1)
+                except asyncio.CancelledError:
+                    cancelled = True
+                    raise
+
+        monkeypatch.setattr(
+            runtime_mod,
+            "_PARTIAL_GRAPH_SNAPSHOT_TIMEOUT_SECONDS",
+            0.01,
+        )
+
+        messages, error = await runtime_mod._partial_graph_messages(
+            HangingSnapshotAgent(),
+            {"configurable": {"thread_id": "request-a"}},
+        )
+
+        assert messages == []
+        assert error == "state_snapshot_timeout"
+        assert cancelled is True
+
+    @pytest.mark.asyncio
     async def test_finalize_failure_preserves_response_and_checkpoint(
         self,
         base_config,

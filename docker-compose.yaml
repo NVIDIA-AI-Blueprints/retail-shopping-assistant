@@ -20,6 +20,7 @@ services:
       - MEMORY_RETRIEVER_URL=http://memory-retriever:8011
       - GUARDRAILS_ENABLED=${GUARDRAILS_ENABLED:-true}
       - CHECKPOINT_STORE=${CHECKPOINT_STORE-memory}
+      - DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS=${DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS:-45}
     volumes:
       - ./shared:/app/shared
     depends_on:

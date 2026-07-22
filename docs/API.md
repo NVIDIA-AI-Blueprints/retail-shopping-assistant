@@ -321,6 +321,14 @@ service failure does not replace grounded shopper text; it sets
 A superseded attempt is the deliberate exception: its stale response is replaced
 with the safe attempt-fencing response described below.
 
+`final_termination_reason: "agent_timeout"` means the Deep Agents graph exceeded
+`DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS`. The response contains no unsent products
+or images, the durable turn is finalized as failed, and partial graph messages
+are captured on a bounded best-effort basis before checkpoint cleanup. An
+already-started synchronous tool operation may finish while cancellation is
+propagating; clients should follow the response's cart-check guidance before
+retrying a mutation.
+
 Successful turns leave `partial_graph_messages` empty. Before a failed graph
 checkpoint is deleted, the runtime reads its latest state and preserves up to
 the final 24 current-turn assistant/tool messages, with each content field

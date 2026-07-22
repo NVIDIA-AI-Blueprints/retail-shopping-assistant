@@ -1,6 +1,6 @@
 # Project Status
 
-Updated: 2026-07-21
+Updated: 2026-07-22
 
 ## Current Milestone
 
@@ -60,10 +60,13 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   other finalize outages preserve the grounded response and add
   `memory_finalize_error` while retaining the request checkpoint. Successful
   finalization atomically records presented products and then deletes the
-  checkpoint. Cancelled runtime turns are finalized before
-  cancellation propagates; database sessions remain request-scoped and are
-  always returned to the SQLAlchemy pool after successful and failed API
-  requests;
+  checkpoint. Cancelled runtime turns are finalized before cancellation
+  propagates. Deep Agents graph execution now has a configurable 45-second
+  default deadline; timeout cancels the graph, captures bounded partial state,
+  clears unsent products, finalizes the turn as failed with `agent_timeout`, and
+  releases the checkpoint only after durable finalization. Database sessions
+  remain request-scoped and are always returned to the SQLAlchemy pool after
+  successful and failed API requests;
 - dependency resolution retains `deepagents==0.6.12`, `langchain==1.3.11`,
   `langgraph==1.2.7`, and `langgraph-sdk==0.4.2`. The services that resolve
   `orjson` pin `3.11.5`, the last release limited to the Apache-2.0/MIT policy;
@@ -268,6 +271,19 @@ The newest focused gate is recorded first. Older Slice 0, Slice 2, and Slice 3
 results remain below as comparison points; generated quality and timing
 artifacts stay in the required local archive rather than versioned source.
 
+- Focused execution-deadline gate: 78 passed with one pre-existing
+  `StarletteDeprecationWarning`. Coverage includes positive/default/environment
+  configuration, rejection of non-positive values, graph cancellation before
+  partial-state capture, exactly-once failed durable finalization with the
+  current attempt token, empty unsent product replay, checkpoint deletion only
+  after finalization, unchanged external cancellation, unchanged finalize-
+  failure preservation, and the neighboring graph-failure path. Ruff and
+  Docker Compose configuration validation pass. A targeted five-turn
+  `conv_4.yaml` rerun scored 2.8/5 with mean / median / maximum latency of
+  16.179s / 10.220s / 45.098s. Its one hosted post-search stall terminated as
+  `agent_timeout`; the following turn completed normally, with no
+  `conversation_turn_in_progress` cascade. This targeted result validates
+  containment only and does not replace the canonical 48-turn WIP baseline.
 - Focused Slice 5 durable-product gate: 77 passed and 1 existing expected
   failure. Coverage includes server-derived `candidate_set_presented` events,
   compact projection rebuilds, exact 0/1/many typed resolution, strict
@@ -276,7 +292,13 @@ artifacts stay in the required local archive rather than versioned source.
   also pass for collision-safe conversation/request checkpoint isolation,
   deletion only after successful durable finalization, and preservation on
   finalize failure.
-  No full offline suite or live/Judge evaluation has been run for this slice.
+  The committed Slice 5 state at `5d60623` subsequently completed the fixed
+  48-turn Judge cohort at 3.0625/5, with 27/48 turns scoring at least 4. One
+  hosted graph execution continued for 213 seconds after the evaluator's
+  60-second client timeout and caused four immediate follow-ups to return
+  `conversation_turn_in_progress`. That single cascade accounts for 14 of the
+  17 Judge points lost against the prior WIP; the targeted execution-deadline
+  rerun above confirms that this failure mode is bounded to one turn.
 - Focused Slice 4 durable-turn gate: 74 passed in 2.85 seconds. Coverage joins
   the new start/finalize/replay and crash-recovery boundary, existing memory
   cart behavior, the typed chain-server client, and serving lifecycle tests.
@@ -495,8 +517,10 @@ One observed gap motivated Slice 5: after a denim-skirt request correctly failed
 closed, the next turn's “that skirt” resolved to an older maxi-skirt candidate.
 The new durable resolver deterministically returns zero, one, or many exact
 matches and authorizes only one, so missing or ambiguous references now require
-clarification. Focused tests cover that boundary; a full live/Judge rerun has
-not yet been performed.
+clarification. The full Slice 5 run confirmed the durable lookup path but also
+showed that shopper-visible presentation order and candidate-set styling
+references need their own later slice; they are not part of the execution-
+deadline change.
 
 The raw Judge score should not be described as an unqualified catalog-quality
 gain until catalog-dependent Goldens are reconciled with the active inventory.

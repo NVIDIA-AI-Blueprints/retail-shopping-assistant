@@ -21,6 +21,7 @@ Top-level orchestration is via `docker-compose.yaml`; optional local NIM model c
 3. Chain server request flow:
    - `DeepAgentsRuntime` first starts a durable turn in the memory service, which returns bounded finalized raw turns and the authoritative cart. It still uses `conversation_id` as the process-local checkpoint thread. Caller-supplied persona data is not injected into model context.
    - Optional input guardrails run before model/tool work; attached media is analyzed through the configured perception client.
+   - Deep Agents graph execution has a configurable 45-second default deadline. A timeout captures bounded partial graph messages, clears unsent products, finalizes the durable turn as failed, and deletes the request checkpoint only after that finalization succeeds.
    - Every turn begins with a required model step that semantically selects the smallest applicable set from five registered shopper skills. Product work uses exactly one primary procedure: product discovery or outfit styling. Budget shopping is a modifier only when the shopper states a budget; cart and policy requests may use their standalone skills. The runtime injects the complete selected files and exposes only the union of their declared `tools_granted`; dispatch independently rechecks the selected skills, grant union, and immutable tool policy. Pre-activation, same-batch, and ungranted shopping calls are execution-blocked.
    - Catalog capabilities generate the tool's exact taxonomy values and non-taxonomy required-constraint properties. The model selects from that schema; deterministic code validates and maps the structured values but does not interpret shopper language. Each text search carries `requested_product_type`: the shortest product noun or true umbrella from the shopper's current turn or direct antecedent, excluding color, material, fit, occasion, weather, and style modifiers. For `agent_selected_type`, it is the chosen advertised role noun. It is provenance, not taxonomy or ranking text, and is `null` only for `image_only`. A genuinely open role selects and names exactly one advertised subcategory. Each call has at most one category. A concrete type with no faithful advertised match stops without retrieval using empty taxonomy and no hard constraints.
    - Every search also carries required pre-retrieval `shopper_guidance`: one concise, product-agnostic sentence authored under the active skill. A nonempty `unadvertised_requirements` lane consumes that distinct scope's one search repair for model-owned review: retain a directly stated objective must-have, or remove only an inferred season, weather, occasion, or subjective preference. Deterministic code does not classify shopper prose. A repair cannot change a shopper-named scope noun, and an open-role repair remains `agent_selected_type`. A successful partial search may continue with another valid role and its own one-repair opportunity, but no scope receives two repairs; the configured turn cap remains three successful searches.
@@ -187,6 +188,7 @@ Key env vars:
 - `IMAGE_EMBED_BASE_URL`, `IMAGE_EMBED_MODEL`
 - `RAILS_BASE_URL`, `RAILS_CONTENT_BASE_URL`, `RAILS_TOPIC_BASE_URL`
 - `CHECKPOINT_STORE` (currently supports only `memory`)
+- `DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS`
 - `MEMORY_DATABASE_URL`, `MEMORY_SQLITE_BUSY_TIMEOUT_MS`
 - `MEMORY_TURN_ABANDON_SECONDS`, `MEMORY_RECENT_TURNS`
 - `CATALOG_DATA_SOURCE`, `CATALOG_SCHEMA_SOURCE`
@@ -220,6 +222,10 @@ Key env vars:
   the process lifetime, and is not shared across workers or replicas.
   `CHECKPOINT_STORE=memory` is the only supported value; a compliant production
   shared graph backend remains an open decision.
+- `DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS` defaults to 45 seconds and bounds the
+  awaited Deep Agents graph invocation. Timeout finalization uses the existing
+  durable attempt fence; do not substitute the stale-turn abandonment setting
+  for this live execution deadline.
 - Durable raw turns contain shopper/assistant text plus bounded replay and
   ordered event envelopes. They do not store raw media, model reasoning, or the
   complete graph/tool transcript. Projection tables and event vocabulary are

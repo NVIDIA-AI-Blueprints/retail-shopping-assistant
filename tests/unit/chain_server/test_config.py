@@ -33,6 +33,7 @@ def _clear_model_and_service_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "RAILS_URL",
         "CATALOG_SEARCH_TIMEOUT_SECONDS",
         "DEEPAGENTS_RECURSION_LIMIT",
+        "DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS",
         "MAX_CATALOG_SEARCHES_PER_TURN",
         "MAX_PRODUCT_DETAIL_READS_PER_TURN",
         "GROUNDING_REWRITE_ENABLED",
@@ -82,6 +83,7 @@ class TestChainServerConfigValidation:
         assert config.vlm_enabled is False
         assert config.guardrails_enabled is True
         assert config.grounding_rewrite_enabled is True
+        assert config.deepagents_execution_timeout_seconds == 45.0
         assert config.max_product_detail_reads_per_turn == 2
         assert config.grounding_rewrite_max_evidence_chars == 12000
         assert config.media_input.max_images_per_turn == 1
@@ -158,6 +160,44 @@ class TestChainServerConfigValidation:
             ChainServerConfig(
                 **{**valid_config_dict, "deepagents_recursion_limit": value}
             )
+
+    @pytest.mark.parametrize(
+        "value",
+        [0, -0.1, float("inf"), float("-inf"), float("nan")],
+    )
+    def test_deepagents_execution_timeout_must_be_positive(
+        self, valid_config_dict: dict, value: float
+    ) -> None:
+        with pytest.raises(ValidationError):
+            ChainServerConfig(
+                **{
+                    **valid_config_dict,
+                    "deepagents_execution_timeout_seconds": value,
+                }
+            )
+
+    @pytest.mark.parametrize("value", [1, 45.0, 120.5])
+    def test_deepagents_execution_timeout_accepts_positive_values(
+        self, valid_config_dict: dict, value: float
+    ) -> None:
+        config = ChainServerConfig(
+            **{
+                **valid_config_dict,
+                "deepagents_execution_timeout_seconds": value,
+            }
+        )
+
+        assert config.deepagents_execution_timeout_seconds == value
+
+    def test_deepagents_execution_timeout_defaults_to_45_seconds(
+        self, valid_config_dict: dict
+    ) -> None:
+        config_data = dict(valid_config_dict)
+        del config_data["deepagents_execution_timeout_seconds"]
+
+        config = ChainServerConfig(**config_data)
+
+        assert config.deepagents_execution_timeout_seconds == 45.0
 
     @pytest.mark.parametrize("value", [0, -4])
     def test_max_catalog_searches_per_turn_must_be_positive(
@@ -240,6 +280,9 @@ class TestLoadConfig:
         assert isinstance(config, ChainServerConfig)
         assert config.memory_length == valid_config_dict["memory_length"]
         assert config.deepagents_recursion_limit == valid_config_dict["deepagents_recursion_limit"]
+        assert config.deepagents_execution_timeout_seconds == valid_config_dict[
+            "deepagents_execution_timeout_seconds"
+        ]
         assert config.max_catalog_searches_per_turn == valid_config_dict["max_catalog_searches_per_turn"]
         assert config.max_product_detail_reads_per_turn == valid_config_dict["max_product_detail_reads_per_turn"]
         assert config.guardrails_enabled is True
@@ -326,6 +369,19 @@ class TestLoadConfig:
         config = load_config(str(path))
 
         assert config.grounding_rewrite_max_evidence_chars == 6400
+
+    def test_deepagents_execution_timeout_env_override(
+        self, write_yaml, valid_config_dict: dict, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _clear_model_and_service_env(monkeypatch)
+        monkeypatch.setenv("SHARED_CONFIG_ROOT", str(REPO_ROOT / "shared/configs"))
+        monkeypatch.setenv("LLM_API_KEY", "test-key")
+        monkeypatch.setenv("DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS", "31.5")
+        path = write_yaml("config.yaml", valid_config_dict)
+
+        config = load_config(str(path))
+
+        assert config.deepagents_execution_timeout_seconds == 31.5
 
     def test_max_product_detail_reads_env_override(
         self, write_yaml, valid_config_dict: dict, monkeypatch: pytest.MonkeyPatch

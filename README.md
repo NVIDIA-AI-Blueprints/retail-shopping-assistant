@@ -76,7 +76,8 @@ The application follows a microservices architecture:
   deterministic per-skill binding, capability-derived search schemas, bounded
   search-schema repair, a category-aware no-I/O availability stub for known
   product refs, typed same-conversation product resolution, grounded response
-  assembly, and a request-scoped process-local checkpointer
+  assembly, a configurable Deep Agents execution deadline, and a request-scoped
+  process-local checkpointer
 - **Catalog Retriever**: Generative-LLM-free text/image embedding search, hard
   filtering, normalized COSINE relevance scores, and deterministic result
   ranking
@@ -164,6 +165,11 @@ policy. Redis checkpoint packages remain absent; the runtime supports only
 process-local `CHECKPOINT_STORE=memory`. Each graph thread is request-scoped
 with a collision-safe pair of conversation ID and request ID, deleted after
 successful durable finalization, and retained only when finalization fails.
+Deep Agents graph execution defaults to a 45-second deadline. A timeout is
+captured as `agent_timeout`, clears unsent products, finalizes the durable turn
+as failed, releases the durable conversation turn, and then deletes its request
+checkpoint. Work before and after the graph invocation remains outside this
+deadline.
 
 For the serving-agent flow, see
 [Shopper Agent Architecture](docs/SHOPPER_AGENT_ARCHITECTURE.md). The

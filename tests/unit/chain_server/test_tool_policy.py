@@ -36,6 +36,7 @@ def _skill_tool_grants() -> dict[str, frozenset[str]]:
 def test_policy_covers_all_registered_shopping_tools() -> None:
     assert set(SHOPPING_TOOL_POLICIES) == {
         "add_cart_items_tool",
+        "check_active_promotions_tool",
         "check_product_availability_tool",
         "get_cart_tool",
         "get_product_details_tool",
@@ -59,6 +60,11 @@ def test_policy_covers_all_registered_shopping_tools() -> None:
     assert resolver.risk == "read"
     assert resolver.allowed_skills_any_of == frozenset(
         {"cart-management", "outfit-styling", "product-discovery"}
+    )
+    promotions = SHOPPING_TOOL_POLICIES["check_active_promotions_tool"]
+    assert promotions.risk == "read"
+    assert promotions.allowed_skills_any_of == frozenset(
+        {"outfit-styling", "product-discovery"}
     )
 
 
@@ -94,6 +100,7 @@ def test_selected_skills_receive_only_their_declared_union() -> None:
 
     assert tools == frozenset(
         {
+            "check_active_promotions_tool",
             "check_product_availability_tool",
             "get_product_details_tool",
             "resolve_conversation_products_tool",

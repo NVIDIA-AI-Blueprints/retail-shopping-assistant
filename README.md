@@ -72,12 +72,12 @@ The Retail Shopping Assistant is an AI-powered blueprint that provides a compreh
 
 The application follows a microservices architecture:
 - **Chain Server**: Deep Agents SDK orchestration with five registered shopper
-  skills, a required per-turn activation phase, a ten-tool registry with
+  skills, a required per-turn activation phase, an eleven-tool registry with
   deterministic per-skill binding, capability-derived search schemas, bounded
   search-schema repair, a category-aware no-I/O availability stub for known
-  product refs, typed same-conversation product resolution, grounded response
-  assembly, a configurable Deep Agents execution deadline, and a request-scoped
-  process-local checkpointer
+  product refs, a no-I/O active-promotions stub, typed same-conversation product
+  resolution, grounded response assembly, a configurable Deep Agents execution
+  deadline, and a request-scoped process-local checkpointer
 - **Catalog Retriever**: Generative-LLM-free text/image embedding search, hard
   filtering, normalized COSINE relevance scores, and deterministic result
   ranking

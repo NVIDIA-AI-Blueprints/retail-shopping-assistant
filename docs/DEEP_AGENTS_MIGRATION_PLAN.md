@@ -24,7 +24,7 @@ entrypoint.
 Current constraints:
 
 - The Deep Agents adapter exposes ten thin request-scoped shopping tools over
-  deterministic catalog, conversation-product, cart, policy, and availability
+  deterministic catalog, conversation-product, cart, policy, availability, and promotions
   functions, plus one internal skill-activation control tool.
 - Five shopper-facing skills are discovered under
   `chain_server/skills/shopper/`: product discovery, outfit styling, cart
@@ -203,7 +203,7 @@ Current constraints:
   attached to their own products. When a graph fails, its current-turn
   assistant/tool messages are read from the latest checkpoint before that
   checkpoint is deleted.
-- Catalog, cart, policy, and availability tools return to the Deep Agents loop
+- Catalog, cart, policy, availability, and promotions tools return to the Deep Agents loop
   so a single shopper turn can complete a compound request before the final
   shopper-facing response.
 - Grounding uses actual tool-role messages only. Current-turn evidence is
@@ -322,7 +322,7 @@ POST /query/stream
   -> expose deterministic shopping tools
   -> generate taxonomy and required-constraint schemas from catalog capabilities
   -> select and validate exact advertised values or stop on a no-retrieval path
-  -> tools call catalog and cart services or controlled policy/availability boundaries
+  -> tools call catalog and cart services or controlled policy/availability/promotion boundaries
   -> stop the graph at the configured execution deadline and finalize agent_timeout
   -> ground current-turn results separately from prior-turn tool evidence
   -> finalize durable turn as completed, blocked, or failed with the current attempt token
@@ -438,6 +438,9 @@ The tool layer is small, typed, and deterministic:
 - `check_product_availability`: read-only deliberate stub that reports general,
   sized apparel/footwear, or one-size availability for a known conversation
   product ref without calling live inventory.
+- `check_active_promotions`: read-only no-I/O stub that reports no active sale or
+  promotion configured through the assistant. Catalog retrieval and price do
+  not establish markdown status.
 
 `load_customer_persona` and typed turn-start persona snapshots remain planned;
 neither is available in the current runtime.
@@ -714,7 +717,7 @@ Implications:
 
 ### Slice 3: Shopping Tools
 
-- Expose current catalog, cart, policy, and availability capabilities as typed
+- Expose current catalog, cart, policy, availability, and promotions capabilities as typed
   tools.
 - Keep product search stateless.
 - Keep cart operations deterministic and idempotent.

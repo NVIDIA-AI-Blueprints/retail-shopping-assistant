@@ -11,6 +11,7 @@ import requests
 from chain_server.src import commerce_tools as commerce_tools_mod
 from chain_server.src.commerce_tools import (
     add_cart_item,
+    check_active_promotions,
     check_product_availability,
     get_cart,
     get_product_details,
@@ -21,6 +22,7 @@ from chain_server.src.commerce_tools import (
 )
 from shared.commerce_contracts import (
     AddCartItemInput,
+    CheckActivePromotionsResult,
     CheckProductAvailabilityInput,
     GetCartInput,
     GetProductDetailsInput,
@@ -804,6 +806,27 @@ def test_check_product_availability_reports_general_availability() -> None:
     assert result.product_ref == "prod_123"
     assert result.availability == "in_stock"
     assert result.message == "Yes, Everyday Dress is available."
+
+
+def test_check_active_promotions_reports_no_sales_without_io(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_io(*_args, **_kwargs):
+        raise AssertionError("promotion stub must not perform external I/O")
+
+    monkeypatch.setattr(commerce_tools_mod.requests, "get", fail_io)
+    monkeypatch.setattr(commerce_tools_mod.requests, "post", fail_io)
+    monkeypatch.setattr(commerce_tools_mod.requests, "Session", fail_io)
+    monkeypatch.setattr(commerce_tools_mod, "_catalog_session", fail_io)
+
+    result = check_active_promotions()
+
+    assert isinstance(result, CheckActivePromotionsResult)
+    assert result.ok is True
+    assert result.active is False
+    assert result.message == (
+        "No active sale or promotion is available through the assistant right now."
+    )
 
 
 @pytest.mark.parametrize(

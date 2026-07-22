@@ -251,7 +251,9 @@ Key env vars:
   availability is a deliberate no-I/O stub for known conversation product
   refs. It reports sized availability for apparel and footwear and one-size
   availability for other categories; catalog presence alone is not an
-  inventory signal.
+  inventory signal. Active sale or promotion status is a separate no-I/O stub
+  that currently reports no configured promotions; catalog search does not
+  establish markdown status.
 - Catalog retriever fuses candidate lists, deduplicates by product ID, applies
   explicit hard filters (including taxonomy and price), then performs
   deterministic thresholding, similarity ranking, and top-k trimming. The

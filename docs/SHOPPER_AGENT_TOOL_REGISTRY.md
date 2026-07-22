@@ -20,14 +20,14 @@ controlled by the activation and loop-control phases described below.
 
 ## Current Runtime Boundary
 
-The active Deep Agents runtime registers ten app-owned shopper commerce tools
+The active Deep Agents runtime registers eleven app-owned shopper commerce tools
 plus one internal activation control tool. Every turn begins in an activation
 phase where the model sees only `activate_shopper_skills_tool`, its use is
 forced, and parallel tool calls are disabled. After the model semantically
 selects the smallest skill set for the complete current intent, the runtime
 validates those names and deterministically injects the full selected
 `SKILL.md` contents. Only then does the next model step receive the union of
-those skills' declared `tools_granted` from the ten-tool registry. Every
+those skills' declared `tools_granted` from the eleven-tool registry. Every
 app-owned shopping dispatch independently rechecks the selected skill, grant
 union, and immutable policy before invoking its handler.
 
@@ -256,6 +256,7 @@ termination reason to `incomplete_agent_response`.
 | `update_cart_items_tool` | `mutating_cart` | Memory cart service | Registered |
 | `get_store_policy_tool` | `read_only_policy` | Operator-managed static policy file | Registered |
 | `check_product_availability_tool` | `read_only_catalog` | Application availability contract; no live inventory source | Registered |
+| `check_active_promotions_tool` | `read_only_promotions` | Application promotions contract; no live promotions source | Registered |
 
 ## Risk Classes
 
@@ -269,6 +270,7 @@ termination reason to `incomplete_agent_response`.
 | `computed_read_cart` | Computes over authoritative cart reads. | Granted only by cart management; do arithmetic in code, not model prose. |
 | `mutating_cart` | Changes cart contents. | Slice 0 requires the cart-management grant, valid refs, and service-side success. Skill instructions require explicit shopper intent, but server-owned current-turn intent authorization is a later slice. |
 | `read_only_policy` | Reads controlled operator-managed policy content. | Never substitute model knowledge when a topic is absent. |
+| `read_only_promotions` | Reports the deployment's promotion signal without treating catalog results or price as markdown evidence. | Granted by product discovery and outfit styling; currently no active promotion is configured. |
 | `future_high_risk` | Checkout, payment, orders, account changes. | Not registered. Requires stronger auth, idempotency, ownership checks, and confirmation policy before use. |
 
 ## Registered Tools
@@ -960,6 +962,39 @@ Current limitations:
 
 - There is no live inventory or variant lookup behind this tool.
 
+### `check_active_promotions_tool`
+
+Purpose: Give a deterministic answer when a shopper explicitly asks whether a
+sale, discount, or promotion is active.
+
+Inputs:
+
+- None. The current deployment signal is global.
+
+Preconditions:
+
+- Use for explicit sale or promotion status, not ordinary low-price or budget
+  browsing and not store price-matching policy.
+
+Outputs:
+
+- `active=false` with a message that no active sale or promotion is currently
+  configured through the assistant.
+
+Side effects:
+
+- None. The deliberate stub makes no catalog or external-service call.
+
+Skills that grant this tool:
+
+- `product-discovery`
+- `outfit-styling`
+
+Current limitations:
+
+- There is no live promotions service behind this tool. Product prices and
+  catalog search results do not establish sale status.
+
 ## Skill Access Matrix
 
 This matrix is the deterministic per-skill authorization contract. The model
@@ -973,8 +1008,8 @@ activation.
 
 | Skill | Tools granted |
 | --- | --- |
-| `product-discovery` | `search_catalog_tool`, `get_product_details_tool`, `check_product_availability_tool`, `resolve_conversation_products_tool` |
-| `outfit-styling` | `search_catalog_tool`, `get_product_details_tool`, `check_product_availability_tool`, `resolve_conversation_products_tool` |
+| `product-discovery` | `search_catalog_tool`, `get_product_details_tool`, `check_product_availability_tool`, `check_active_promotions_tool`, `resolve_conversation_products_tool` |
+| `outfit-styling` | `search_catalog_tool`, `get_product_details_tool`, `check_product_availability_tool`, `check_active_promotions_tool`, `resolve_conversation_products_tool` |
 | `budget-shopping` | None (`tools_granted: []`) |
 | `cart-management` | `get_cart_tool`, `view_cart_total_tool`, `add_cart_items_tool`, `remove_cart_item_tool`, `update_cart_items_tool`, `resolve_conversation_products_tool` |
 | `store-policy-answers` | `get_store_policy_tool` |
@@ -997,6 +1032,7 @@ but they are not registered tools in the active Deep Agents runtime:
 | `load_customer_persona_tool` | Planned. No registered runtime tool. |
 | Cross-catalog durable product identity | Planned; requires an upstream stable ID guarantee. |
 | Live inventory, variant, and size availability lookup | Not implemented; the registered no-I/O stub reports deterministic availability for known conversation product refs. |
+| Live promotions lookup | Not implemented; the registered no-I/O stub reports that no active promotion is configured through the assistant. |
 | Checkout, order, payment, address, or account mutation | Not implemented and should be treated as `future_high_risk`. |
 | Outfit styling tool | Not a tool. Styling is model behavior guided by skills over catalog results. |
 | Media perception tool | Not an agent-callable tool. Media analysis runs before the Deep Agents turn and is passed as context. |

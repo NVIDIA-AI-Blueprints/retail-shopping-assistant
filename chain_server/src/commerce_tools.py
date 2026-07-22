@@ -28,6 +28,7 @@ from shared.commerce_contracts import (
     Cart,
     CartLine,
     CartMutationResult,
+    CheckActivePromotionsResult,
     CheckProductAvailabilityInput,
     CheckProductAvailabilityResult,
     CommerceError,
@@ -626,6 +627,19 @@ def check_product_availability(
         product_ref=request.product_ref,
         availability="in_stock",
         message=message,
+    )
+
+
+def check_active_promotions() -> CheckActivePromotionsResult:
+    """Return the fixed promotion-status boundary without making an external call."""
+
+    return CheckActivePromotionsResult(
+        ok=True,
+        active=False,
+        message=(
+            "No active sale or promotion is available through the assistant "
+            "right now."
+        ),
     )
 
 

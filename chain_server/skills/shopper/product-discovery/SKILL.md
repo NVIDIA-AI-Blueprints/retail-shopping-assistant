@@ -8,6 +8,7 @@ tools_granted:
   - search_catalog_tool
   - get_product_details_tool
   - check_product_availability_tool
+  - check_active_promotions_tool
   - resolve_conversation_products_tool
 ---
 
@@ -34,7 +35,7 @@ Use for search, browse, and filter requests. Do not expose skill names or tool n
   modifier with the advertised filter schema. Copy each exact advertised value
   into `required_constraints`; do not send an empty object when one applies.
 - "Any denim skirts available?" requires `unadvertised_requirements: ["denim"]` when composition is not a hard filter. "Do you have water-resistant bags?" likewise requires `unadvertised_requirements: ["water resistance"]`; an empty object is not faithful to either request. Subjective recommendation adjectives such as comfortable, relaxed, soft, breathable, lightweight, casual, dressy, bold, bright, vibrant, or sporty always remain semantic ranking preferences, never objective hard filters.
-- Subjective style or vibe words remain semantic direction unless the shopper explicitly makes them hard requirements. Objective product attributes such as material, weather performance, sale status, or a specific shade remain must-haves when they define the requested product.
+- Subjective style or vibe words remain semantic direction unless the shopper explicitly makes them hard requirements. Objective product attributes such as material, weather performance, or a specific shade remain must-haves when they define the requested product.
 - For alternatives joined by "or", preserve every named branch. Search a supported branch with `scope_complete=false` when another branch is unavailable, then report the unavailable branch with one `no_direct_catalog_match` call. Do not reject a supported branch because another alternative is unavailable, and do not put the supported taxonomy value in `unadvertised_requirements`.
 
 ## Operating Principles
@@ -50,7 +51,7 @@ Use for search, browse, and filter requests. Do not expose skill names or tool n
 - Set `requested_product_type` to the shortest product noun or umbrella. Exclude color, material, fit, occasion, weather, and style modifiers. For `agent_selected_type`, use the chosen advertised role noun. Use null only for image-only search.
 - For one requested product role, make one inclusive search using only faithful advertised types for that role. Do not spend unused search budget on adjacent categories or one-piece substitutes.
 - Each search covers at most one catalog category. Include all faithful advertised subtypes for the requested role in that call, but do not mix unrelated categories in one retrieval.
-- Set `scope_complete` to true only when the search plus existing turn evidence is enough to answer the shopper's complete current request. Judge the current turn, not a broader multi-turn shopping project: a one-role browse request is complete after its one inclusive search. Set it false while another role explicitly requested in this turn, a product-detail verification, an availability check, or a cart action still must run. Never set it false merely to search alternatives. A requested type with no faithful advertised taxonomy match does not make a one-role scope partial; report that gap without another search.
+- Set `scope_complete` to true only when the search plus existing turn evidence is enough to answer the shopper's complete current request. Judge the current turn, not a broader multi-turn shopping project: a one-role browse request is complete after its one inclusive search. Set it false while another role explicitly requested in this turn, a product-detail verification, an availability or promotion check, or a cart action still must run. Never set it false merely to search alternatives. A requested type with no faithful advertised taxonomy match does not make a one-role scope partial; report that gap without another search.
 - If the first search returns zero results, offer to relax one constraint before retrying. State which constraint you would relax and why.
 - If the request scope exceeds the per-turn search cap, cover the highest-priority scope first and tell the shopper you can search remaining categories next.
 
@@ -79,6 +80,15 @@ Use for search, browse, and filter requests. Do not expose skill names or tool n
 - If the shopper asks about general or size availability, use
   `check_product_availability_tool` with a known `PRODUCT_REF` and relay its
   deterministic result.
+
+## Promotions
+
+- Use `check_active_promotions_tool` only when the shopper explicitly asks about
+  a sale, discount, or promotion. Catalog results and prices do not prove sale
+  status.
+- If no promotion is active and sale status is required, do not substitute a
+  regular-price search without the shopper's agreement. Continue any separate
+  product, cart, or policy request from the same turn.
 
 ## Response Style
 

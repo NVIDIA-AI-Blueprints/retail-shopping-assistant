@@ -60,6 +60,7 @@ SKILL_TOOL_GRANTS = {
     ),
     "outfit-styling": frozenset(
         {
+            "check_active_promotions_tool",
             "check_product_availability_tool",
             "get_product_details_tool",
             "resolve_conversation_products_tool",
@@ -68,6 +69,7 @@ SKILL_TOOL_GRANTS = {
     ),
     "product-discovery": frozenset(
         {
+            "check_active_promotions_tool",
             "check_product_availability_tool",
             "get_product_details_tool",
             "resolve_conversation_products_tool",
@@ -775,6 +777,7 @@ async def test_compiled_agent_loads_skill_and_blocks_ungranted_tool(
     assert "search_catalog_tool" in shopping_call["tools"]
     assert "get_product_details_tool" in shopping_call["tools"]
     assert "check_product_availability_tool" in shopping_call["tools"]
+    assert "check_active_promotions_tool" in shopping_call["tools"]
     assert "get_cart_tool" not in shopping_call["tools"]
     assert "add_cart_items_tool" not in shopping_call["tools"]
     assert "read_file" in shopping_call["tools"]
@@ -790,6 +793,115 @@ async def test_compiled_agent_loads_skill_and_blocks_ungranted_tool(
     assert result["messages"][-1].content == (
         "I can help with products for this outfit."
     )
+
+
+@pytest.mark.asyncio
+async def test_compiled_agent_answers_promotions_without_catalog_search(
+    base_config: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A promotions lookup uses its granted stub instead of catalog retrieval."""
+
+    from chain_server.src import deepagents_runtime as runtime_mod
+
+    model_name = "compiled-promotions-test"
+    base_config.llm_name = model_name
+    model = _RecordingToolModel(
+        model_name=model_name,
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "id": "activate-product-discovery",
+                        "name": SKILL_ACTIVATION_TOOL_NAME,
+                        "args": {"skill_names": ["product-discovery"]},
+                    }
+                ],
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "id": "check-promotions",
+                        "name": "check_active_promotions_tool",
+                        "args": {},
+                    }
+                ],
+            ),
+            AIMessage(
+                content=(
+                    "No active sale or promotion is available through the assistant "
+                    "right now."
+                )
+            ),
+        ],
+    )
+    runtime = DeepAgentsRuntime(base_config)
+    monkeypatch.setattr(runtime, "_create_chat_model", lambda: model)
+
+    def fail_catalog_search(*_args, **_kwargs):
+        raise AssertionError("promotions lookup must not execute catalog search")
+
+    monkeypatch.setattr(
+        runtime_mod,
+        "execute_catalog_search",
+        fail_catalog_search,
+    )
+    identity = RequestIdentity(
+        session_id="session-promotions",
+        conversation_id="conversation-promotions",
+        cart_id="cart-promotions",
+        context_user_id=1,
+        cart_user_id=1,
+        request_id=REQUEST_ID,
+    )
+    agent = runtime._create_agent(
+        State(user_id=1, query="Any sales on shoes?"),
+        identity,
+        CatalogCapabilities(
+            catalog_id="test-catalog",
+            retrieval_modes=["text"],
+            filters={},
+        ),
+    )
+
+    result = await agent.ainvoke(
+        {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": (
+                        f"REQUEST ID: {REQUEST_ID}\n"
+                        "USER QUERY: Any sales on shoes?"
+                    ),
+                }
+            ]
+        },
+        config={"configurable": {"thread_id": identity.conversation_id}},
+    )
+
+    assert len(model.calls) == 3
+    assert model.calls[0]["tools"] == [SKILL_ACTIVATION_TOOL_NAME]
+    assert "check_active_promotions_tool" in model.calls[1]["tools"]
+    assert "search_catalog_tool" in model.calls[1]["tools"]
+    assert "get_cart_tool" not in model.calls[1]["tools"]
+    promotion_results = [
+        message
+        for message in result["messages"]
+        if isinstance(message, ToolMessage)
+        and message.name == "check_active_promotions_tool"
+    ]
+    assert len(promotion_results) == 1
+    expected = (
+        "No active sale or promotion is available through the assistant right now."
+    )
+    assert expected in str(promotion_results[0].content)
+    assert not any(
+        isinstance(message, ToolMessage) and message.name == "search_catalog_tool"
+        for message in result["messages"]
+    )
+    assert result["messages"][-1].content == expected
 
 
 @pytest.mark.asyncio

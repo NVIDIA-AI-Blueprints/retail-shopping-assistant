@@ -220,6 +220,13 @@ class CheckProductAvailabilityResult(CommerceModel):
     meta: ToolMeta = Field(default_factory=ToolMeta)
 
 
+class CheckActivePromotionsResult(CommerceModel):
+    ok: bool
+    active: bool
+    message: str
+    meta: ToolMeta = Field(default_factory=ToolMeta)
+
+
 class GetCartInput(CommerceModel):
     user_id: str = Field(..., min_length=1)
 

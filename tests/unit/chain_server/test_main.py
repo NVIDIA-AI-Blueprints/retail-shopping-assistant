@@ -2439,6 +2439,7 @@ class TestDeepAgentsRuntimeRefs:
             "update_cart_items_tool",
             "view_cart_total_tool",
             "get_store_policy_tool",
+            "check_active_promotions_tool",
             "check_product_availability_tool",
         }
         activation_schema = tools_by_name[
@@ -2493,6 +2494,7 @@ class TestDeepAgentsRuntimeRefs:
         assert all(tool.return_direct is False for tool in tools_by_name.values())
         assert tools_by_name["remove_cart_item_tool"].return_direct is False
         assert tools_by_name["view_cart_total_tool"].return_direct is False
+        assert tools_by_name["check_active_promotions_tool"].return_direct is False
         assert "skills" not in captured
         assert len(captured["middleware"]) == 2
         tool_loop_control, skill_gate = captured["middleware"]
@@ -2504,6 +2506,7 @@ class TestDeepAgentsRuntimeRefs:
             "search_catalog_tool",
             "get_product_details_tool",
             "check_product_availability_tool",
+            "check_active_promotions_tool",
             "resolve_conversation_products_tool",
         }
         assert skill_gate._skill_tool_grants["cart-management"] == {
@@ -2528,6 +2531,7 @@ class TestDeepAgentsRuntimeRefs:
             "search_catalog_tool",
             "get_product_details_tool",
             "check_product_availability_tool",
+            "check_active_promotions_tool",
             "resolve_conversation_products_tool",
         }
         selected = runtime_mod._shopper_skill_registry(
@@ -2607,6 +2611,12 @@ class TestDeepAgentsRuntimeRefs:
         policy_response = tools_by_name["get_store_policy_tool"](topic="returns")
         assert policy_response.startswith("POLICY NOT AVAILABLE:")
         assert "not configured for this deployment" in policy_response
+        promotions_response = tools_by_name["check_active_promotions_tool"]()
+        assert promotions_response.startswith("ACTIVE PROMOTIONS:")
+        assert (
+            "No active sale or promotion is available through the assistant right now."
+            in promotions_response
+        )
         resolution_response = tools_by_name[
             "resolve_conversation_products_tool"
         ](references=[{"reference_id": "dress", "product_ref": "prod_123"}])
@@ -2737,6 +2747,7 @@ class TestDeepAgentsRuntimeRefs:
             "remove_cart_item_tool",
             "update_cart_items_tool",
             "get_store_policy_tool",
+            "check_active_promotions_tool",
             "check_product_availability_tool",
         }
         assert "| `load_customer_persona_tool` |" in registry

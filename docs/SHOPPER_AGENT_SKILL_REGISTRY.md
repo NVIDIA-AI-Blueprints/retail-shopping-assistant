@@ -84,7 +84,7 @@ terminate the turn with shopper prose instead of an activation call.
 
 This invariant adds one bounded model step to every turn. The static file load
 and injection add no model call. The extra step is the deliberate latency and
-model-call tradeoff for ensuring that catalog, cart, policy, and availability
+model-call tradeoff for ensuring that catalog, cart, policy, availability, and promotions
 work cannot bypass applicable skill instructions.
 
 Catalog repair is not another skill-selection phase. The server keys repairs by
@@ -174,8 +174,8 @@ evidence/truncation and those catalog scope outcomes from diagnostics.
 
 | Skill | Source | Status | Role | Tools granted | Primary entry modes |
 | --- | --- | --- | --- | --- | --- |
-| `product-discovery` | `chain_server/skills/shopper/product-discovery/SKILL.md` | Registered | `primary` / `product_procedure` | Search, details, availability, same-conversation product resolution | General search, category browsing, filter-driven discovery without styling intent |
-| `outfit-styling` | `chain_server/skills/shopper/outfit-styling/SKILL.md` | Registered | `primary` / `product_procedure` | Search, details, availability, same-conversation product resolution | Build, complete, or refine a look; coordinate a requested piece with an anchor; use cart evidence only when cart management is also active |
+| `product-discovery` | `chain_server/skills/shopper/product-discovery/SKILL.md` | Registered | `primary` / `product_procedure` | Search, details, availability, promotions, same-conversation product resolution | General search, category browsing, filter-driven discovery without styling intent |
+| `outfit-styling` | `chain_server/skills/shopper/outfit-styling/SKILL.md` | Registered | `primary` / `product_procedure` | Search, details, availability, promotions, same-conversation product resolution | Build, complete, or refine a look; coordinate a requested piece with an anchor; use cart evidence only when cart management is also active |
 | `cart-management` | `chain_server/skills/shopper/cart-management/SKILL.md` | Registered | `standalone` | Cart read, total, add, remove, update, same-conversation product resolution | Explicit cart reads and mutations, alone or beside a product procedure |
 | `budget-shopping` | `chain_server/skills/shopper/budget-shopping/SKILL.md` | Registered | `modifier` | None | Stated price ceilings and budget bundles; combine with cart management for cart-total checks |
 | `store-policy-answers` | `chain_server/skills/shopper/store-policy-answers/SKILL.md` | Registered | `standalone` | Policy lookup | Returns, shipping, sizing, payment, price matching, and gift cards |
@@ -240,6 +240,8 @@ combined with `outfit-styling`.
 - Keeps subjective style in semantic direction. Repeating taxonomy plus the
   same hard constraints is a duplicate even when `semantic_query` changes.
 - Uses the availability tool rather than treating catalog results as inventory.
+- Uses the promotions tool for explicit sale or promotion status rather than
+  treating catalog search or price as markdown evidence.
 - Uses the historical resolver only when a needed product is not already
   established in the current turn. A unique exact match becomes request-local
   evidence; missing or ambiguous results require clarification rather than a
@@ -295,10 +297,10 @@ The skill owns:
 - keeping product facts separate from styling judgment; and
 - using the seasonal trend reference only as optional framing.
 
-The skill grants catalog search, product details, availability, and typed
-same-conversation product resolution. Search results support name, price,
+The skill grants catalog search, product details, availability, promotions, and
+typed same-conversation product resolution. Search results support name, price,
 category, and image availability; other product attributes require detail
-evidence. Catalog presence is never treated as stock.
+evidence. Catalog presence is never treated as stock or sale status.
 
 For a named follow-up role, the skill keeps the anchor as context and searches
 only that role. Confirmed anchor attributes guide coordination, but do not

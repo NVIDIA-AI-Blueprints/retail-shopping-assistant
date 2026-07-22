@@ -46,11 +46,11 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   fail-closed fallback when synthesis or editing cannot produce an answer. Selection and
   response metadata are regenerated from current files rather than retained in
   the request checkpoint;
-- the runtime has a ten-tool shopper registry plus one internal skill
+- the runtime has an eleven-tool shopper registry plus one internal skill
   activation control tool. A turn receives only the tools granted by its
   selected skills. The shopping tools cover cart quantity update, controlled
-  policy lookup, a category-aware no-I/O availability stub, and deterministic
-  durable same-conversation product resolution;
+  policy lookup, category-aware no-I/O availability, a no-I/O active-promotions
+  signal, and deterministic durable same-conversation product resolution;
 - memory-service schema migrations, turn start/finalize/replay, bounded
   recent-turn reads, and cart snapshots use transactional SQLite operations;
   stale active turns are recovered during startup and atomically at the next
@@ -271,6 +271,14 @@ The newest focused gate is recorded first. Older Slice 0, Slice 2, and Slice 3
 results remain below as comparison points; generated quality and timing
 artifacts stay in the required local archive rather than versioned source.
 
+- Focused promotions gate: 11 passed with one pre-existing
+  `StarletteDeprecationWarning`. A fresh-identity live smoke for “Any sales on
+  shoes?” activated only `product-discovery`, called
+  `check_active_promotions_tool`, made no catalog search, and completed in
+  13.054 seconds with the no-active-promotion response. No Judge call or broad
+  evaluation was run. The smoke and its qualified comparison to the prior
+  45.098-second sale timeout are stored under the required local quality
+  archive.
 - Focused execution-deadline gate: 78 passed with one pre-existing
   `StarletteDeprecationWarning`. Coverage includes positive/default/environment
   configuration, rejection of non-positive values, graph cancellation before
@@ -471,6 +479,16 @@ inventory. For a known conversation product ref it reports general
 availability, echoes a requested size for apparel and footwear, and treats
 other product categories as one-size. Unknown or expired refs require a fresh
 catalog search. Live stock counts and variant inventory remain future work.
+Promotion status is also a deterministic application stub. It currently reports
+that no active sale or promotion is configured through the assistant; catalog
+results and prices are not treated as markdown evidence. A live promotions
+service remains future work.
+
+The promotions smoke used an isolated fresh SQLite database because a local
+pre-Slice database lacked the required `conversation_turns.attempt_id` column
+and failed during startup recovery. That local database was not deleted or
+modified. Upgrade compatibility for that legacy artifact requires a separate
+migration-order audit.
 
 `PRODUCT_REF` authorization exists only in request-local evidence. Current-turn
 search adds it directly; one unique durable same-conversation resolution can

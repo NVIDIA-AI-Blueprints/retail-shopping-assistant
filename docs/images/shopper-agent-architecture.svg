@@ -112,12 +112,12 @@
   <g>
     <rect x="1104" y="444" width="404" height="226" rx="14" class="built"/>
     <rect x="1104" y="444" width="404" height="9" rx="4" class="built-bar"/>
-    <text x="1306" y="485" text-anchor="middle" class="box-title">Ten-tool registry · selected subset</text>
+    <text x="1306" y="485" text-anchor="middle" class="box-title">Eleven-tool registry · selected subset</text>
     <text x="1306" y="515" text-anchor="middle" class="box-text">
       <tspan x="1306" dy="0">Catalog: search · details · availability</tspan>
       <tspan x="1306" dy="24">Memory: exact product resolver</tspan>
       <tspan x="1306" dy="24">Cart: read · total · add · remove · update</tspan>
-      <tspan x="1306" dy="24">Policy: controlled lookup</tspan>
+      <tspan x="1306" dy="24">Read boundaries: promotions · policy</tspan>
       <tspan x="1306" dy="24">Frontmatter + policy bind visibility</tspan>
       <tspan x="1306" dy="24">Dispatch rechecks grants before handlers</tspan>
     </text>

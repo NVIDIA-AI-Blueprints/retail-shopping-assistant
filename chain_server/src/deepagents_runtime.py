@@ -46,6 +46,7 @@ from .catalog_request import (
 )
 from .commerce_tools import (
     add_cart_item,
+    check_active_promotions,
     check_product_availability,
     get_cart,
     get_product_details,
@@ -98,6 +99,7 @@ from shared.commerce_contracts import (
     CatalogCapabilities,
     Cart as CommerceCart,
     CartMutationResult,
+    CheckActivePromotionsResult,
     CheckProductAvailabilityInput,
     CheckProductAvailabilityResult,
     CommerceError,
@@ -3295,6 +3297,17 @@ class DeepAgentsRuntime:
             return _format_availability_result(result)
 
         @tool(return_direct=False)
+        def check_active_promotions_tool() -> str:
+            """Check whether a sale, discount, or promotion is currently active.
+            Use ONLY when the shopper explicitly asks about promotion status. Do
+            NOT use for ordinary affordable browsing, a price ceiling, price
+            matching, or product availability. Catalog search does not establish
+            sale status.
+            """
+
+            return _format_promotions_result(check_active_promotions())
+
+        @tool(return_direct=False)
         def view_cart_total_tool() -> str:
             """Compute the cart subtotal. Use for budget checks or when the
             shopper asks for the total. Does not include tax or shipping. Use
@@ -3321,6 +3334,7 @@ class DeepAgentsRuntime:
             view_cart_total_tool,
             get_store_policy_tool,
             check_product_availability_tool,
+            check_active_promotions_tool,
         ]
         validate_registered_tool_names(
             {
@@ -3797,8 +3811,8 @@ Rules:
   "water-resistant bags" directly requires it.
 - Subjective style/vibe language is semantic direction unless the shopper makes
   it an explicit hard requirement. Objective product attributes such as material,
-  weather performance, sale status, or a specific shade remain must-haves when
-  they define the requested product.
+  weather performance, or a specific shade remain must-haves when they define
+  the requested product.
 - For alternatives joined by "or", search the faithful advertised branch and
   preserve every named branch. Search a supported branch with
   `scope_complete=false` when another branch is unavailable, then report the
@@ -3944,6 +3958,11 @@ Rules:
   require check_product_availability_tool with a PRODUCT_REF from a prior
   search. Relay its deterministic result rather than guessing from catalog
   presence.
+- Explicit sale, discount, or promotion questions require
+  check_active_promotions_tool. Catalog results and prices cannot establish sale
+  status. If no promotion is active and sale status is required, do not search
+  regular-price products without the shopper's agreement; continue any separate
+  requested work from the same turn.
 - If the shopper asks for anything under a budget without a product type,
   category, occasion, style, outfit goal, or image, ask one concise clarifying
   question instead of guessing.
@@ -6288,6 +6307,11 @@ def _format_policy_result(result: GetStorePolicyResult) -> str:
 
 def _format_availability_result(result: CheckProductAvailabilityResult) -> str:
     return f"AVAILABILITY ({result.product_ref}): {result.message}"
+
+
+def _format_promotions_result(result: CheckActivePromotionsResult) -> str:
+    status = "YES" if result.active else "NO"
+    return f"ACTIVE PROMOTIONS: {status}\n{result.message}"
 
 
 def _format_cart_total(cart: Cart) -> str:

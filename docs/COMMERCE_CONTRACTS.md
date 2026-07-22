@@ -140,6 +140,7 @@ The first tool contract set is:
 | `SearchCatalogInput` / `SearchCatalogResult` | Read-only | Find products by query, category, filters, and `top_k`. |
 | `GetProductDetailsInput` / `GetProductDetailsResult` | Read-only | Fetch deterministic detail fields for one known product ref from the active catalog snapshot. |
 | `CheckProductAvailabilityInput` / `CheckProductAvailabilityResult` | Read-only | Return the deterministic availability-stub result for a known product ref and optional size hint. |
+| `CheckActivePromotionsResult` | Read-only | Return the no-I/O deployment promotion signal; currently no active promotion is configured through the assistant. |
 | `GetCartInput` / `GetCartResult` | Read-only | Read the authoritative cart for a user. |
 | `GetStorePolicyInput` / `GetStorePolicyResult` | Read-only | Fetch controlled store-policy text by topic. |
 | `AddCartItemInput` / `CartMutationResult` | Mutating | Add a product or variant to the cart from an explicit product ref. |

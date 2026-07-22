@@ -152,8 +152,11 @@ constraint call executes. Conversely, when native taxonomy validation fails,
 it restores independently valid hard constraints before execution. A boundary
 that cannot be restored safely remains comparison-protected and closes without
 execution under the matching `repair_*_changed` reason. Malformed or nonempty
-free-form `unadvertised_requirements` arguments are never restored; a native
-schema-invalid call containing one closes without repair. A
+free-form `unadvertised_requirements` arguments are never restored. One exact
+duplicate of a shopper-stated unavailable concrete product type receives a
+single validation correction requiring an empty no-direct envelope; it is never
+silently rewritten. Every other native schema-invalid call containing one
+closes without repair. A
 schema-valid, genuinely open `agent_selected_type` request may still use the
 bounded review for a proposed inferred requirement.
 
@@ -231,7 +234,9 @@ guides.
    no-retrieval path with empty taxonomy and no hard constraints. An unsupported
    modifier does not erase an advertised product type. A directly stated
    must-have missing from the generated schema is placed in
-   `unadvertised_requirements`. Every such requirement on a shopper-stated
+   `unadvertised_requirements`, while preference, styling, occasion, weather,
+   and anchor context remain in the semantic query. A product type never belongs
+   in `unadvertised_requirements`. Every such requirement on a shopper-stated
    product scope fails closed before retrieval, including when the model uses a
    synonym rather than the shopper's exact wording. The bounded
    constraint-provenance review is reserved for a proposed inferred requirement

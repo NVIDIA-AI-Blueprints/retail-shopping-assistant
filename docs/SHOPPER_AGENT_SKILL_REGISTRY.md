@@ -107,7 +107,10 @@ execution, with bounded `restored_fields` diagnostics listing names only. A
 change to a grounded free-form scope that cannot be reconstructed safely is
 still stripped and recorded with reason `repair_scope_changed`. Malformed or
 nonempty free-form `unadvertised_requirements` arguments remain outside that
-restoration boundary and close a native schema-invalid call without repair. A
+restoration boundary and close a native schema-invalid call without repair. An
+exact duplicate of a shopper-stated unavailable concrete product type instead
+receives one bounded validation correction requiring an empty no-direct
+envelope; runtime does not rewrite it. A
 schema-valid, genuinely open `agent_selected_type` request retains the bounded
 review for a proposed inferred requirement. When a
 runtime semantic open-role schema repair removes such a proposal, runtime
@@ -218,6 +221,10 @@ combined with `outfit-styling`.
   performs no retrieval; the skill does not broaden to a parent, omit the type,
   or search an adjacent type until the shopper accepts that direction. An
   unsupported modifier does not erase an advertised type.
+- Separates three request lanes: unavailable concrete product type to no-direct,
+  advertised type plus unenforceable must-have to
+  `unadvertised_requirements`, and preference or styling context to
+  `semantic_query`. Product types never enter the requirement lane.
 - Treats names as display names and reads product details before asserting
   attributes not present in search evidence.
 - Never silently weakens a shopper must-have. An unsupported hard requirement

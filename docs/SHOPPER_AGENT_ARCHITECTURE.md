@@ -194,7 +194,10 @@ The detailed contracts and implementation live in:
    `repair_*_changed` reason. Empty optional defaults and reordered filter
    lists compare canonically. A native
    schema-invalid call containing malformed or nonempty free-form
-   `unadvertised_requirements` arguments closes without repair; a schema-valid,
+   `unadvertised_requirements` arguments closes without repair. The one narrow
+   exception is an exact duplicate of a shopper-stated unavailable concrete
+   product type: runtime rejects it with a bounded correction requiring an empty
+   no-direct envelope and never silently rewrites it. A schema-valid,
    genuinely open `agent_selected_type` request retains the bounded review for
    a proposed inferred requirement. Every unadvertised requirement on a
    shopper-stated product scope fails closed before retrieval, including when

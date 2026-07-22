@@ -16,6 +16,13 @@ tools_granted:
 
 Use for search, browse, and filter requests. Do not expose skill names or tool names in responses.
 
+## Request Lanes
+
+- If a shopper-named concrete product type has no faithful advertised taxonomy value, use `no_direct_catalog_match` with empty taxonomy and required constraints. Do not retrieve an adjacent product type.
+- If the product type is advertised but a directly stated must-have has no exact advertised filter property or allowed value, keep the faithful taxonomy and put only that attribute in `unadvertised_requirements`.
+- If occasion, weather, style, an anchor relationship, or another preference guides ranking rather than eligibility, keep it only in `semantic_query`.
+- A product type never belongs in `unadvertised_requirements`, and an attribute or preference never turns an advertised product type into `no_direct_catalog_match`.
+
 ## Mandatory Constraint Boundary
 
 - Before every search, split the product noun from its modifiers.

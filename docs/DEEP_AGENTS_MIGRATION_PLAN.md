@@ -165,8 +165,10 @@ Current constraints:
   restores independently valid constraints before execution. A locked boundary
   that cannot be restored safely remains comparison-protected and closes under
   the matching `repair_*_changed` reason. Malformed or nonempty free-form
-  `unadvertised_requirements` arguments are never restored; a native
-  schema-invalid call containing one closes without repair. A schema-valid,
+  `unadvertised_requirements` arguments are never restored. An exact duplicate
+  of a shopper-stated unavailable concrete product type receives one bounded
+  validation correction requiring an empty no-direct envelope; every other
+  native schema-invalid call containing one closes without repair. A schema-valid,
   genuinely open `agent_selected_type` request retains the bounded review for a
   proposed inferred requirement. Every unadvertised requirement on a
   shopper-stated product scope fails closed, including when the model uses a
@@ -480,7 +482,9 @@ finite locks are restored before execution, and bounded `restored_fields`
 diagnostics list names only. Runtime validation separately protects
 capability-owned advertised sibling relationships. On a native schema-invalid
 call, malformed or nonempty free-form `unadvertised_requirements` arguments
-remain outside restoration and close without repair; a schema-valid, genuinely
+remain outside restoration and close without repair. An exact duplicate of a
+shopper-stated unavailable concrete product type instead receives one explicit
+no-direct validation correction and is never silently rewritten; a schema-valid, genuinely
 open `agent_selected_type` request retains the bounded review for a proposed
 inferred requirement.
 After a successful search is marked `scope_complete`, when a requirement or
@@ -826,7 +830,9 @@ Implications:
   and recorded by name in bounded `restored_fields` diagnostics; a grounded
   free-form scope that cannot be reconstructed safely remains protected by
   `repair_scope_changed`. On a native schema-invalid call, malformed or nonempty
-  free-form `unadvertised_requirements` arguments close without repair. Successful
+  free-form `unadvertised_requirements` arguments close without repair, except
+  for one explicit correction when the sole value exactly duplicates a
+  shopper-stated unavailable concrete product type. Successful
   completed turns receive one tools-disabled synthesis from collected evidence;
   search-only drafts then pass through grounding with deterministic fallback.
 - Taxonomy and required-constraint schemas contain only capability-derived

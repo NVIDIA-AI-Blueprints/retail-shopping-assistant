@@ -135,6 +135,19 @@ def test_primary_skill_descriptions_define_the_activation_boundary() -> None:
     )
 
 
+def test_product_discovery_separates_request_lanes() -> None:
+    _, body = _read_skill_path(REGISTERED_SKILL_PATHS["product-discovery"])
+    normalized = " ".join(body.split())
+
+    assert "## Request Lanes" in body
+    assert "concrete product type has no faithful advertised taxonomy value" in (
+        normalized
+    )
+    assert "put only that attribute in `unadvertised_requirements`" in normalized
+    assert "keep it only in `semantic_query`" in normalized
+    assert "A product type never belongs in `unadvertised_requirements`" in normalized
+
+
 def test_outfit_styling_owns_domain_judgment_and_clarification() -> None:
     _, body = _read_skill()
     normalized = " ".join(body.lower().split())

@@ -620,6 +620,28 @@ def _advertised_scope_match(
     )
 
 
+def _duplicates_unavailable_product_type(
+    requirements: Any,
+    requested_product_type: str | None,
+    capabilities: CatalogCapabilities,
+) -> bool:
+    """Return whether requirements only repeat an unavailable product type."""
+
+    requested = _normalize_product_text(requested_product_type or "")
+    return bool(
+        requested
+        and isinstance(requirements, list)
+        and len(requirements) == 1
+        and not _has_alternative_connector(requested_product_type or "")
+        and _advertised_scope_match(requested_product_type, capabilities) is None
+        and all(
+            isinstance(requirement, str)
+            and _normalize_product_text(requirement) == requested
+            for requirement in requirements
+        )
+    )
+
+
 def _same_product_scope(
     first: str,
     second: str,
@@ -955,7 +977,8 @@ class SearchCatalogToolArguments(BaseModel):
             "'no_direct_catalog_match' only for an explicitly requested concrete "
             "product type when only parent, adjacent, or substitute types exist. "
             "Decide that from the product type alone and send no required "
-            "constraints on this no-retrieval path. "
+            "constraints on this no-retrieval path. A product type never belongs "
+            "in unadvertised_requirements. "
             "A modifier does not erase an advertised product type: for example, "
             "if skirts are advertised but denim is not enforceable, keep skirts "
             "as taxonomy and preserve denim as an unadvertised requirement. "
@@ -991,7 +1014,8 @@ class SearchCatalogToolArguments(BaseModel):
             "context remain semantic direction unless the shopper directly "
             "requires an objective product attribute. A defining material is a "
             "must-have: for 'Any denim skirts available?', put 'denim' in "
-            "unadvertised_requirements when composition is not a hard filter."
+            "unadvertised_requirements when composition is not a hard filter. "
+            "Product types never belong in unadvertised_requirements."
         ),
     )
     scope_complete: bool = Field(
@@ -1065,25 +1089,11 @@ class SearchCatalogToolInput(SearchCatalogToolArguments):
                 if isinstance(self.required_constraints, BaseModel)
                 else self.required_constraints
             )
-            repeated_product_types = constraints.get(
-                "unadvertised_requirements",
-                [],
-            )
-            requested_product_words = _normalize_product_text(
-                requested_product_type
-            ).split()
-            has_other_constraint = any(
+            has_constraint = any(
                 value not in (None, "", [], {})
-                for name, value in constraints.items()
-                if name != "unadvertised_requirements"
+                for value in constraints.values()
             )
-            has_distinct_requirement = any(
-                not requested_product_words
-                or requested_product_words[-1]
-                not in _normalize_product_text(str(value)).split()
-                for value in repeated_product_types
-            )
-            if has_other_constraint or has_distinct_requirement:
+            if has_constraint:
                 raise ValueError(
                     "no_direct_catalog_match cannot include required constraints"
                 )
@@ -1269,7 +1279,9 @@ def _search_catalog_tool_input_model(
                     "sporty are always semantic ranking preferences, not "
                     "objective hard filters. Before calling the tool, compare "
                     "every target-product modifier with this advertised schema "
-                    "and include every exact matching filter value."
+                    "and include every exact matching filter value. A product type "
+                    "never belongs in unadvertised_requirements, and "
+                    "no_direct_catalog_match requires this object to be empty."
                 ),
             ),
         ),
@@ -1359,7 +1371,8 @@ def _required_constraints_input_model(
                 "value that modifies the target product; do not leave this object "
                 "empty when one applies. "
                 "In an 'A or B' request, do not put the "
-                "supported advertised branch here."
+                "supported advertised branch here. A product type never belongs "
+                "here, and no_direct_catalog_match requires an empty list."
             ),
         ),
     )
@@ -2054,6 +2067,7 @@ class DeepAgentsRuntime:
             Copy every attribute that defines the requested products into
             required_constraints. Use only advertised filter properties directly;
             put any defining requirement not in the schema into
+            unadvertised_requirements. A product type never belongs in
             unadvertised_requirements. For "Any denim skirts available?", use
             {"unadvertised_requirements": ["denim"]}. For "Do you have water-resistant bags?",
             use {"unadvertised_requirements": ["water resistance"]}, not a soft
@@ -2183,6 +2197,26 @@ class DeepAgentsRuntime:
                 if isinstance(constraint_payload, dict)
                 else []
             )
+            duplicated_no_direct_type = bool(
+                taxonomy_status == "no_direct_catalog_match"
+                and shopper_stated_scope
+                and _duplicates_unavailable_product_type(
+                    raw_unadvertised_requirements,
+                    requested_product_type,
+                    capabilities,
+                )
+            )
+            if duplicated_no_direct_type:
+                failed_repair_scope_key = candidate_scope_key
+                failed_agent_selected_scope = False
+                return (
+                    SEARCH_VALIDATION_ERROR_PREFIX
+                    + "The requested product type was duplicated in "
+                    "unadvertised_requirements. Preserve the shopper-stated "
+                    "requested_product_type and "
+                    "taxonomy_status='no_direct_catalog_match', then send empty "
+                    "shopper_guidance, taxonomy arrays, and required_constraints."
+                )
             stated_unadvertised_requirements = (
                 [
                     requirement

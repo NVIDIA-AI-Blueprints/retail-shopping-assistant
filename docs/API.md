@@ -794,7 +794,10 @@ selections to advertised field names and sends the semantic query as a singleton
 
 One invalid agent search may receive one search-only repair per distinct scope.
 Malformed or nonempty free-form `unadvertised_requirements` arguments on a
-native schema-invalid call fail closed. A schema-valid, genuinely open
+native schema-invalid call fail closed. If the only value exactly duplicates a
+shopper-stated unavailable concrete product type, runtime rejects it with one
+bounded correction requiring an empty no-direct envelope rather than silently
+rewriting it. A schema-valid, genuinely open
 `agent_selected_type` role may consume that scope's repair for model-owned
 review: preserve an explicit objective must-have, or remove only an inferred or
 subjective requirement. Deterministic code does not parse shopper prose. The

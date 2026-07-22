@@ -49,7 +49,8 @@ product type the shopper named, including an alternative, confirmation,
 comparison, or follow-up. `no_direct_catalog_match` uses empty
 taxonomy and no hard constraints and performs no retrieval. It is decided from
 the requested type alone: an unsupported modifier does not erase an advertised
-type, while subjective style remains semantic direction.
+type, while subjective style remains semantic direction. Product types never
+belong in `unadvertised_requirements`.
 
 Explicit image or hybrid intent is also validated against advertised retrieval
 modes and requires an attached image. It stops before retrieval rather than

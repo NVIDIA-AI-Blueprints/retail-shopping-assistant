@@ -1708,6 +1708,32 @@ class TestDeepAgentsRuntimeRefs:
             ),
         )
 
+        assert runtime_mod._duplicates_unavailable_product_type(
+            ["sneakers"],
+            "sneakers",
+            capabilities,
+        )
+        assert not runtime_mod._duplicates_unavailable_product_type(
+            ["sneakers", "water resistance"],
+            "sneakers",
+            capabilities,
+        )
+        assert not runtime_mod._duplicates_unavailable_product_type(
+            ["sneakers", "sneakers"],
+            "sneakers",
+            capabilities,
+        )
+        assert not runtime_mod._duplicates_unavailable_product_type(
+            ["bags"],
+            "bags",
+            capabilities,
+        )
+        assert not runtime_mod._duplicates_unavailable_product_type(
+            ["sneakers or boots"],
+            "sneakers or boots",
+            capabilities,
+        )
+
         schema_model = runtime_mod._search_catalog_tool_input_model(capabilities)
         schema = schema_model.model_json_schema()
 
@@ -1755,6 +1781,9 @@ class TestDeepAgentsRuntimeRefs:
         assert "Do you have water-resistant bags?" in schema["properties"][
             "required_constraints"
         ]["description"]
+        assert "A product type never belongs in unadvertised_requirements" in (
+            schema["properties"]["required_constraints"]["description"]
+        )
         assert "cart action still must run" in schema["properties"][
             "scope_complete"
         ]["description"]
@@ -1792,6 +1821,11 @@ class TestDeepAgentsRuntimeRefs:
             "primary_color",
             "unadvertised_requirements",
         }
+        assert "A product type never belongs here" in (
+            constraints_schema["properties"]["unadvertised_requirements"][
+                "description"
+            ]
+        )
         assert {"const": "text", "type": "string"} in schema["properties"][
             "search_mode"
         ]["anyOf"]
@@ -2090,19 +2124,18 @@ class TestDeepAgentsRuntimeRefs:
             }
         )
         assert no_direct_match.taxonomy_status == "no_direct_catalog_match"
-        redundant_type_constraint = schema_model.model_validate(
-            {
-                **no_direct_match.model_dump(),
-                "required_constraints": {
-                    "unadvertised_requirements": [
-                        "sneakers not available in catalog"
-                    ]
-                },
-            }
-        )
-        assert redundant_type_constraint.taxonomy_status == (
-            "no_direct_catalog_match"
-        )
+        with pytest.raises(
+            ValueError,
+            match="no_direct_catalog_match cannot include required constraints",
+        ):
+            schema_model.model_validate(
+                {
+                    **no_direct_match.model_dump(),
+                    "required_constraints": {
+                        "unadvertised_requirements": ["sneakers"]
+                    },
+                }
+            )
         with pytest.raises(
             ValueError,
             match="no_direct_catalog_match cannot include required constraints",
@@ -3257,6 +3290,75 @@ class TestDeepAgentsRuntimeRefs:
             },
         )
         assert unsupported_result.startswith(
+            "The requested catalog requirement cannot be enforced"
+        )
+        assert captured_plan.get("calls", 0) == 0
+
+        duplicated_no_direct_state = State(
+            user_id=111,
+            query="What casual sneakers do you have?",
+        )
+        runtime._create_agent(duplicated_no_direct_state, identity)
+        duplicated_no_direct_tools = {
+            fn.__name__: fn for fn in captured["tools"]
+        }
+        duplicated_no_direct_tools["activate_shopper_skills_tool"](
+            skill_names=["product-discovery"],
+        )
+        duplicated_no_direct_result = duplicated_no_direct_tools[
+            "search_catalog_tool"
+        ](
+            semantic_query="casual sneakers for a sporty casual look",
+            shopper_guidance=(
+                "Find casual sneakers to complete a sporty casual look."
+            ),
+            requested_product_type="sneakers",
+            taxonomy_status="no_direct_catalog_match",
+            taxonomy={"category": [], "subcategory": []},
+            required_constraints={
+                "unadvertised_requirements": ["sneakers"],
+            },
+        )
+        assert duplicated_no_direct_result.startswith(
+            runtime_mod.SEARCH_VALIDATION_ERROR_PREFIX
+        )
+        assert "duplicated in unadvertised_requirements" in (
+            duplicated_no_direct_result
+        )
+        assert captured_plan.get("calls", 0) == 0
+
+        repaired_duplicated_no_direct = duplicated_no_direct_tools[
+            "search_catalog_tool"
+        ](
+            semantic_query="casual sneakers",
+            shopper_guidance="",
+            requested_product_type="sneakers",
+            taxonomy_status="no_direct_catalog_match",
+            taxonomy={"category": [], "subcategory": []},
+            required_constraints={},
+        )
+        assert "No faithful advertised catalog taxonomy" in (
+            repaired_duplicated_no_direct
+        )
+        assert "CATALOG_SCOPE_OUTCOME" in repaired_duplicated_no_direct
+        assert captured_plan.get("calls", 0) == 0
+
+        mixed_no_direct_requirement = duplicated_no_direct_tools[
+            "search_catalog_tool"
+        ](
+            semantic_query="casual sneakers",
+            shopper_guidance="",
+            requested_product_type="sneakers",
+            taxonomy_status="no_direct_catalog_match",
+            taxonomy={"category": [], "subcategory": []},
+            required_constraints={
+                "unadvertised_requirements": [
+                    "sneakers",
+                    "water resistance",
+                ],
+            },
+        )
+        assert mixed_no_direct_requirement.startswith(
             "The requested catalog requirement cannot be enforced"
         )
         assert captured_plan.get("calls", 0) == 0

@@ -154,7 +154,10 @@ validation fails, independently valid constraints are likewise restored before
 execution. A locked boundary that cannot be restored safely remains
 comparison-protected and closes under the matching `repair_*_changed` reason.
 Malformed or nonempty free-form `unadvertised_requirements` arguments are never
-restored; a native schema-invalid call containing one closes without repair. A
+restored. An exact duplicate of a shopper-stated unavailable concrete product
+type receives one validation correction requiring an empty no-direct envelope;
+it is not silently rewritten. Every other native schema-invalid call containing
+one closes without repair. A
 schema-valid, genuinely open `agent_selected_type` request retains the bounded
 review for a proposed inferred requirement. A completed scope, an exhausted repair budget,
 or any tool result
@@ -377,7 +380,9 @@ Inputs:
   only. Advertised enum values are exact and numeric constraints use
   `min`/`max`. A directly stated product must-have absent from those properties
   goes in `unadvertised_requirements`; unknown ad hoc properties are rejected.
-  A preference such as "maybe cotton" stays in `semantic_query`.
+  A preference such as "maybe cotton" stays in `semantic_query`. Product types
+  never belong in `unadvertised_requirements`; no-direct requests use an empty
+  constraint object.
 - `scope_complete` (required): True only when this search plus existing
   current-turn evidence can answer the complete current request. A multi-role
   request keeps it false while another explicitly requested role, detail read,

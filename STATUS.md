@@ -146,7 +146,8 @@ The schema-driven catalog refactor is implemented:
 - `no_direct_catalog_match` is selected from the requested product type alone,
   carries empty taxonomy and no hard constraints, and performs no retrieval. An
   unsupported modifier does not erase an advertised type, while subjective
-  style remains semantic direction;
+  style remains semantic direction. A product type never belongs in
+  `unadvertised_requirements`;
 - duplicate search identity is normalized taxonomy plus hard constraints, not
   semantic wording. Repeating that identity is stopped even when the query is
   paraphrased. A shopper-named product scope also executes at most once per
@@ -202,8 +203,11 @@ The schema-driven catalog refactor is implemented:
   outside that finite restoration boundary still closes before execution and
   is classified as `repair_scope_changed`, `repair_relation_changed`, or
   `repair_constraints_changed`.
-  A native schema-invalid call with any nonempty
-  `unadvertised_requirements` lane closes without repair. Schema-valid,
+  A native schema-invalid call with a nonempty `unadvertised_requirements` lane
+  closes without repair, except when its only value exactly duplicates a
+  shopper-stated unavailable concrete product type. That one case receives a
+  bounded validation correction requiring empty no-direct guidance, taxonomy,
+  and constraints; runtime never silently rewrites it. Schema-valid,
   genuinely open `agent_selected_type` requests retain the bounded review for
   proposed inferred requirements.
   Every unadvertised requirement on a shopper-stated product scope fails closed
@@ -271,6 +275,13 @@ The newest focused gate is recorded first. Older Slice 0, Slice 2, and Slice 3
 results remain below as comparison points; generated quality and timing
 artifacts stay in the required local archive rather than versioned source.
 
+- Focused request-lane gate: 4 passed with one pre-existing
+  `StarletteDeprecationWarning`. The live “What casual sneakers do you have?”
+  smoke activated `product-discovery`, completed after one bounded no-direct
+  guidance correction, recorded `no_direct_catalog_match`, returned no product
+  evidence, and made no catalog retrieval. Total time was 13.982 seconds. No
+  Judge call was run; the unjudged smoke and comparison to the two archived 2/5
+  turns are stored under the required local quality archive.
 - Focused promotions gate: 11 passed with one pre-existing
   `StarletteDeprecationWarning`. A fresh-identity live smoke for “Any sales on
   shoes?” activated only `product-discovery`, called

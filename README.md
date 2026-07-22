@@ -99,42 +99,32 @@ full normalized `requested_product_type` phrase. A schema correction or a fresh
 constraint-provenance review can consume that single budget; constraint feedback
 returned by an in-flight schema repair closes the loop for synthesis rather than
 opening another repair. Distinct advertised siblings never count as the same
-repair scope. The repair uses a concise, schema-generic prompt with only
-`search_catalog_tool` exposed and forced. Its messages contain only the current
-shopper message and bounded, sanitized validator feedback in a separate Human
-data message; echoed rejected arguments are stripped, quoted text is labeled as
-data, and the base runtime prompt, invalid AI/tool history, and prior
-conversation history are absent. The skill gate then appends the complete active
-shopper-skill instructions to the concise repair prompt, so repair remains
-skill-governed while tool choice stays forced. For a native tool-transport
-failure, the requested scope is locked only when current or recent shopper text
-grounds it; an ungrounded model-generated scope may be corrected. A rejected
-change to a grounded free-form scope that cannot be reconstructed safely is
-removed before execution and appears in `agent_diagnostics` with the
-`repair_scope_changed` reason.
+repair scope. The isolated repair receives the capability-derived typed
+`search_catalog_tool`, compact server-generated Catalog capabilities, the
+current shopper message, bounded sanitized validator feedback, and the complete
+active shopper-skill instructions. The tool is forced and parallel calls are
+disabled; the base runtime prompt, invalid AI/tool history, and prior
+conversation history are absent. For a native tool-transport failure, the
+requested scope is locked only when current or recent shopper text grounds it;
+an ungrounded model-generated scope may be corrected. A rejected change to a
+grounded scope is removed before execution and appears in `agent_diagnostics`
+with the `repair_scope_changed` reason.
 Native validation feedback contains only rejected top-level field names; raw
 Pydantic `input_value` metadata and free-form `requested_product_type` text are
 never copied into the authoritative repair message. After activation, the
 server rejects a model response containing more than one shopping tool call,
 in addition to requesting `parallel_tool_calls=false`.
 When strict request validation fails while its constraint object validates
-independently, the server keeps capability-validated advertised constraints as
-a private immutable repair boundary. The isolated feedback supplies that exact
-finite constraint object, including an explicit empty object, so the repair can
-preserve it without reconstructing advertised values. Free-form rejected
-arguments remain excluded. Before execution, the server restores every
-independently valid finite lock: the taxonomy relation, canonical advertised
-constraints (including an explicit empty object), explicit valid
-`scope_complete` and `search_mode`, and `requested_product_type` when a
-singleton exact or agent-selected taxonomy determines it. The model still owns
-the invalid fields. A repair that drifts a restorable lock is corrected in
-place; bounded tool-call diagnostics record only the affected field names in
-`restored_fields`. The lock follows an accepted normalization of a
-modifier-bearing product phrase, and list-valued filters compare without regard
-to order; omitted optional values and explicit empty defaults compare equally.
-A no-direct repair may clear constraints only if it remains no-direct; if it
-changes to a retrieving status, it must preserve the original advertised
-constraints.
+independently, the handler keeps those capability-validated advertised
+constraints as a private immutable repair boundary and includes their exact
+finite object in validator feedback. The repaired call must preserve them; the
+strict handler rejects drift instead of overwriting model output. Free-form
+rejected arguments remain excluded. Repair middleware never restores or
+rewrites taxonomy, constraints, requested type, or search mode. It may restore
+only the structural `scope_complete` flag, which is reported by name in bounded
+`restored_fields` diagnostics. A no-direct repair may clear constraints only if
+it remains no-direct; if it changes to a retrieving status, it must preserve the
+original advertised constraints.
 If native enum validation rejects an `agent_selected_type` call, the same repair
 feedback also carries the shopper-provenance rule: a shopper-named role must use
 exact/umbrella status, while an open role keeps agent-selected status and chooses
@@ -143,15 +133,12 @@ requires `exact_requested_type`; named umbrellas and alternatives use
 `member_of_requested_umbrella`. A valid no-direct outcome reached after that one repair
 retains the specific not-advertised response instead of becoming a generic
 rejected-search response.
-When native validation rejects only `required_constraints`, the repair feedback
-also carries only the finite, schema-validated taxonomy status and selection so
-the model changes the rejected filter without reconstructing taxonomy. The
-free-form query, guidance, and requested scope remain excluded; the scope is
-compared privately. The server restores relation drift before a repaired
-constraint call executes. Conversely, when native taxonomy validation fails,
-it restores independently valid hard constraints before execution. A boundary
-that cannot be restored safely remains comparison-protected and closes without
-execution under the matching `repair_*_changed` reason. Malformed or nonempty
+When native validation rejects `required_constraints`, the repair receives the
+typed search tool and compact Catalog capabilities needed to select valid
+values. The free-form query, guidance, and requested scope remain excluded from
+native validator feedback; a shopper-grounded scope is compared privately.
+Middleware does not preserve unvalidated taxonomy or constraints by rewriting
+the repaired call. Malformed or nonempty
 free-form `unadvertised_requirements` arguments are never restored. One exact
 duplicate of a shopper-stated unavailable concrete product type receives a
 single validation correction requiring an empty no-direct envelope; it is never
@@ -189,12 +176,14 @@ guides.
    contract shared by all sessions. Its aggregate endpoint at
    `http://localhost:8009/capabilities` returns the cached catalog contract with
    the other runtime capabilities.
-4. Cached capabilities generate both the allowed taxonomy values and the
-   non-taxonomy `required_constraints` properties. The agent-facing tool uses a
-   structural transport schema; the runtime then applies the strict semantic
-   search model. This lets cross-field failures reach the catalog validator and
-   return capability-derived corrections instead of failing before tool
-   execution. The agent semantically selects exact advertised values and owns
+4. Cached capabilities generate the model-facing tool's exact taxonomy values,
+   hard-filter properties and enum values, typed numeric range shape, and
+   search-mode enum. This typed schema
+   deliberately omits cross-field validators; the handler applies a separate
+   strict semantic model to the same payload. Invalid individual values fail at
+   the tool boundary, while cross-field failures reach capability-aware handler
+   validation and can receive one bounded repair. The agent semantically selects
+   exact advertised values and owns
    `taxonomy_status`; deterministic chain code never semantically rewrites that
    status. It validates and maps the selection against the capability-owned
    exact category/subcategory relationships and returns corrective feedback for

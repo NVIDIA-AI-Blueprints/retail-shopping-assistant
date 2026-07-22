@@ -2488,7 +2488,7 @@ class TestDeepAgentsRuntimeRefs:
             "store-policy-answers",
         ]
         search_schema = tools_by_name["search_catalog_tool"].args_schema
-        assert search_schema is not runtime_mod.SearchCatalogToolInput
+        assert search_schema is not runtime_mod.SearchCatalogToolArguments
         assert set(search_schema.model_fields) == {
             "semantic_query",
             "shopper_guidance",
@@ -2499,6 +2499,30 @@ class TestDeepAgentsRuntimeRefs:
             "scope_complete",
             "search_mode",
         }
+        search_schema_json = search_schema.model_json_schema()
+        taxonomy_ref = search_schema_json["properties"]["taxonomy"]["$ref"]
+        taxonomy_schema = search_schema_json["$defs"][
+            taxonomy_ref.rsplit("/", 1)[-1]
+        ]
+        assert taxonomy_schema["properties"]["category"]["items"]["const"] == (
+            "dress"
+        )
+        constraints_ref = search_schema_json["properties"][
+            "required_constraints"
+        ]["$ref"]
+        constraints_schema = search_schema_json["$defs"][
+            constraints_ref.rsplit("/", 1)[-1]
+        ]
+        assert set(constraints_schema["properties"]) == {
+            "color",
+            "unadvertised_requirements",
+        }
+        assert {"const": "blue", "type": "string"} in constraints_schema[
+            "properties"
+        ]["color"]["anyOf"]
+        assert {"const": "text", "type": "string"} in search_schema_json[
+            "properties"
+        ]["search_mode"]["anyOf"]
         assert (
             tools_by_name["add_cart_items_tool"].args_schema
             is runtime_mod.AddCartItemsToolInput
@@ -3198,9 +3222,11 @@ class TestDeepAgentsRuntimeRefs:
         )
         assert "member_of_requested_umbrella requires" in invalid_strict_taxonomy
         assert (
-            "Preserve all already validated advertised required_constraints "
-            "exactly on repair"
+            "Preserve these capability-validated advertised "
+            "required_constraints exactly on repair"
         ) in invalid_strict_taxonomy
+        assert '"color": ["black", "blue"]' in invalid_strict_taxonomy
+        assert '"price": {"max": 60.0}' in invalid_strict_taxonomy
         drifted_strict_taxonomy = strict_taxonomy_tools[
             "search_catalog_tool"
         ](
@@ -3426,6 +3452,10 @@ class TestDeepAgentsRuntimeRefs:
         assert "If the repaired taxonomy_status remains" in (
             invalid_advertised_no_direct
         )
+        assert "capability-validated advertised required_constraints" in (
+            invalid_advertised_no_direct
+        )
+        assert '"price": {"max": 60.0}' in invalid_advertised_no_direct
         dropped_retrieval_constraint = no_direct_to_retrieval_tools[
             "search_catalog_tool"
         ](
@@ -3713,9 +3743,11 @@ class TestDeepAgentsRuntimeRefs:
         assert "agent_selected_type is forbidden" in invalid_open_role
         assert "Preserve that requested_product_type" in invalid_open_role
         assert (
-            "Preserve all already validated advertised required_constraints "
-            "exactly on repair"
+            "Preserve these capability-validated advertised "
+            "required_constraints exactly on repair"
         ) in invalid_open_role
+        assert '"color": ["black", "blue"]' in invalid_open_role
+        assert '"price": {"max": 60.0}' in invalid_open_role
         assert captured_plan.get("calls", 0) == 0
 
         drifted_taxonomy_repair = tools_by_name["search_catalog_tool"](

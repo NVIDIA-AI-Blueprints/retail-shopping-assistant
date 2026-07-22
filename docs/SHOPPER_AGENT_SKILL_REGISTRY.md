@@ -93,21 +93,25 @@ siblings protected from being treated as the same scope. Each scope receives
 one total repair. A schema correction or a fresh constraint-provenance review
 can consume that shared budget; constraint feedback returned by an in-flight
 schema repair closes the loop for synthesis rather than opening another repair.
-The request replaces the normal prompt and history with a concise, schema-generic
-system prompt, the current shopper message, and bounded, sanitized validator
-feedback in a separate Human data message. Echoed rejected arguments are
-stripped and quoted text is labeled as data. Only `search_catalog_tool` is
-exposed and forced. The base runtime prompt, invalid AI/tool history, and earlier
-conversation history are absent, while the skill gate appends the complete
-active shopper-skill instructions to the concise repair prompt.
+The isolated request receives the capability-derived typed
+`search_catalog_tool`, compact server-generated Catalog capabilities, the
+current shopper message, bounded sanitized validator feedback in a separate
+Human data message, and the complete active shopper-skill instructions. Echoed
+rejected arguments are stripped and quoted text is labeled as data. Only
+`search_catalog_tool` is exposed and forced; the base runtime prompt, invalid
+AI/tool history, and earlier conversation history are absent.
 For a native tool-transport failure, the requested scope is locked only when
 current or recent shopper text grounds it; an ungrounded model-generated scope
-may be corrected. Independently valid finite locked fields are restored before
-execution, with bounded `restored_fields` diagnostics listing names only. A
-change to a grounded free-form scope that cannot be reconstructed safely is
-still stripped and recorded with reason `repair_scope_changed`. Malformed or
-nonempty free-form `unadvertised_requirements` arguments remain outside that
-restoration boundary and close a native schema-invalid call without repair. An
+may be corrected. Middleware never restores or rewrites taxonomy, constraints,
+requested type, or search mode. It may restore only structural
+`scope_complete`, with bounded `restored_fields` diagnostics listing that name.
+When strict handler validation has already accepted the advertised constraints,
+its feedback may include that finite object and the next call is rejected if it
+drifts; the handler does not overwrite it.
+A changed shopper-grounded scope is stripped and recorded with reason
+`repair_scope_changed`. Malformed or nonempty free-form
+`unadvertised_requirements` arguments close a native schema-invalid call without
+repair. An
 exact duplicate of a shopper-stated unavailable concrete product type instead
 receives one bounded validation correction requiring an empty no-direct
 envelope; runtime does not rewrite it. A
@@ -192,9 +196,11 @@ combined with `outfit-styling`.
 - Uses one focused catalog search for each category scope.
 - Semantically maps shopper meaning to the exact taxonomy values and
   non-taxonomy constraint properties generated from active catalog
-  capabilities. The model-facing structural transport schema is revalidated by
-  the strict runtime semantic model, so cross-field failures reach the
-  capability-aware validator and receive exact corrections. The model owns
+  capabilities. The model-facing typed schema contains exact taxonomy values,
+  hard-filter properties and enum values, typed numeric range shape, and
+  search-mode values but omits cross-field validators. The
+  handler revalidates with the strict runtime semantic model, so cross-field
+  failures reach capability-aware validation. The model owns
   `taxonomy_status`; runtime never semantically rewrites it. Exact advertised
   category/subcategory coherence is owned by the capability contract.
 - Supplies required `requested_product_type` provenance on every text search:

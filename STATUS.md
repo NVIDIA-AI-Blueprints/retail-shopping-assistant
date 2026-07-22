@@ -107,9 +107,13 @@ The schema-driven catalog refactor is implemented:
   strict runtime model requires nonempty `shopper_guidance` for every search
   except `image_only` and `no_direct_catalog_match`, which require it to be
   empty. The
-  agent-facing structural transport schema is separate from the strict runtime
-  semantic model, so cross-field failures reach capability-aware validation and
-  produce capability-derived feedback. For text searches,
+  model-facing schema is generated from the cached capabilities with exact
+  taxonomy values, hard-filter properties and enum values, typed numeric range
+  shape, and search-mode values. It omits cross-field
+  validators, while the handler applies a separate strict semantic model to the
+  same payload. Invalid individual values therefore fail at the typed tool
+  boundary and cross-field failures reach capability-aware handler validation.
+  For text searches,
   `requested_product_type` is the shortest product noun or true umbrella from
   the current turn or direct antecedent. Color, material, fit, occasion,
   weather, and style modifiers stay out of it. It is null only for image-only
@@ -158,13 +162,12 @@ The schema-driven catalog refactor is implemented:
   constraint-provenance review can consume that shared budget; constraint
   feedback returned by an in-flight schema repair closes the loop for synthesis
   rather than opening another repair. The repair is an isolated model phase:
-  its concise, schema-generic system prompt replaces the base runtime prompt,
-  while the skill gate retains the complete active shopper-skill instructions.
-  Only `search_catalog_tool` is exposed and forced, and parallel calls are
-  disabled. Active-skill responses containing more than one shopping tool call
-  are rejected before execution. Its messages contain only the current shopper
-  message plus bounded, sanitized validator feedback in a separate Human data
-  message.
+  it receives the capability-derived typed `search_catalog_tool`, compact
+  server-generated Catalog capabilities, the current shopper message, bounded
+  sanitized validator feedback, and the complete active shopper-skill
+  instructions. Only `search_catalog_tool` is exposed and forced, and parallel
+  calls are disabled. Active-skill responses containing more than one shopping
+  tool call are rejected before execution.
   Echoed rejected arguments are stripped. Native Pydantic feedback is reduced
   to rejected top-level field names, unbounded requested-scope text is not
   replayed, and invalid AI/tool history and full conversation history are absent.
@@ -176,16 +179,12 @@ The schema-driven catalog refactor is implemented:
   snapshots its capability-validated advertised `required_constraints`
   privately. Isolated repair feedback supplies that exact finite constraint
   object, including an explicit empty object, while excluding free-form rejected
-  arguments. The repaired call must preserve it exactly. Before it reaches
-  tool execution, runtime restores only independently valid finite fields from
-  the rejected call: a validated taxonomy relation, canonical advertised
-  `required_constraints` (including an empty object), valid `scope_complete`
-  and explicit `search_mode`, and a singleton exact/agent-selected
-  `requested_product_type`. This is value preservation, not shopper-language
-  interpretation: the model still owns every semantic correction required to
-  make the rejected field valid. Accepted product-phrase
-  normalization retains the same lock, and list-valued filters compare
-  canonically; omitted optional defaults equal explicit empty values. A
+  arguments. The repaired call must preserve it exactly; the strict handler
+  rejects drift rather than overwriting the model's call. Repair middleware
+  never restores or rewrites taxonomy, constraints, requested type, or search
+  mode. It may restore only the independently valid structural
+  `scope_complete` flag, reported by name in bounded `restored_fields`
+  diagnostics. A
   no-direct repair may clear constraints only while remaining no-direct; a
   repair that changes to retrieval must preserve the original advertised
   constraints.
@@ -195,14 +194,11 @@ The schema-driven catalog refactor is implemented:
   named umbrellas and alternatives repair to member provenance. A terminal
   no-direct result after repair keeps its specific
   not-advertised shopper response.
-  Native failures confined to `required_constraints` include only finite,
-  validated taxonomy status and selection in repair feedback; free-form scope,
-  query, and guidance remain excluded while scope is compared privately.
-  Independently valid locked fields are restored before execution and reported
-  in diagnostics as bounded `restored_fields` names without values. Any drift
-  outside that finite restoration boundary still closes before execution and
-  is classified as `repair_scope_changed`, `repair_relation_changed`, or
-  `repair_constraints_changed`.
+  Native failures confined to `required_constraints` receive sanitized field
+  feedback plus the typed tool and compact Catalog capabilities; free-form
+  scope, query, and guidance remain excluded while shopper-grounded scope is
+  compared privately. A changed grounded scope closes before execution as
+  `repair_scope_changed`.
   A native schema-invalid call with a nonempty `unadvertised_requirements` lane
   closes without repair, except when its only value exactly duplicates a
   shopper-stated unavailable concrete product type. That one case receives a
@@ -275,6 +271,20 @@ The newest focused gate is recorded first. Older Slice 0, Slice 2, and Slice 3
 results remain below as comparison points; generated quality and timing
 artifacts stay in the required local archive rather than versioned source.
 
+- Current commit-readiness gate: the focused affected suite completed with 183
+  passed and 1 xfailed, followed by the full offline suite with 929 passed and 1
+  xfailed. Ruff, `git diff --check`, and Docker
+  Compose configuration validation are green. Eight targeted live GPT-backed
+  flows completed 8/8. The full GPT-qualified shopping cohort completed all 48
+  shopper turns, Judge decisions, and timing records with no request errors or
+  timeouts and two generic fallbacks. Judge average was 3.5208/5, with 32/48
+  turns scoring at least 4; mean / median / p95 / maximum latency was 19.457s /
+  19.185s / 35.665s / 47.774s. Comparison with earlier Ultra-backed app/Judge
+  runs is qualified because both the app model and Judge model changed to GPT.
+  The two genuine remaining failures are generic fallbacks for formal tops and
+  the beige-top bottoms follow-up. Catalog-sensitive Golden drift also remains:
+  older expected absence or category breadth can disagree with the active
+  published catalog.
 - Focused request-lane gate: 4 passed with one pre-existing
   `StarletteDeprecationWarning`. The live “What casual sneakers do you have?”
   smoke activated `product-discovery`, completed after one bounded no-direct
@@ -450,8 +460,7 @@ still applies: existing beige skirts and pastel tops contradict older absence
 answers, so raw scores are not a standalone catalog-quality verdict.
 
 The preserved Slice 0 full run covers the deterministic search-only renderer, noun-only
-product-type provenance, one-repair search boundary, finite preservation of
-independently valid repair fields, review-blocker fixes, and turn-scoped Judge
+product-type provenance, one-repair search boundary, review-blocker fixes, and turn-scoped Judge
 evidence. Search-only answers stayed inside names, prices, roles, and confirmed
 filter evidence. The remaining score gap is therefore not a reason to weaken
 the evidence boundary.

@@ -276,7 +276,7 @@ interface AgentDiagnostics {
     status: 'completed' | 'rejected' | 'error' | 'pending';
     rejection_reason?: string;
     duplicate?: boolean;
-    restored_fields?: string[];       // Bounded names of server-restored locks
+    restored_fields?: string[];       // Structural fields restored by middleware
   }>;
   rejected_tool_calls: number[];       // Sequence numbers in tool_calls
   duplicate_tool_calls: number[];      // Rejected duplicate-call subset
@@ -339,10 +339,10 @@ explicit reads of those files; other reference-file reads remain visible in
 `tool_calls`. Every Deep Agents turn starts with an internal
 `activate_shopper_skills_tool` call. A pre-activation or same-batch shopping
 call is rejected with `rejection_reason: "skill_activation_required"`.
-For a one-shot catalog repair, independently valid finite locked fields are
-restored before execution rather than delegated back to the model.
-`restored_fields` contains only the bounded field names restored on that tool
-call, never a second copy of their values.
+For a one-shot catalog repair, middleware may restore only the independently
+valid structural `scope_complete` field. It never restores or rewrites taxonomy,
+constraints, requested type, or search mode. `restored_fields` therefore
+contains only bounded structural field names, never a second copy of values.
 
 `product_evidence` contains only structured records derived from successful
 current-turn `search_catalog_tool` and `get_product_details_tool` result
@@ -762,10 +762,14 @@ catalog retriever derives them from the loaded JSONL.
 Executes a structured text catalog search on the catalog service port, usually
 `http://localhost:8010/query/text`.
 
-The agent-facing search tool requires one `semantic_query`, one pre-retrieval
+The model-facing search tool requires one `semantic_query`, one pre-retrieval
 product-agnostic `shopper_guidance`, one `requested_product_type`, one
 `taxonomy_status`, one capability-derived `taxonomy` envelope, one
 capability-derived `required_constraints` object, and `scope_complete`.
+Its schema is generated from Catalog capabilities with exact taxonomy values,
+hard-filter properties and enum values, typed numeric range shape, and
+search-mode values while deliberately omitting cross-field validators. The
+handler applies a separate strict semantic model to the same payload.
 `requested_product_type` is the shortest product noun or true
 umbrella from the shopper's current turn or direct antecedent. It excludes
 color, material, fit, occasion, weather, and style modifiers; for
@@ -793,6 +797,15 @@ selections to advertised field names and sends the semantic query as a singleton
 `text` list.
 
 One invalid agent search may receive one search-only repair per distinct scope.
+That isolated call receives the capability-derived typed search tool, compact
+server-generated Catalog capabilities, the current shopper message, bounded
+sanitized validator feedback, and the active skill instructions. Runtime
+protects a shopper-grounded requested scope across native and strict validation
+paths. Repair middleware may restore only structural `scope_complete`; it does
+not rewrite catalog fields.
+When strict handler validation has already accepted advertised constraints, its
+feedback may include that finite object and a repaired call that drifts is
+rejected rather than overwritten.
 Malformed or nonempty free-form `unadvertised_requirements` arguments on a
 native schema-invalid call fail closed. If the only value exactly duplicates a
 shopper-stated unavailable concrete product type, runtime rejects it with one

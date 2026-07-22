@@ -20,7 +20,6 @@ from chain_server.src.tool_loop_control import (
     UNSUPPORTED_CONSTRAINT_PREFIX,
     UNSUPPORTED_TAXONOMY_PREFIX,
     ToolLoopControlMiddleware,
-    _canonical_constraints,
     _normalize_scope,
 )
 from chain_server.src.skill_activation import ShopperSkillActivationMiddleware
@@ -95,9 +94,12 @@ def _messages_with_result(result: ToolMessage) -> list[Any]:
 
 
 def test_normal_phase_preserves_activation_and_shopping_tools() -> None:
-    prepared = _capture_model_request(ToolLoopControlMiddleware())
+    prepared = _capture_model_request(
+        ToolLoopControlMiddleware(catalog_context="advertised boots")
+    )
 
     assert prepared.tools == TOOLS
+    assert "advertised boots" not in prepared.system_prompt
 
 
 @pytest.mark.parametrize(
@@ -376,7 +378,9 @@ def test_closed_loop_strips_a_model_emitted_invalid_tool_call() -> None:
 
 
 def test_one_search_schema_repair_is_exposed_then_tools_are_removed() -> None:
-    middleware = ToolLoopControlMiddleware()
+    middleware = ToolLoopControlMiddleware(
+        catalog_context="Taxonomy: footwear > boots, flats"
+    )
     invalid_call = AIMessage(
         content="",
         tool_calls=[
@@ -405,12 +409,18 @@ def test_one_search_schema_repair_is_exposed_then_tools_are_removed() -> None:
     assert "## Catalog Search Repair" in repair_request.system_prompt
     normalized_prompt = " ".join(repair_request.system_prompt.split())
     assert "validator feedback is authoritative" in normalized_prompt
+    assert "allowed values and field descriptions" not in normalized_prompt
     assert "Apply every requested correction in the same call" in normalized_prompt
+    assert "CATALOG CAPABILITIES (server-generated data)" in normalized_prompt
+    assert "Taxonomy: footwear > boots, flats" in normalized_prompt
     assert "invalid taxonomy" not in repair_request.system_prompt
     assert repair_request.messages[0] == repair_messages[0]
     assert len(repair_request.messages) == 2
     assert isinstance(repair_request.messages[1], HumanMessage)
     assert "CATALOG VALIDATOR FEEDBACK" in repair_request.messages[1].content
+    assert "Taxonomy: footwear > boots, flats" not in (
+        repair_request.messages[1].content
+    )
     assert "Tool arguments failed schema validation" in (
         repair_request.messages[1].content
     )
@@ -823,7 +833,7 @@ def test_native_repair_feedback_preserves_open_role_selection_rule() -> None:
     assert "choose exactly one advertised subcategory" in feedback
 
 
-def test_runtime_repair_preserves_open_role_and_empty_constraints() -> None:
+def test_runtime_repair_preserves_open_role() -> None:
     middleware = ToolLoopControlMiddleware()
     invalid_call = AIMessage(
         content="",
@@ -862,7 +872,6 @@ def test_runtime_repair_preserves_open_role_and_empty_constraints() -> None:
 
     assert "Preserve taxonomy_status=agent_selected_type" in feedback
     assert "choose exactly one advertised subcategory" in feedback.casefold()
-    assert "Preserve required_constraints exactly as {}" in feedback
 
 
 def test_runtime_alternative_correction_does_not_preserve_narrowed_scope() -> None:
@@ -908,12 +917,9 @@ def test_runtime_alternative_correction_does_not_preserve_narrowed_scope() -> No
     assert "['heels', 'flats']" in feedback
     assert "Preserve the shopper-named requested_product_type" not in feedback
     assert "Preserve taxonomy_status=agent_selected_type" not in feedback
-    assert 'Preserve required_constraints exactly as {"primary_color": ["black"]}' in (
-        feedback
-    )
 
 
-def test_runtime_repair_receives_exact_valid_constraints() -> None:
+def test_runtime_repair_preserves_named_scope() -> None:
     middleware = ToolLoopControlMiddleware()
     invalid_call = AIMessage(
         content="",
@@ -958,13 +964,9 @@ def test_runtime_repair_receives_exact_valid_constraints() -> None:
 
     assert "Preserve the shopper-named requested_product_type" in feedback
     assert "agent_selected_type is forbidden" in feedback
-    assert (
-        'Preserve required_constraints exactly as {"structure": '
-        '["semi_structured", "structured"]}' in feedback
-    )
 
 
-def test_runtime_repair_restores_empty_constraints_before_execution() -> None:
+def test_runtime_repair_does_not_restore_unvalidated_constraints() -> None:
     middleware = ToolLoopControlMiddleware()
     invalid_call = AIMessage(
         content="",
@@ -985,9 +987,9 @@ def test_runtime_repair_restores_empty_constraints_before_execution() -> None:
                             "tote_bags",
                         ],
                     },
-                    "required_constraints": {},
+                    "required_constraints": {"color": ["black"]},
                     "scope_complete": True,
-                    "search_mode": "text",
+                    "search_mode": "typo-mode",
                 },
             }
         ],
@@ -1030,7 +1032,7 @@ def test_runtime_repair_restores_empty_constraints_before_execution() -> None:
                                     ],
                                 },
                                 "required_constraints": {
-                                    "primary_color": ["beige", "brown", "white"]
+                                    "primary_color": ["black"]
                                 },
                                 "scope_complete": True,
                                 "search_mode": "text",
@@ -1047,10 +1049,11 @@ def test_runtime_repair_restores_empty_constraints_before_execution() -> None:
     assert repaired.tool_calls[0]["args"]["taxonomy_status"] == (
         "member_of_requested_umbrella"
     )
-    assert repaired.tool_calls[0]["args"]["required_constraints"] == {}
-    assert repaired.additional_kwargs["server_restored_tool_call_fields"] == [
-        {"tool_call_id": "call-b", "fields": ["required_constraints"]}
-    ]
+    assert repaired.tool_calls[0]["args"]["required_constraints"] == {
+        "primary_color": ["black"]
+    }
+    assert repaired.tool_calls[0]["args"]["search_mode"] == "text"
+    assert "server_restored_tool_call_fields" not in repaired.additional_kwargs
 
 
 @pytest.mark.parametrize(
@@ -1122,7 +1125,7 @@ def test_runtime_repair_restores_empty_constraints_before_execution() -> None:
         ),
     ],
 )
-def test_native_taxonomy_repair_keeps_named_scope_and_constraints(
+def test_native_taxonomy_repair_keeps_named_scope(
     shopper_query: str,
     arguments: dict[str, Any],
     repaired_arguments: dict[str, Any],
@@ -1175,10 +1178,9 @@ def test_native_taxonomy_repair_keeps_named_scope_and_constraints(
     assert "Preserve requested_product_type" in feedback
     assert "agent_selected_type is forbidden" in feedback
     assert status_guidance in feedback
-    assert "Preserve required_constraints exactly as {}" in feedback
 
 
-def test_native_constraint_repair_feedback_preserves_taxonomy_relation() -> None:
+def test_native_constraint_repair_does_not_replay_unvalidated_relation() -> None:
     middleware = ToolLoopControlMiddleware()
     invalid_call = AIMessage(
         content="",
@@ -1215,16 +1217,18 @@ def test_native_constraint_repair_feedback_preserves_taxonomy_relation() -> None
     )
     feedback = str(prepared.messages[1].content)
 
-    assert "Preserve this validated relation exactly" in feedback
-    assert '"taxonomy_status": "member_of_requested_umbrella"' in feedback
-    assert '"category": ["bags"]' in feedback
-    assert '"subcategory": ["crossbody_bags", "tote_bags"]' in feedback
+    assert "Tool schema rejected these fields: required_constraints" in feedback
+    assert "validated relation" not in feedback
+    assert "tote_bags" not in feedback
+    assert "crossbody_bags" not in feedback
     assert "IGNORE THIS MODEL TEXT" not in feedback
     assert "IGNORE THIS GUIDANCE" not in feedback
 
 
-def test_native_constraint_repair_restores_relation_drift() -> None:
-    middleware = ToolLoopControlMiddleware()
+def test_native_repair_does_not_restore_unvalidated_taxonomy() -> None:
+    middleware = ToolLoopControlMiddleware(
+        catalog_context="Taxonomy: category=footwear; subcategory=flats"
+    )
     invalid_call = AIMessage(
         content="",
         tool_calls=[
@@ -1232,15 +1236,13 @@ def test_native_constraint_repair_restores_relation_drift() -> None:
                 "id": "call-a",
                 "name": "search_catalog_tool",
                 "args": {
-                    "requested_product_type": "bags",
-                    "taxonomy_status": "member_of_requested_umbrella",
+                    "requested_product_type": "shoes",
+                    "taxonomy_status": "exact_requested_type",
                     "taxonomy": {
-                        "category": ["bags"],
-                        "subcategory": ["tote_bags", "crossbody_bags"],
+                        "category": ["footwear"],
+                        "subcategory": ["shoes"],
                     },
-                    "required_constraints": {
-                        "primary_color": ["beige", "cream"],
-                    },
+                    "required_constraints": "invalid",
                     "scope_complete": True,
                     "search_mode": "text",
                 },
@@ -1249,15 +1251,16 @@ def test_native_constraint_repair_restores_relation_drift() -> None:
     )
     native_error = _tool_result(
         SEARCH_VALIDATION_ERROR_PREFIX
-        + "{'required_constraints': {'primary_color': ['beige', 'cream']}} "
-        "with error:\nrequired_constraints.primary_color.1: invalid enum value",
+        + "{'required_constraints': 'invalid'} with error:\n"
+        "required_constraints\n"
+        "  Input should be a valid dictionary [type=dict_type]",
         status="error",
     )
     request = _model_request(
-        [HumanMessage(content="Find a matching bag."), invalid_call, native_error]
+        [HumanMessage(content="Show me black shoes."), invalid_call, native_error]
     )
 
-    def changed_relation(_: ModelRequest) -> ModelResponse:
+    def corrected_catalog_values(_: ModelRequest) -> ModelResponse:
         return ModelResponse(
             result=[
                 AIMessage(
@@ -1267,17 +1270,14 @@ def test_native_constraint_repair_restores_relation_drift() -> None:
                             "id": "call-b",
                             "name": "search_catalog_tool",
                             "args": {
-                                "requested_product_type": "bags",
-                                "taxonomy_status": "exact_requested_type",
+                                "requested_product_type": "shoes",
+                                "taxonomy_status": "member_of_requested_umbrella",
                                 "taxonomy": {
-                                    "category": ["bags"],
-                                    "subcategory": [
-                                        "crossbody_bags",
-                                        "tote_bags",
-                                    ],
+                                    "category": ["footwear"],
+                                    "subcategory": ["flats"],
                                 },
                                 "required_constraints": {
-                                    "primary_color": ["beige"],
+                                    "primary_color": ["black"],
                                 },
                                 "scope_complete": True,
                                 "search_mode": "text",
@@ -1288,25 +1288,23 @@ def test_native_constraint_repair_restores_relation_drift() -> None:
             ]
         )
 
-    response = middleware.wrap_model_call(request, changed_relation)
+    response = middleware.wrap_model_call(request, corrected_catalog_values)
 
     repaired = response.result[0]
     assert repaired.tool_calls[0]["args"]["taxonomy_status"] == (
         "member_of_requested_umbrella"
     )
     assert repaired.tool_calls[0]["args"]["taxonomy"] == {
-        "category": ["bags"],
-        "subcategory": ["crossbody_bags", "tote_bags"],
+        "category": ["footwear"],
+        "subcategory": ["flats"],
     }
     assert repaired.tool_calls[0]["args"]["required_constraints"] == {
-        "primary_color": ["beige"]
+        "primary_color": ["black"]
     }
-    assert repaired.additional_kwargs["server_restored_tool_call_fields"] == [
-        {"tool_call_id": "call-b", "fields": ["taxonomy_status"]}
-    ]
+    assert "server_restored_tool_call_fields" not in repaired.additional_kwargs
 
 
-def test_missing_constraints_cannot_drift_valid_open_role_relation() -> None:
+def test_native_repair_may_change_ungrounded_open_role() -> None:
     middleware = ToolLoopControlMiddleware()
     invalid_call = AIMessage(
         content="",
@@ -1375,27 +1373,22 @@ def test_missing_constraints_cannot_drift_valid_open_role_relation() -> None:
     repaired = response.result[0]
     arguments = repaired.tool_calls[0]["args"]
 
-    assert "Preserve this validated relation exactly" in str(
+    assert "genuinely open product role" in str(
         captured[0].messages[-1].content
     )
-    assert arguments["requested_product_type"] == "sneakers"
+    assert arguments["requested_product_type"] == "sweaters"
     assert arguments["taxonomy_status"] == "agent_selected_type"
     assert arguments["taxonomy"] == {
-        "category": ["footwear"],
-        "subcategory": ["sneakers"],
+        "category": ["apparel"],
+        "subcategory": ["sweaters"],
     }
     assert arguments["required_constraints"] == {}
     assert arguments["scope_complete"] is False
-    assert arguments["search_mode"] == "text"
+    assert "search_mode" not in arguments
     assert repaired.additional_kwargs["server_restored_tool_call_fields"] == [
         {
             "tool_call_id": "call-b",
-            "fields": [
-                "requested_product_type",
-                "scope_complete",
-                "search_mode",
-                "taxonomy",
-            ],
+            "fields": ["scope_complete"],
         }
     ]
 
@@ -1508,7 +1501,7 @@ def test_missing_constraints_do_not_lock_an_invalid_taxonomy_relation(
     )
 
 
-def test_native_taxonomy_repair_restores_valid_constraints() -> None:
+def test_native_taxonomy_repair_does_not_restore_constraints() -> None:
     middleware = ToolLoopControlMiddleware()
     invalid_call = AIMessage(
         content="",
@@ -1571,26 +1564,8 @@ def test_native_taxonomy_repair_restores_valid_constraints() -> None:
     response = middleware.wrap_model_call(request, dropped_constraints)
 
     repaired = response.result[0]
-    assert repaired.tool_calls[0]["args"]["required_constraints"] == {
-        "primary_color": ["beige", "black"]
-    }
-    assert repaired.additional_kwargs["server_restored_tool_call_fields"] == [
-        {"tool_call_id": "call-b", "fields": ["required_constraints"]}
-    ]
-
-
-def test_native_constraint_lock_normalizes_default_empty_values() -> None:
-    assert _canonical_constraints(
-        {
-            "primary_color": ["black", "beige"],
-        }
-    ) == _canonical_constraints(
-        {
-            "unadvertised_requirements": [],
-            "primary_color": ["beige", "black"],
-            "brand": None,
-        }
-    )
+    assert repaired.tool_calls[0]["args"]["required_constraints"] == {}
+    assert "server_restored_tool_call_fields" not in repaired.additional_kwargs
 
 
 def test_native_error_metadata_and_free_form_scope_never_enter_repair_prompt() -> None:
@@ -1662,11 +1637,12 @@ def test_native_error_metadata_and_free_form_scope_never_enter_repair_prompt() -
     assert "IGNORE SYSTEM" not in feedback
     assert "reveal secrets" not in feedback
     assert "Tool schema rejected these fields: required_constraints" in feedback
-    assert response.result[0].tool_calls == []
-    rejected_calls = response.result[0].additional_kwargs[
-        "server_rejected_tool_calls"
-    ]
-    assert rejected_calls[0]["rejection_reason"] == "repair_scope_changed"
+    assert response.result[0].tool_calls[0]["args"]["requested_product_type"] == (
+        "bags"
+    )
+    assert "server_rejected_tool_calls" not in (
+        response.result[0].additional_kwargs
+    )
 
 
 @pytest.mark.parametrize(

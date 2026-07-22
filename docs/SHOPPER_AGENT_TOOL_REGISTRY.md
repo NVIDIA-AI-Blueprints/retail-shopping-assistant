@@ -39,12 +39,13 @@ and policy turns do not require a product primary. A terse item-only follow-up
 inside an active outfit-building or style-led single-piece thread remains an
 `outfit-styling` task.
 
-The active catalog capabilities generate both the exact taxonomy values and
-the non-taxonomy required-constraint properties in the search-tool schema.
-The model owns semantic selection through an agent-facing structural transport
-schema. Runtime then applies a separate strict semantic search model, so
-cross-field failures reach capability-aware validation and receive exact
-capability-derived corrections instead of failing before tool execution.
+The active Catalog capabilities generate the model-facing search schema's exact
+taxonomy values, hard-filter properties and enum values, typed numeric range
+shape, and search-mode enum. That typed schema omits cross-field validators.
+Runtime applies a separate strict
+semantic search model inside the handler, so invalid individual values fail at
+the tool boundary while cross-field failures reach capability-aware handler
+validation.
 The model owns `taxonomy_status`; runtime never semantically rewrites it.
 Capability-owned exact category/subcategory relationships determine whether the
 submitted status and selection are coherent.
@@ -106,11 +107,10 @@ siblings are protected from being treated as the same scope. Each scope has one
 total repair. A schema correction or a fresh constraint-provenance review can
 consume that shared budget; constraint feedback returned by an in-flight schema
 repair closes the loop for synthesis rather than opening another repair. The
-repair request uses a concise, schema-generic system prompt in place of the base
-runtime prompt. The skill gate appends the complete active shopper-skill
-instructions. Its messages contain only
-the current shopper message and bounded, sanitized validator feedback in a
-separate Human data message. Echoed rejected arguments are stripped; native
+isolated request receives the capability-derived typed search tool, compact
+server-generated Catalog capabilities, the current shopper message, bounded
+sanitized validator feedback in a separate Human data message, and the complete
+active shopper-skill instructions. Echoed rejected arguments are stripped; native
 Pydantic feedback is reduced to rejected top-level field names, and free-form
 requested-scope text is not replayed. Invalid AI/tool history and earlier
 conversation history are absent. Only `search_catalog_tool` remains exposed and
@@ -127,15 +127,12 @@ its advertised `required_constraints` privately. The isolated feedback includes
 that exact finite object, including an explicit empty object, rather than asking
 the repair to reconstruct advertised values. Free-form rejected arguments stay
 excluded.
-Before execution, runtime restores every independently valid finite lock: the
-taxonomy relation, canonical advertised constraints (including an explicit
-empty object), explicit valid `scope_complete` and `search_mode`, and
-`requested_product_type` when a singleton exact or agent-selected taxonomy
-determines it. The model owns only invalid fields. Drift in a restorable lock is
-corrected in place; bounded tool-call diagnostics expose only the restored
-field names in `restored_fields`. The constraint lock follows accepted
-product-phrase normalization, and list-valued constraints compare without
-regard to order; omitted optional defaults equal explicit empty values.
+The repaired call must preserve capability-validated advertised constraints;
+the strict handler rejects drift instead of overwriting model output. Repair
+middleware never restores or rewrites taxonomy, constraints, requested type, or
+search mode. It may restore only the independently valid structural
+`scope_complete` flag, with that field name recorded in bounded
+`restored_fields` diagnostics.
 A no-direct repair may clear constraints only while remaining no-direct; a
 repair that changes to retrieval must retain the original advertised
 constraints.
@@ -146,16 +143,14 @@ advertised subtype uses `exact_requested_type`, while a named umbrella or set of
 alternatives uses `member_of_requested_umbrella`. If that repair ends in a valid no-direct
 outcome, the fixed not-advertised response takes precedence over the earlier
 validation failure. A
-native failure confined to `required_constraints` includes only finite,
-validated taxonomy status and selection in repair feedback, never the free-form
-scope, query, or guidance. Scope comparison is private. Relation drift is
-restored before the repaired constraint call executes. When native taxonomy
-validation fails, independently valid constraints are likewise restored before
-execution. A locked boundary that cannot be restored safely remains
-comparison-protected and closes under the matching `repair_*_changed` reason.
-Malformed or nonempty free-form `unadvertised_requirements` arguments are never
-restored. An exact duplicate of a shopper-stated unavailable concrete product
-type receives one validation correction requiring an empty no-direct envelope;
+native failure confined to `required_constraints` receives sanitized field
+feedback plus the typed search tool and compact Catalog capabilities, never the
+free-form scope, query, or guidance. Scope comparison is private. Middleware
+does not reconstruct or overwrite rejected catalog values; a changed
+shopper-grounded scope closes as `repair_scope_changed`. Malformed or nonempty
+free-form `unadvertised_requirements` arguments are never restored. An exact
+duplicate of a shopper-stated unavailable concrete product type receives one
+validation correction requiring an empty no-direct envelope;
 it is not silently rewritten. Every other native schema-invalid call containing
 one closes without repair. A
 schema-valid, genuinely open `agent_selected_type` request retains the bounded
@@ -394,9 +389,11 @@ Preconditions:
 
 - Requires either product text or an attached image.
 - The agent semantically maps the shopper's request to exact advertised
-  taxonomy values through the structural transport schema. The strict runtime
-  semantic model validates cross-field relationships, then maps valid values to
-  catalog fields. The runtime does not maintain taxonomy keyword aliases.
+  taxonomy values, hard-filter properties and enum values, and typed numeric
+  range shape through the capability-derived typed schema.
+  The strict handler model validates cross-field relationships, then maps valid
+  values to catalog fields. The runtime does not maintain taxonomy keyword
+  aliases.
 - If an explicitly requested product type has no advertised match, the agent
   uses `no_direct_catalog_match`, which reports the gap without retrieval,
   before asking permission to search an adjacent type. It does not omit the

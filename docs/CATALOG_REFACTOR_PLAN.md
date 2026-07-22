@@ -28,19 +28,24 @@ The agent depends on advertised capabilities, but capabilities are not trusted
 as executable instructions. The chain validates the agent's structured intent,
 and the catalog validates the resulting request again.
 
-The agent tool schema requires `semantic_query`, `requested_product_type`,
-`taxonomy`, and `required_constraints`. For every text search,
+The model-facing tool schema requires `semantic_query`,
+`requested_product_type`, `taxonomy`, and `required_constraints`. It is generated
+from cached Catalog capabilities with exact taxonomy values, hard-filter
+properties and enum values, typed numeric range shape, and search-mode values,
+but deliberately omits cross-field validators. The handler applies a separate
+strict semantic model to the same payload. For every text search,
 `requested_product_type` is the shortest product noun or true umbrella from the
 shopper's current turn or direct antecedent, excluding color, material, fit,
 occasion, weather, and style modifiers. For `agent_selected_type`, it is the
 chosen advertised role noun. It is provenance rather than taxonomy or ranking
 text and is `null` only for image-only search. The taxonomy envelope has stable
 `category` and `subcategory` roles, but their enum values are generated from the
-cached capability contract. `required_constraints` stays generic for
-non-taxonomy must-haves. The chain keeps the full capability object for
-deterministic mapping and validation, while the system prompt receives a compact
-projection of other filter, semantic, and detail roles. Generated values are
-never baked into application code.
+cached capability contract. `required_constraints` exposes only advertised
+non-taxonomy hard-filter properties, advertised enum values, typed numeric range
+shape, and the explicit `unadvertised_requirements` lane. The chain keeps the
+full capability object for deterministic mapping and validation, while the
+system prompt receives a compact projection of other filter, semantic, and
+detail roles. Generated values are never baked into application code.
 
 Each search accepts at most one category. When a broad request names no concrete
 type, `agent_selected_type` selects exactly one advertised subcategory as the
@@ -326,6 +331,15 @@ must-haves stop the search rather than being silently weakened; an unsupported
 modifier does not erase an advertised type, and subjective style stays semantic.
 
 One invalid search may consume that distinct scope's single search-only repair.
+The isolated repair receives the capability-derived typed search tool, compact
+server-generated Catalog capabilities, the current shopper message, bounded
+sanitized validator feedback, and the active shopper-skill instructions.
+Runtime protects shopper-grounded requested scope across native and strict
+validation paths. Repair middleware may restore only structural
+`scope_complete`; it never rewrites taxonomy, constraints, requested type, or
+search mode. When strict handler validation has
+already accepted advertised constraints, its feedback may include that finite
+object and the next call is rejected if it drifts rather than being overwritten.
 Malformed or nonempty free-form `unadvertised_requirements` arguments on a
 native schema-invalid call fail closed. Constraint review is model-owned only
 for a schema-valid, genuinely open `agent_selected_type` role: explicit

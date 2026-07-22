@@ -907,7 +907,7 @@ def _advertised_taxonomy_scope_issue(
 
 
 class SearchCatalogToolArguments(BaseModel):
-    """Agent-facing search arguments narrowed to the active catalog schema."""
+    """Stable agent-facing catalog-search arguments."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -1008,9 +1008,11 @@ class SearchCatalogToolArguments(BaseModel):
             "an antecedent or anchor guide semantic styling judgment; do not copy "
             "them onto a complementary product unless the shopper explicitly asks "
             "for the same value. "
-            "The active catalog replaces this base field with its advertised hard "
-            "filters and an explicit lane for directly stated requirements it "
-            "cannot enforce. Season, weather, occasion, and subjective style/vibe "
+            "Use exact hard-filter properties and advertised enum values from "
+            "current Catalog capabilities. Put a directly stated requirement "
+            "those capabilities do not advertise in unadvertised_requirements. "
+            "Season, weather, occasion, "
+            "and subjective style/vibe "
             "context remain semantic direction unless the shopper directly "
             "requires an objective product attribute. A defining material is a "
             "must-have: for 'Any denim skirts available?', put 'denim' in "
@@ -1984,13 +1986,19 @@ class DeepAgentsRuntime:
             constraints.pop("unadvertised_requirements", None)
             pending_taxonomy_constraints = constraints
             pending_no_direct_constraint_clear = allow_no_direct_clear
+            serialized_constraints = json.dumps(
+                constraints,
+                ensure_ascii=False,
+                sort_keys=True,
+            )
             if allow_no_direct_clear:
                 return (
                     " If the repaired taxonomy_status remains "
                     "no_direct_catalog_match, clear advertised "
                     "required_constraints as that status requires. If the "
                     "repair changes to a retrieving taxonomy_status, preserve "
-                    "all validated advertised required_constraints exactly."
+                    "these capability-validated advertised required_constraints "
+                    f"exactly: {serialized_constraints}."
                 )
             if not constraints:
                 return (
@@ -2000,8 +2008,9 @@ class DeepAgentsRuntime:
                     "identified ungrounded product scope."
                 )
             return (
-                " Preserve all already validated advertised "
-                "required_constraints exactly on repair. Change only "
+                " Preserve these capability-validated advertised "
+                "required_constraints exactly on repair: "
+                f"{serialized_constraints}. Change only "
                 "taxonomy_status, taxonomy, or an explicitly identified "
                 "ungrounded product scope."
             )
@@ -2028,86 +2037,13 @@ class DeepAgentsRuntime:
             taxonomy_status: str = "exact_requested_type",
             search_mode: str | None = None,
         ) -> str:
-            """Find products by description, category, or price. Use for browse,
-            search, and recommendation requests. Set taxonomy_status to
-            'exact_requested_type' when the selected taxonomy directly represents
-            the requested focused role. For a single selected value, the requested
-            type must name that value; the semantic query may focus on soft
-            ranking direction. Use
-            'member_of_requested_umbrella' only when
-            the shopper named an umbrella or explicit alternatives and every
-            selected value is its faithful child or named alternative;
-            never reverse that relationship because the requested type belongs to
-            a selected parent. Ask whether each selected value is a kind of the
-            shopper's requested scope: a skirt is a kind of bottom; a flat or
-            sandal is not a kind of sneaker. For a broad styling or discovery
-            request that names no concrete product type, use 'agent_selected_type'
-            and choose one exact advertised subcategory as the focused starting
-            role. Never use
-            it for a role whose type the shopper named, including an alternative,
-            confirmation, comparison, or follow-up. Use 'no_direct_catalog_match' only
-            for an explicitly requested concrete product type when only parent,
-            adjacent, or substitute types exist. Never use it for an outfit,
-            occasion, season, weather need, style/vibe, or product attribute. Set
-            empty taxonomy arrays on that path so it reports the gap without
-            retrieval. Use 'image_only' only with an empty text query and taxonomy. A turn
-            asking for one recommendation-only product role permits one inclusive
-            matched search, then an answer; set scope_complete=true. Set it false
-            only when an explicitly requested product role, product-detail check,
-            availability check, or cart action still must run after this search.
-            Judge completeness against this user turn, not an unfinished multi-turn
-            outfit project. "Start with a beige top" and "What bottoms go with
-            that?" are complete after their one-role searches.
-            An unavailable type inside a one-role umbrella does not make the scope
-            partial. Do NOT search an adjacent category or substitute
-            after a result. Do NOT use if the product was presented earlier in
-            this conversation; resolve it, then use get_product_details_tool.
-            Each call covers at most one catalog category. Include all faithful
-            subtypes for one requested role, but never mix categories in one call.
-            Copy every attribute that defines the requested products into
-            required_constraints. Use only advertised filter properties directly;
-            put any defining requirement not in the schema into
-            unadvertised_requirements. A product type never belongs in
-            unadvertised_requirements. For "Any denim skirts available?", use
-            {"unadvertised_requirements": ["denim"]}. For "Do you have water-resistant bags?",
-            use {"unadvertised_requirements": ["water resistance"]}, not a soft
-            semantic preference. Broad season, weather, occasion, and subjective
-            style/vibe context stays in semantic_query unless the shopper directly
-            requires a product attribute. Apply hard constraints only when the
-            current turn states them for the target products; do not copy an
-            anchor's color or material onto a complementary role. "Rainy day
-            outfit" does not imply a
-            water-resistance requirement. Treat comfortable, relaxed, soft,
-            breathable, lightweight, casual, dressy, bold, bright, vibrant, and
-            sporty as semantic recommendation preferences, never objective hard
-            filters. Before calling this tool, compare every target-product
-            modifier with the advertised required_constraints schema and include
-            every exact matching filter value; do not leave the object empty when
-            one applies.
-            For alternatives joined by "or", search
-            a faithful advertised branch and explain any unavailable branch; do not
-            put the supported branch in unadvertised_requirements.
-            When the shopper names an umbrella or explicit alternatives, use
-            member_of_requested_umbrella with every faithful advertised child in
-            one call; do not narrow it with agent_selected_type.
-            Do NOT repeat a search with the same taxonomy and hard constraints;
-            semantic paraphrases do not create a new scope.
+            """Find products by description, advertised taxonomy, or constraints.
 
-            Every call also supplies shopper_guidance: one concise,
-            product-agnostic sentence connecting the searched role to the
-            shopper's stated goal or direct antecedent. Write it before results
-            are known. Do not name or describe candidate products or expose
-            internal search mechanics, and do not name product types outside the
-            selected advertised scope. Use an empty string for image-only and
-            no-direct requests.
-
-            Always set requested_product_type to the shortest product-type phrase
-            for this role. Keep only the product noun or umbrella and exclude color,
-            material, fit, occasion, weather, and style modifiers. For example,
-            "formal tops" and "relaxed-fit tops" both use "tops". For
-            agent_selected_type, use the advertised role noun you selected. Set it
-            to null only for image-only search. It is not a catalog enum or semantic
-            query.
+            Use for browse, search, and recommendation requests after product
+            discovery or outfit styling is active. Select exact values from the
+            current Catalog capabilities. Do not use for a product already
+            established in this conversation, and do not repeat a completed hard-
+            filter scope with different semantic wording.
             """
 
             nonlocal catalog_searches_this_turn
@@ -3390,7 +3326,11 @@ class DeepAgentsRuntime:
                 for name, skill in skill_registry.items()
             },
         )
-        tool_loop_control = ToolLoopControlMiddleware()
+        tool_loop_control = ToolLoopControlMiddleware(
+            catalog_context=format_catalog_capabilities_for_prompt(
+                turn_capabilities
+            )
+        )
 
         @tool(args_schema=skill_activation_input, return_direct=False)
         def activate_shopper_skills_tool(
@@ -3760,9 +3700,9 @@ Rules:
   candidate products, name product types outside the selected advertised scope,
   or mention internal search mechanics. Use an empty string for image-only and
   no-direct requests.
-- The `taxonomy.category` and `taxonomy.subcategory` arrays contain only the
-  exact values allowed by the current tool schema, which is generated from the
-  active Catalog capabilities. List each value once. Use all applicable values
+- The `taxonomy.category` and `taxonomy.subcategory` arrays contain only exact
+  values advertised in the current Catalog capabilities. List each value once.
+  Use all applicable values
   for an inclusive request containing alternatives. When both arrays are used,
   every subcategory must belong to a selected category and every selected
   category must own at least one selected subcategory. Every text search needs
@@ -3795,7 +3735,7 @@ Rules:
   relaxed, soft, breathable, lightweight, casual, dressy, bold, bright,
   vibrant, or sporty always remain semantic preferences, never objective hard
   filters. Before every search, compare each modifier on the target product
-  with the advertised filter schema and copy every exact matching value into
+  with the hard filters advertised in Catalog capabilities and copy every exact matching value into
   `required_constraints`; never leave the object empty when one applies. Use only advertised
   filter properties directly. For "Do you have
   water-resistant bags?", include

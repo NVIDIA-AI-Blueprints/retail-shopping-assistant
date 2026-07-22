@@ -24,6 +24,7 @@ from langgraph.prebuilt.tool_node import ToolCallRequest
 from pydantic import Field, PrivateAttr
 
 from chain_server.src.agenttypes import Cart, State
+from chain_server.src.catalog_execution import CatalogSearchExecution
 from chain_server.src.deepagents_runtime import (
     DeepAgentsRuntime,
     RequestIdentity,
@@ -39,9 +40,11 @@ from chain_server.src.skill_activation import (
 )
 from shared.commerce_contracts import (
     CatalogCapabilities,
+    CatalogFilterCapability,
     CatalogTaxonomyCapabilities,
     CatalogTaxonomyCategory,
     CatalogTaxonomySubcategory,
+    SearchCatalogResult,
 )
 
 
@@ -1012,6 +1015,11 @@ async def test_compiled_agent_allows_one_invalid_taxonomy_repair_then_synthesize
     assert model.calls[2]["tools"] == ["search_catalog_tool"]
     assert model.calls[2]["settings"]["parallel_tool_calls"] is False
     assert "## Catalog Search Repair" in model.calls[2]["system_prompt"]
+    assert "CATALOG CAPABILITIES (server-generated data)" in (
+        model.calls[2]["system_prompt"]
+    )
+    assert "category=apparel" in model.calls[2]["system_prompt"]
+    assert "subcategory=skirts" in model.calls[2]["system_prompt"]
     assert "## Active Shopper Skills" in model.calls[2]["system_prompt"]
     assert "# Outfit Styling" in model.calls[2]["system_prompt"]
     assert "You are a shopping assistant" not in model.calls[2]["system_prompt"]
@@ -1024,5 +1032,168 @@ async def test_compiled_agent_allows_one_invalid_taxonomy_repair_then_synthesize
         repair_messages[-2]["text"]
     )
     assert "CATALOG VALIDATOR FEEDBACK" in repair_messages[-1]["text"]
+    assert "category=apparel" not in repair_messages[-1]["text"]
     assert model.calls[3]["tools"] == []
     assert result["messages"][-1].content.startswith("I don't see pants")
+
+
+@pytest.mark.asyncio
+async def test_compiled_agent_executes_capability_valid_repair(
+    base_config: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A repair may replace unvalidated catalog fields before execution."""
+
+    from chain_server.src import deepagents_runtime as runtime_mod
+
+    model_name = "compiled-capability-repair-test"
+    base_config.llm_name = model_name
+    model = _RecordingToolModel(
+        model_name=model_name,
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "id": "activate-skill",
+                        "name": SKILL_ACTIVATION_TOOL_NAME,
+                        "args": {"skill_names": ["product-discovery"]},
+                    }
+                ],
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "id": "invalid-search",
+                        "name": "search_catalog_tool",
+                        "args": {
+                            "semantic_query": "black shoes",
+                            "shopper_guidance": "Finding black shoes.",
+                            "requested_product_type": "shoes",
+                            "taxonomy_status": "exact_requested_type",
+                            "taxonomy": {
+                                "category": ["footwear"],
+                                "subcategory": ["shoes"],
+                            },
+                            "required_constraints": {"color": ["black"]},
+                            "scope_complete": True,
+                            "search_mode": "typo-mode",
+                        },
+                    }
+                ],
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "id": "valid-repair",
+                        "name": "search_catalog_tool",
+                        "args": {
+                            "semantic_query": "black shoes",
+                            "shopper_guidance": "Finding black shoes.",
+                            "requested_product_type": "shoes",
+                            "taxonomy_status": "member_of_requested_umbrella",
+                            "taxonomy": {
+                                "category": ["footwear"],
+                                "subcategory": ["flats"],
+                            },
+                            "required_constraints": {
+                                "primary_color": ["black"]
+                            },
+                            "scope_complete": True,
+                            "search_mode": "text",
+                        },
+                    }
+                ],
+            ),
+            AIMessage(content="I found no black flats in the current catalog."),
+        ],
+    )
+    runtime = DeepAgentsRuntime(base_config)
+    monkeypatch.setattr(runtime, "_create_chat_model", lambda: model)
+    executed_plans = []
+
+    def execute_catalog_search(plan, *_args, **_kwargs):
+        executed_plans.append(plan)
+        return CatalogSearchExecution(
+            result=SearchCatalogResult(ok=True, products=[])
+        )
+
+    monkeypatch.setattr(
+        runtime_mod,
+        "execute_catalog_search",
+        execute_catalog_search,
+    )
+    identity = RequestIdentity(
+        session_id="session-capability-repair",
+        conversation_id="conversation-capability-repair",
+        cart_id="cart-capability-repair",
+        context_user_id=1,
+        cart_user_id=1,
+        request_id="request-capability-repair",
+    )
+    capabilities = CatalogCapabilities(
+        catalog_id="test-catalog",
+        retrieval_modes=["text"],
+        filters={
+            "category": CatalogFilterCapability(
+                type="enum",
+                operators=["in"],
+                source_fields=["category"],
+                values=["footwear"],
+            ),
+            "subcategory": CatalogFilterCapability(
+                type="enum",
+                operators=["in"],
+                source_fields=["subcategory"],
+                values=["flats"],
+            ),
+            "primary_color": CatalogFilterCapability(
+                type="enum",
+                operators=["in"],
+                source_fields=["primary_color"],
+                values=["black"],
+            )
+        },
+        taxonomy=CatalogTaxonomyCapabilities(
+            category_field="category",
+            subcategory_field="subcategory",
+            categories={
+                "footwear": CatalogTaxonomyCategory(
+                    product_count=1,
+                    subcategories={
+                        "flats": CatalogTaxonomySubcategory(product_count=1)
+                    },
+                )
+            },
+        ),
+    )
+    agent = runtime._create_agent(
+        State(user_id=1, query="Show me black shoes."),
+        identity,
+        capabilities,
+    )
+
+    result = await agent.ainvoke(
+        {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": (
+                        "REQUEST ID: request-capability-repair\n"
+                        "USER QUERY: Show me black shoes."
+                    ),
+                }
+            ]
+        },
+        config={"configurable": {"thread_id": identity.conversation_id}},
+    )
+
+    assert len(executed_plans) == 1
+    assert executed_plans[0].hard_filters["primary_color"] == ["black"]
+    assert "color" not in executed_plans[0].hard_filters
+    assert executed_plans[0].search_mode == "text"
+    assert model.calls[2]["tools"] == ["search_catalog_tool"]
+    assert model.calls[3]["tools"] == []
+    assert result["messages"][-1].content.startswith("I found no black flats")

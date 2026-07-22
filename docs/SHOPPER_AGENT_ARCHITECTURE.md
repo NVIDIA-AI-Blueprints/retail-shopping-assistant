@@ -46,13 +46,15 @@ The chain server caches the first successful contract and uses it both to
 generate `search_catalog_tool` inputs and to validate every structured search.
 
 The shopper model owns the semantic mapping from the request to advertised
-values. Its tool uses a structural transport schema; the runtime revalidates the
-payload with a separate strict semantic search model. Cross-field failures
-therefore reach the capability-aware catalog validator and produce exact
-corrections instead of failing before tool execution. Deterministic code verifies
-and maps valid values before retrieval. The catalog service contains no
-chat/completion LLM and does not interpret shopper language, expand queries, or
-choose filters. Its only model inference is text or image embedding generation;
+values. Its model-facing tool schema is generated from Catalog capabilities and
+contains exact taxonomy values, hard-filter properties and enum values, typed
+numeric range shape, and search-mode values, but omits cross-field validators.
+The handler revalidates the payload with a separate
+strict semantic search model. Invalid individual values fail at the typed tool
+boundary; cross-field failures reach capability-aware handler validation.
+Deterministic code verifies and maps valid values before retrieval. The catalog
+service contains no chat/completion LLM and does not interpret shopper language,
+expand queries, or choose filters. Its only model inference is text or image embedding generation;
 candidate fusion, hard filtering, COSINE relevance normalization, deduplication,
 and final ordering are deterministic.
 
@@ -144,9 +146,10 @@ The detailed contracts and implementation live in:
    Each scope receives one total repair. A schema correction or a fresh
    constraint-provenance review can consume that shared budget; constraint
    feedback returned by an in-flight schema repair closes the loop for synthesis
-   rather than opening another repair. The repair is isolated: a concise,
-   schema-generic system prompt replaces the base runtime prompt, while the
-   skill gate appends the complete active shopper-skill instructions. Only
+   rather than opening another repair. The repair is isolated: it receives the
+   capability-derived typed `search_catalog_tool`, compact server-generated
+   Catalog capabilities, the current shopper message, bounded sanitized
+   validator feedback, and the complete active shopper-skill instructions. Only
    `search_catalog_tool` is exposed and forced, and parallel calls are disabled.
    Active-skill responses containing more than one shopping tool call are
    rejected before execution, so repair state always belongs to one call.
@@ -165,13 +168,12 @@ The detailed contracts and implementation live in:
    `required_constraints` privately and includes that exact finite object,
    including an explicit empty object, in the isolated feedback. This bounded
    capability-derived object is the exception to excluding free-form rejected
-   arguments. Before execution, runtime restores every independently valid
-   finite lock: the taxonomy relation, canonical advertised constraints
-   (including an explicit empty object), explicit valid `scope_complete` and
-   `search_mode`, and `requested_product_type` when a singleton exact or
-   agent-selected taxonomy determines it. The model owns only invalid fields.
-   Drift in a restorable lock is corrected in place; bounded tool-call
-   diagnostics expose only the affected field names in `restored_fields`. A
+   arguments. The repaired call must preserve that finite constraint object;
+   the strict handler rejects drift instead of overwriting model output. Repair
+   middleware never restores or rewrites taxonomy, constraints, requested type,
+   or search mode. It may restore only the independently valid structural
+   `scope_complete` flag; bounded tool-call diagnostics expose that field name
+   in `restored_fields`. A
    no-direct repair may clear
    constraints only if it remains no-direct; changing to retrieval requires the
    original advertised constraints.
@@ -184,15 +186,12 @@ The detailed contracts and implementation live in:
    to `exact_requested_type`; named umbrellas and alternatives repair to
    `member_of_requested_umbrella`. A no-direct terminal outcome reached after
    that repair retains the specific not-advertised response. A native
-   failure confined to `required_constraints` carries only the finite, validated
-   taxonomy status and selection into the isolated repair while continuing to
-   exclude free-form scope, query, and guidance text. Scope comparison remains
-   private. Runtime restores relation drift before the repaired constraint call
-   executes. A native taxonomy failure likewise restores independently valid
-   constraints before execution. A locked boundary that cannot be restored
-   safely remains comparison-protected and closes under the matching
-   `repair_*_changed` reason. Empty optional defaults and reordered filter
-   lists compare canonically. A native
+   failure confined to `required_constraints` receives sanitized field feedback
+   together with the typed tool and compact Catalog capabilities while
+   continuing to exclude free-form scope, query, and guidance text. Scope
+   comparison remains private. Middleware does not reconstruct or overwrite
+   rejected catalog values. A changed shopper-grounded scope closes as
+   `repair_scope_changed`. A native
    schema-invalid call containing malformed or nonempty free-form
    `unadvertised_requirements` arguments closes without repair. The one narrow
    exception is an exact duplicate of a shopper-stated unavailable concrete

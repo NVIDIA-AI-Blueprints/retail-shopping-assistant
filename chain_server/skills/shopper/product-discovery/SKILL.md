@@ -37,9 +37,9 @@ Use for search, browse, and filter requests. Do not expose skill names or tool n
   how this search scope serves the shopper's request. Write it before results
   are known; never name or describe candidate products or product types outside
   the selected advertised scope in it.
-- Copy every attribute that defines the requested products into `required_constraints`. Use only properties present in its current schema; put a defining requirement the catalog does not advertise into `unadvertised_requirements`. Never weaken it into semantic text just to make a search run.
+- Copy every attribute that defines the requested products into `required_constraints`. Use only properties and values advertised in the current Catalog capabilities; put a defining requirement the catalog does not advertise into `unadvertised_requirements`. Never weaken it into semantic text just to make a search run.
 - Immediately before calling the search tool, compare every target-product
-  modifier with the advertised filter schema. Copy each exact advertised value
+  modifier with the hard filters advertised in the current Catalog capabilities. Copy each exact advertised value
   into `required_constraints`; do not send an empty object when one applies.
 - "Any denim skirts available?" requires `unadvertised_requirements: ["denim"]` when composition is not a hard filter. "Do you have water-resistant bags?" likewise requires `unadvertised_requirements: ["water resistance"]`; an empty object is not faithful to either request. Subjective recommendation adjectives such as comfortable, relaxed, soft, breathable, lightweight, casual, dressy, bold, bright, vibrant, or sporty always remain semantic ranking preferences, never objective hard filters.
 - Subjective style or vibe words remain semantic direction unless the shopper explicitly makes them hard requirements. Objective product attributes such as material, weather performance, or a specific shade remain must-haves when they define the requested product.

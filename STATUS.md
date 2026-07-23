@@ -155,10 +155,10 @@ The schema-driven catalog refactor is implemented:
   paraphrased. A shopper-named product scope also executes at most once per
   turn, so an adjacent taxonomy cannot replace a successful first search;
 - repair accounting uses the full normalized `requested_product_type` phrase.
-  An unambiguous literal set of advertised alternatives uses its category and
-  exact subcategory set as scope identity, allowing connector or ordering
-  changes while blocking narrowing and sibling substitution. Each scope
-  receives one total repair. A schema correction or a fresh
+  Alternative, comparison, ordering, and negation semantics remain model-owned;
+  deterministic repair does not reconstruct them from shopper prose or equate
+  connector and ordering changes. Each scope receives one total repair. A
+  schema correction or a fresh
   constraint-provenance review can consume that shared budget; constraint
   feedback returned by an in-flight schema repair closes the loop for synthesis
   rather than opening another repair. The repair is an isolated model phase:
@@ -270,18 +270,18 @@ The newest focused gate is recorded first. Older Slice 0, Slice 2, and Slice 3
 results remain below as comparison points; generated quality and timing
 artifacts stay in the required local archive rather than versioned source.
 
-- Targeted advertised-alternative repair gate (2026-07-23): 8 focused offline
-  tests passed, including the exact `heels or flats` to `heels and flats`
-  repair, connector/order equivalence, catalog execution with both advertised
-  branches, and rejection of narrowing or sibling substitution. Targeted Ruff
-  and `git diff --check` passed. A five-turn `conv_3.yaml` live replay scored
-  4.6/5; “Heels or flats for this look?” improved from the matching archived
-  1/5 failure to 5/5 and from 15.364s to 8.433s. The model answered that live
-  turn directly without catalog search, so the live result confirms the
-  shopper-facing failure did not recur while the deterministic regression is
-  the evidence for the repaired catalog-call path. The targeted archive and
-  qualified comparison are stored outside the repository under the required
-  local quality root.
+- Model-owned catalog semantics gate (2026-07-23): 4 focused offline tests
+  passed. Coverage confirms that negated shopper language does not override the
+  model-owned typed scope, a typed multi-subcategory selection receives
+  candidate coverage without prose parsing, and generic repair retains its
+  fixed clarification boundary.
+- Superseded advertised-alternative parser gate (2026-07-23): the earlier
+  deterministic tests asserted raw shopper-text pair detection and
+  connector/order equivalence. Slice 1 removed that behavior because semantic
+  alternatives and negation belong to the model-owned typed request. Its
+  five-turn `conv_3.yaml` replay scored 4.6/5, but the “Heels or flats for this
+  look?” turn answered directly without catalog search and therefore did not
+  exercise the removed parser.
 - Targeted search-boundary gate (2026-07-23): the focused offline suite passed
   210 tests with 1 intentional xfail. Coverage includes the fixed server-owned
   clarification boundary and preservation of grounded products when another

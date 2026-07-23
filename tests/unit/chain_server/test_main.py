@@ -1578,7 +1578,7 @@ class TestDeepAgentsRuntimeRefs:
             capabilities,
         ) is not None
 
-    def test_literal_advertised_alternatives_preserve_scope_and_coverage(
+    def test_typed_multi_subcategory_selection_preserves_coverage(
         self,
     ) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
@@ -1602,60 +1602,28 @@ class TestDeepAgentsRuntimeRefs:
             ),
         )
 
-        alternatives = runtime_mod._explicit_advertised_alternatives(
-            "heels or flats",
-            capabilities,
-        )
-        assert alternatives == ("footwear", ["heels", "flats"])
-        assert runtime_mod._explicit_advertised_alternatives_in_text(
-            "Heels or flats for this look?",
-            capabilities,
-        ) == alternatives
-        assert runtime_mod._explicit_advertised_alternatives(
-            "closed shoes or flats",
-            capabilities,
-        ) is None
-        assert runtime_mod._explicit_advertised_alternatives_in_text(
-            "Closed shoes or flats for this look?",
-            capabilities,
-        ) is None
-        assert runtime_mod._same_product_scope(
-            "heels or flats",
-            "heels and flats",
-            capabilities,
-        )
-        assert runtime_mod._same_product_scope(
-            "heels or flats",
-            "flats or heels",
-            capabilities,
-        )
-        assert not runtime_mod._same_product_scope(
-            "heels or flats",
-            "heels",
-            capabilities,
-        )
-        assert not runtime_mod._same_product_scope(
-            "heels or flats",
-            "heels and sandals",
-            capabilities,
-        )
-        assert runtime_mod._advertised_taxonomy_scope_issue(
-            "heels or flats",
-            "member_of_requested_umbrella",
+        alternatives = runtime_mod._selected_advertised_subcategories(
             {
                 "category": ["footwear"],
+                "subcategory": ["heels", "flats", "sandals"],
+            },
+            capabilities,
+        )
+        assert alternatives == ("footwear", ["heels", "flats", "sandals"])
+        assert runtime_mod._selected_advertised_subcategories(
+            {
+                "category": ["footwear"],
+                "subcategory": ["heels"],
+            },
+            capabilities,
+        ) is None
+        assert runtime_mod._selected_advertised_subcategories(
+            {
+                "category": ["bags"],
                 "subcategory": ["heels", "flats"],
             },
             capabilities,
         ) is None
-        for selected in (["heels"], ["heels", "flats", "sandals"]):
-            issue = runtime_mod._advertised_taxonomy_scope_issue(
-                "heels or flats",
-                "member_of_requested_umbrella",
-                {"category": ["footwear"], "subcategory": selected},
-                capabilities,
-            )
-            assert "Select every named alternative exactly once" in (issue or "")
 
         products = [
             ProductSummary(
@@ -1671,20 +1639,31 @@ class TestDeepAgentsRuntimeRefs:
                 category="flats",
             )
             for index in range(3)
+        ] + [
+            ProductSummary(
+                product_id=f"sandal-{index}",
+                display_name=f"Sandal {index}",
+                category="sandals",
+            )
+            for index in range(2)
         ]
-        covered = runtime_mod._products_with_alternative_coverage(
+        covered = runtime_mod._products_with_subcategory_coverage(
             products,
             alternatives,
             4,
         )
 
-        assert runtime_mod._alternative_candidate_limit(
+        assert runtime_mod._multi_subcategory_candidate_limit(
             alternatives,
             capabilities,
             4,
-        ) == 7
+        ) == 9
         assert len(covered) == 4
-        assert {product.category for product in covered} == {"heels", "flats"}
+        assert {product.category for product in covered} == {
+            "heels",
+            "flats",
+            "sandals",
+        }
 
     def test_search_catalog_tool_schema_is_generated_from_catalog_taxonomy(
         self,
@@ -2935,22 +2914,6 @@ class TestDeepAgentsRuntimeRefs:
             captured_plan["calls"] = captured_plan.get("calls", 0) + 1
             if plan.semantic_queries == ["no result bag"]:
                 products = []
-            elif plan.semantic_queries == ["heels or flats"]:
-                products = [
-                    ProductSummary(
-                        product_id=f"heel_{index}",
-                        display_name=f"Heel {index}",
-                        category="heels",
-                    )
-                    for index in range(4)
-                ] + [
-                    ProductSummary(
-                        product_id=f"flat_{index}",
-                        display_name=f"Flat {index}",
-                        category="flats",
-                    )
-                    for index in range(3)
-                ]
             else:
                 products = [
                     ProductSummary(
@@ -3068,51 +3031,31 @@ class TestDeepAgentsRuntimeRefs:
         assert captured_plan.get("calls", 0) == 1
         captured_plan["calls"] = 0
 
-        literal_alternatives_state = State(
+        negated_alternatives_state = State(
             user_id=111,
-            query="Heels or flats for this look?",
+            query="I don't want heels or flats; show sandals.",
         )
-        runtime._create_agent(literal_alternatives_state, identity)
-        literal_alternatives_tools = {
+        runtime._create_agent(negated_alternatives_state, identity)
+        negated_alternatives_tools = {
             fn.__name__: fn for fn in captured["tools"]
         }
-        literal_alternatives_tools["activate_shopper_skills_tool"](
+        negated_alternatives_tools["activate_shopper_skills_tool"](
             skill_names=["outfit-styling"],
         )
-        narrowed_literal_alternative = literal_alternatives_tools[
+        sandals_result = negated_alternatives_tools[
             "search_catalog_tool"
         ](
-            semantic_query="flats for this look",
-            shopper_guidance="Finding flats for this look.",
-            requested_product_type="flats",
+            semantic_query="sandals for this look",
+            shopper_guidance="Finding sandals for this look.",
+            requested_product_type="sandals",
             taxonomy={
                 "category": ["footwear"],
-                "subcategory": ["flats"],
+                "subcategory": ["sandals"],
             },
-            required_constraints={"color": ["black"]},
+            required_constraints={},
         )
-        assert "Set requested_product_type to include every named alternative" in (
-            narrowed_literal_alternative
-        )
-        assert captured_plan.get("calls", 0) == 0
-        repaired_literal_alternatives = literal_alternatives_tools[
-            "search_catalog_tool"
-        ](
-            semantic_query="heels or flats",
-            shopper_guidance="Comparing heels and flats for this look.",
-            requested_product_type="heels and flats",
-            taxonomy={
-                "category": ["footwear"],
-                "subcategory": ["heels", "flats"],
-            },
-            required_constraints={"color": ["black"]},
-        )
-        assert "SEARCH_RESULT_GROUNDING_NOTE" in repaired_literal_alternatives
-        assert captured_plan["plan"].top_k == 7
-        assert captured_plan["plan"].hard_filters["color"] == ["black"]
-        assert "Heel 0" in repaired_literal_alternatives
-        assert "Flat 0" in repaired_literal_alternatives
-        assert repaired_literal_alternatives.count("PRODUCT_REF:") == 4
+        assert "SEARCH_RESULT_GROUNDING_NOTE" in sandals_result
+        assert captured_plan["plan"].hard_filters["product_type"] == ["sandals"]
         assert captured_plan.get("calls", 0) == 1
         captured_plan["calls"] = 0
 

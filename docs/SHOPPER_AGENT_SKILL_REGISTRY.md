@@ -88,10 +88,9 @@ model-call tradeoff for ensuring that catalog, cart, policy, availability, and p
 work cannot bypass applicable skill instructions.
 
 Catalog repair is not another skill-selection phase. The server keys repairs by
-the full normalized `requested_product_type` phrase. An unambiguous literal set
-of advertised alternatives uses its category and exact subcategory set as scope
-identity, allowing connector or ordering changes while blocking narrowing and
-sibling substitution. Each scope receives one total repair. A schema correction
+the full normalized, model-authored `requested_product_type` phrase. It does not
+reconstruct alternatives, negation, ordering, or comparisons from shopper
+prose. Each scope receives one total repair. A schema correction
 or a fresh constraint-provenance review
 can consume that shared budget; constraint feedback returned by an in-flight
 schema repair closes the loop for synthesis rather than opening another repair.

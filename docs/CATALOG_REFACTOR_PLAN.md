@@ -318,15 +318,15 @@ owners would cross the one-category boundary. When both roles are present,
 every selected subcategory must belong to the selected category; incompatibility
 fails before retrieval.
 
-When the current shopper turn contains one unambiguous literal pair of exact
-advertised subcategories from the same category, the chain requires the
-model-authored requested type and taxonomy to retain both branches. Repair scope
-identity uses that category and exact subcategory set, so changing the connector
-or order does not reject a faithful repair while narrowing or substitution still
-fails. This exact capability check does not interpret nonliteral alternatives.
-The pair remains one catalog execution: the plan uses a pair-wide candidate
-window, then rank-preserving result selection keeps one returned candidate per
-branch when available and trims to the configured result count.
+The model owns alternative, comparison, ordering, and negation semantics. The
+chain does not extract alternative members from shopper prose. When the model
+submits multiple advertised subcategories from one category through the typed
+taxonomy field, they remain one catalog execution: the plan uses a
+selection-wide candidate window, then rank-preserving result selection keeps one
+returned candidate per selected subcategory when available and trims to the
+configured result count. Repair remains keyed to the full normalized,
+model-authored `requested_product_type`; an untrustworthy repair returns no tool
+call and the server asks a fixed clarification.
 
 The runtime executes a normalized taxonomy-plus-hard-constraint scope at most
 once per turn, regardless of semantic paraphrasing. Genuinely different hard-

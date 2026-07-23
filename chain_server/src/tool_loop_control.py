@@ -29,7 +29,6 @@ STOP_TOOL_USE_PREFIX = "STOP_TOOL_USE:"
 SEARCH_SCOPE_COMPLETE_PREFIX = "SEARCH_SCOPE_COMPLETE:"
 SEARCH_BUDGET_EXHAUSTED_PREFIX = "SEARCH_BUDGET_EXHAUSTED:"
 CONSTRAINT_REVIEW_PREFIX = "REVIEW_REQUIRED_CONSTRAINT:"
-EXPLICIT_ALTERNATIVE_CORRECTION_PREFIX = "SHOPPER_EXPLICIT_ALTERNATIVES:"
 UNSUPPORTED_TAXONOMY_PREFIX = "The requested catalog taxonomy cannot be enforced:"
 UNSUPPORTED_CONSTRAINT_PREFIX = "The requested catalog requirement cannot be enforced:"
 _SYNTHESIS_PROMPT = """## Tool Loop Closed
@@ -285,9 +284,6 @@ class ToolLoopControlMiddleware(AgentMiddleware):
             + _runtime_taxonomy_repair_guidance(
                 native_validation_failure=native_validation_failure,
                 shopper_stated_scope=shopper_stated_scope,
-                server_corrected_alternatives=(
-                    EXPLICIT_ALTERNATIVE_CORRECTION_PREFIX in content
-                ),
             )
         )[:_REPAIR_FEEDBACK_LIMIT]
 
@@ -670,11 +666,10 @@ def _runtime_taxonomy_repair_guidance(
     *,
     native_validation_failure: bool,
     shopper_stated_scope: bool,
-    server_corrected_alternatives: bool = False,
 ) -> str:
     """Preserve shopper-owned product scope across one runtime repair."""
 
-    if native_validation_failure or server_corrected_alternatives:
+    if native_validation_failure:
         return ""
     if not shopper_stated_scope:
         return ""

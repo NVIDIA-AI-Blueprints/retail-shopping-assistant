@@ -99,10 +99,9 @@ schema. The model cannot submit a clarification or catalog-absence result
 through that tool: it must either select faithful advertised values or ask one
 concise clarification directly without a tool call.
 When a catalog search needs repair, the runtime assigns one total repair to the
-full normalized `requested_product_type` phrase. An unambiguous literal set of
-advertised alternatives uses its category and exact subcategory set as scope
-identity, so connector or ordering changes remain the same scope while narrowing
-or sibling substitution remains blocked. A schema correction or a fresh
+full normalized, model-authored `requested_product_type` phrase. It does not
+reconstruct alternatives, negation, ordering, or comparisons from shopper
+prose. A schema correction or a fresh
 constraint-provenance review can consume that single budget; constraint feedback
 returned by an in-flight schema repair closes the loop for synthesis rather than
 opening another repair. Distinct advertised siblings never count as the same
@@ -210,14 +209,14 @@ guides.
    that shortcut for explicit alternatives containing `and`, `or`, `/`, or
    `&`.
    Thus `closed shoes or boots` remains model-owned alternative or umbrella
-   reasoning rather than being collapsed to `boots`. When the current shopper
-   turn instead contains one unambiguous literal pair of exact advertised
-   subcategories from the same category, runtime requires the model-authored
-   scope and taxonomy to retain both branches. The valid request remains one
-   catalog execution; its candidate window expands for that pair, then rank-preserving
-   selection keeps one returned candidate per branch when available before
-   trimming to the configured result count. Modified, synonymous, ambiguous,
-   or cross-category alternatives remain model-owned. Each search also requires
+   reasoning rather than being collapsed to `boots`. The model owns all
+   alternative, comparison, ordering, and negation semantics. When it submits
+   multiple advertised subcategories from one category through the typed
+   taxonomy field, the valid request remains one catalog execution; its
+   candidate window expands for that selection, then rank-preserving selection
+   keeps one returned candidate per selected subcategory when available before
+   trimming to the configured result count. The runtime does not derive that
+   selection from the shopper's raw text. Each search also requires
    `shopper_guidance`: one nonempty, product-agnostic
    sentence authored before retrieval under the active skill to connect the
    selected role to the shopper's goal or direct antecedent. Empty guidance is

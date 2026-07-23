@@ -14,7 +14,6 @@ from langchain_core.tools import tool
 
 from chain_server.src.tool_loop_control import (
     CONSTRAINT_REVIEW_PREFIX,
-    EXPLICIT_ALTERNATIVE_CORRECTION_PREFIX,
     SEARCH_BUDGET_EXHAUSTED_PREFIX,
     SEARCH_VALIDATION_ERROR_PREFIX,
     SERVER_CATALOG_CLARIFICATION,
@@ -891,50 +890,6 @@ def test_no_tool_repair_clarification_is_marked() -> None:
     assert response.result[0].additional_kwargs[
         SERVER_CATALOG_CLARIFICATION
     ] is True
-
-
-def test_runtime_alternative_correction_does_not_preserve_narrowed_scope() -> None:
-    middleware = ToolLoopControlMiddleware()
-    invalid_call = AIMessage(
-        content="",
-        tool_calls=[
-            {
-                "id": "call-a",
-                "name": "search_catalog_tool",
-                "args": {
-                    "requested_product_type": "flats",
-                    "taxonomy": {
-                        "category": ["footwear"],
-                        "subcategory": ["flats"],
-                    },
-                    "required_constraints": {"primary_color": ["black"]},
-                },
-            }
-        ],
-    )
-    runtime_error = _tool_result(
-        SEARCH_VALIDATION_ERROR_PREFIX
-        + EXPLICIT_ALTERNATIVE_CORRECTION_PREFIX
-        + " The current shopper request names exact advertised alternatives "
-        "['heels', 'flats']. Set requested_product_type to include every named "
-        "alternative and select both advertised subcategories.",
-        status="error",
-    )
-
-    prepared = _capture_model_request(
-        middleware,
-        [
-            HumanMessage(content="Heels or flats for this look?"),
-            invalid_call,
-            runtime_error,
-        ],
-    )
-    feedback = str(prepared.messages[-1].content)
-
-    assert EXPLICIT_ALTERNATIVE_CORRECTION_PREFIX in feedback
-    assert "['heels', 'flats']" in feedback
-    assert "Preserve the shopper-named requested_product_type" not in feedback
-    assert "taxonomy_status" not in feedback
 
 
 def test_runtime_repair_preserves_named_scope() -> None:

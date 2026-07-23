@@ -87,7 +87,6 @@ from .tool_policy import (
 )
 from .tool_loop_control import (
     CONSTRAINT_REVIEW_PREFIX,
-    EXPLICIT_ALTERNATIVE_CORRECTION_PREFIX,
     SEARCH_BUDGET_EXHAUSTED_PREFIX,
     SEARCH_SCOPE_COMPLETE_PREFIX,
     SEARCH_VALIDATION_ERROR_PREFIX,
@@ -656,17 +655,6 @@ def _same_product_scope(
 
     if first == second:
         return True
-    first_alternatives = _explicit_advertised_alternatives(first, capabilities)
-    if first_alternatives is not None:
-        second_alternatives = _explicit_advertised_alternatives(
-            second,
-            capabilities,
-        )
-        return bool(
-            second_alternatives is not None
-            and first_alternatives[0] == second_alternatives[0]
-            and set(first_alternatives[1]) == set(second_alternatives[1])
-        )
     if _has_alternative_connector(first):
         return False
     first_advertised = _advertised_taxonomy_value(first, capabilities)
@@ -678,120 +666,37 @@ def _same_product_scope(
     return first.endswith(f" {second}")
 
 
-def _explicit_advertised_alternatives(
-    requested_product_type: str | None,
-    capabilities: CatalogCapabilities,
-) -> tuple[str, list[str]] | None:
-    """Resolve literal advertised alternatives owned by one category."""
-
-    normalized = _normalize_product_text(requested_product_type or "")
-    parts = re.split(r"\b(?:and|or)\b", normalized)
-    if len(parts) < 2 or any(not part.strip() for part in parts):
-        return None
-
-    matches: list[tuple[str, str]] = []
-    for part in parts:
-        normalized_part = part.strip()
-        part_matches = [
-            (category_name, subcategory_name)
-            for category_name, category in capabilities.taxonomy.categories.items()
-            for subcategory_name in category.subcategories
-            if normalized_part == _normalize_product_text(subcategory_name)
-        ]
-        if len(part_matches) != 1:
-            return None
-        matches.append(part_matches[0])
-
-    category_names = {category_name for category_name, _ in matches}
-    subcategories = list(dict.fromkeys(name for _, name in matches))
-    if len(category_names) != 1 or len(subcategories) != len(matches):
-        return None
-    return matches[0][0], subcategories
-
-
-def _explicit_advertised_alternatives_in_text(
-    text: str,
-    capabilities: CatalogCapabilities,
-) -> tuple[str, list[str]] | None:
-    """Find one literal advertised alternative pair in shopper text."""
-
-    normalized = _normalize_product_text(text)
-    matches: list[tuple[str, list[str]]] = []
-    for category_name, category in capabilities.taxonomy.categories.items():
-        subcategories = list(category.subcategories)
-        for first in subcategories:
-            normalized_first = _normalize_product_text(first)
-            for second in subcategories:
-                if first == second:
-                    continue
-                normalized_second = _normalize_product_text(second)
-                pattern = (
-                    rf"(?<!\w){re.escape(normalized_first)}\s+"
-                    rf"(?:and|or)\s+{re.escape(normalized_second)}(?!\w)"
-                )
-                if re.search(pattern, normalized):
-                    matches.append((category_name, [first, second]))
-    return matches[0] if len(matches) == 1 else None
-
-
-def _advertised_alternative_selection_issue(
-    requested_product_type: str | None,
-    alternatives: tuple[str, list[str]],
-    taxonomy_status: str,
+def _selected_advertised_subcategories(
     taxonomy: BaseModel | dict[str, Any],
-) -> str | None:
-    """Require an exact taxonomy projection for literal alternatives."""
+    capabilities: CatalogCapabilities,
+) -> tuple[str, list[str]] | None:
+    """Return one typed multi-subcategory selection owned by one category."""
 
-    category_name, advertised_subcategories = alternatives
     payload = taxonomy.model_dump() if isinstance(taxonomy, BaseModel) else taxonomy
-    selected_categories = {
-        _normalize_product_text(value)
-        for value in (payload.get("category") or [])
-    }
-    selected_subcategories = {
-        _normalize_product_text(value)
-        for value in (payload.get("subcategory") or [])
-    }
-    expected_subcategories = {
-        _normalize_product_text(value) for value in advertised_subcategories
-    }
-    requested_parts = {
-        part.strip()
-        for part in re.split(
-            r"\b(?:and|or)\b",
-            _normalize_product_text(requested_product_type or ""),
-        )
-        if part.strip()
-    }
-    category_matches = selected_categories in (
-        set(),
-        {_normalize_product_text(category_name)},
-    )
-    if (
-        requested_parts == expected_subcategories
-        and taxonomy_status == "member_of_requested_umbrella"
-        and category_matches
-        and selected_subcategories == expected_subcategories
-    ):
+    selected = list(dict.fromkeys(payload.get("subcategory") or []))
+    if len(selected) < 2:
         return None
-    return (
-        "The current shopper request names exact advertised alternatives "
-        f"{advertised_subcategories!r} in category '{category_name}'. "
-        "Set requested_product_type to include every named alternative. Select "
-        "every named alternative exactly once and no other subcategory."
-    )
+    owners = [
+        category_name
+        for category_name, category in capabilities.taxonomy.categories.items()
+        if all(value in category.subcategories for value in selected)
+    ]
+    selected_categories = set(payload.get("category") or [])
+    if len(owners) != 1 or selected_categories not in (set(), {owners[0]}):
+        return None
+    return owners[0], selected
 
 
-def _alternative_candidate_limit(
-    alternatives: tuple[str, list[str]] | None,
+def _multi_subcategory_candidate_limit(
+    selection: tuple[str, list[str]] | None,
     capabilities: CatalogCapabilities,
     default: int,
 ) -> int:
-    """Fetch enough ranked candidates to cover literal alternatives."""
+    """Fetch enough ranked candidates for a typed multi-subcategory selection."""
 
-    if alternatives is None:
+    if selection is None:
         return default
-    category_name, subcategories = alternatives
+    category_name, subcategories = selection
     category = capabilities.taxonomy.categories[category_name]
     product_count = sum(
         category.subcategories[name].product_count for name in subcategories
@@ -799,16 +704,16 @@ def _alternative_candidate_limit(
     return min(50, max(default, len(subcategories), product_count))
 
 
-def _products_with_alternative_coverage(
+def _products_with_subcategory_coverage(
     products: list[ProductSummary],
-    alternatives: tuple[str, list[str]] | None,
+    selection: tuple[str, list[str]] | None,
     limit: int,
 ) -> list[ProductSummary]:
-    """Keep rank order while reserving one result per returned alternative."""
+    """Keep rank order while reserving one result per selected subcategory."""
 
-    if alternatives is None or len(products) <= limit:
+    if selection is None or len(products) <= limit:
         return products
-    _, subcategories = alternatives
+    _, subcategories = selection
     selected_indexes: set[int] = set()
     for subcategory in subcategories:
         normalized_subcategory = _normalize_product_text(subcategory)
@@ -838,18 +743,6 @@ def _advertised_taxonomy_scope_issue(
     capabilities: CatalogCapabilities,
 ) -> str | None:
     """Enforce capability-owned relations for exact advertised scopes."""
-
-    alternatives = _explicit_advertised_alternatives(
-        requested_product_type,
-        capabilities,
-    )
-    if alternatives is not None:
-        return _advertised_alternative_selection_issue(
-            requested_product_type,
-            alternatives,
-            taxonomy_status,
-            taxonomy,
-        )
 
     advertised_match = _advertised_scope_match(
         requested_product_type,
@@ -2066,28 +1959,12 @@ class DeepAgentsRuntime:
             if capabilities.catalog_id == "unavailable" and not capabilities.filters:
                 return "Catalog search is unavailable. Please try again."
             initial_scope_key = _product_scope_key(requested_product_type)
-            shopper_explicit_alternatives = (
-                _explicit_advertised_alternatives_in_text(
-                    state.query,
-                    capabilities,
-                )
-            )
             shopper_stated_requested_scope = bool(
                 initial_scope_key
-                and (
-                    _shopper_stated_product_scope(
-                        state.query,
-                        state.context,
-                        initial_scope_key,
-                    )
-                    or (
-                        shopper_explicit_alternatives is not None
-                        and _same_product_scope(
-                            " or ".join(shopper_explicit_alternatives[1]),
-                            initial_scope_key,
-                            capabilities,
-                        )
-                    )
+                and _shopper_stated_product_scope(
+                    state.query,
+                    state.context,
+                    initial_scope_key,
                 )
             )
             taxonomy_status = _catalog_execution_taxonomy_status(
@@ -2367,33 +2244,6 @@ class DeepAgentsRuntime:
                 return _unsupported_requirement_message(
                     unadvertised_requirements
                 )
-
-            if shopper_explicit_alternatives is not None:
-                shopper_alternative_issue = (
-                    _advertised_alternative_selection_issue(
-                        request.requested_product_type,
-                        shopper_explicit_alternatives,
-                        request.taxonomy_status,
-                        request.taxonomy,
-                    )
-                )
-                if shopper_alternative_issue:
-                    _, advertised_subcategories = shopper_explicit_alternatives
-                    alternative_scope_key = _product_scope_key(
-                        " or ".join(advertised_subcategories)
-                    )
-                    failed_repair_scope_key = alternative_scope_key
-                    failed_agent_selected_scope = False
-                    return (
-                        SEARCH_VALIDATION_ERROR_PREFIX
-                        + EXPLICIT_ALTERNATIVE_CORRECTION_PREFIX
-                        + " "
-                        + shopper_alternative_issue
-                        + _lock_taxonomy_constraints(
-                            alternative_scope_key,
-                            request,
-                        )
-                    )
 
             advertised_taxonomy_issue = _advertised_taxonomy_scope_issue(
                 request.requested_product_type,
@@ -2778,16 +2628,16 @@ class DeepAgentsRuntime:
                 },
                 search_mode=normalized_search_mode,
             )
-            explicit_alternatives = _explicit_advertised_alternatives(
-                request.requested_product_type,
+            selected_subcategories = _selected_advertised_subcategories(
+                request.taxonomy,
                 capabilities,
             )
             plan = build_catalog_search_plan(
                 intent,
                 capabilities,
                 has_image=bool(state.image),
-                top_k=_alternative_candidate_limit(
-                    explicit_alternatives,
+                top_k=_multi_subcategory_candidate_limit(
+                    selected_subcategories,
                     capabilities,
                     self.config.top_k_retrieve,
                 ),
@@ -2863,9 +2713,9 @@ class DeepAgentsRuntime:
             if result.ok:
                 result = result.model_copy(
                     update={
-                        "products": _products_with_alternative_coverage(
+                        "products": _products_with_subcategory_coverage(
                             result.products,
-                            explicit_alternatives,
+                            selected_subcategories,
                             self.config.top_k_retrieve,
                         )
                     }

@@ -57,13 +57,13 @@ for image-only search. Literal validation may bind the longest exact advertised
 suffix in a modifier-bearing model phrase (`waterproof boots` to `boots`), but
 disables that shortcut for explicit alternatives containing `and`, `or`, `/`,
 or `&`. `closed shoes or boots` remains model-owned alternative or umbrella
-reasoning. If the current shopper turn contains one unambiguous literal pair of
-exact advertised subcategories in the same category, runtime instead validates
-that both model-authored branches are preserved. The pair still uses one catalog execution. Its
-candidate window covers both branches, and rank-preserving selection keeps one
-returned candidate per branch when available before trimming to the configured
-result count. Modified, synonymous, ambiguous, and cross-category alternatives
-remain model-owned. Each call covers at most one category.
+reasoning. The model owns alternative, comparison, ordering, and negation
+semantics. A typed selection of multiple advertised subcategories in one
+category uses one catalog execution. Its candidate window covers the complete
+selection, and rank-preserving selection keeps one returned candidate per
+selected subcategory when available before trimming to the configured result
+count. The runtime does not extract that selection from shopper prose. Each call
+covers at most one category.
 For a broad request that names no type, the model selects exactly one advertised
 subcategory and names it in `requested_product_type`. That open-role path is
 rejected for a shopper-named scope rather than silently reinterpreted. When an
@@ -101,10 +101,9 @@ names if skill files change while the process remains alive.
 After activation, parallel shopping calls remain disabled. Repair accounting
 also rejects any active model response containing more than one shopping tool
 call before execution. Repair accounting
-uses the full normalized `requested_product_type` phrase. An unambiguous literal
-set of advertised alternatives uses its category and exact subcategory set as
-scope identity, allowing connector or ordering changes while blocking narrowing
-and sibling substitution. Each scope has one total repair. A schema correction
+uses the full normalized, model-authored `requested_product_type` phrase. It
+does not reconstruct shopper alternatives or equate connector and ordering
+changes. Each scope has one total repair. A schema correction
 or a fresh constraint-provenance review can
 consume that shared budget; constraint feedback returned by an in-flight schema
 repair closes the loop for synthesis rather than opening another repair. The
@@ -455,10 +454,10 @@ Failure behavior:
   constraint-provenance review; a second mismatch or other unresolved
   provenance fails closed.
 - A full normalized `requested_product_type` scope receives one total repair.
-  An unambiguous literal set of advertised alternatives is identified by its
-  category and exact subcategory set, so connector or ordering changes are
-  accepted without permitting narrowing or sibling substitution. A schema
-  failure or fresh constraint-provenance question can consume it. Constraint
+  Alternative, comparison, ordering, and negation semantics remain model-owned;
+  deterministic repair does not reconstruct them from shopper prose. A schema
+  failure or fresh constraint-provenance question can consume the repair.
+  Constraint
   feedback after an in-flight schema repair closes the loop for synthesis. A
   successful partial search may continue to another valid role
   with its own single repair opportunity; the configured turn cap remains three

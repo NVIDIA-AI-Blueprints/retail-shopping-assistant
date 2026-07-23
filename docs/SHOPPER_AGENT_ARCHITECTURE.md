@@ -69,14 +69,12 @@ Literal validation can bind the longest exact advertised suffix in a
 modifier-bearing model phrase (`waterproof boots` to `boots`). It disables that
 shortcut for explicit alternatives containing `and`, `or`, `/`, or `&`, so `closed
 shoes or boots` remains model-owned alternative or umbrella reasoning.
-When the current shopper turn contains one unambiguous literal pair of exact
-advertised subcategories from the same category, deterministic validation
-requires the model-authored requested type and taxonomy to retain both branches.
-This is exact capability matching, not
-semantic interpretation. The valid scope executes once with a pair-wide
-candidate window; rank-preserving selection keeps one returned candidate per
-branch when available and trims to the configured result count. Modified,
-synonymous, ambiguous, or cross-category alternatives remain model-owned.
+The model owns alternative, comparison, ordering, and negation semantics; the
+runtime does not extract alternative members from shopper prose. A typed
+selection of multiple advertised subcategories from one category executes once
+with a selection-wide candidate window. Rank-preserving selection keeps one
+returned candidate per selected subcategory when available and trims to the
+configured result count.
 The `semantic_query` remains independent soft ranking direction. The model owns
 advertised taxonomy selection. Capability-owned exact category/subcategory
 relationships validate that selection. A genuinely open role is valid only
@@ -145,10 +143,9 @@ The detailed contracts and implementation live in:
    sequential and duplicate taxonomy-plus-hard-constraint scopes are rejected.
    Repair accounting uses
    the full normalized `requested_product_type` phrase rather than only its last
-   noun. An unambiguous literal set of advertised alternatives is identified by
-   its category and exact subcategory set, so connector or ordering changes are
-   accepted without permitting narrowing or sibling substitution. Each scope
-   receives one total repair. A schema correction or a fresh
+   noun. It does not reconstruct an alternative set from shopper prose or treat
+   connector and ordering changes as deterministic semantic equivalence. Each
+   scope receives one total repair. A schema correction or a fresh
    constraint-provenance review can consume that shared budget; constraint
    feedback returned by an in-flight schema repair closes the loop for synthesis
    rather than opening another repair. The repair is isolated: it receives the

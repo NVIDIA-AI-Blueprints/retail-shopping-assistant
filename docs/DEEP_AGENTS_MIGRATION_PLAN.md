@@ -385,10 +385,9 @@ Agent decides when to call a shopping tool; that tool decides whether the call
 is valid and what state changes are allowed.
 
 Tool-loop control is a separate deterministic boundary. It keys one total model
-repair to the full normalized `requested_product_type` phrase. An unambiguous
-literal set of advertised alternatives uses its category and exact subcategory
-set as scope identity, allowing connector or ordering changes while blocking
-narrowing and sibling substitution. A schema correction or fresh
+repair to the full normalized, model-authored `requested_product_type` phrase.
+It does not reconstruct alternatives, negation, ordering, or comparisons from
+shopper prose. A schema correction or fresh
 constraint-provenance review can consume that budget. Constraint feedback from
 an in-flight schema repair closes the loop for synthesis. The isolated call
 receives the capability-derived typed search tool, compact server-generated
@@ -456,12 +455,12 @@ selection. Capability-owned exact category/subcategory relationships validate
 the selection. A genuinely open role selects one advertised subcategory and
 names it in `requested_product_type`; that path is rejected for a shopper-named
 scope rather than silently reinterpreted.
-One unambiguous literal pair of exact advertised subcategories in the current
-shopper turn is validated as a whole: the model-authored request must retain
-both branches. It still produces one
-catalog execution, with a widened candidate window and rank-preserving branch
-coverage when each branch returns a candidate. All nonliteral alternative
-reasoning remains model-owned.
+The model owns alternative, comparison, ordering, and negation semantics. When
+it submits multiple advertised subcategories from one category through the
+typed taxonomy field, the selection produces one catalog execution, with a
+widened candidate window and rank-preserving coverage when each selected
+subcategory returns a candidate. The runtime does not derive that selection
+from the shopper's raw text.
 
 Final grounding accepts evidence only from tool-role messages. The current
 request is isolated by its request marker and prior-turn evidence is supplied
@@ -740,10 +739,10 @@ Implications:
   selected only for a stated budget. Terse item-only follow-ups inside an active
   outfit or style-led single-piece thread remain styling intent.
 - Each full normalized `requested_product_type` scope receives one total repair.
-  An unambiguous literal set of advertised alternatives is identified by its
-  category and exact subcategory set, so connector or ordering changes are
-  accepted without permitting narrowing or sibling substitution. A schema
-  correction or a fresh constraint-provenance review may consume it; constraint
+  Alternative, comparison, ordering, and negation semantics remain model-owned;
+  deterministic repair does not reconstruct them from shopper prose. A schema
+  correction or a fresh constraint-provenance review may consume the repair;
+  constraint
   feedback from an in-flight schema repair closes for synthesis. The isolated
   step receives the capability-derived typed `search_catalog_tool`, compact
   server-generated Catalog capabilities, the current shopper turn, bounded
@@ -782,12 +781,11 @@ Implications:
   be `null`. Literal suffix binding can recover an advertised type from a
   modifier phrase but is disabled for explicit alternatives containing `and`,
   `or`, `/`, or `&`, leaving their umbrella/alternative interpretation
-  model-owned. For one unambiguous current-turn literal pair whose members are
-  exact advertised subcategories of the same category, runtime requires both
-  model-authored branches and executes the
-  pair once. It widens the candidate window and preserves ranking while keeping
-  one returned candidate per branch when available. Modified, synonymous,
-  ambiguous, and cross-category alternatives remain model-owned.
+  model-owned. When the model submits multiple exact advertised subcategories
+  from one category through the typed taxonomy field, runtime executes the
+  selection once. It widens the candidate window and preserves ranking while
+  keeping one returned candidate per selected subcategory when available. The
+  runtime does not extract alternative members from shopper prose.
 - Each search has at most one category. A genuinely open role selects exactly
   one advertised subcategory as a focused starting role only when the shopper
   named no type for that role, and names it in `requested_product_type`.

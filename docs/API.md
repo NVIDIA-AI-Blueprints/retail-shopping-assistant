@@ -194,8 +194,10 @@ and cart state cannot bleed across sessions.
 
 Durable ordered shopper/assistant turns live in the single-replica
 memory-service SQLite database. At turn start the runtime consumes a bounded set
-of finalized recent turns and a compact product-reference projection in place
-of the legacy rolling context blob. Products enter durable reference evidence
+of model-context-eligible recent turns and a compact product-reference
+projection in place of the legacy rolling context blob. Blocked turns remain
+durable and exactly replayable but are excluded from both the service projection
+and chain prompt formatter. Products enter durable reference evidence
 only when they appear in the finalized ordered `product_results` sent as product
 cards. The selected discovery, styling, or cart skill may conditionally resolve
 typed references against those events. Exactly one match becomes request-local
@@ -471,7 +473,9 @@ completed turn response text, and timing/token-usage/agent diagnostic metrics
 after the Deep Agents turn finishes.
 
 Before guardrails or agent work, the chain server starts a durable conversation
-turn and receives bounded finalized recent turns plus the authoritative cart.
+turn and receives bounded model-context-eligible recent turns plus the
+authoritative cart. Blocked turns remain durable and exactly replayable but do
+not enter a later model prompt.
 It finalizes that turn as `completed`, `blocked`, or `failed` before emitting the
 terminal SSE frames. An exact finalized retry replays the stored output without
 another model/tool turn. The public SSE frame shapes are unchanged.
@@ -948,9 +952,10 @@ search round-trips exactly through this endpoint. A missing ID returns HTTP 404.
 Starts one durable turn transaction before guardrail, model, or tool work. The
 memory service accepts one active turn per conversation and assigns its ordered
 `sequence`. It returns the authoritative cart and at most
-`MEMORY_RECENT_TURNS` prior finalized raw turns. Raw media is not stored; the
-request digest includes ordered media content hashes so exact retries can be
-distinguished safely.
+`MEMORY_RECENT_TURNS` prior non-blocked raw turns. The chain formatter also
+excludes abandoned turns before creating model context. Raw media is not stored;
+the request digest includes ordered media content hashes so exact retries can
+be distinguished safely.
 
 ```json
 {

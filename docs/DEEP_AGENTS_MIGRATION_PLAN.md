@@ -58,10 +58,12 @@ Current constraints:
   Legacy callers that send only `user_id` are still mapped to deterministic
   compatibility identifiers.
 - A single memory-service SQLite replica starts an ordered durable turn before
-  guardrail, model, or tool work and returns bounded finalized raw turns plus
-  the authoritative cart. Every new turn is finalized as completed, blocked,
-  or failed. An exact finalized request replay skips model/tool execution and
-  returns stored response output. Each start returns a service-issued attempt
+  guardrail, model, or tool work and returns bounded model-context-eligible raw
+  turns plus the authoritative cart. Blocked turns remain durable and exactly
+  replayable but are excluded from both the service projection and chain prompt
+  formatter. Every new turn is finalized as completed, blocked, or failed. An
+  exact finalized request replay skips model/tool execution and returns stored
+  response output. Each start returns a service-issued attempt
   token that finalization must echo. A start failure prevents agent execution;
   a generic finalize failure preserves the grounded response and request
   checkpoint and adds an operator diagnostic.
@@ -240,7 +242,7 @@ Filesystem and built-in Deep Agents tools:
 ```text
 POST /query/stream
   -> resolve or create server-owned identity
-  -> start durable conversation turn; load bounded finalized turns, cart, and attempt token
+  -> start durable conversation turn; load bounded model-context turns, cart, and attempt token
   -> replay stored finalized output and stop, when request identity matches
   -> invoke Deep Agents SDK with thread_id = conversation_id
   -> force structured per-turn skill selection

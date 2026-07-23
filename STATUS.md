@@ -7,9 +7,11 @@ Updated: 2026-07-23
 The current working tree extends the shopper-serving Deep Agent architecture:
 
 - a single memory-service SQLite replica now starts each turn durably before
-  guardrail/model/tool work, returns bounded finalized raw turns plus the
-  authoritative cart, and finalizes every completed, blocked, or failed
-  outcome. An exact retry of a finalized request replays its stored response
+  guardrail/model/tool work, returns bounded model-context-eligible raw turns
+  plus the authoritative cart, and finalizes every completed, blocked, or
+  failed outcome. Blocked turns remain durable and exactly replayable but are
+  excluded from both the service's recent-turn projection and the chain prompt
+  formatter. An exact retry of a finalized request replays its stored response
   without another model turn. Finalized ordered product cards create durable
   `candidate_set_presented` events and a compact reference index. One exact
   typed batch resolver returns 0/1/many same-conversation matches; only a unique
@@ -270,6 +272,10 @@ The newest focused gate is recorded first. Older Slice 0, Slice 2, and Slice 3
 results remain below as comparison points; generated quality and timing
 artifacts stay in the required local archive rather than versioned source.
 
+- Blocked-context isolation gate (2026-07-23): 4 focused offline tests passed.
+  A blocked turn remains durably stored and exactly replayable, while both the
+  memory-service recent-turn projection and the chain prompt formatter exclude
+  its shopper and assistant text from the next request.
 - Model-owned catalog semantics gate (2026-07-23): 4 focused offline tests
   passed. Coverage confirms that negated shopper language does not override the
   model-owned typed scope, a typed multi-subcategory selection receives

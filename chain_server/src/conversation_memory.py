@@ -319,7 +319,7 @@ def format_conversation_context(
     *,
     max_chars: int = _DEFAULT_CONTEXT_MAX_CHARS,
 ) -> str:
-    """Render service-bounded raw turns without merging speaker lines."""
+    """Render model-safe service-bounded turns without merging speaker lines."""
 
     if max_chars < 256:
         raise ValueError("max_chars must be at least 256")
@@ -327,7 +327,8 @@ def format_conversation_context(
         (
             turn
             for turn in recent_turns
-            if turn.status != "abandoned" and turn.assistant_text is not None
+            if turn.status not in {"abandoned", "blocked"}
+            and turn.assistant_text is not None
         ),
         key=lambda turn: turn.sequence,
     )

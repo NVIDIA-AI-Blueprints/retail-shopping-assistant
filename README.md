@@ -302,11 +302,14 @@ shopper-facing answer, the runtime returns a safe retry response and records the
 termination reason as `incomplete_agent_response` rather than exposing internal
 content.
 
-At turn start, the memory service returns a bounded set of finalized raw
-shopper/assistant turns, the authoritative cart, and a service-issued attempt
-token. Only the latest abandoned turn can reopen; reopening retains its request
-identity but rotates the attempt token, so a late finalize cannot overwrite the
-retry. Those recent turns replace the legacy rolling context blob, while the
+At turn start, the memory service returns a bounded set of prior raw
+shopper/assistant turns eligible for model context, the authoritative cart, and
+a service-issued attempt token. Blocked turns remain durable and exactly
+replayable but are excluded by both the service projection and chain prompt
+formatter; abandoned turns are also excluded by the formatter. Only the latest
+abandoned turn can reopen; reopening retains its request identity but rotates
+the attempt token, so a late finalize cannot overwrite the retry. Those recent
+turns replace the legacy rolling context blob, while the
 memory service also returns a compact index of products actually presented as
 ordered cards on earlier turns. When a needed product is not established in the
 current request, the selected discovery, styling, or cart skill may make one

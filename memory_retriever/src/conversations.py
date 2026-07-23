@@ -173,11 +173,13 @@ def _recent_turns_limit() -> int:
 
 
 def _recent_turns(db, conversation_id: str) -> list[dict[str, Any]]:
+    """Return bounded prior turns eligible for downstream context filtering."""
+
     rows = (
         db.query(ConversationTurn)
         .filter(
             ConversationTurn.conversation_id == conversation_id,
-            ConversationTurn.status != "started",
+            ConversationTurn.status.notin_(("started", "blocked")),
         )
         .order_by(ConversationTurn.sequence.desc())
         .limit(_recent_turns_limit())

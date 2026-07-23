@@ -303,6 +303,30 @@ def test_context_formatter_preserves_separate_speaker_lines() -> None:
     assert "\nAssistant:" in rendered
 
 
+def test_context_formatter_excludes_blocked_turns() -> None:
+    rendered = format_conversation_context(
+        [
+            RecentConversationTurn(
+                sequence=1,
+                shopper_text="blocked shopper text",
+                assistant_text="blocked response",
+                status="blocked",
+            ),
+            RecentConversationTurn(
+                sequence=2,
+                shopper_text="Show me bags",
+                assistant_text="Here are two bags.",
+                status="completed",
+            ),
+        ],
+    )
+
+    assert "blocked shopper text" not in rendered
+    assert "blocked response" not in rendered
+    assert "Show me bags" in rendered
+    assert "Here are two bags." in rendered
+
+
 def test_context_formatter_is_bounded_and_keeps_the_newest_turn() -> None:
     turns = [
         RecentConversationTurn(

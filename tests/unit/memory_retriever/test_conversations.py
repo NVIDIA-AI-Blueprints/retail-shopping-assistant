@@ -191,6 +191,55 @@ def test_start_returns_recent_turns_projection_and_authoritative_cart(
     ]
 
 
+def test_blocked_turn_replays_but_is_excluded_from_next_turn_context(
+    conversation_db: TestClient,
+) -> None:
+    blocked = _start_turn(
+        conversation_db,
+        "conversation-blocked",
+        request_id="request-blocked",
+        shopper_text="blocked shopper text",
+    ).json()
+    finalized = _finalize_turn(
+        conversation_db,
+        "conversation-blocked",
+        blocked["turn_id"],
+        request_id="request-blocked",
+        attempt_id=blocked["attempt_id"],
+        assistant_text="blocked response",
+        status="blocked",
+    )
+
+    replay = _start_turn(
+        conversation_db,
+        "conversation-blocked",
+        request_id="request-blocked",
+        shopper_text="blocked shopper text",
+    )
+    next_turn = _start_turn(
+        conversation_db,
+        "conversation-blocked",
+        request_id="request-safe",
+        shopper_text="Show me a bag",
+    )
+
+    assert finalized.status_code == 200
+    assert replay.status_code == 200
+    assert replay.json()["replayed"] is True
+    assert replay.json()["status"] == "blocked"
+    assert replay.json()["assistant_text"] == "blocked response"
+    assert next_turn.status_code == 200
+    assert next_turn.json()["recent_turns"] == []
+    with memory_main.SessionLocal() as db:
+        stored = (
+            db.query(memory_main.ConversationTurn)
+            .filter_by(turn_id=blocked["turn_id"])
+            .one()
+        )
+        assert stored.shopper_text == "blocked shopper text"
+        assert stored.status == "blocked"
+
+
 def test_start_is_idempotent_and_rejects_active_or_conflicting_reuse(
     conversation_db: TestClient,
 ) -> None:

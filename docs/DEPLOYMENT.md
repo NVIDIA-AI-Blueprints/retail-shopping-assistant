@@ -339,7 +339,7 @@ docker stack deploy -c docker-compose.prod.yaml retail-assistant
 | `MEMORY_DATABASE_URL` | SQLite URL for durable raw turns and cart state; Compose supplies the named-volume path | No | Compose: `sqlite:////data/context.db` |
 | `MEMORY_SQLITE_BUSY_TIMEOUT_MS` | SQLite lock wait for the single memory-service writer | No | `5000` |
 | `MEMORY_TURN_ABANDON_SECONDS` | Age at which startup or the next turn start marks an unfinished `started` turn abandoned | No | `300` |
-| `MEMORY_RECENT_TURNS` | Maximum finalized raw turns returned at the next durable turn start | No | `8` |
+| `MEMORY_RECENT_TURNS` | Maximum prior context-eligible raw turns returned at the next durable turn start | No | `8` |
 | `LOCAL_NIM_CACHE` | NIM cache directory | Local only | `~/.cache/nim` |
 | `LOG_LEVEL` | Logging level | No | `INFO` |
 | `NODE_ENV` | Node environment | No | `production` |
@@ -349,10 +349,13 @@ docker stack deploy -c docker-compose.prod.yaml retail-assistant
 Compose runs one memory-service SQLite replica at
 `sqlite:////data/context.db` and mounts the `memory-data` named volume at
 `/data`. The chain server starts a durable row before guardrail/model/tool work,
-receives bounded finalized shopper/assistant turns plus the authoritative cart,
-and finalizes the row as `completed`, `blocked`, or `failed`. An exact retry of
+receives bounded model-context-eligible shopper/assistant turns plus the
+authoritative cart, and finalizes the row as `completed`, `blocked`, or
+`failed`. An exact retry of
 a finalized request replays the stored response and output without another
-model turn.
+model turn. Blocked turns remain stored for exact replay and audit but are
+excluded from both the next-turn service projection and the chain prompt
+formatter.
 
 `DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS` bounds the active graph invocation. On
 timeout, the runtime records `agent_timeout`, captures bounded partial graph

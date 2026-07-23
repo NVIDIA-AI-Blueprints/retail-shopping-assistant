@@ -38,11 +38,13 @@ flowchart LR
    model, or tool work, the memory service transaction creates the ordered
    durable turn and returns an opaque attempt token, or exactly replays a
    matching finalized request.
-2. **Load continuity.** A new turn start returns bounded finalized raw
-   shopper/assistant turns, a compact index of products actually presented, and
-   the authoritative cart from SQLite. Those turns replace the legacy rolling
-   context blob. LangGraph creates separate process-local working state for only
-   this request under a collision-safe pair of conversation ID and request ID.
+2. **Load continuity.** A new turn start returns bounded model-context-eligible
+   raw shopper/assistant turns, a compact index of products actually presented,
+   and the authoritative cart from SQLite. Blocked turns stay durable for exact
+   replay and audit but never enter this context. Those turns replace the legacy
+   rolling context blob. LangGraph creates separate process-local working state
+   for only this request under a collision-safe pair of conversation ID and
+   request ID.
 3. **Load the data contract.** The chain server reuses its process-lifetime
    catalog-capability snapshot. That contract advertises the exact taxonomy,
    hard filters, ranges, and retrieval modes available from the current catalog.

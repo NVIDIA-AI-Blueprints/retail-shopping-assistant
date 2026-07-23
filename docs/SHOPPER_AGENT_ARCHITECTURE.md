@@ -106,10 +106,12 @@ The detailed contracts and implementation live in:
 ## 2. One Shopper Turn
 
 1. The runtime scopes the request and starts a durable memory-service turn before
-   guardrail, model, or tool work. That transaction returns bounded finalized
-   raw turns, a compact historical-product index, the authoritative cart, and an
-   opaque execution `attempt_id`. The raw turns replace the legacy rolling
-   context blob. LangGraph working state is isolated to this request under
+   guardrail, model, or tool work. That transaction returns bounded
+   model-context-eligible raw turns, a compact historical-product index, the
+   authoritative cart, and an opaque execution `attempt_id`. Blocked turns stay
+   durable for exact replay and audit but are excluded from both the service
+   projection and chain prompt formatter. The raw turns replace the legacy
+   rolling context blob. LangGraph working state is isolated to this request under
    a collision-safe pair of conversation ID and request ID.
 2. The first model step can call only `activate_shopper_skills_tool`. It selects
    the smallest registered skill set for the current intent. The prior turn's

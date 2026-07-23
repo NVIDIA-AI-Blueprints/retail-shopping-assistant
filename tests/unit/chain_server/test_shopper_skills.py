@@ -140,9 +140,9 @@ def test_product_discovery_separates_request_lanes() -> None:
     normalized = " ".join(body.split())
 
     assert "## Request Lanes" in body
-    assert "concrete product type has no faithful advertised taxonomy value" in (
-        normalized
-    )
+    assert "ask one concise clarification directly" in normalized
+    assert "Do not call `search_catalog_tool`" in normalized
+    assert "claim the requested type is absent" in normalized
     assert "put only that attribute in `unadvertised_requirements`" in normalized
     assert "keep it only in `semantic_query`" in normalized
     assert "A product type never belongs in `unadvertised_requirements`" in normalized

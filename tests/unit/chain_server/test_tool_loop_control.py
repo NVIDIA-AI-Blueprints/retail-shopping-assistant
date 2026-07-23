@@ -17,6 +17,7 @@ from chain_server.src.tool_loop_control import (
     EXPLICIT_ALTERNATIVE_CORRECTION_PREFIX,
     SEARCH_BUDGET_EXHAUSTED_PREFIX,
     SEARCH_VALIDATION_ERROR_PREFIX,
+    SERVER_CATALOG_CLARIFICATION,
     UNSUPPORTED_CONSTRAINT_PREFIX,
     UNSUPPORTED_TAXONOMY_PREFIX,
     ToolLoopControlMiddleware,
@@ -64,12 +65,16 @@ def _model_request(messages: list[Any] | None = None) -> ModelRequest:
 def _capture_model_request(
     middleware: ToolLoopControlMiddleware,
     messages: list[Any] | None = None,
+    *,
+    model_response: AIMessage | None = None,
 ) -> ModelRequest:
     captured: list[ModelRequest] = []
 
     def handler(request: ModelRequest) -> ModelResponse:
         captured.append(request)
-        return ModelResponse(result=[AIMessage(content="answer")])
+        return ModelResponse(
+            result=[model_response or AIMessage(content="answer")]
+        )
 
     middleware.wrap_model_call(_model_request(messages), handler)
     return captured[0]
@@ -404,7 +409,7 @@ def test_one_search_schema_repair_is_exposed_then_tools_are_removed() -> None:
     completed_messages = [*repair_messages, repair_result]
 
     assert [tool.name for tool in repair_request.tools] == ["search_catalog_tool"]
-    assert repair_request.tool_choice == "search_catalog_tool"
+    assert repair_request.tool_choice == "auto"
     assert repair_request.model_settings["parallel_tool_calls"] is False
     assert "## Catalog Search Repair" in repair_request.system_prompt
     normalized_prompt = " ".join(repair_request.system_prompt.split())
@@ -450,12 +455,30 @@ def test_incomplete_successful_repair_allows_one_repair_for_next_scope() -> None
         first_invalid_call,
         error,
     ]
-    _capture_model_request(middleware, repair_messages)
+    first_repair_call = AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "id": "call-b",
+                "name": "search_catalog_tool",
+                "args": {"requested_product_type": "skirts"},
+            }
+        ],
+    )
+    _capture_model_request(
+        middleware,
+        repair_messages,
+        model_response=first_repair_call,
+    )
     repaired_search = _tool_result(
         "SEARCH_RESULT_GROUNDING_NOTE: grounded candidates",
         tool_call_id="call-b",
     )
-    continued_messages = [*repair_messages, repaired_search]
+    continued_messages = [
+        *repair_messages,
+        first_repair_call,
+        repaired_search,
+    ]
 
     assert _capture_model_request(middleware, continued_messages).tools == TOOLS
 
@@ -474,13 +497,24 @@ def test_incomplete_successful_repair_allows_one_repair_for_next_scope() -> None
         tool_call_id="call-c",
         status="error",
     )
+    second_repair_call = AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "id": "call-d",
+                "name": "search_catalog_tool",
+                "args": {"requested_product_type": "boots"},
+            }
+        ],
+    )
     second_repair = _capture_model_request(
         middleware,
         [*continued_messages, second_invalid_call, second_error],
+        model_response=second_repair_call,
     )
 
     assert [tool.name for tool in second_repair.tools] == ["search_catalog_tool"]
-    assert second_repair.tool_choice == "search_catalog_tool"
+    assert second_repair.tool_choice == "auto"
 
     failed_second_repair = _tool_result(
         SEARCH_VALIDATION_ERROR_PREFIX + "{} with error: still invalid",
@@ -493,6 +527,7 @@ def test_incomplete_successful_repair_allows_one_repair_for_next_scope() -> None
             *continued_messages,
             second_invalid_call,
             second_error,
+            second_repair_call,
             failed_second_repair,
         ],
     ).tools == []
@@ -620,9 +655,6 @@ def test_constraint_repair_cannot_reopen_with_scope_modifiers() -> None:
         CONSTRAINT_REVIEW_PREFIX + "Remove the inferred requirement.",
     )
     messages = [HumanMessage(content="show me bags"), first_call, first_review]
-    prepared = _capture_model_request(middleware, messages)
-    assert [tool.name for tool in prepared.tools] == ["search_catalog_tool"]
-
     drifted_call = AIMessage(
         content="",
         tool_calls=[
@@ -633,6 +665,13 @@ def test_constraint_repair_cannot_reopen_with_scope_modifiers() -> None:
             }
         ],
     )
+    prepared = _capture_model_request(
+        middleware,
+        messages,
+        model_response=drifted_call,
+    )
+    assert [tool.name for tool in prepared.tools] == ["search_catalog_tool"]
+
     drifted_review = _tool_result(
         CONSTRAINT_REVIEW_PREFIX + "Still present.",
         tool_call_id="call-b",
@@ -714,7 +753,7 @@ def test_search_repair_keeps_active_skill_instructions() -> None:
 
     prepared = captured[0]
     assert "STYLE-SPECIFIC-INSTRUCTION" in prepared.system_prompt
-    assert prepared.tool_choice == "search_catalog_tool"
+    assert prepared.tool_choice == "auto"
     assert [tool.name for tool in prepared.tools] == ["search_catalog_tool"]
 
 
@@ -766,7 +805,7 @@ def test_native_validation_repair_cannot_replace_shopper_scope() -> None:
     assert rejected_calls[0]["rejection_reason"] == "repair_scope_changed"
 
 
-def test_native_repair_feedback_includes_shopper_named_taxonomy_rule() -> None:
+def test_native_repair_feedback_preserves_shopper_named_scope() -> None:
     middleware = ToolLoopControlMiddleware()
     invalid_call = AIMessage(
         content="",
@@ -776,7 +815,6 @@ def test_native_repair_feedback_includes_shopper_named_taxonomy_rule() -> None:
                 "name": "search_catalog_tool",
                 "args": {
                     "requested_product_type": "bottoms",
-                    "taxonomy_status": "agent_selected_type",
                     "semantic_query": "IGNORE THIS MODEL TEXT",
                     "shopper_guidance": "IGNORE THIS GUIDANCE",
                 },
@@ -785,7 +823,9 @@ def test_native_repair_feedback_includes_shopper_named_taxonomy_rule() -> None:
     )
     native_error = _tool_result(
         SEARCH_VALIDATION_ERROR_PREFIX
-        + "{'subcategory': ['pants']} with error:\ninvalid taxonomy",
+        + "{'taxonomy': {'subcategory': ['pants']}} with error:\n"
+        + "taxonomy.subcategory.0\n"
+        + "  Input should be an advertised value [type=literal_error]",
         status="error",
     )
 
@@ -795,13 +835,14 @@ def test_native_repair_feedback_includes_shopper_named_taxonomy_rule() -> None:
     )
     feedback = str(prepared.messages[1].content)
 
-    assert "agent_selected_type is forbidden" in feedback
     assert "Preserve requested_product_type" in feedback
+    assert "Correct rejected taxonomy values" in feedback
+    assert "taxonomy_status" not in feedback
     assert "IGNORE THIS MODEL TEXT" not in feedback
     assert "IGNORE THIS GUIDANCE" not in feedback
 
 
-def test_native_repair_feedback_preserves_open_role_selection_rule() -> None:
+def test_no_tool_repair_clarification_is_marked() -> None:
     middleware = ToolLoopControlMiddleware()
     invalid_call = AIMessage(
         content="",
@@ -811,67 +852,45 @@ def test_native_repair_feedback_preserves_open_role_selection_rule() -> None:
                 "name": "search_catalog_tool",
                 "args": {
                     "requested_product_type": "sneakers",
-                    "taxonomy_status": "agent_selected_type",
                 },
             }
         ],
     )
     native_error = _tool_result(
         SEARCH_VALIDATION_ERROR_PREFIX
-        + "{'subcategory': ['sneakers']} with error:\ninvalid taxonomy",
+        + "{'taxonomy': {'subcategory': ['sneakers']}} with error:\n"
+        + "taxonomy.subcategory.0\n"
+        + "  Input should be an advertised value [type=literal_error]",
         status="error",
     )
-
-    prepared = _capture_model_request(
-        middleware,
-        [HumanMessage(content="Build a sporty casual look"), invalid_call, native_error],
+    request = _model_request(
+        [HumanMessage(content="Build a sporty casual look"), invalid_call, native_error]
     )
-    feedback = str(prepared.messages[1].content)
+    captured: list[ModelRequest] = []
 
-    assert "genuinely open product role" in feedback
-    assert "Preserve taxonomy_status=agent_selected_type" in feedback
-    assert "choose exactly one advertised subcategory" in feedback
+    def clarify(prepared: ModelRequest) -> ModelResponse:
+        captured.append(prepared)
+        return ModelResponse(
+            result=[
+                AIMessage(
+                    content=(
+                        "Would you like flats, heels, or another advertised "
+                        "footwear type?"
+                    )
+                )
+            ]
+        )
 
+    response = middleware.wrap_model_call(request, clarify)
 
-def test_runtime_repair_preserves_open_role() -> None:
-    middleware = ToolLoopControlMiddleware()
-    invalid_call = AIMessage(
-        content="",
-        tool_calls=[
-            {
-                "id": "call-a",
-                "name": "search_catalog_tool",
-                "args": {
-                    "requested_product_type": "tops",
-                    "taxonomy_status": "agent_selected_type",
-                    "taxonomy": {
-                        "category": ["apparel"],
-                        "subcategory": ["blouses", "camisoles", "sweaters"],
-                    },
-                    "required_constraints": {},
-                },
-            }
-        ],
-    )
-    runtime_error = _tool_result(
-        SEARCH_VALIDATION_ERROR_PREFIX
-        + "An open-role agent_selected_type search must select exactly one "
-        "advertised subcategory.",
-        status="error",
-    )
-
-    prepared = _capture_model_request(
-        middleware,
-        [
-            HumanMessage(content="I'm going back to the office, need a few outfits."),
-            invalid_call,
-            runtime_error,
-        ],
-    )
-    feedback = str(prepared.messages[-1].content)
-
-    assert "Preserve taxonomy_status=agent_selected_type" in feedback
-    assert "choose exactly one advertised subcategory" in feedback.casefold()
+    assert captured[0].tool_choice == "auto"
+    assert [candidate.name for candidate in captured[0].tools] == [
+        "search_catalog_tool"
+    ]
+    assert response.result[0].tool_calls == []
+    assert response.result[0].additional_kwargs[
+        SERVER_CATALOG_CLARIFICATION
+    ] is True
 
 
 def test_runtime_alternative_correction_does_not_preserve_narrowed_scope() -> None:
@@ -884,7 +903,6 @@ def test_runtime_alternative_correction_does_not_preserve_narrowed_scope() -> No
                 "name": "search_catalog_tool",
                 "args": {
                     "requested_product_type": "flats",
-                    "taxonomy_status": "agent_selected_type",
                     "taxonomy": {
                         "category": ["footwear"],
                         "subcategory": ["flats"],
@@ -899,7 +917,7 @@ def test_runtime_alternative_correction_does_not_preserve_narrowed_scope() -> No
         + EXPLICIT_ALTERNATIVE_CORRECTION_PREFIX
         + " The current shopper request names exact advertised alternatives "
         "['heels', 'flats']. Set requested_product_type to include every named "
-        "alternative and use member_of_requested_umbrella.",
+        "alternative and select both advertised subcategories.",
         status="error",
     )
 
@@ -916,7 +934,7 @@ def test_runtime_alternative_correction_does_not_preserve_narrowed_scope() -> No
     assert EXPLICIT_ALTERNATIVE_CORRECTION_PREFIX in feedback
     assert "['heels', 'flats']" in feedback
     assert "Preserve the shopper-named requested_product_type" not in feedback
-    assert "Preserve taxonomy_status=agent_selected_type" not in feedback
+    assert "taxonomy_status" not in feedback
 
 
 def test_runtime_repair_preserves_named_scope() -> None:
@@ -929,7 +947,6 @@ def test_runtime_repair_preserves_named_scope() -> None:
                 "name": "search_catalog_tool",
                 "args": {
                     "requested_product_type": "bags",
-                    "taxonomy_status": "exact_requested_type",
                     "taxonomy": {
                         "category": ["bags"],
                         "subcategory": [
@@ -948,7 +965,7 @@ def test_runtime_repair_preserves_named_scope() -> None:
     )
     runtime_error = _tool_result(
         SEARCH_VALIDATION_ERROR_PREFIX
-        + "exact_requested_type cannot select multiple advertised children.",
+        + "The selected taxonomy does not faithfully represent the named scope.",
         status="error",
     )
 
@@ -963,7 +980,8 @@ def test_runtime_repair_preserves_named_scope() -> None:
     feedback = str(prepared.messages[-1].content)
 
     assert "Preserve the shopper-named requested_product_type" in feedback
-    assert "agent_selected_type is forbidden" in feedback
+    assert "exact advertised values" in feedback
+    assert "taxonomy_status" not in feedback
 
 
 def test_runtime_repair_does_not_restore_unvalidated_constraints() -> None:
@@ -976,7 +994,6 @@ def test_runtime_repair_does_not_restore_unvalidated_constraints() -> None:
                 "name": "search_catalog_tool",
                 "args": {
                     "requested_product_type": "bag",
-                    "taxonomy_status": "exact_requested_type",
                     "taxonomy": {
                         "category": ["bags"],
                         "subcategory": [
@@ -996,7 +1013,7 @@ def test_runtime_repair_does_not_restore_unvalidated_constraints() -> None:
     )
     runtime_error = _tool_result(
         SEARCH_VALIDATION_ERROR_PREFIX
-        + "exact_requested_type cannot select multiple advertised children.",
+        + "The selected taxonomy does not faithfully represent the named scope.",
         status="error",
     )
     request = _model_request(
@@ -1020,7 +1037,6 @@ def test_runtime_repair_does_not_restore_unvalidated_constraints() -> None:
                                 "semantic_query": "neutral bag",
                                 "shopper_guidance": "Keep the palette cohesive.",
                                 "requested_product_type": "bag",
-                                "taxonomy_status": "member_of_requested_umbrella",
                                 "taxonomy": {
                                     "category": ["bags"],
                                     "subcategory": [
@@ -1046,9 +1062,13 @@ def test_runtime_repair_does_not_restore_unvalidated_constraints() -> None:
     response = middleware.wrap_model_call(request, added_constraints)
     repaired = response.result[0]
 
-    assert repaired.tool_calls[0]["args"]["taxonomy_status"] == (
-        "member_of_requested_umbrella"
-    )
+    assert repaired.tool_calls[0]["args"]["taxonomy"]["subcategory"] == [
+        "clutches",
+        "crossbody_bags",
+        "satchels",
+        "shoulder_bags",
+        "tote_bags",
+    ]
     assert repaired.tool_calls[0]["args"]["required_constraints"] == {
         "primary_color": ["black"]
     }
@@ -1057,13 +1077,12 @@ def test_runtime_repair_does_not_restore_unvalidated_constraints() -> None:
 
 
 @pytest.mark.parametrize(
-    ("shopper_query", "arguments", "repaired_arguments", "status_guidance"),
+    ("shopper_query", "arguments", "repaired_arguments"),
     [
         (
             "Any matching shoes?",
             {
                 "requested_product_type": "shoes",
-                "taxonomy_status": "member_of_requested_umbrella",
                 "taxonomy": {
                     "category": ["footwear"],
                     "subcategory": [
@@ -1080,20 +1099,17 @@ def test_runtime_repair_does_not_restore_unvalidated_constraints() -> None:
             },
             {
                 "requested_product_type": "shoes",
-                "taxonomy_status": "member_of_requested_umbrella",
                 "taxonomy": {
                     "category": ["footwear"],
                     "subcategory": ["boots", "flats", "heels", "sandals"],
                 },
                 "required_constraints": {},
             },
-            "Preserve taxonomy_status=member_of_requested_umbrella",
         ),
         (
             "Do you have eye-catching bags?",
             {
                 "requested_product_type": "bags",
-                "taxonomy_status": "exact_requested_type",
                 "taxonomy": {
                     "category": ["bags"],
                     "subcategory": [
@@ -1108,7 +1124,6 @@ def test_runtime_repair_does_not_restore_unvalidated_constraints() -> None:
             },
             {
                 "requested_product_type": "bags",
-                "taxonomy_status": "member_of_requested_umbrella",
                 "taxonomy": {
                     "category": ["bags"],
                     "subcategory": [
@@ -1121,7 +1136,6 @@ def test_runtime_repair_does_not_restore_unvalidated_constraints() -> None:
                 },
                 "required_constraints": {},
             },
-            "member_of_requested_umbrella for faithful advertised children",
         ),
     ],
 )
@@ -1129,7 +1143,6 @@ def test_native_taxonomy_repair_keeps_named_scope(
     shopper_query: str,
     arguments: dict[str, Any],
     repaired_arguments: dict[str, Any],
-    status_guidance: str,
 ) -> None:
     middleware = ToolLoopControlMiddleware()
     invalid_call = AIMessage(
@@ -1176,8 +1189,8 @@ def test_native_taxonomy_repair_keeps_named_scope(
 
     assert response.result[0].tool_calls
     assert "Preserve requested_product_type" in feedback
-    assert "agent_selected_type is forbidden" in feedback
-    assert status_guidance in feedback
+    assert "Correct rejected taxonomy values" in feedback
+    assert "taxonomy_status" not in feedback
 
 
 def test_native_constraint_repair_does_not_replay_unvalidated_relation() -> None:
@@ -1190,7 +1203,6 @@ def test_native_constraint_repair_does_not_replay_unvalidated_relation() -> None
                 "name": "search_catalog_tool",
                 "args": {
                     "requested_product_type": "bags",
-                    "taxonomy_status": "member_of_requested_umbrella",
                     "taxonomy": {
                         "category": ["bags"],
                         "subcategory": ["tote_bags", "crossbody_bags"],
@@ -1237,7 +1249,6 @@ def test_native_repair_does_not_restore_unvalidated_taxonomy() -> None:
                 "name": "search_catalog_tool",
                 "args": {
                     "requested_product_type": "shoes",
-                    "taxonomy_status": "exact_requested_type",
                     "taxonomy": {
                         "category": ["footwear"],
                         "subcategory": ["shoes"],
@@ -1271,7 +1282,6 @@ def test_native_repair_does_not_restore_unvalidated_taxonomy() -> None:
                             "name": "search_catalog_tool",
                             "args": {
                                 "requested_product_type": "shoes",
-                                "taxonomy_status": "member_of_requested_umbrella",
                                 "taxonomy": {
                                     "category": ["footwear"],
                                     "subcategory": ["flats"],
@@ -1291,9 +1301,6 @@ def test_native_repair_does_not_restore_unvalidated_taxonomy() -> None:
     response = middleware.wrap_model_call(request, corrected_catalog_values)
 
     repaired = response.result[0]
-    assert repaired.tool_calls[0]["args"]["taxonomy_status"] == (
-        "member_of_requested_umbrella"
-    )
     assert repaired.tool_calls[0]["args"]["taxonomy"] == {
         "category": ["footwear"],
         "subcategory": ["flats"],
@@ -1314,7 +1321,6 @@ def test_native_repair_may_change_ungrounded_open_role() -> None:
                 "name": "search_catalog_tool",
                 "args": {
                     "requested_product_type": "sneakers",
-                    "taxonomy_status": "agent_selected_type",
                     "taxonomy": {
                         "category": ["footwear"],
                         "subcategory": ["sneakers"],
@@ -1355,7 +1361,6 @@ def test_native_repair_may_change_ungrounded_open_role() -> None:
                                 "semantic_query": "sporty casual look",
                                 "shopper_guidance": "Start with a versatile top.",
                                 "requested_product_type": "sweaters",
-                                "taxonomy_status": "agent_selected_type",
                                 "taxonomy": {
                                     "category": ["apparel"],
                                     "subcategory": ["sweaters"],
@@ -1373,11 +1378,10 @@ def test_native_repair_may_change_ungrounded_open_role() -> None:
     repaired = response.result[0]
     arguments = repaired.tool_calls[0]["args"]
 
-    assert "genuinely open product role" in str(
+    assert "Preserve requested_product_type" not in str(
         captured[0].messages[-1].content
     )
     assert arguments["requested_product_type"] == "sweaters"
-    assert arguments["taxonomy_status"] == "agent_selected_type"
     assert arguments["taxonomy"] == {
         "category": ["apparel"],
         "subcategory": ["sweaters"],
@@ -1394,13 +1398,12 @@ def test_native_repair_may_change_ungrounded_open_role() -> None:
 
 
 @pytest.mark.parametrize(
-    ("shopper_query", "arguments", "repaired_arguments", "guidance"),
+    ("shopper_query", "arguments", "repaired_arguments"),
     [
         (
             "Start with a beige top.",
             {
                 "requested_product_type": "tops",
-                "taxonomy_status": "exact_requested_type",
                 "taxonomy": {
                     "category": ["apparel"],
                     "subcategory": ["blouses", "camisoles"],
@@ -1409,7 +1412,6 @@ def test_native_repair_may_change_ungrounded_open_role() -> None:
             },
             {
                 "requested_product_type": "top",
-                "taxonomy_status": "member_of_requested_umbrella",
                 "taxonomy": {
                     "category": ["apparel"],
                     "subcategory": ["blouses", "camisoles"],
@@ -1418,13 +1420,11 @@ def test_native_repair_may_change_ungrounded_open_role() -> None:
                 "scope_complete": True,
                 "search_mode": "text",
             },
-            "taxonomy relation is not self-consistent",
         ),
         (
             "What bottoms go well with that?",
             {
                 "requested_product_type": "bottoms",
-                "taxonomy_status": "agent_selected_type",
                 "taxonomy": {
                     "category": ["apparel"],
                     "subcategory": ["skirts"],
@@ -1433,7 +1433,6 @@ def test_native_repair_may_change_ungrounded_open_role() -> None:
             },
             {
                 "requested_product_type": "bottom",
-                "taxonomy_status": "member_of_requested_umbrella",
                 "taxonomy": {
                     "category": ["apparel"],
                     "subcategory": ["skirts"],
@@ -1441,15 +1440,13 @@ def test_native_repair_may_change_ungrounded_open_role() -> None:
                 "required_constraints": {},
                 "scope_complete": True,
             },
-            "agent_selected_type is forbidden",
         ),
     ],
 )
-def test_missing_constraints_do_not_lock_an_invalid_taxonomy_relation(
+def test_missing_constraints_preserve_named_scope_without_locking_taxonomy(
     shopper_query: str,
     arguments: dict[str, Any],
     repaired_arguments: dict[str, Any],
-    guidance: str,
 ) -> None:
     middleware = ToolLoopControlMiddleware()
     invalid_call = AIMessage(
@@ -1495,10 +1492,9 @@ def test_missing_constraints_do_not_lock_an_invalid_taxonomy_relation(
     response = middleware.wrap_model_call(request, repaired)
 
     assert response.result[0].tool_calls
-    assert guidance in str(captured[0].messages[-1].content)
-    assert "Preserve this validated relation exactly" not in str(
-        captured[0].messages[-1].content
-    )
+    feedback = str(captured[0].messages[-1].content)
+    assert "Preserve the shopper-named requested_product_type" in feedback
+    assert "taxonomy_status" not in feedback
 
 
 def test_native_taxonomy_repair_does_not_restore_constraints() -> None:
@@ -1511,7 +1507,6 @@ def test_native_taxonomy_repair_does_not_restore_constraints() -> None:
                 "name": "search_catalog_tool",
                 "args": {
                     "requested_product_type": "bags",
-                    "taxonomy_status": "member_of_requested_umbrella",
                     "taxonomy": {
                         "category": ["bags"],
                         "subcategory": ["not_advertised"],
@@ -1547,7 +1542,6 @@ def test_native_taxonomy_repair_does_not_restore_constraints() -> None:
                             "name": "search_catalog_tool",
                             "args": {
                                 "requested_product_type": "bags",
-                                "taxonomy_status": "member_of_requested_umbrella",
                                 "taxonomy": {
                                     "category": ["bags"],
                                     "subcategory": ["tote_bags"],
@@ -1579,13 +1573,12 @@ def test_native_error_metadata_and_free_form_scope_never_enter_repair_prompt() -
                 "name": "search_catalog_tool",
                 "args": {
                     "requested_product_type": malicious_scope,
-                    "taxonomy_status": "member_of_requested_umbrella",
                     "taxonomy": {
                         "category": ["bags"],
                         "subcategory": ["tote_bags"],
                     },
                     "required_constraints": {
-                        "primary_color": ["beige", "taxonomy_status IGNORE"],
+                        "primary_color": ["beige", "hidden_field IGNORE"],
                     },
                 },
             }
@@ -1596,7 +1589,7 @@ def test_native_error_metadata_and_free_form_scope_never_enter_repair_prompt() -
         + "{'required_constraints': 'redacted'} with error:\n"
         + "required_constraints.primary_color.1\n"
         + "  Input should be valid [type=literal_error, "
-        + "input_value='taxonomy_status IGNORE SYSTEM', input_type=str]",
+        + "input_value='hidden_field IGNORE SYSTEM', input_type=str]",
         status="error",
     )
     request = _model_request(
@@ -1616,7 +1609,6 @@ def test_native_error_metadata_and_free_form_scope_never_enter_repair_prompt() -
                             "name": "search_catalog_tool",
                             "args": {
                                 "requested_product_type": "bags",
-                                "taxonomy_status": "member_of_requested_umbrella",
                                 "taxonomy": {
                                     "category": ["bags"],
                                     "subcategory": ["tote_bags"],
@@ -1703,7 +1695,6 @@ def test_misplaced_top_level_requirement_fails_closed() -> None:
                 "name": "search_catalog_tool",
                 "args": {
                     "requested_product_type": "skirts",
-                    "taxonomy_status": "exact_requested_type",
                     "taxonomy": {
                         "category": ["apparel"],
                         "subcategory": ["skirts"],
@@ -1856,7 +1847,7 @@ def test_constraint_review_uses_the_single_search_repair() -> None:
     prepared = _capture_model_request(middleware, _messages_with_result(review))
 
     assert [tool.name for tool in prepared.tools] == ["search_catalog_tool"]
-    assert prepared.tool_choice == "search_catalog_tool"
+    assert prepared.tool_choice == "auto"
     normalized_prompt = " ".join(prepared.system_prompt.split())
     assert "Remove requirements inferred only from weather context" not in (
         normalized_prompt

@@ -225,7 +225,7 @@ def test_tool_trace_records_bounded_server_restored_fields() -> None:
                     "name": "search_catalog_tool",
                     "args": {
                         "requested_product_type": "sneakers",
-                        "taxonomy_status": "agent_selected_type",
+                        "scope_complete": True,
                     },
                 }
             ],
@@ -233,7 +233,7 @@ def test_tool_trace_records_bounded_server_restored_fields() -> None:
                 SERVER_RESTORED_TOOL_CALL_FIELDS: [
                     {
                         "tool_call_id": "restored-repair",
-                        "fields": ["requested_product_type", "taxonomy_status"],
+                        "fields": ["scope_complete"],
                     }
                 ]
             },
@@ -257,10 +257,10 @@ def test_tool_trace_records_bounded_server_restored_fields() -> None:
             "tool_name": "search_catalog_tool",
             "arguments": {
                 "requested_product_type": "sneakers",
-                "taxonomy_status": "agent_selected_type",
+                "scope_complete": True,
             },
             "status": "completed",
-            "restored_fields": ["requested_product_type", "taxonomy_status"],
+            "restored_fields": ["scope_complete"],
         }
     ]
 
@@ -272,24 +272,32 @@ def test_tool_trace_preserves_bounded_catalog_scope_outcome() -> None:
             content="",
             tool_calls=[
                 {
-                    "id": "no-direct",
+                    "id": "zero-results",
                     "name": "search_catalog_tool",
                     "args": {
-                        "requested_product_type": "tailored trousers",
-                        "taxonomy_status": "no_direct_catalog_match",
+                        "semantic_query": "formal skirts",
+                        "requested_product_type": "skirts",
+                        "taxonomy": {
+                            "category": ["apparel"],
+                            "subcategory": ["skirts"],
+                        },
+                        "required_constraints": {},
+                        "scope_complete": True,
                     },
                 }
             ],
         ),
         ToolMessage(
             content=(
-                "STOP_TOOL_USE: No faithful advertised catalog taxonomy "
-                "matches the requested product type 'tailored trousers'.\n\n"
+                "SEARCH_NO_MATCH_GROUNDING_NOTE: Zero products matched this "
+                "exact advertised taxonomy and filter scope.\n\n"
                 'CATALOG_SCOPE_OUTCOME: {"outcome": '
-                '"no_direct_catalog_match", "requested_product_type": '
-                '"tailored trousers"}'
+                '"zero_results", "requested_product_type": "skirts", '
+                '"taxonomy": {"category": ["apparel"], '
+                '"subcategory": ["skirts"]}, "confirmed_filters": {}}'
             ),
-            tool_call_id="no-direct",
+            name="search_catalog_tool",
+            tool_call_id="zero-results",
         ),
     ]
 
@@ -301,8 +309,13 @@ def test_tool_trace_preserves_bounded_catalog_scope_outcome() -> None:
 
     assert diagnostics["catalog_scope_outcomes"] == [
         {
-            "outcome": "no_direct_catalog_match",
-            "requested_product_type": "tailored trousers",
+            "outcome": "zero_results",
+            "requested_product_type": "skirts",
+            "taxonomy": {
+                "category": ["apparel"],
+                "subcategory": ["skirts"],
+            },
+            "confirmed_filters": {},
         }
     ]
 

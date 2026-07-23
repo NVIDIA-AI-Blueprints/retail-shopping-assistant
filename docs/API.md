@@ -293,7 +293,7 @@ interface AgentDiagnostics {
   }>;
   product_evidence_truncated: boolean;
   catalog_scope_outcomes: Array<{
-    outcome: 'no_direct_catalog_match' | 'zero_results';
+    outcome: 'zero_results';
     requested_product_type?: string | null;
     taxonomy?: Record<string, unknown>;
     confirmed_filters?: Record<string, unknown>;
@@ -352,9 +352,9 @@ records keep their taxonomy and confirmed filters in `search_scope`, attached
 only to products returned by that search. The list excludes semantic queries,
 raw tool messages, model reasoning, and other diagnostic fields.
 `catalog_scope_outcomes` contains at most eight server-authored, product-free
-outcomes. Its only accepted outcomes are `no_direct_catalog_match` and
-`zero_results`; records may include only `requested_product_type`, `taxonomy`,
-and `confirmed_filters` in addition to `outcome`. Evaluation consumers default
+outcomes. Its only accepted outcome is `zero_results`; records may include only
+`requested_product_type`, `taxonomy`, and `confirmed_filters` in addition to
+`outcome`. Evaluation consumers default
 missing legacy list fields to `[]` and `product_evidence_truncated` to `false`.
 
 Successful internal search-tool results carry `SEARCH_DIRECTION_EVIDENCE`, the
@@ -479,7 +479,7 @@ another model/tool turn. The public SSE frame shapes are unchanged.
 Every unblocked Deep Agents turn includes one bounded activation model step
 before normal shopping-tool selection. That step selects registered shopper
 skills; the runtime injects their complete instructions before exposing the
-ten shopping tools. It is included in `token_usage.model_calls` and
+eleven shopping tools. It is included in `token_usage.model_calls` and
 `agent_diagnostics`.
 
 Token-level Deep Agents streaming is a known limitation for this PR and is
@@ -762,33 +762,33 @@ catalog retriever derives them from the loaded JSONL.
 Executes a structured text catalog search on the catalog service port, usually
 `http://localhost:8010/query/text`.
 
-The model-facing search tool requires one `semantic_query`, one pre-retrieval
-product-agnostic `shopper_guidance`, one `requested_product_type`, one
-`taxonomy_status`, one capability-derived `taxonomy` envelope, one
-capability-derived `required_constraints` object, and `scope_complete`.
-Its schema is generated from Catalog capabilities with exact taxonomy values,
+The model-facing `search_catalog_tool` exposes one flat executable schema with
+`semantic_query`, pre-retrieval product-agnostic `shopper_guidance`,
+`requested_product_type`, capability-derived `taxonomy` and
+`required_constraints`, `scope_complete`, and optional `search_mode`. It
+contains no model-authored taxonomy relationship or catalog-absence field. The
+schema is generated from Catalog capabilities with exact taxonomy values,
 hard-filter properties and enum values, typed numeric range shape, and
 search-mode values while deliberately omitting cross-field validators. The
-handler applies a separate strict semantic model to the same payload.
+handler translates it into the existing strict semantic search model.
 `requested_product_type` is the shortest product noun or true
 umbrella from the shopper's current turn or direct antecedent. It excludes
-color, material, fit, occasion, weather, and style modifiers; for
-`agent_selected_type`, it is the chosen advertised role noun. It is `null` only
-for `image_only`. The semantic query supplies soft ranking direction
+color, material, fit, occasion, weather, and style modifiers. For a genuinely
+open role, it is the one advertised subcategory selected for that role. It is
+`null` only for image-only search. The semantic query supplies soft ranking direction
 independently of taxonomy; it need not repeat the selected taxonomy noun.
 Taxonomy and hard constraints are enforced through their structured fields.
 `shopper_guidance` is authored under the active skill before results are known
 and is not sent to the catalog service.
 Each call accepts at most one category. For a broad request that names no type,
-`agent_selected_type` selects exactly one advertised subcategory as the focused
-starting role. It is forbidden for a role whose type the shopper named,
-including an alternative, confirmation, comparison, or follow-up. Invalid
-open-role provenance is rejected rather than silently reinterpreted, and a
-genuinely open-role selection must name its selected advertised subcategory in
-`requested_product_type`. A repair of an open role remains
-`agent_selected_type`.
-`no_direct_catalog_match` is a no-retrieval result with
-empty taxonomy and no hard constraints; an unsupported modifier does not erase
+the model selects exactly one advertised subcategory as the focused starting
+role and names it in `requested_product_type`. That open-role path is forbidden
+when the shopper named the role's type, including an alternative, confirmation,
+comparison, or follow-up. Invalid open-role provenance is rejected rather than
+silently reinterpreted.
+If faithful advertised taxonomy cannot be selected, the assistant asks one
+concise clarification directly without calling the tool. It does not broaden,
+substitute, or assert catalog absence. An unsupported modifier does not erase
 an advertised type, and subjective style remains semantic. The duplicate-search
 identity is normalized taxonomy plus hard constraints, so paraphrasing cannot
 repeat a retrieval while a genuinely different hard-filter scope may run within
@@ -796,24 +796,28 @@ repeat a retrieval while a genuinely different hard-filter scope may run within
 selections to advertised field names and sends the semantic query as a singleton
 `text` list.
 
-One invalid agent search may receive one search-only repair per distinct scope.
+One invalid agent search may receive one bounded repair per distinct scope.
 That isolated call receives the capability-derived typed search tool, compact
 server-generated Catalog capabilities, the current shopper message, bounded
-sanitized validator feedback, and the active skill instructions. Runtime
-protects a shopper-grounded requested scope across native and strict validation
-paths. Repair middleware may restore only structural `scope_complete`; it does
-not rewrite catalog fields.
+sanitized validator feedback, and the active skill instructions. It may submit
+one corrected search or return no tool call to signal that clarification is
+needed.
+The no-tool response is only branch/control state: the server marks it, discards
+the model prose, and emits `Could you clarify the product type or requirement
+you want me to use?`. If another requested search scope already succeeded, its
+deterministic grounded products precede that clarification. Runtime protects a
+shopper-grounded requested scope across native and strict validation paths. If a
+different shopping tool already completed, the existing grounding editor
+combines its evidence with the fixed clarification. Repair middleware may
+restore only structural `scope_complete`; it does not rewrite catalog fields.
 When strict handler validation has already accepted advertised constraints, its
 feedback may include that finite object and a repaired call that drifts is
 rejected rather than overwritten.
 Malformed or nonempty free-form `unadvertised_requirements` arguments on a
-native schema-invalid call fail closed. If the only value exactly duplicates a
-shopper-stated unavailable concrete product type, runtime rejects it with one
-bounded correction requiring an empty no-direct envelope rather than silently
-rewriting it. A schema-valid, genuinely open
-`agent_selected_type` role may consume that scope's repair for model-owned
-review: preserve an explicit objective must-have, or remove only an inferred or
-subjective requirement. Deterministic code does not parse shopper prose. The
+native schema-invalid call fail closed. A schema-valid, genuinely open role may
+consume that scope's repair for model-owned review: preserve an explicit
+objective must-have, or remove only an inferred or subjective requirement.
+Deterministic code does not parse shopper prose. The
 repair cannot replace a shopper-stated product-scope noun. A successful partial
 search may continue to another valid role with its own one-repair opportunity;
 no scope receives two repairs. Completed scopes and deterministic stop results

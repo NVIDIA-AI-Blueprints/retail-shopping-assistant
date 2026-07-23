@@ -61,7 +61,7 @@ The Retail Shopping Assistant is an AI-powered blueprint that provides a compreh
 - ⚡ **SSE Response Stream**: Event-stream response framing for chat clients; token-level Deep Agents streaming is a follow-up after the harness migration
 - 📊 **Inference Visibility**: Model names, call counts, token usage, and
   operator-facing ordered agent/tool termination diagnostics, including
-  bounded no-direct and zero-result catalog-scope outcomes
+  bounded zero-result catalog-scope outcomes
 - 📱 **Responsive UI**: Modern, mobile-friendly interface
 
 ### Architecture
@@ -94,6 +94,10 @@ a read-only continuity signal; they do not force routing or authorize tools.
 Conversation context still matters: a terse item-only follow-up inside an
 active outfit-building or style-led single-piece thread remains an
 `outfit-styling` task.
+`search_catalog_tool` exposes one flat, capability-derived executable search
+schema. The model cannot submit a clarification or catalog-absence result
+through that tool: it must either select faithful advertised values or ask one
+concise clarification directly without a tool call.
 When a catalog search needs repair, the runtime assigns one total repair to the
 full normalized `requested_product_type` phrase. A schema correction or a fresh
 constraint-provenance review can consume that single budget; constraint feedback
@@ -102,9 +106,17 @@ opening another repair. Distinct advertised siblings never count as the same
 repair scope. The isolated repair receives the capability-derived typed
 `search_catalog_tool`, compact server-generated Catalog capabilities, the
 current shopper message, bounded sanitized validator feedback, and the complete
-active shopper-skill instructions. The tool is forced and parallel calls are
-disabled; the base runtime prompt, invalid AI/tool history, and prior
-conversation history are absent. For a native tool-transport failure, the
+active shopper-skill instructions. Only that search tool is available, parallel
+calls are disabled, and the repair may either submit one corrected search or
+signal that clarification is needed by returning no tool call. The server
+discards that model prose and emits the fixed clarification `Could you clarify
+the product type or requirement you want me to use?`. If another requested
+search scope already succeeded, its deterministic grounded products are kept
+before that clarification. If another shopping tool already completed, the
+existing grounding editor preserves that evidence with the fixed clarification.
+The base runtime prompt, invalid AI/tool history, and prior conversation history
+are absent. For a native
+tool-transport failure, the
 requested scope is locked only when current or recent shopper text grounds it;
 an ungrounded model-generated scope may be corrected. A rejected change to a
 grounded scope is removed before execution and appears in `agent_diagnostics`
@@ -122,29 +134,20 @@ strict handler rejects drift instead of overwriting model output. Free-form
 rejected arguments remain excluded. Repair middleware never restores or
 rewrites taxonomy, constraints, requested type, or search mode. It may restore
 only the structural `scope_complete` flag, which is reported by name in bounded
-`restored_fields` diagnostics. A no-direct repair may clear constraints only if
-it remains no-direct; if it changes to a retrieving status, it must preserve the
-original advertised constraints.
-If native enum validation rejects an `agent_selected_type` call, the same repair
-feedback also carries the shopper-provenance rule: a shopper-named role must use
-exact/umbrella status, while an open role keeps agent-selected status and chooses
-one advertised subtype. For a shopper-named advertised subtype, the feedback
-requires `exact_requested_type`; named umbrellas and alternatives use
-`member_of_requested_umbrella`. A valid no-direct outcome reached after that one repair
-retains the specific not-advertised response instead of becoming a generic
-rejected-search response.
+`restored_fields` diagnostics.
+When validation rejects an incoherent open-role search, the same repair
+feedback carries the shopper-provenance rule: a shopper-named role must retain
+the shopper's noun or umbrella, while a genuinely open role chooses and names
+one advertised subtype.
 When native validation rejects `required_constraints`, the repair receives the
 typed search tool and compact Catalog capabilities needed to select valid
 values. The free-form query, guidance, and requested scope remain excluded from
 native validator feedback; a shopper-grounded scope is compared privately.
 Middleware does not preserve unvalidated taxonomy or constraints by rewriting
 the repaired call. Malformed or nonempty
-free-form `unadvertised_requirements` arguments are never restored. One exact
-duplicate of a shopper-stated unavailable concrete product type receives a
-single validation correction requiring an empty no-direct envelope; it is never
-silently rewritten. Every other native schema-invalid call containing one
-closes without repair. A
-schema-valid, genuinely open `agent_selected_type` request may still use the
+free-form `unadvertised_requirements` arguments are never restored. A native
+schema-invalid call containing one closes without repair. A
+schema-valid, genuinely open role may still use the
 bounded review for a proposed inferred requirement.
 
 The resolved chain-server agent stack remains `deepagents==0.6.12`,
@@ -176,30 +179,29 @@ guides.
    contract shared by all sessions. Its aggregate endpoint at
    `http://localhost:8009/capabilities` returns the cached catalog contract with
    the other runtime capabilities.
-4. Cached capabilities generate the model-facing tool's exact taxonomy values,
-   hard-filter properties and enum values, typed numeric range shape, and
-   search-mode enum. This typed schema
+4. Cached capabilities generate `search_catalog_tool`'s flat schema:
+   `semantic_query`, `shopper_guidance`, `requested_product_type`, `taxonomy`,
+   `required_constraints`, `scope_complete`, and optional `search_mode`.
+   Taxonomy values, hard-filter properties and enum values, typed numeric range
+   shape, and search-mode values come from the active contract. This typed schema
    deliberately omits cross-field validators; the handler applies a separate
    strict semantic model to the same payload. Invalid individual values fail at
    the tool boundary, while cross-field failures reach capability-aware handler
    validation and can receive one bounded repair. The agent semantically selects
-   exact advertised values and owns
-   `taxonomy_status`; deterministic chain code never semantically rewrites that
-   status. It validates and maps the selection against the capability-owned
+   exact advertised values; deterministic chain code validates and maps the
+   selection against the capability-owned
    exact category/subcategory relationships and returns corrective feedback for
    incoherent combinations. Each call covers at most one category. For a
    genuinely open request, the model selects exactly one advertised subcategory
-   with `agent_selected_type`; the runtime derives the duplicate
-   `requested_product_type` provenance from that selection while retaining
-   `agent_selected_type`. A named shopper scope must use exact or umbrella
-   provenance instead. A transport repair cannot change that scope when it is
-   grounded in shopper text; an ungrounded model-generated scope may be
-   corrected.
-   Every other text search carries
+   and names it in `requested_product_type`. A named shopper scope must retain
+   the shopper's noun or umbrella. A transport repair cannot change that scope
+   when it is grounded in shopper text; an ungrounded model-generated scope may
+   be corrected.
+   Every text search carries
    `requested_product_type`: the shortest product noun or true umbrella from
    the shopper's current turn or direct antecedent. It excludes color,
    material, fit, occasion, weather, and style modifiers. It is provenance, not
-   taxonomy or ranking text, and is `null` only for `image_only` search.
+   taxonomy or ranking text, and is `null` only for image-only search.
    Validation can bind the longest exact advertised suffix in a
    modifier-bearing model phrase (`waterproof boots` to `boots`), but disables
    that shortcut for explicit alternatives containing `and`, `or`, `/`, or
@@ -208,19 +210,18 @@ guides.
    reasoning rather than being collapsed to `boots`. When the current shopper
    turn instead contains one unambiguous literal pair of exact advertised
    subcategories from the same category, runtime requires the model-authored
-   scope and taxonomy to retain both branches with
-   `member_of_requested_umbrella`. The valid request remains one catalog
-   execution; its candidate window expands for that pair, then rank-preserving
+   scope and taxonomy to retain both branches. The valid request remains one
+   catalog execution; its candidate window expands for that pair, then rank-preserving
    selection keeps one returned candidate per branch when available before
    trimming to the configured result count. Modified, synonymous, ambiguous,
    or cross-category alternatives remain model-owned. Each search also requires
    `shopper_guidance`: one nonempty, product-agnostic
    sentence authored before retrieval under the active skill to connect the
    selected role to the shopper's goal or direct antecedent. Empty guidance is
-   valid only for `image_only` and `no_direct_catalog_match`; those statuses
-   require guidance to be empty.
-5. An explicitly requested type with no faithful advertised value takes a
-   no-retrieval path with empty taxonomy and no hard constraints. An unsupported
+   valid only for image-only search.
+5. If faithful advertised values cannot be selected for an explicitly requested
+   type, the assistant asks one concise clarification directly. It makes no tool
+   call, retrieval, or catalog-absence claim. An unsupported
    modifier does not erase an advertised product type. A directly stated
    must-have missing from the generated schema is placed in
    `unadvertised_requirements`, while preference, styling, occasion, weather,
@@ -229,9 +230,8 @@ guides.
    product scope fails closed before retrieval, including when the model uses a
    synonym rather than the shopper's exact wording. The bounded
    constraint-provenance review is reserved for a proposed inferred requirement
-   on a genuinely open `agent_selected_type` role when its shared repair budget
-   remains. The review freezes `requested_product_type`,
-   `taxonomy_status`, taxonomy, `scope_complete`, `search_mode`, and every
+   on a genuinely open role when its shared repair budget remains. The review
+   freezes `requested_product_type`, taxonomy, `scope_complete`, `search_mode`, and every
    advertised hard constraint. Within that preserved hard scope, it may correct
    only the soft `semantic_query`, the reviewed `unadvertised_requirements`
    lane, and its associated `shopper_guidance`; the requirement is either
@@ -277,17 +277,17 @@ results, each guidance sentence is grouped with the products from the search
 that produced it. Candidate groups deduplicate by `product_ref`, not display
 name: the same catalog product appears once, while distinct products that share
 a name remain distinct. Mixed-outcome turns retain every successful product
-group when a later scope has no direct match or an unsupported requirement, and
-append the honest gap. The fixed no-direct or unsupported canned response is
-used only when that rejection is the sole current-turn business-tool outcome;
+group when a later scope has an unsupported requirement and append the honest
+gap. The fixed unsupported-requirement response is used only when that rejection
+is the sole current-turn business-tool outcome;
 otherwise the other outcome remains available for rendering or synthesis. If
 successful search evidence remains incomplete, the renderer adds a neutral
 offer to continue with the next requested piece or search scope.
 Separate searches are never flattened into one global filter claim. Zero-result
 evidence retains its exact taxonomy and filter scope and cannot support a claim
 about a different product type or the whole catalog.
-Operator diagnostics include bounded `catalog_scope_outcomes` for no-direct and
-zero-result scopes. The grounding boundary keeps current-turn and prior-turn
+Operator diagnostics include bounded `catalog_scope_outcomes` for zero-result
+scopes. The grounding boundary keeps current-turn and prior-turn
 tool-role evidence separate, so earlier results can resolve references but
 cannot prove that a new search or cart mutation ran. If every current-turn
 business call is a rejected catalog search and no current product evidence

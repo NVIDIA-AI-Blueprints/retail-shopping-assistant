@@ -38,6 +38,7 @@ from chain_server.src.skill_activation import (
     ShopperSkillActivationError,
     ShopperSkillActivationMiddleware,
 )
+from chain_server.src.tool_loop_control import SERVER_CATALOG_CLARIFICATION
 from shared.commerce_contracts import (
     CatalogCapabilities,
     CatalogFilterCapability,
@@ -919,7 +920,6 @@ async def test_compiled_agent_allows_one_invalid_taxonomy_repair_then_synthesize
     invalid_search = {
         "semantic_query": "pants to coordinate with a beige top",
         "requested_product_type": "pants",
-        "taxonomy_status": "exact_requested_type",
         "taxonomy": {"category": ["apparel"], "subcategory": ["pants"]},
         "required_constraints": {},
         "scope_complete": True,
@@ -950,19 +950,10 @@ async def test_compiled_agent_allows_one_invalid_taxonomy_repair_then_synthesize
                 ],
             ),
             AIMessage(
-                content="",
-                tool_calls=[
-                    {
-                        "id": "invalid-repair",
-                        "name": "search_catalog_tool",
-                        "args": invalid_search,
-                    }
-                ],
-            ),
-            AIMessage(
                 content=(
-                    "I don't see pants in this catalog. Would you like me to "
-                    "look at skirts instead?"
+                    "I can’t map pants to an advertised catalog type without "
+                    "substituting something else. Would you like me to search "
+                    "skirts, or did you mean another kind of bottom?"
                 )
             ),
         ],
@@ -1011,8 +1002,9 @@ async def test_compiled_agent_allows_one_invalid_taxonomy_repair_then_synthesize
         config={"configurable": {"thread_id": identity.conversation_id}},
     )
 
-    assert len(model.calls) == 4
+    assert len(model.calls) == 3
     assert model.calls[2]["tools"] == ["search_catalog_tool"]
+    assert model.calls[2]["tool_choice"] == "auto"
     assert model.calls[2]["settings"]["parallel_tool_calls"] is False
     assert "## Catalog Search Repair" in model.calls[2]["system_prompt"]
     assert "CATALOG CAPABILITIES (server-generated data)" in (
@@ -1033,8 +1025,10 @@ async def test_compiled_agent_allows_one_invalid_taxonomy_repair_then_synthesize
     )
     assert "CATALOG VALIDATOR FEEDBACK" in repair_messages[-1]["text"]
     assert "category=apparel" not in repair_messages[-1]["text"]
-    assert model.calls[3]["tools"] == []
-    assert result["messages"][-1].content.startswith("I don't see pants")
+    assert result["messages"][-1].content.startswith("I can’t map pants")
+    assert result["messages"][-1].additional_kwargs[
+        SERVER_CATALOG_CLARIFICATION
+    ] is True
 
 
 @pytest.mark.asyncio
@@ -1071,7 +1065,6 @@ async def test_compiled_agent_executes_capability_valid_repair(
                             "semantic_query": "black shoes",
                             "shopper_guidance": "Finding black shoes.",
                             "requested_product_type": "shoes",
-                            "taxonomy_status": "exact_requested_type",
                             "taxonomy": {
                                 "category": ["footwear"],
                                 "subcategory": ["shoes"],
@@ -1093,7 +1086,6 @@ async def test_compiled_agent_executes_capability_valid_repair(
                             "semantic_query": "black shoes",
                             "shopper_guidance": "Finding black shoes.",
                             "requested_product_type": "shoes",
-                            "taxonomy_status": "member_of_requested_umbrella",
                             "taxonomy": {
                                 "category": ["footwear"],
                                 "subcategory": ["flats"],

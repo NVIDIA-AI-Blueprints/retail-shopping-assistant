@@ -44,6 +44,7 @@ from .catalog_request import (
     CatalogSearchPlan,
     build_catalog_search_plan,
 )
+from .catalog_scope import CATALOG_SEARCH_RULES
 from .commerce_tools import (
     add_cart_item,
     check_active_promotions,
@@ -90,6 +91,7 @@ from .tool_loop_control import (
     SEARCH_BUDGET_EXHAUSTED_PREFIX,
     SEARCH_SCOPE_COMPLETE_PREFIX,
     SEARCH_VALIDATION_ERROR_PREFIX,
+    SERVER_CATALOG_CLARIFICATION,
     SERVER_RESTORED_TOOL_CALL_FIELDS,
     ToolLoopControlMiddleware,
     _SERVER_REJECTED_TOOL_CALLS,
@@ -212,6 +214,9 @@ _REJECTED_CATALOG_SEARCH_RESPONSE = (
     "I couldn't complete a valid catalog search for that request, so I don't "
     "have catalog results to show. Please try again or ask me to search a "
     "different advertised product type."
+)
+_CATALOG_REPAIR_CLARIFICATION_RESPONSE = (
+    "Could you clarify the product type or requirement you want me to use?"
 )
 _UNSUPPORTED_REQUIREMENT_RESPONSE = (
     "I can't guarantee that requirement from the catalog information available "
@@ -347,7 +352,7 @@ class CatalogTaxonomyToolInput(BaseModel):
         description=(
             "Exact advertised category values required by the shopper. Use an "
             "empty list only when subcategory supplies the text-search scope or "
-            "taxonomy_status is 'image_only' or 'no_direct_catalog_match'."
+            "the search is image-only."
         ),
     )
     subcategory: list[str] = Field(
@@ -355,7 +360,7 @@ class CatalogTaxonomyToolInput(BaseModel):
         description=(
             "Exact advertised subcategory values required by the shopper. Use an "
             "empty list when category supplies the text-search scope or the search "
-            "status is 'image_only' or 'no_direct_catalog_match'."
+            "is image-only."
         ),
     )
 
@@ -762,8 +767,7 @@ def _advertised_alternative_selection_issue(
         "The current shopper request names exact advertised alternatives "
         f"{advertised_subcategories!r} in category '{category_name}'. "
         "Set requested_product_type to include every named alternative. Select "
-        "every named alternative exactly once and no other subcategory, using "
-        "member_of_requested_umbrella."
+        "every named alternative exactly once and no other subcategory."
     )
 
 
@@ -867,9 +871,8 @@ def _advertised_taxonomy_scope_issue(
             return (
                 f"Requested product type '{requested_product_type}' binds to "
                 f"advertised category '{advertised_name}', while the selected "
-                "taxonomy contains only its advertised children. Preserve that "
-                "taxonomy and change only taxonomy_status to "
-                "member_of_requested_umbrella."
+                "taxonomy contains only its advertised children. Keep those "
+                "children together for the shopper's umbrella request."
             )
         exact_category = (
             taxonomy_status == "exact_requested_type"
@@ -906,6 +909,43 @@ def _advertised_taxonomy_scope_issue(
     )
 
 
+def _catalog_execution_taxonomy_status(
+    requested_product_type: str | None,
+    taxonomy: BaseModel | dict[str, Any],
+    semantic_query: str,
+    capabilities: CatalogCapabilities,
+    *,
+    shopper_stated_scope: bool,
+) -> str:
+    """Derive the legacy execution mode without asking the model to label it."""
+
+    payload = taxonomy.model_dump() if isinstance(taxonomy, BaseModel) else taxonomy
+    categories = payload.get("category") or []
+    subcategories = payload.get("subcategory") or []
+    if (
+        not semantic_query.strip()
+        and not requested_product_type
+        and not categories
+        and not subcategories
+    ):
+        return "image_only"
+    if not shopper_stated_scope:
+        return "agent_selected_type"
+
+    advertised_match = _advertised_scope_match(
+        requested_product_type,
+        capabilities,
+    )
+    if advertised_match is not None:
+        scope_kind = advertised_match[0]
+        if scope_kind == "category" and subcategories:
+            return "member_of_requested_umbrella"
+        return "exact_requested_type"
+    if subcategories:
+        return "member_of_requested_umbrella"
+    return "exact_requested_type"
+
+
 class SearchCatalogToolArguments(BaseModel):
     """Stable agent-facing catalog-search arguments."""
 
@@ -929,8 +969,8 @@ class SearchCatalogToolArguments(BaseModel):
             "product role to the shopper's stated goal or direct antecedent. Do "
             "not name unselected or unavailable product types, name or describe "
             "candidate products, assert product attributes, or mention tools, "
-            "schemas, filters, evidence, or identifiers. Use an empty string for "
-            "image-only or no-direct requests."
+            "schemas, filters, evidence, or identifiers. Use an empty string only "
+            "for image-only search."
         ),
     )
     requested_product_type: str | None = Field(
@@ -945,57 +985,14 @@ class SearchCatalogToolArguments(BaseModel):
             "only for image-only search."
         ),
     )
-    taxonomy_status: Literal[
-        "exact_requested_type",
-        "member_of_requested_umbrella",
-        "agent_selected_type",
-        "no_direct_catalog_match",
-        "image_only",
-    ] = Field(
-        ...,
-        description=(
-            "Direction-aware semantic relation to the shopper's requested product "
-            "type. Use 'exact_requested_type' when the selected taxonomy directly "
-            "represents the requested focused role. Use "
-            "'member_of_requested_umbrella' when the shopper named a true umbrella "
-            "or explicit alternatives and every selected value is a faithful child "
-            "or named alternative; do not "
-            "reverse this relation merely because the requested type is a child of "
-            "a selected parent category. Apply this direction test: each selected "
-            "catalog value must answer yes to 'is this a kind of the product scope "
-            "the shopper asked for?' A skirt is a kind of bottom; a dress is not a "
-            "kind of bottom; a flat or sandal is not a kind of sneaker even though "
-            "all are footwear. Use 'agent_selected_type' only when a broad "
-            "styling or discovery request names no concrete product type; choose "
-            "one exact advertised subcategory as the focused starting role. "
-            "Evaluate every product role named "
-            "in the current turn independently. If the shopper names a product "
-            "type for a role, including as an alternative, confirmation, "
-            "comparison, or follow-up, 'agent_selected_type' is forbidden for "
-            "that role. Never use it to replace an explicitly requested "
-            "unavailable type. Use "
-            "'no_direct_catalog_match' only for an explicitly requested concrete "
-            "product type when only parent, adjacent, or substitute types exist. "
-            "Decide that from the product type alone and send no required "
-            "constraints on this no-retrieval path. A product type never belongs "
-            "in unadvertised_requirements. "
-            "A modifier does not erase an advertised product type: for example, "
-            "if skirts are advertised but denim is not enforceable, keep skirts "
-            "as taxonomy and preserve denim as an unadvertised requirement. "
-            "Never use it for an outfit, occasion, season, weather need, style/vibe, "
-            "or product attribute. Use 'image_only' only "
-            "when no text query or taxonomy scope is needed."
-        ),
-    )
     taxonomy: CatalogTaxonomyToolInput = Field(
         ...,
         description=(
             "Required catalog-derived taxonomy selection. Allowed category and "
             "subcategory values come from the active catalog capabilities. Every "
             "selected value must be the requested product type or a child of an "
-            "umbrella the shopper actually named, except for advertised values "
-            "serving one focused role chosen under agent_selected_type. Never "
-            "select a parent "
+            "umbrella the shopper actually named. For a genuinely open request, "
+            "select one advertised subcategory as the focused role. Never select a parent "
             "or sibling as a substitute. For example, skirts may satisfy bottoms; "
             "dresses may not."
         ),
@@ -1043,6 +1040,14 @@ class SearchCatalogToolArguments(BaseModel):
 class SearchCatalogToolInput(SearchCatalogToolArguments):
     """Runtime-validated catalog search request."""
 
+    taxonomy_status: Literal[
+        "exact_requested_type",
+        "member_of_requested_umbrella",
+        "agent_selected_type",
+        "no_direct_catalog_match",
+        "image_only",
+    ] = Field(..., description="Server-derived catalog execution mode.")
+
     @model_validator(mode="after")
     def text_search_has_taxonomy_scope(self) -> "SearchCatalogToolInput":
         if len(set(self.taxonomy.category)) > 1:
@@ -1063,7 +1068,7 @@ class SearchCatalogToolInput(SearchCatalogToolArguments):
         }:
             if has_shopper_guidance:
                 raise ValueError(
-                    f"{self.taxonomy_status} requires empty shopper_guidance"
+                    "A non-text retrieval path requires empty shopper_guidance"
                 )
         elif not has_shopper_guidance:
             raise ValueError(
@@ -1071,20 +1076,20 @@ class SearchCatalogToolInput(SearchCatalogToolArguments):
             )
         if self.taxonomy_status != "image_only" and not requested_product_type:
             raise ValueError(
-                f"{self.taxonomy_status} requires a requested product type"
+                "text catalog search requires requested_product_type"
             )
         if self.taxonomy_status == "image_only" and requested_product_type:
             raise ValueError(
-                "image_only requires requested_product_type=null"
+                "image-only search requires requested_product_type=null"
             )
         if self.taxonomy_status == "no_direct_catalog_match":
             if has_taxonomy:
                 raise ValueError(
-                    "no_direct_catalog_match requires empty taxonomy arrays"
+                    "a non-retrieval result requires empty taxonomy arrays"
                 )
             if not has_query:
                 raise ValueError(
-                    "no_direct_catalog_match requires a requested product type"
+                    "a non-retrieval result requires a requested product type"
                 )
             constraints = (
                 self.required_constraints.model_dump(exclude_none=True)
@@ -1097,26 +1102,26 @@ class SearchCatalogToolInput(SearchCatalogToolArguments):
             )
             if has_constraint:
                 raise ValueError(
-                    "no_direct_catalog_match cannot include required constraints"
+                    "a non-retrieval result cannot include required constraints"
                 )
             return self
         if self.taxonomy_status == "image_only":
             if has_query or has_taxonomy:
                 raise ValueError(
-                    "image_only requires an empty semantic query and taxonomy"
+                    "image-only search requires an empty semantic query and taxonomy"
                 )
             return self
         if self.taxonomy_status == "member_of_requested_umbrella" and not (
             self.taxonomy.subcategory
         ):
             raise ValueError(
-                "member_of_requested_umbrella requires an advertised subcategory"
+                "an umbrella search requires an advertised subcategory"
             )
         if self.taxonomy_status == "agent_selected_type" and not (
             self.taxonomy.subcategory
         ):
             raise ValueError(
-                "agent_selected_type requires an advertised subcategory"
+                "an open-role search requires an advertised subcategory"
             )
         if has_query and not has_taxonomy:
             raise ValueError(
@@ -1147,10 +1152,8 @@ def _exact_taxonomy_issue(
     selected_product_types = subcategories or categories
     if len(selected_product_types) != 1:
         return (
-            "exact_requested_type requires one matching taxonomy value unless "
-            "the shopper requested the selected category. Use "
-            "member_of_requested_umbrella only when every selected value is a "
-            "true child; otherwise use no_direct_catalog_match"
+            "The selected taxonomy must faithfully represent one requested type "
+            "or every child of a shopper-requested umbrella."
         )
     selected_product_type = selected_product_types[0]
     if _normalize_product_text(requested_product_type) == _normalize_product_text(
@@ -1158,10 +1161,8 @@ def _exact_taxonomy_issue(
     ):
         return None
     return (
-        "a single exact_requested_type taxonomy value requires "
-        "requested_product_type to match that product type. Use "
-        "member_of_requested_umbrella only when every selected value is a true "
-        "child of the requested type; otherwise use no_direct_catalog_match"
+        "A single taxonomy value must match requested_product_type. If no "
+        "advertised value faithfully represents it, ask a clarification instead"
     )
 
 
@@ -1247,13 +1248,12 @@ def _search_catalog_tool_input_model(
                 description=(
                     "Required taxonomy selection generated from the active catalog. "
                     "Use exact enum values. A text search requires at least one "
-                    "category or subcategory unless taxonomy_status is "
-                    "'no_direct_catalog_match'; both arrays may be empty for that "
-                    "no-retrieval result or when taxonomy_status is 'image_only'."
+                    "category or subcategory; both arrays may be empty only for "
+                    "an image-only search."
                     " Every value must be a kind of the requested scope: skirts "
                     "may satisfy bottoms; dresses may not. For a broad request "
-                    "that names no product type, agent_selected_type chooses one "
-                    "exact advertised subcategory as the focused starting role."
+                    "that names no product type, choose one exact advertised "
+                    "subcategory as the focused starting role."
                 ),
             ),
         ),
@@ -1282,8 +1282,8 @@ def _search_catalog_tool_input_model(
                     "objective hard filters. Before calling the tool, compare "
                     "every target-product modifier with this advertised schema "
                     "and include every exact matching filter value. A product type "
-                    "never belongs in unadvertised_requirements, and "
-                    "no_direct_catalog_match requires this object to be empty."
+                    "never belongs in unadvertised_requirements. Use an empty "
+                    "object for image-only search."
                 ),
             ),
         ),
@@ -1307,7 +1307,7 @@ def _taxonomy_list_field(
     description = (
         f"Exact {role} values advertised through catalog field '{field_name}'. "
         "Use an empty list when the other taxonomy role supplies the text scope or "
-        "taxonomy_status is 'image_only' or 'no_direct_catalog_match'."
+        "the search is image-only."
     )
     if role == "category":
         description += " Select at most one category per catalog search."
@@ -1374,7 +1374,7 @@ def _required_constraints_input_model(
                 "empty when one applies. "
                 "In an 'A or B' request, do not put the "
                 "supported advertised branch here. A product type never belongs "
-                "here, and no_direct_catalog_match requires an empty list."
+                "here."
             ),
         ),
     )
@@ -1993,26 +1993,23 @@ class DeepAgentsRuntime:
             )
             if allow_no_direct_clear:
                 return (
-                    " If the repaired taxonomy_status remains "
-                    "no_direct_catalog_match, clear advertised "
-                    "required_constraints as that status requires. If the "
-                    "repair changes to a retrieving taxonomy_status, preserve "
-                    "these capability-validated advertised required_constraints "
+                    " Clear advertised required_constraints if the corrected "
+                    "request does not retrieve. Otherwise preserve these "
+                    "capability-validated advertised required_constraints "
                     f"exactly: {serialized_constraints}."
                 )
             if not constraints:
                 return (
                     " The rejected call had no advertised required_constraints. "
                     "Keep advertised required_constraints empty on repair. "
-                    "Change only taxonomy_status, taxonomy, or an explicitly "
-                    "identified ungrounded product scope."
+                    "Change only taxonomy or an explicitly identified ungrounded "
+                    "product scope."
                 )
             return (
                 " Preserve these capability-validated advertised "
                 "required_constraints exactly on repair: "
-                f"{serialized_constraints}. Change only "
-                "taxonomy_status, taxonomy, or an explicitly identified "
-                "ungrounded product scope."
+                f"{serialized_constraints}. Change only taxonomy or an "
+                "explicitly identified ungrounded product scope."
             )
 
         def _lock_taxonomy_constraints(
@@ -2032,9 +2029,8 @@ class DeepAgentsRuntime:
             requested_product_type: str | None,
             taxonomy: BaseModel | dict[str, Any],
             required_constraints: BaseModel | dict[str, Any],
-            shopper_guidance: str = "",
+            shopper_guidance: str,
             scope_complete: bool = True,
-            taxonomy_status: str = "exact_requested_type",
             search_mode: str | None = None,
         ) -> str:
             """Find products by description, advertised taxonomy, or constraints.
@@ -2053,9 +2049,27 @@ class DeepAgentsRuntime:
             nonlocal pending_no_direct_constraint_clear
             nonlocal pending_taxonomy_constraints
             nonlocal pending_schema_requirements
+            taxonomy = taxonomy or {"category": [], "subcategory": []}
+            required_constraints = required_constraints or {}
             capabilities = turn_capabilities
             if capabilities.catalog_id == "unavailable" and not capabilities.filters:
                 return "Catalog search is unavailable. Please try again."
+            initial_scope_key = _product_scope_key(requested_product_type)
+            shopper_stated_requested_scope = bool(
+                initial_scope_key
+                and _shopper_stated_product_scope(
+                    state.query,
+                    state.context,
+                    initial_scope_key,
+                )
+            )
+            taxonomy_status = _catalog_execution_taxonomy_status(
+                requested_product_type,
+                taxonomy,
+                semantic_query,
+                capabilities,
+                shopper_stated_scope=shopper_stated_requested_scope,
+            )
 
             shopper_explicit_alternatives = (
                 _explicit_advertised_alternatives_in_text(
@@ -2096,8 +2110,7 @@ class DeepAgentsRuntime:
                     + "A catalog search repair cannot replace product scope "
                     f"'{expected_scope_key}' "
                     f"with '{candidate_scope_key or 'none'}'. Preserve the "
-                    "requested_product_type and repair taxonomy_status or "
-                    "taxonomy instead."
+                    "requested_product_type and repair taxonomy instead."
                 )
             if (
                 failed_agent_selected_scope
@@ -2105,9 +2118,8 @@ class DeepAgentsRuntime:
             ):
                 return (
                     SEARCH_VALIDATION_ERROR_PREFIX
-                    + "This open-role repair must preserve "
-                    "taxonomy_status='agent_selected_type' and choose exactly "
-                    "one advertised subcategory for the role."
+                    + "This open-role repair must choose exactly one advertised "
+                    "subcategory for the role."
                 )
 
             taxonomy_payload = (
@@ -2149,9 +2161,8 @@ class DeepAgentsRuntime:
                     SEARCH_VALIDATION_ERROR_PREFIX
                     + "The requested product type was duplicated in "
                     "unadvertised_requirements. Preserve the shopper-stated "
-                    "requested_product_type and "
-                    "taxonomy_status='no_direct_catalog_match', then send empty "
-                    "shopper_guidance, taxonomy arrays, and required_constraints."
+                    "requested_product_type, remove it from requirements, and ask "
+                    "a concise clarification if no taxonomy maps faithfully."
                 )
             stated_unadvertised_requirements = (
                 [
@@ -2235,7 +2246,7 @@ class DeepAgentsRuntime:
                             capabilities,
                         )
                         repair_guidance = (
-                            " For an open-role agent_selected_type search, choose "
+                            " For an open-role search, choose "
                             "exactly one advertised subcategory and copy it into "
                             "requested_product_type. Choose exactly one of these "
                             "currently advertised subcategories: "
@@ -2312,7 +2323,7 @@ class DeepAgentsRuntime:
                     SEARCH_VALIDATION_ERROR_PREFIX
                     + "A taxonomy repair must preserve previously validated "
                     "advertised required_constraints exactly. Change only "
-                    "taxonomy_status, taxonomy, or an explicitly identified "
+                    "taxonomy or an explicitly identified "
                     "ungrounded product scope."
                 )
             if pending_taxonomy_constraints is not None:
@@ -2399,9 +2410,7 @@ class DeepAgentsRuntime:
                 candidate_scope_key
             )
             if pending_constraint_review and (
-                request.taxonomy_status
-                != pending_constraint_review["taxonomy_status"]
-                or request.taxonomy.model_dump()
+                request.taxonomy.model_dump()
                 != pending_constraint_review["taxonomy"]
                 or request.scope_complete
                 != pending_constraint_review["scope_complete"]
@@ -2412,8 +2421,8 @@ class DeepAgentsRuntime:
                 return (
                     SEARCH_VALIDATION_ERROR_PREFIX
                     + "A constraint-provenance repair must preserve "
-                    "requested_product_type, taxonomy_status, taxonomy, "
-                    "scope_complete, search_mode, and all "
+                    "requested_product_type, taxonomy, scope_complete, "
+                    "search_mode, and all "
                     "advertised required constraints exactly. Change only the "
                     "reviewed unadvertised requirement wording or remove an "
                     "inferred requirement; the soft semantic query may be "
@@ -2461,20 +2470,17 @@ class DeepAgentsRuntime:
                         == _normalize_product_text(advertised_match[1])
                     )
                     repair_status = (
-                        "Change only taxonomy_status to exact_requested_type."
+                        "Keep that exact advertised taxonomy selection."
                         if exact_selected_scope
                         else (
-                            "If every selected value is a kind of the named "
-                            "scope, change only taxonomy_status to "
-                            "member_of_requested_umbrella; do not narrow to one "
-                            "child or report no direct match."
+                            "Select only advertised values that are kinds of the "
+                            "named scope; do not narrow to one convenient child."
                         )
                     )
                     agent_selected_issue = (
                         "The shopper named requested_product_type "
                         f"'{request.requested_product_type}', so "
-                        "agent_selected_type is forbidden. Preserve that "
-                        "requested_product_type and these selected advertised "
+                        "preserve that requested_product_type and these advertised "
                         "values on repair: "
                         + json.dumps(selected_values, sort_keys=True)
                         + ". "
@@ -2486,8 +2492,8 @@ class DeepAgentsRuntime:
                         capabilities,
                     )
                     agent_selected_issue = (
-                        "An open-role agent_selected_type search must select "
-                        "exactly one advertised subcategory and copy that exact "
+                        "An open-role search must select exactly one advertised "
+                        "subcategory and copy that exact "
                         "subcategory into requested_product_type. Do not use a "
                         "parent category or an unadvertised role. Choose exactly "
                         "one of these currently advertised subcategories: "
@@ -2557,7 +2563,6 @@ class DeepAgentsRuntime:
                 constraint_reviewed_scopes.add(review_scope)
                 pending_constraint_reviews[review_scope] = {
                     "requirements": list(unadvertised_requirements),
-                    "taxonomy_status": request.taxonomy_status,
                     "taxonomy": request.taxonomy.model_dump(),
                     "scope_complete": request.scope_complete,
                     "search_mode": request.search_mode,
@@ -2571,8 +2576,6 @@ class DeepAgentsRuntime:
                     + json.dumps(unadvertised_requirements, ensure_ascii=False)
                     + ". Preserve requested_product_type "
                     + json.dumps(request.requested_product_type)
-                    + ", taxonomy_status "
-                    + json.dumps(request.taxonomy_status)
                     + ", taxonomy "
                     + json.dumps(request.taxonomy.model_dump(), sort_keys=True)
                     + ", and scope_complete "
@@ -2644,11 +2647,8 @@ class DeepAgentsRuntime:
                         "shopper-stated."
                     )
                     + " Choose only advertised taxonomy values that faithfully "
-                    "represent that scope. Do not repeat exact_requested_type "
-                    "for this repair. If each selected value is a kind of "
-                    "a shopper-stated umbrella, use "
-                    "member_of_requested_umbrella; otherwise use "
-                    "no_direct_catalog_match rather than an adjacent type."
+                    "represent that scope. If none does, ask one concise "
+                    "clarifying question instead of searching an adjacent type."
                 )
 
             advertised_match = (
@@ -2666,8 +2666,7 @@ class DeepAgentsRuntime:
                     SEARCH_VALIDATION_ERROR_PREFIX
                     + f"The requested product type '{request.requested_product_type}' "
                     f"matches advertised taxonomy value '{advertised_match}'. "
-                    "Do not report no direct match; select that advertised value "
-                    "with exact_requested_type."
+                    "Select that advertised value instead of reporting a gap."
                     + _lock_taxonomy_constraints(candidate_scope_key, request)
                 )
 
@@ -3411,6 +3410,29 @@ class DeepAgentsRuntime:
         *,
         request_id: str,
     ) -> str:
+        clarification = _catalog_repair_clarification_response(
+            result,
+            request_id=request_id,
+        )
+        if clarification:
+            if _has_search_only_tool_evidence(
+                result,
+                request_id=request_id,
+            ):
+                grounded_response = self._rewrite_search_only_response(
+                    state,
+                    result,
+                    request_id=request_id,
+                )
+                return _scrub_internal_shopper_language(
+                    f"{grounded_response}\n\n{clarification}"
+                )
+            if not _has_successful_non_search_tool_evidence(
+                result,
+                request_id=request_id,
+            ):
+                return _scrub_internal_shopper_language(clarification)
+            draft_response = clarification
         rejected_search_response = _rejected_catalog_search_response(
             result,
             request_id=request_id,
@@ -3643,87 +3665,7 @@ Rules:
   building or styling thread continues to use outfit styling for piece-by-piece
   searches until the shopper changes tasks; do not reclassify a follow-up as
   product discovery merely because it asks for one product type.
-- The model owns the semantic choice of taxonomy values from the exact values
-  advertised in Catalog capabilities. Runtime validation only enforces that
-  contract; it does not infer shopper meaning or substitute product types.
-- Product discovery, product recommendations, budget filters, and image-similar
-  shopping use search_catalog_tool. Every call declares `taxonomy_status` as
-  `exact_requested_type`, `member_of_requested_umbrella`,
-  `agent_selected_type`, `no_direct_catalog_match`, or `image_only`. Exact means
-  the selected taxonomy directly represents the requested focused role. For a
-  single selected value, the requested type must name that value; the semantic
-  query may focus on soft ranking direction. Umbrella-member means the shopper
-  named a true umbrella and every selected value is its child. Never reverse
-  that relation merely because the requested type belongs to a broader selected
-  category. Apply one direction test to every selected value: "is this a kind of
-  the product scope the shopper asked for?" A skirt is a kind of bottom; a flat
-  or sandal is not a kind of sneaker even though all are footwear. If no value
-  qualifies because a broad styling or discovery request did not name a product
-  type, `agent_selected_type` may choose exactly one advertised subcategory as
-  the focused starting role. It must not replace
-  an explicitly requested unavailable type. Evaluate every product role named
-  in the current turn independently. If the shopper names a product type for a
-  role, including as an alternative, confirmation, comparison, or follow-up,
-  `agent_selected_type` is forbidden for that role. If no value
-  qualifies for an explicitly requested concrete product type, use
-  `no_direct_catalog_match` with empty taxonomy arrays; that path reports the
-  gap without retrieval and has no required constraints. Decide it from the
-  requested product type alone: an unavailable attribute or subjective modifier
-  does not erase an advertised type. Never use that status for an outfit, occasion, season,
-  weather need, style/vibe, or product attribute. Never search an adjacent type
-  as a substitute.
-- Every search call must include exactly one `semantic_query`, one required
-  nullable `requested_product_type`, one product-agnostic `shopper_guidance`,
-  one `taxonomy_status`, one `taxonomy` object, and one `required_constraints`
-  object, plus `scope_complete`.
-  `requested_product_type` is the shortest product noun or true umbrella from
-  the current turn or direct antecedent. Exclude color, material, fit,
-  occasion, weather, and style modifiers; for `agent_selected_type`, use the
-  chosen advertised role noun. It is null only for image-only search. Set
-  `scope_complete` true only when this search
-  plus existing turn evidence is enough to answer the shopper's complete current
-  request. A recommendation-only one-role request is complete after its one
-  inclusive search. Set it false while an explicitly requested product role,
-  product-detail verification, availability check, or cart action still must
-  run after the search. Never set it false merely to search alternatives. A
-  requested type with no faithful advertised taxonomy match does not make a
-  one-role scope partial; report that gap without another search.
-  Judge completeness against the current user turn, not an unfinished broader
-  outfit project. "Start with a beige top" and "What bottoms go with that?" are
-  each complete after their one-role search. Put
-  product meaning and soft preferences in `semantic_query`. Use an
-  empty string only for image-only search; do not create synonyms, paraphrases,
-  or query expansions as additional searches.
-- Write `shopper_guidance` before retrieval as one concise sentence connecting
-  the selected role to the shopper's stated goal or direct antecedent. It may
-  express product-agnostic styling judgment, but it must not name or describe
-  candidate products, name product types outside the selected advertised scope,
-  or mention internal search mechanics. Use an empty string for image-only and
-  no-direct requests.
-- The `taxonomy.category` and `taxonomy.subcategory` arrays contain only exact
-  values advertised in the current Catalog capabilities. List each value once.
-  Use all applicable values
-  for an inclusive request containing alternatives. When both arrays are used,
-  every subcategory must belong to a selected category and every selected
-  category must own at least one selected subcategory. Every text search needs
-  at least one taxonomy value when `taxonomy_status` is `exact_requested_type`
-  or `member_of_requested_umbrella`; if a broad request has no clear scope, ask
-  one concise clarifying question. Both arrays may be empty only for an
-  `image_only` search or a `no_direct_catalog_match` no-retrieval result. Taxonomy is mapped
-  deterministically to the Catalog's actual filter field names.
-- Each catalog call covers at most one category and one focused product role.
-  Include every faithful advertised subtype for that role in the same call, but
-  never mix apparel, footwear, bags, or other categories in one retrieval. A
-  multi-role request uses separate focused calls up to the search cap. An outfit
-  or style/vibe is not a taxonomy umbrella; use `agent_selected_type` to choose
-  one focused starting role when the shopper did not name one.
-- If an explicitly requested product type has no faithful advertised taxonomy
-  value, do not broaden to its parent category, omit it, or silently substitute
-  an adjacent type. Tell the shopper that type is unavailable and ask before
-  searching an alternative.
-- Never describe an unadvertised or unselected product type as advertised. When
-  offering a next search direction, name only exact taxonomy values shown in
-  Catalog capabilities or the current search's taxonomy evidence.
+{CATALOG_SEARCH_RULES}
 - Put every non-taxonomy shopper must-have in `required_constraints`, including
   requirements whose fields are semantic/detail-only or absent from Catalog
   capabilities. Do not omit an unsupported must-have or rely on semantic search
@@ -3788,14 +3730,13 @@ Rules:
   weather performance, or a specific shade remain must-haves when they define
   the requested product.
 - For alternatives joined by "or", search the faithful advertised branch and
-  preserve every named branch. Search a supported branch with
-  `scope_complete=false` when another branch is unavailable, then report the
-  unavailable branch with one `no_direct_catalog_match` call. Do not reject a
-  supported branch merely because another alternative is unavailable, and never
-  list the supported taxonomy value in `unadvertised_requirements`.
-- When every named alternative is advertised, use
-  `member_of_requested_umbrella` and include all of them in one call. Do not use
-  `agent_selected_type` to narrow an explicit umbrella or alternatives.
+  preserve every named branch. If another branch cannot be mapped faithfully,
+  present the supported result and ask one concise clarification before any
+  adjacent search. Do not reject a supported branch merely because another
+  alternative is unresolved, and never list the supported taxonomy value in
+  `unadvertised_requirements`.
+- When every named alternative is advertised, include all of them in one call.
+  Do not narrow an explicit umbrella or alternatives to one convenient type.
 - Use at most {self.config.max_product_detail_reads_per_turn} product-detail
   reads per user turn. Product details are for direct product fact questions,
   cart or comparison follow-ups, or already-shortlisted items; they are not
@@ -4489,12 +4430,37 @@ def _rejected_catalog_search_response(
 
     if not business_calls:
         return None
+    if _catalog_repair_clarification_response(
+        result,
+        request_id=request_id,
+    ):
+        return None
     if all(
         tool_name == "search_catalog_tool" and status == "rejected"
         for tool_name, status in business_calls
     ):
         return _REJECTED_CATALOG_SEARCH_RESPONSE
     return None
+
+
+def _catalog_repair_clarification_response(
+    result: Any,
+    *,
+    request_id: str,
+) -> str:
+    """Return a fixed response for a server-marked no-tool repair branch."""
+
+    messages = _current_turn_messages(_result_messages(result), request_id)
+    for message in reversed(messages):
+        if _message_type(message) != "ai" or _value(message, "tool_calls"):
+            continue
+        additional_kwargs = _value(message, "additional_kwargs") or {}
+        if not isinstance(additional_kwargs, dict) or not additional_kwargs.get(
+            SERVER_CATALOG_CLARIFICATION
+        ):
+            continue
+        return _CATALOG_REPAIR_CLARIFICATION_RESPONSE
+    return ""
 
 
 def _unsupported_requirement_response(
@@ -4977,6 +4943,29 @@ def _has_search_only_tool_evidence(result: Any, *, request_id: str) -> bool:
         has_search_result
         and set(tool_names) == {"search_catalog_tool"}
     )
+
+
+def _has_successful_non_search_tool_evidence(
+    result: Any,
+    *,
+    request_id: str,
+) -> bool:
+    """Return whether another current-turn shopping tool completed."""
+
+    for message in _current_turn_messages(_result_messages(result), request_id):
+        if _message_type(message) != "tool":
+            continue
+        tool_name = str(_value(message, "name") or "")
+        if tool_name in {
+            "",
+            SKILL_ACTIVATION_TOOL_NAME,
+            "read_file",
+            "search_catalog_tool",
+        }:
+            continue
+        if _tool_call_status(tool_name, message)[0] == "completed":
+            return True
+    return False
 
 
 def _format_search_only_response(

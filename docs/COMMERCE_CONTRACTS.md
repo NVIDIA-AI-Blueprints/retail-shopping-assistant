@@ -32,11 +32,11 @@ The main design decision is separation:
 The stacked commerce-tool work now has runtime wiring through the Deep Agents
 SDK adapter:
 
-- `DeepAgentsRuntime` registers ten request-scoped tools: catalog search,
+- `DeepAgentsRuntime` registers eleven request-scoped tools: catalog search,
   product details, same-conversation product resolution, cart read, cart total,
   cart add, cart remove, cart quantity update, store-policy lookup, and product
-  availability. These use the internal commerce adapters plus deterministic
-  cart-total calculation.
+  availability, plus active-promotions status. These use the internal commerce
+  adapters plus deterministic cart-total calculation.
 - Deep Agents cart mutation tools use explicit refs: `PRODUCT_REF` values
   returned by catalog search for add operations, and `CART_LINE_ID` values
   returned by cart reads for remove operations. They do not perform hidden
@@ -70,14 +70,15 @@ SDK adapter:
   `required_constraints`. The provenance is the
   shortest product noun or true umbrella from the shopper's current turn or
   direct antecedent, excluding color, material, fit, occasion, weather, and
-  style modifiers. For `agent_selected_type`, it is the chosen advertised role
-  noun; it is `null` only for image-only search. The chain maps generic taxonomy
-  roles to advertised field names, validates scope consistency and other
-  must-haves, and produces catalog hard filters. Each call accepts at most one
-  category. For a broad request that names no type,
-  `agent_selected_type` selects exactly one advertised subcategory as the
-  focused starting role. It is forbidden for a role whose type the shopper
-  named, including an alternative, confirmation, comparison, or follow-up.
+  style modifiers. For a genuinely open role, it is the one advertised
+  subcategory selected for that role; it is `null` only for image-only search.
+  The chain maps generic taxonomy roles to advertised field names, validates
+  scope consistency and other must-haves, and produces catalog hard filters.
+  Each call accepts at most one category. For a broad request that names no
+  type, the model selects exactly one advertised subcategory as the focused
+  starting role and names it in `requested_product_type`. That open-role path
+  is forbidden when the shopper named the role, including an alternative,
+  confirmation, comparison, or follow-up.
   Duplicate identity is normalized taxonomy plus hard
   constraints, so semantic paraphrases do not fan out while genuinely different
   hard-filter scopes can run within the per-turn cap.
@@ -164,29 +165,31 @@ produce one `semantic_query`, required pre-retrieval `shopper_guidance`, require
 `taxonomy` envelope, and structured `required_constraints`. The provenance is
 the shortest product noun
 or true umbrella from the shopper's current turn or direct antecedent, excludes
-color, material, fit, occasion, weather, and style modifiers, and uses the
-chosen advertised role noun for `agent_selected_type`. It is `null` only for
+color, material, fit, occasion, weather, and style modifiers, and uses the one
+advertised subcategory chosen for a genuinely open role. It is `null` only for
 image-only search and is not passed as catalog taxonomy or ranking text; it lets
 the chain validate the relation between the requested role and selected
-advertised scope. The chain maps taxonomy roles to the actual
+advertised scope. The model-facing schema has no taxonomy-relationship or
+catalog-absence label. The chain derives its private execution mode after the
+typed request validates, maps taxonomy roles to the actual
 advertised field names, checks every required field and value, refuses requests
 that cannot be enforced, and sends `queries=[semantic_query]` plus the validated
 hard filters. `shopper_guidance` remains in the chain tool-result boundary and
 is not sent to the catalog service. `search_catalog` itself remains a pure read.
 
-An explicitly requested concrete type with no faithful advertised value uses
-`no_direct_catalog_match`: both taxonomy arrays and all hard constraints are
-empty, and no retrieval occurs. That decision is based on product type alone;
-an unsupported modifier does not erase an advertised type. Unsupported direct
-must-haves use `unadvertised_requirements`, while subjective style and other soft
-preferences remain in the taxonomy-independent `semantic_query`. Malformed or
-nonempty free-form arguments on a native schema-invalid call fail closed. A
-schema-valid, genuinely open `agent_selected_type` role may consume its one
-model repair for review: preserve an explicit objective must-have so the
-repaired call fails closed, or remove only an inferred or subjective
-requirement. Deterministic code does not parse shopper prose. A successful
-partial search may advance to another valid role with its own repair
-opportunity; no scope receives two repairs.
+If a shopper-named type cannot be mapped faithfully to advertised taxonomy, the
+assistant asks one concise clarification without calling the search tool,
+substituting an adjacent type, or claiming catalog absence. An unsupported
+modifier does not erase an advertised type. Unsupported direct must-haves use
+`unadvertised_requirements`, while subjective style and other soft preferences
+remain in the taxonomy-independent `semantic_query`. Malformed or nonempty
+free-form arguments on a native schema-invalid call fail closed. A schema-valid,
+genuinely open role may consume its one model repair for review: preserve an
+explicit objective must-have so the repaired call fails closed, or remove only
+an inferred or subjective requirement. The same bounded schema repair may
+instead return one server-marked clarification. Deterministic code does not
+parse shopper prose. A successful partial search may advance to another valid
+role with its own repair opportunity; no scope receives two repairs.
 
 The catalog makes no chat/completion call and performs no shopper-language
 interpretation or query expansion. It generates the configured text/image
@@ -276,7 +279,7 @@ Agents turn: activated/injected skill paths, ordered tool calls,
 rejection/duplicate outcomes, termination, and bounded partial graph messages
 after failure. It also contains bounded per-product evidence from successful
 search/detail results, `product_evidence_truncated`, and bounded
-`catalog_scope_outcomes` for `no_direct_catalog_match` and `zero_results`. The
+`catalog_scope_outcomes` for `zero_results`. The
 Judge copies only those three diagnostic fields and discards semantic queries,
 raw tool messages, reasoning, and all other diagnostics. Final shopper-text
 extraction excludes tool messages, tool-calling assistant messages, and

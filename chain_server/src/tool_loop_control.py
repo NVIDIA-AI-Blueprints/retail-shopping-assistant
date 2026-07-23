@@ -42,14 +42,17 @@ claim a search ran and do not name alternative product types; ask permission
 before searching a different advertised type."""
 _REPAIR_PROMPT = """## Catalog Search Repair
 
-Correct one invalid catalog search. Return exactly one search_catalog_tool call
-and no prose. Use only the current shopper message, the exact validator feedback
-below, and the structural fields in the tool schema.
+Correct one invalid catalog search. Either return exactly one
+search_catalog_tool call with no prose, or ask one concise shopper-facing
+clarification question with no tool call. Use only the current shopper message,
+the exact validator feedback below, and the structural fields in the tool schema.
 
 The validator feedback is authoritative about which fields to preserve and
 which fields to change. Apply every requested correction in the same call. Do
 not repeat an argument the validator rejected, and do not introduce a new scope
-or requirement while repairing it."""
+or requirement while repairing it. If faithful advertised taxonomy still cannot
+be selected, ask the shopper instead of substituting a different product type or
+claiming catalog absence."""
 _SYNTHESIS_FALLBACK = (
     "I couldn't establish a reliable catalog match for that request. I can "
     "explain the gap or search a different advertised product type if you'd like."
@@ -58,6 +61,7 @@ _REPAIR_FEEDBACK_LIMIT = 6000
 _UNKNOWN_REPAIR_SCOPE = "__unknown__"
 _SERVER_REJECTED_TOOL_CALLS = "server_rejected_tool_calls"
 SERVER_RESTORED_TOOL_CALL_FIELDS = "server_restored_tool_call_fields"
+SERVER_CATALOG_CLARIFICATION = "server_catalog_clarification"
 
 
 class ToolLoopControlMiddleware(AgentMiddleware):
@@ -88,6 +92,7 @@ class ToolLoopControlMiddleware(AgentMiddleware):
 
         prepared = self._prepare_model_request(request)
         response = handler(prepared)
+        response = self._mark_repair_clarification(response)
         response = self._restore_locked_repair_fields(response)
         response = self._reject_changed_native_repair(response)
         return self._enforce_synthesis(response)
@@ -101,6 +106,7 @@ class ToolLoopControlMiddleware(AgentMiddleware):
 
         prepared = self._prepare_model_request(request)
         response = await handler(prepared)
+        response = self._mark_repair_clarification(response)
         response = self._restore_locked_repair_fields(response)
         response = self._reject_changed_native_repair(response)
         return self._enforce_synthesis(response)
@@ -174,7 +180,7 @@ class ToolLoopControlMiddleware(AgentMiddleware):
                 ),
             ],
             tools=search_tools,
-            tool_choice=SEARCH_TOOL_NAME,
+            tool_choice="auto",
             model_settings={**request.model_settings, "parallel_tool_calls": False},
             system_message=SystemMessage(content=repair_prompt),
         )
@@ -277,7 +283,6 @@ class ToolLoopControlMiddleware(AgentMiddleware):
                 invalid_fields=invalid_fields,
             )
             + _runtime_taxonomy_repair_guidance(
-                arguments,
                 native_validation_failure=native_validation_failure,
                 shopper_stated_scope=shopper_stated_scope,
                 server_corrected_alternatives=(
@@ -285,6 +290,49 @@ class ToolLoopControlMiddleware(AgentMiddleware):
                 ),
             )
         )[:_REPAIR_FEEDBACK_LIMIT]
+
+    def _mark_repair_clarification(
+        self,
+        response: ModelResponse,
+    ) -> ModelResponse:
+        """Mark a no-tool repair response as an intentional clarification."""
+
+        with self._lock:
+            repair_in_flight = self._repair_in_flight
+        if not repair_in_flight:
+            return response
+        if any(
+            getattr(message, "tool_calls", None)
+            or getattr(message, "invalid_tool_calls", None)
+            for message in response.result
+        ):
+            return response
+
+        result = []
+        changed = False
+        for message in response.result:
+            if not _message_text(message):
+                result.append(message)
+                continue
+            additional_kwargs = dict(
+                getattr(message, "additional_kwargs", None) or {}
+            )
+            additional_kwargs[SERVER_CATALOG_CLARIFICATION] = True
+            result.append(
+                message.model_copy(
+                    update={"additional_kwargs": additional_kwargs}
+                )
+            )
+            changed = True
+
+        if not changed:
+            return response
+        with self._lock:
+            self._clear_in_flight_repair()
+        return ModelResponse(
+            result=result,
+            structured_response=response.structured_response,
+        )
 
     def _restore_locked_repair_fields(
         self,
@@ -566,7 +614,6 @@ def _native_validation_fields(content: str) -> set[str]:
         "semantic_query",
         "shopper_guidance",
         "requested_product_type",
-        "taxonomy_status",
         "taxonomy",
         "required_constraints",
         "scope_complete",
@@ -596,98 +643,45 @@ def _native_taxonomy_repair_guidance(
     native_validation_failure: bool,
     invalid_fields: set[str],
 ) -> str:
-    """Complete agent-selected provenance feedback after transport rejection."""
+    """Preserve shopper scope across one transport-schema correction."""
 
     if not native_validation_failure:
         return ""
-    arguments = _search_arguments(messages, tool_call_id)
-    taxonomy_status = arguments.get("taxonomy_status")
     repair_scope = _search_scope(messages, tool_call_id)
     shopper_stated_scope = _shopper_stated_scope(messages, repair_scope)
     taxonomy_needs_repair = bool(
-        invalid_fields
-        & {"requested_product_type", "taxonomy_status", "taxonomy"}
-    ) or not _native_relation_is_self_consistent(arguments)
+        invalid_fields & {"requested_product_type", "taxonomy"}
+    )
     if shopper_stated_scope and taxonomy_needs_repair:
-        relation_is_self_consistent = _native_relation_is_self_consistent(
-            arguments
-        )
-        status_guidance = (
-            f" Preserve taxonomy_status={taxonomy_status}."
-            if relation_is_self_consistent
-            and taxonomy_status
-            in {"exact_requested_type", "member_of_requested_umbrella"}
-            else (
-                " Use exact_requested_type for one direct advertised value "
-                "or member_of_requested_umbrella for faithful advertised "
-                "children."
-            )
-        )
         return (
-            (
-                " The taxonomy relation is not self-consistent."
-                if not relation_is_self_consistent
-                else ""
-            )
-            + " The shopper named this requested product type. Preserve "
-            "requested_product_type. agent_selected_type is forbidden. "
+            " The shopper named this requested product type. Preserve "
+            "requested_product_type. "
             "Correct rejected taxonomy values using current Catalog capabilities."
-            + status_guidance
         )
-    if (
-        "required_constraints" in invalid_fields
-        and not _native_relation_is_self_consistent(arguments)
-    ):
+    if "required_constraints" in invalid_fields and shopper_stated_scope:
         return (
-            " The rejected taxonomy relation is not self-consistent for "
-            f"taxonomy_status={taxonomy_status!r}. Preserve the shopper-named "
-            "product scope when present."
-            + " Correct the relation using the structural taxonomy_status rules "
-            "and exact taxonomy in Catalog capabilities while also correcting "
+            " Preserve the shopper-named requested_product_type while correcting "
             "the rejected required_constraints."
         )
-    if taxonomy_status != "agent_selected_type":
-        return ""
-    if shopper_stated_scope:
-        return (
-            " The shopper named this requested product type, so "
-            "agent_selected_type is forbidden. Preserve requested_product_type. "
-            "Use exact_requested_type for one direct advertised value or "
-            "member_of_requested_umbrella for faithful advertised children."
-        )
-    return (
-        " This is a genuinely open product role. Preserve "
-        "taxonomy_status=agent_selected_type, choose exactly one advertised "
-        "subcategory, and copy that value into requested_product_type."
-    )
+    return ""
 
 
 def _runtime_taxonomy_repair_guidance(
-    arguments: dict[str, Any],
     *,
     native_validation_failure: bool,
     shopper_stated_scope: bool,
     server_corrected_alternatives: bool = False,
 ) -> str:
-    """Preserve model-owned provenance across one runtime validation repair."""
+    """Preserve shopper-owned product scope across one runtime repair."""
 
     if native_validation_failure or server_corrected_alternatives:
         return ""
-    if arguments.get("taxonomy_status") == "agent_selected_type" and not (
-        shopper_stated_scope
-    ):
-        return (
-            " Preserve taxonomy_status=agent_selected_type for this open "
-            "role. Choose exactly one advertised subcategory and copy that "
-            "value into requested_product_type."
-        )
     if not shopper_stated_scope:
         return ""
     return (
         " Preserve the shopper-named requested_product_type. "
-        "agent_selected_type is forbidden for this repair. Use "
-        "exact_requested_type for one direct advertised value or "
-        "member_of_requested_umbrella for faithful advertised children."
+        "Correct only rejected taxonomy or constraint fields using exact "
+        "advertised values."
     )
 
 
@@ -713,77 +707,6 @@ def _locked_repair_fields(
         if isinstance(value, expected_type):
             locked[field_name] = value
     return locked
-
-
-def _native_taxonomy(arguments: dict[str, Any]) -> dict[str, list[str]] | None:
-    """Return finite, normalized taxonomy values from raw arguments."""
-
-    taxonomy = arguments.get("taxonomy")
-    if not isinstance(taxonomy, dict):
-        return None
-    category = taxonomy.get("category")
-    subcategory = taxonomy.get("subcategory")
-    if not all(
-        isinstance(values, list)
-        and all(isinstance(value, str) for value in values)
-        for values in (category, subcategory)
-    ):
-        return None
-    return {
-        "category": sorted(category),
-        "subcategory": sorted(subcategory),
-    }
-
-
-def _native_relation_is_self_consistent(arguments: dict[str, Any]) -> bool:
-    """Reject relations whose provenance must change during repair."""
-
-    status = arguments.get("taxonomy_status")
-    if status == "exact_requested_type":
-        return _native_exact_relation_is_self_consistent(arguments)
-    if status == "agent_selected_type":
-        taxonomy = _native_taxonomy(arguments)
-        return bool(
-            taxonomy
-            and len(taxonomy["subcategory"]) == 1
-            and _search_scope_from_arguments(arguments)
-            == _normalize_scope(taxonomy["subcategory"][0])
-        )
-    taxonomy = _native_taxonomy(arguments)
-    if taxonomy is None:
-        return False
-    if status == "member_of_requested_umbrella":
-        return bool(taxonomy["subcategory"])
-    if status == "no_direct_catalog_match":
-        return bool(
-            not taxonomy["category"]
-            and not taxonomy["subcategory"]
-            and _search_scope_from_arguments(arguments) != _UNKNOWN_REPAIR_SCOPE
-            and str(arguments.get("semantic_query") or "").strip()
-            and not str(arguments.get("shopper_guidance") or "").strip()
-        )
-    if status == "image_only":
-        return bool(
-            not taxonomy["category"]
-            and not taxonomy["subcategory"]
-            and _search_scope_from_arguments(arguments) == _UNKNOWN_REPAIR_SCOPE
-            and not str(arguments.get("semantic_query") or "").strip()
-            and not str(arguments.get("shopper_guidance") or "").strip()
-        )
-    return False
-
-
-def _native_exact_relation_is_self_consistent(
-    arguments: dict[str, Any],
-) -> bool:
-    """Check exact provenance using only the finite selected taxonomy."""
-
-    taxonomy = _native_taxonomy(arguments)
-    if taxonomy is None:
-        return False
-    requested_scope = _search_scope_from_arguments(arguments)
-    selected = taxonomy["subcategory"] or taxonomy["category"]
-    return len(selected) == 1 and requested_scope == _normalize_scope(selected[0])
 
 
 def _canonical_argument_value(value: Any) -> Any:

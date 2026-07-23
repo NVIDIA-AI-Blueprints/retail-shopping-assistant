@@ -1619,6 +1619,26 @@ class TestDeepAgentsRuntimeRefs:
             "Closed shoes or flats for this look?",
             capabilities,
         ) is None
+        assert runtime_mod._same_product_scope(
+            "heels or flats",
+            "heels and flats",
+            capabilities,
+        )
+        assert runtime_mod._same_product_scope(
+            "heels or flats",
+            "flats or heels",
+            capabilities,
+        )
+        assert not runtime_mod._same_product_scope(
+            "heels or flats",
+            "heels",
+            capabilities,
+        )
+        assert not runtime_mod._same_product_scope(
+            "heels or flats",
+            "heels and sandals",
+            capabilities,
+        )
         assert runtime_mod._advertised_taxonomy_scope_issue(
             "heels or flats",
             "member_of_requested_umbrella",
@@ -3080,13 +3100,14 @@ class TestDeepAgentsRuntimeRefs:
         ](
             semantic_query="heels or flats",
             shopper_guidance="Comparing heels and flats for this look.",
-            requested_product_type="heels or flats",
+            requested_product_type="heels and flats",
             taxonomy={
                 "category": ["footwear"],
                 "subcategory": ["heels", "flats"],
             },
             required_constraints={"color": ["black"]},
         )
+        assert "SEARCH_RESULT_GROUNDING_NOTE" in repaired_literal_alternatives
         assert captured_plan["plan"].top_k == 7
         assert captured_plan["plan"].hard_filters["color"] == ["black"]
         assert "Heel 0" in repaired_literal_alternatives

@@ -656,6 +656,17 @@ def _same_product_scope(
 
     if first == second:
         return True
+    first_alternatives = _explicit_advertised_alternatives(first, capabilities)
+    if first_alternatives is not None:
+        second_alternatives = _explicit_advertised_alternatives(
+            second,
+            capabilities,
+        )
+        return bool(
+            second_alternatives is not None
+            and first_alternatives[0] == second_alternatives[0]
+            and set(first_alternatives[1]) == set(second_alternatives[1])
+        )
     if _has_alternative_connector(first):
         return False
     first_advertised = _advertised_taxonomy_value(first, capabilities)
@@ -2055,12 +2066,28 @@ class DeepAgentsRuntime:
             if capabilities.catalog_id == "unavailable" and not capabilities.filters:
                 return "Catalog search is unavailable. Please try again."
             initial_scope_key = _product_scope_key(requested_product_type)
+            shopper_explicit_alternatives = (
+                _explicit_advertised_alternatives_in_text(
+                    state.query,
+                    capabilities,
+                )
+            )
             shopper_stated_requested_scope = bool(
                 initial_scope_key
-                and _shopper_stated_product_scope(
-                    state.query,
-                    state.context,
-                    initial_scope_key,
+                and (
+                    _shopper_stated_product_scope(
+                        state.query,
+                        state.context,
+                        initial_scope_key,
+                    )
+                    or (
+                        shopper_explicit_alternatives is not None
+                        and _same_product_scope(
+                            " or ".join(shopper_explicit_alternatives[1]),
+                            initial_scope_key,
+                            capabilities,
+                        )
+                    )
                 )
             )
             taxonomy_status = _catalog_execution_taxonomy_status(
@@ -2071,12 +2098,6 @@ class DeepAgentsRuntime:
                 shopper_stated_scope=shopper_stated_requested_scope,
             )
 
-            shopper_explicit_alternatives = (
-                _explicit_advertised_alternatives_in_text(
-                    state.query,
-                    capabilities,
-                )
-            )
             requested_product_type = _resolved_agent_selected_product_type(
                 query=state.query,
                 context=state.context,

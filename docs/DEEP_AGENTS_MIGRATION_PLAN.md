@@ -385,8 +385,10 @@ Agent decides when to call a shopping tool; that tool decides whether the call
 is valid and what state changes are allowed.
 
 Tool-loop control is a separate deterministic boundary. It keys one total model
-repair to the full normalized `requested_product_type` phrase and never
-conflates distinct advertised sibling scopes. A schema correction or fresh
+repair to the full normalized `requested_product_type` phrase. An unambiguous
+literal set of advertised alternatives uses its category and exact subcategory
+set as scope identity, allowing connector or ordering changes while blocking
+narrowing and sibling substitution. A schema correction or fresh
 constraint-provenance review can consume that budget. Constraint feedback from
 an in-flight schema repair closes the loop for synthesis. The isolated call
 receives the capability-derived typed search tool, compact server-generated
@@ -737,8 +739,10 @@ Implications:
   styling to remain alternative primary procedures and budget shopping to be
   selected only for a stated budget. Terse item-only follow-ups inside an active
   outfit or style-led single-piece thread remain styling intent.
-- Each full normalized `requested_product_type` scope receives one total repair,
-  keyed by the server with distinct advertised siblings kept separate. A schema
+- Each full normalized `requested_product_type` scope receives one total repair.
+  An unambiguous literal set of advertised alternatives is identified by its
+  category and exact subcategory set, so connector or ordering changes are
+  accepted without permitting narrowing or sibling substitution. A schema
   correction or a fresh constraint-provenance review may consume it; constraint
   feedback from an in-flight schema repair closes for synthesis. The isolated
   step receives the capability-derived typed `search_catalog_tool`, compact

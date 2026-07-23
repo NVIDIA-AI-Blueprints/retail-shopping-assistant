@@ -101,9 +101,11 @@ names if skill files change while the process remains alive.
 After activation, parallel shopping calls remain disabled. Repair accounting
 also rejects any active model response containing more than one shopping tool
 call before execution. Repair accounting
-uses the full normalized `requested_product_type` phrase; distinct advertised
-siblings are protected from being treated as the same scope. Each scope has one
-total repair. A schema correction or a fresh constraint-provenance review can
+uses the full normalized `requested_product_type` phrase. An unambiguous literal
+set of advertised alternatives uses its category and exact subcategory set as
+scope identity, allowing connector or ordering changes while blocking narrowing
+and sibling substitution. Each scope has one total repair. A schema correction
+or a fresh constraint-provenance review can
 consume that shared budget; constraint feedback returned by an in-flight schema
 repair closes the loop for synthesis rather than opening another repair. The
 isolated request receives the capability-derived typed search tool, compact
@@ -452,11 +454,13 @@ Failure behavior:
   a genuinely open role may receive one
   constraint-provenance review; a second mismatch or other unresolved
   provenance fails closed.
-- A full normalized `requested_product_type` scope receives one total repair,
-  enforced by a server-derived key that keeps distinct advertised siblings
-  separate. A schema failure or fresh constraint-provenance question can consume
-  it. Constraint feedback after an in-flight schema repair closes the loop for
-  synthesis. A successful partial search may continue to another valid role
+- A full normalized `requested_product_type` scope receives one total repair.
+  An unambiguous literal set of advertised alternatives is identified by its
+  category and exact subcategory set, so connector or ordering changes are
+  accepted without permitting narrowing or sibling substitution. A schema
+  failure or fresh constraint-provenance question can consume it. Constraint
+  feedback after an in-flight schema repair closes the loop for synthesis. A
+  successful partial search may continue to another valid role
   with its own single repair opportunity; the configured turn cap remains three
   searches. A successful or zero-result third search carries
   `SEARCH_BUDGET_EXHAUSTED`, so no fourth search is possible while non-search

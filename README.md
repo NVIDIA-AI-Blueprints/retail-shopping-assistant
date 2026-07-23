@@ -99,7 +99,10 @@ schema. The model cannot submit a clarification or catalog-absence result
 through that tool: it must either select faithful advertised values or ask one
 concise clarification directly without a tool call.
 When a catalog search needs repair, the runtime assigns one total repair to the
-full normalized `requested_product_type` phrase. A schema correction or a fresh
+full normalized `requested_product_type` phrase. An unambiguous literal set of
+advertised alternatives uses its category and exact subcategory set as scope
+identity, so connector or ordering changes remain the same scope while narrowing
+or sibling substitution remains blocked. A schema correction or a fresh
 constraint-provenance review can consume that single budget; constraint feedback
 returned by an in-flight schema repair closes the loop for synthesis rather than
 opening another repair. Distinct advertised siblings never count as the same

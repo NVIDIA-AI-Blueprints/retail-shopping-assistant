@@ -145,8 +145,10 @@ The detailed contracts and implementation live in:
    sequential and duplicate taxonomy-plus-hard-constraint scopes are rejected.
    Repair accounting uses
    the full normalized `requested_product_type` phrase rather than only its last
-   noun, and distinct advertised siblings cannot substitute for one another.
-   Each scope receives one total repair. A schema correction or a fresh
+   noun. An unambiguous literal set of advertised alternatives is identified by
+   its category and exact subcategory set, so connector or ordering changes are
+   accepted without permitting narrowing or sibling substitution. Each scope
+   receives one total repair. A schema correction or a fresh
    constraint-provenance review can consume that shared budget; constraint
    feedback returned by an in-flight schema repair closes the loop for synthesis
    rather than opening another repair. The repair is isolated: it receives the

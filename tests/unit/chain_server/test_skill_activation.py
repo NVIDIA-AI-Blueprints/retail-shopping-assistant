@@ -37,6 +37,7 @@ from chain_server.src.skill_activation import (
     SKILL_TOOL_NOT_GRANTED,
     ShopperSkillActivationError,
     ShopperSkillActivationMiddleware,
+    selected_skill_names_for_turn,
 )
 from chain_server.src.tool_loop_control import SERVER_CATALOG_CLARIFICATION
 from shared.commerce_contracts import (
@@ -187,7 +188,10 @@ def add_cart_items_tool(product_ref: str) -> str:
     return product_ref
 
 
-def _middleware() -> ShopperSkillActivationMiddleware:
+def _middleware(
+    *,
+    previous_selected_skills: Sequence[str] = (),
+) -> ShopperSkillActivationMiddleware:
     return ShopperSkillActivationMiddleware(
         request_id=REQUEST_ID,
         skill_descriptions={
@@ -200,6 +204,7 @@ def _middleware() -> ShopperSkillActivationMiddleware:
             "store-policy-answers": "Use for store policies.",
         },
         skill_tool_grants=SKILL_TOOL_GRANTS,
+        previous_selected_skills=previous_selected_skills,
     )
 
 
@@ -385,12 +390,10 @@ def test_pending_phase_forces_only_the_activation_tool() -> None:
 
 
 def test_pending_phase_exposes_prior_skill_as_continuity_signal() -> None:
-    messages = [
-        *_activated_messages("old-request"),
-        HumanMessage(content=f"REQUEST ID: {REQUEST_ID}"),
-    ]
-
-    prepared = _capture_request(_middleware(), _model_request(messages))
+    prepared = _capture_request(
+        _middleware(previous_selected_skills=["outfit-styling"]),
+        _model_request(),
+    )
 
     assert "Previous turn's selected shopper skills: outfit-styling" in (
         prepared.system_prompt
@@ -398,6 +401,18 @@ def test_pending_phase_exposes_prior_skill_as_continuity_signal() -> None:
     assert "change it only when the shopper changes tasks" in (
         prepared.system_prompt
     )
+
+
+def test_completed_current_turn_activation_exposes_selected_skill_names() -> None:
+    messages = _activated_messages(
+        REQUEST_ID,
+        skill_name="outfit-styling",
+    )
+
+    assert selected_skill_names_for_turn(messages, REQUEST_ID) == (
+        "outfit-styling",
+    )
+    assert selected_skill_names_for_turn(messages, "other-request") == ()
 
 
 def test_pending_phase_rejects_a_direct_model_answer() -> None:
@@ -736,7 +751,11 @@ async def test_compiled_agent_loads_skill_and_blocks_ungranted_tool(
         cart_user_id=1,
         request_id=REQUEST_ID,
     )
-    state = State(user_id=1, query="What bottoms go with the beige top?")
+    state = State(
+        user_id=1,
+        query="What bottoms go with the beige top?",
+        previous_selected_skill_names=["outfit-styling"],
+    )
     agent = runtime._create_agent(
         state,
         identity,
@@ -772,6 +791,9 @@ async def test_compiled_agent_loads_skill_and_blocks_ungranted_tool(
         first_call["system_prompt"]
     )
     assert "product-discovery: General product search" in (
+        first_call["system_prompt"]
+    )
+    assert "Previous turn's selected shopper skills: outfit-styling" in (
         first_call["system_prompt"]
     )
 

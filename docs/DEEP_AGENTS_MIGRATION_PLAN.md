@@ -47,10 +47,11 @@ Current constraints:
 - Registration is not activation. Every turn begins with a forced structured
   selection from those registered names. The runtime deterministically loads
   and injects each selected `SKILL.md` in full before it exposes any shopping
-  tool. The prior turn's selected names are a read-only continuity signal for
-  the next fresh semantic selection; they do not force routing or satisfy the
-  activation gate. Shopping calls issued before activation or in the same model
-  batch are rejected at execution time.
+  tool. Each terminal output durably stores the selected names; the immediately
+  preceding turn supplies them as a read-only continuity signal only when that
+  turn is eligible for model context. Otherwise there is no hint. The names do
+  not force routing or satisfy the activation gate. Shopping calls issued before
+  activation or in the same model batch are rejected at execution time.
 - Caller-supplied persona data is not injected into model context. Persona
   support remains deferred until its trust and validation contract is defined.
 - Optional `session_id`, `conversation_id`, and `cart_id` fields are accepted,
@@ -122,7 +123,7 @@ Current constraints:
   `langgraph==1.2.7`, and `langgraph-sdk==0.4.2`. Services that resolve `orjson`
   pin `3.11.5`, the last upstream release limited to the project's
   Apache-2.0/MIT policy. Redis checkpoint packages remain absent.
-- Every turn exposes additive agent diagnostics with activated skill-file
+- Every turn retains additive agent diagnostics with activated skill-file
   paths, model-issued tool calls and arguments in order, deterministic
   rejection/duplicate markers, bounded structured product evidence from
   successful current-turn catalog search/detail results, a truncation flag,
@@ -130,7 +131,9 @@ Current constraints:
   reason. Per-search scopes remain
   attached to their own products. When a graph fails, its current-turn
   assistant/tool messages are read from the latest checkpoint before that
-  checkpoint is deleted.
+  checkpoint is deleted. Public query responses return an empty diagnostics
+  object by default; only trusted operator/evaluation deployments explicitly
+  enable exposure with `EXPOSE_AGENT_DIAGNOSTICS=true`.
 - Catalog, cart, policy, availability, and promotions tools return to the Deep Agents loop
   so a single shopper turn can complete a compound request before the final
   shopper-facing response.
@@ -242,9 +245,9 @@ Filesystem and built-in Deep Agents tools:
 ```text
 POST /query/stream
   -> resolve or create server-owned identity
-  -> start durable conversation turn; load bounded model-context turns, cart, and attempt token
+  -> start durable conversation turn; load bounded model-context turns, prior selected skills, cart, and attempt token
   -> replay stored finalized output and stop, when request identity matches
-  -> invoke Deep Agents SDK with thread_id = conversation_id
+  -> invoke Deep Agents SDK with thread_id = [conversation_id, request_id]
   -> force structured per-turn skill selection
   -> load and inject complete selected SKILL.md files
   -> expose deterministic shopping tools
@@ -268,7 +271,7 @@ that do not send them.
 | --- | --- | --- | --- |
 | `customer_id` | Logged-in shopper identity. Optional for anonymous users. | Durable | Across that customer's sessions only |
 | `session_id` | Website/browser session. | TTL-bound | Never across customers |
-| `conversation_id` | One chat thread and Deep Agents `thread_id`. | TTL-bound or user-visible thread | Never across unrelated sessions |
+| `conversation_id` | One durable chat thread and one component of the request-scoped graph `thread_id`. | TTL-bound or user-visible thread | Never across unrelated sessions |
 | `cart_id` | Active cart being mutated. | Cart lifecycle policy | May follow a customer across sessions |
 | `persona_id` | Optional persona/profile source. | Durable or scenario-bound | Never across unrelated customers |
 | `request_id` | One submitted turn and exact replay identity. | Durable with the turn-retention policy | Unique per turn |
@@ -642,7 +645,8 @@ Implications:
 - Accept explicit `session_id`, `conversation_id`, and `cart_id` from clients
   that have a stable browser/session identity.
 - Keep deriving `request_id` server-side per turn.
-- Map `conversation_id` to the Deep Agents `thread_id`.
+- Combine `conversation_id` and `request_id` for the request-scoped Deep Agents
+  `thread_id`.
 - Keep the current request body compatible for legacy callers.
 - The bundled UI now creates session-scoped IDs and sends them on every turn.
 - Add isolation tests before relying on this in production.
@@ -734,8 +738,9 @@ Implications:
   only those skills' combined tool grants.
 - A prior-turn activation, failed activation, or same-batch activation does not
   authorize a current shopping tool call.
-- Prior-turn selected skill names appear only as a read-only continuity signal
-  in the next activation prompt; the model still makes a fresh semantic choice.
+- Prior-turn selected skill names cross the durable turn boundary explicitly and
+  appear only as a read-only continuity signal in the next activation prompt;
+  the model still makes a fresh semantic choice.
 - Activation instructions and skill files require product discovery and outfit
   styling to remain alternative primary procedures and budget shopping to be
   selected only for a stated budget. Terse item-only follow-ups inside an active
@@ -843,8 +848,10 @@ Implications:
 - Diagnostics preserve selected skill paths, ordered arguments, rejected and
   duplicate calls, termination reason, bounded product evidence and truncation,
   bounded no-product catalog scope outcomes, and bounded partial graph messages
-  on failure. The Judge receives only generated conversation history, product
-  evidence/truncation, and catalog scope outcomes from those diagnostics.
+  on failure. Public responses suppress that trace by default. Evaluation
+  deployments explicitly enable it so the Judge receives only generated
+  conversation history, product evidence/truncation, and catalog scope outcomes
+  from those diagnostics.
 
 ## Resolved Decisions
 
@@ -862,7 +869,8 @@ Implications:
   finalizes as failed with `grounding_timeout`; search-only evidence uses
   deterministic catalog rendering, while other turns return a fixed
   retry/cart-check response instead of the unverified draft. Other editor
-  failures use the same response rule with `grounding_error`. Checkpoint release
+  errors and empty or whitespace-only output use the same response rule with
+  `grounding_error`. Checkpoint release
   occurs only after durable finalization.
 - Durable turns use one memory-service SQLite replica with transactional start,
   terminal finalize, exact finalized replay, a bounded recent-turn snapshot,

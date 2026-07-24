@@ -149,6 +149,7 @@ def test_start_returns_recent_turns_projection_and_authoritative_cart(
         "replayed": False,
         "status": "started",
         "recent_turns": [],
+        "previous_selected_skill_names": [],
         "projection": {
             "version": 0,
             "active_anchors": [],
@@ -168,6 +169,12 @@ def test_start_returns_recent_turns_projection_and_authoritative_cart(
             first.json()["turn_id"],
             request_id="request-1",
             attempt_id=first.json()["attempt_id"],
+            output={
+                "product_results": [],
+                "retrieved": {},
+                "agent_diagnostics": {},
+                "selected_skill_names": ["outfit-styling"],
+            },
         ).status_code
         == 200
     )
@@ -189,6 +196,7 @@ def test_start_returns_recent_turns_projection_and_authoritative_cart(
             "status": "completed",
         }
     ]
+    assert second.json()["previous_selected_skill_names"] == ["outfit-styling"]
 
 
 def test_blocked_turn_replays_but_is_excluded_from_next_turn_context(
@@ -230,6 +238,7 @@ def test_blocked_turn_replays_but_is_excluded_from_next_turn_context(
     assert replay.json()["assistant_text"] == "blocked response"
     assert next_turn.status_code == 200
     assert next_turn.json()["recent_turns"] == []
+    assert next_turn.json()["previous_selected_skill_names"] == []
     with memory_main.SessionLocal() as db:
         stored = (
             db.query(memory_main.ConversationTurn)

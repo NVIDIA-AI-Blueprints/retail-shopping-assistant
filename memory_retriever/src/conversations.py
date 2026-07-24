@@ -71,6 +71,7 @@ class TurnReplayOutput(BaseModel):
     product_results: list[dict[str, Any]]
     retrieved: dict[str, str]
     agent_diagnostics: dict[str, Any]
+    selected_skill_names: list[str] = Field(default_factory=list, max_length=5)
 
 
 class TurnFinalizeRequest(BaseModel):
@@ -196,6 +197,46 @@ def _recent_turns(db, conversation_id: str) -> list[dict[str, Any]]:
     ]
 
 
+def _turn_selected_skill_names(turn: ConversationTurn) -> list[str]:
+    """Read the typed skill-selection hint from one finalized turn."""
+
+    if not turn.output_json:
+        return []
+    try:
+        output = json.loads(turn.output_json)
+    except (TypeError, ValueError):
+        return []
+    names = output.get("selected_skill_names") if isinstance(output, dict) else None
+    if not isinstance(names, list):
+        return []
+    return [
+        name
+        for name in names[:5]
+        if isinstance(name, str) and name.strip()
+    ]
+
+
+def _previous_selected_skill_names(
+    db,
+    turn: ConversationTurn,
+) -> list[str]:
+    """Return only the immediately preceding eligible turn's skill hint."""
+
+    if turn.sequence <= 1:
+        return []
+    previous = (
+        db.query(ConversationTurn)
+        .filter_by(
+            conversation_id=turn.conversation_id,
+            sequence=turn.sequence - 1,
+        )
+        .first()
+    )
+    if previous is None or previous.status in {"started", "blocked", "abandoned"}:
+        return []
+    return _turn_selected_skill_names(previous)
+
+
 def _start_response(
     db,
     turn: ConversationTurn,
@@ -210,6 +251,7 @@ def _start_response(
         "replayed": replayed,
         "status": turn.status,
         "recent_turns": _recent_turns(db, turn.conversation_id),
+        "previous_selected_skill_names": _previous_selected_skill_names(db, turn),
         "projection": _projection_dict(projection),
         "cart": _cart_for_user(db, turn.cart_user_id),
         "assistant_text": turn.assistant_text,

@@ -80,6 +80,7 @@ from .skill_activation import (
     SKILL_TOOL_NOT_GRANTED,
     ShopperSkillActivationError,
     ShopperSkillActivationMiddleware,
+    selected_skill_names_for_turn,
 )
 from .tool_policy import (
     load_shopper_skill_registry as _shopper_skill_registry,
@@ -1572,6 +1573,11 @@ class DeepAgentsRuntime:
 
         return self._catalog_capabilities.get()
 
+    def _exposed_agent_diagnostics(self, output: State) -> dict[str, Any]:
+        if not getattr(self.config, "expose_agent_diagnostics", False):
+            return {}
+        return output.agent_diagnostics
+
     async def astream(
         self,
         state: State,
@@ -1597,7 +1603,7 @@ class DeepAgentsRuntime:
                     "total_seconds": sum(output.timings.values()),
                     "token_usage": _normalized_token_usage(output.token_usage),
                     "model_usage": output.model_usage,
-                    "agent_diagnostics": output.agent_diagnostics,
+                    "agent_diagnostics": self._exposed_agent_diagnostics(output),
                 },
                 "timestamp": time.time(),
             }
@@ -1616,7 +1622,7 @@ class DeepAgentsRuntime:
             "timings": output.timings,
             "token_usage": _normalized_token_usage(output.token_usage),
             "model_usage": output.model_usage,
-            "agent_diagnostics": output.agent_diagnostics,
+            "agent_diagnostics": self._exposed_agent_diagnostics(output),
         }
 
     async def _run_turn(
@@ -1626,6 +1632,8 @@ class DeepAgentsRuntime:
     ) -> State:
         state.user_id = identity.context_user_id
         state.agent_diagnostics = _empty_agent_diagnostics("not_started")
+        state.previous_selected_skill_names = []
+        state.selected_skill_names = []
         turn = self._start_conversation_turn(state, identity)
         if turn is not None and turn.replayed:
             await self._delete_turn_checkpoint(identity)
@@ -1735,10 +1743,17 @@ class DeepAgentsRuntime:
                 ),
                 timeout=agent_timeout,
             )
+            result_messages = _result_messages(result)
+            state.selected_skill_names = list(
+                selected_skill_names_for_turn(
+                    result_messages,
+                    identity.request_id,
+                )
+            )
             draft_response = _extract_final_text(result)
             state.token_usage = _collect_token_usage(result)
             state.agent_diagnostics = _safe_collect_agent_diagnostics(
-                _result_messages(result),
+                result_messages,
                 request_id=identity.request_id,
                 final_termination_reason="completed",
             )
@@ -1775,6 +1790,12 @@ class DeepAgentsRuntime:
             partial_messages, capture_error = await _partial_graph_messages(
                 agent,
                 invoke_config,
+            )
+            state.selected_skill_names = list(
+                selected_skill_names_for_turn(
+                    partial_messages,
+                    identity.request_id,
+                )
             )
             if isinstance(exc, GraphRecursionError):
                 termination_reason = "recursion_limit"
@@ -3212,6 +3233,7 @@ class DeepAgentsRuntime:
                 name: skill.tools_granted
                 for name, skill in skill_registry.items()
             },
+            previous_selected_skills=state.previous_selected_skill_names,
         )
         tool_loop_control = ToolLoopControlMiddleware(
             catalog_context=format_catalog_capabilities_for_prompt(
@@ -3441,13 +3463,6 @@ class DeepAgentsRuntime:
             return _GROUNDING_FAILURE_RESPONSE
 
         state.timings["grounding_rewrite"] = time.monotonic() - start
-        _add_model_usage(
-            state,
-            "app_llm_grounding_editor",
-            status="used",
-            calls=1,
-            detail="Final response grounding rewrite",
-        )
         state.token_usage = _merge_token_usage(
             state.token_usage,
             _collect_token_usage(rewrite_result),
@@ -3456,13 +3471,30 @@ class DeepAgentsRuntime:
         rewritten = _content_to_text(_value(rewrite_result, "content"))
         if not rewritten:
             rewritten = _content_to_text(rewrite_result)
-        if not rewritten and search_only:
-            return self._rewrite_search_only_response(
+        if not rewritten.strip():
+            state.agent_diagnostics["final_termination_reason"] = "grounding_error"
+            _add_model_usage(
                 state,
-                result,
-                request_id=request_id,
+                "app_llm_grounding_editor",
+                status="failed",
+                calls=1,
+                detail="Final response grounding rewrite returned empty output",
             )
-        return _scrub_internal_shopper_language(rewritten or draft_response)
+            if search_only:
+                return self._rewrite_search_only_response(
+                    state,
+                    result,
+                    request_id=request_id,
+                )
+            return _GROUNDING_FAILURE_RESPONSE
+        _add_model_usage(
+            state,
+            "app_llm_grounding_editor",
+            status="used",
+            calls=1,
+            detail="Final response grounding rewrite",
+        )
+        return _scrub_internal_shopper_language(rewritten)
 
     def _rewrite_search_only_response(
         self,
@@ -3934,6 +3966,9 @@ Rules:
             turn.recent_turns,
             max_chars=max(1000, int(self.config.memory_length)),
         )
+        state.previous_selected_skill_names = list(
+            turn.previous_selected_skill_names
+        )
         historical_products = format_historical_product_index(
             turn.projection.product_reference_index
         )
@@ -3965,6 +4000,7 @@ Rules:
             ]
             state.retrieved = dict(turn.output.retrieved)
             state.agent_diagnostics = dict(turn.output.agent_diagnostics)
+            state.selected_skill_names = list(turn.output.selected_skill_names)
         else:
             state.agent_diagnostics = _empty_agent_diagnostics(
                 turn.termination_reason or "durable_turn_replayed"
@@ -3995,6 +4031,7 @@ Rules:
                 product_results=(state.product_results if present_products else []),
                 retrieved=(state.retrieved if present_products else {}),
                 agent_diagnostics=state.agent_diagnostics,
+                selected_skill_names=state.selected_skill_names,
             )
             self._conversation_memory.finalize_turn(
                 identity.conversation_id,

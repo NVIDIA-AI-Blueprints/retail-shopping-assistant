@@ -332,6 +332,7 @@ docker stack deploy -c docker-compose.prod.yaml retail-assistant
 | `RAIL_API_KEY` | Guardrails API key | Yes | - |
 | `GUARDRAILS_ENABLED` | Default chain-server guardrails setting for requests that omit `guardrails`; accepts true/false, yes/no, on/off, or 1/0 | No | `true` |
 | `DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS` | Shared deadline for the Deep Agents graph and grounding editor before the durable turn fails cleanly | No | `45` |
+| `EXPOSE_AGENT_DIAGNOSTICS` | Expose detailed agent/tool traces in query responses; enable only behind a trusted operator or evaluation surface | No | `false` |
 | `CATALOG_SEARCH_TIMEOUT_SECONDS` | Optional chain-server timeout for catalog search requests | No | no timeout |
 | `MAX_CATALOG_SEARCHES_PER_TURN` | Caps distinct catalog taxonomy-plus-hard-constraint scope executions in one assistant turn; a repeated scope is stopped even when semantic wording changes | No | `3` |
 | `MAX_PRODUCT_DETAIL_READS_PER_TURN` | Caps Deep Agents product-detail reads in one assistant turn | No | `2` |
@@ -348,7 +349,10 @@ docker stack deploy -c docker-compose.prod.yaml retail-assistant
 
 Compose runs one memory-service SQLite replica at
 `sqlite:////data/context.db` and mounts the `memory-data` named volume at
-`/data`. The chain server starts a durable row before guardrail/model/tool work,
+`/data`. Its host port is bound to `127.0.0.1:8011`; sibling containers use the
+private Compose network. The service has no authentication, so non-Compose
+deployments must preserve an equivalent internal-only boundary. The chain
+server starts a durable row before guardrail/model/tool work,
 receives bounded model-context-eligible shopper/assistant turns plus the
 authoritative cart, and finalizes the row as `completed`, `blocked`, or
 `failed`. An exact retry of
@@ -364,8 +368,8 @@ clears unsent products and images, and finalizes the durable turn as failed. A
 grounding timeout records `grounding_timeout` and also finalizes as failed;
 search-only evidence uses deterministic catalog rendering, while other turns
 receive a fixed retry/cart-check response instead of the unverified draft. The
-same response rule applies to other editor failures recorded as
-`grounding_error`. The request checkpoint is deleted only after finalization
+same response rule applies to editor errors and empty or whitespace-only output,
+recorded as `grounding_error`. The request checkpoint is deleted only after finalization
 succeeds. This live deadline is separate from
 `MEMORY_TURN_ABANDON_SECONDS`, which handles unfinished turns left by a crash or
 process loss.

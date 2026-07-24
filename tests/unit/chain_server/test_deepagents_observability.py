@@ -808,7 +808,7 @@ def test_product_evidence_reports_serialized_size_truncation() -> None:
 
 
 @pytest.mark.asyncio
-async def test_stream_metrics_include_agent_diagnostics(
+async def test_query_responses_hide_agent_diagnostics_by_default(
     base_config,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -840,6 +840,43 @@ async def test_stream_metrics_include_agent_diagnostics(
     monkeypatch.setattr(runtime, "_run_turn", fake_run_turn)
 
     chunks = [json.loads(chunk) async for chunk in runtime.astream(state, identity)]
+    result = await runtime.ainvoke(state, identity)
 
     assert [chunk["type"] for chunk in chunks] == ["images", "content", "metrics"]
+    assert chunks[-1]["payload"]["agent_diagnostics"] == {}
+    assert result["agent_diagnostics"] == {}
+
+
+@pytest.mark.asyncio
+async def test_trusted_query_responses_can_expose_agent_diagnostics(
+    base_config,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base_config.expose_agent_diagnostics = True
+    runtime = DeepAgentsRuntime(base_config)
+    state = State(user_id=1, query="hello", guardrails=False)
+    state.response = "done"
+    state.agent_diagnostics = {
+        "skill_files_read": ["/shopper/product-discovery/SKILL.md"],
+        "tool_calls": [],
+        "final_termination_reason": "completed",
+    }
+    identity = RequestIdentity(
+        session_id="session-a",
+        conversation_id="conversation-a",
+        cart_id="cart-a",
+        context_user_id=1,
+        cart_user_id=1,
+        request_id="request-a",
+    )
+
+    async def fake_run_turn(*args, **kwargs):
+        return state
+
+    monkeypatch.setattr(runtime, "_run_turn", fake_run_turn)
+
+    chunks = [json.loads(chunk) async for chunk in runtime.astream(state, identity)]
+    result = await runtime.ainvoke(state, identity)
+
     assert chunks[-1]["payload"]["agent_diagnostics"] == state.agent_diagnostics
+    assert result["agent_diagnostics"] == state.agent_diagnostics

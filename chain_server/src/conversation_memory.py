@@ -97,6 +97,7 @@ class TurnReplayOutput(_MemoryModel):
     product_results: list[ProductSummary]
     retrieved: dict[str, str]
     agent_diagnostics: dict[str, JsonValue]
+    selected_skill_names: list[str] = Field(default_factory=list, max_length=5)
 
 
 class TurnStartResult(_MemoryModel):
@@ -110,6 +111,10 @@ class TurnStartResult(_MemoryModel):
     recent_turns: list[RecentConversationTurn] = Field(
         default_factory=list,
         max_length=100,
+    )
+    previous_selected_skill_names: list[str] = Field(
+        default_factory=list,
+        max_length=5,
     )
     projection: ConversationProjection = Field(default_factory=ConversationProjection)
     cart: list[ConversationCartItem] = Field(default_factory=list)

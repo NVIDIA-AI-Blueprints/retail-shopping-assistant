@@ -72,6 +72,7 @@ def base_config() -> SimpleNamespace:
         max_product_detail_reads_per_turn=2,
         grounding_rewrite_enabled=True,
         grounding_rewrite_max_evidence_chars=12000,
+        expose_agent_diagnostics=False,
         catalog_search_timeout_seconds=None,
         multimodal=True,
         media_input=SimpleNamespace(
@@ -118,6 +119,7 @@ def valid_config_dict() -> Dict[str, Any]:
         "max_product_detail_reads_per_turn": 2,
         "grounding_rewrite_enabled": True,
         "grounding_rewrite_max_evidence_chars": 12000,
+        "expose_agent_diagnostics": False,
         "catalog_search_timeout_seconds": None,
         "multimodal": True,
         "guardrails_enabled": True,

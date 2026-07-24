@@ -38,6 +38,7 @@ def _clear_model_and_service_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "MAX_PRODUCT_DETAIL_READS_PER_TURN",
         "GROUNDING_REWRITE_ENABLED",
         "GROUNDING_REWRITE_MAX_EVIDENCE_CHARS",
+        "EXPOSE_AGENT_DIAGNOSTICS",
         "GUARDRAILS_ENABLED",
         "LLM_BASE_URL",
         "LLM_MODEL",
@@ -83,6 +84,7 @@ class TestChainServerConfigValidation:
         assert config.vlm_enabled is False
         assert config.guardrails_enabled is True
         assert config.grounding_rewrite_enabled is True
+        assert config.expose_agent_diagnostics is False
         assert config.deepagents_execution_timeout_seconds == 45.0
         assert config.max_product_detail_reads_per_turn == 2
         assert config.grounding_rewrite_max_evidence_chars == 12000
@@ -356,6 +358,31 @@ class TestLoadConfig:
         config = load_config(str(path))
 
         assert config.grounding_rewrite_enabled is expected
+
+    @pytest.mark.parametrize(
+        "raw_value,expected",
+        [
+            ("true", True),
+            ("false", False),
+        ],
+    )
+    def test_expose_agent_diagnostics_env_override_accepts_explicit_bools(
+        self,
+        write_yaml,
+        valid_config_dict: dict,
+        monkeypatch: pytest.MonkeyPatch,
+        raw_value: str,
+        expected: bool,
+    ) -> None:
+        _clear_model_and_service_env(monkeypatch)
+        monkeypatch.setenv("SHARED_CONFIG_ROOT", str(REPO_ROOT / "shared/configs"))
+        monkeypatch.setenv("LLM_API_KEY", "test-key")
+        monkeypatch.setenv("EXPOSE_AGENT_DIAGNOSTICS", raw_value)
+        path = write_yaml("config.yaml", valid_config_dict)
+
+        config = load_config(str(path))
+
+        assert config.expose_agent_diagnostics is expected
 
     def test_grounding_rewrite_max_evidence_env_override(
         self, write_yaml, valid_config_dict: dict, monkeypatch: pytest.MonkeyPatch

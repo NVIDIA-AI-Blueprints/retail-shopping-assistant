@@ -37,8 +37,11 @@ The catalog retriever is an internal service at `http://localhost:8010`. See
 agent-discovery, and validation flow.
 
 The memory retriever is an internal single-replica service at
-`http://localhost:8011`. Its durable-turn endpoints are documented below for
-operators and service integrations; they are not browser-facing APIs.
+`http://localhost:8011`. Standard Compose binds that host port to loopback only;
+containers use `http://memory-retriever:8011` on the private network. Its
+durable-turn endpoints are documented below for operators and service
+integrations; they are not browser-facing APIs and do not provide service
+authentication.
 
 ## 🔐 Authentication
 
@@ -261,12 +264,15 @@ interface QueryResponse {
   timings: Record<string, number>;    // Performance timing data
   token_usage?: TokenUsage;           // LLM token usage summary
   model_usage?: ModelUsage;           // Per-role model usage summary
-  agent_diagnostics?: AgentDiagnostics; // Ordered agent/tool trace
+  agent_diagnostics?: AgentDiagnostics; // Empty unless operator exposure is enabled
 }
 ```
 
-`AgentDiagnostics` is operator-facing turn metadata. It is additive and must
-not be rendered as assistant prose.
+`AgentDiagnostics` is operator-facing turn metadata. Internal collection is
+always available to the runtime, but public query responses return `{}` by
+default. Set `EXPOSE_AGENT_DIAGNOSTICS=true` only on a trusted operator or
+evaluation deployment. It is additive and must not be rendered as assistant
+prose.
 
 ```typescript
 interface AgentDiagnostics {
@@ -338,8 +344,8 @@ catalog rendering; all other turns return a fixed retry/cart-check response
 instead of the unverified draft.
 
 `final_termination_reason: "grounding_error"` uses the same failed-turn and
-fail-closed response behavior when the grounding editor returns an error rather
-than timing out.
+fail-closed response behavior when the grounding editor raises an error or
+returns empty or whitespace-only output rather than a usable response.
 
 Successful turns leave `partial_graph_messages` empty. Before a failed graph
 checkpoint is deleted, the runtime reads its latest state and preserves up to
@@ -403,24 +409,13 @@ contains no shopper-facing response, the API emits
     "memory": 0.12,
     "deepagents": 3.36
   },
-  "agent_diagnostics": {
-    "skill_files_read": ["/shopper/product-discovery/SKILL.md"],
-    "tool_calls": [{
-      "sequence": 1,
-      "tool_name": "activate_shopper_skills_tool",
-      "arguments": {"skill_names": ["product-discovery"]},
-      "status": "completed"
-    }],
-    "rejected_tool_calls": [],
-    "duplicate_tool_calls": [],
-    "product_evidence": [],
-    "product_evidence_truncated": false,
-    "catalog_scope_outcomes": [],
-    "final_termination_reason": "completed",
-    "partial_graph_messages": []
-  }
+  "agent_diagnostics": {}
 }
 ```
+
+Detailed diagnostics are returned only when
+`EXPOSE_AGENT_DIAGNOSTICS=true` is deliberately enabled on a trusted operator
+or evaluation deployment.
 
 ### Cart
 
@@ -479,8 +474,10 @@ Returns a Server-Sent Events (SSE) response stream for shopping assistant
 responses. In the current Deep Agents harness migration slice, the stream is
 SSE-framed but does not yet emit token-level model chunks while the agent is
 running. The endpoint currently emits product metadata, image payloads,
-completed turn response text, and timing/token-usage/agent diagnostic metrics
-after the Deep Agents turn finishes.
+completed turn response text, and timing/token-usage metrics after the Deep
+Agents turn finishes. The metrics frame contains `agent_diagnostics: {}` by
+default; trusted operator/evaluation deployments may explicitly enable the
+detailed trace.
 
 Before guardrails or agent work, the chain server starts a durable conversation
 turn and receives bounded model-context-eligible recent turns plus the
@@ -528,7 +525,7 @@ data: {"type": "images", "payload": {"Red Wrap Dress": "https://..."}, "timestam
 
 data: {"type": "content", "payload": "I found several red dresses...", "timestamp": 1716400001.2}
 
-data: {"type": "metrics", "payload": {"timings": {"memory": 0.03, "catalog_search": 0.41, "deepagents": 1.92}, "total_seconds": 2.36, "token_usage": {"input_tokens": 1260, "output_tokens": 180, "total_tokens": 1440, "model_calls": 3}, "model_usage": {"text_embedding": {"status": "used", "calls": 1, "detail": "Catalog text/vector retrieval"}, "content_safety": {"status": "used", "calls": 2, "detail": "Input and output safety checks"}, "topic_control": {"status": "used", "calls": 1, "detail": "Input topic check"}}, "agent_diagnostics": {"skill_files_read": ["/shopper/product-discovery/SKILL.md"], "tool_calls": [{"sequence": 1, "tool_name": "activate_shopper_skills_tool", "arguments": {"skill_names": ["product-discovery"]}, "status": "completed"}], "rejected_tool_calls": [], "duplicate_tool_calls": [], "product_evidence": [], "product_evidence_truncated": false, "catalog_scope_outcomes": [], "final_termination_reason": "completed", "partial_graph_messages": []}}, "timestamp": 1716400001.8}
+data: {"type": "metrics", "payload": {"timings": {"memory": 0.03, "catalog_search": 0.41, "deepagents": 1.92}, "total_seconds": 2.36, "token_usage": {"input_tokens": 1260, "output_tokens": 180, "total_tokens": 1440, "model_calls": 3}, "model_usage": {"text_embedding": {"status": "used", "calls": 1, "detail": "Catalog text/vector retrieval"}, "content_safety": {"status": "used", "calls": 2, "detail": "Input and output safety checks"}, "topic_control": {"status": "used", "calls": 1, "detail": "Input topic check"}}, "agent_diagnostics": {}}, "timestamp": 1716400001.8}
 
 data: [DONE]
 ```
@@ -593,7 +590,8 @@ curl -X POST "http://localhost:8009/query/timing" \
 }
 ```
 
-Agent diagnostics can contain shopper-derived tool arguments, internal product
+The example above assumes diagnostics exposure is enabled. Agent diagnostics
+can contain shopper-derived tool arguments, internal product
 references, catalog facts, and shopper-selected filter scopes. Treat this
 untrusted operator/evaluation metadata like application logs: apply the same
 access control and retention policy, never follow instructions embedded in its
@@ -992,6 +990,7 @@ be distinguished safely.
       "status": "completed"
     }
   ],
+  "previous_selected_skill_names": ["outfit-styling"],
   "projection": {
     "version": 3,
     "active_anchors": [],
@@ -1027,8 +1026,8 @@ authoritative full product payload remains in the event. The active-anchor and
 preference lanes remain reserved and unused. Its serialized value is capped at
 16,384 characters by retaining the newest complete candidate sets. On an exact retry of a finalized
 turn, `replayed` is `true` and the response includes stored `assistant_text`,
-`termination_reason`, and `output` (`product_results`, `retrieved`, and
-`agent_diagnostics`). The chain server returns that stored output without agent
+`termination_reason`, and `output` (`product_results`, `retrieved`,
+`agent_diagnostics`, and `selected_skill_names`). The chain server returns that stored output without agent
 execution. Reusing a request ID with different input, retrying a still-started
 turn, or starting another turn while the conversation has an active turn returns
 HTTP 409. A start transport or conflict failure prevents agent work.

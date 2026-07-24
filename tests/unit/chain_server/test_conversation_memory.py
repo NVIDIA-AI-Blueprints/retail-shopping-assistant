@@ -69,6 +69,7 @@ def _start_payload() -> dict[str, Any]:
                 "status": "completed",
             }
         ],
+        "previous_selected_skill_names": ["outfit-styling"],
         "projection": {
             "version": 1,
             "active_anchors": [],
@@ -133,6 +134,7 @@ def test_start_turn_posts_one_request_without_raw_media() -> None:
 
     assert result.turn_id == "turn-2"
     assert result.recent_turns[0].shopper_text == "Show me bags"
+    assert result.previous_selected_skill_names == ["outfit-styling"]
     assert result.cart[0].cart_line_id == "line-1"
     assert session.calls[0]["url"] == (
         "http://memory:8011/conversations/conversation%2Fa/turn/start"
@@ -173,6 +175,7 @@ def test_start_result_restores_finalized_replay_output() -> None:
                 "agent_diagnostics": {
                     "final_termination_reason": "completed",
                 },
+                "selected_skill_names": ["outfit-styling"],
             },
         }
     )
@@ -193,6 +196,7 @@ def test_start_result_restores_finalized_replay_output() -> None:
     assert result.output.product_results[0].product_id == "bag-1"
     assert result.output.retrieved == {"Cobalt Bag": "/images/bag-1.png"}
     assert result.output.agent_diagnostics["final_termination_reason"] == ("completed")
+    assert result.output.selected_skill_names == ["outfit-styling"]
 
 
 def test_start_result_accepts_existing_cart_contract_values() -> None:
@@ -252,6 +256,7 @@ def test_finalize_turn_posts_the_typed_event_contract() -> None:
         ],
         retrieved={"Cobalt Bag": "/images/bag-1.png"},
         agent_diagnostics={"final_termination_reason": "completed"},
+        selected_skill_names=["outfit-styling"],
     )
 
     result = client.finalize_turn(
@@ -283,6 +288,7 @@ def test_finalize_turn_posts_the_typed_event_contract() -> None:
     ]
     assert call["json"]["attempt_id"] == "attempt-2"
     assert call["json"]["output"]["retrieved"] == {"Cobalt Bag": "/images/bag-1.png"}
+    assert call["json"]["output"]["selected_skill_names"] == ["outfit-styling"]
 
 
 def test_context_formatter_preserves_separate_speaker_lines() -> None:

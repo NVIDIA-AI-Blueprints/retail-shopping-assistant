@@ -55,11 +55,12 @@ Every shopper turn uses two model phases inside the same Deep Agents run:
 
 Selection is model-owned semantic interpretation over the current conversation
 and skill descriptions, not a deterministic keyword router. Loading and prompt
-injection are deterministic once names are selected. The prior turn's selected
-skill names are supplied to the next activation prompt as a read-only continuity
-signal. The model keeps them when the shopper continues the task and may change
-them when the task changes; the signal does not force routing, inject a skill,
-or satisfy the current turn's activation gate. A multi-intent turn may
+injection are deterministic once names are selected. The selected names are
+persisted with the durable terminal turn and supplied to the next activation
+prompt as a read-only continuity signal. The model keeps them when the shopper
+continues the task and may change them when the task changes; the signal does
+not force routing, inject a skill, or satisfy the current turn's activation
+gate. A multi-intent turn may
 activate more than one skill, but `product-discovery` and `outfit-styling` are
 alternative primary procedures and must not be selected together.
 `budget-shopping` may accompany the applicable primary procedure only when the
@@ -165,8 +166,9 @@ claims, surface guarantees, and internal refs.
 The editor receives only the remaining shared model-stage deadline. A timeout
 finalizes the turn as failed with `grounding_timeout`; search-only evidence uses
 deterministic catalog rendering, while other turns receive a fixed
-retry/cart-check response instead of the unverified draft. Other editor failures
-use the same fail-closed response with `grounding_error`.
+retry/cart-check response instead of the unverified draft. Editor errors and
+empty or whitespace-only output use the same fail-closed response with
+`grounding_error`.
 Grounding is enabled by default and can be disabled with
 `GROUNDING_REWRITE_ENABLED=false`; the evidence window is controlled by
 `GROUNDING_REWRITE_MAX_EVIDENCE_CHARS`.
@@ -176,13 +178,15 @@ contain tool calls, and internal activation markers. If no shopper-facing text
 remains, the runtime emits a safe retry response and records
 `incomplete_agent_response` rather than exposing internal content.
 
-Each response also exposes operator-facing diagnostics for selected skill-file
+The runtime also retains operator-facing diagnostics for selected skill-file
 paths, ordered tool calls and arguments, rejected or duplicate calls, final
 termination reason, bounded product evidence with a truncation flag, and
-bounded `catalog_scope_outcomes` for `zero_results`. On graph failure, bounded
-current-turn assistant/tool messages
-are captured before checkpoint cleanup. The Judge retains only product
-evidence/truncation and those catalog scope outcomes from diagnostics.
+bounded `catalog_scope_outcomes` for `zero_results`. Public query responses
+return `{}` for this field by default; trusted operator/evaluation deployments
+must explicitly set `EXPOSE_AGENT_DIAGNOSTICS=true`. On graph failure, bounded
+current-turn assistant/tool messages are captured before checkpoint cleanup.
+The Judge retains only product evidence/truncation and those catalog scope
+outcomes from diagnostics.
 
 ## Registered Skills
 

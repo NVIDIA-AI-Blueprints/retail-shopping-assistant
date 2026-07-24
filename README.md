@@ -59,9 +59,9 @@ The Retail Shopping Assistant is an AI-powered blueprint that provides a compreh
 - 💬 **Conversational AI**: Natural language interactions
 - 🔒 **Configurable Content Safety**: Built-in moderation and safety checks are on by default and can be disabled per request or config
 - ⚡ **SSE Response Stream**: Event-stream response framing for chat clients; token-level Deep Agents streaming is a follow-up after the harness migration
-- 📊 **Inference Visibility**: Model names, call counts, token usage, and
-  operator-facing ordered agent/tool termination diagnostics, including
-  bounded zero-result catalog-scope outcomes
+- 📊 **Inference Visibility**: Model names, call counts, and token usage, with
+  detailed ordered agent/tool diagnostics available only when explicitly
+  enabled for a trusted operator or evaluation deployment
 - 📱 **Responsive UI**: Modern, mobile-friendly interface
 
 ### Architecture
@@ -82,15 +82,17 @@ The application follows a microservices architecture:
   filtering, normalized COSINE relevance scores, and deterministic result
   ranking
 - **Memory Retriever**: Ordered durable turns with start/finalize and exact
-  replay, bounded recent-turn reads, presented-product events and a compact
-  reference index, stable cart-line IDs, atomically idempotent add/remove/
-  quantity mutations, and request-scoped database sessions
+  replay, bounded recent-turn reads, typed prior-skill continuity, presented-
+  product events and a compact reference index, stable cart-line IDs, atomically
+  idempotent add/remove/quantity mutations, and request-scoped database
+  sessions; standard Compose exposes its host port on loopback only
 - **Guardrails**: Content safety and moderation
 - **UI**: React-based frontend interface
 
 Every turn still makes a fresh semantic skill-selection decision. The previous
-turn's selected skill names are supplied to that activation model step only as
-a read-only continuity signal; they do not force routing or authorize tools.
+turn's selected skill names are persisted with its durable output and supplied
+to the next activation model step only as a read-only continuity signal; they
+do not force routing or authorize tools.
 Conversation context still matters: a terse item-only follow-up inside an
 active outfit-building or style-led single-piece thread remains an
 `outfit-styling` task.
@@ -167,8 +169,8 @@ durable conversation turn, and then deletes its request checkpoint. The
 grounding editor receives only the remaining time. Its timeout is finalized as
 failed with `grounding_timeout`: search-only turns use the existing deterministic
 catalog renderer, while every other turn returns a fixed retry/cart-check
-response instead of the unverified draft. Other editor failures follow the same
-fail-closed response rule with `grounding_error`.
+response instead of the unverified draft. Editor errors and empty or whitespace-
+only output follow the same fail-closed response rule with `grounding_error`.
 
 For the serving-agent flow, see
 [Shopper Agent Architecture](docs/SHOPPER_AGENT_ARCHITECTURE.md). The

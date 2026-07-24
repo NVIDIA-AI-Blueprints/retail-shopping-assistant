@@ -759,6 +759,7 @@ class TestDeepAgentsRuntimeScopes:
                             "status": "completed",
                         }
                     ],
+                    "previous_selected_skill_names": ["outfit-styling"],
                     "projection": {
                         "product_reference_index": [
                             {
@@ -793,18 +794,23 @@ class TestDeepAgentsRuntimeScopes:
         assert turn is not None
         state.response = "Done"
         state.agent_diagnostics = runtime_mod._empty_agent_diagnostics("completed")
+        state.selected_skill_names = ["product-discovery"]
         runtime._finalize_conversation_turn(state, identity, turn)
 
         assert memory.start_calls[0]["conversation_id"] == "conversation-a"
         assert memory.start_calls[0]["cart_user_id"] == 222
         assert memory.start_calls[0]["request_id"] == "request-a"
         assert "User: Show me a bag" in state.context
+        assert state.previous_selected_skill_names == ["outfit-styling"]
         assert "HISTORICAL PRODUCT INDEX (read-only)" in state.context
         assert "set=set-a turn=1: 1:Blue Bag [bags] <bag-a>" in state.context
         assert state.cart.contents[0]["cart_line_id"] == "line-a"
         assert memory.finalize_calls[0]["conversation_id"] == "conversation-a"
         assert memory.finalize_calls[0]["turn_id"] == "turn-a"
         assert memory.finalize_calls[0]["attempt_id"] == "attempt-a"
+        assert memory.finalize_calls[0]["output"].selected_skill_names == [
+            "product-discovery"
+        ]
 
     @pytest.mark.asyncio
     async def test_finalized_replay_skips_agent_work(
@@ -4747,6 +4753,77 @@ class TestDeepAgentsRuntimeRefs:
         assert state.agent_diagnostics["final_termination_reason"] == (
             "grounding_error"
         )
+
+    @pytest.mark.asyncio
+    async def test_empty_mutation_editor_output_never_returns_draft(
+        self,
+        base_config,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+        from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+
+        class EmptyEditor:
+            async def ainvoke(self, messages):
+                return AIMessage(content="")
+
+        monkeypatch.setattr(
+            runtime,
+            "_create_chat_model",
+            lambda: EmptyEditor(),
+        )
+        result = {
+            "messages": [
+                HumanMessage(content="REQUEST ID: current-request"),
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "partial-add",
+                            "name": "add_cart_items_tool",
+                            "args": {
+                                "items": [
+                                    {"product_ref": "bag-1"},
+                                    {"product_ref": "shoe-2"},
+                                ]
+                            },
+                        }
+                    ],
+                ),
+                ToolMessage(
+                    content=(
+                        "CART_ADD_RESULT\n"
+                        "Added:\n- 1 x Work Bag (PRODUCT_REF: bag-1)\n"
+                        "Failed:\n- PRODUCT_REF 'shoe-2': Cart add failed."
+                    ),
+                    name="add_cart_items_tool",
+                    tool_call_id="partial-add",
+                ),
+                AIMessage(content="I added both items."),
+            ]
+        }
+        state = State(
+            user_id=111,
+            query="Add both items.",
+            agent_diagnostics={"final_termination_reason": "completed"},
+        )
+
+        response = await runtime._rewrite_response_for_grounding(
+            state,
+            result,
+            "I added both items.",
+            request_id="current-request",
+        )
+
+        assert response == runtime_mod._GROUNDING_FAILURE_RESPONSE
+        assert "I added both items." not in response
+        assert state.agent_diagnostics["final_termination_reason"] == (
+            "grounding_error"
+        )
+        assert state.model_usage["app_llm_grounding_editor"]["status"] == "failed"
+        assert state.model_usage["app_llm_grounding_editor"]["calls"] == 1
 
     def test_search_response_uses_only_activated_skill_guidance(
         self,

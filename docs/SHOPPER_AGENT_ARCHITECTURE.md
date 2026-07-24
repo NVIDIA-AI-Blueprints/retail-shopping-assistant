@@ -108,16 +108,18 @@ The detailed contracts and implementation live in:
 1. The runtime scopes the request and starts a durable memory-service turn before
    guardrail, model, or tool work. That transaction returns bounded
    model-context-eligible raw turns, a compact historical-product index, the
-   authoritative cart, and an opaque execution `attempt_id`. Blocked turns stay
-   durable for exact replay and audit but are excluded from both the service
-   projection and chain prompt formatter. The raw turns replace the legacy
-   rolling context blob. LangGraph working state is isolated to this request under
-   a collision-safe pair of conversation ID and request ID.
+   prior turn's selected skill names, the authoritative cart, and an opaque
+   execution `attempt_id`. Blocked turns stay durable for exact replay and audit
+   but are excluded from both the service projection and chain prompt formatter.
+   The raw turns replace the legacy rolling context blob. LangGraph working state
+   is isolated to this request under a collision-safe pair of conversation ID and
+   request ID.
 2. The first model step can call only `activate_shopper_skills_tool`. It selects
    the smallest registered skill set for the current intent. The prior turn's
-   selected skill names are included only as a read-only continuity signal for
-   this fresh semantic decision. They do not force routing, inject the old skill,
-   or authorize commerce tools. The conversation still establishes intent: a
+   selected skill names, persisted with the prior terminal turn, are included
+   only as a read-only continuity signal for this fresh semantic decision. They
+   do not force routing, inject the old skill, or authorize commerce tools. The
+   conversation still establishes intent: a
    terse item-only follow-up inside an active outfit-building or style-led
    single-piece thread remains an `outfit-styling` task.
 3. The runtime validates the selection and injects the complete selected
@@ -257,8 +259,10 @@ The detailed contracts and implementation live in:
    results from the rejected search.
 6. The runtime finalizes the durable turn as `completed`, `blocked`, or `failed`
    on every terminal path. An exact retry of a finalized request replays stored
-   assistant text, products, retrieved images, and diagnostics without another
-   model/tool turn or finalize call. A start failure runs no agent work. A
+   assistant text, products, retrieved images, and internal diagnostics without
+   another model/tool turn or finalize call. Public query responses return an
+   empty diagnostics object unless a trusted operator/evaluation deployment
+   explicitly sets `EXPOSE_AGENT_DIAGNOSTICS=true`. A start failure runs no agent work. A
    finalize must echo the current attempt token. Only the latest-sequence
    abandoned turn can reopen, and doing so rotates that token; a late finalize
    from the stale attempt is rejected and becomes a safe superseded-attempt
@@ -275,8 +279,9 @@ The detailed contracts and implementation live in:
    `agent_timeout`. A grounding timeout finalizes as failed with
    `grounding_timeout`; search-only evidence uses deterministic catalog
    rendering, while every other turn receives a fixed retry/cart-check response
-   instead of the unverified draft. Other editor failures use the same response
-   rule and finalize as failed with `grounding_error`. Only a successful durable
+   instead of the unverified draft. Editor errors and empty or whitespace-only
+   output use the same response rule and finalize as failed with
+   `grounding_error`. Only a successful durable
    finalize permits checkpoint deletion and admission of the next conversation turn. An
    already-started synchronous tool operation may finish while graph
    cancellation propagates; cart idempotency and the timeout response's
@@ -290,11 +295,11 @@ The detailed contracts and implementation live in:
    process-local but is no longer shopper memory; it survives only a finalize
    failure and otherwise ends with the request.
 
-The durable transcript contains raw shopper/assistant text plus bounded replay
-output and ordered event envelopes. It does not contain raw media, model
-reasoning, or the full graph/tool transcript. Product-card output now populates
-durable `candidate_set_presented` events and a bounded compact product-reference
-index. The projection keeps the newest complete candidate sets within 16,384
+The durable transcript contains raw shopper/assistant text, selected skill
+names, bounded replay output, and ordered event envelopes. It does not contain
+raw media, model reasoning, or the full graph/tool transcript. Product-card
+output populates durable `candidate_set_presented` events and a bounded compact
+product-reference index. The projection keeps the newest complete candidate sets within 16,384
 serialized characters. A typed batch resolver matches exact product ref,
 display name, category, turn, candidate set, and one-based position within the
 current conversation. It is enforced at most once per turn and returns
@@ -313,7 +318,8 @@ Final-response extraction ignores tool messages, assistant tool-call messages,
 and internal activation markers. If no shopper-facing answer remains, the
 runtime returns a safe retry response and records `incomplete_agent_response`.
 Operator diagnostics also include bounded `catalog_scope_outcomes` for
-zero-result scopes.
+zero-result scopes. Standard Compose keeps the unauthenticated memory API on the
+private service network and host loopback; it is not a public application API.
 
 Product refs used for detail, availability, and cart-add calls live only in the
 current request's evidence set. Current-turn search adds them directly; a

@@ -128,6 +128,13 @@ class ChainServerConfig(BaseModel):
         default=12000,
         description="Maximum tool evidence characters passed to the grounding editor",
     )
+    expose_agent_diagnostics: bool = Field(
+        default=False,
+        description=(
+            "Whether shopper query responses expose detailed agent diagnostics. "
+            "Enable only on a trusted operator or evaluation surface."
+        ),
+    )
     catalog_search_timeout_seconds: Optional[float] = Field(
         default=None,
         description=(
@@ -265,6 +272,7 @@ def load_config(config_path: Optional[str] = None) -> ChainServerConfig:
         "grounding_rewrite_max_evidence_chars": os.environ.get(
             "GROUNDING_REWRITE_MAX_EVIDENCE_CHARS"
         ),
+        "expose_agent_diagnostics": _env_bool("EXPOSE_AGENT_DIAGNOSTICS"),
         "guardrails_enabled": _env_bool("GUARDRAILS_ENABLED"),
     }
     config_data.update(

@@ -1,6 +1,6 @@
 # Project Status
 
-Updated: 2026-07-23
+Updated: 2026-07-24
 
 ## Current Milestone
 
@@ -29,8 +29,10 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   grant union becomes model-visible, and dispatch rechecks it against an
   independent immutable policy before invoking a shopping handler. Registry
   tools, frontmatter grant pairs, and policy pairs must match exactly at startup.
-  The previous turn's selected names are a read-only continuity signal
-  for that fresh semantic decision; they neither force routing nor unlock tools.
+  The selected names are persisted with each durable terminal output. The
+  immediately preceding turn supplies them as a read-only continuity signal
+  only when that turn is eligible for model context; otherwise there is no
+  hint. They neither force routing nor unlock tools.
   Terse item-only follow-ups inside an active outfit-building or style-led
   single-piece thread still select `outfit-styling` from conversation context.
   Outfit styling is a focused fashion procedure for anchors, clarification,
@@ -79,10 +81,15 @@ The current working tree extends the shopper-serving Deep Agent architecture:
 - caller-supplied persona data is not injected into model context. Persona
   support remains deferred until it has a typed, bounded schema, authenticated
   ownership, and input-safety validation; and
-- both response paths expose additive agent diagnostics for activated skill
+- both response paths retain additive agent diagnostics for activated skill
   files, ordered tool calls and arguments, rejected/duplicate calls, bounded
   current-turn product evidence from successful catalog search/detail results,
-  bounded zero-result catalog scope outcomes, and final termination.
+  bounded zero-result catalog scope outcomes, and final termination. Public
+  query responses return an empty diagnostics object by default;
+  `EXPOSE_AGENT_DIAGNOSTICS=true` is reserved for trusted operator/evaluation
+  deployments. Standard Compose binds the unauthenticated memory-service host
+  port to loopback while containers continue to use the private Compose
+  network.
   Failed graph messages are captured from the current checkpoint before cleanup
   deletes it. Pre-activation and same-batch shopping calls are execution-blocked
   and reported as `skill_activation_required`; post-activation calls outside
@@ -275,12 +282,27 @@ The newest focused gate is recorded first. Older Slice 0, Slice 2, and Slice 3
 results remain below as comparison points; generated quality and timing
 artifacts stay in the required local archive rather than versioned source.
 
+- Three-review-slice gate (2026-07-24): the durable prior-skill hint,
+  empty-editor fail-closed response, and diagnostics/network-default hardening
+  passed an 18-test focused pre-commit gate. Changed-file Ruff,
+  `git diff --check`, and Docker Compose configuration validation passed.
+  The matching 48-turn GPT-5.2 app/Judge run completed all shopper and Judge
+  calls with no collector or Judge errors. Judge average was 3.8958/5, with
+  37/48 turns scoring at least 4. Mean / median / p95 / maximum latency was
+  19.069s / 17.239s / 36.140s / 45.025s. Forty-six turns terminated
+  `completed`; two used the bounded `grounding_timeout` path. Against the
+  immediately preceding WIP, average quality improved by 0.1042, score-4-or-
+  better coverage increased by one turn, and mean / median / p95 latency
+  improved by 0.500s / 1.160s / 1.390s. The comparison is qualified because
+  both runs were dirty working trees and the client timeout changed from 120
+  to 300 seconds.
 - Grounding deadline gate (2026-07-24): 7 focused offline tests passed. The
   grounding editor uses async invocation under the remaining model-stage
   deadline. Timeout cancels the editor, finalizes once as failed with
   `grounding_timeout`, and never returns an unverified mutation draft; ordinary
-  editor failure also fails closed, while search-only deterministic fallback,
-  explicit editor disablement, and graph `agent_timeout` behavior remain intact.
+  editor failure or empty output also fails closed, while search-only
+  deterministic fallback, explicit editor disablement, and graph
+  `agent_timeout` behavior remain intact.
 - Blocked-context isolation gate (2026-07-23): 4 focused offline tests passed.
   A blocked turn remains durably stored and exactly replayable, while both the
   memory-service recent-turn projection and the chain prompt formatter exclude
@@ -536,6 +558,10 @@ shared multi-writer replacement for the single SQLite memory service rather
 than a shared graph-history store. Repository-wide allowlist compliance remains
 a separate audit because the pre-existing dependency set contains additional
 license notices unrelated to checkpointing.
+Selected skill names cross that boundary explicitly in typed durable turn
+output and are returned only as a non-authorizing hint for the next turn's
+fresh activation decision. Active anchors and effective preferences remain
+unimplemented.
 Cart reads now expose an opaque, non-reusable `cart_line_id` as
 `CART_LINE_ID`, including an idempotent migration for existing databases.
 Adds persist the catalog `product_id`; remove and absolute-quantity update use

@@ -90,6 +90,14 @@ class State(BaseModel):
         default_factory=dict,
         description="Ordered Deep Agents tool and termination diagnostics"
     )
+    previous_selected_skill_names: List[str] = Field(
+        default_factory=list,
+        description="Prior turn skill-selection hint loaded from durable memory"
+    )
+    selected_skill_names: List[str] = Field(
+        default_factory=list,
+        description="Shopper skills selected during the current turn"
+    )
     next_agent: str = Field(default="", description="Next agent to route to")
     guardrails: bool = Field(default=True, description="Enable content safety checks")
     timings: Annotated[Dict[str, float], ior] = Field(

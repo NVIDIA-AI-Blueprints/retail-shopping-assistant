@@ -472,8 +472,9 @@ Failure behavior:
   rendering as fail-closed fallback. The grounding editor receives only the
   remaining shared model-stage deadline. A timeout finalizes as failed with
   `grounding_timeout`; non-search turns receive a fixed retry/cart-check response
-  instead of the unverified draft. Other editor failures use the same
-  fail-closed response with `grounding_error`.
+  instead of the unverified draft. Other editor failures and empty or
+  whitespace-only successful editor responses use the same fail-closed response
+  with `grounding_error`.
 - If the Deep Agents loop fails after catalog search has returned products, the
   runtime clears the failed thread checkpoint and returns a grounded partial
   product summary instead of a generic shopper-facing error.

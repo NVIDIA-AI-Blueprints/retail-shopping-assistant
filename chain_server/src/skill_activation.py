@@ -76,6 +76,7 @@ class ShopperSkillActivationMiddleware(AgentMiddleware):
         request_id: str,
         skill_descriptions: Mapping[str, str],
         skill_tool_grants: Mapping[str, Collection[str]],
+        previous_selected_skills: Collection[str] = (),
     ) -> None:
         self._request_id = request_id
         self._skill_descriptions = dict(skill_descriptions)
@@ -88,6 +89,13 @@ class ShopperSkillActivationMiddleware(AgentMiddleware):
         self._skill_files: dict[str, str] = {}
         self._selected_skills: frozenset[str] = frozenset()
         self._granted_tools: frozenset[str] = frozenset()
+        self._previous_selected_skills = tuple(
+            dict.fromkeys(
+                name
+                for name in previous_selected_skills
+                if name in self._skill_descriptions
+            )
+        )
         self._lock = Lock()
 
     def activate(
@@ -232,10 +240,7 @@ class ShopperSkillActivationMiddleware(AgentMiddleware):
                 request.system_message,
                 _activation_prompt(
                     self._skill_descriptions,
-                    previous_skills=_previous_selected_skills(
-                        request.messages,
-                        self._request_id,
-                    ),
+                    previous_skills=self._previous_selected_skills,
                 ),
             ),
         )
@@ -316,24 +321,34 @@ def _activation_prompt(
     return "\n".join(lines)
 
 
-def _previous_selected_skills(
+def selected_skill_names_for_turn(
     messages: list[Any],
     request_id: str,
 ) -> tuple[str, ...]:
-    """Return the prior turn's selected skills as an activation signal."""
+    """Return skills whose activation completed in the current turn."""
 
     marker = f"REQUEST ID: {request_id}"
-    current_turn_start = len(messages)
+    current_turn_start: int | None = None
     for index, message in enumerate(messages):
         if _message_type(message) == "human" and marker in _message_text(message):
             current_turn_start = index
-            break
-
-    for message in reversed(messages[:current_turn_start]):
+    if current_turn_start is None:
+        return ()
+    turn_messages = messages[current_turn_start:]
+    completed_call_ids = {
+        str(_value(message, "tool_call_id") or "")
+        for message in turn_messages
+        if _message_type(message) == "tool"
+        and _value(message, "name") == SKILL_ACTIVATION_TOOL_NAME
+        and _message_text(message).startswith(SKILL_ACTIVATION_COMPLETE)
+    }
+    for message in turn_messages:
         if _message_type(message) != "ai":
             continue
-        for tool_call in reversed(_value(message, "tool_calls") or []):
+        for tool_call in _value(message, "tool_calls") or []:
             if _value(tool_call, "name") != SKILL_ACTIVATION_TOOL_NAME:
+                continue
+            if str(_value(tool_call, "id") or "") not in completed_call_ids:
                 continue
             arguments = _value(tool_call, "args") or {}
             names = _value(arguments, "skill_names") or []

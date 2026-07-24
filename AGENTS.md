@@ -19,14 +19,14 @@ Top-level orchestration is via `docker-compose.yaml`; optional local NIM model c
 1. UI posts to `/api/query/stream` (nginx proxy on port `3000`).
 2. Nginx routes `/api/*` to `chain-server:8009`.
 3. Chain server request flow:
-   - `DeepAgentsRuntime` first starts a durable turn in the memory service, which returns bounded model-context-eligible raw turns and the authoritative cart. Blocked turns remain durable and exactly replayable but are excluded from both the service projection and chain prompt formatter. It still uses `conversation_id` as the process-local checkpoint thread. Caller-supplied persona data is not injected into model context.
+   - `DeepAgentsRuntime` first starts a durable turn in the memory service, which returns bounded model-context-eligible raw turns, the prior turn's selected skill names, and the authoritative cart. Blocked turns remain durable and exactly replayable but are excluded from both the service projection and chain prompt formatter. Graph working state uses a request-scoped pair of `conversation_id` and `request_id`. Caller-supplied persona data is not injected into model context.
    - Optional input guardrails run before model/tool work; attached media is analyzed through the configured perception client.
    - Deep Agents graph execution has a configurable 45-second default deadline. A timeout captures bounded partial graph messages, clears unsent products, finalizes the durable turn as failed, and deletes the request checkpoint only after that finalization succeeds.
-   - Every turn begins with a required model step that semantically selects the smallest applicable set from five registered shopper skills. Product work uses exactly one primary procedure: product discovery or outfit styling. Budget shopping is a modifier only when the shopper states a budget; cart and policy requests may use their standalone skills. The runtime injects the complete selected files and exposes only the union of their declared `tools_granted`; dispatch independently rechecks the selected skills, grant union, and immutable tool policy. Pre-activation, same-batch, and ungranted shopping calls are execution-blocked.
+   - Every turn begins with a required model step that semantically selects the smallest applicable set from five registered shopper skills. The latest durable selected names are supplied as a read-only continuity hint; they never authorize tools or replace the fresh selection. Product work uses exactly one primary procedure: product discovery or outfit styling. Budget shopping is a modifier only when the shopper states a budget; cart and policy requests may use their standalone skills. The runtime injects the complete selected files and exposes only the union of their declared `tools_granted`; dispatch independently rechecks the selected skills, grant union, and immutable tool policy. Pre-activation, same-batch, and ungranted shopping calls are execution-blocked.
    - Catalog capabilities generate `search_catalog_tool`'s flat schema with exact taxonomy values and non-taxonomy required-constraint properties. The model may call it only with a faithful executable search scope; model-authored catalog absence is not exposed. If faithful taxonomy cannot be selected, the assistant asks one concise clarification directly without a tool call or absence claim. Deterministic code validates and maps search values but does not interpret shopper language. Each text search carries `requested_product_type`: the shortest product noun or true umbrella from the shopper's current turn or direct antecedent, excluding color, material, fit, occasion, weather, and style modifiers. For a genuinely open role, it is the one advertised subcategory selected for that role. It is provenance, not taxonomy or ranking text, and is `null` only for image-only search. Each call has at most one category.
    - Every search also carries required pre-retrieval `shopper_guidance`: one concise, product-agnostic sentence authored under the active skill. A directly stated unadvertised requirement on a shopper-named scope fails closed. Only a schema-valid proposed inferred requirement on a genuinely open role may consume that distinct scope's one model-owned review. Deterministic code does not classify shopper prose or rewrite malformed arguments. A repair cannot change a shopper-named scope noun. A successful partial search may continue with another valid role and its own one-repair opportunity, but no scope receives two repairs; the configured turn cap remains three successful searches.
-   - Cart mutations require explicit product/cart-line refs. Grounding reads actual tool-role messages, separates current-request evidence from prior-turn evidence, and never treats an assistant draft as evidence. Successful searches preserve the taxonomy-independent semantic query as internal ranking evidence, the pre-retrieval `shopper_guidance` as product-agnostic response framing, and each confirmed filter set with the products from that search. A completed search gets one final tools-disabled model step under the active skill, followed by the grounding editor. If that draft or editor is unavailable, deterministic fallback uses search guidance, static skill `response_guidance`, returned names, prices, categories, and search-scoped confirmed filters. Scoped zero-result evidence cannot establish absence outside its exact taxonomy and filters. The graph and grounding editor share one execution deadline; a grounding timeout finalizes as failed with `grounding_timeout`, uses the deterministic catalog renderer for search-only evidence, and otherwise returns a fixed retry/cart-check response rather than the unverified draft. Other editor failures use the same fail-closed response rule with `grounding_error`.
-   - Optional output guardrails run, then the memory service finalizes the durable turn as completed, blocked, or failed before products, images, content, metrics, and operator-facing agent diagnostics are emitted over SSE. An exact retry of a finalized request replays its stored response without model/tool work. Diagnostics include bounded current-turn product evidence from successful catalog search and detail results plus bounded `catalog_scope_outcomes` for zero-result scopes; each search scope remains attached to its own products. Final-text extraction skips tool, tool-calling, and internal activation messages; if no shopper-facing answer exists, the runtime returns a safe fallback with `incomplete_agent_response`. On graph failure, bounded current-turn messages are captured before checkpoint cleanup.
+   - Cart mutations require explicit product/cart-line refs. Grounding reads actual tool-role messages, separates current-request evidence from prior-turn evidence, and never treats an assistant draft as evidence. Successful searches preserve the taxonomy-independent semantic query as internal ranking evidence, the pre-retrieval `shopper_guidance` as product-agnostic response framing, and each confirmed filter set with the products from that search. A completed search gets one final tools-disabled model step under the active skill, followed by the grounding editor. If that draft or editor is unavailable, deterministic fallback uses search guidance, static skill `response_guidance`, returned names, prices, categories, and search-scoped confirmed filters. Scoped zero-result evidence cannot establish absence outside its exact taxonomy and filters. The graph and grounding editor share one execution deadline; a grounding timeout finalizes as failed with `grounding_timeout`, uses the deterministic catalog renderer for search-only evidence, and otherwise returns a fixed retry/cart-check response rather than the unverified draft. Editor errors and empty or whitespace-only editor output use the same fail-closed response rule with `grounding_error`.
+   - Optional output guardrails run, then the memory service finalizes the durable turn as completed, blocked, or failed before products, images, content, and metrics are emitted over SSE. An exact retry of a finalized request replays its stored response without model/tool work. Internal diagnostics include bounded current-turn product evidence from successful catalog search and detail results plus bounded `catalog_scope_outcomes` for zero-result scopes; each search scope remains attached to its own products. Public query responses contain an empty diagnostics object by default. `EXPOSE_AGENT_DIAGNOSTICS=true` exposes the detailed trace only for a trusted operator or evaluation deployment. Final-text extraction skips tool, tool-calling, and internal activation messages; if no shopper-facing answer exists, the runtime returns a safe fallback with `incomplete_agent_response`. On graph failure, bounded current-turn messages are captured before checkpoint cleanup.
 4. For product discovery, chain server calls catalog retriever:
    - `/query/text` for text-only.
    - `/query/image` for text + image.
@@ -191,6 +191,7 @@ Key env vars:
 - `RAILS_BASE_URL`, `RAILS_CONTENT_BASE_URL`, `RAILS_TOPIC_BASE_URL`
 - `CHECKPOINT_STORE` (currently supports only `memory`)
 - `DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS`
+- `EXPOSE_AGENT_DIAGNOSTICS` (trusted operator/evaluation deployments only)
 - `MEMORY_DATABASE_URL`, `MEMORY_SQLITE_BUSY_TIMEOUT_MS`
 - `MEMORY_TURN_ABANDON_SECONDS`, `MEMORY_RECENT_TURNS`
 - `CATALOG_DATA_SOURCE`, `CATALOG_SCHEMA_SOURCE`
@@ -203,6 +204,8 @@ Key env vars:
 - Ports in docs are not always aligned with runtime wiring.
   - Actual backend service port is `8009` in compose.
   - External app entrypoint is usually `http://localhost:3000` through nginx.
+  - Standard Compose binds memory port `8011` to host loopback only. Containers
+    use `http://memory-retriever:8011` on the private Compose network.
 - UI API base URL defaults to `/api` (nginx path), but local runner overrides it to `http://localhost:8009`.
 - The memory service stores ordered shopper/assistant turns and cart state in a
   single-replica SQLite database. Compose uses
@@ -219,9 +222,11 @@ Key env vars:
   response without stale products or images. A start failure runs no agent work;
   a non-fencing finalize failure preserves the grounded response, records
   `memory_finalize_error`, and keeps the graph checkpoint.
-- Deep Agents graph state still uses conversation-scoped, in-process
-  MemorySaver. It disappears on chain-server restart, accumulates in heap for
-  the process lifetime, and is not shared across workers or replicas.
+- Deep Agents graph state uses request-scoped, in-process MemorySaver threads
+  keyed by conversation and request identity. A successful durable finalize
+  deletes the thread; a finalize failure preserves it for recovery. Remaining
+  threads disappear on chain-server restart and are not shared across workers
+  or replicas.
   `CHECKPOINT_STORE=memory` is the only supported value; a compliant production
   shared graph backend remains an open decision.
 - `DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS` defaults to 45 seconds and bounds one
@@ -230,11 +235,16 @@ Key env vars:
   as failed using `agent_timeout` and `grounding_timeout`, respectively. Timeout
   finalization uses the existing durable attempt fence; do not substitute the
   stale-turn abandonment setting for this live execution deadline.
-- Durable raw turns contain shopper/assistant text plus bounded replay and
-  ordered event envelopes. They do not store raw media, model reasoning, or the
-  complete graph/tool transcript. Projection tables and event vocabulary are
-  reserved schema only: preference, anchor, product-reference, and historical
-  resolver semantics remain unimplemented until Slice 5.
+- Durable raw turns contain shopper/assistant text, selected skill names,
+  bounded replay, and ordered event envelopes. They do not store raw media,
+  model reasoning, or the complete graph/tool transcript. Presented-product
+  events and deterministic historical resolution are implemented; active
+  anchors and effective preferences remain reserved and unused.
+- The memory API has no service authentication. Standard Compose limits its
+  host mapping to `127.0.0.1:8011`; keep it on an internal network in other
+  deployments. Detailed agent diagnostics remain internal and public query
+  responses return `{}` unless `EXPOSE_AGENT_DIAGNOSTICS=true` is deliberately
+  set behind a trusted operator or evaluation surface.
 - `CartItem` rows carry catalog `product_id`, opaque `cart_line_id`, and `price`
   fields. Startup migrations add missing fields to older SQLite databases. The
   deterministic `view_cart_total` tool uses stored prices instead of letting
@@ -277,9 +287,11 @@ Key env vars:
 - Search results use source `record_id` values. Product facts are read from
   `/products/{product_id}`; current generated IDs are safe only within the
   active snapshot, so stale refs require a fresh search.
-- Same-conversation product refs are held in a bounded process-local cache.
-  They are separate from the process-local graph checkpoint; a restart, another
-  replica, cache eviction, or catalog replacement requires a fresh search.
+- Current-request product evidence is process-local. Finalized product cards
+  also create a bounded durable same-conversation reference index; one unique
+  exact resolution can restore a prior product after restart or on another
+  worker. Missing, ambiguous, or stale-catalog references require clarification
+  or a fresh search.
 - Local LLM service is named `nemotron` (was `llama`); chain-server reaches it through `shared/configs/models.yaml` when the app LLM role uses `source: local_nim`.
 - Tool calling against the local NIM requires `--enable-auto-tool-choice --tool-call-parser llama3_json` passthrough args. Without them, requests with `tool_choice="auto"` 400.
 - The Deep Agents model first selects shopper skills through the internal

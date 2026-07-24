@@ -178,6 +178,7 @@ _SEARCH_FILTER_EVIDENCE_PREFIX = "SEARCH_FILTER_EVIDENCE:"
 _SEARCH_TAXONOMY_EVIDENCE_PREFIX = "SEARCH_TAXONOMY_EVIDENCE:"
 _SEARCH_DIRECTION_EVIDENCE_PREFIX = "SEARCH_DIRECTION_EVIDENCE:"
 _SEARCH_GUIDANCE_EVIDENCE_PREFIX = "SEARCH_GUIDANCE_EVIDENCE:"
+_SEARCH_SCOPE_RELATION_EVIDENCE_PREFIX = "SEARCH_SCOPE_RELATION_EVIDENCE:"
 _CATALOG_SCOPE_OUTCOME_PREFIX = "CATALOG_SCOPE_OUTCOME:"
 _MAX_DIAGNOSTIC_PRODUCT_EVIDENCE = 24
 _MAX_DIAGNOSTIC_PRODUCT_FACTS = 40
@@ -254,6 +255,10 @@ Rules:
   gap, preserve any other successful current-turn role, and ask whether to
   search a different advertised type. Do not name alternatives unless their
   exact taxonomy values appear in TOOL EVIDENCE.
+- If TOOL EVIDENCE says a requested type is not separately advertised and a
+  broader advertised category was searched, say so plainly. Present the
+  returned products as closest options and keep each product's actual catalog
+  category; do not relabel any result as the requested type.
 - A scoped zero-result search proves only that its exact advertised taxonomy
   and filter scope returned no products. It does not prove that a different,
   unsearched, or unadvertised product type is absent, and it never supports a
@@ -856,6 +861,8 @@ def _catalog_execution_taxonomy_status(
         if scope_kind == "category" and subcategories:
             return "member_of_requested_umbrella"
         return "exact_requested_type"
+    if len(categories) == 1 and not subcategories:
+        return "parent_category_alternative"
     if subcategories:
         return "member_of_requested_umbrella"
     return "exact_requested_type"
@@ -896,6 +903,8 @@ class SearchCatalogToolArguments(BaseModel):
             "Exclude color, material, fit, occasion, weather, and style modifiers: "
             "'formal tops' and 'relaxed-fit tops' both use 'tops'. For a genuinely "
             "open role selected by the agent, use the chosen advertised role noun. "
+            "If this type is not separately advertised and you select one faithful "
+            "advertised parent category, keep this shopper-named type unchanged. "
             "This is provenance, not catalog taxonomy or a ranking query. Use null "
             "only for image-only search."
         ),
@@ -907,8 +916,12 @@ class SearchCatalogToolArguments(BaseModel):
             "subcategory values come from the active catalog capabilities. Every "
             "selected value must be the requested product type or a child of an "
             "umbrella the shopper actually named. For a genuinely open request, "
-            "select one advertised subcategory as the focused role. Never select a parent "
-            "or sibling as a substitute. For example, skirts may satisfy bottoms; "
+            "select one advertised subcategory as the focused role. Never select "
+            "a parent or sibling as a substitute for an advertised type. If a "
+            "shopper-named type is not separately advertised but one advertised "
+            "category is its faithful broader parent, select only that category "
+            "and leave subcategory empty; results remain alternatives under their "
+            "actual catalog types. For example, skirts may satisfy bottoms; "
             "dresses may not."
         ),
     )
@@ -958,6 +971,7 @@ class SearchCatalogToolInput(SearchCatalogToolArguments):
     taxonomy_status: Literal[
         "exact_requested_type",
         "member_of_requested_umbrella",
+        "parent_category_alternative",
         "agent_selected_type",
         "no_direct_catalog_match",
         "image_only",
@@ -1037,6 +1051,14 @@ class SearchCatalogToolInput(SearchCatalogToolArguments):
         ):
             raise ValueError(
                 "an open-role search requires an advertised subcategory"
+            )
+        if self.taxonomy_status == "parent_category_alternative" and not (
+            len(self.taxonomy.category) == 1
+            and not self.taxonomy.subcategory
+        ):
+            raise ValueError(
+                "a parent-category alternative requires one advertised category "
+                "and no subcategory"
             )
         if has_query and not has_taxonomy:
             raise ValueError(
@@ -1168,7 +1190,10 @@ def _search_catalog_tool_input_model(
                     " Every value must be a kind of the requested scope: skirts "
                     "may satisfy bottoms; dresses may not. For a broad request "
                     "that names no product type, choose one exact advertised "
-                    "subcategory as the focused starting role."
+                    "subcategory as the focused starting role. If a shopper-named "
+                    "type is not separately advertised but one faithful broader "
+                    "advertised parent category exists, select only that category "
+                    "and leave subcategory empty."
                 ),
             ),
         ),
@@ -2087,24 +2112,25 @@ class DeepAgentsRuntime:
                 if isinstance(constraint_payload, dict)
                 else []
             )
-            duplicated_no_direct_type = bool(
-                taxonomy_status == "no_direct_catalog_match"
-                and shopper_stated_scope
+            duplicated_product_type = bool(
+                shopper_stated_scope
                 and _duplicates_unavailable_product_type(
                     raw_unadvertised_requirements,
                     requested_product_type,
                     capabilities,
                 )
             )
-            if duplicated_no_direct_type:
+            if duplicated_product_type:
                 failed_repair_scope_key = candidate_scope_key
                 failed_agent_selected_scope = False
                 return (
                     SEARCH_VALIDATION_ERROR_PREFIX
-                    + "The requested product type was duplicated in "
+                    + "Product types never belong in "
                     "unadvertised_requirements. Preserve the shopper-stated "
-                    "requested_product_type, remove it from requirements, and ask "
-                    "a concise clarification if no taxonomy maps faithfully."
+                    "requested_product_type, remove it from requirements, and "
+                    "preserve the selected advertised parent category when it is "
+                    "a faithful broader scope. Otherwise ask one concise "
+                    "clarification."
                 )
             stated_unadvertised_requirements = (
                 [
@@ -2789,11 +2815,21 @@ class DeepAgentsRuntime:
                 for name, value in plan.hard_filters.items()
                 if name not in taxonomy_fields
             }
+            scope_relation_evidence = (
+                _format_search_scope_relation_evidence(
+                    requested_product_type=request.requested_product_type or "",
+                    advertised_category=request.taxonomy.category[0],
+                )
+                if request.taxonomy_status == "parent_category_alternative"
+                else ""
+            )
             if not result.products:
                 lines = [
                     _SEARCH_NO_MATCH_GROUNDING_NOTE,
                     _format_search_taxonomy_evidence(taxonomy_constraints),
                 ]
+                if scope_relation_evidence:
+                    lines.append(scope_relation_evidence)
                 if confirmed_filters:
                     lines.append(_format_search_filter_evidence(confirmed_filters))
                 lines.append(
@@ -2823,6 +2859,8 @@ class DeepAgentsRuntime:
                 ),
                 _format_search_taxonomy_evidence(taxonomy_constraints),
             ]
+            if scope_relation_evidence:
+                lines.append(scope_relation_evidence)
             if confirmed_filters:
                 lines.append(_format_search_filter_evidence(confirmed_filters))
             if request.scope_complete:
@@ -4985,6 +5023,36 @@ def _format_search_only_response(
                 parts.append(category.replace("_", " "))
             lines.append("- " + " — ".join(parts))
 
+    parent_relations = []
+    for group in search_groups:
+        relation = group.get("scope_relation") or {}
+        requested_type = str(
+            relation.get("requested_product_type") or ""
+        ).strip()
+        category = str(relation.get("advertised_category") or "").strip()
+        normalized = {
+            "requested_product_type": requested_type,
+            "advertised_category": category,
+        }
+        if (
+            relation.get("relation") == "model_selected_parent_category"
+            and requested_type
+            and category
+            and normalized not in parent_relations
+        ):
+            parent_relations.append(normalized)
+    if parent_relations:
+        relation_lines = [
+            (
+                f"The catalog does not advertise **{relation['requested_product_type']}** "
+                "as a separate product type. I searched the broader "
+                f"**{relation['advertised_category']}** category for the closest "
+                "options; each result keeps its actual catalog category."
+            )
+            for relation in parent_relations
+        ]
+        lines = relation_lines + [""] + lines
+
     filter_groups = _confirmed_search_filter_groups(
         result,
         request_id=request_id,
@@ -5061,6 +5129,7 @@ def _search_result_groups(result: Any, *, request_id: str) -> list[dict[str, Any
                 ).strip(),
                 "products": _product_evidence_records(content),
                 "taxonomy": _search_taxonomy_evidence(content),
+                "scope_relation": _search_scope_relation_evidence(content),
             }
         )
     return groups
@@ -5590,9 +5659,15 @@ def _customer_safe_tool_evidence(content: str) -> str:
                 "CONFIRMED_SEARCH_FILTERS: "
                 + json.dumps(confirmed_filters, sort_keys=True)
             )
+        scope_relation = _customer_safe_scope_relation(
+            content,
+            has_products=False,
+        )
+        if scope_relation:
+            lines.append(scope_relation)
         return "\n".join(lines)
     if "SEARCH_RESULT_GROUNDING_NOTE" in content:
-        return _summarize_product_evidence(
+        summary = _summarize_product_evidence(
             content,
             heading="CUSTOMER_SAFE_SEARCH_EVIDENCE",
             note=(
@@ -5606,6 +5681,13 @@ def _customer_safe_tool_evidence(content: str) -> str:
             ),
             confirmed_filters=_search_filter_evidence(content),
             taxonomy_scope=_search_taxonomy_evidence(content),
+        )
+        scope_relation = _customer_safe_scope_relation(
+            content,
+            has_products=True,
+        )
+        return "\n".join(
+            part for part in (summary, scope_relation) if part
         )
     if "PRODUCT_DETAIL_GROUNDING_NOTE" in content:
         return _summarize_product_evidence(
@@ -5673,6 +5755,44 @@ def _search_taxonomy_evidence(content: str) -> dict[str, Any]:
     """Read the advertised taxonomy marker from one search result."""
 
     return _search_json_evidence(content, _SEARCH_TAXONOMY_EVIDENCE_PREFIX)
+
+
+def _search_scope_relation_evidence(content: str) -> dict[str, Any]:
+    """Read the requested-to-advertised scope relation from one search result."""
+
+    return _search_json_evidence(
+        content,
+        _SEARCH_SCOPE_RELATION_EVIDENCE_PREFIX,
+    )
+
+
+def _customer_safe_scope_relation(
+    content: str,
+    *,
+    has_products: bool,
+) -> str:
+    """Describe one model-selected parent search without asserting subtype identity."""
+
+    relation = _search_scope_relation_evidence(content)
+    if relation.get("relation") != "model_selected_parent_category":
+        return ""
+    requested_type = str(relation.get("requested_product_type") or "").strip()
+    category = str(relation.get("advertised_category") or "").strip()
+    if not requested_type or not category:
+        return ""
+    if not has_products:
+        return (
+            f"REQUESTED_SCOPE_RELATION: {requested_type} is not separately "
+            f"advertised. The broader advertised category {category} returned "
+            "zero products for this search, so do not claim that the requested "
+            "type is absent from the whole catalog."
+        )
+    return (
+        f"REQUESTED_SCOPE_RELATION: {requested_type} is not separately "
+        f"advertised. The search used the broader advertised category {category}. "
+        "Present these as closest options and keep every returned product's "
+        "actual catalog category; do not relabel them as the requested type."
+    )
 
 
 def _search_json_evidence(content: str, prefix: str) -> dict[str, Any]:
@@ -5896,6 +6016,26 @@ def _format_search_taxonomy_evidence(taxonomy: dict[str, Any]) -> str:
     return (
         f"{_SEARCH_TAXONOMY_EVIDENCE_PREFIX} "
         + json.dumps(taxonomy, sort_keys=True, default=str)
+    )
+
+
+def _format_search_scope_relation_evidence(
+    *,
+    requested_product_type: str,
+    advertised_category: str,
+) -> str:
+    """Record a model-selected advertised parent for honest response framing."""
+
+    return (
+        f"{_SEARCH_SCOPE_RELATION_EVIDENCE_PREFIX} "
+        + json.dumps(
+            {
+                "relation": "model_selected_parent_category",
+                "requested_product_type": requested_product_type,
+                "advertised_category": advertised_category,
+            },
+            sort_keys=True,
+        )
     )
 
 

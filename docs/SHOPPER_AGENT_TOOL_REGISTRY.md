@@ -359,10 +359,14 @@ Preconditions:
   The strict handler model validates cross-field relationships, then maps valid
   values to catalog fields. The runtime does not maintain taxonomy keyword
   aliases.
-- If an explicitly requested product type cannot be mapped faithfully, the
-  agent clarifies. It does not omit the type, broaden to its parent, substitute
-  an adjacent type, or claim catalog absence. An unsupported modifier does not
-  erase an advertised type, and subjective style stays in `semantic_query`.
+- If a shopper-named type is not separately advertised, the model may select
+  one faithful advertised parent category while preserving the type in
+  `requested_product_type` and `semantic_query`. The tool emits structured
+  scope-relation evidence so the response describes returned products as
+  closest alternatives under their actual categories. If neither a direct type
+  nor one faithful parent can be selected, the agent clarifies without
+  retrieval or a catalog-absence claim. An unsupported modifier does not erase
+  an advertised type, and subjective style stays in `semantic_query`.
 - A zero-result retrieval reports only that its exact advertised taxonomy and
   filter scope returned no matches. It cannot establish absence for a different
   product type or the whole catalog.
@@ -450,8 +454,9 @@ Failure behavior:
 
 - Returns a short tool-readable failure string such as unavailable catalog,
   invalid search request, catalog failure, or no matching products.
-- When faithful taxonomy cannot be selected, the assistant asks one concise
-  clarification directly instead of calling this tool.
+- When neither a direct advertised type nor one faithful parent category can be
+  selected, the assistant asks one concise clarification directly instead of
+  calling this tool.
 - Returns without calling catalog search when a required constraint cannot be
   enforced by the active capabilities. An unadvertised must-have on a
   shopper-stated product scope fails closed even when the model uses a synonym.

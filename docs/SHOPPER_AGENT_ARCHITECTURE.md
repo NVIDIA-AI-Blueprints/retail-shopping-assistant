@@ -87,10 +87,13 @@ related constraint and `shopper_guidance` defects in that same repair result.
 This is bounded schema feedback, not semantic routing: the model operating under
 the active skill still selects the role.
 The duplicate identity is normalized taxonomy plus hard constraints, not
-semantic wording. If no faithful advertised selection can be made, the
-assistant asks one concise clarification directly without a tool call rather
-than broadening, substituting, or asserting catalog absence. An unsupported
-modifier does not erase an otherwise advertised type.
+semantic wording. A shopper-named type that is not separately advertised may
+use one model-selected faithful advertised parent category, with the original
+type retained as semantic direction and structured evidence requiring honest
+closest-alternative framing. If neither a direct advertised type nor one
+faithful parent can be selected, the assistant asks one concise clarification
+directly without a tool call rather than substituting or asserting catalog
+absence. An unsupported modifier does not erase an otherwise advertised type.
 
 The detailed contracts and implementation live in:
 
@@ -140,8 +143,11 @@ The detailed contracts and implementation live in:
    makes no catalog, embedding, or separate model call. Before
    retrieval, every text search includes one nonempty, product-agnostic
    `shopper_guidance` sentence authored under the active skill; image-only search
-   uses empty guidance. If faithful taxonomy cannot be selected, the assistant
-   asks one concise clarification directly and makes no search-tool call. Search
+   uses empty guidance. A shopper-named type not separately advertised may use
+   one model-selected faithful advertised parent category; the search result
+   records that relation so synthesis cannot relabel the returned products.
+   If neither a direct type nor one faithful parent can be selected, the
+   assistant asks one concise clarification directly and makes no search-tool call. Search
    requests pass through the capability-derived schema and deterministic
    validation. Tool calls are
    sequential and duplicate taxonomy-plus-hard-constraint scopes are rejected.

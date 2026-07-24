@@ -177,9 +177,14 @@ that cannot be enforced, and sends `queries=[semantic_query]` plus the validated
 hard filters. `shopper_guidance` remains in the chain tool-result boundary and
 is not sent to the catalog service. `search_catalog` itself remains a pure read.
 
-If a shopper-named type cannot be mapped faithfully to advertised taxonomy, the
-assistant asks one concise clarification without calling the search tool,
-substituting an adjacent type, or claiming catalog absence. An unsupported
+If a shopper-named type is not separately advertised but the model selects one
+faithful advertised parent category, the chain searches that category once,
+preserves the shopper's type as semantic direction, and emits structured
+scope-relation evidence. Grounding must disclose the broader search and keep
+every product's actual catalog category. If neither a direct type nor one
+faithful parent can be selected, the assistant asks one concise clarification
+without calling the search tool, substituting an adjacent type, or claiming
+catalog absence. An unsupported
 modifier does not erase an advertised type. Unsupported direct must-haves use
 `unadvertised_requirements`, while subjective style and other soft preferences
 remain in the taxonomy-independent `semantic_query`. Malformed or nonempty

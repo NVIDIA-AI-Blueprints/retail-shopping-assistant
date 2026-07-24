@@ -33,9 +33,11 @@ The model-facing tool exposes one flat executable search schema:
 `required_constraints`, `scope_complete`, and optional `search_mode`. Cached
 Catalog capabilities supply its exact taxonomy values, hard-filter properties
 and enum values, typed numeric ranges, and search modes. It exposes neither a
-clarification branch nor a catalog-absence result. If faithful taxonomy cannot
-be selected, the assistant asks one concise clarification directly without
-calling the tool. The generated schema deliberately omits cross-field
+clarification branch nor a catalog-absence result. A shopper-named type not
+separately advertised may use one model-selected faithful advertised parent
+category while retaining the type as semantic direction. If neither a direct
+type nor one faithful parent can be selected, the assistant asks one concise
+clarification directly without calling the tool. The generated schema deliberately omits cross-field
 validators, and the handler applies the existing strict semantic search model.
 For every text search,
 `requested_product_type` is the shortest product noun or true umbrella from the
@@ -55,9 +57,12 @@ Each search accepts at most one category. When a broad request names no concrete
 type, the model selects exactly one advertised subcategory as the focused
 starting role and names it in `requested_product_type`. That open-role path is
 forbidden when the shopper named the role's product type, including an
-alternative, confirmation, comparison, or follow-up. When no faithful advertised selection can be made,
-the assistant asks one concise clarification directly without a tool call
-rather than broadening, substituting, or asserting catalog absence. An
+alternative, confirmation, comparison, or follow-up. A shopper-named type that
+is not separately advertised may use one model-selected faithful advertised
+parent category; results remain closest alternatives under their actual
+catalog types. When neither a direct type nor one faithful parent can be
+selected, the assistant asks one concise clarification directly without a tool
+call rather than substituting or asserting catalog absence. An
 unsupported modifier does not erase an advertised type, while
 subjective style remains semantic direction. Product types never belong in
 `unadvertised_requirements`.
@@ -307,8 +312,11 @@ successful response for its process lifetime. Every agent catalog call supplies
 one flat executable search with one semantic query, required pre-retrieval
 product-agnostic `shopper_guidance`, product noun/umbrella
 `requested_product_type` provenance, taxonomy, and non-taxonomy constraints.
-When faithful taxonomy cannot be selected, the assistant asks one concise
-clarification directly and makes no catalog call.
+When a shopper-named type is not separately advertised, one model-selected
+faithful advertised parent category may be searched with an explicit
+closest-alternative response caveat. When neither a direct type nor one faithful
+parent can be selected, the assistant asks one concise clarification directly
+and makes no catalog call.
 Each call accepts at most one category. Executable text search requires at least
 one advertised category or subcategory; `requested_product_type` is `null` and
 both taxonomy arrays are empty for image-only search. Generic taxonomy roles map

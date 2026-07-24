@@ -5,10 +5,18 @@
 
 from __future__ import annotations
 
-CATALOG_SEARCH_RULES = """- Call search_catalog_tool only when exact advertised
-  taxonomy values faithfully represent the shopper's product type. If they do
-  not, ask one concise clarification question directly and wait for the shopper;
-  do not call the tool, substitute another product type, or claim catalog absence.
+CATALOG_SEARCH_RULES = """- Call search_catalog_tool when exact advertised
+  taxonomy values faithfully represent the shopper's product type.
+- If the shopper names a product type that is not separately advertised but the
+  model determines that one faithful advertised parent category exists, select
+  only that broader category. Keep the shopper's product type in
+  `requested_product_type` and `semantic_query`, leave subcategory empty, and
+  never put a product type in `unadvertised_requirements`. Returned products are
+  closest alternatives under their actual catalog types, not confirmed instances
+  of the shopper's unadvertised type.
+- If neither a direct advertised type nor one faithful parent category exists,
+  ask one concise clarification question directly and wait for the shopper; do
+  not call the tool, substitute another product type, or claim catalog absence.
 - Different wording is not a reason to ask. When the shopper names a true
   umbrella, search every advertised value that is genuinely a kind of that
   umbrella. For example, skirts can satisfy bottoms; dresses cannot.

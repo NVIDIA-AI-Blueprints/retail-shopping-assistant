@@ -120,9 +120,12 @@ The schema-driven catalog refactor is implemented:
   `semantic_query`, product-agnostic `shopper_guidance`, nullable
   `requested_product_type`, capability-derived `taxonomy` and
   `required_constraints`, `scope_complete`, and optional `search_mode`. It has
-  no model-authored taxonomy relationship or catalog-absence field. If faithful
-  taxonomy cannot be selected, the assistant asks one concise clarification
-  directly without a tool call or absence claim. The
+  no model-authored taxonomy relationship or catalog-absence field. A
+  shopper-named type that is not separately advertised may use one
+  model-selected faithful advertised parent category; the type remains semantic
+  direction and structured response evidence preserves the broader-scope
+  caveat. If neither a direct type nor one faithful parent can be selected, the
+  assistant asks one concise clarification directly without a tool call or absence claim. The
   search schema is generated from cached capabilities with exact taxonomy
   values, hard-filter properties and enum values, typed numeric ranges, and
   search-mode values. It omits cross-field validators, while the handler applies
@@ -160,11 +163,15 @@ The schema-driven catalog refactor is implemented:
   names, infers owning categories for a valid subcategory-only selection,
   rejects incompatible category/subcategory selections, and applies the result
   as deterministic hard filters;
-- when faithful advertised taxonomy cannot be selected, the assistant asks one
-  concise clarification directly without calling `search_catalog_tool`; it does
-  not broaden, substitute, or assert absence. An unsupported modifier does not
-  erase an advertised type, while subjective style remains semantic direction.
-  A product type never belongs in `unadvertised_requirements`;
+- a shopper-named type that is not separately advertised may use one
+  model-selected faithful advertised parent category. The category is the only
+  taxonomy filter, the original type remains semantic direction, and returned
+  products retain their actual categories as closest alternatives. If neither a
+  direct type nor one faithful parent can be selected, the assistant asks one
+  concise clarification without retrieval or an absence claim. An unsupported
+  modifier does not erase an advertised type, while subjective style remains
+  semantic direction. A product type never belongs in
+  `unadvertised_requirements`;
 - duplicate search identity is normalized taxonomy plus hard constraints, not
   semantic wording. Repeating that identity is stopped even when the query is
   paraphrased. A shopper-named product scope also executes at most once per
@@ -285,6 +292,13 @@ The newest focused gate is recorded first. Older Slice 0, Slice 2, and Slice 3
 results remain below as comparison points; generated quality and timing
 artifacts stay in the required local archive rather than versioned source.
 
+- Parent-category alternative gate (2026-07-24): focused catalog-scope, skill,
+  request-validation, evidence, and deterministic-fallback tests pass for a
+  shopper-named subtype such as sneakers searched once under a model-selected
+  advertised parent such as footwear. The semantic query remains unchanged, no
+  subtype hard filter is invented, and returned flats or sandals retain their
+  actual categories with an explicit closest-alternative caveat. No catalog
+  service or catalog data changed.
 - Evidence-honesty gate (2026-07-24): focused search-only grounding and
   deterministic-fallback coverage requires unconfirmed functional properties
   to remain explicit and prevents candidates from being presented as proven

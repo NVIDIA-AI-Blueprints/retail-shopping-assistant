@@ -29,9 +29,11 @@ Current constraints:
   `semantic_query`, `shopper_guidance`, `requested_product_type`, `taxonomy`,
   `required_constraints`, `scope_complete`, and optional `search_mode`. It has
   no model-authored taxonomy relationship, clarification branch, or
-  catalog-absence result. If faithful advertised taxonomy cannot be selected,
-  the assistant asks one concise clarification directly without calling the
-  tool.
+  catalog-absence result. A shopper-named type not separately advertised may
+  use one model-selected faithful advertised parent category while preserving
+  the type as semantic direction. If neither a direct type nor one faithful
+  parent can be selected, the assistant asks one concise clarification directly
+  without calling the tool.
 - The Deep Agents adapter exposes eleven thin request-scoped shopping tools
   over deterministic catalog, conversation-product, cart, policy,
   availability, and promotions functions, plus one internal skill-activation
@@ -97,8 +99,11 @@ Current constraints:
   validates and maps the selection but does not interpret shopper language.
   Each search covers at most one category. A genuinely open role selects and
   names exactly one advertised subcategory. A shopper-named role retains the
-  shopper's noun or umbrella. If no faithful advertised selection can be made,
-  the assistant clarifies without retrieval, substitution, or an absence claim.
+  shopper's noun or umbrella. A type not separately advertised may use one
+  model-selected faithful advertised parent category and remains semantic
+  direction rather than a claimed catalog type. If neither a direct type nor
+  one faithful parent can be selected, the assistant clarifies without
+  retrieval, substitution, or an absence claim.
   Unsupported modifiers do not erase an advertised type. Directly stated
   must-haves absent from the generated schema remain in
   `unadvertised_requirements` and fail closed instead of becoming semantic
@@ -430,9 +435,12 @@ synthesis. Completed turns receive one tools-disabled synthesis from collected
 evidence. Search-only drafts then pass through grounding, with deterministic
 rendering as fail-closed fallback.
 
-The search contract has two explicit no-search boundaries. When a concrete
-requested type has no faithful advertised taxonomy, the assistant asks one
-concise clarification directly and performs no retrieval. An unsupported
+The search contract has two explicit no-search boundaries. A concrete
+shopper-named type not separately advertised may first use one model-selected
+faithful advertised parent category, with results framed as closest alternatives
+under their actual catalog types. When neither a direct type nor one faithful
+parent can be selected, the assistant asks one concise clarification directly
+and performs no retrieval. An unsupported
 modifier does not erase an otherwise advertised type. Every
 unadvertised requirement on a shopper-stated product scope is returned as
 unenforceable before retrieval, including when the model uses a synonym rather
@@ -799,9 +807,12 @@ Implications:
   Alternatives, confirmations, comparisons, and follow-ups count as named
   types. Invalid open-role provenance is rejected rather than silently
   reinterpreted.
-- A product type with no faithful advertised taxonomy prompts one concise
-  clarification without a tool call. An unenforceable direct must-have also
-  performs no catalog retrieval. Unsupported modifiers do not erase an
+- A product type not separately advertised may use one model-selected faithful
+  advertised parent category, with its original noun retained as semantic
+  direction and every result kept under its actual catalog type. If neither a
+  direct type nor one faithful parent can be selected, the assistant asks one
+  concise clarification without a tool call. An unenforceable direct must-have
+  also performs no catalog retrieval. Unsupported modifiers do not erase an
   advertised type, and subjective style stays semantic.
 - Duplicate search identity is normalized taxonomy plus hard constraints;
   changing only semantic wording cannot repeat a retrieval.

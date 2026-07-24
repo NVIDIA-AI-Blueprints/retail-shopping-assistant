@@ -237,10 +237,13 @@ combined with `outfit-styling`.
   forbidden when the shopper named the role's type, including an alternative,
   confirmation, comparison, or follow-up. Invalid open-role provenance is
   rejected rather than silently reinterpreted.
-- Clarifies when an explicitly requested product type cannot be mapped
-  faithfully. Clarification performs no retrieval and makes no catalog-absence
-  claim; the skill does not broaden to a parent, omit the type, or search an
-  adjacent type. An unsupported modifier does not erase an advertised type.
+- When a shopper-named type is not separately advertised, permits one
+  model-selected faithful advertised parent category while retaining the type
+  in `requested_product_type` and semantic direction. Results remain closest
+  alternatives under their actual catalog categories. If neither a direct type
+  nor one faithful parent can be selected, clarification performs no retrieval
+  and makes no catalog-absence claim. An unsupported modifier does not erase an
+  advertised type.
 - Separates request lanes: unresolved product type to clarification, advertised
   type plus unenforceable must-have to
   `unadvertised_requirements`, and preference or styling context to

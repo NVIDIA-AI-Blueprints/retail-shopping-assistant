@@ -798,10 +798,14 @@ role and names it in `requested_product_type`. That open-role path is forbidden
 when the shopper named the role's type, including an alternative, confirmation,
 comparison, or follow-up. Invalid open-role provenance is rejected rather than
 silently reinterpreted.
-If faithful advertised taxonomy cannot be selected, the assistant asks one
-concise clarification directly without calling the tool. It does not broaden,
-substitute, or assert catalog absence. An unsupported modifier does not erase
-an advertised type, and subjective style remains semantic. The duplicate-search
+If a shopper-named type is not separately advertised, the model may select one
+faithful advertised parent category while preserving the original type in
+`requested_product_type` and the semantic query. Returned products keep their
+actual catalog categories and are framed as closest alternatives. If neither a
+direct type nor one faithful parent can be selected, the assistant asks one
+concise clarification directly without calling the tool or asserting catalog
+absence. An unsupported modifier does not erase an advertised type, and
+subjective style remains semantic. The duplicate-search
 identity is normalized taxonomy plus hard constraints, so paraphrasing cannot
 repeat a retrieval while a genuinely different hard-filter scope may run within
 `max_catalog_searches_per_turn`. The chain maps generic category/subcategory

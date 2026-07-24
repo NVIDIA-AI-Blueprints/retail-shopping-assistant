@@ -98,8 +98,11 @@ active outfit-building or style-led single-piece thread remains an
 `outfit-styling` task.
 `search_catalog_tool` exposes one flat, capability-derived executable search
 schema. The model cannot submit a clarification or catalog-absence result
-through that tool: it must either select faithful advertised values or ask one
-concise clarification directly without a tool call.
+through that tool: it must select faithful advertised values, use one faithful
+advertised parent category for a shopper-named type that is not separately
+advertised, or ask one concise clarification directly without a tool call.
+Parent-category results are explicitly presented as closest alternatives under
+their actual catalog categories.
 When a catalog search needs repair, the runtime assigns one total repair to the
 full normalized, model-authored `requested_product_type` phrase. It does not
 reconstruct alternatives, negation, ordering, or comparisons from shopper
@@ -227,9 +230,13 @@ guides.
    sentence authored before retrieval under the active skill to connect the
    selected role to the shopper's goal or direct antecedent. Empty guidance is
    valid only for image-only search.
-5. If faithful advertised values cannot be selected for an explicitly requested
-   type, the assistant asks one concise clarification directly. It makes no tool
-   call, retrieval, or catalog-absence claim. An unsupported
+5. If a shopper-named type is not separately advertised but one faithful
+   advertised parent category can be selected, the model searches that category
+   once while preserving the shopper's type as semantic direction. The response
+   discloses the broader scope and keeps each result's actual category. If
+   neither a direct type nor one faithful parent can be selected, the assistant
+   asks one concise clarification directly. It makes no tool call, retrieval, or
+   catalog-absence claim. An unsupported
    modifier does not erase an advertised product type. A directly stated
    must-have missing from the generated schema is placed in
    `unadvertised_requirements`, while preference, styling, occasion, weather,

@@ -18,7 +18,8 @@ Use for search, browse, and filter requests. Do not expose skill names or tool n
 
 ## Request Lanes
 
-- If you cannot select faithful advertised taxonomy for a shopper-named product type, ask one concise clarification directly. Do not call `search_catalog_tool`, retrieve an adjacent product type, or claim the requested type is absent.
+- If a shopper-named product type is not separately advertised but one advertised category is a faithful broader parent, search that category once and present every result under its actual catalog type as a closest alternative. Keep the shopper's type in `requested_product_type` and `semantic_query`; never put it in `unadvertised_requirements`.
+- If neither a direct advertised type nor one faithful parent category can be selected, ask one concise clarification directly. Do not call `search_catalog_tool`, retrieve an arbitrary adjacent type, or claim the requested type is absent.
 - If the product type is advertised but a directly stated must-have has no exact advertised filter property or allowed value, keep the faithful taxonomy and put only that attribute in `unadvertised_requirements`.
 - If occasion, weather, style, an anchor relationship, or another preference guides ranking rather than eligibility, keep it only in `semantic_query`.
 - A product type never belongs in `unadvertised_requirements`, and an attribute or preference never prevents an otherwise faithful taxonomy search.
@@ -53,7 +54,7 @@ Use for search, browse, and filter requests. Do not expose skill names or tool n
   clarification; never guess, search for a substitute, or mutate the cart.
 - When one selected taxonomy value directly represents the requested role, `requested_product_type` must name that value. When a true shopper-named umbrella spans multiple advertised children, include every selected value that is genuinely a kind of that umbrella. The semantic query may focus on soft ranking direction.
 - An objective attribute that defines the requested products is a must-have even when the shopper does not say the words "must have." For example, "Do you have water-resistant bags?" makes water resistance required. Subjective recommendation adjectives always remain semantic ranking direction.
-- Start with one focused catalog search using exact advertised values that faithfully represent the shopper's product type. If that selection would require guessing, ask one concise clarification directly without calling the tool. For a true umbrella or explicit alternatives, include every faithful advertised child in the same search. Never substitute a parent, sibling, or adjacent type. Do not fan out with synonym queries for the same scope.
+- Start with one focused catalog search using exact advertised values that faithfully represent the shopper's product type. If the type is not separately advertised and one advertised category is its faithful broader parent, select only that category and keep the type as semantic ranking direction. If either choice would require guessing, ask one concise clarification directly without calling the tool. For a true umbrella or explicit alternatives, include every faithful advertised child in the same search. Never substitute a sibling or arbitrary adjacent type. Do not fan out with synonym queries for the same scope.
 - Set `requested_product_type` to the shortest product noun or umbrella. Exclude color, material, fit, occasion, weather, and style modifiers. For a genuinely open role, use the one advertised subcategory chosen for that role. Use null only for image-only search.
 - For one requested product role, make one inclusive search using only faithful advertised types for that role. Do not spend unused search budget on adjacent categories or one-piece substitutes.
 - Each search covers at most one catalog category. Include all faithful advertised subtypes for the requested role in that call, but do not mix unrelated categories in one retrieval.
@@ -71,7 +72,7 @@ Use for search, browse, and filter requests. Do not expose skill names or tool n
 ## Filter Discipline
 
 - Interpret the shopper's meaning against the catalog capabilities and choose only exact advertised taxonomy values that faithfully match. Generic product language is not taxonomy evidence.
-- If an explicitly requested product type cannot be mapped faithfully, ask the shopper one concise clarification without calling the search tool. Do not broaden to a parent category, omit the type, silently substitute another type, or claim catalog absence.
+- If an explicitly requested product type is not separately advertised, use one model-selected advertised parent category only when it is a faithful broader scope. Keep the requested type explicit, label results with their actual catalog categories, and say they are closest alternatives. If no faithful parent can be selected, ask one concise clarification without calling the search tool; never omit the type, silently choose a sibling, or claim catalog absence.
 - Use only advertised filter values from the catalog capabilities.
 - Subjective style or vibe language belongs in the semantic query, not `unadvertised_requirements`. That field is only for directly stated objective product requirements the catalog cannot enforce.
 - Preserve every explicit must-have. Use its exact advertised property in `required_constraints`, or `unadvertised_requirements` when the property is absent; let deterministic validation report what the catalog cannot enforce rather than omitting or weakening it.

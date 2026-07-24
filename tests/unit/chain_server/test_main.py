@@ -1764,6 +1764,7 @@ class TestDeepAgentsRuntimeRefs:
         assert schema["properties"]["taxonomy_status"]["enum"] == [
             "exact_requested_type",
             "member_of_requested_umbrella",
+            "parent_category_alternative",
             "agent_selected_type",
             "no_direct_catalog_match",
             "image_only",
@@ -1792,6 +1793,12 @@ class TestDeepAgentsRuntimeRefs:
         assert "no_direct_catalog_match" not in schema["properties"]["taxonomy"][
             "description"
         ]
+        assert "not separately advertised" in schema["properties"]["taxonomy"][
+            "description"
+        ]
+        assert "broader advertised parent category" in schema["properties"][
+            "taxonomy"
+        ]["description"]
         assert set(taxonomy_schema["required"]) == {"category", "subcategory"}
         assert "search is image-only" in taxonomy_schema["properties"][
             "category"
@@ -3244,24 +3251,54 @@ class TestDeepAgentsRuntimeRefs:
         unresolved_type_tools["activate_shopper_skills_tool"](
             skill_names=["product-discovery"],
         )
+        misplaced_product_type = unresolved_type_tools[
+            "search_catalog_tool"
+        ](
+            semantic_query="casual sneakers for a sporty casual look",
+            shopper_guidance=(
+                "Searching broader footwear for the closest casual options."
+            ),
+            requested_product_type="sneakers",
+            taxonomy={"category": ["footwear"], "subcategory": []},
+            required_constraints={
+                "unadvertised_requirements": ["sneakers"],
+            },
+        )
+        assert misplaced_product_type.startswith(
+            runtime_mod.SEARCH_VALIDATION_ERROR_PREFIX
+        )
+        assert "Product types never belong in unadvertised_requirements" in (
+            misplaced_product_type
+        )
+        assert "preserve the selected advertised parent category" in (
+            misplaced_product_type
+        )
+        assert captured_plan.get("calls", 0) == 0
         unresolved_type_result = unresolved_type_tools[
             "search_catalog_tool"
         ](
             semantic_query="casual sneakers for a sporty casual look",
             shopper_guidance=(
-                "Find casual sneakers to complete a sporty casual look."
+                "Searching broader footwear for the closest casual options."
             ),
             requested_product_type="sneakers",
-            taxonomy={"category": [], "subcategory": []},
+            taxonomy={"category": ["footwear"], "subcategory": []},
             required_constraints={},
         )
-        assert unresolved_type_result.startswith(
-            runtime_mod.SEARCH_VALIDATION_ERROR_PREFIX
+        assert "SEARCH_RESULT_GROUNDING_NOTE" in unresolved_type_result
+        assert (
+            'SEARCH_SCOPE_RELATION_EVIDENCE: {"advertised_category": '
+            '"footwear", "relation": "model_selected_parent_category", '
+            '"requested_product_type": "sneakers"}'
+            in unresolved_type_result
         )
-        assert "requires an advertised category or subcategory" in (
-            unresolved_type_result
-        )
-        assert captured_plan.get("calls", 0) == 0
+        assert captured_plan["plan"].semantic_queries == [
+            "casual sneakers for a sporty casual look"
+        ]
+        assert captured_plan["plan"].hard_filters["department"] == ["footwear"]
+        assert "product_type" not in captured_plan["plan"].hard_filters
+        assert captured_plan.get("calls", 0) == 1
+        captured_plan["calls"] = 0
 
         no_direct_to_retrieval_state = State(
             user_id=111,
@@ -5679,6 +5716,63 @@ class TestDeepAgentsRuntimeRefs:
         assert "weather performance remains unverified" in response
         assert "unless listed above as a catalog-confirmed filter" in response
 
+    def test_search_only_fallback_discloses_parent_category_alternatives(
+        self,
+        base_config,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+        state = State(
+            user_id=111,
+            query="What casual sneakers do you have?",
+            product_results=[
+                {
+                    "product_id": "flat-1",
+                    "display_name": "Everyday Flat",
+                    "category": "flats",
+                    "price": {"amount": 49.0, "currency": "USD"},
+                }
+            ],
+        )
+        result = {
+            "messages": [
+                {"role": "user", "content": "REQUEST ID: current-request"},
+                {
+                    "role": "tool",
+                    "name": "search_catalog_tool",
+                    "content": (
+                        "SEARCH_RESULT_GROUNDING_NOTE: grounded.\n"
+                        "SEARCH_SCOPE_RELATION_EVIDENCE: "
+                        '{"advertised_category": "footwear", '
+                        '"relation": "model_selected_parent_category", '
+                        '"requested_product_type": "sneakers"}\n'
+                        'SEARCH_GUIDANCE_EVIDENCE: {"text": "Use casual '
+                        'footwear for a sporty direction."}\n'
+                        "SEARCH_TAXONOMY_EVIDENCE: "
+                        '{"department": ["footwear"]}\n'
+                        "PRODUCT_REF: flat-1\n"
+                        "NAME: Everyday Flat\n"
+                        "CATEGORY: flats\n"
+                        "PRICE: $49.00 USD\n"
+                        "SEARCH_SCOPE_COMPLETE: Answer now."
+                    ),
+                },
+            ]
+        }
+
+        response = runtime._rewrite_search_only_response(
+            state,
+            result,
+            request_id="current-request",
+        )
+
+        assert "does not advertise **sneakers** as a separate product type" in response
+        assert "broader **footwear** category" in response
+        assert "closest options" in response
+        assert "**Everyday Flat** — $49.00 USD — flats" in response
+        assert "Everyday Flat** — $49.00 USD — sneakers" not in response
+
     def test_multi_search_fallback_preserves_scoped_evidence_without_model(
         self,
         base_config,
@@ -6211,6 +6305,9 @@ class TestDeepAgentsRuntimeRefs:
         assert "Do not omit or override a confirmed filter" in (
             runtime_mod._GROUNDING_EDITOR_SYSTEM_PROMPT
         )
+        assert "requested type is not separately advertised" in (
+            runtime_mod._GROUNDING_EDITOR_SYSTEM_PROMPT
+        )
         assert "classify or group candidates by" in (
             runtime_mod._GROUNDING_EDITOR_SYSTEM_PROMPT
         )
@@ -6227,6 +6324,47 @@ class TestDeepAgentsRuntimeRefs:
         assert "Gazelle Gingham Dress | category: dress | price: $149.99 USD" in (
             evidence
         )
+
+    def test_collect_search_evidence_preserves_parent_category_caveat(
+        self,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        result = {
+            "messages": [
+                {
+                    "role": "tool",
+                    "content": (
+                        "SEARCH_RESULT_GROUNDING_NOTE: Use search results.\n"
+                        "SEARCH_SCOPE_RELATION_EVIDENCE: "
+                        '{"advertised_category": "footwear", '
+                        '"relation": "model_selected_parent_category", '
+                        '"requested_product_type": "sneakers"}\n'
+                        "SEARCH_TAXONOMY_EVIDENCE: "
+                        '{"department": ["footwear"]}\n'
+                        "PRODUCT_REF: prod_flat\n"
+                        "NAME: Everyday Flat\n"
+                        "CATEGORY: flats\n"
+                        "PRICE: $49.00 USD\n"
+                        "PRODUCT_REF: prod_sandal\n"
+                        "NAME: Weekend Sandal\n"
+                        "CATEGORY: sandals\n"
+                        "PRICE: $59.00 USD"
+                    ),
+                }
+            ]
+        }
+
+        evidence = runtime_mod._collect_tool_grounding_evidence(
+            result,
+            max_chars=12000,
+        )
+
+        assert "sneakers is not separately advertised" in evidence
+        assert "broader advertised category footwear" in evidence
+        assert "keep every returned product's actual catalog category" in evidence
+        assert "Everyday Flat | category: flats" in evidence
+        assert "Weekend Sandal | category: sandals" in evidence
 
     def test_skill_activation_content_is_not_commerce_grounding_evidence(
         self,

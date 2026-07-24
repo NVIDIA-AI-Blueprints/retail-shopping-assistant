@@ -207,7 +207,11 @@ responses receive one tools-disabled synthesis under the active skill and then
 the grounding editor. Product-agnostic guidance and static skill
 `response_guidance` support deterministic fallback, which lists all returned candidates, adds a
 neutral continuation for partial successful evidence, and groups each search's
-guidance and confirmed filters with its originating products. A zero-result response
+guidance and confirmed filters with its originating products. When the requested
+outcome depends on a functional product property absent from evidence, grounding
+must disclose the gap and frame candidates as the closest catalog or styling
+direction rather than as proven suitable; deterministic fallback carries the
+same generic unverified-property disclosure. A zero-result response
 retains its exact advertised taxonomy and confirmed filters, so it cannot
 establish absence for another product type or the whole catalog. The grounding
 editor receives only the remaining shared model-stage deadline. A timeout

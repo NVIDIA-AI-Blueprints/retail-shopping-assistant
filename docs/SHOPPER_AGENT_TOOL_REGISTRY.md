@@ -186,7 +186,11 @@ model-authored semantic query used as an independent internal ranking preference
 plus required pre-retrieval `shopper_guidance` authored under the active skill.
 A closed search gets one tools-disabled synthesis under that skill and then the
 grounding editor. Static skill `response_guidance` and pre-retrieval guidance
-support deterministic fallback. Results, taxonomy, filters, semantic query,
+support deterministic fallback. If the requested outcome depends on a
+functional product property absent from evidence, grounding discloses the gap
+and frames candidates as the closest catalog or styling direction rather than
+as proven suitable; deterministic fallback makes the same generic disclosure.
+Results, taxonomy, filters, semantic query,
 and drafts are not converted into evidence after retrieval. Before fallback
 guidance is serialized as shopper-facing text, the runtime replaces a
 sentence containing `waterproof`, `water-resistant`/`water resistant`,
@@ -408,7 +412,10 @@ Outputs:
   product evidence. For a completed search-only response, the runtime runs one
   tools-disabled synthesis under the active skill and grounds the draft against
   tool-role evidence. Static skill `response_guidance` and pre-retrieval guidance
-  support deterministic fallback. Prohibited outdoor/weather guarantee wording
+  support deterministic fallback. Unconfirmed functional properties remain
+  explicit in both grounded synthesis and deterministic fallback, which frames
+  the products as the closest direction rather than as proven suitable.
+  Prohibited outdoor/weather guarantee wording
 is first replaced with neutral selected-role guidance in that fallback; this does not
 alter the query, taxonomy, constraints, or retrieval. This includes
 outdoor-surface or outdoor-walking claims and "handle rain," "work well for

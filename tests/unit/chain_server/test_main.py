@@ -4520,6 +4520,9 @@ class TestDeepAgentsRuntimeRefs:
         ) in editor_prompt
         assert "DRAFT RESPONSE" in editor_prompt
         assert "will not sink in wet grass" in editor_prompt
+        editor_system_prompt = editor_calls[0][0]["content"]
+        assert "say that property is not confirmed" in editor_system_prompt
+        assert "closest catalog or styling direction" in editor_system_prompt
         assert state.model_usage["app_llm_grounding_editor"]["status"] == "used"
 
     @pytest.mark.asyncio
@@ -5615,6 +5618,66 @@ class TestDeepAgentsRuntimeRefs:
         )
         assert "Styling direction:" not in response
         assert "This is a partial result set." in response
+
+    def test_search_only_fallback_discloses_unverified_functional_goal(
+        self,
+        base_config,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+        monkeypatch.setattr(
+            runtime,
+            "_create_chat_model",
+            lambda: pytest.fail("fallback formatting must not call the model"),
+        )
+        state = State(
+            user_id=111,
+            query="Show me a whole outfit I can wear in wet weather.",
+            product_results=[
+                {
+                    "product_id": "dress-1",
+                    "display_name": "Everyday Dress",
+                    "category": "dresses",
+                    "price": {"amount": 69.0, "currency": "USD"},
+                }
+            ],
+            agent_diagnostics={
+                "skill_files_read": ["/shopper/outfit-styling/SKILL.md"]
+            },
+        )
+        result = {
+            "messages": [
+                {"role": "user", "content": "REQUEST ID: current-request"},
+                {
+                    "role": "tool",
+                    "name": "search_catalog_tool",
+                    "content": (
+                        "SEARCH_RESULT_GROUNDING_NOTE: grounded.\n"
+                        'SEARCH_GUIDANCE_EVIDENCE: {"text": "Here is a practical '
+                        'styling direction for wet weather."}\n'
+                        "SEARCH_TAXONOMY_EVIDENCE: "
+                        '{"category": ["apparel"], "subcategory": ["dresses"]}\n'
+                        "PRODUCT_REF: dress-1\n"
+                        "NAME: Everyday Dress\n"
+                        "CATEGORY: dresses\n"
+                        "PRICE: $69.00 USD\n"
+                        "SEARCH_SCOPE_COMPLETE: Answer now."
+                    ),
+                },
+            ]
+        }
+
+        response = runtime._rewrite_search_only_response(
+            state,
+            result,
+            request_id="current-request",
+        )
+
+        assert "**Everyday Dress** — $69.00 USD — dresses" in response
+        assert "weather performance remains unverified" in response
+        assert "unless listed above as a catalog-confirmed filter" in response
 
     def test_multi_search_fallback_preserves_scoped_evidence_without_model(
         self,

@@ -304,6 +304,12 @@ Rules:
 - Material, care, dimensions, pockets, closures, fit, comfort, and outdoor
   practicality claims require matching product-detail evidence and a direct
   shopper need for that fact.
+- If the shopper's requested outcome depends on a material, fit, comfort,
+  durability, care, weather, or other functional property that TOOL EVIDENCE
+  does not confirm, say that property is not confirmed. Frame the candidates as
+  the closest catalog or styling direction, not as complete, suitable, ready,
+  or proven for that outcome. Keep any missing functional element explicit
+  without inventing a product.
 - Group claims such as "all are maxi length", "both are cotton", "the lightest",
   "most polished", or "best for heat" require product-detail evidence for every
   item included in that claim. Remove the claim if any item lacks that support.
@@ -5024,8 +5030,10 @@ def _format_search_only_response(
         (
             "",
             (
-                "Want a closer comparison? I can verify material, construction, "
-                "length, fit, care, or weather performance for a specific option."
+                "These candidates were ranked toward your requested direction. "
+                "Product-specific material, construction, length, fit, comfort, "
+                "care, or weather performance remains unverified unless listed "
+                "above as a catalog-confirmed filter."
             ),
         )
     )

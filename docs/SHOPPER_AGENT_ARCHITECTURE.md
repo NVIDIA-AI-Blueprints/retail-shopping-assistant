@@ -231,7 +231,12 @@ The detailed contracts and implementation live in:
    search-only turns, the runtime runs one final tools-disabled synthesis under
    the active skill, then grounds that draft against tool-role evidence. If the
    draft or editor is unavailable, pre-retrieval `shopper_guidance` and static
-   skill `response_guidance` feed deterministic fallback. Before fallback
+   skill `response_guidance` feed deterministic fallback. When the requested
+   outcome depends on a material, fit, comfort, durability, care, weather, or
+   other functional property absent from evidence, grounding must disclose the
+   gap and present candidates as the closest catalog or styling direction, not
+   as proven suitable. Deterministic fallback makes the same generic
+   unverified-property disclosure. Before fallback
    guidance is serialized, a narrow scrub replaces documented unsupported
    outdoor/weather guarantee terms with neutral selected-role guidance. It does
    not change the semantic query, taxonomy, constraints, or executed search.

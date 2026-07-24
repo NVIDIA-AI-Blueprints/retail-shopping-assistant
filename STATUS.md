@@ -47,7 +47,10 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   `shopper_guidance` authored under the active skill. Completed successful
   search-only turns receive one tools-disabled synthesis under that skill and
   then the grounding editor; deterministic candidate formatting remains the
-  fail-closed fallback when synthesis or editing cannot produce an answer. Selection and
+  fail-closed fallback when synthesis or editing cannot produce an answer.
+  Grounding now requires an explicit gap when the requested outcome depends on
+  a functional product property absent from evidence, and deterministic
+  fallback carries the same generic unverified-property disclosure. Selection and
   response metadata are regenerated from current files rather than retained in
   the request checkpoint;
 - the runtime has an eleven-tool shopper registry plus one internal skill
@@ -282,6 +285,11 @@ The newest focused gate is recorded first. Older Slice 0, Slice 2, and Slice 3
 results remain below as comparison points; generated quality and timing
 artifacts stay in the required local archive rather than versioned source.
 
+- Evidence-honesty gate (2026-07-24): focused search-only grounding and
+  deterministic-fallback coverage requires unconfirmed functional properties
+  to remain explicit and prevents candidates from being presented as proven
+  suitable for the requested outcome. No catalog request or ranking behavior
+  changed.
 - Three-review-slice gate (2026-07-24): the durable prior-skill hint,
   empty-editor fail-closed response, and diagnostics/network-default hardening
   passed an 18-test focused pre-commit gate. Changed-file Ruff,

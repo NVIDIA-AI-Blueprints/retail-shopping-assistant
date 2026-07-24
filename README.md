@@ -270,7 +270,12 @@ For a completed successful search-only turn, the runtime allows one final
 tools-disabled synthesis under the active skill and then grounds that draft
 against tool-role evidence. The pre-retrieval `shopper_guidance` and active
 skill's static `response_guidance` support deterministic fallback when synthesis
-or editing cannot produce an answer. Before fallback guidance is serialized, a
+or editing cannot produce an answer. If the shopper's goal depends on a
+material, fit, comfort, durability, care, weather, or other functional property
+that the evidence does not confirm, final grounding states that gap and presents
+the candidates as the closest catalog or styling direction rather than as
+proven suitable. Deterministic fallback ends with the same generic disclosure.
+Before fallback guidance is serialized, a
 narrow runtime scrub replaces documented unsupported outdoor/weather guarantee
 language with neutral guidance for the selected role. This changes only response
 framing; the semantic query, taxonomy, constraints, and executed search remain

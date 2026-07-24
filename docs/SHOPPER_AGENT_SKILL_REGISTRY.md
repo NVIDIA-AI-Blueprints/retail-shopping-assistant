@@ -141,7 +141,11 @@ and required pre-retrieval `shopper_guidance` authored under the active skill.
 The runtime gives the active skill one final tools-disabled synthesis step, then
 grounds that draft against tool-role evidence. Static `response_guidance` and
 the pre-retrieval guidance are used by the deterministic fallback when the
-draft or editor is unavailable. Candidate results, taxonomy, filters, semantic
+draft or editor is unavailable. If the requested outcome depends on a
+functional product property absent from evidence, final grounding explicitly
+marks it unconfirmed and presents the candidates as the closest catalog or
+styling direction rather than as proven suitable; deterministic fallback ends
+with the same generic disclosure. Candidate results, taxonomy, filters, semantic
 query, and drafts are not turned into evidence after retrieval. Before fallback
 guidance becomes shopper-facing text, a narrow scrub
 replaces documented unsupported outdoor/weather guarantee terms with neutral

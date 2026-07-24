@@ -2610,7 +2610,10 @@ class TestDeepAgentsRuntimeRefs:
             captured["system_prompt"]
         )
         assert "Semantic relevance cannot guarantee" in captured["system_prompt"]
-        assert "Call search_catalog_tool only when exact advertised" in (
+        assert "Call search_catalog_tool when exact advertised" in (
+            captured["system_prompt"]
+        )
+        assert "one faithful advertised parent category exists" in (
             captured["system_prompt"]
         )
         assert "Different wording is not a reason to ask" in (

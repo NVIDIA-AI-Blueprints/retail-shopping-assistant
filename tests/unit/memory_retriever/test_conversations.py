@@ -306,6 +306,7 @@ def test_start_is_idempotent_and_rejects_active_or_conflicting_reuse(
         "product_results": [{"product_ref": "bag-1"}],
         "retrieved": {"Structured Bag": "/images/bag.png"},
         "agent_diagnostics": {"final_termination_reason": "completed"},
+        "selected_skill_names": [],
     }
     assert conflict.status_code == 409
 

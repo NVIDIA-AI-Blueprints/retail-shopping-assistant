@@ -209,7 +209,11 @@ the grounding editor. Product-agnostic guidance and static skill
 neutral continuation for partial successful evidence, and groups each search's
 guidance and confirmed filters with its originating products. A zero-result response
 retains its exact advertised taxonomy and confirmed filters, so it cannot
-establish absence for another product type or the whole catalog.
+establish absence for another product type or the whole catalog. The grounding
+editor receives only the remaining shared model-stage deadline. A timeout
+finalizes as failed with `grounding_timeout`; non-search turns receive a fixed
+retry/cart-check response instead of the unverified draft. Other editor failures
+use the same fail-closed response with `grounding_error`.
 Tool-loop repair is also bounded: one invalid search or eligible open-role
 unadvertised-requirement review may consume the single repair for that distinct
 scope. A successful partial scope may continue to another valid role with its

@@ -268,14 +268,19 @@ The detailed contracts and implementation live in:
    Memory-service operations are transactional, and database sessions are
    request-scoped and returned to the SQLAlchemy pool after every request.
 
-   The Deep Agents graph invocation has a configurable 45-second default
-   deadline. On timeout, the runtime cancels the graph, captures bounded partial
-   graph messages, clears products and images that were not delivered, and
-   finalizes the durable turn as failed with `agent_timeout`. Only a successful
-   durable finalize permits checkpoint deletion and admission of the next
-   conversation turn. An already-started synchronous tool operation may finish
-   while graph cancellation propagates; cart idempotency and the timeout
-   response's cart-check guidance cover that narrow interval.
+   The Deep Agents graph and grounding editor share one configurable 45-second
+   model-stage deadline. The editor receives only the remaining time. A graph
+   timeout cancels the graph, captures bounded partial graph messages, clears
+   products and images that were not delivered, and finalizes as failed with
+   `agent_timeout`. A grounding timeout finalizes as failed with
+   `grounding_timeout`; search-only evidence uses deterministic catalog
+   rendering, while every other turn receives a fixed retry/cart-check response
+   instead of the unverified draft. Other editor failures use the same response
+   rule and finalize as failed with `grounding_error`. Only a successful durable
+   finalize permits checkpoint deletion and admission of the next conversation turn. An
+   already-started synchronous tool operation may finish while graph
+   cancellation propagates; cart idempotency and the timeout response's
+   cart-check guidance cover that narrow interval.
 
    Finalization derives one `candidate_set_presented` event only from the
    ordered product cards in the terminal replay output, then rebuilds the compact

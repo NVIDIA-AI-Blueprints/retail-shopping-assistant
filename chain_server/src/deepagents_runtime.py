@@ -223,6 +223,10 @@ _UNSUPPORTED_REQUIREMENT_RESPONSE = (
     "to treat it as a preference and show candidates to verify on their product "
     "pages?"
 )
+_GROUNDING_FAILURE_RESPONSE = (
+    "I couldn't safely verify the final response. Please retry; if this involved "
+    "a cart change, check your cart first."
+)
 _GROUNDING_EDITOR_SYSTEM_PROMPT = """You are a final response editor for a retail shopping assistant.
 
 Rewrite the draft response only as needed so it is grounded in TOOL EVIDENCE
@@ -1711,18 +1715,25 @@ class DeepAgentsRuntime:
         }
         agent = None
         try:
+            execution_deadline = (
+                time.monotonic()
+                + self.config.deepagents_execution_timeout_seconds
+            )
             agent = self._create_agent(
                 state,
                 identity,
                 turn_capabilities,
             )
             input_message = self._build_user_message(state, identity)
+            agent_timeout = max(0.0, execution_deadline - time.monotonic())
+            if agent_timeout <= 0:
+                raise TimeoutError
             result = await asyncio.wait_for(
                 agent.ainvoke(
                     {"messages": [{"role": "user", "content": input_message}]},
                     config=invoke_config,
                 ),
-                timeout=self.config.deepagents_execution_timeout_seconds,
+                timeout=agent_timeout,
             )
             draft_response = _extract_final_text(result)
             state.token_usage = _collect_token_usage(result)
@@ -1740,13 +1751,19 @@ class DeepAgentsRuntime:
                     result,
                     request_id=identity.request_id,
                 )
-                or self._rewrite_response_for_grounding(
+            )
+            if not state.response:
+                remaining_seconds = max(
+                    0.0,
+                    execution_deadline - time.monotonic(),
+                )
+                state.response = await self._rewrite_response_for_grounding(
                     state,
                     result,
                     draft_response,
                     request_id=identity.request_id,
+                    timeout_seconds=remaining_seconds,
                 )
-            )
             if not state.response:
                 state.response = (
                     "I could not complete that shopping request. Please try again."
@@ -3273,13 +3290,14 @@ class DeepAgentsRuntime:
             extra_body={"chat_template_kwargs": {"enable_thinking": False}},
         )
 
-    def _rewrite_response_for_grounding(
+    async def _rewrite_response_for_grounding(
         self,
         state: State,
         result: Any,
         draft_response: str,
         *,
         request_id: str,
+        timeout_seconds: float | None = None,
     ) -> str:
         clarification = _catalog_repair_clarification_response(
             result,
@@ -3361,25 +3379,40 @@ class DeepAgentsRuntime:
             f"DRAFT RESPONSE:\n{draft_response}"
         )
         try:
-            rewrite_result = self._create_chat_model().invoke(
-                [
-                    {"role": "system", "content": _GROUNDING_EDITOR_SYSTEM_PROMPT},
-                    {"role": "user", "content": prompt},
-                ]
+            active_timeout = (
+                self.config.deepagents_execution_timeout_seconds
+                if timeout_seconds is None
+                else timeout_seconds
             )
-        except Exception:  # noqa: BLE001 - response editor has a safe fallback.
-            logger.exception("Grounding response editor failed")
+            if active_timeout <= 0:
+                raise TimeoutError
+            rewrite_result = await asyncio.wait_for(
+                self._create_chat_model().ainvoke(
+                    [
+                        {
+                            "role": "system",
+                            "content": _GROUNDING_EDITOR_SYSTEM_PROMPT,
+                        },
+                        {"role": "user", "content": prompt},
+                    ]
+                ),
+                timeout=active_timeout,
+            )
+        except TimeoutError:
+            logger.warning(
+                "Grounding response editor timed out for request %s",
+                request_id,
+            )
             state.timings["grounding_rewrite"] = time.monotonic() - start
+            state.agent_diagnostics[
+                "final_termination_reason"
+            ] = "grounding_timeout"
             _add_model_usage(
                 state,
                 "app_llm_grounding_editor",
                 status="failed",
                 calls=1,
-                detail=(
-                    "Final response grounding rewrite failed closed"
-                    if search_only
-                    else "Final response grounding rewrite failed open"
-                ),
+                detail="Final response grounding rewrite timed out",
             )
             if search_only:
                 return self._rewrite_search_only_response(
@@ -3387,7 +3420,25 @@ class DeepAgentsRuntime:
                     result,
                     request_id=request_id,
                 )
-            return _scrub_internal_shopper_language(draft_response)
+            return _GROUNDING_FAILURE_RESPONSE
+        except Exception:  # noqa: BLE001 - response editor has a safe fallback.
+            logger.exception("Grounding response editor failed")
+            state.timings["grounding_rewrite"] = time.monotonic() - start
+            state.agent_diagnostics["final_termination_reason"] = "grounding_error"
+            _add_model_usage(
+                state,
+                "app_llm_grounding_editor",
+                status="failed",
+                calls=1,
+                detail="Final response grounding rewrite failed closed",
+            )
+            if search_only:
+                return self._rewrite_search_only_response(
+                    state,
+                    result,
+                    request_id=request_id,
+                )
+            return _GROUNDING_FAILURE_RESPONSE
 
         state.timings["grounding_rewrite"] = time.monotonic() - start
         _add_model_usage(

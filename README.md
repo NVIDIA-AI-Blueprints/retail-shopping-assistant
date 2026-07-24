@@ -160,11 +160,15 @@ policy. Redis checkpoint packages remain absent; the runtime supports only
 process-local `CHECKPOINT_STORE=memory`. Each graph thread is request-scoped
 with a collision-safe pair of conversation ID and request ID, deleted after
 successful durable finalization, and retained only when finalization fails.
-Deep Agents graph execution defaults to a 45-second deadline. A timeout is
-captured as `agent_timeout`, clears unsent products, finalizes the durable turn
-as failed, releases the durable conversation turn, and then deletes its request
-checkpoint. Work before and after the graph invocation remains outside this
-deadline.
+Deep Agents model-stage execution defaults to one 45-second deadline shared by
+the graph and grounding editor. A graph timeout is captured as `agent_timeout`,
+clears unsent products, finalizes the durable turn as failed, releases the
+durable conversation turn, and then deletes its request checkpoint. The
+grounding editor receives only the remaining time. Its timeout is finalized as
+failed with `grounding_timeout`: search-only turns use the existing deterministic
+catalog renderer, while every other turn returns a fixed retry/cart-check
+response instead of the unverified draft. Other editor failures follow the same
+fail-closed response rule with `grounding_error`.
 
 For the serving-agent flow, see
 [Shopper Agent Architecture](docs/SHOPPER_AGENT_ARCHITECTURE.md). The

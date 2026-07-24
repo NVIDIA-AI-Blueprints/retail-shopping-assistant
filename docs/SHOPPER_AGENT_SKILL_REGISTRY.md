@@ -162,6 +162,11 @@ zero-result evidence retains its exact advertised taxonomy and filters and
 cannot support a broader absence claim. Other
 tool-backed responses use the grounding editor to remove unsupported product
 claims, surface guarantees, and internal refs.
+The editor receives only the remaining shared model-stage deadline. A timeout
+finalizes the turn as failed with `grounding_timeout`; search-only evidence uses
+deterministic catalog rendering, while other turns receive a fixed
+retry/cart-check response instead of the unverified draft. Other editor failures
+use the same fail-closed response with `grounding_error`.
 Grounding is enabled by default and can be disabled with
 `GROUNDING_REWRITE_ENABLED=false`; the evidence window is controlled by
 `GROUNDING_REWRITE_MAX_EVIDENCE_CHARS`.

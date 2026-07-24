@@ -4305,7 +4305,7 @@ class TestDeepAgentsRuntimeRefs:
             return ""
 
         class FakeEditor:
-            def invoke(self, messages):
+            async def ainvoke(self, messages):
                 editor_calls.append(messages)
                 return AIMessage(
                     content=(
@@ -4434,7 +4434,8 @@ class TestDeepAgentsRuntimeRefs:
         assert "grounding_rewrite" in output.timings
         assert output.model_usage["app_llm_grounding_editor"]["status"] == "used"
 
-    def test_search_only_response_grounds_product_bearing_draft(
+    @pytest.mark.asyncio
+    async def test_search_only_response_grounds_product_bearing_draft(
         self,
         base_config,
         monkeypatch: pytest.MonkeyPatch,
@@ -4446,7 +4447,7 @@ class TestDeepAgentsRuntimeRefs:
         editor_calls: list[list[dict[str, str]]] = []
 
         class FakeEditor:
-            def invoke(self, messages):
+            async def ainvoke(self, messages):
                 editor_calls.append(messages)
                 return AIMessage(
                     content=(
@@ -4490,7 +4491,7 @@ class TestDeepAgentsRuntimeRefs:
             lambda: FakeEditor(),
         )
 
-        response = runtime._rewrite_response_for_grounding(
+        response = await runtime._rewrite_response_for_grounding(
             state,
             result,
             (
@@ -4515,7 +4516,8 @@ class TestDeepAgentsRuntimeRefs:
         assert "will not sink in wet grass" in editor_prompt
         assert state.model_usage["app_llm_grounding_editor"]["status"] == "used"
 
-    def test_search_only_editor_failure_uses_safe_catalog_fallback(
+    @pytest.mark.asyncio
+    async def test_search_only_editor_failure_uses_safe_catalog_fallback(
         self,
         base_config,
         monkeypatch: pytest.MonkeyPatch,
@@ -4525,7 +4527,7 @@ class TestDeepAgentsRuntimeRefs:
         runtime = runtime_mod.DeepAgentsRuntime(base_config)
 
         class FailingEditor:
-            def invoke(self, messages):
+            async def ainvoke(self, messages):
                 raise RuntimeError("editor unavailable")
 
         monkeypatch.setattr(
@@ -4562,7 +4564,7 @@ class TestDeepAgentsRuntimeRefs:
             ]
         }
 
-        response = runtime._rewrite_response_for_grounding(
+        response = await runtime._rewrite_response_for_grounding(
             state,
             result,
             "These sandals will stay comfortable all evening.",
@@ -4573,6 +4575,178 @@ class TestDeepAgentsRuntimeRefs:
         assert "**Flat Strappy Black Sandals**" in response
         assert "$49.90 USD" in response
         assert state.model_usage["app_llm_grounding_editor"]["status"] == "failed"
+
+    @pytest.mark.asyncio
+    async def test_grounding_editor_timeout_fails_closed_and_finalizes_failed_turn(
+        self,
+        base_config,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+        from langchain_core.messages import AIMessage, ToolMessage
+
+        base_config.deepagents_execution_timeout_seconds = 0.05
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+        identity = runtime_mod.RequestIdentity(
+            session_id="session-a",
+            conversation_id="conversation-a",
+            cart_id="cart-a",
+            context_user_id=111,
+            cart_user_id=222,
+            request_id="request-a",
+        )
+
+        async def fake_analyze(state):
+            return ""
+
+        cancelled = asyncio.Event()
+
+        class SlowEditor:
+            async def ainvoke(self, messages):
+                try:
+                    await asyncio.sleep(1)
+                except asyncio.CancelledError:
+                    cancelled.set()
+                    raise
+
+        class FakeAgent:
+            async def ainvoke(self, payload, config):
+                return {
+                    "messages": [
+                        payload["messages"][0],
+                        AIMessage(
+                            content="",
+                            tool_calls=[
+                                {
+                                    "id": "cart-add",
+                                    "name": "add_cart_items_tool",
+                                    "args": {
+                                        "items": [
+                                            {"product_ref": "boot-1"},
+                                            {"product_ref": "shoe-2"},
+                                        ]
+                                    },
+                                }
+                            ],
+                        ),
+                        ToolMessage(
+                            content=(
+                                "CART_ADD_RESULT\n"
+                                "Added:\n"
+                                "- 1 x Everyday Boot (PRODUCT_REF: boot-1)\n"
+                                "Failed:\n"
+                                "- PRODUCT_REF 'shoe-2': Could not add the "
+                                "requested item.\n"
+                                "Current cart:\n"
+                                "- CART_LINE_ID: line-1 | 1 x Everyday Boot"
+                            ),
+                            name="add_cart_items_tool",
+                            tool_call_id="cart-add",
+                        ),
+                        AIMessage(content="I added both items."),
+                    ]
+                }
+
+        monkeypatch.setattr(runtime._media_perception, "analyze", fake_analyze)
+        memory = _install_conversation_memory_stub(runtime)
+        monkeypatch.setattr(
+            runtime,
+            "_create_agent",
+            lambda state, identity, turn_capabilities=None: FakeAgent(),
+        )
+        monkeypatch.setattr(
+            runtime,
+            "_create_chat_model",
+            lambda: SlowEditor(),
+        )
+
+        output = await runtime._run_turn(
+            State(
+                user_id=111,
+                query="Add both items.",
+                guardrails=False,
+            ),
+            identity,
+        )
+
+        assert output.response == runtime_mod._GROUNDING_FAILURE_RESPONSE
+        assert cancelled.is_set()
+        assert "I added both items." not in output.response
+        assert "PRODUCT_REF" not in output.response
+        assert "CART_LINE_ID" not in output.response
+        assert output.agent_diagnostics["final_termination_reason"] == (
+            "grounding_timeout"
+        )
+        assert output.model_usage["app_llm_grounding_editor"]["status"] == "failed"
+        assert memory.finalize_calls[-1]["attempt_id"] == "attempt-a"
+        assert memory.finalize_calls[-1]["status"] == "failed"
+        assert memory.finalize_calls[-1]["termination_reason"] == (
+            "grounding_timeout"
+        )
+        assert memory.finalize_calls[-1]["assistant_text"] == output.response
+
+    @pytest.mark.asyncio
+    async def test_mutation_editor_failure_never_returns_draft(
+        self,
+        base_config,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+        from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+
+        class FailingEditor:
+            async def ainvoke(self, messages):
+                raise RuntimeError("editor unavailable")
+
+        monkeypatch.setattr(
+            runtime,
+            "_create_chat_model",
+            lambda: FailingEditor(),
+        )
+        result = {
+            "messages": [
+                HumanMessage(content="REQUEST ID: current-request"),
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "pending-add",
+                            "name": "add_cart_items_tool",
+                            "args": {"items": [{"product_ref": "bag-1"}]},
+                        }
+                    ],
+                ),
+                ToolMessage(
+                    content=(
+                        "CART_ADD_RESULT\nAdded:\n"
+                        "- 1 x Work Bag (PRODUCT_REF: bag-1)"
+                    ),
+                    name="add_cart_items_tool",
+                    tool_call_id="pending-add",
+                ),
+                AIMessage(content="I added the bag."),
+            ]
+        }
+        state = State(
+            user_id=111,
+            query="Add the bag.",
+            agent_diagnostics={"final_termination_reason": "completed"},
+        )
+
+        response = await runtime._rewrite_response_for_grounding(
+            state,
+            result,
+            "I added the bag.",
+            request_id="current-request",
+        )
+
+        assert response == runtime_mod._GROUNDING_FAILURE_RESPONSE
+        assert "I added the bag." not in response
+        assert state.agent_diagnostics["final_termination_reason"] == (
+            "grounding_error"
+        )
 
     def test_search_response_uses_only_activated_skill_guidance(
         self,
@@ -4598,7 +4772,8 @@ class TestDeepAgentsRuntimeRefs:
         assert "confirmed prices" in guidance
         assert "color relationship" not in guidance
 
-    def test_search_only_missing_draft_uses_safe_catalog_fallback(
+    @pytest.mark.asyncio
+    async def test_search_only_missing_draft_uses_safe_catalog_fallback(
         self,
         base_config,
         monkeypatch: pytest.MonkeyPatch,
@@ -4641,7 +4816,7 @@ class TestDeepAgentsRuntimeRefs:
             ]
         }
 
-        response = runtime._rewrite_response_for_grounding(
+        response = await runtime._rewrite_response_for_grounding(
             state,
             result,
             "",
@@ -4651,7 +4826,8 @@ class TestDeepAgentsRuntimeRefs:
         assert "**Flat Strappy Black Sandals**" in response
         assert state.agent_diagnostics["final_termination_reason"] == "completed"
 
-    def test_rejected_catalog_search_preserves_final_clarification(
+    @pytest.mark.asyncio
+    async def test_rejected_catalog_search_preserves_final_clarification(
         self,
         base_config,
         monkeypatch: pytest.MonkeyPatch,
@@ -4704,7 +4880,7 @@ class TestDeepAgentsRuntimeRefs:
             ]
         }
 
-        response = runtime._rewrite_response_for_grounding(
+        response = await runtime._rewrite_response_for_grounding(
             state,
             result,
             unsafe_model_text,
@@ -4718,7 +4894,8 @@ class TestDeepAgentsRuntimeRefs:
             request_id="current-request",
         ) is None
 
-    def test_partial_search_preserves_products_before_fixed_clarification(
+    @pytest.mark.asyncio
+    async def test_partial_search_preserves_products_before_fixed_clarification(
         self,
         base_config,
         monkeypatch: pytest.MonkeyPatch,
@@ -4775,7 +4952,7 @@ class TestDeepAgentsRuntimeRefs:
             ]
         }
 
-        response = runtime._rewrite_response_for_grounding(
+        response = await runtime._rewrite_response_for_grounding(
             state,
             result,
             unsafe_model_text,
@@ -4786,7 +4963,8 @@ class TestDeepAgentsRuntimeRefs:
         assert runtime_mod._CATALOG_REPAIR_CLARIFICATION_RESPONSE in response
         assert unsafe_model_text not in response
 
-    def test_cart_result_is_grounded_before_fixed_catalog_clarification(
+    @pytest.mark.asyncio
+    async def test_cart_result_is_grounded_before_fixed_catalog_clarification(
         self,
         base_config,
         monkeypatch: pytest.MonkeyPatch,
@@ -4797,7 +4975,7 @@ class TestDeepAgentsRuntimeRefs:
         captured: dict[str, str] = {}
 
         class _GroundingModel:
-            def invoke(self, messages):
+            async def ainvoke(self, messages):
                 captured["prompt"] = messages[-1]["content"]
                 return AIMessage(
                     content=(
@@ -4858,7 +5036,7 @@ class TestDeepAgentsRuntimeRefs:
             ]
         }
 
-        response = runtime._rewrite_response_for_grounding(
+        response = await runtime._rewrite_response_for_grounding(
             state,
             result,
             unsafe_model_text,
@@ -4873,7 +5051,8 @@ class TestDeepAgentsRuntimeRefs:
         )
         assert "Everyday Boot" in captured["prompt"]
 
-    def test_rejected_catalog_searches_fail_closed_before_grounding_editor(
+    @pytest.mark.asyncio
+    async def test_rejected_catalog_searches_fail_closed_before_grounding_editor(
         self,
         base_config,
         monkeypatch: pytest.MonkeyPatch,
@@ -4944,7 +5123,7 @@ class TestDeepAgentsRuntimeRefs:
             ]
         }
 
-        response = runtime._rewrite_response_for_grounding(
+        response = await runtime._rewrite_response_for_grounding(
             state,
             result,
             (

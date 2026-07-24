@@ -331,6 +331,16 @@ already-started synchronous tool operation may finish while cancellation is
 propagating; clients should follow the response's cart-check guidance before
 retrying a mutation.
 
+`final_termination_reason: "grounding_timeout"` means the graph completed but
+the grounding editor exhausted the remaining shared execution budget. The
+durable turn is finalized as failed. Search-only evidence uses deterministic
+catalog rendering; all other turns return a fixed retry/cart-check response
+instead of the unverified draft.
+
+`final_termination_reason: "grounding_error"` uses the same failed-turn and
+fail-closed response behavior when the grounding editor returns an error rather
+than timing out.
+
 Successful turns leave `partial_graph_messages` empty. Before a failed graph
 checkpoint is deleted, the runtime reads its latest state and preserves up to
 the final 24 current-turn assistant/tool messages, with each content field

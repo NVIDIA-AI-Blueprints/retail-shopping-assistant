@@ -63,10 +63,13 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   `memory_finalize_error` while retaining the request checkpoint. Successful
   finalization atomically records presented products and then deletes the
   checkpoint. Cancelled runtime turns are finalized before cancellation
-  propagates. Deep Agents graph execution now has a configurable 45-second
-  default deadline; timeout cancels the graph, captures bounded partial state,
-  clears unsent products, finalizes the turn as failed with `agent_timeout`, and
-  releases the checkpoint only after durable finalization. Database sessions
+  propagates. Deep Agents graph execution and the grounding editor now share a
+  configurable 45-second default deadline. A graph timeout captures bounded
+  partial state and finalizes as failed with `agent_timeout`; a grounding timeout
+  finalizes as failed with `grounding_timeout`, uses deterministic catalog
+  rendering for search-only evidence, and otherwise returns a fixed
+  retry/cart-check response instead of the unverified draft. The checkpoint is
+  released only after durable finalization. Database sessions
   remain request-scoped and are always returned to the SQLAlchemy pool after
   successful and failed API requests;
 - dependency resolution retains `deepagents==0.6.12`, `langchain==1.3.11`,
@@ -272,6 +275,12 @@ The newest focused gate is recorded first. Older Slice 0, Slice 2, and Slice 3
 results remain below as comparison points; generated quality and timing
 artifacts stay in the required local archive rather than versioned source.
 
+- Grounding deadline gate (2026-07-24): 7 focused offline tests passed. The
+  grounding editor uses async invocation under the remaining model-stage
+  deadline. Timeout cancels the editor, finalizes once as failed with
+  `grounding_timeout`, and never returns an unverified mutation draft; ordinary
+  editor failure also fails closed, while search-only deterministic fallback,
+  explicit editor disablement, and graph `agent_timeout` behavior remain intact.
 - Blocked-context isolation gate (2026-07-23): 4 focused offline tests passed.
   A blocked turn remains durably stored and exactly replayable, while both the
   memory-service recent-turn projection and the chain prompt formatter exclude

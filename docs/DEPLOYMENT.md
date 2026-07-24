@@ -331,7 +331,7 @@ docker stack deploy -c docker-compose.prod.yaml retail-assistant
 | `EMBED_API_KEY` | Embedding model API key | Yes | - |
 | `RAIL_API_KEY` | Guardrails API key | Yes | - |
 | `GUARDRAILS_ENABLED` | Default chain-server guardrails setting for requests that omit `guardrails`; accepts true/false, yes/no, on/off, or 1/0 | No | `true` |
-| `DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS` | Maximum time allowed for one Deep Agents graph invocation before the durable turn fails cleanly | No | `45` |
+| `DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS` | Shared deadline for the Deep Agents graph and grounding editor before the durable turn fails cleanly | No | `45` |
 | `CATALOG_SEARCH_TIMEOUT_SECONDS` | Optional chain-server timeout for catalog search requests | No | no timeout |
 | `MAX_CATALOG_SEARCHES_PER_TURN` | Caps distinct catalog taxonomy-plus-hard-constraint scope executions in one assistant turn; a repeated scope is stopped even when semantic wording changes | No | `3` |
 | `MAX_PRODUCT_DETAIL_READS_PER_TURN` | Caps Deep Agents product-detail reads in one assistant turn | No | `2` |
@@ -357,12 +357,18 @@ model turn. Blocked turns remain stored for exact replay and audit but are
 excluded from both the next-turn service projection and the chain prompt
 formatter.
 
-`DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS` bounds the active graph invocation. On
-timeout, the runtime records `agent_timeout`, captures bounded partial graph
-messages, clears unsent products and images, finalizes the durable turn as
-failed, and deletes its request checkpoint only after finalization succeeds.
-This live deadline is separate from `MEMORY_TURN_ABANDON_SECONDS`, which handles
-unfinished turns left by a crash or process loss.
+`DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS` is one model-stage deadline shared by the
+active graph and grounding editor. The editor receives only the remaining time.
+A graph timeout records `agent_timeout`, captures bounded partial graph messages,
+clears unsent products and images, and finalizes the durable turn as failed. A
+grounding timeout records `grounding_timeout` and also finalizes as failed;
+search-only evidence uses deterministic catalog rendering, while other turns
+receive a fixed retry/cart-check response instead of the unverified draft. The
+same response rule applies to other editor failures recorded as
+`grounding_error`. The request checkpoint is deleted only after finalization
+succeeds. This live deadline is separate from
+`MEMORY_TURN_ABANDON_SECONDS`, which handles unfinished turns left by a crash or
+process loss.
 
 `MEMORY_DATABASE_URL` accepts SQLite URLs only. The busy timeout must be
 non-negative, the abandoned-turn threshold must be positive, and

@@ -855,10 +855,15 @@ Implications:
   and request ID. The runtime deletes it after successful durable finalization and preserves it after a
   finalize failure. Durable turns and presented-product events, not the graph
   checkpoint, provide cross-turn continuity.
-- Deep Agents graph execution defaults to 45 seconds through
-  `DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS`. A timeout is finalized as failed with
-  `agent_timeout`, preserves bounded partial diagnostics, clears unsent product
-  output, and releases its request checkpoint only after durable finalization.
+- Deep Agents graph execution and the grounding editor share one 45-second
+  model-stage deadline through `DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS`. The editor
+  receives only the remaining time. A graph timeout finalizes as failed with
+  `agent_timeout` and preserves bounded partial diagnostics. A grounding timeout
+  finalizes as failed with `grounding_timeout`; search-only evidence uses
+  deterministic catalog rendering, while other turns return a fixed
+  retry/cart-check response instead of the unverified draft. Other editor
+  failures use the same response rule with `grounding_error`. Checkpoint release
+  occurs only after durable finalization.
 - Durable turns use one memory-service SQLite replica with transactional start,
   terminal finalize, exact finalized replay, a bounded recent-turn snapshot,
   latest-sequence-only abandoned reopen, rotating attempt tokens, and

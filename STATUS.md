@@ -55,7 +55,11 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   the request checkpoint;
 - the runtime has an eleven-tool shopper registry plus one internal skill
   activation control tool. A turn receives only the tools granted by its
-  selected skills. The shopping tools cover cart quantity update, controlled
+  selected skills. Invalid skill composition receives one reasoned correction;
+  a repeated invalid selection returns a fixed clarification without running a
+  shopping tool or exhausting the graph recursion budget. Multiple activation
+  calls in one response execute none and clarify immediately. The shopping tools
+  cover cart quantity update, controlled
   policy lookup, category-aware no-I/O availability, a no-I/O active-promotions
   signal, and deterministic durable same-conversation product resolution;
 - memory-service schema migrations, turn start/finalize/replay, bounded
@@ -292,6 +296,15 @@ The newest focused gate is recorded first. Older Slice 0, Slice 2, and Slice 3
 results remain below as comparison points; generated quality and timing
 artifacts stay in the required local archive rather than versioned source.
 
+- Budget activation-correction gate (2026-07-24): 25 focused tests passed with
+  1 existing expected xfail. The budget opener recovered from 1/5 and graph
+  recursion failure to 4/5 and normal completion, while latency improved from
+  21.99s to 9.40s. The full GPT-5.2 app/Judge run completed all 48 shopper turns
+  and 48 judgments. Against the preceding WIP, Judge average moved
+  3.8333→3.7917, score-4-or-better coverage moved 40/48→38/48, mean latency
+  moved 21.36s→22.84s, and p95 moved 41.24s→44.12s. The target fix passed;
+  aggregate quality and latency slightly regressed, with one unrelated bounded
+  `grounding_timeout` fallback.
 - Parent-category alternative gate (2026-07-24): focused catalog-scope, skill,
   request-validation, evidence, and deterministic-fallback tests pass for a
   shopper-named subtype such as sneakers searched once under a model-selected
@@ -623,13 +636,14 @@ per turn. `product_evidence_truncated` makes omissions explicit; a truncated
 turn may still require a narrower rerun when the omitted fact is material to the
 score.
 
-Mandatory activation adds one bounded app-model step to every Deep Agents turn.
-It guarantees that shopping cannot run before a complete skill file is loaded,
-then limits model visibility and dispatch to the selected `tools_granted` union.
-The semantic choice among registered skills remains model-selected and is
-explicit in `agent_diagnostics.skill_files_read`. Slice 0 does not yet prove
-explicit current-turn mutation intent: selecting `cart-management` grants its
-mutators, while server-owned intent authorization remains a later slice.
+Mandatory activation normally adds one bounded app-model step to every Deep
+Agents turn; an invalid composition may add one corrective step. It guarantees
+that shopping cannot run before a complete skill file is loaded, then limits
+model visibility and dispatch to the selected `tools_granted` union. The
+semantic choice among registered skills remains model-selected and is explicit
+in `agent_diagnostics.skill_files_read`. Slice 0 does not yet prove explicit
+current-turn mutation intent: selecting `cart-management` grants its mutators,
+while server-owned intent authorization remains a later slice.
 
 The corrected contract guarantees validation and enforcement of the scope and
 must-haves the agent supplies. It cannot prove that a language model copied

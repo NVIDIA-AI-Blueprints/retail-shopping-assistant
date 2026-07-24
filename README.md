@@ -93,6 +93,10 @@ Every turn still makes a fresh semantic skill-selection decision. The previous
 turn's selected skill names are persisted with its durable output and supplied
 to the next activation model step only as a read-only continuity signal; they
 do not force routing or authorize tools.
+If the model selects an invalid skill composition, it receives the typed reason
+and one correction attempt. A second invalid selection returns a deterministic
+clarifying question without running catalog or commerce tools. Multiple
+activation calls in one response execute none and clarify immediately.
 Conversation context still matters: a terse item-only follow-up inside an
 active outfit-building or style-led single-piece thread remains an
 `outfit-styling` task.

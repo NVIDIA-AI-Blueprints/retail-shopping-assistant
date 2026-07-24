@@ -14,7 +14,12 @@ from langchain.agents.middleware.types import (
     ModelRequest,
     ModelResponse,
 )
-from langchain_core.messages import ContentBlock, SystemMessage, ToolMessage
+from langchain_core.messages import (
+    AIMessage,
+    ContentBlock,
+    SystemMessage,
+    ToolMessage,
+)
 from langgraph.prebuilt.tool_node import ToolCallRequest
 
 from .tool_policy import (
@@ -27,6 +32,12 @@ from .tool_policy import (
 
 SKILL_ACTIVATION_TOOL_NAME = "activate_shopper_skills_tool"
 SKILL_ACTIVATION_COMPLETE = "SHOPPER_SKILL_ACTIVATION_COMPLETE:"
+SKILL_ACTIVATION_INVALID = "SHOPPER_SKILL_ACTIVATION_INVALID:"
+SKILL_ACTIVATION_CLARIFICATION_REQUIRED = (
+    "SHOPPER_SKILL_ACTIVATION_CLARIFICATION_REQUIRED:"
+)
+SKILL_ACTIVATION_MULTIPLE_PRIMARY = "multiple_primary_procedures"
+SKILL_ACTIVATION_MODIFIER_REQUIRES_PRIMARY = "modifier_requires_primary"
 SKILL_ACTIVATION_REQUIRED = (
     "SKILL_ACTIVATION_REQUIRED: Shopper skills must be selected and loaded "
     "before any shopping tool can run. Retry after activation completes."
@@ -89,6 +100,8 @@ class ShopperSkillActivationMiddleware(AgentMiddleware):
         self._skill_files: dict[str, str] = {}
         self._selected_skills: frozenset[str] = frozenset()
         self._granted_tools: frozenset[str] = frozenset()
+        self._activation_validation_failures = 0
+        self._clarification_response = ""
         self._previous_selected_skills = tuple(
             dict.fromkeys(
                 name
@@ -139,9 +152,11 @@ class ShopperSkillActivationMiddleware(AgentMiddleware):
     ) -> ModelResponse:
         """Apply the activation phase to a synchronous model request."""
 
+        clarification = self._clarification_model_response()
+        if clarification is not None:
+            return clarification
         response = handler(self._prepare_model_request(request))
-        self._validate_model_response(response)
-        return response
+        return self._validate_model_response(response)
 
     async def awrap_model_call(
         self,
@@ -150,9 +165,32 @@ class ShopperSkillActivationMiddleware(AgentMiddleware):
     ) -> ModelResponse:
         """Apply the activation phase to an asynchronous model request."""
 
+        clarification = self._clarification_model_response()
+        if clarification is not None:
+            return clarification
         response = await handler(self._prepare_model_request(request))
-        self._validate_model_response(response)
-        return response
+        return self._validate_model_response(response)
+
+    def handle_activation_validation_error(self, error: Any) -> str:
+        """Return bounded model feedback for an invalid skill selection."""
+
+        issue = _activation_validation_issue(error)
+        feedback = _activation_validation_feedback(issue)
+        with self._lock:
+            if self._status != "pending":
+                return f"{SKILL_ACTIVATION_INVALID} {feedback}"
+            self._activation_validation_failures += 1
+            if self._activation_validation_failures == 1:
+                return (
+                    f"{SKILL_ACTIVATION_INVALID} {feedback} "
+                    "Retry the activation once with the smallest valid skill set."
+                )
+            self._status = "clarification"
+            self._clarification_response = _activation_clarification(issue)
+        return (
+            f"{SKILL_ACTIVATION_CLARIFICATION_REQUIRED} {feedback} "
+            "No shopping tool was run."
+        )
 
     def wrap_tool_call(
         self,
@@ -245,6 +283,13 @@ class ShopperSkillActivationMiddleware(AgentMiddleware):
             ),
         )
 
+    def _clarification_model_response(self) -> ModelResponse | None:
+        with self._lock:
+            if self._status != "clarification":
+                return None
+            clarification = self._clarification_response
+        return ModelResponse(result=[AIMessage(content=clarification)])
+
     def _tool_call_rejection(self, request: ToolCallRequest) -> str | None:
         tool_name = str(request.tool_call.get("name") or "")
         if tool_name == SKILL_ACTIVATION_TOOL_NAME:
@@ -265,7 +310,7 @@ class ShopperSkillActivationMiddleware(AgentMiddleware):
             return SKILL_TOOL_NOT_GRANTED
         return None
 
-    def _validate_model_response(self, response: ModelResponse) -> None:
+    def _validate_model_response(self, response: ModelResponse) -> ModelResponse:
         with self._lock:
             status = self._status
         if status == "active":
@@ -279,11 +324,23 @@ class ShopperSkillActivationMiddleware(AgentMiddleware):
                 raise ShopperSkillActivationError(
                     "The model requested multiple shopping tools in one step."
                 )
-            return
-        if status == "pending" and not _response_requests_activation(response):
+            return response
+        if status != "pending":
+            return response
+
+        activation_calls = _activation_calls(response)
+        if not activation_calls:
             raise ShopperSkillActivationError(
                 "The model did not complete required shopper skill activation."
             )
+        if len(activation_calls) == 1:
+            return response
+
+        clarification = _activation_clarification("invalid_selection")
+        with self._lock:
+            self._status = "clarification"
+            self._clarification_response = clarification
+        return ModelResponse(result=[AIMessage(content=clarification)])
 
 
 def _active_skills_prompt(skill_files: Mapping[str, str]) -> str:
@@ -371,12 +428,45 @@ def _tool_rejection_message(
     )
 
 
-def _response_requests_activation(response: ModelResponse) -> bool:
-    for message in response.result:
-        for tool_call in _value(message, "tool_calls") or []:
-            if _value(tool_call, "name") == SKILL_ACTIVATION_TOOL_NAME:
-                return True
-    return False
+def _activation_calls(response: ModelResponse) -> list[Any]:
+    return [
+        tool_call
+        for message in response.result
+        for tool_call in _value(message, "tool_calls") or []
+        if _value(tool_call, "name") == SKILL_ACTIVATION_TOOL_NAME
+    ]
+
+
+def _activation_validation_issue(error: Any) -> str:
+    errors = error.errors() if callable(getattr(error, "errors", None)) else []
+    for detail in errors:
+        issue = str(_value(detail, "type") or "")
+        if issue in {
+            SKILL_ACTIVATION_MODIFIER_REQUIRES_PRIMARY,
+            SKILL_ACTIVATION_MULTIPLE_PRIMARY,
+        }:
+            return issue
+    return "invalid_selection"
+
+
+def _activation_validation_feedback(issue: str) -> str:
+    if issue == SKILL_ACTIVATION_MODIFIER_REQUIRES_PRIMARY:
+        return (
+            "budget-shopping is a modifier and requires exactly one primary "
+            "procedure: outfit-styling or product-discovery."
+        )
+    if issue == SKILL_ACTIVATION_MULTIPLE_PRIMARY:
+        return (
+            "Select exactly one primary procedure: outfit-styling or "
+            "product-discovery, never both."
+        )
+    return "The selected shopper-skill combination is invalid."
+
+
+def _activation_clarification(issue: str) -> str:
+    if issue == SKILL_ACTIVATION_MODIFIER_REQUIRES_PRIMARY:
+        return "What product or outfit would you like to find within your budget?"
+    return "What product or shopping task would you like help with?"
 
 
 def _has_current_turn_activation(state: Any, request_id: str) -> bool:

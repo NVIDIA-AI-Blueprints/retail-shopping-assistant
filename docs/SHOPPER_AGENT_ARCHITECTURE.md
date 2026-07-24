@@ -124,7 +124,11 @@ The detailed contracts and implementation live in:
    do not force routing, inject the old skill, or authorize commerce tools. The
    conversation still establishes intent: a
    terse item-only follow-up inside an active outfit-building or style-led
-   single-piece thread remains an `outfit-styling` task.
+   single-piece thread remains an `outfit-styling` task. An invalid composition
+   returns its typed reason to the activation model for one correction. A second
+   invalid composition ends the graph with a deterministic clarification and
+   exposes no shopping tool. Multiple activation calls in one model response
+   execute none and produce the generic shopping-task clarification immediately.
 3. The runtime validates the selection and injects the complete selected
    `SKILL.md` files. Each file declares `role`, optional `exclusive_group`, and
    `tools_granted`; only the union of those grants becomes model-visible on the

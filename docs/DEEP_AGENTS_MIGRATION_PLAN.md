@@ -544,11 +544,14 @@ of `product-discovery` and `outfit-styling`. `budget-shopping` is added only for
 an explicit shopper budget. This composition rule lives in the activation
 contract and the skill files; it is not a keyword router.
 
-This design adds one bounded app-model step per shopper turn. It avoids broad
-keyword routing and keeps intent selection semantic, while making the selected
-skill paths and any gate rejection observable. Correct selection among the
-registered skills remains a model-quality concern; silently running a shopping
-turn without complete skill instructions is no longer possible.
+This design normally adds one bounded app-model step per shopper turn. An
+invalid composition may add one corrective app-model step; a repeated invalid
+composition returns a deterministic clarification without another model call.
+It avoids broad keyword routing and keeps intent selection semantic, while
+making the selected skill paths and any gate rejection observable. Correct
+selection among the registered skills remains a model-quality concern;
+silently running a shopping turn without complete skill instructions is no
+longer possible.
 
 Planned future roles include dedicated visual shopping, product comparison, and
 persona-aware recommendation. Keep them as markdown-guided behavior until

@@ -30,6 +30,7 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+from pydantic_core import PydanticCustomError
 import requests
 
 from .agenttypes import Cart, State
@@ -75,6 +76,8 @@ from .conversation_products import (
 from .media_perception import MediaPerceptionClient
 from .skill_activation import (
     SKILL_ACTIVATION_COMPLETE,
+    SKILL_ACTIVATION_MODIFIER_REQUIRES_PRIMARY,
+    SKILL_ACTIVATION_MULTIPLE_PRIMARY,
     SKILL_ACTIVATION_REQUIRED,
     SKILL_ACTIVATION_TOOL_NAME,
     SKILL_TOOL_NOT_GRANTED,
@@ -1339,14 +1342,16 @@ class _ShopperSkillActivationInput(BaseModel):
             {"outfit-styling", "product-discovery"}
         )
         if len(primary) > 1:
-            raise ValueError(
+            raise PydanticCustomError(
+                SKILL_ACTIVATION_MULTIPLE_PRIMARY,
                 "select exactly one primary procedure: outfit-styling or "
-                "product-discovery, never both"
+                "product-discovery, never both",
             )
         if "budget-shopping" in selected and len(primary) != 1:
-            raise ValueError(
+            raise PydanticCustomError(
+                SKILL_ACTIVATION_MODIFIER_REQUIRES_PRIMARY,
                 "budget-shopping requires exactly one primary procedure: "
-                "outfit-styling or product-discovery"
+                "outfit-styling or product-discovery",
             )
         return self
 
@@ -3323,6 +3328,10 @@ class DeepAgentsRuntime:
                 f"{SKILL_ACTIVATION_COMPLETE} "
                 + ", ".join(selected_files)
             )
+
+        activate_shopper_skills_tool.handle_validation_error = (
+            skill_gate.handle_activation_validation_error
+        )
 
         return create_deep_agent(
             model=self._create_chat_model(),

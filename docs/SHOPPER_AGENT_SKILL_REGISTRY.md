@@ -83,10 +83,12 @@ the `skill_tool_not_granted` diagnostic reason. The runtime also validates the
 activation-phase model response, so provider noncompliance cannot silently
 terminate the turn with shopper prose instead of an activation call.
 
-This invariant adds one bounded model step to every turn. The static file load
-and injection add no model call. The extra step is the deliberate latency and
-model-call tradeoff for ensuring that catalog, cart, policy, availability, and promotions
-work cannot bypass applicable skill instructions.
+This invariant normally adds one bounded model step to every turn. An invalid
+composition may add one corrective model step; a second invalid composition
+returns the deterministic clarification without another model call. The static
+file load and injection add no model call. The activation step is the deliberate
+latency and model-call tradeoff for ensuring that catalog, cart, policy,
+availability, and promotions work cannot bypass applicable skill instructions.
 
 Catalog repair is not another skill-selection phase. The server keys repairs by
 the full normalized, model-authored `requested_product_type` phrase. It does not

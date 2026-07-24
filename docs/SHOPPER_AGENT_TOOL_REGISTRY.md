@@ -77,14 +77,19 @@ no commerce tools. A commerce call placed in the same model response as the
 activation call is rejected, and activation from a prior turn cannot unlock the
 current turn. An activation-phase model response without the required call is
 rejected as `skill_activation_failed`, rather than becoming shopper-facing
-prose. A post-activation call outside the selected grant union is rejected
+prose. An invalid skill composition returns a typed reason and receives one
+correction attempt. If the corrected composition is also invalid, the
+middleware returns a deterministic clarification without another model call or
+any shopping-tool execution. Multiple activation calls in one response execute
+none and return the generic clarification immediately. A post-activation call outside the selected grant union is rejected
 before its handler with `SHOPPER_SKILL_TOOL_NOT_GRANTED`. Frontmatter grants and
 the independent policy must agree exactly at startup, so unknown or drifted
 skill/tool pairs fail closed. Tool schemas and wrappers continue to enforce
 deterministic request and state preconditions.
 
-This design adds one bounded model step to every turn. Deterministic skill-file
-injection itself adds no model call. The runtime also excludes default Deep
+This design normally adds one activation model step to every turn and permits
+one additional correction only for an invalid composition. Deterministic
+skill-file injection itself adds no model call. The runtime also excludes default Deep
 Agents filesystem write/edit/list/search tools, todo tools, shell tools, and the
 general-purpose subagent from the shopper-facing harness. Built-in `read_file`
 remains available after activation for static read-only references in the
@@ -324,7 +329,8 @@ Current limitations:
 - The activation gate enforces both the two-phase ordering boundary and the
   selected skills' exact tool grants. Explicit mutation-intent authorization is
   not part of Slice 0.
-- The required selection phase adds one bounded model step to each turn.
+- The required selection phase normally adds one bounded model step to each
+  turn. An invalid composition may add one corrective model step.
 
 ### `search_catalog_tool`
 

@@ -688,6 +688,123 @@ def test_activation_tool_is_always_allowed() -> None:
     assert result is expected
 
 
+def test_pending_phase_rejects_multiple_activation_calls() -> None:
+    """Competing activation calls execute neither selection."""
+
+    response = _middleware().wrap_model_call(
+        _model_request(),
+        lambda _: ModelResponse(
+            result=[
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "activate-discovery",
+                            "name": SKILL_ACTIVATION_TOOL_NAME,
+                            "args": {"skill_names": ["product-discovery"]},
+                        },
+                        {
+                            "id": "activate-styling",
+                            "name": SKILL_ACTIVATION_TOOL_NAME,
+                            "args": {"skill_names": ["outfit-styling"]},
+                        },
+                    ],
+                )
+            ]
+        ),
+    )
+
+    assert response.result == [
+        AIMessage(content="What product or shopping task would you like help with?")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_compiled_agent_bounds_repeated_invalid_budget_activation(
+    base_config: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A repeated modifier-only selection clarifies instead of exhausting the graph."""
+
+    model_name = "compiled-budget-activation-recovery-test"
+    base_config.llm_name = model_name
+    model = _RecordingToolModel(
+        model_name=model_name,
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "id": f"budget-only-{attempt}",
+                        "name": SKILL_ACTIVATION_TOOL_NAME,
+                        "args": {"skill_names": ["budget-shopping"]},
+                    }
+                ],
+            )
+            for attempt in (1, 2)
+        ],
+    )
+    runtime = DeepAgentsRuntime(base_config)
+    monkeypatch.setattr(runtime, "_create_chat_model", lambda: model)
+    identity = RequestIdentity(
+        session_id="session-budget",
+        conversation_id="conversation-budget",
+        cart_id="cart-budget",
+        context_user_id=1,
+        cart_user_id=1,
+        request_id="request-budget",
+    )
+    agent = runtime._create_agent(
+        State(user_id=1, query="I need to stay under $100 total."),
+        identity,
+        CatalogCapabilities(
+            catalog_id="test-catalog",
+            retrieval_modes=["text"],
+            filters={},
+        ),
+    )
+
+    result = await agent.ainvoke(
+        {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": (
+                        "REQUEST ID: request-budget\n"
+                        "USER QUERY: I need to stay under $100 total."
+                    ),
+                }
+            ]
+        },
+        config={"configurable": {"thread_id": identity.conversation_id}},
+    )
+
+    assert len(model.calls) == 2
+    activation_results = [
+        message
+        for message in result["messages"]
+        if isinstance(message, ToolMessage)
+        and message.name == SKILL_ACTIVATION_TOOL_NAME
+    ]
+    assert len(activation_results) == 2
+    assert activation_results[0].status == "error"
+    assert str(activation_results[0].content).startswith(
+        "SHOPPER_SKILL_ACTIVATION_INVALID:"
+    )
+    assert activation_results[1].status == "error"
+    assert str(activation_results[1].content).startswith(
+        "SHOPPER_SKILL_ACTIVATION_CLARIFICATION_REQUIRED:"
+    )
+    assert result["messages"][-1].content == (
+        "What product or outfit would you like to find within your budget?"
+    )
+    assert not any(
+        isinstance(message, ToolMessage)
+        and message.name != SKILL_ACTIVATION_TOOL_NAME
+        for message in result["messages"]
+    )
+
+
 @pytest.mark.asyncio
 async def test_compiled_agent_loads_skill_and_blocks_ungranted_tool(
     base_config: Any,

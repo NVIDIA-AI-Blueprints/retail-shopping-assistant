@@ -232,9 +232,10 @@ Filesystem and built-in Deep Agents tools:
    The runtime owns complete skill loading and the pre-tool execution gate;
    deterministic tools own validation, state mutation, idempotency, and
    authorization.
-6. Persona data remains unavailable until a trusted source and typed,
-   input-safe untrusted-data boundary are implemented. A future snapshot is
-   read-only for the turn unless a later feature supports profile updates.
+6. Caller-supplied persona data remains unavailable. The UI may send one ID
+   from the trusted, typed, read-only registry of five fixed representative
+   shoppers. Durable turn start resolves and binds the server-owned snapshot;
+   only its type, behavior, and ZIP enter current-turn context as soft guidance.
 7. Carts are scoped by `cart_id`, not by conversation memory.
 8. Conversation memory is scoped by `conversation_id`, not by customer alone.
 9. Skills describe shopping behavior and domain knowledge. Tools perform
@@ -346,13 +347,15 @@ Persona precedence:
 4. Loaded customer persona/profile snapshot.
 5. Model assumptions are not allowed as facts.
 
-The current runtime does not accept or inject caller-supplied persona data and
-does not expose a persona-loading tool. A future implementation must use a
-typed, bounded schema, authenticate profile ownership, validate values through
-the input-safety boundary, and present the snapshot explicitly as untrusted
-data rather than system instructions. Individual skills should not
-independently fetch mutable persona state, because that creates inconsistent
-context and hard-to-debug race conditions.
+The current runtime ignores unknown caller fields for backward compatibility
+and never injects caller-supplied persona data; it also does not expose a
+persona-loading tool. The bundled UI sends only a selected ID from the typed,
+bounded, server-owned registry of five immutable representative shoppers.
+Durable turn start resolves and binds the row atomically, and the runtime
+renders one compact soft-guidance block. User-owned or mutable profiles
+additionally require authenticated ownership and input-safety validation.
+Individual skills should not independently fetch mutable persona state, because
+that creates inconsistent context and hard-to-debug race conditions.
 
 ## Tools
 
@@ -377,9 +380,24 @@ The tool layer is small, typed, and deterministic:
 - `check_active_promotions`: read-only no-I/O stub that reports no active sale or
   promotion configured through the assistant. Catalog retrieval and price do
   not establish markdown status.
+- `get_weather_forecast`: implemented provider-neutral read-only contract for
+  an exact US ZIP and optional ISO date/range, but dormant in Slice 3 and not
+  registered, granted, prompted, or connected to shopper context.
 
-`load_customer_persona` and typed turn-start persona snapshots remain planned;
-neither is available in the current runtime.
+`load_customer_persona` remains unregistered. Representative-shopper context is
+resolved as part of the existing durable turn-start call, not through an
+agent-callable tool. It does not grant skills or tools and is not independently
+refetched by shopper skills.
+
+`get_weather_forecast` is likewise absent from the serving registry. Direct
+construction validates a closed ZIP/date schema, returns bounded normalized
+daily evidence through the Visual Crossing adapter, rejects non-live forecast
+sources, and emits sanitized typed failures. `WEATHER_ENABLED=false` is the
+default and needs no credential; an enabled direct client reads the key only
+from the environment variable named by config. A later leveraging slice owns
+relative-date resolution, trusted location precedence, agent registration,
+grounded weather evidence, attribution display, uncertainty language, and the
+rule that weather cannot silently become a catalog must-have.
 
 The active shopper-serving Deep Agents tool registry is documented in
 [Shopper Agent Tool Registry](SHOPPER_AGENT_TOOL_REGISTRY.md). The active skill

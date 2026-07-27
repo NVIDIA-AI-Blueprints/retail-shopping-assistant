@@ -81,6 +81,48 @@ class SchemaMigration(Base):
     applied_at = Column(Float, nullable=False)
 
 
+class ShopperProfile(Base):
+    """One immutable representative shopper managed by startup bootstrap."""
+
+    __tablename__ = "shopper_profiles"
+    __table_args__ = (
+        UniqueConstraint(
+            "shopper_type",
+            name="uq_shopper_profiles_shopper_type",
+        ),
+        CheckConstraint(
+            "length(shopper_profile_id) BETWEEN 1 AND 64 "
+            "AND shopper_profile_id = trim(shopper_profile_id)",
+            name="ck_shopper_profiles_id",
+        ),
+        CheckConstraint(
+            "length(display_name) BETWEEN 1 AND 80 "
+            "AND display_name = trim(display_name)",
+            name="ck_shopper_profiles_display_name",
+        ),
+        CheckConstraint(
+            "length(shopper_type) BETWEEN 1 AND 80 "
+            "AND shopper_type = trim(shopper_type)",
+            name="ck_shopper_profiles_type",
+        ),
+        CheckConstraint(
+            "length(behavior) BETWEEN 1 AND 512 "
+            "AND behavior = trim(behavior)",
+            name="ck_shopper_profiles_behavior",
+        ),
+        CheckConstraint(
+            "length(zipcode) = 5 AND zipcode NOT GLOB '*[^0-9]*'",
+            name="ck_shopper_profiles_zipcode",
+        ),
+    )
+
+    shopper_profile_id = Column(String(64), primary_key=True, nullable=False)
+    display_name = Column(String(80), nullable=False)
+    shopper_type = Column(String(80), nullable=False)
+    behavior = Column(Text, nullable=False)
+    zipcode = Column(String(5), nullable=False)
+
+
 class ConversationTurn(Base):
     __tablename__ = "conversation_turns"
     __table_args__ = (
@@ -118,6 +160,15 @@ class ConversationTurn(Base):
     )
     finalize_digest = Column(String, nullable=True)
     cart_user_id = Column(Integer, nullable=False)
+    shopper_profile_id = Column(
+        String(64),
+        ForeignKey(
+            "shopper_profiles.shopper_profile_id",
+            ondelete="RESTRICT",
+            onupdate="RESTRICT",
+        ),
+        nullable=True,
+    )
     shopper_text = Column(Text, nullable=False)
     assistant_text = Column(Text, nullable=True)
     output_json = Column(Text, nullable=True)

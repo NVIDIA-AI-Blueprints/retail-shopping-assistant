@@ -63,6 +63,31 @@ category scopes always come from the ingested rows.
 
 ## 💬 Using the Chat Interface
 
+### Representative Shoppers
+
+The navigation bar includes a **Shop as** picker with Guest plus five fictional
+representative shoppers derived from the live-evaluation behavior set. Hover,
+keyboard-focus, or tap a shopper to see the exact behavior summary, internal
+shopper type, and saved ZIP. Only the selected profile ID is retained in the
+current browser tab and sent with a chat request; profile contents are resolved
+by the server.
+
+The selected behavior may guide interaction and styling, while your explicit
+request always wins. A profile never supplies an unstated budget, size, color,
+material requirement, cart action, product fact, or weather fact. Saved ZIP is
+background location data only in this slice and does not trigger a weather
+lookup or prove where an event will occur. Guest sends no profile ID and gets no
+profile context. A dormant internal weather client exists for direct operator
+testing, but it is not available to the assistant or UI and does not yet change
+clarification or style guidance.
+
+Switching shoppers starts a clean visible session: chat, product cards,
+selected product, attachments, inference activity, and metrics are cleared, and
+fresh session, conversation, and cart identities are created. A conversation
+cannot switch between Guest and a profile or between two profiles. The Reset
+button keeps the selected shopper while starting another clean session. If the
+profile service cannot load, Guest remains available.
+
 ### Basic Interaction
 
 1. **Type your question** in the chat input box at the bottom
@@ -447,7 +472,9 @@ matching.
 **Q: Can I save my preferences?**
 A: Typed preferences are not extracted or saved between sessions. Conversation
 text may be retained as part of the durable turn transcript, but this release
-does not convert it into a reusable preference profile.
+does not convert it into a reusable preference profile. The five shoppers in
+the **Shop as** picker are fixed evaluation-derived examples, not learned
+customer profiles.
 
 **Q: Is my data private?**
 A: The deployment processes data within its configured services. Shopper and

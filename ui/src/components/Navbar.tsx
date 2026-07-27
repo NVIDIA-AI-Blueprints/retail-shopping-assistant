@@ -22,12 +22,28 @@
 import React from "react";
 import MenuIcon from "@mui/icons-material/Menu";
 import { config } from "../config/config";
+import { ShopperProfile } from "../types";
+import ShopperPicker, { ShopperProfilesStatus } from "./ShopperPicker";
 
-const Navbar: React.FC = () => {
+interface NavbarProps {
+  shopperProfiles: ShopperProfile[];
+  shopperProfilesStatus: ShopperProfilesStatus;
+  selectedShopperProfileId: string | null;
+  isShopperSwitchDisabled: boolean;
+  onShopperChange: (shopperProfileId: string | null) => void;
+}
+
+const Navbar: React.FC<NavbarProps> = ({
+  shopperProfiles,
+  shopperProfilesStatus,
+  selectedShopperProfileId,
+  isShopperSwitchDisabled,
+  onShopperChange,
+}) => {
   const categories = config.ui.categories;
 
   return (
-    <div>
+    <div className="shopper-nav">
       {/* Main navigation bar */}
       <div className="bg-[#FFFFFF] h-[48px] px-3 py-2 lg:px-5 text-white flex justify-between items-center">
         {/* Left side - Menu and Brand */}
@@ -38,11 +54,15 @@ const Navbar: React.FC = () => {
           </p>
         </div>
         
-        {/* Right side - Welcome message */}
+        {/* Right side - Representative shopper selector */}
         <div className="flex items-center gap-x-2">
-          <div className="flex items-center gap-2 p-3 rounded-full">
-            <p className="text-[14px] text-[#202020]">Welcome!</p>
-          </div>
+          <ShopperPicker
+            profiles={shopperProfiles}
+            profilesStatus={shopperProfilesStatus}
+            selectedShopperProfileId={selectedShopperProfileId}
+            disabled={isShopperSwitchDisabled}
+            onChange={onShopperChange}
+          />
         </div>
       </div>
 

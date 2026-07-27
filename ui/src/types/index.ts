@@ -46,8 +46,19 @@ export interface ImageRowContent extends Array<ImageContent> {}
 
 export interface ChatboxProps {
   selectedProduct: ProductSummary | null;
+  selectedShopperProfileId: string | null;
   onProductSelect: (product: ProductSummary | null) => void;
   onProductsUpdate: (products: ProductSummary[]) => void;
+  onBusyChange: (isBusy: boolean) => void;
+  preserveIdentityOnMount: boolean;
+}
+
+export interface ShopperProfile {
+  shopper_profile_id: string;
+  display_name: string;
+  shopper_type: string;
+  behavior: string;
+  zipcode: string;
 }
 
 export interface ProductDetailPanelProps {
@@ -78,6 +89,7 @@ export interface ApiRequest {
   session_id?: string;
   conversation_id?: string;
   cart_id?: string;
+  shopper_profile_id?: string;
   context?: string;
   cart?: CartData;
   retrieved?: Record<string, string>;

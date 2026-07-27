@@ -11,6 +11,7 @@ import logging
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field, validator
 
+from .weather import WeatherConfig
 from shared.model_config import resolve_model_config, validate_model_config
 
 logger = logging.getLogger(__name__)
@@ -142,6 +143,7 @@ class ChainServerConfig(BaseModel):
             "the previous no-timeout behavior for slower remote embedding calls."
         ),
     )
+    weather: WeatherConfig = Field(default_factory=WeatherConfig)
     multimodal: bool = Field(..., description="Whether multimodal features are enabled")
     media_input: MediaInputConfig = Field(default_factory=MediaInputConfig)
     
@@ -282,6 +284,11 @@ def load_config(config_path: Optional[str] = None) -> ChainServerConfig:
             if value is not None and value != ""
         }
     )
+    weather_enabled = _env_bool("WEATHER_ENABLED")
+    if weather_enabled is not None:
+        weather_data = dict(config_data.get("weather") or {})
+        weather_data["enabled"] = weather_enabled
+        config_data["weather"] = weather_data
 
     config_root = Path(os.environ.get("SHARED_CONFIG_ROOT", str(Path(config_path).parents[1])))
     model_config = resolve_model_config(config_root=config_root)

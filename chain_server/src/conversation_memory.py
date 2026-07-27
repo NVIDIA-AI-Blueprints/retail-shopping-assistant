@@ -14,6 +14,7 @@ from urllib.parse import quote
 import requests
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError
 
+from .agenttypes import SHOPPER_PROFILE_ID_PATTERN, ShopperContext
 from shared.commerce_contracts import ProductSummary
 
 
@@ -52,6 +53,12 @@ class TurnStartRequest(_MemoryModel):
     request_digest: str = Field(
         ...,
         pattern=r"^sha256:[0-9a-f]{64}$",
+    )
+    shopper_profile_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=64,
+        pattern=SHOPPER_PROFILE_ID_PATTERN,
     )
     catalog_revision: str | None = Field(default=None, min_length=1, max_length=512)
 
@@ -116,6 +123,7 @@ class TurnStartResult(_MemoryModel):
         default_factory=list,
         max_length=5,
     )
+    shopper_context: ShopperContext | None
     projection: ConversationProjection = Field(default_factory=ConversationProjection)
     cart: list[ConversationCartItem] = Field(default_factory=list)
     assistant_text: str | None = Field(default=None, max_length=100_000)
@@ -199,6 +207,7 @@ class ConversationMemoryClient:
         shopper_text: str,
         media: Sequence[Mapping[str, Any]] = (),
         cart_user_id: int,
+        shopper_profile_id: str | None = None,
         catalog_revision: str | None = None,
     ) -> TurnStartResult:
         """Start one turn without sending raw media to the memory service."""
@@ -207,14 +216,25 @@ class ConversationMemoryClient:
             request_id=request_id,
             shopper_text=shopper_text,
             cart_user_id=cart_user_id,
-            request_digest=build_request_digest(shopper_text, media),
+            request_digest=build_request_digest(
+                shopper_text,
+                media,
+                shopper_profile_id=shopper_profile_id,
+            ),
+            shopper_profile_id=shopper_profile_id,
             catalog_revision=catalog_revision,
         )
         payload = self._post(
             f"/conversations/{_path_segment(conversation_id)}/turn/start",
             request.model_dump(mode="json"),
         )
-        return self._validate_response(payload, TurnStartResult)
+        result = self._validate_response(payload, TurnStartResult)
+        if (shopper_profile_id is None) != (result.shopper_context is None):
+            raise ConversationMemoryError(
+                "shopper_context_invalid",
+                "Conversation memory returned mismatched shopper context.",
+            )
+        return result
 
     def finalize_turn(
         self,
@@ -299,8 +319,14 @@ class ConversationMemoryClient:
 def build_request_digest(
     shopper_text: str,
     media: Sequence[Mapping[str, Any]] = (),
+    *,
+    shopper_profile_id: str | None = None,
 ) -> str:
-    """Fingerprint exact shopper text and ordered media content hashes."""
+    """Fingerprint shopper input, selected profile, and ordered media hashes.
+
+    Guest requests retain the pre-profile canonical shape so finalized turns
+    created before the shopper-profile migration remain exactly replayable.
+    """
 
     media_fingerprints = [
         {
@@ -310,12 +336,13 @@ def build_request_digest(
         }
         for item in media
     ]
-    canonical = _canonical_json(
-        {
-            "shopper_text": shopper_text,
-            "media": media_fingerprints,
-        }
-    )
+    digest_payload: dict[str, Any] = {
+        "shopper_text": shopper_text,
+        "media": media_fingerprints,
+    }
+    if shopper_profile_id is not None:
+        digest_payload["shopper_profile_id"] = shopper_profile_id
+    canonical = _canonical_json(digest_payload)
     return f"sha256:{hashlib.sha256(canonical.encode('utf-8')).hexdigest()}"
 
 
@@ -395,6 +422,12 @@ def _format_recent_turn(
 
 def _http_error(status_code: int, detail: str = "") -> ConversationMemoryError:
     if status_code == 409:
+        if detail == "conversation_profile_mismatch":
+            return ConversationMemoryError(
+                detail,
+                "Conversation is bound to another shopper profile.",
+                status_code=status_code,
+            )
         if detail in {"turn_in_progress", "conversation_turn_in_progress"}:
             return ConversationMemoryError(
                 detail,
@@ -417,6 +450,12 @@ def _http_error(status_code: int, detail: str = "") -> ConversationMemoryError:
         return ConversationMemoryError(
             "memory_turn_conflict",
             "Conversation turn conflicts with an existing request.",
+            status_code=status_code,
+        )
+    if status_code == 404 and detail == "shopper_profile_not_found":
+        return ConversationMemoryError(
+            detail,
+            "Shopper profile was not found.",
             status_code=status_code,
         )
     if status_code in {400, 404, 422}:

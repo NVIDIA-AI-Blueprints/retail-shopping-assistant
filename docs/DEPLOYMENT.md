@@ -341,9 +341,67 @@ docker stack deploy -c docker-compose.prod.yaml retail-assistant
 | `MEMORY_SQLITE_BUSY_TIMEOUT_MS` | SQLite lock wait for the single memory-service writer | No | `5000` |
 | `MEMORY_TURN_ABANDON_SECONDS` | Age at which startup or the next turn start marks an unfinished `started` turn abandoned | No | `300` |
 | `MEMORY_RECENT_TURNS` | Maximum prior context-eligible raw turns returned at the next durable turn start | No | `8` |
+| `WEATHER_ENABLED` | Permits explicit direct construction of the dormant weather client/tool; does not register it with the shopper agent | No | `false` |
+| `WEATHER_API_KEY` | Visual Crossing server-side credential, read indirectly from the variable named by chain-server weather config | Only when directly constructing an enabled weather client | empty |
 | `LOCAL_NIM_CACHE` | NIM cache directory | Local only | `~/.cache/nim` |
 | `LOG_LEVEL` | Logging level | No | `INFO` |
 | `NODE_ENV` | Node environment | No | `production` |
+
+### Dormant Weather Tool
+
+The chain server includes a provider-neutral daily weather client and a
+`get_weather_forecast_tool` factory, with Visual Crossing as the first adapter.
+Slice 3 leaves it disabled and unregistered: it is not model-visible, not
+granted by any shopper skill, not connected to selected-shopper ZIP, and not
+exposed through FastAPI or the UI. Ordinary startup, health checks, shopper
+turns, and offline tests perform no provider request and require no weather key.
+
+The complete non-secret configuration is in
+`shared/configs/chain_server/config.yaml`:
+
+```yaml
+weather:
+  enabled: false
+  provider: visual_crossing
+  base_url: https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline
+  api_key_env: WEATHER_API_KEY
+  timeout_seconds: 3.0
+  max_forecast_horizon_days: 15
+  max_range_days: 15
+```
+
+For an explicit direct-client test, set `WEATHER_ENABLED=true` and provide
+`WEATHER_API_KEY` through an ignored `.env`, the process environment, or the
+deployment secret manager. Compose passes those two variables only to
+`chain-server`; it does not bake a value into an image or expose it to catalog,
+memory, guardrail, UI, or local-NIM services. The config stores only the
+variable name, never the secret value. Enabling the client without the named
+key fails closed, and no MCP server is required. The local process runner
+enforces the same boundary by removing both weather variables from memory,
+guardrail, catalog, and React process environments while retaining them for the
+chain server.
+
+An optional direct provider smoke makes at most one request per invocation:
+
+```bash
+python scripts/weather_smoke.py
+```
+
+Before running it, set `WEATHER_ENABLED=true`, `WEATHER_API_KEY`, and
+`WEATHER_SMOKE_ZIP` in the private process environment. Optionally set either
+`WEATHER_SMOKE_DATE` or the complete
+`WEATHER_SMOKE_START_DATE`/`WEATHER_SMOKE_END_DATE` pair. The command prints
+only provider/config label, request mode, window length, outcome category,
+schema validity, and latency. It never prints the ZIP, dates, location,
+forecast, key, URL, provider body, or raw exception. It is not run by startup,
+CI, health checks, or shopper traffic.
+
+The adapter emits normalized daily forecast evidence and attribution metadata
+but persists nothing. Before a later slice displays or stores this evidence,
+operators must confirm the selected Visual Crossing plan's attribution,
+storage, sharing, and uncertainty requirements in the
+[pricing terms](https://www.visualcrossing.com/weather-data-editions/) and
+[service terms](https://www.visualcrossing.com/weather-service-terms/).
 
 ### Durable Conversation Turns
 

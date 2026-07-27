@@ -1,0 +1,37 @@
+[
+  {
+    "shopper_profile_id": "shopper_alex",
+    "display_name": "Alex",
+    "shopper_type": "occasion_driven_explorer",
+    "behavior": "Gives occasion and vibe first, answers concise clarification, then asks for a complete look.",
+    "zipcode": "98101"
+  },
+  {
+    "shopper_profile_id": "shopper_casey",
+    "display_name": "Casey",
+    "shopper_type": "strict_budget_style_mixer",
+    "behavior": "Treats budget and style as equally important, asks for swaps, and rejects over-budget bundles.",
+    "zipcode": "85004"
+  },
+  {
+    "shopper_profile_id": "shopper_jordan",
+    "display_name": "Jordan",
+    "shopper_type": "impatient_decisive",
+    "behavior": "Uses shorthand and pronouns after product comparisons, then changes their mind about cart contents.",
+    "zipcode": "10001"
+  },
+  {
+    "shopper_profile_id": "shopper_morgan",
+    "display_name": "Morgan",
+    "shopper_type": "skeptical_researcher",
+    "behavior": "Probes for material, care burden, and repeated-wear practicality before choosing.",
+    "zipcode": "60601"
+  },
+  {
+    "shopper_profile_id": "shopper_riley",
+    "display_name": "Riley",
+    "shopper_type": "iterative_refiner",
+    "behavior": "Accepts part of the outfit, rejects one constraint, and expects the assistant to revise intelligently.",
+    "zipcode": "33130"
+  }
+]

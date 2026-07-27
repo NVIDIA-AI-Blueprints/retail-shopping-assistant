@@ -152,6 +152,10 @@ If another local Milvus is already healthy at `localhost:19530` with health on `
 - The runner sets `SHARED_ROOT`, `SHARED_CONFIG_ROOT`, `REACT_APP_API_BASE_URL=http://localhost:8009`, and `BROWSER=none`.
 - `configure --nim-host` writes `.local-run/model-endpoints.env` with the per-role base URLs and model names.
 - When `NVIDIA_API_KEY` or `NGC_API_KEY` is present, the runner uses it as the default for `LLM_API_KEY`, `EMBED_API_KEY`, and `RAIL_API_KEY`; generated local endpoint envs use `local-nim` as a no-auth placeholder when no key is set.
+- `WEATHER_ENABLED` and `WEATHER_API_KEY` remain available only to the local
+  chain-server process; the runner removes them from memory, guardrails,
+  catalog, and UI environments and never writes them to
+  `.local-run/model-endpoints.env`.
 - Use `status` before deciding whether to start or stop.
 - Use `logs --service catalog-retriever --lines 120` when catalog startup is slow; first startup may populate Milvus embeddings through the remote NIMs.
 

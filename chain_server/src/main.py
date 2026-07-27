@@ -21,10 +21,15 @@ import time
 import json
 import re
 
-from .agenttypes import State, Cart
+from .agenttypes import SHOPPER_PROFILE_ID_PATTERN, State, Cart
 from .config import load_config
 from .deepagents_runtime import DeepAgentsRuntime, create_request_identity
 from .media_perception import MEDIA_ONLY_QUERY
+from .shopper_profiles import (
+    ShopperProfile,
+    ShopperProfilesClient,
+    ShopperProfilesError,
+)
 from shared.model_config import resolve_model_config
 
 # Configure logging
@@ -39,6 +44,7 @@ logger = logging.getLogger(__name__)
 try:
     config = load_config()  # Load and validate configuration
     assistant_runtime = DeepAgentsRuntime(config)
+    shopper_profiles_client = ShopperProfilesClient(config.memory_port)
 except Exception as e:
     logger.error(f"Failed to initialize application: {e}")
     raise
@@ -79,6 +85,12 @@ class QueryRequest(BaseModel):
     session_id: Optional[str] = None
     conversation_id: Optional[str] = None
     cart_id: Optional[str] = None
+    shopper_profile_id: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        max_length=64,
+        pattern=SHOPPER_PROFILE_ID_PATTERN,
+    )
     request_id: Optional[str] = Field(
         default=None,
         max_length=128,
@@ -122,6 +134,7 @@ def create_initial_state(request: QueryRequest) -> State:
     return State(
         user_id=request.user_id,
         query=request.query,
+        shopper_profile_id=request.shopper_profile_id,
         image=first_image,
         media=media,
         context=request.context or "",
@@ -155,6 +168,7 @@ async def process_query_stream(request: QueryRequest):
             conversation_id=request.conversation_id,
             cart_id=request.cart_id,
             request_id=request.request_id,
+            shopper_profile_id=request.shopper_profile_id,
         )
         
         async def send_updates():
@@ -201,6 +215,7 @@ async def process_query_timing(request: QueryRequest):
             conversation_id=request.conversation_id,
             cart_id=request.cart_id,
             request_id=request.request_id,
+            shopper_profile_id=request.shopper_profile_id,
         )
         
         # Process query and collect timing data
@@ -269,6 +284,22 @@ async def capabilities():
     }
 
 
+@app.get(
+    "/shopper-profiles",
+    response_model=list[ShopperProfile],
+)
+async def list_shopper_profiles() -> list[ShopperProfile]:
+    """Return the reviewed representative shoppers without changing chat context."""
+
+    try:
+        return await asyncio.to_thread(shopper_profiles_client.list_profiles)
+    except ShopperProfilesError as exc:
+        raise HTTPException(
+            status_code=_shopper_profiles_status(exc),
+            detail=str(exc),
+        ) from exc
+
+
 @app.get("/")
 async def root():
     """Root endpoint with API information."""
@@ -280,10 +311,17 @@ async def root():
             "stream": "/query/stream",
             "timing": "/query/timing",
             "capabilities": "/capabilities",
+            "shopper_profiles": "/shopper-profiles",
             "health": "/health",
             "docs": "/docs"
         }
     }
+
+
+def _shopper_profiles_status(error: ShopperProfilesError) -> int:
+    if error.code == "shopper_profiles_response_invalid":
+        return 502
+    return 503
 
 
 _DATA_URL_RE = re.compile(r"^data:([^;]+);base64,(.*)$", re.IGNORECASE | re.DOTALL)

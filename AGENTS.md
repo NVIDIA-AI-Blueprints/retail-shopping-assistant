@@ -7,7 +7,7 @@ This file is a working guide for coding agents and contributors in this reposito
 Retail Shopping Assistant is a multi-service application with:
 - `chain_server`: FastAPI + Deep Agents SDK orchestration over deterministic catalog and cart tools.
 - `catalog_retriever`: FastAPI service for text/image embedding retrieval against Milvus.
-- `memory_retriever`: FastAPI + single-replica SQLite service for ordered durable conversation turns, exact finalized-turn replay, stable cart-line IDs, and atomically idempotent add/remove/quantity mutations.
+- `memory_retriever`: FastAPI + single-replica SQLite service for an immutable representative-shopper registry, ordered durable conversation turns, exact finalized-turn replay, stable cart-line IDs, and atomically idempotent add/remove/quantity mutations.
 - `guardrails`: FastAPI wrapper around NeMo Guardrails input/output safety checks.
 - `ui`: React + TypeScript chat UI using SSE streaming.
 - `shared`: Shared YAML configs, JSONL catalog data/role sidecars, and image assets.
@@ -19,7 +19,7 @@ Top-level orchestration is via `docker-compose.yaml`; optional local NIM model c
 1. UI posts to `/api/query/stream` (nginx proxy on port `3000`).
 2. Nginx routes `/api/*` to `chain-server:8009`.
 3. Chain server request flow:
-   - `DeepAgentsRuntime` first starts a durable turn in the memory service, which returns bounded model-context-eligible raw turns, the prior turn's selected skill names, and the authoritative cart. Blocked turns remain durable and exactly replayable but are excluded from both the service projection and chain prompt formatter. Graph working state uses a request-scoped pair of `conversation_id` and `request_id`. Caller-supplied persona data is not injected into model context.
+   - `DeepAgentsRuntime` first starts a durable turn in the memory service, which returns bounded model-context-eligible raw turns, the prior turn's selected skill names, the authoritative cart, and an optional server-resolved representative-shopper snapshot. Blocked turns remain durable and exactly replayable but are excluded from both the service projection and chain prompt formatter. Graph working state uses a request-scoped pair of `conversation_id` and `request_id`. A selected profile ID is bound immutably to that conversation and renders one compact current-turn context block containing only type, behavior, and saved ZIP. Profile precedence and non-authority rules are also present only for selected-profile turns; Guest receives neither the block nor profile-specific prompt rules. The block is soft guidance: current explicit instructions and recent explicit preferences take precedence, and it cannot establish budget, product constraints or facts, cart intent, skill selection, or tool grants. Unknown caller fields remain backward-compatibly ignored, and caller-supplied persona objects are never injected.
    - Optional input guardrails run before model/tool work; attached media is analyzed through the configured perception client.
    - Deep Agents graph execution has a configurable 45-second default deadline. A timeout captures bounded partial graph messages, clears unsent products, finalizes the durable turn as failed, and deletes the request checkpoint only after that finalization succeeds.
    - Every turn begins with a required model step that semantically selects the smallest applicable set from five registered shopper skills. The latest durable selected names are supplied as a read-only continuity hint; they never authorize tools or replace the fresh selection. Product work uses exactly one primary procedure: product discovery or outfit styling. Budget shopping is a modifier only when the shopper states a budget; cart and policy requests may use their standalone skills. An invalid composition receives its typed reason and one correction attempt; a second invalid composition ends with a deterministic clarification and runs no shopping tool. Multiple activation calls in one response execute none and clarify immediately. The runtime injects the complete selected files and exposes only the union of their declared `tools_granted`; dispatch independently rechecks the selected skills, grant union, and immutable tool policy. Pre-activation, same-batch, and ungranted shopping calls are execution-blocked.
@@ -27,6 +27,7 @@ Top-level orchestration is via `docker-compose.yaml`; optional local NIM model c
    - Every search also carries required pre-retrieval `shopper_guidance`: one concise, product-agnostic sentence authored under the active skill. A directly stated unadvertised requirement on a shopper-named scope fails closed. Only a schema-valid proposed inferred requirement on a genuinely open role may consume that distinct scope's one model-owned review. Deterministic code does not classify shopper prose or rewrite malformed arguments. A repair cannot change a shopper-named scope noun. A successful partial search may continue with another valid role and its own one-repair opportunity, but no scope receives two repairs; the configured turn cap remains three successful searches.
    - Cart mutations require explicit product/cart-line refs. Grounding reads actual tool-role messages, separates current-request evidence from prior-turn evidence, and never treats an assistant draft as evidence. Successful searches preserve the taxonomy-independent semantic query as internal ranking evidence, the pre-retrieval `shopper_guidance` as product-agnostic response framing, and each confirmed filter set with the products from that search. A completed search gets one final tools-disabled model step under the active skill, followed by the grounding editor. If the requested outcome depends on an unconfirmed material, fit, comfort, durability, care, weather, or other functional property, the response must disclose that gap and frame results as the closest catalog or styling direction rather than as proven suitable. If that draft or editor is unavailable, deterministic fallback uses search guidance, static skill `response_guidance`, returned names, prices, categories, and search-scoped confirmed filters, followed by the same generic unverified-property disclosure. Scoped zero-result evidence cannot establish absence outside its exact taxonomy and filters. The graph and grounding editor share one execution deadline; a grounding timeout finalizes as failed with `grounding_timeout`, uses the deterministic catalog renderer for search-only evidence, and otherwise returns a fixed retry/cart-check response rather than the unverified draft. Editor errors and empty or whitespace-only editor output use the same fail-closed response rule with `grounding_error`.
    - Optional output guardrails run, then the memory service finalizes the durable turn as completed, blocked, or failed before products, images, content, and metrics are emitted over SSE. An exact retry of a finalized request replays its stored response without model/tool work. Internal diagnostics include bounded current-turn product evidence from successful catalog search and detail results plus bounded `catalog_scope_outcomes` for zero-result scopes; each search scope remains attached to its own products. Public query responses contain an empty diagnostics object by default. `EXPOSE_AGENT_DIAGNOSTICS=true` exposes the detailed trace only for a trusted operator or evaluation deployment. Final-text extraction skips tool, tool-calling, and internal activation messages; if no shopper-facing answer exists, the runtime returns a safe fallback with `incomplete_agent_response`. On graph failure, bounded current-turn messages are captured before checkpoint cleanup.
+   - A provider-neutral daily weather client and `get_weather_forecast_tool` factory exist as a dormant boundary. They accept only a five-digit US ZIP plus today, one exact date, or a complete inclusive date range. `WEATHER_ENABLED=false` is the default. The wrapper is not registered with Deep Agents, granted by a skill, mentioned in prompts, connected to shopper context, exposed through FastAPI, or called by the UI; startup, health checks, and shopper turns make no weather request.
 4. For product discovery, chain server calls catalog retriever:
    - `/query/text` for text-only.
    - `/query/image` for text + image.
@@ -41,6 +42,7 @@ Top-level orchestration is via `docker-compose.yaml`; optional local NIM model c
 - Shopper-skill registry, frontmatter validation, and immutable tool policy: `chain_server/src/tool_policy.py`
 - Per-turn skill activation, model-visible tool binding, and dispatch grant gate: `chain_server/src/skill_activation.py`
 - Durable conversation-turn client and wire contracts: `chain_server/src/conversation_memory.py`
+- Representative-shopper read client: `chain_server/src/shopper_profiles.py`
 - API contract and SSE endpoint: `chain_server/src/main.py`
 - Catalog capability cache/prompt projection: `chain_server/src/catalog_capabilities.py`
 - Catalog intent validation/execution: `chain_server/src/catalog_request.py`, `chain_server/src/catalog_execution.py`
@@ -48,6 +50,10 @@ Top-level orchestration is via `docker-compose.yaml`; optional local NIM model c
 - Operator-managed store policy content: `shared/configs/chain_server/store_policies.yaml`
 - Shopper behavior skills and references: `chain_server/skills/shopper/`
 - Image/video perception: `chain_server/src/media_perception.py`
+- Dormant weather request/result contract and Visual Crossing adapter:
+  `chain_server/src/weather.py`
+- Dormant, directly constructible weather wrapper:
+  `chain_server/src/weather_tool.py`
 - Shared request/state models: `chain_server/src/agenttypes.py`
 - `graph.py`, `planner.py`, `retriever.py`, `cart.py`, `chatter.py`, and `summarizer.py` are legacy compatibility paths, not the serving runtime.
 
@@ -62,12 +68,15 @@ Top-level orchestration is via `docker-compose.yaml`; optional local NIM model c
   `memory_retriever/src/models.py`, `memory_retriever/src/migrations.py`
 - Durable turn start/finalize/replay boundary:
   `memory_retriever/src/conversations.py`
+- Immutable representative-shopper bootstrap/read API:
+  `memory_retriever/src/shopper_profiles.py`
 
 - Guardrails API: `guardrails/src/main.py`
 - Guardrails engine/wiring: `guardrails/src/rails.py`
 - Guardrails model config helper: `guardrails/src/config_utils.py`
 
 - UI streaming behavior: `ui/src/components/chatbox/chatbox.tsx`
+- UI representative-shopper picker: `ui/src/components/ShopperPicker.tsx`
 - UI API config and feature flags: `ui/src/config/config.ts`
 - UI chat panel layout and footer alignment: `ui/src/chatbox.css`
 - UI message/cart-toast parsing helpers: `ui/src/utils/index.ts`
@@ -127,6 +136,8 @@ The local runner:
 - Starts app services as local processes and uses Docker only for Milvus infra (`etcd`, `minio`, `milvus`).
 - Uses `shared/configs/models.yaml` plus environment overrides.
 - `configure --nim-host http://HOST` writes ignored `.local-run/model-endpoints.env` with remote NIM URLs.
+- Retains `WEATHER_ENABLED` and `WEATHER_API_KEY` only for the chain-server
+  process and removes them from memory, guardrail, catalog, and UI processes.
 - Sets `SHARED_ROOT`, `SHARED_CONFIG_ROOT`, `REACT_APP_API_BASE_URL=http://localhost:8009`, and `BROWSER=none`.
 - Creates runtime files under ignored `.local-run/` and links ignored `ui/public/images -> shared/images`.
 
@@ -198,6 +209,10 @@ Key env vars:
 - `SHARED_CONFIG_ROOT` (local runner / non-container config root)
 - `SHARED_ROOT` (local runner / non-container shared asset root)
 - `REACT_APP_API_BASE_URL` (local React dev server API target)
+- `WEATHER_ENABLED` (dormant direct weather-client construction only; default
+  `false`)
+- `WEATHER_API_KEY` (Visual Crossing server-side key; required only when
+  explicitly constructing the enabled dormant client)
 
 ## 7) Important Gotchas
 
@@ -211,6 +226,12 @@ Key env vars:
   single-replica SQLite database. Compose uses
   `sqlite:////data/context.db` on the `memory-data` named volume; deleting that
   volume deletes the stored transcript and cart state.
+- The same SQLite database owns five immutable representative shoppers loaded
+  from `shared/configs/memory_retriever/shopper_profiles.json`. The bundled UI
+  sends only the selected ID. Turn start resolves it transactionally, binds it
+  to the conversation (including Guest as `NULL`), and returns a typed
+  three-field context. Switching profiles therefore requires the new
+  conversation/cart identities created by the picker.
 - Stale active turns are recovered at startup and atomically at the next turn
   start. An exact abandoned retry reopens only the latest conversation sequence,
   preserves its request ID for cart idempotency, and rotates its service-issued
@@ -235,8 +256,9 @@ Key env vars:
   as failed using `agent_timeout` and `grounding_timeout`, respectively. Timeout
   finalization uses the existing durable attempt fence; do not substitute the
   stale-turn abandonment setting for this live execution deadline.
-- Durable raw turns contain shopper/assistant text, selected skill names,
-  bounded replay, and ordered event envelopes. They do not store raw media,
+- Durable raw turns contain shopper/assistant text, the nullable representative
+  profile binding, selected skill names, bounded replay, and ordered event
+  envelopes. They do not store the rendered shopper-context block, raw media,
   model reasoning, or the complete graph/tool transcript. Presented-product
   events and deterministic historical resolution are implemented; active
   anchors and effective preferences remain reserved and unused.
@@ -373,6 +395,13 @@ Key env vars:
   it must not claim a mutation without a successful cart result or invent facts
   absent from catalog detail evidence.
 - The right chat panel is fixed between the nav bar and global footer; keep `ui/src/chatbox.css` aligned with the navbar/footer heights when changing layout.
+- The Slice 3 weather client/tool is deliberately dormant. Keep it out of
+  `DeepAgentsRuntime` registration, `SHOPPING_TOOL_POLICIES`, shopper-skill
+  grants, prompts, request/state models, FastAPI, and UI until a separate
+  leveraging slice defines trusted location/date precedence, grounded evidence,
+  provider attribution, and forecast-uncertainty behavior. It needs no MCP
+  server and must never log the key, prepared URL, ZIP, requested dates,
+  resolved location, provider body, or raw exception.
 
 ## 8) Contribution and Commit Notes
 

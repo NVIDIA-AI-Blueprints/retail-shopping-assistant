@@ -22,6 +22,8 @@ The Retail Shopping Assistant API provides a comprehensive interface for an AI-p
 - **Real-time Streaming**: Server-Sent Events (SSE) for live responses
 - **Multi-modal Input**: Text queries, image uploads, and optional VLM-backed video/image understanding
 - **Shopping Cart Management**: Add, remove, and view cart items
+- **Representative Shoppers**: Read five immutable eval-derived shopper
+  profiles for the bundled UI picker
 - **Content Safety**: Built-in guardrails for safe interactions
 - **Performance Monitoring**: Detailed timing information
 
@@ -132,6 +134,7 @@ interface QueryRequest {
   session_id?: string;                // Optional website/browser session identifier
   conversation_id?: string;           // Optional chat thread identifier
   cart_id?: string;                   // Optional cart identifier
+  shopper_profile_id?: string;        // Optional fixed representative-shopper ID
   request_id?: string;                // Optional stable ID for exact whole-turn replay
   context?: string;                   // Previous conversation context
   cart?: Cart;                        // Current shopping cart state
@@ -158,6 +161,7 @@ interface MediaAttachment {
   "session_id": "session_abc",
   "conversation_id": "conversation_abc",
   "cart_id": "cart_abc",
+  "shopper_profile_id": "shopper_morgan",
   "request_id": "request_abc",
   "context": "Previous conversation about summer clothing",
   "cart": {
@@ -176,15 +180,20 @@ interface MediaAttachment {
 }
 ```
 
-`session_id`, `conversation_id`, `cart_id`, and `request_id` are optional for
-backward compatibility. When the scoped IDs are omitted, the server maps the
-legacy `user_id` to internal compatibility identifiers; when `request_id` is
-omitted, it generates a new UUID for the turn. A caller retrying the same exact
-turn should reuse its request ID. The memory service stores the request digest
-with the durable turn: an identical finalized retry replays the stored response,
-products, retrieved images, and diagnostics without model/tool work or another
-finalize call. Reusing the request ID with different shopper text or media is a
-conflict. The same request ID also derives stable cart-mutation idempotency keys.
+`session_id`, `conversation_id`, `cart_id`, `shopper_profile_id`, and
+`request_id` are optional for backward compatibility. `shopper_profile_id`
+accepts 1–64 ASCII letters, digits, `_`, and `-`, beginning with a letter or
+digit; omitted or `null` means Guest. When the scoped IDs are omitted, the
+server maps the legacy `user_id` to internal compatibility identifiers; when
+`request_id` is omitted, it generates a new UUID for the turn. A caller retrying
+the same exact turn should reuse its request ID. The memory service stores the
+selected profile in the request digest and on the durable turn: an identical
+finalized retry replays the stored response, products, retrieved images, and
+diagnostics without model/tool work or another finalize call. Reusing the
+request ID with different shopper text, media, or selected profile is a
+conflict. Guest requests retain the pre-profile digest shape so finalized Guest
+turns from before migration 6 remain exactly replayable. The same request ID
+also derives stable cart-mutation idempotency keys.
 
 The bundled UI creates browser-session identifiers and sends them on every
 turn. When supplied, `conversation_id` scopes durable raw turns, presented-
@@ -215,10 +224,18 @@ durable resolver is same-conversation only and does not implement fuzzy or
 embedding matching, preferences, sentiment, active anchors, cross-conversation
 lookup, or stale-catalog-revision handling.
 
-Caller-supplied persona data is not part of `QueryRequest` and is not injected
-into model context. Persona support remains deferred until the API has a typed,
-bounded schema, authenticated ownership, input-safety validation, and an
-explicit untrusted-data boundary.
+Arbitrary caller-supplied persona data is not part of `QueryRequest`.
+The only profile input is the optional ID of one fixed server-published
+representative shopper. Turn start resolves it from SQLite, binds it to the
+conversation, and returns exactly `shopper_type`, `behavior`, and `zipcode`.
+The runtime renders that typed snapshot once as soft current-turn guidance.
+Explicit current and recent shopper statements take precedence; the snapshot
+cannot establish budget, product constraints or facts, cart intent, skill
+selection, or tool grants. Saved ZIP is background data only and does not
+trigger weather behavior. The behavior value is validated as one trimmed line
+at both registry bootstrap and turn-start serialization boundaries. Guest turns
+receive neither the context block nor its profile-specific precedence and
+non-authority prompt rules.
 
 `image` remains supported for backward compatibility and is normalized into the
 same internal media list as `media[]`. New clients should use `media[]` for
@@ -468,6 +485,37 @@ interface StreamingChunk {
 
 ## 🔄 Endpoints
 
+### Weather boundary (no HTTP route)
+
+Slice 3 adds a disabled, directly constructible weather client/tool inside the
+chain server, but it exposes no application, chain-server, or memory-service
+weather endpoint. It is absent from query request/response schemas, agent tool
+registration, prompts, and UI payloads. `/query/stream` and `/query/timing`
+therefore do not perform weather lookups, including when a selected shopper has
+a saved ZIP or a message mentions an event or date.
+
+### GET `/shopper-profiles`
+
+Returns the five immutable representative shoppers in
+`shopper_profile_id` order. The chain server validates and proxies the
+memory-service registry; it does not synthesize a client fallback.
+
+```json
+[
+  {
+    "shopper_profile_id": "shopper_alex",
+    "display_name": "Alex",
+    "shopper_type": "occasion_driven_explorer",
+    "behavior": "Gives occasion and vibe first, answers concise clarification, then asks for a complete look.",
+    "zipcode": "98101"
+  }
+]
+```
+
+Every ZIP is a five-character string. There are no create, update, or delete
+profile endpoints. This endpoint does not mutate or select a shopper and does
+not change `/query/stream` or `/query/timing`.
+
 ### POST `/query/stream`
 
 Returns a Server-Sent Events (SSE) response stream for shopping assistant
@@ -513,6 +561,7 @@ curl -X POST "http://localhost:8009/query/stream" \
   -H "Accept: text/event-stream" \
   -d '{
     "user_id": 123,
+    "shopper_profile_id": "shopper_morgan",
     "query": "Show me red dresses under $100"
   }'
 ```
@@ -959,6 +1008,21 @@ search round-trips exactly through this endpoint. A missing ID returns HTTP 404.
 }
 ```
 
+### Memory Retriever GET `/shopper-profiles`
+
+Returns the same ordered, bare profile array from SQLite. Startup migration 5
+creates `shopper_profiles`, then an immutable bootstrap inserts any missing
+reviewed rows in one transaction. Identical rows are a no-op; malformed seed
+data, unmanaged rows, or same-ID/different-content drift fails startup rather
+than silently updating a shopper.
+
+### Memory Retriever GET `/shopper-profiles/{shopper_profile_id}`
+
+Returns one profile row or HTTP 404. Profile IDs accept only 1–64 ASCII
+letters, digits, `_`, and `-`, beginning with a letter or digit. These
+unauthenticated memory routes remain internal/loopback-only under standard
+Compose.
+
 ### Memory Retriever POST `/conversations/{conversation_id}/turn/start`
 
 Starts one durable turn transaction before guardrail, model, or tool work. The
@@ -975,6 +1039,7 @@ be distinguished safely.
   "shopper_text": "Show me black flats",
   "cart_user_id": 123,
   "request_digest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "shopper_profile_id": "shopper_morgan",
   "catalog_revision": "catalog-fingerprint"
 }
 ```
@@ -986,6 +1051,11 @@ be distinguished safely.
   "sequence": 4,
   "replayed": false,
   "status": "started",
+  "shopper_context": {
+    "shopper_type": "skeptical_researcher",
+    "behavior": "Probes for material, care burden, and repeated-wear practicality before choosing.",
+    "zipcode": "60601"
+  },
   "recent_turns": [
     {
       "sequence": 3,
@@ -1023,6 +1093,15 @@ be distinguished safely.
 }
 ```
 
+Migration 6 adds nullable
+`conversation_turns.shopper_profile_id` with restrictive foreign-key actions;
+`NULL` means Guest. The first turn binds the conversation. Every later turn
+must use the same selected ID or the same Guest binding. A non-null ID is
+resolved inside the existing atomic start transaction, and the response always
+includes either the exact three-field `shopper_context` or `null` for Guest.
+The rendered context block is not stored in shopper or assistant transcript
+text.
+
 `projection.product_reference_index` is a compact, bounded index of ordered
 product-card sets derived from durable `candidate_set_presented` events. The
 runtime uses it as read-only context for typed historical resolution; the
@@ -1033,8 +1112,10 @@ turn, `replayed` is `true` and the response includes stored `assistant_text`,
 `termination_reason`, and `output` (`product_results`, `retrieved`,
 `agent_diagnostics`, and `selected_skill_names`). The chain server returns that stored output without agent
 execution. Reusing a request ID with different input, retrying a still-started
-turn, or starting another turn while the conversation has an active turn returns
-HTTP 409. A start transport or conflict failure prevents agent work.
+turn, changing the profile bound to a conversation, or starting another turn
+while the conversation has an active turn returns HTTP 409. An unknown
+`shopper_profile_id` returns HTTP 404. These failures insert no new turn and
+prevent model and shopping-tool work.
 
 At memory-service startup and atomically before each new turn start, turns left
 in `started` longer than `MEMORY_TURN_ABANDON_SECONDS` are changed to

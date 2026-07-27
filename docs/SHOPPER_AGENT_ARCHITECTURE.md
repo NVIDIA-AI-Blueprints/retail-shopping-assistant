@@ -18,15 +18,26 @@ see the [Shopper Agent Leadership Note](SHOPPER_AGENT_LEADERSHIP_NOTE.md).
 | Boundary | Owns | Does not own |
 | --- | --- | --- |
 | Published catalog | Product records, taxonomy, filter values, field roles, prices, details, and retrieval results | Shopper intent, styling judgment, cart state, or inventory |
-| Deep Agents runtime | Semantic intent, skill selection, deterministic selected-skill tool grants, tool selection, and styling judgment | Product facts, policy facts, or cart truth |
-| Memory service | Ordered durable shopper/assistant turns, exact finalized replay, bounded recent-turn reads, presented-product events and compact index, deterministic same-conversation reference resolution, authoritative cart state, and atomic mutation replay records | Catalog facts, model reasoning, preferences, sentiment, active anchors, or cross-conversation memory |
+| Deep Agents runtime | Semantic intent, skill selection, deterministic selected-skill tool grants, tool selection, styling judgment, and one server-resolved representative-shopper soft-guidance block | Product facts, policy facts, cart truth, or profile ownership |
+| Memory service | Immutable representative-shopper registry and conversation binding, typed three-field shopper snapshots, ordered durable shopper/assistant turns, exact finalized replay, bounded recent-turn reads, presented-product events and compact index, deterministic same-conversation reference resolution, authoritative cart state, and atomic mutation replay records | Catalog facts, model reasoning, learned preferences, sentiment, active anchors, or cross-conversation memory |
 | Graph checkpointer | Request-scoped working graph/tool state within one chain-server process | Durable transcript storage, cross-turn shopper memory, cross-replica context, or product-ref authorization |
+| Dormant weather boundary | Closed US ZIP/date request validation, one provider adapter, normalized daily forecast evidence, and sanitized typed failures | Shopper selection, relative-date interpretation, model context, agent registration, styling advice, persistence, or public API |
 
 A model-authored semantic query is an internal **ranking preference**, not a
 product fact or shopper-facing explanation. Only catalog tool evidence can
 establish catalog facts. Conversation memory may guide judgment, but it cannot
-override current tool results. Caller-supplied persona data is not injected into
-model context.
+override current tool results. Caller-supplied persona objects are not injected
+into model context. The UI may send only one server-published profile ID;
+memory resolves and binds it at turn start. The runtime renders the returned
+type, behavior, and ZIP once as soft guidance. That context never grants a
+skill/tool or establishes budget, constraints, cart intent, or product facts.
+
+Slice 3 also contains a dormant `get_weather_forecast_tool` factory backed by a
+provider-neutral client contract. Its wrapper is directly testable, but neither
+the wrapper nor its schema is supplied to `create_deep_agent`, the shopping-tool
+policy, a shopper skill, a prompt, FastAPI, or the UI. It does not read the
+saved ZIP or any shopper identity. Disabled startup and health checks make no
+weather request.
 
 ## 1. Published Catalog Data Foundation
 
@@ -323,6 +334,42 @@ request-local evidence. Active anchors and effective preferences remain
 reserved. Fuzzy/embedding lookup, preference or sentiment extraction,
 cross-conversation lookup, and stale-catalog-revision handling are not included.
 
+Separately, migration 5 creates `shopper_profiles`. Startup validates and
+immutably bootstraps exactly five eval-derived rows from shared memory-service
+configuration. The memory service exposes read-only list/get routes, and the
+chain server provides the typed list proxy used by the UI. No profile write
+route exists. Selecting another shopper remounts the chat surface and rotates
+the bundled UI's browser identities; it does not restore a profile-specific
+cart or transcript.
+
+Migration 6 adds nullable `conversation_turns.shopper_profile_id` with
+`ON DELETE RESTRICT` and `ON UPDATE RESTRICT`; `NULL` is the explicit Guest
+binding. Within the existing `BEGIN IMMEDIATE` turn-start transaction, memory
+resolves a selected row, rejects an unknown ID without inserting a turn, and
+prevents Guest-to-profile, profile-to-Guest, or profile-to-profile reuse of one
+conversation. The selected ID participates in exact request identity. A valid
+start or finalized replay returns:
+
+```text
+SHOPPER CONTEXT (server-resolved; soft guidance only):
+shopper_type: <type>
+behavior: <exact behavior>
+saved_zipcode: <five-digit ZIP>
+END SHOPPER CONTEXT
+```
+
+The block and its profile-specific precedence/non-authority prompt rules are
+absent for Guest. The block contains no profile ID or display name and is not
+written into raw shopper/assistant text or repeated in recent history.
+Explicit current-turn instructions win, followed by explicit recent
+conversation preferences. Static profile behavior is third-priority interaction
+guidance only. Saved ZIP is neither proof of current/event location nor a
+weather or product requirement. There are no shopper-type-specific code or
+prompt branches. Registry bootstrap and turn-start serialization both require
+the behavior summary to remain one trimmed line. Guest request digests preserve
+their pre-profile canonical shape so older finalized Guest turns still replay
+after migration 6.
+
 The resolved agent dependency boundary remains `deepagents==0.6.12`,
 `langchain==1.3.11`, `langgraph==1.2.7`, and `langgraph-sdk==0.4.2`.
 Services that resolve `orjson` pin `3.11.5`, the last upstream release limited
@@ -351,11 +398,13 @@ The serving implementation is split across the
 [Deep Agents runtime](../chain_server/src/deepagents_runtime.py),
 [conversation-memory client](../chain_server/src/conversation_memory.py),
 [conversation-product boundary](../chain_server/src/conversation_products.py),
+[shopper-profile read boundary](../chain_server/src/shopper_profiles.py),
 [shopper tool policy](../chain_server/src/tool_policy.py),
 [skill activation boundary](../chain_server/src/skill_activation.py), and
 [tool-loop controller](../chain_server/src/tool_loop_control.py). The durable
 SQLite boundary is implemented by the memory service's
 [conversation API](../memory_retriever/src/conversations.py),
+[shopper-profile registry](../memory_retriever/src/shopper_profiles.py),
 [product-reference resolver](../memory_retriever/src/product_references.py),
 [models](../memory_retriever/src/models.py), and
 [migrations](../memory_retriever/src/migrations.py).
@@ -409,6 +458,7 @@ skill and is not catalog truth.
 | Promotions boundary | `check_active_promotions_tool` | Global no-I/O application stub; currently reports no active promotion configured through the assistant |
 | Cart | `get_cart_tool`, `view_cart_total_tool`, `add_cart_items_tool`, `remove_cart_item_tool`, `update_cart_items_tool` | Memory service cart |
 | Policy | `get_store_policy_tool` | Operator-managed policy YAML |
+| Dormant weather (not registered) | `get_weather_forecast_tool` | Directly constructed provider-neutral client; Visual Crossing is the first adapter |
 
 `activate_shopper_skills_tool` is an internal control tool, not a commerce
 tool. It is forced at turn start and selects static behavior instructions; it

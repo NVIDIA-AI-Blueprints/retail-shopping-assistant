@@ -18,6 +18,8 @@ from chain_server.src.conversation_memory import (
     format_conversation_context,
 )
 
+_MISSING = object()
+
 
 class FakeResponse:
     def __init__(
@@ -70,6 +72,7 @@ def _start_payload() -> dict[str, Any]:
             }
         ],
         "previous_selected_skill_names": ["outfit-styling"],
+        "shopper_context": None,
         "projection": {
             "version": 1,
             "active_anchors": [],
@@ -111,11 +114,48 @@ def test_request_digest_uses_exact_query_and_ordered_media_hashes() -> None:
     assert len(digest) == 71
     assert digest != build_request_digest("show me that", media)
     assert digest != build_request_digest("show me this", list(reversed(media)))
+    selected_digest = build_request_digest(
+        "show me this",
+        media,
+        shopper_profile_id="shopper_morgan",
+    )
+    assert digest != selected_digest
+    assert selected_digest == build_request_digest(
+        "show me this",
+        media,
+        shopper_profile_id="shopper_morgan",
+    )
+    assert selected_digest != build_request_digest(
+        "show me this",
+        media,
+        shopper_profile_id="shopper_casey",
+    )
     assert "AAAA" not in digest
 
 
+def test_guest_request_digest_preserves_pre_profile_replay_identity() -> None:
+    expected_legacy_digest = (
+        "sha256:fe13e0bd6c30523251464483e8fa50c4da4021970734ff2f1b440dd37c8ef09d"
+    )
+
+    assert build_request_digest("show me this") == expected_legacy_digest
+    assert (
+        build_request_digest("show me this", shopper_profile_id=None)
+        == expected_legacy_digest
+    )
+
+
 def test_start_turn_posts_one_request_without_raw_media() -> None:
-    session = FakeSession(FakeResponse(_start_payload()))
+    payload = _start_payload()
+    payload["shopper_context"] = {
+        "shopper_type": "skeptical_researcher",
+        "behavior": (
+            "Probes for material, care burden, and repeated-wear practicality "
+            "before choosing."
+        ),
+        "zipcode": "60601",
+    }
+    session = FakeSession(FakeResponse(payload))
     client = ConversationMemoryClient(
         "http://memory:8011/",
         timeout_seconds=4,
@@ -129,12 +169,15 @@ def test_start_turn_posts_one_request_without_raw_media() -> None:
         shopper_text="Show me that bag again",
         media=[{"type": "image", "data": raw_media}],
         cart_user_id=17,
+        shopper_profile_id="shopper_morgan",
         catalog_revision="sha256:catalog",
     )
 
     assert result.turn_id == "turn-2"
     assert result.recent_turns[0].shopper_text == "Show me bags"
     assert result.previous_selected_skill_names == ["outfit-styling"]
+    assert result.shopper_context is not None
+    assert result.shopper_context.shopper_type == "skeptical_researcher"
     assert result.cart[0].cart_line_id == "line-1"
     assert session.calls[0]["url"] == (
         "http://memory:8011/conversations/conversation%2Fa/turn/start"
@@ -147,11 +190,82 @@ def test_start_turn_posts_one_request_without_raw_media() -> None:
         "request_digest": build_request_digest(
             "Show me that bag again",
             [{"type": "image", "data": raw_media}],
+            shopper_profile_id="shopper_morgan",
         ),
+        "shopper_profile_id": "shopper_morgan",
         "catalog_revision": "sha256:catalog",
     }
     assert raw_media not in str(request_payload)
     assert session.calls[0]["timeout"] == 4
+
+
+@pytest.mark.parametrize(
+    "shopper_context",
+    [
+        _MISSING,
+        None,
+        {
+            "shopper_type": "skeptical_researcher",
+            "behavior": "Evidence-conscious.",
+            "zipcode": "60601",
+            "display_name": "Morgan",
+        },
+        {
+            "shopper_type": "skeptical_researcher",
+            "behavior": "Evidence-conscious.",
+            "zipcode": "6060",
+        },
+    ],
+)
+def test_selected_start_rejects_missing_or_malformed_shopper_context(
+    shopper_context: Any,
+) -> None:
+    payload = _start_payload()
+    if shopper_context is _MISSING:
+        payload.pop("shopper_context")
+    else:
+        payload["shopper_context"] = shopper_context
+    client = ConversationMemoryClient(
+        "http://memory",
+        session=FakeSession(FakeResponse(payload)),
+    )
+
+    with pytest.raises(ConversationMemoryError) as caught:
+        client.start_turn(
+            "conversation-a",
+            request_id="request-a",
+            shopper_text="hello",
+            cart_user_id=17,
+            shopper_profile_id="shopper_morgan",
+        )
+
+    assert caught.value.code in {
+        "memory_response_invalid",
+        "shopper_context_invalid",
+    }
+
+
+def test_guest_start_rejects_an_unrequested_shopper_context() -> None:
+    payload = _start_payload()
+    payload["shopper_context"] = {
+        "shopper_type": "skeptical_researcher",
+        "behavior": "Evidence-conscious.",
+        "zipcode": "60601",
+    }
+    client = ConversationMemoryClient(
+        "http://memory",
+        session=FakeSession(FakeResponse(payload)),
+    )
+
+    with pytest.raises(ConversationMemoryError) as caught:
+        client.start_turn(
+            "conversation-a",
+            request_id="request-a",
+            shopper_text="hello",
+            cart_user_id=17,
+        )
+
+    assert caught.value.code == "shopper_context_invalid"
 
 
 def test_start_result_restores_finalized_replay_output() -> None:
@@ -405,6 +519,39 @@ def test_active_turn_conflict_is_retryable() -> None:
 
     assert caught.value.code == "turn_in_progress"
     assert caught.value.retryable is True
+
+
+@pytest.mark.parametrize(
+    "status_code,detail,expected_code",
+    [
+        (404, "shopper_profile_not_found", "shopper_profile_not_found"),
+        (409, "conversation_profile_mismatch", "conversation_profile_mismatch"),
+    ],
+)
+def test_profile_start_failures_preserve_stable_error_codes(
+    status_code: int,
+    detail: str,
+    expected_code: str,
+) -> None:
+    client = ConversationMemoryClient(
+        "http://memory",
+        session=FakeSession(
+            FakeResponse({"detail": detail}, status_code=status_code)
+        ),
+    )
+
+    with pytest.raises(ConversationMemoryError) as caught:
+        client.start_turn(
+            "conversation-a",
+            request_id="request-a",
+            shopper_text="hello",
+            cart_user_id=17,
+            shopper_profile_id="shopper_morgan",
+        )
+
+    assert caught.value.code == expected_code
+    assert caught.value.status_code == status_code
+    assert caught.value.retryable is False
 
 
 @pytest.mark.parametrize(

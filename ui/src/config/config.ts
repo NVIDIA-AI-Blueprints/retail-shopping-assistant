@@ -13,6 +13,7 @@ export interface AppConfig {
         query: string;
         stream: string;
         capabilities: string;
+        shopperProfiles: string;
         health: string;
       };
   };
@@ -55,6 +56,7 @@ const getConfig = (): AppConfig => {
         query: '/query',
         stream: '/query/stream',
         capabilities: '/capabilities',
+        shopperProfiles: '/shopper-profiles',
         health: '/health',
       },
     },

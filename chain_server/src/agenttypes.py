@@ -8,8 +8,33 @@ This module defines the core data structures used throughout the shopping assist
 including the main State object that flows through the LangGraph and supporting models.
 """
 from operator import ior
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing import Annotated, Dict, List, Any
+
+
+SHOPPER_PROFILE_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+
+
+class ShopperContext(BaseModel):
+    """Server-resolved soft guidance for one representative shopper."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    shopper_type: str = Field(
+        ...,
+        min_length=1,
+        max_length=80,
+        pattern=r"^[a-z][a-z0-9_]*$",
+    )
+    behavior: str = Field(..., min_length=1, max_length=512)
+    zipcode: str = Field(..., pattern=r"^[0-9]{5}$")
+
+    @field_validator("behavior")
+    @classmethod
+    def _validate_behavior(cls, value: str) -> str:
+        if value != value.strip() or "\n" in value or "\r" in value:
+            raise ValueError("shopper behavior must be one trimmed line")
+        return value
 
 
 class Cart(BaseModel):
@@ -58,6 +83,17 @@ class State(BaseModel):
     """
     user_id: int = Field(..., description="Unique user identifier")
     query: str = Field(..., description="User's input query")
+    shopper_profile_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=64,
+        pattern=SHOPPER_PROFILE_ID_PATTERN,
+        description="Selected immutable representative-shopper key",
+    )
+    shopper_context: ShopperContext | None = Field(
+        default=None,
+        description="Server-resolved current-turn shopper guidance",
+    )
     context: str = Field(default="", description="Previous conversation context")
     cart: Cart = Field(default_factory=Cart, description="User's shopping cart")
     response: str = Field(default="", description="Generated response from agents")

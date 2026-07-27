@@ -18,7 +18,7 @@ import sys
 import time
 from http.client import HTTPException
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Mapping
 from urllib.error import URLError
 from urllib.parse import urlparse
 from urllib.request import urlopen
@@ -77,6 +77,12 @@ PYTHON_SERVICES = {
 
 UI_SERVICE = "ui"
 ALL_LOCAL_SERVICES = (*PYTHON_SERVICES.keys(), UI_SERVICE)
+CHAIN_SERVER_ONLY_ENV_KEYS = frozenset(
+    {
+        "WEATHER_ENABLED",
+        "WEATHER_API_KEY",
+    }
+)
 
 
 def ensure_dirs() -> None:
@@ -277,6 +283,19 @@ def base_env() -> dict[str, str]:
         os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else ""
     )
     return env
+
+
+def scope_service_env(
+    service: str,
+    environment: Mapping[str, str],
+) -> dict[str, str]:
+    """Keep chain-server-only credentials out of sibling local processes."""
+
+    scoped = dict(environment)
+    if service != "chain-server":
+        for key in CHAIN_SERVER_ONLY_ENV_KEYS:
+            scoped.pop(key, None)
+    return scoped
 
 
 def set_if_empty(env: dict[str, str], key: str, value: str) -> None:
@@ -505,7 +524,7 @@ def start_python_service(name: str, spec: dict[str, object], *, skip_install: bo
     if not skip_install:
         ensure_python_deps(name, spec)
 
-    env = with_pythonpath(base_env(), pythonpath)
+    env = with_pythonpath(scope_service_env(name, base_env()), pythonpath)
     command = [
         str(venv_python(service_dir)),
         "-m",
@@ -523,7 +542,7 @@ def start_ui(*, skip_install: bool) -> None:
     ensure_ui_image_assets()
     if not skip_install:
         ensure_ui_deps()
-    env = os.environ.copy()
+    env = scope_service_env(UI_SERVICE, os.environ)
     env["PORT"] = "3000"
     env["BROWSER"] = "none"
     env["REACT_APP_API_BASE_URL"] = "http://localhost:8009"

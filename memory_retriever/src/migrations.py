@@ -20,6 +20,7 @@ from .models import (
     ConversationProjection,
     ConversationTurn,
     SchemaMigration,
+    ShopperProfile,
     User,
     new_cart_line_id,
     new_turn_attempt_id,
@@ -172,11 +173,29 @@ def _conversation_attempt_id(connection: Connection) -> None:
         )
 
 
+def _shopper_profiles_schema(connection: Connection) -> None:
+    ShopperProfile.__table__.create(bind=connection, checkfirst=True)
+
+
+def _conversation_shopper_profile(connection: Connection) -> None:
+    if "shopper_profile_id" not in _table_columns(connection, "conversation_turns"):
+        connection.execute(
+            text(
+                "ALTER TABLE conversation_turns "
+                "ADD COLUMN shopper_profile_id VARCHAR(64) "
+                "REFERENCES shopper_profiles(shopper_profile_id) "
+                "ON DELETE RESTRICT ON UPDATE RESTRICT"
+            )
+        )
+
+
 _MIGRATIONS = (
     (1, _legacy_schema),
     (2, _conversation_schema),
     (3, _conversation_output),
     (4, _conversation_attempt_id),
+    (5, _shopper_profiles_schema),
+    (6, _conversation_shopper_profile),
 )
 
 

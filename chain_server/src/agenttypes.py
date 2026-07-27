@@ -9,7 +9,7 @@ including the main State object that flows through the LangGraph and supporting 
 """
 from operator import ior
 from pydantic import BaseModel, Field
-from typing import Annotated, TypedDict, Dict, List, Any, Optional
+from typing import Annotated, Dict, List, Any
 
 
 class Cart(BaseModel):
@@ -85,6 +85,18 @@ class State(BaseModel):
     model_usage: Dict[str, Dict[str, Any]] = Field(
         default_factory=dict,
         description="Per-role model usage summary for the current turn"
+    )
+    agent_diagnostics: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Ordered Deep Agents tool and termination diagnostics"
+    )
+    previous_selected_skill_names: List[str] = Field(
+        default_factory=list,
+        description="Prior turn skill-selection hint loaded from durable memory"
+    )
+    selected_skill_names: List[str] = Field(
+        default_factory=list,
+        description="Shopper skills selected during the current turn"
     )
     next_agent: str = Field(default="", description="Next agent to route to")
     guardrails: bool = Field(default=True, description="Enable content safety checks")

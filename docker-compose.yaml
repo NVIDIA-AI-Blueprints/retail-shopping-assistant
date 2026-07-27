@@ -19,6 +19,9 @@ services:
       - CATALOG_RETRIEVER_URL=http://catalog-retriever:8010
       - MEMORY_RETRIEVER_URL=http://memory-retriever:8011
       - GUARDRAILS_ENABLED=${GUARDRAILS_ENABLED:-true}
+      - CHECKPOINT_STORE=${CHECKPOINT_STORE-memory}
+      - DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS=${DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS:-45}
+      - EXPOSE_AGENT_DIAGNOSTICS=${EXPOSE_AGENT_DIAGNOSTICS:-false}
     volumes:
       - ./shared:/app/shared
     depends_on:
@@ -60,12 +63,17 @@ services:
       context: ./memory_retriever
     container_name: memory-retriever
     ports:
-      - "8011:8011"
+      - "127.0.0.1:8011:8011"
     environment:
       - MILVUS_HOST=milvus
       - MILVUS_PORT=19530
+      - MEMORY_DATABASE_URL=${MEMORY_DATABASE_URL:-sqlite:////data/context.db}
+      - MEMORY_SQLITE_BUSY_TIMEOUT_MS=${MEMORY_SQLITE_BUSY_TIMEOUT_MS:-5000}
+      - MEMORY_TURN_ABANDON_SECONDS=${MEMORY_TURN_ABANDON_SECONDS:-300}
+      - MEMORY_RECENT_TURNS=${MEMORY_RECENT_TURNS:-8}
     volumes:
       - ./shared:/app/shared
+      - memory-data:/data
     depends_on:
       milvus:
         condition: service_healthy
@@ -206,3 +214,6 @@ networks:
     driver: bridge
     name: retail-shopping-assistant_shopping-network
     external: false
+
+volumes:
+  memory-data:

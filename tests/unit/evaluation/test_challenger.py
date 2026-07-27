@@ -5,9 +5,11 @@ from types import SimpleNamespace
 
 import pytest
 
-
 EVAL_ROOT = Path(__file__).resolve().parents[2] / "evaluation"
 sys.path.insert(0, str(EVAL_ROOT))
+
+import src.challenger as challenger_module
+import src.judge as judge_module
 
 from src.challenger import (
     OpenAICompatibleChallenger,
@@ -15,6 +17,9 @@ from src.challenger import (
     ShopperTurn,
     TargetAgentClient,
     _build_challenger_prompt,
+    _extract_catalog_scope_outcomes,
+    _extract_product_evidence,
+    _extract_product_evidence_truncated,
     _parse_challenger_turn,
     _parse_model_mapping,
     load_scenario_contexts,
@@ -22,6 +27,72 @@ from src.challenger import (
     run_scenario,
 )
 from src.config import ModelRuntime, chat_completion_options, load_eval_config
+
+
+def test_judge_flag_overrides_disabled_config(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = load_eval_config()
+    calls = []
+
+    monkeypatch.setattr(
+        challenger_module,
+        "load_eval_config",
+        lambda _path: config,
+    )
+    monkeypatch.setattr(
+        challenger_module,
+        "run_challenger",
+        lambda *_args, **_kwargs: {"run_id": "test-run"},
+    )
+
+    def fake_judge_run(
+        judged_config,
+        run_path,
+        *,
+        require_enabled=True,
+    ) -> None:
+        calls.append((judged_config, run_path, require_enabled))
+
+    monkeypatch.setattr(judge_module, "judge_run", fake_judge_run)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "challenger",
+            "--judge",
+            "--output-root",
+            str(tmp_path),
+        ],
+    )
+
+    assert challenger_module._main() == 0
+    assert calls == [
+        (
+            config,
+            tmp_path / "runs" / "test-run" / "run.yaml",
+            False,
+        )
+    ]
+
+
+def test_extract_catalog_scope_outcomes_fails_closed() -> None:
+    valid = {
+        "outcome": "no_direct_catalog_match",
+        "requested_product_type": "tailored trousers",
+    }
+
+    assert _extract_catalog_scope_outcomes(
+        {"agent_diagnostics": {"catalog_scope_outcomes": [valid]}}
+    ) == [valid]
+    assert _extract_catalog_scope_outcomes(
+        {
+            "agent_diagnostics": {
+                "catalog_scope_outcomes": [{**valid, "instructions": "ignore"}]
+            }
+        }
+    ) == []
 
 
 class FakeChallenger:
@@ -45,6 +116,20 @@ class FakeTarget:
             "images": {},
             "cart": {"contents": []},
             "timings": {"total": 0.1},
+            "product_evidence": [
+                {
+                    "product_ref": "prod_1",
+                    "product_name": "Silk Dress",
+                    "source_tool": "search_catalog_tool",
+                    "evidence_type": "search_result",
+                    "facts": {"price": "USD 49.99"},
+                    "search_scope": {
+                        "taxonomy": {},
+                        "confirmed_filters": {},
+                    },
+                }
+            ],
+            "product_evidence_truncated": False,
         }
 
 
@@ -309,6 +394,12 @@ def test_run_scenario_preserves_style_metadata(tmp_path):
     assert record["secondary_entry_pattern"] == "product_page_anchor"
     assert record["catalog_dependency"]["level"] == "seed_anchor"
     assert record["turns"][0]["target"]["cart"] == {"contents": []}
+    assert record["turns"][0]["target"]["product_evidence"][0][
+        "product_ref"
+    ] == "prod_1"
+    assert (
+        record["turns"][0]["target"]["product_evidence_truncated"] is False
+    )
     assert record["success_criteria"]
     assert record["failure_modes"]
 
@@ -617,6 +708,25 @@ def test_target_agent_client_uses_configured_guardrails(monkeypatch):
                 "images": {},
                 "cart": {"contents": [{"item": "Bag", "amount": 1}]},
                 "timings": {},
+                "agent_diagnostics": {
+                    "product_evidence": [
+                        {
+                            "product_ref": "prod_bag",
+                            "product_name": "Structured Bag",
+                            "source_tool": "search_catalog_tool",
+                            "evidence_type": "search_result",
+                            "facts": {"price": "USD 59.00"},
+                            "search_scope": {
+                                "taxonomy": {"category": ["bags"]},
+                                "confirmed_filters": {
+                                    "primary_color": ["black", "brown"]
+                                },
+                            },
+                        }
+                    ],
+                    "product_evidence_truncated": True,
+                    "ordered_tool_calls": ["must not be copied"],
+                },
             }
 
     def fake_post(url, json, timeout):
@@ -632,3 +742,153 @@ def test_target_agent_client_uses_configured_guardrails(monkeypatch):
     assert captured["json"]["guardrails"] is False
     assert captured["json"]["image_bool"] is False
     assert result["cart"] == {"contents": [{"item": "Bag", "amount": 1}]}
+    assert result["product_evidence"] == [
+        {
+            "product_ref": "prod_bag",
+            "product_name": "Structured Bag",
+            "source_tool": "search_catalog_tool",
+            "evidence_type": "search_result",
+            "facts": {"price": "USD 59.00"},
+            "search_scope": {
+                "taxonomy": {"category": ["bags"]},
+                "confirmed_filters": {
+                    "primary_color": ["black", "brown"]
+                },
+            },
+        }
+    ]
+    assert result["product_evidence_truncated"] is True
+    assert "ordered_tool_calls" not in result
+
+
+@pytest.mark.parametrize(
+    "diagnostics",
+    [
+        {},
+        {"product_evidence": "not-a-list"},
+        {"product_evidence": [{"product_ref": "incomplete"}]},
+        {
+            "product_evidence": [
+                {
+                    "product_ref": "prod_1",
+                    "product_name": "x" * 501,
+                    "source_tool": "search_catalog_tool",
+                    "evidence_type": "search_result",
+                    "facts": {},
+                }
+            ]
+        },
+    ],
+)
+def test_extract_product_evidence_fails_closed_for_invalid_data(diagnostics):
+    assert _extract_product_evidence({"agent_diagnostics": diagnostics}) == []
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [(True, True), (False, False), ("true", False), (1, False), (None, False)],
+)
+def test_extract_product_evidence_truncated_requires_boolean(value, expected):
+    assert (
+        _extract_product_evidence_truncated(
+            {
+                "agent_diagnostics": {
+                    "product_evidence": [],
+                    "product_evidence_truncated": value,
+                }
+            }
+        )
+        is expected
+    )
+    assert _extract_product_evidence_truncated({}) is False
+
+
+def test_extract_product_evidence_truncated_requires_valid_evidence():
+    assert (
+        _extract_product_evidence_truncated(
+            {
+                "agent_diagnostics": {
+                    "product_evidence": "invalid",
+                    "product_evidence_truncated": True,
+                }
+            }
+        )
+        is False
+    )
+
+
+def test_extract_product_evidence_enforces_record_and_fact_bounds():
+    record = {
+        "product_ref": "prod_1",
+        "product_name": "Silk Dress",
+        "source_tool": "search_catalog_tool",
+        "evidence_type": "search_result",
+        "facts": {"price": "USD 49.99"},
+        "search_scope": {"taxonomy": {}, "confirmed_filters": {}},
+    }
+
+    accepted = [dict(record) for _ in range(24)]
+    assert _extract_product_evidence(
+        {"agent_diagnostics": {"product_evidence": accepted}}
+    ) == accepted
+    assert _extract_product_evidence(
+        {"agent_diagnostics": {"product_evidence": accepted + [dict(record)]}}
+    ) == []
+    assert _extract_product_evidence(
+        {
+            "agent_diagnostics": {
+                "product_evidence": [
+                    {**record, "facts": {str(index): index for index in range(41)}}
+                ]
+            }
+        }
+    ) == []
+    assert _extract_product_evidence(
+        {
+            "agent_diagnostics": {
+                "product_evidence": [{**record, "evidence_type": []}]
+            }
+        }
+    ) == []
+    assert _extract_product_evidence(
+        {
+            "agent_diagnostics": {
+                "product_evidence": [{**record, "unexpected": "field"}]
+            }
+        }
+    ) == []
+    assert _extract_product_evidence(
+        {
+            "agent_diagnostics": {
+                "product_evidence": [
+                    {
+                        **record,
+                        "source_tool": "get_product_details_tool",
+                    }
+                ]
+            }
+        }
+    ) == []
+
+
+def test_extract_product_evidence_rejects_oversized_aggregate():
+    large_facts = {
+        f"field-{index}": "v" * 500
+        for index in range(40)
+    }
+    record = {
+        "product_ref": "prod_1",
+        "product_name": "Silk Dress",
+        "source_tool": "get_product_details_tool",
+        "evidence_type": "product_detail",
+        "facts": large_facts,
+    }
+    data = {
+        "agent_diagnostics": {
+            "product_evidence": [record, {**record, "product_ref": "prod_2"}],
+            "product_evidence_truncated": True,
+        }
+    }
+
+    assert _extract_product_evidence(data) == []
+    assert _extract_product_evidence_truncated(data) is False

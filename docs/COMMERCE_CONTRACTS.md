@@ -32,21 +32,30 @@ The main design decision is separation:
 The stacked commerce-tool work now has runtime wiring through the Deep Agents
 SDK adapter:
 
-- `DeepAgentsRuntime` registers six request-scoped tools: catalog search,
-  product details, cart read, cart total, cart add, and cart remove. These use
-  the internal `search_catalog`, `get_product_details`, `get_cart`,
-  `add_cart_item`, and `remove_cart_item` adapters plus deterministic cart-total
-  calculation.
+- `DeepAgentsRuntime` registers eleven request-scoped tools: catalog search,
+  product details, same-conversation product resolution, cart read, cart total,
+  cart add, cart remove, cart quantity update, store-policy lookup, and product
+  availability, plus active-promotions status. These use the internal commerce
+  adapters plus deterministic cart-total calculation.
 - Deep Agents cart mutation tools use explicit refs: `PRODUCT_REF` values
   returned by catalog search for add operations, and `CART_LINE_ID` values
   returned by cart reads for remove operations. They do not perform hidden
   product-name lookup or fuzzy cart-line matching.
 - Deep Agents product details lookup uses explicit `PRODUCT_REF` values from a
-  prior catalog search in the same conversation, then reads the active catalog
-  through `GET /products/{product_id}`. It is not a second broad search path.
-- Catalog search and cart-read wrapper tools return results to the agent loop
-  so explicit cart-mutation requests can search/read and then mutate in one
-  turn. Mutation tools still return the authoritative cart result directly.
+  current-turn search or a unique durable same-conversation resolution, then
+  reads the active catalog through `GET /products/{product_id}`. It is not a
+  second broad search path. Authorization exists only in request-local product
+  evidence, not the graph checkpoint.
+- Finalized ordered product-card output creates one durable
+  `candidate_set_presented` event and refreshes a compact per-conversation
+  reference index. The typed resolver returns 0/1/many matches; only one match
+  enters request-local evidence. It performs no catalog, embedding, or separate
+  model call, zero/many results require clarification, and the runtime permits
+  one batched resolver call per turn. The compact index keeps the newest
+  complete candidate sets within 16,384 serialized characters.
+- All wrapper tools return results to the agent loop so compound discovery,
+  policy, availability, and cart requests can finish before the final
+  shopper-facing response.
 - The legacy `RetrieverAgent` and `CartAgent` files still exist in the repo for
   reference and tests, but they are not the chain-server entrypoint.
 - Catalog search remains stateless: no user, cart, memory, session, or
@@ -55,12 +64,24 @@ SDK adapter:
   request-builder layer validates structured agent intent against catalog-owned
   capabilities and produces a `CatalogSearchPlan`; the catalog execution layer
   only maps that plan to catalog service requests.
-- Structured agent intent has three required parts: one `semantic_query`, a
-  capability-derived `taxonomy` envelope, and `required_constraints`. The chain
-  maps generic taxonomy roles to advertised field names, validates scope
-  consistency and other must-haves, and produces catalog hard filters. One
-  normalized taxonomy scope may execute once per turn, preventing paraphrase
-  fan-out while allowing bounded searches for distinct product scopes.
+- Structured agent intent includes one `semantic_query`, required pre-retrieval
+  product-agnostic `shopper_guidance`, required `requested_product_type` product
+  noun/umbrella provenance, a capability-derived `taxonomy` envelope, and
+  `required_constraints`. The provenance is the
+  shortest product noun or true umbrella from the shopper's current turn or
+  direct antecedent, excluding color, material, fit, occasion, weather, and
+  style modifiers. For a genuinely open role, it is the one advertised
+  subcategory selected for that role; it is `null` only for image-only search.
+  The chain maps generic taxonomy roles to advertised field names, validates
+  scope consistency and other must-haves, and produces catalog hard filters.
+  Each call accepts at most one category. For a broad request that names no
+  type, the model selects exactly one advertised subcategory as the focused
+  starting role and names it in `requested_product_type`. That open-role path
+  is forbidden when the shopper named the role, including an alternative,
+  confirmation, comparison, or follow-up.
+  Duplicate identity is normalized taxonomy plus hard
+  constraints, so semantic paraphrases do not fan out while genuinely different
+  hard-filter scopes can run within the per-turn cap.
 - Deep Agents prompt context is also built from catalog-owned capabilities.
   Chain-server no longer ships a product category allowlist for the active
   runtime; changing catalog shape is handled by the JSONL role sidecar plus the
@@ -73,7 +94,19 @@ SDK adapter:
   `catalog_search_timeout_seconds`. The default is `null`, preserving the
   previous no-timeout catalog POST behavior for slower remote embedding calls.
 - Cart tools are stateful and adapt the current memory service API without
-  changing the public service schema.
+  changing the shopper-facing query API.
+- The memory service uses one request-scoped SQLAlchemy session per API call,
+  including error paths, so sustained multi-turn traffic returns connections
+  to the pool deterministically.
+- Cart reads map the opaque, non-reusable `CartItem.cart_line_id` to
+  `CART_LINE_ID`. Adds identify products by catalog `product_id`; remove and
+  absolute-quantity update identify existing rows by `cart_line_id`.
+- Store policy is loaded from
+  `shared/configs/chain_server/store_policies.yaml` and cached for the process
+  lifetime. The bundled template fails closed until an operator replaces its
+  placeholders and sets `configured: true`. Product availability is a
+  deliberate no-I/O stub for a known conversation product ref. It reports
+  `in_stock` using a fixed category rule; it does not query live inventory.
 
 The runtime Deep Agents tool names, risk classes, skill access boundaries, and
 registered-vs-planned status are tracked separately in
@@ -87,6 +120,7 @@ No ACP/UCP adapter layer has been added yet.
 
 | Model | Purpose |
 | --- | --- |
+| `Availability` | Controlled stock signal with an explicit `unknown` state. |
 | `Money` | Currency amount with a default `USD` currency. |
 | `ProductSummary` | Search-result-safe product display fields and current product identifier. |
 | `ProductDetail` | Full product shape with variants and optional source URI. |
@@ -106,34 +140,95 @@ The first tool contract set is:
 | --- | --- | --- |
 | `SearchCatalogInput` / `SearchCatalogResult` | Read-only | Find products by query, category, filters, and `top_k`. |
 | `GetProductDetailsInput` / `GetProductDetailsResult` | Read-only | Fetch deterministic detail fields for one known product ref from the active catalog snapshot. |
+| `CheckProductAvailabilityInput` / `CheckProductAvailabilityResult` | Read-only | Return the deterministic availability-stub result for a known product ref and optional size hint. |
+| `CheckActivePromotionsResult` | Read-only | Return the no-I/O deployment promotion signal; currently no active promotion is configured through the assistant. |
 | `GetCartInput` / `GetCartResult` | Read-only | Read the authoritative cart for a user. |
 | `GetStorePolicyInput` / `GetStorePolicyResult` | Read-only | Fetch controlled store-policy text by topic. |
 | `AddCartItemInput` / `CartMutationResult` | Mutating | Add a product or variant to the cart from an explicit product ref. |
 | `UpdateCartItemInput` / `CartMutationResult` | Mutating | Change cart-line quantity. Quantity `0` means remove. |
 | `RemoveCartItemInput` / `CartMutationResult` | Mutating | Remove an explicit cart line by `cart_line_id`. |
 
-Mutating inputs require `idempotency_key` so future agent retries and protocol
-adapters have a stable key to enforce safe retries. In the current memory
-service adapter, the key is echoed in tool metadata but is not stored or used to
-deduplicate mutations yet.
+Mutating inputs require `idempotency_key` so agent retries and future protocol
+adapters retain a stable request identity. Add, remove, and quantity update use
+one owner-scoped replay ledger and commit the cart change plus replay record
+atomically. Identical retries return the stored result; reuse for a different
+operation, target, or quantity is rejected before mutation. Records currently
+persist for the SQLite database lifetime; retention and cleanup policy remain
+follow-up work.
 
 ### Stateless Catalog Search
 
 `SearchCatalogInput` intentionally has no `user_id`, cart, memory, session, or
 conversation-history fields. The agent layer uses conversation context to
-produce one `semantic_query`, a capability-derived `taxonomy` envelope, and
-structured `required_constraints`. The chain maps taxonomy roles to the actual
+produce one `semantic_query`, required pre-retrieval `shopper_guidance`, required
+`requested_product_type` product noun/umbrella provenance, a capability-derived
+`taxonomy` envelope, and structured `required_constraints`. The provenance is
+the shortest product noun
+or true umbrella from the shopper's current turn or direct antecedent, excludes
+color, material, fit, occasion, weather, and style modifiers, and uses the one
+advertised subcategory chosen for a genuinely open role. It is `null` only for
+image-only search and is not passed as catalog taxonomy or ranking text; it lets
+the chain validate the relation between the requested role and selected
+advertised scope. The model-facing schema has no taxonomy-relationship or
+catalog-absence label. The chain derives its private execution mode after the
+typed request validates, maps taxonomy roles to the actual
 advertised field names, checks every required field and value, refuses requests
 that cannot be enforced, and sends `queries=[semantic_query]` plus the validated
-hard filters. `search_catalog` itself remains a pure read.
+hard filters. `shopper_guidance` remains in the chain tool-result boundary and
+is not sent to the catalog service. `search_catalog` itself remains a pure read.
+
+If a shopper-named type is not separately advertised but the model selects one
+faithful advertised parent category, the chain searches that category once,
+preserves the shopper's type as semantic direction, and emits structured
+scope-relation evidence. Grounding must disclose the broader search and keep
+every product's actual catalog category. If neither a direct type nor one
+faithful parent can be selected, the assistant asks one concise clarification
+without calling the search tool, substituting an adjacent type, or claiming
+catalog absence. An unsupported
+modifier does not erase an advertised type. Unsupported direct must-haves use
+`unadvertised_requirements`, while subjective style and other soft preferences
+remain in the taxonomy-independent `semantic_query`. Malformed or nonempty
+free-form arguments on a native schema-invalid call fail closed. A schema-valid,
+genuinely open role may consume its one model repair for review: preserve an
+explicit objective must-have so the repaired call fails closed, or remove only
+an inferred or subjective requirement. The same bounded schema repair may
+instead return one server-marked clarification. Deterministic code does not
+parse shopper prose. A successful partial search may advance to another valid
+role with its own repair opportunity; no scope receives two repairs.
 
 The catalog makes no chat/completion call and performs no shopper-language
 interpretation or query expansion. It generates the configured text/image
 embeddings, performs vector retrieval and candidate fusion, deduplicates by
 source product ID, applies hard filters and thresholds, and sorts results
-deterministically. The
-lower-level `queries` list remains for direct/internal compatibility, but the
+deterministically. The lower-level `queries` list remains for direct/internal
+compatibility, but the
 serving agent sends one entry and bounds distinct taxonomy scopes per turn.
+
+Every successful search tool result carries `SEARCH_DIRECTION_EVIDENCE`, the
+model-authored `semantic_query` used as an independent private catalog ranking
+preference, and the pre-retrieval `shopper_guidance` authored under the active
+skill. Neither is a confirmed product attribute. Completed search-only
+responses receive one tools-disabled synthesis under the active skill and then
+the grounding editor. Product-agnostic guidance and static skill
+`response_guidance` support deterministic fallback, which lists all returned candidates, adds a
+neutral continuation for partial successful evidence, and groups each search's
+guidance and confirmed filters with its originating products. When the requested
+outcome depends on a functional product property absent from evidence, grounding
+must disclose the gap and frame candidates as the closest catalog or styling
+direction rather than as proven suitable; deterministic fallback carries the
+same generic unverified-property disclosure. A zero-result response
+retains its exact advertised taxonomy and confirmed filters, so it cannot
+establish absence for another product type or the whole catalog. The grounding
+editor receives only the remaining shared model-stage deadline. A timeout
+finalizes as failed with `grounding_timeout`; non-search turns receive a fixed
+retry/cart-check response instead of the unverified draft. Other editor failures
+and empty or whitespace-only successful editor responses use the same
+fail-closed response with `grounding_error`.
+Tool-loop repair is also bounded: one invalid search or eligible open-role
+unadvertised-requirement review may consume the single repair for that distinct
+scope. A successful partial scope may continue to another valid role with its
+own one-repair opportunity, but no scope receives two repairs; the configured
+turn cap remains three successful searches.
 
 The chain-server request-builder consumes `CatalogCapabilities` before it
 creates a product search request. Authoritative field roles come from the
@@ -161,13 +256,58 @@ Catalog search maps the source `record_id` into `ProductSummary.product_id`;
 Milvus primary keys and product names are never commerce identities. The
 current feed's generated IDs are only guaranteed within the active catalog
 snapshot. Detail reads and cart adds verify refs against that snapshot and
-require a fresh search when a ref is stale.
+require a fresh search when a ref is stale. The runtime keeps refs only in
+request-local evidence. A later turn can recover one exact product from durable
+product-card events in the same conversation, including after a chain-server
+restart. The current resolver does not perform fuzzy matching,
+cross-conversation lookup, or catalog-revision invalidation, so an absent or
+changed active product still requires a fresh search.
+
+### Policy And Availability Boundaries
+
+`get_store_policy` reads only controlled content for the six supported topics:
+returns, shipping, sizing, payment, price matching, and gift cards. A missing
+file, unconfigured deployment, placeholder marker in enabled content, or
+missing topic produces a structured error rather than a model-authored policy.
+The bundled `shared/configs/chain_server/store_policies.yaml` has
+`configured: false`; an operator must replace every placeholder and explicitly
+set it to `true` before any policy can be served. The file is outside the
+agent-readable skills root, so policy content is available only through the
+controlled policy tool.
+
+`check_product_availability` makes no catalog or inventory call. The runtime
+first resolves the supplied ref from request-local product evidence and rejects
+an unknown ref. That evidence comes from current-turn search or one unique
+same-conversation historical resolution. For a known product, the helper returns
+`availability="in_stock"`: it echoes a requested size for catalog
+taxonomy categories `apparel` and `footwear`, treats every other category as
+one-size, and gives a general availability answer when no hint is supplied.
+This deterministic application contract does not represent live stock counts
+or variant inventory.
+
+### Diagnostic Boundaries
+
+`SearchCatalogResult.diagnostics` describes deterministic catalog retrieval
+work. The chain server's separate `agent_diagnostics` field describes one Deep
+Agents turn: activated/injected skill paths, ordered tool calls,
+rejection/duplicate outcomes, termination, and bounded partial graph messages
+after failure. It also contains bounded per-product evidence from successful
+search/detail results, `product_evidence_truncated`, and bounded
+`catalog_scope_outcomes` for `zero_results`. The
+Judge copies only those three diagnostic fields and discards semantic queries,
+raw tool messages, reasoning, and all other diagnostics. Final shopper-text
+extraction excludes tool messages, tool-calling assistant messages, and
+internal activation markers. If none remains, the runtime returns a safe retry
+response and records `incomplete_agent_response`. These runtime behaviors do not
+change any shared commerce request or result model.
 
 ## Remaining Direction
 
-The active Deep Agents runtime now uses these wrappers. Remaining commerce
-identity work is to obtain an upstream ID guarantee and persist source product
-IDs in the cart service instead of relying on display names for stored lines.
+The active Deep Agents runtime now uses these wrappers. Cart adds persist the
+catalog `product_id`; cart reads expose the memory service's opaque,
+non-reusable `cart_line_id` as `CART_LINE_ID`; and all registered mutation paths
+atomically enforce idempotency. Remaining commerce identity work is variant-
+level cart identity and a bounded retention policy for replay records.
 Legacy `RetrieverAgent` and `CartAgent` code remains for compatibility tests but
 is not the serving entrypoint.
 

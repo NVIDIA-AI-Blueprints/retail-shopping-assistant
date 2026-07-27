@@ -36,6 +36,13 @@ The catalog retriever is an internal service at `http://localhost:8010`. See
 [Catalog Architecture](CATALOG_REFACTOR_PLAN.md) for the ingest, capability,
 agent-discovery, and validation flow.
 
+The memory retriever is an internal single-replica service at
+`http://localhost:8011`. Standard Compose binds that host port to loopback only;
+containers use `http://memory-retriever:8011` on the private network. Its
+durable-turn endpoints are documented below for operators and service
+integrations; they are not browser-facing APIs and do not provide service
+authentication.
+
 ## 🔐 Authentication
 
 Currently, the API does not require authentication for local deployments. For production deployments, consider implementing API key authentication or OAuth2.
@@ -125,6 +132,7 @@ interface QueryRequest {
   session_id?: string;                // Optional website/browser session identifier
   conversation_id?: string;           // Optional chat thread identifier
   cart_id?: string;                   // Optional cart identifier
+  request_id?: string;                // Optional stable ID for exact whole-turn replay
   context?: string;                   // Previous conversation context
   cart?: Cart;                        // Current shopping cart state
   retrieved?: Record<string, string>; // Previously retrieved products
@@ -150,6 +158,7 @@ interface MediaAttachment {
   "session_id": "session_abc",
   "conversation_id": "conversation_abc",
   "cart_id": "cart_abc",
+  "request_id": "request_abc",
   "context": "Previous conversation about summer clothing",
   "cart": {
     "contents": [
@@ -167,14 +176,49 @@ interface MediaAttachment {
 }
 ```
 
-`session_id`, `conversation_id`, and `cart_id` are optional for backward
-compatibility. When they are omitted, the server maps the legacy `user_id` to
-internal compatibility identifiers. The bundled UI creates browser-session
-identifiers and sends them on every turn. When supplied, `conversation_id`
-scopes the Deep Agents thread and conversation memory, while `cart_id` scopes
-cart reads/writes. Production website integrations should move these IDs to a
-server-owned session/thread service before broad rollout so customer context and
-cart state cannot bleed across sessions.
+`session_id`, `conversation_id`, `cart_id`, and `request_id` are optional for
+backward compatibility. When the scoped IDs are omitted, the server maps the
+legacy `user_id` to internal compatibility identifiers; when `request_id` is
+omitted, it generates a new UUID for the turn. A caller retrying the same exact
+turn should reuse its request ID. The memory service stores the request digest
+with the durable turn: an identical finalized retry replays the stored response,
+products, retrieved images, and diagnostics without model/tool work or another
+finalize call. Reusing the request ID with different shopper text or media is a
+conflict. The same request ID also derives stable cart-mutation idempotency keys.
+
+The bundled UI creates browser-session identifiers and sends them on every
+turn. When supplied, `conversation_id` scopes durable raw turns, presented-
+product evidence, and historical resolution; `cart_id` scopes cart reads/writes.
+The Deep Agents working graph is request-scoped under a collision-safe pair of
+conversation ID and request ID, not used as durable shopper memory, and deleted
+after successful turn finalization. Production website integrations should move these IDs to a
+server-owned session/thread service before broad rollout so customer context
+and cart state cannot bleed across sessions.
+
+Durable ordered shopper/assistant turns live in the single-replica
+memory-service SQLite database. At turn start the runtime consumes a bounded set
+of model-context-eligible recent turns and a compact product-reference
+projection in place of the legacy rolling context blob. Blocked turns remain
+durable and exactly replayable but are excluded from both the service projection
+and chain prompt formatter. Products enter durable reference evidence
+only when they appear in the finalized ordered `product_results` sent as product
+cards. The selected discovery, styling, or cart skill may conditionally resolve
+typed references against those events. Exactly one match becomes request-local
+evidence; zero or multiple matches require clarification and do not authorize a
+detail, availability, or cart tool. The deterministic resolver adds no separate
+model or catalog call.
+
+`MemorySaver` remains process-local and is not shared across workers or
+replicas, but its graph thread now exists only for one request. It is deleted
+after successful durable finalization and preserved if finalization fails. The
+durable resolver is same-conversation only and does not implement fuzzy or
+embedding matching, preferences, sentiment, active anchors, cross-conversation
+lookup, or stale-catalog-revision handling.
+
+Caller-supplied persona data is not part of `QueryRequest` and is not injected
+into model context. Persona support remains deferred until the API has a typed,
+bounded schema, authenticated ownership, input-safety validation, and an
+explicit untrusted-data boundary.
 
 `image` remains supported for backward compatibility and is normalized into the
 same internal media list as `media[]`. New clients should use `media[]` for
@@ -220,8 +264,134 @@ interface QueryResponse {
   timings: Record<string, number>;    // Performance timing data
   token_usage?: TokenUsage;           // LLM token usage summary
   model_usage?: ModelUsage;           // Per-role model usage summary
+  agent_diagnostics?: AgentDiagnostics; // Empty unless operator exposure is enabled
 }
 ```
+
+`AgentDiagnostics` is operator-facing turn metadata. Internal collection is
+always available to the runtime, but public query responses return `{}` by
+default. Set `EXPOSE_AGENT_DIAGNOSTICS=true` only on a trusted operator or
+evaluation deployment. It is additive and must not be rendered as assistant
+prose.
+
+```typescript
+interface AgentDiagnostics {
+  skill_files_read: string[];
+  tool_calls: Array<{
+    sequence: number;
+    tool_name: string;
+    arguments: Record<string, unknown>;
+    status: 'completed' | 'rejected' | 'error' | 'pending';
+    rejection_reason?: string;
+    duplicate?: boolean;
+    restored_fields?: string[];       // Structural fields restored by middleware
+  }>;
+  rejected_tool_calls: number[];       // Sequence numbers in tool_calls
+  duplicate_tool_calls: number[];      // Rejected duplicate-call subset
+  product_evidence: Array<{
+    product_ref: string;
+    product_name: string;
+    source_tool: 'search_catalog_tool' | 'get_product_details_tool';
+    evidence_type: 'search_result' | 'product_detail';
+    facts: Record<string, unknown>;
+    search_scope?: {
+      taxonomy: Record<string, unknown>;
+      confirmed_filters: Record<string, unknown>;
+    };
+  }>;
+  product_evidence_truncated: boolean;
+  catalog_scope_outcomes: Array<{
+    outcome: 'zero_results';
+    requested_product_type?: string | null;
+    taxonomy?: Record<string, unknown>;
+    confirmed_filters?: Record<string, unknown>;
+  }>;
+  final_termination_reason: string;
+  partial_graph_messages: Array<{
+    type: string;
+    content: string;
+    name?: string;
+    tool_call_id?: string;
+    tool_calls?: Array<Record<string, unknown>>;
+    truncated?: boolean;
+  }>;
+  partial_graph_messages_truncated?: boolean;
+  partial_graph_capture_error?: string;
+  diagnostic_collection_error?: string;
+  memory_finalize_error?: string;
+}
+```
+
+`final_termination_reason: "memory_start_failed"` means the required durable
+start failed before guardrail/model/tool work. A generic finalize transport or
+service failure does not replace grounded shopper text; it sets
+`memory_finalize_error` and preserves the request checkpoint for recovery.
+A superseded attempt is the deliberate exception: its stale response is replaced
+with the safe attempt-fencing response described below.
+
+`final_termination_reason: "agent_timeout"` means the Deep Agents graph exceeded
+`DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS`. The response contains no unsent products
+or images, the durable turn is finalized as failed, and partial graph messages
+are captured on a bounded best-effort basis before checkpoint cleanup. An
+already-started synchronous tool operation may finish while cancellation is
+propagating; clients should follow the response's cart-check guidance before
+retrying a mutation.
+
+`final_termination_reason: "grounding_timeout"` means the graph completed but
+the grounding editor exhausted the remaining shared execution budget. The
+durable turn is finalized as failed. Search-only evidence uses deterministic
+catalog rendering; all other turns return a fixed retry/cart-check response
+instead of the unverified draft.
+
+`final_termination_reason: "grounding_error"` uses the same failed-turn and
+fail-closed response behavior when the grounding editor raises an error or
+returns empty or whitespace-only output rather than a usable response.
+
+Successful turns leave `partial_graph_messages` empty. Before a failed graph
+checkpoint is deleted, the runtime reads its latest state and preserves up to
+the final 24 current-turn assistant/tool messages, with each content field
+bounded to 2,000 characters. Tool calls remain in model-issued order even when
+parallel tool results finish in another order. `skill_files_read` contains only
+successfully activated/injected `/shopper/.../SKILL.md` paths and successful
+explicit reads of those files; other reference-file reads remain visible in
+`tool_calls`. Every Deep Agents turn starts with an internal
+`activate_shopper_skills_tool` call. A pre-activation or same-batch shopping
+call is rejected with `rejection_reason: "skill_activation_required"`.
+For a one-shot catalog repair, middleware may restore only the independently
+valid structural `scope_complete` field. It never restores or rewrites taxonomy,
+constraints, requested type, or search mode. `restored_fields` therefore
+contains only bounded structural field names, never a second copy of values.
+
+`product_evidence` contains only structured records derived from successful
+current-turn `search_catalog_tool` and `get_product_details_tool` result
+messages. It is limited to 24 records and 32,000 serialized characters;
+`product_evidence_truncated` is `true` when either bound omits evidence. Search
+records keep their taxonomy and confirmed filters in `search_scope`, attached
+only to products returned by that search. The list excludes semantic queries,
+raw tool messages, model reasoning, and other diagnostic fields.
+`catalog_scope_outcomes` contains at most eight server-authored, product-free
+outcomes. Its only accepted outcome is `zero_results`; records may include only
+`requested_product_type`, `taxonomy`, and `confirmed_filters` in addition to
+`outcome`. Evaluation consumers default
+missing legacy list fields to `[]` and `product_evidence_truncated` to `false`.
+
+Successful internal search-tool results carry `SEARCH_DIRECTION_EVIDENCE`, the
+model-authored semantic query used as an independent private ranking preference,
+and required pre-retrieval `shopper_guidance` authored under the active skill.
+For completed search-only turns, the runtime runs one tools-disabled synthesis
+under the active skill and grounds the draft against tool-role evidence. Static
+skill `response_guidance` and pre-retrieval guidance support deterministic
+fallback, which separately renders every returned candidate
+with its name, price, category, and the confirmed-filter group from its own
+search. A partial successful result set receives a neutral continuation. A zero-result tool response
+carries its exact advertised taxonomy and confirmed filters; that scoped miss
+cannot prove absence for a different type or the whole catalog.
+
+Final-response extraction skips tool messages, assistant messages that still
+contain tool calls, and internal skill-activation markers. If a completed graph
+contains no shopper-facing response, the API emits
+`"I could not complete that shopping request. Please try again."` and reports
+`final_termination_reason: "incomplete_agent_response"` in diagnostics.
 
 **Example:**
 ```json
@@ -238,9 +408,14 @@ interface QueryResponse {
     "total": 3.48,
     "memory": 0.12,
     "deepagents": 3.36
-  }
+  },
+  "agent_diagnostics": {}
 }
 ```
+
+Detailed diagnostics are returned only when
+`EXPOSE_AGENT_DIAGNOSTICS=true` is deliberately enabled on a trusted operator
+or evaluation deployment.
 
 ### Cart
 
@@ -252,8 +427,11 @@ interface Cart {
 }
 
 interface CartItem {
-  item: string;                       // Product identifier
+  cart_line_id?: string;              // Opaque, non-reusable line ID on authoritative reads
+  product_id?: string;                // Catalog product ref when available
+  item: string;                       // Product display name
   amount: number;                     // Quantity
+  price?: number;                     // Cached unit price
 }
 ```
 
@@ -282,6 +460,7 @@ interface StreamingChunk {
           calls: number;
           detail?: string;
         }>;
+        agent_diagnostics?: AgentDiagnostics;
       };
   timestamp: number;
 }
@@ -296,7 +475,23 @@ responses. In the current Deep Agents harness migration slice, the stream is
 SSE-framed but does not yet emit token-level model chunks while the agent is
 running. The endpoint currently emits product metadata, image payloads,
 completed turn response text, and timing/token-usage metrics after the Deep
-Agents turn finishes.
+Agents turn finishes. The metrics frame contains `agent_diagnostics: {}` by
+default; trusted operator/evaluation deployments may explicitly enable the
+detailed trace.
+
+Before guardrails or agent work, the chain server starts a durable conversation
+turn and receives bounded model-context-eligible recent turns plus the
+authoritative cart. Blocked turns remain durable and exactly replayable but do
+not enter a later model prompt.
+It finalizes that turn as `completed`, `blocked`, or `failed` before emitting the
+terminal SSE frames. An exact finalized retry replays the stored output without
+another model/tool turn. The public SSE frame shapes are unchanged.
+
+Every unblocked Deep Agents turn includes one bounded activation model step
+before normal shopping-tool selection. That step selects registered shopper
+skills; the runtime injects their complete instructions before exposing the
+eleven shopping tools. It is included in `token_usage.model_calls` and
+`agent_diagnostics`.
 
 Token-level Deep Agents streaming is a known limitation for this PR and is
 planned as a follow-up after the harness migration is stable.
@@ -330,7 +525,7 @@ data: {"type": "images", "payload": {"Red Wrap Dress": "https://..."}, "timestam
 
 data: {"type": "content", "payload": "I found several red dresses...", "timestamp": 1716400001.2}
 
-data: {"type": "metrics", "payload": {"timings": {"memory": 0.03, "catalog_search": 0.41, "deepagents": 1.92}, "total_seconds": 2.36, "token_usage": {"input_tokens": 1260, "output_tokens": 180, "total_tokens": 1440, "model_calls": 1}, "model_usage": {"text_embedding": {"status": "used", "calls": 1, "detail": "Catalog text/vector retrieval"}, "content_safety": {"status": "used", "calls": 2, "detail": "Input and output safety checks"}, "topic_control": {"status": "used", "calls": 1, "detail": "Input topic check"}}}, "timestamp": 1716400001.8}
+data: {"type": "metrics", "payload": {"timings": {"memory": 0.03, "catalog_search": 0.41, "deepagents": 1.92}, "total_seconds": 2.36, "token_usage": {"input_tokens": 1260, "output_tokens": 180, "total_tokens": 1440, "model_calls": 3}, "model_usage": {"text_embedding": {"status": "used", "calls": 1, "detail": "Catalog text/vector retrieval"}, "content_safety": {"status": "used", "calls": 2, "detail": "Input and output safety checks"}, "topic_control": {"status": "used", "calls": 1, "detail": "Input topic check"}}, "agent_diagnostics": {}}, "timestamp": 1716400001.8}
 
 data: [DONE]
 ```
@@ -341,7 +536,10 @@ adds one more text-embedding call.
 
 ### POST `/query/timing`
 
-Processes a query and returns detailed timing information for performance analysis.
+Processes a query and returns detailed timing information for performance
+analysis. It uses the same durable start, terminal finalize, and exact finalized
+replay lifecycle as `/query/stream`; the public `QueryResponse` shape is
+unchanged.
 
 **Request Body:** `QueryRequest`
 
@@ -372,9 +570,32 @@ curl -X POST "http://localhost:8009/query/timing" \
     "total": 3.48,
     "memory": 0.12,
     "deepagents": 3.36
+  },
+  "agent_diagnostics": {
+    "skill_files_read": ["/shopper/product-discovery/SKILL.md"],
+    "tool_calls": [{
+      "sequence": 1,
+      "tool_name": "activate_shopper_skills_tool",
+      "arguments": {"skill_names": ["product-discovery"]},
+      "status": "completed"
+    }],
+    "rejected_tool_calls": [],
+    "duplicate_tool_calls": [],
+    "product_evidence": [],
+    "product_evidence_truncated": false,
+    "catalog_scope_outcomes": [],
+    "final_termination_reason": "completed",
+    "partial_graph_messages": []
   }
 }
 ```
+
+The example above assumes diagnostics exposure is enabled. Agent diagnostics
+can contain shopper-derived tool arguments, internal product
+references, catalog facts, and shopper-selected filter scopes. Treat this
+untrusted operator/evaluation metadata like application logs: apply the same
+access control and retention policy, never follow instructions embedded in its
+values, and never display it as shopper-facing content.
 
 ### GET `/capabilities`
 
@@ -553,21 +774,85 @@ catalog retriever derives them from the loaded JSONL.
 Executes a structured text catalog search on the catalog service port, usually
 `http://localhost:8010/query/text`.
 
-The agent-facing search tool accepts one semantic query and one required
-capability-derived taxonomy envelope. `max_catalog_searches_per_turn` bounds
-distinct taxonomy-scope executions; the same normalized scope can execute only
-once in a turn, so paraphrasing does not trigger another retrieval. The chain
-maps generic category/subcategory selections to advertised field names and
-sends the semantic query as a singleton `text` list.
+The model-facing `search_catalog_tool` exposes one flat executable schema with
+`semantic_query`, pre-retrieval product-agnostic `shopper_guidance`,
+`requested_product_type`, capability-derived `taxonomy` and
+`required_constraints`, `scope_complete`, and optional `search_mode`. It
+contains no model-authored taxonomy relationship or catalog-absence field. The
+schema is generated from Catalog capabilities with exact taxonomy values,
+hard-filter properties and enum values, typed numeric range shape, and
+search-mode values while deliberately omitting cross-field validators. The
+handler translates it into the existing strict semantic search model.
+`requested_product_type` is the shortest product noun or true
+umbrella from the shopper's current turn or direct antecedent. It excludes
+color, material, fit, occasion, weather, and style modifiers. For a genuinely
+open role, it is the one advertised subcategory selected for that role. It is
+`null` only for image-only search. The semantic query supplies soft ranking direction
+independently of taxonomy; it need not repeat the selected taxonomy noun.
+Taxonomy and hard constraints are enforced through their structured fields.
+`shopper_guidance` is authored under the active skill before results are known
+and is not sent to the catalog service.
+Each call accepts at most one category. For a broad request that names no type,
+the model selects exactly one advertised subcategory as the focused starting
+role and names it in `requested_product_type`. That open-role path is forbidden
+when the shopper named the role's type, including an alternative, confirmation,
+comparison, or follow-up. Invalid open-role provenance is rejected rather than
+silently reinterpreted.
+If a shopper-named type is not separately advertised, the model may select one
+faithful advertised parent category while preserving the original type in
+`requested_product_type` and the semantic query. Returned products keep their
+actual catalog categories and are framed as closest alternatives. If neither a
+direct type nor one faithful parent can be selected, the assistant asks one
+concise clarification directly without calling the tool or asserting catalog
+absence. An unsupported modifier does not erase an advertised type, and
+subjective style remains semantic. The duplicate-search
+identity is normalized taxonomy plus hard constraints, so paraphrasing cannot
+repeat a retrieval while a genuinely different hard-filter scope may run within
+`max_catalog_searches_per_turn`. The chain maps generic category/subcategory
+selections to advertised field names and sends the semantic query as a singleton
+`text` list.
+
+One invalid agent search may receive one bounded repair per distinct scope.
+That isolated call receives the capability-derived typed search tool, compact
+server-generated Catalog capabilities, the current shopper message, bounded
+sanitized validator feedback, and the active skill instructions. It may submit
+one corrected search or return no tool call to signal that clarification is
+needed.
+The no-tool response is only branch/control state: the server marks it, discards
+the model prose, and emits `Could you clarify the product type or requirement
+you want me to use?`. If another requested search scope already succeeded, its
+deterministic grounded products precede that clarification. Runtime protects a
+shopper-grounded requested scope across native and strict validation paths. If a
+different shopping tool already completed, the existing grounding editor
+combines its evidence with the fixed clarification. Repair middleware may
+restore only structural `scope_complete`; it does not rewrite catalog fields.
+When strict handler validation has already accepted advertised constraints, its
+feedback may include that finite object and a repaired call that drifts is
+rejected rather than overwritten.
+Malformed or nonempty free-form `unadvertised_requirements` arguments on a
+native schema-invalid call fail closed. A schema-valid, genuinely open role may
+consume that scope's repair for model-owned review: preserve an explicit
+objective must-have, or remove only an inferred or subjective requirement.
+Deterministic code does not parse shopper prose. The
+repair cannot replace a shopper-stated product-scope noun. A successful partial
+search may continue to another valid role with its own one-repair opportunity;
+no scope receives two repairs. Completed scopes and deterministic stop results
+close the loop, and the configured turn cap remains three successful searches.
+For multi-role output, each pre-retrieval guidance sentence remains grouped with
+products from its originating search. Completed turns get one tools-disabled
+synthesis from collected evidence; search-only drafts pass through grounding,
+with deterministic rendering as fail-closed fallback.
 
 The chain server also bounds product-detail reads with
 `max_product_detail_reads_per_turn`. Detail reads are intended for direct
 product fact questions and shortlisted comparisons, not for enriching every
 initial outfit recommendation.
 
-When a cart item matches a product ref cached in the active conversation, the
-chain server can return that product image again on later cart or comparison
-turns without forcing another catalog search.
+When a cart item matches current-request product evidence, the chain server can
+return that product image in a cart or comparison turn. A later turn can obtain
+that evidence from one unique durable same-conversation resolution without
+forcing another catalog search; missing, ambiguous, or stale active-catalog refs
+require clarification or a fresh search.
 
 **Request Body:**
 ```json
@@ -671,6 +956,221 @@ search round-trips exactly through this endpoint. A missing ID returns HTTP 404.
   },
   "variants": [],
   "source_uri": null
+}
+```
+
+### Memory Retriever POST `/conversations/{conversation_id}/turn/start`
+
+Starts one durable turn transaction before guardrail, model, or tool work. The
+memory service accepts one active turn per conversation and assigns its ordered
+`sequence`. It returns the authoritative cart and at most
+`MEMORY_RECENT_TURNS` prior non-blocked raw turns. The chain formatter also
+excludes abandoned turns before creating model context. Raw media is not stored;
+the request digest includes ordered media content hashes so exact retries can
+be distinguished safely.
+
+```json
+{
+  "request_id": "request_abc",
+  "shopper_text": "Show me black flats",
+  "cart_user_id": 123,
+  "request_digest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "catalog_revision": "catalog-fingerprint"
+}
+```
+
+```json
+{
+  "turn_id": "8e40575d5e5a4dbca34e1d08a2cb1692",
+  "attempt_id": "bd77b851b3494e37a764e3dfa7500208",
+  "sequence": 4,
+  "replayed": false,
+  "status": "started",
+  "recent_turns": [
+    {
+      "sequence": 3,
+      "shopper_text": "Show me a beige top",
+      "assistant_text": "Here are the grounded beige options.",
+      "status": "completed"
+    }
+  ],
+  "previous_selected_skill_names": ["outfit-styling"],
+  "projection": {
+    "version": 3,
+    "active_anchors": [],
+    "effective_preferences": [],
+    "product_reference_index": [
+      {
+        "candidate_set_id": "candidate-set-event-id",
+        "turn_seq": 3,
+        "catalog_revision": "catalog-fingerprint",
+        "products": [
+          {
+            "ref": "product-123",
+            "name": "Beige Ribbed Top",
+            "category": "apparel",
+            "position": 1
+          }
+        ]
+      }
+    ],
+    "last_turn_id": "prior-turn-id"
+  },
+  "cart": [],
+  "assistant_text": null,
+  "termination_reason": null,
+  "output": null
+}
+```
+
+`projection.product_reference_index` is a compact, bounded index of ordered
+product-card sets derived from durable `candidate_set_presented` events. The
+runtime uses it as read-only context for typed historical resolution; the
+authoritative full product payload remains in the event. The active-anchor and
+preference lanes remain reserved and unused. Its serialized value is capped at
+16,384 characters by retaining the newest complete candidate sets. On an exact retry of a finalized
+turn, `replayed` is `true` and the response includes stored `assistant_text`,
+`termination_reason`, and `output` (`product_results`, `retrieved`,
+`agent_diagnostics`, and `selected_skill_names`). The chain server returns that stored output without agent
+execution. Reusing a request ID with different input, retrying a still-started
+turn, or starting another turn while the conversation has an active turn returns
+HTTP 409. A start transport or conflict failure prevents agent work.
+
+At memory-service startup and atomically before each new turn start, turns left
+in `started` longer than `MEMORY_TURN_ABANDON_SECONDS` are changed to
+`abandoned`. An exact retry may reopen an abandoned turn only while it is the
+latest sequence in that conversation. The service keeps its turn ID, sequence,
+and request ID but rotates the opaque `attempt_id`; an older abandoned turn is
+superseded and cannot be reopened. This is not a continuous background
+expiration process.
+
+### Memory Retriever POST `/conversations/{conversation_id}/turns/{turn_id}/finalize`
+
+Finalizes a started turn transaction as `completed`, `blocked`, or `failed`.
+The request, any ordered event envelopes, and the compact projection commit
+atomically with the replay output. When finalized `output.product_results`
+contains referenceable product cards, the service derives one ordered
+`candidate_set_presented` event from that server-controlled output. Empty,
+failed, or non-presented candidates do not enter the reference index.
+The `runtime-presented-products` event key is reserved; caller-supplied events
+using it are rejected with HTTP 422.
+
+```json
+{
+  "request_id": "request_abc",
+  "attempt_id": "bd77b851b3494e37a764e3dfa7500208",
+  "assistant_text": "Here are the black flats I found.",
+  "status": "completed",
+  "termination_reason": "completed",
+  "events": [],
+  "output": {
+    "product_results": [],
+    "retrieved": {},
+    "agent_diagnostics": {
+      "final_termination_reason": "completed"
+    }
+  }
+}
+```
+
+```json
+{
+  "turn_id": "8e40575d5e5a4dbca34e1d08a2cb1692",
+  "attempt_id": "bd77b851b3494e37a764e3dfa7500208",
+  "sequence": 4,
+  "replayed": false,
+  "status": "completed",
+  "assistant_text": "Here are the black flats I found.",
+  "termination_reason": "completed"
+}
+```
+
+The caller must echo the `attempt_id` returned by start. An identical finalize
+retry for the current attempt returns the same receipt with `replayed: true`.
+After an abandoned turn is reopened, a late finalize from its old attempt is
+rejected with HTTP 409 `turn_attempt_superseded`; the chain server returns a safe
+superseded-attempt response instead of exposing the stale answer or products. A
+generic finalize transport or service failure still preserves the already
+grounded response, its request-scoped graph checkpoint, and records
+`memory_finalize_error`. After successful durable finalization, the chain server
+deletes the request-scoped checkpoint identified by that collision-safe
+conversation/request pair. Different final data, a
+request-ID mismatch, duplicate event keys, or an invalid status transition also
+returns a conflict and rolls back the transaction. Event envelopes are stored
+in logical order. Active anchors, preferences, and selections remain reserved;
+only presented-product candidate sets currently update a projection.
+
+### Memory Retriever POST `/conversations/{conversation_id}/products/resolve`
+
+Deterministically resolves a nonempty batch of typed product descriptors against
+that conversation's durable `candidate_set_presented` events. This is an
+internal memory-service API. It performs no catalog, embedding, or model call.
+
+```json
+{
+  "references": [
+    {
+      "reference_id": "chosen_top",
+      "display_name": "Beige Ribbed Top",
+      "turn_sequence": 3
+    }
+  ]
+}
+```
+
+Selectors may include `product_ref`, exact `display_name`, exact `category`,
+`turn_sequence`, or `candidate_set_id`. `ordinal` is one-based and requires a
+turn sequence or candidate-set ID. Matching is case-insensitive after trimming;
+there is no fuzzy or semantic matching. The service accepts at most 20
+descriptors per request.
+
+```json
+{
+  "results": [
+    {
+      "reference_id": "chosen_top",
+      "status": "resolved",
+      "match_count": 1,
+      "matches": [
+        {
+          "product": {
+            "product_id": "product-123",
+            "display_name": "Beige Ribbed Top",
+            "category": "apparel",
+            "image_url": null,
+            "price": null,
+            "availability": "unknown"
+          },
+          "candidate_set_id": "candidate-set-event-id",
+          "turn_sequence": 3,
+          "position": 1,
+          "catalog_revision": "catalog-fingerprint"
+        }
+      ]
+    }
+  ]
+}
+```
+
+Each result is `resolved`, `ambiguous`, or `not_found`. Only a unique match is
+added to the chain server's request-local product evidence. Ambiguous and
+missing results return bounded candidates for a concise clarification and never
+authorize a guessed product. The shopper runtime permits at most one batched
+resolver-tool call per turn; a second call is stopped. The current slice does
+not invalidate stored evidence when `catalog_revision` changes.
+
+### Memory Retriever DELETE `/conversations/{conversation_id}`
+
+Deletes that conversation's durable turns, cascaded event envelopes, and
+reserved projection row. It deliberately does not delete cart rows, cart
+mutation replay rows, or the legacy user/context row.
+
+```json
+{
+  "conversation_id": "conversation_abc",
+  "deleted_turns": 4,
+  "deleted_events": 0,
+  "deleted_projection": true
 }
 ```
 

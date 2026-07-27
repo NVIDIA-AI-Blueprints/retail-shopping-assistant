@@ -3,6 +3,7 @@
 
 """Centralized configuration management for the chain server."""
 
+import math
 import os
 from pathlib import Path
 import yaml
@@ -104,6 +105,10 @@ class ChainServerConfig(BaseModel):
         default=24,
         description="Maximum Deep Agents graph steps allowed for one assistant turn",
     )
+    deepagents_execution_timeout_seconds: float = Field(
+        default=45.0,
+        description="Maximum Deep Agents execution time allowed for one assistant turn",
+    )
     max_catalog_searches_per_turn: int = Field(
         default=3,
         description="Maximum distinct catalog taxonomy scopes allowed per turn",
@@ -122,6 +127,13 @@ class ChainServerConfig(BaseModel):
     grounding_rewrite_max_evidence_chars: int = Field(
         default=12000,
         description="Maximum tool evidence characters passed to the grounding editor",
+    )
+    expose_agent_diagnostics: bool = Field(
+        default=False,
+        description=(
+            "Whether shopper query responses expose detailed agent diagnostics. "
+            "Enable only on a trusted operator or evaluation surface."
+        ),
     )
     catalog_search_timeout_seconds: Optional[float] = Field(
         default=None,
@@ -172,6 +184,15 @@ class ChainServerConfig(BaseModel):
         """Validate Deep Agents recursion limit is positive."""
         if v <= 0:
             raise ValueError("deepagents_recursion_limit must be positive")
+        return v
+
+    @validator('deepagents_execution_timeout_seconds')
+    def validate_deepagents_execution_timeout_seconds(cls, v):
+        """Validate Deep Agents execution timeout is positive."""
+        if not math.isfinite(v) or v <= 0:
+            raise ValueError(
+                "deepagents_execution_timeout_seconds must be finite and positive"
+            )
         return v
 
     @validator('max_catalog_searches_per_turn')
@@ -240,6 +261,9 @@ def load_config(config_path: Optional[str] = None) -> ChainServerConfig:
         "rails_port": os.environ.get("RAILS_URL"),
         "catalog_search_timeout_seconds": os.environ.get("CATALOG_SEARCH_TIMEOUT_SECONDS"),
         "deepagents_recursion_limit": os.environ.get("DEEPAGENTS_RECURSION_LIMIT"),
+        "deepagents_execution_timeout_seconds": os.environ.get(
+            "DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS"
+        ),
         "max_catalog_searches_per_turn": os.environ.get("MAX_CATALOG_SEARCHES_PER_TURN"),
         "max_product_detail_reads_per_turn": os.environ.get(
             "MAX_PRODUCT_DETAIL_READS_PER_TURN"
@@ -248,6 +272,7 @@ def load_config(config_path: Optional[str] = None) -> ChainServerConfig:
         "grounding_rewrite_max_evidence_chars": os.environ.get(
             "GROUNDING_REWRITE_MAX_EVIDENCE_CHARS"
         ),
+        "expose_agent_diagnostics": _env_bool("EXPOSE_AGENT_DIAGNOSTICS"),
         "guardrails_enabled": _env_bool("GUARDRAILS_ENABLED"),
     }
     config_data.update(

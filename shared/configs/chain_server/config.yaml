@@ -92,8 +92,10 @@ agent_choices: [
 memory_length: 16384
 top_k_retrieve: 4
 deepagents_recursion_limit: 24
+deepagents_execution_timeout_seconds: 45.0
 max_catalog_searches_per_turn: 3
 max_product_detail_reads_per_turn: 2
+expose_agent_diagnostics: false
 catalog_search_timeout_seconds: null
 multimodal: True
 media_input:

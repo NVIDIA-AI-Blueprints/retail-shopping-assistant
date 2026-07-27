@@ -185,6 +185,7 @@ export interface ApiResponse {
   images: Record<string, string>;
   timings: Record<string, number>;
   token_usage?: TokenUsage;
+  agent_diagnostics?: AgentDiagnostics;
 }
 
 export interface CartData {
@@ -207,6 +208,62 @@ export interface InferenceMetricsPayload {
   total_seconds?: number;
   token_usage?: TokenUsage;
   model_usage?: ModelUsage;
+  agent_diagnostics?: AgentDiagnostics;
+}
+
+export interface AgentToolCallDiagnostic {
+  sequence: number;
+  tool_name: string;
+  arguments: Record<string, unknown>;
+  status: 'completed' | 'rejected' | 'error' | 'pending';
+  rejection_reason?: string;
+  duplicate?: boolean;
+  restored_fields?: string[];
+}
+
+export interface AgentPartialMessageDiagnostic {
+  type: string;
+  content: string;
+  name?: string;
+  tool_call_id?: string;
+  tool_calls?: Array<Record<string, unknown>>;
+  truncated?: boolean;
+}
+
+export interface AgentProductEvidenceSearchScope {
+  taxonomy: Record<string, unknown>;
+  confirmed_filters: Record<string, unknown>;
+}
+
+export interface AgentProductEvidenceDiagnostic {
+  product_ref: string;
+  product_name: string;
+  source_tool: 'search_catalog_tool' | 'get_product_details_tool';
+  evidence_type: 'search_result' | 'product_detail';
+  facts: Record<string, unknown>;
+  search_scope?: AgentProductEvidenceSearchScope;
+}
+
+export interface AgentCatalogScopeOutcomeDiagnostic {
+  outcome: 'no_direct_catalog_match' | 'zero_results';
+  requested_product_type?: string | null;
+  taxonomy?: Record<string, unknown>;
+  confirmed_filters?: Record<string, unknown>;
+}
+
+export interface AgentDiagnostics {
+  skill_files_read: string[];
+  tool_calls: AgentToolCallDiagnostic[];
+  rejected_tool_calls: number[];
+  duplicate_tool_calls: number[];
+  product_evidence: AgentProductEvidenceDiagnostic[];
+  product_evidence_truncated: boolean;
+  catalog_scope_outcomes: AgentCatalogScopeOutcomeDiagnostic[];
+  final_termination_reason: string;
+  partial_graph_messages: AgentPartialMessageDiagnostic[];
+  partial_graph_messages_truncated?: boolean;
+  partial_graph_capture_error?: string;
+  diagnostic_collection_error?: string;
 }
 
 export interface TokenUsage {

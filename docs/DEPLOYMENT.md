@@ -331,33 +331,129 @@ docker stack deploy -c docker-compose.prod.yaml retail-assistant
 | `EMBED_API_KEY` | Embedding model API key | Yes | - |
 | `RAIL_API_KEY` | Guardrails API key | Yes | - |
 | `GUARDRAILS_ENABLED` | Default chain-server guardrails setting for requests that omit `guardrails`; accepts true/false, yes/no, on/off, or 1/0 | No | `true` |
+| `DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS` | Shared deadline for the Deep Agents graph and grounding editor before the durable turn fails cleanly | No | `45` |
+| `EXPOSE_AGENT_DIAGNOSTICS` | Expose detailed agent/tool traces in query responses; enable only behind a trusted operator or evaluation surface | No | `false` |
 | `CATALOG_SEARCH_TIMEOUT_SECONDS` | Optional chain-server timeout for catalog search requests | No | no timeout |
-| `MAX_CATALOG_SEARCHES_PER_TURN` | Caps distinct catalog taxonomy-scope executions in one assistant turn; a repeated same-scope request is stopped | No | `3` |
+| `MAX_CATALOG_SEARCHES_PER_TURN` | Caps distinct catalog taxonomy-plus-hard-constraint scope executions in one assistant turn; a repeated scope is stopped even when semantic wording changes | No | `3` |
 | `MAX_PRODUCT_DETAIL_READS_PER_TURN` | Caps Deep Agents product-detail reads in one assistant turn | No | `2` |
+| `CHECKPOINT_STORE` | Deep Agents conversation checkpoint store; currently supports only `memory` | No | `memory` |
+| `MEMORY_DATABASE_URL` | SQLite URL for durable raw turns and cart state; Compose supplies the named-volume path | No | Compose: `sqlite:////data/context.db` |
+| `MEMORY_SQLITE_BUSY_TIMEOUT_MS` | SQLite lock wait for the single memory-service writer | No | `5000` |
+| `MEMORY_TURN_ABANDON_SECONDS` | Age at which startup or the next turn start marks an unfinished `started` turn abandoned | No | `300` |
+| `MEMORY_RECENT_TURNS` | Maximum prior context-eligible raw turns returned at the next durable turn start | No | `8` |
 | `LOCAL_NIM_CACHE` | NIM cache directory | Local only | `~/.cache/nim` |
 | `LOG_LEVEL` | Logging level | No | `INFO` |
 | `NODE_ENV` | Node environment | No | `production` |
 
+### Durable Conversation Turns
+
+Compose runs one memory-service SQLite replica at
+`sqlite:////data/context.db` and mounts the `memory-data` named volume at
+`/data`. Its host port is bound to `127.0.0.1:8011`; sibling containers use the
+private Compose network. The service has no authentication, so non-Compose
+deployments must preserve an equivalent internal-only boundary. The chain
+server starts a durable row before guardrail/model/tool work,
+receives bounded model-context-eligible shopper/assistant turns plus the
+authoritative cart, and finalizes the row as `completed`, `blocked`, or
+`failed`. An exact retry of
+a finalized request replays the stored response and output without another
+model turn. Blocked turns remain stored for exact replay and audit but are
+excluded from both the next-turn service projection and the chain prompt
+formatter.
+
+`DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS` is one model-stage deadline shared by the
+active graph and grounding editor. The editor receives only the remaining time.
+A graph timeout records `agent_timeout`, captures bounded partial graph messages,
+clears unsent products and images, and finalizes the durable turn as failed. A
+grounding timeout records `grounding_timeout` and also finalizes as failed;
+search-only evidence uses deterministic catalog rendering, while other turns
+receive a fixed retry/cart-check response instead of the unverified draft. The
+same response rule applies to editor errors and empty or whitespace-only output,
+recorded as `grounding_error`. The request checkpoint is deleted only after finalization
+succeeds. This live deadline is separate from
+`MEMORY_TURN_ABANDON_SECONDS`, which handles unfinished turns left by a crash or
+process loss.
+
+`MEMORY_DATABASE_URL` accepts SQLite URLs only. The busy timeout must be
+non-negative, the abandoned-turn threshold must be positive, and
+`MEMORY_RECENT_TURNS` is bounded by the service to 1–50 records.
+
+SQLite uses WAL mode, foreign-key enforcement, and the configured busy timeout.
+This is a single-writer, single-memory-service deployment boundary, not a shared
+multi-replica conversation store. At memory-service startup and before each
+turn start, unfinished rows older than `MEMORY_TURN_ABANDON_SECONDS` become
+`abandoned`; there is no continuous expiration worker. An exact abandoned
+request retry reopens the same durable turn only when it is still the latest
+conversation sequence, preserving the request ID used by cart idempotency while
+rotating its service-issued `attempt_id`. Older abandoned turns are superseded.
+A finalize must echo the current attempt token, so a late worker cannot overwrite
+a reopened attempt; the chain server replaces that stale result with a safe
+superseded-attempt response. Other finalize outages preserve the grounded
+response and add `memory_finalize_error`. Operators must define transcript
+retention and backup policy. Deleting the `memory-data` volume deletes the
+durable transcript, cart, and mutation replay records.
+
+Stored turns contain shopper/assistant text plus bounded replay output and
+ordered event envelopes. Raw uploaded media, model reasoning, and the full graph
+message/tool transcript are not stored there. On finalization, ordered product
+cards are also stored as a `candidate_set_presented` event and folded into a
+compact product-reference projection. The deterministic resolver can recover a
+unique typed reference from those same-conversation events after a chain-server
+restart or on another worker; zero or multiple matches require clarification.
+The projection keeps the newest complete candidate sets within a 16,384-
+character serialized cap, and the serving runtime permits at most one batched
+resolver call per turn.
+Preferences, sentiment, active anchors, fuzzy/embedding lookup, and
+cross-conversation resolution are not implemented. Catalog revisions are
+recorded when supplied but are not yet used to invalidate stored evidence.
+
+### Graph Checkpointing
+
+`CHECKPOINT_STORE=memory` preserves the in-process development and test
+behavior. Each graph thread is keyed by a collision-safe pair of conversation
+ID and request ID and holds only one request's working Deep Agents state. The runtime deletes it after the
+durable turn finalizes successfully. A finalize failure preserves that request's
+checkpoint for diagnosis or retry instead of discarding the incomplete attempt.
+Checkpoints still disappear when the chain-server process restarts and are not
+shared across replicas, but they are no longer the source of shopper memory or
+product-reference authorization.
+
+`memory` is currently the only accepted value; an empty or different value
+fails during chain-server initialization instead of silently falling back to
+process-local state. The durable memory-service turn record, not the graph
+checkpoint, supplies cross-turn continuity. A shared graph backend is therefore
+not required for this request-scoped design; production durability and scale
+remain bounded by the single-replica SQLite memory service.
+
+### Store Policy Content
+
+Operator-managed policy content lives in
+`shared/configs/chain_server/store_policies.yaml`, under `SHARED_CONFIG_ROOT`
+at runtime. The bundled template is disabled. Replace every
+`[Operator placeholder]` title or body, then set `configured: true`; enabled
+content that retains the marker fails closed with `policy_load_failed`. Restart
+the chain server after changing the file because policy content is cached on
+first use.
+
 ### Configuration File
 
-The main configuration is in `chain_server/config/config.yaml`:
+Chain-server service behavior is configured in
+`shared/configs/chain_server/config.yaml`. Model roles and endpoints are
+configured separately in `shared/configs/models.yaml`:
 
 ```yaml
-# NIM Endpoints
-llm_port: "http://localhost:8000/v1"  # or cloud endpoint
-llm_name: "meta/llama-3.1-70b-instruct"
 retriever_port: "http://localhost:8010"
-guardrails_enabled: true
 memory_port: "http://localhost:8011"
 rails_port: "http://localhost:8012"
-
-# Agent Prompts
-routing_prompt: |
-  You are a retail store assistant that routes customer queries...
-
-chatter_prompt: |
-  You are a helpful shopping assistant specializing in...
+memory_length: 16384
+deepagents_recursion_limit: 24
+max_catalog_searches_per_turn: 3
+max_product_detail_reads_per_turn: 2
+guardrails_enabled: true
 ```
+
+The legacy routing and chatter prompt keys remain in that file for compatibility
+paths; they do not configure the serving Deep Agents runtime.
 
 ### Updating Catalog Filter Metadata
 
@@ -692,7 +788,7 @@ ping api.nvcf.nvidia.com
 # Edit chain_server/app/config.yaml
 top_k_retrieve: 2  # Reduce for faster responses
 deepagents_recursion_limit: 24  # Raise modestly for multi-item outfit planning
-max_catalog_searches_per_turn: 3  # Bound distinct taxonomy-scope searches per turn
+max_catalog_searches_per_turn: 3  # Bound distinct taxonomy-plus-hard-constraint scopes
 max_product_detail_reads_per_turn: 2  # Bound product-detail reads per turn
 ```
 
@@ -753,7 +849,22 @@ docker run --rm -v retail-shopping-assistant_milvus_data:/data \
 # Restore volumes
 docker run --rm -v retail-shopping-assistant_milvus_data:/data \
   -v $(pwd):/backup alpine tar xzf /backup/milvus_backup.tar.gz -C /data
+
+# Back up memory-service SQLite while its writer is stopped
+docker compose stop memory-retriever
+docker run --rm -v retail-shopping-assistant_memory-data:/data \
+  -v $(pwd):/backup alpine tar czf /backup/memory-data_backup.tar.gz -C /data .
+docker compose start memory-retriever
+
+# Restore memory-service SQLite while its writer is stopped
+docker compose stop memory-retriever
+docker run --rm -v retail-shopping-assistant_memory-data:/data \
+  -v $(pwd):/backup alpine tar xzf /backup/memory-data_backup.tar.gz -C /data
+docker compose start memory-retriever
 ```
+
+`docker compose down -v` removes `memory-data`; back it up first when durable
+turns or carts must survive teardown.
 
 ## 🔒 Security Considerations
 
@@ -769,6 +880,8 @@ docker run --rm -v retail-shopping-assistant_milvus_data:/data \
 - Encrypt sensitive data at rest
 - Use secure API keys
 - Implement access controls
+- Treat durable shopper/assistant turns and replay diagnostics as customer data;
+  restrict database and backup access and define retention/deletion policy
 - Regular security updates
 
 ### Container Security
@@ -781,6 +894,16 @@ docker run --rm -v retail-shopping-assistant_milvus_data:/data \
 ## 📈 Scaling
 
 ### Horizontal Scaling
+
+The request-scoped MemorySaver does not carry shopper memory between turns, so
+it does not itself block additional chain-server workers. Each in-flight request
+still completes on one worker. The remaining durable-state limit is the memory
+service's single local SQLite writer. Replace it with a validated shared/
+multi-writer store before increasing memory-service replicas.
+
+The following scaling example is future-only. Do not apply it as a complete
+production topology until shared durable memory, server-owned identity, and
+traffic testing are in place.
 
 ```yaml
 # In docker-compose.yaml

@@ -76,7 +76,8 @@ for filename in yaml_files:
                 "query": query,
                 "content": response_text,
                 "response": response_text,
-                "timing": data.get("timings", "No timing collected." )
+                "timing": data.get("timings", "No timing collected." ),
+                "agent_diagnostics": data.get("agent_diagnostics", {}),
             })
         except Exception as e:
             results.append({

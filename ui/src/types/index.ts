@@ -46,6 +46,7 @@ export interface ImageRowContent extends Array<ImageContent> {}
 
 export interface ChatboxProps {
   selectedProduct: ProductSummary | null;
+  selectedShopperProfileId: string | null;
   onProductSelect: (product: ProductSummary | null) => void;
   onProductsUpdate: (products: ProductSummary[]) => void;
   onBusyChange: (isBusy: boolean) => void;
@@ -88,6 +89,7 @@ export interface ApiRequest {
   session_id?: string;
   conversation_id?: string;
   cart_id?: string;
+  shopper_profile_id?: string;
   context?: string;
   cart?: CartData;
   retrieved?: Record<string, string>;

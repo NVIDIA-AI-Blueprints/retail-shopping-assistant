@@ -183,11 +183,11 @@ inventory errors.
 - New **durable fact or state** belongs in that owner's service, not in a skill
   prompt or process-local cache.
 
-The fixed representative-shopper registry now supplies one trusted, typed
-source, but Slice 1 does not bind it to conversation context. Any later
-representative-profile binding, user-owned persona support, live inventory, and
-additional policy content should use explicit trusted data contracts; none
-should be inferred from conversation text.
+The fixed representative-shopper registry supplies one trusted, typed source,
+and turn start now binds one server-resolved snapshot to the conversation.
+User-owned persona support, live inventory, and additional policy content
+still require explicit trusted data contracts; none should be inferred from
+conversation text.
 
 ## Recommendation
 

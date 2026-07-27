@@ -283,6 +283,7 @@ const failedActivities = (events: InferenceActivity[]): InferenceActivity[] => {
 
 const Chatbox: React.FC<ChatboxProps> = ({
   selectedProduct,
+  selectedShopperProfileId,
   onProductSelect,
   onProductsUpdate,
   onBusyChange,
@@ -634,7 +635,8 @@ const Chatbox: React.FC<ChatboxProps> = ({
         newMessage,
         image || "",
         isGuardrailsOn,
-        media
+        media,
+        selectedShopperProfileId
       );
       
       // Clear media immediately after preparing payload

@@ -122,6 +122,7 @@ const App: React.FC = () => {
         <Chatbox
           key={chatMount.instance}
           selectedProduct={selectedProduct}
+          selectedShopperProfileId={selectedProfileId}
           onProductSelect={setSelectedProduct}
           onProductsUpdate={setProducts}
           onBusyChange={setIsChatBusy}

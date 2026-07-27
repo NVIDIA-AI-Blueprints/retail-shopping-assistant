@@ -87,10 +87,36 @@ test("shopper profile responses are validated without caching profile contents",
   );
 });
 
-test("Slice 1 selection does not enter the shopping query payload", () => {
+test("selected shopper query payload contains only its profile ID", () => {
   setSelectedShopperProfileId(profile.shopper_profile_id);
 
-  const payload = createApiRequest(getOrCreateUserSession(), "Show me bags");
+  const payload = createApiRequest(
+    getOrCreateUserSession(),
+    "Show me bags",
+    "",
+    true,
+    [],
+    getSelectedShopperProfileId()
+  );
+
+  expect(payload.shopper_profile_id).toBe(profile.shopper_profile_id);
+  expect(payload).not.toHaveProperty("display_name");
+  expect(payload).not.toHaveProperty("shopper_type");
+  expect(payload).not.toHaveProperty("behavior");
+  expect(payload).not.toHaveProperty("zipcode");
+  expect(JSON.stringify(payload)).not.toContain(profile.display_name);
+  expect(JSON.stringify(payload)).not.toContain(profile.behavior);
+});
+
+test("Guest query payload omits shopper_profile_id", () => {
+  const payload = createApiRequest(
+    getOrCreateUserSession(),
+    "Show me bags",
+    "",
+    true,
+    [],
+    null
+  );
 
   expect(payload).not.toHaveProperty("shopper_profile_id");
 });

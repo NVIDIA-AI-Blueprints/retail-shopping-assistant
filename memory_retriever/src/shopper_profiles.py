@@ -55,7 +55,12 @@ class ShopperProfileContract(BaseModel):
         pattern=SHOPPER_PROFILE_ID_PATTERN,
     )
     display_name: str = Field(..., min_length=1, max_length=80)
-    shopper_type: str = Field(..., min_length=1, max_length=80)
+    shopper_type: str = Field(
+        ...,
+        min_length=1,
+        max_length=80,
+        pattern=r"^[a-z][a-z0-9_]*$",
+    )
     behavior: str = Field(..., min_length=1, max_length=512)
     zipcode: str = Field(..., pattern=r"^[0-9]{5}$")
 
@@ -70,6 +75,13 @@ class ShopperProfileContract(BaseModel):
     def _reject_outer_whitespace(cls, value: str) -> str:
         if value != value.strip():
             raise ValueError("profile text must not contain outer whitespace")
+        return value
+
+    @field_validator("behavior")
+    @classmethod
+    def _require_single_line_behavior(cls, value: str) -> str:
+        if "\n" in value or "\r" in value:
+            raise ValueError("profile behavior must be one line")
         return value
 
 

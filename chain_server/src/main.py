@@ -21,7 +21,7 @@ import time
 import json
 import re
 
-from .agenttypes import State, Cart
+from .agenttypes import SHOPPER_PROFILE_ID_PATTERN, State, Cart
 from .config import load_config
 from .deepagents_runtime import DeepAgentsRuntime, create_request_identity
 from .media_perception import MEDIA_ONLY_QUERY
@@ -85,6 +85,12 @@ class QueryRequest(BaseModel):
     session_id: Optional[str] = None
     conversation_id: Optional[str] = None
     cart_id: Optional[str] = None
+    shopper_profile_id: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        max_length=64,
+        pattern=SHOPPER_PROFILE_ID_PATTERN,
+    )
     request_id: Optional[str] = Field(
         default=None,
         max_length=128,
@@ -128,6 +134,7 @@ def create_initial_state(request: QueryRequest) -> State:
     return State(
         user_id=request.user_id,
         query=request.query,
+        shopper_profile_id=request.shopper_profile_id,
         image=first_image,
         media=media,
         context=request.context or "",
@@ -161,6 +168,7 @@ async def process_query_stream(request: QueryRequest):
             conversation_id=request.conversation_id,
             cart_id=request.cart_id,
             request_id=request.request_id,
+            shopper_profile_id=request.shopper_profile_id,
         )
         
         async def send_updates():
@@ -207,6 +215,7 @@ async def process_query_timing(request: QueryRequest):
             conversation_id=request.conversation_id,
             cart_id=request.cart_id,
             request_id=request.request_id,
+            shopper_profile_id=request.shopper_profile_id,
         )
         
         # Process query and collect timing data

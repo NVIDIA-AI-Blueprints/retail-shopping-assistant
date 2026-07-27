@@ -52,7 +52,8 @@ The Retail Shopping Assistant is an AI-powered blueprint that provides a compreh
   catalog search or model call
 - 👤 **Representative Shopper Picker**: Five immutable, database-backed
   shoppers mirror the committed live-evaluation behavior profiles; the UI can
-  select one or Guest and inspect its type, behavior, and ZIP
+  select one or Guest and inspect its type, behavior, and ZIP. The selected ID
+  is bound to the durable conversation and resolved into compact soft guidance
 - 📚 **Enforced Shopper Skills**: Every turn first semantically selects and
   fully loads the smallest applicable skill set; each selected `SKILL.md`
   declares its role and tool grants, only their grant union becomes
@@ -88,16 +89,21 @@ The application follows a microservices architecture:
   replay, bounded recent-turn reads, typed prior-skill continuity, presented-
   product events and a compact reference index, stable cart-line IDs, atomically
   idempotent add/remove/quantity mutations, an immutable five-row representative
-  shopper registry, and request-scoped database sessions; standard Compose
-  exposes its host port on loopback only
+  shopper registry, atomic conversation/profile binding, and request-scoped
+  database sessions; standard Compose exposes its host port on loopback only
 - **Guardrails**: Content safety and moderation
 - **UI**: React-based frontend interface with Guest/representative-shopper
   selection
 
-The shopper picker is intentionally presentation-only in this first slice.
-Changing the selection clears visible chat/product state and rotates the
-browser-scoped session, conversation, and cart identities, but shopping
-requests and model context do not receive the selected profile yet.
+The UI sends only the selected profile ID; Guest omits it. Durable turn start
+resolves the server-owned row and prevents one conversation from switching
+between Guest and another shopper or between two shoppers. The model receives
+one small current-turn block with `shopper_type`, exact `behavior`, and
+`saved_zipcode`. This is soft interaction/style guidance only: explicit shopper
+instructions win, and a profile cannot invent a budget, product requirement,
+cart action, product fact, skill choice, or tool permission. Changing the
+selection clears visible chat/product state and rotates the browser-scoped
+session, conversation, and cart identities.
 
 Every turn still makes a fresh semantic skill-selection decision. The previous
 turn's selected skill names are persisted with its durable output and supplied
@@ -356,9 +362,10 @@ collision-safe pair of conversation ID and request ID. It is deleted only after
 durable finalization succeeds; a finalize failure preserves that checkpoint.
 The compact historical-product index is capped at 16,384 characters, and its
 typed batch resolver can run at most once per turn. Caller-supplied persona data
-is not accepted as turn context. The fixed representative shoppers now have a
-typed, bounded server-owned registry, but Slice 1 selection remains outside the
-query and prompt until the separate context-binding slice.
+is not accepted as turn context. The fixed representative shoppers use a typed,
+bounded server-owned registry and an atomic turn-start binding; only the
+resolved three-field snapshot enters the current model input. Guest turns carry
+neither that snapshot nor profile-specific prompt rules.
 
 Catalog values are never copied into agent or catalog code. After replacing the
 JSONL or sidecar, restart and verify the catalog service first, then restart and

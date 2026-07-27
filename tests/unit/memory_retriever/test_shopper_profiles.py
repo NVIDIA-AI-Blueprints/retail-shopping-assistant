@@ -112,7 +112,7 @@ def test_startup_migrates_bootstraps_and_lists_exact_profiles(
     with memory_main.engine.connect() as connection:
         assert connection.exec_driver_sql(
             "SELECT version FROM schema_migrations ORDER BY version"
-        ).scalars().all() == [1, 2, 3, 4, 5]
+        ).scalars().all() == [1, 2, 3, 4, 5, 6]
 
 
 def test_get_profile_is_typed_and_unknown_or_malformed_ids_fail(
@@ -253,6 +253,10 @@ def test_extra_registry_row_fails_bootstrap(
         lambda rows: [*rows, dict(rows[0])],
         lambda rows: [{**rows[0], "zipcode": "1234"}, *rows[1:]],
         lambda rows: [{**rows[0], "display_name": " Alex"}, *rows[1:]],
+        lambda rows: [
+            {**rows[0], "behavior": "Two-line\nbehavior"},
+            *rows[1:],
+        ],
         lambda rows: [{**rows[0], "unexpected": True}, *rows[1:]],
     ],
 )

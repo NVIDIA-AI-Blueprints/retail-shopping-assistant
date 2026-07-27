@@ -18,6 +18,12 @@ jest.mock("@mui/material/styles", () => ({
 }));
 
 global.IS_REACT_ACT_ENVIRONMENT = true;
+global.TextDecoder = class {
+  decode() {
+    return "";
+  }
+};
+Element.prototype.scrollIntoView = jest.fn();
 
 const SESSION_STORAGE_KEY = "shopping_session_identity";
 const SHOPPER_PROFILE_STORAGE_KEY = "shopping_shopper_profile_id";
@@ -80,6 +86,21 @@ const flushEffects = async () => {
   });
 };
 
+const submitQuery = async (container, query) => {
+  const input = container.querySelector(".input_test");
+  const valueSetter = Object.getOwnPropertyDescriptor(
+    HTMLInputElement.prototype,
+    "value"
+  ).set;
+
+  React.act(() => {
+    valueSetter.call(input, query);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  click(container.querySelector('[aria-label="Send message"]'));
+  await flushEffects();
+};
+
 describe("App shopper identity lifecycle", () => {
   let container;
   let root;
@@ -103,6 +124,16 @@ describe("App shopper identity lifecycle", () => {
           json: () => Promise.resolve({}),
         });
       }
+      if (url.endsWith("/query/stream")) {
+        return Promise.resolve({
+          ok: true,
+          body: {
+            getReader: () => ({
+              read: () => Promise.resolve({ value: undefined, done: true }),
+            }),
+          },
+        });
+      }
       return Promise.reject(new Error(`Unexpected request: ${url}`));
     });
 
@@ -121,6 +152,25 @@ describe("App shopper identity lifecycle", () => {
     jest.clearAllTimers();
     jest.useRealTimers();
     jest.restoreAllMocks();
+  });
+
+  test("Guest requests omit shopper_profile_id through App and Chatbox", async () => {
+    // This test uses React createRoot directly, so rendering must be inside act.
+    // eslint-disable-next-line testing-library/no-unnecessary-act
+    React.act(() => {
+      root.render(<App />);
+    });
+    await flushEffects();
+
+    await submitQuery(container, "Show me bags");
+
+    const streamCall = global.fetch.mock.calls.find(([input]) =>
+      String(input).endsWith("/query/stream")
+    );
+    const payload = JSON.parse(streamCall[1].body);
+
+    expect(payload.query).toBe("Show me bags");
+    expect(payload).not.toHaveProperty("shopper_profile_id");
   });
 
   test("shopper switch keeps exactly its rotated identity and manual Reset clears it", async () => {
@@ -158,6 +208,24 @@ describe("App shopper identity lifecycle", () => {
     expect(shopperSession.sessionId).not.toBe(priorSession.sessionId);
     expect(shopperSession.conversationId).not.toBe(priorSession.conversationId);
     expect(shopperSession.cartId).not.toBe(priorSession.cartId);
+
+    await submitQuery(container, "Show me bags");
+    await submitQuery(container, "Which one is under $50?");
+
+    const payloads = global.fetch.mock.calls
+      .filter(([input]) => String(input).endsWith("/query/stream"))
+      .map(([, request]) => JSON.parse(request.body));
+
+    expect(payloads).toHaveLength(2);
+    payloads.forEach((payload) => {
+      expect(payload.shopper_profile_id).toBe("shopper_morgan");
+      expect(payload.conversation_id).toBe(shopperSession.conversationId);
+      expect(payload.cart_id).toBe(shopperSession.cartId);
+      expect(payload).not.toHaveProperty("display_name");
+      expect(payload).not.toHaveProperty("shopper_type");
+      expect(payload).not.toHaveProperty("behavior");
+      expect(payload).not.toHaveProperty("zipcode");
+    });
 
     click(container.querySelector('[aria-label="Reset conversation"]'));
     expect(sessionStorage.getItem(SESSION_STORAGE_KEY)).toBeNull();

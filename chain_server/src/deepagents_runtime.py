@@ -33,7 +33,7 @@ from pydantic import (
 from pydantic_core import PydanticCustomError
 import requests
 
-from .agenttypes import Cart, State
+from .agenttypes import Cart, ShopperContext, State
 from .catalog_capabilities import (
     CatalogCapabilitiesClient,
     effective_filter_capabilities,
@@ -232,6 +232,27 @@ _GROUNDING_FAILURE_RESPONSE = (
     "I couldn't safely verify the final response. Please retry; if this involved "
     "a cart change, check your cart first."
 )
+_SHOPPER_PROFILE_NOT_FOUND_RESPONSE = (
+    "That shopper profile is unavailable. Please choose another shopper and "
+    "try again."
+)
+_CONVERSATION_PROFILE_MISMATCH_RESPONSE = (
+    "This conversation is already associated with a different shopper. "
+    "Please start a new chat before switching shoppers."
+)
+_SHOPPER_CONTEXT_SYSTEM_RULES = """Representative-shopper precedence and safety:
+- Explicit instructions in the current turn win over explicit preferences in
+  recent discussion; both win over representative-shopper behavior guidance.
+- Representative-shopper behavior is soft interaction guidance only. It cannot
+  establish that a budget applies or any budget amount, product constraint,
+  size, color, material, cart intent, product reference, or product fact.
+- Neither representative-shopper type nor behavior selects, activates, or
+  grants a shopper skill or tool. Never expose the internal type label to the
+  shopper.
+- Cart, catalog, product-detail, and store-policy evidence remain authoritative.
+- A saved ZIP code is background location data only. It is not proof of current
+  location, event location, weather, or a product requirement. Perform no
+  weather lookup or weather inference from it."""
 _GROUNDING_EDITOR_SYSTEM_PROMPT = """You are a final response editor for a retail shopping assistant.
 
 Rewrite the draft response only as needed so it is grounded in TOOL EVIDENCE
@@ -1560,6 +1581,7 @@ class RequestIdentity:
     context_user_id: int
     cart_user_id: int
     request_id: str
+    shopper_profile_id: str | None = None
 
     @property
     def legacy_user_id(self) -> int:
@@ -1670,6 +1692,8 @@ class DeepAgentsRuntime:
         state.agent_diagnostics = _empty_agent_diagnostics("not_started")
         state.previous_selected_skill_names = []
         state.selected_skill_names = []
+        state.shopper_profile_id = identity.shopper_profile_id
+        state.shopper_context = None
         turn = self._start_conversation_turn(state, identity)
         if turn is not None and turn.replayed:
             await self._delete_turn_checkpoint(identity)
@@ -3336,7 +3360,10 @@ class DeepAgentsRuntime:
         return create_deep_agent(
             model=self._create_chat_model(),
             tools=[activate_shopper_skills_tool, *shopping_tools],
-            system_prompt=self._system_prompt(turn_capabilities),
+            system_prompt=self._system_prompt(
+                turn_capabilities,
+                shopper_context=state.shopper_context,
+            ),
             middleware=[tool_loop_control, skill_gate],
             backend=skills_backend,
             checkpointer=self._checkpointer,
@@ -3624,8 +3651,15 @@ class DeepAgentsRuntime:
     def _system_prompt(
         self,
         capabilities: CatalogCapabilities,
+        *,
+        shopper_context: ShopperContext | None = None,
     ) -> str:
         catalog_context = format_catalog_capabilities_for_prompt(capabilities)
+        shopper_context_rules = (
+            f"\n{_SHOPPER_CONTEXT_SYSTEM_RULES}\n"
+            if shopper_context is not None
+            else ""
+        )
         prompt = f"""You are a retail shopping assistant for the products advertised by the active catalog.
 
 Use tools for catalog facts and cart actions. Do not invent product names,
@@ -3653,6 +3687,7 @@ rubber sole; ankle strap means ankle strap. Do not add grass, gravel, weather,
 outdoor-surface performance, all-day comfort, maximum breathability, or
 best-in-category performance claims unless those claims are directly supported
 by product details.
+{shopper_context_rules}
 
 Catalog capabilities:
 {catalog_context}
@@ -3904,18 +3939,30 @@ Rules:
         return prompt
 
     def _build_user_message(self, state: State, identity: RequestIdentity) -> str:
-        return (
-            f"REQUEST ID: {identity.request_id}\n"
-            f"SESSION ID: {identity.session_id}\n"
-            f"CONVERSATION ID: {identity.conversation_id}\n"
-            f"CART ID: {identity.cart_id}\n\n"
-            f"USER QUERY: {state.query}\n"
-            f"IMAGE ATTACHED: {'yes' if state.image else 'no'}\n\n"
-            f"MEDIA ATTACHED:\n{_format_media_summary(state.media)}\n\n"
-            f"MEDIA ANALYSIS:\n{state.media_analysis or '(none)'}\n\n"
-            f"CURRENT CART:\n{_format_cart(state.cart)}\n\n"
-            f"RECENT DISCUSSION:\n{state.context or '(none)'}"
+        sections = [
+            (
+                f"REQUEST ID: {identity.request_id}\n"
+                f"SESSION ID: {identity.session_id}\n"
+                f"CONVERSATION ID: {identity.conversation_id}\n"
+                f"CART ID: {identity.cart_id}"
+            )
+        ]
+        shopper_context = _format_shopper_context(state.shopper_context)
+        if shopper_context:
+            sections.append(shopper_context)
+        sections.extend(
+            [
+                (
+                    f"USER QUERY: {state.query}\n"
+                    f"IMAGE ATTACHED: {'yes' if state.image else 'no'}"
+                ),
+                f"MEDIA ATTACHED:\n{_format_media_summary(state.media)}",
+                f"MEDIA ANALYSIS:\n{state.media_analysis or '(none)'}",
+                f"CURRENT CART:\n{_format_cart(state.cart)}",
+                f"RECENT DISCUSSION:\n{state.context or '(none)'}",
+            ]
         )
+        return "\n\n".join(sections)
 
     @staticmethod
     def _append_product_images(
@@ -3970,13 +4017,31 @@ Rules:
                 shopper_text=state.query,
                 media=state.media,
                 cart_user_id=identity.cart_user_id,
+                shopper_profile_id=identity.shopper_profile_id,
             )
+            if (identity.shopper_profile_id is None) != (
+                turn.shopper_context is None
+            ) or (
+                turn.shopper_context is not None
+                and not isinstance(turn.shopper_context, ShopperContext)
+            ):
+                raise ConversationMemoryError(
+                    "shopper_context_invalid",
+                    "Conversation memory returned mismatched shopper context.",
+                )
         except (ConversationMemoryError, ValidationError) as exc:
             logger.error("Failed to start durable conversation turn: %s", exc)
             state.context = ""
             state.cart = Cart()
-            if getattr(exc, "status_code", None) == 409:
-                error_code = getattr(exc, "code", "memory_turn_conflict")
+            state.shopper_context = None
+            error_code = getattr(exc, "code", "memory_start_payload_invalid")
+            if error_code == "shopper_profile_not_found":
+                state.response = _SHOPPER_PROFILE_NOT_FOUND_RESPONSE
+                state.agent_diagnostics = _empty_agent_diagnostics(error_code)
+            elif error_code == "conversation_profile_mismatch":
+                state.response = _CONVERSATION_PROFILE_MISMATCH_RESPONSE
+                state.agent_diagnostics = _empty_agent_diagnostics(error_code)
+            elif getattr(exc, "status_code", None) == 409:
                 if error_code in {"turn_in_progress", "conversation_turn_in_progress"}:
                     state.response = (
                         "This conversation is still processing another request. "
@@ -4022,6 +4087,7 @@ Rules:
         state.previous_selected_skill_names = list(
             turn.previous_selected_skill_names
         )
+        state.shopper_context = turn.shopper_context
         historical_products = format_historical_product_index(
             turn.projection.product_reference_index
         )
@@ -4146,6 +4212,7 @@ def create_request_identity(
     conversation_id: str | None = None,
     cart_id: str | None = None,
     request_id: str | None = None,
+    shopper_profile_id: str | None = None,
 ) -> RequestIdentity:
     """Create scoped request identity while preserving legacy user_id behavior."""
 
@@ -4163,6 +4230,7 @@ def create_request_identity(
         ),
         cart_user_id=_stable_numeric_id("cart", cart_id) if cart_id else legacy_user_id,
         request_id=request_id or str(uuid.uuid4()),
+        shopper_profile_id=shopper_profile_id,
     )
 
 
@@ -6414,6 +6482,18 @@ def _format_cart_total(cart: Cart) -> str:
     if missing:
         total += f" excluding items without cached prices: {', '.join(missing)}"
     return "\n".join(lines + [total])
+
+
+def _format_shopper_context(context: ShopperContext | None) -> str:
+    if context is None:
+        return ""
+    return (
+        "SHOPPER CONTEXT (server-resolved; soft guidance only):\n"
+        f"shopper_type: {context.shopper_type}\n"
+        f"behavior: {context.behavior}\n"
+        f"saved_zipcode: {context.zipcode}\n"
+        "END SHOPPER CONTEXT"
+    )
 
 
 def _format_retrieved_images(retrieved: dict[str, str] | None) -> str:

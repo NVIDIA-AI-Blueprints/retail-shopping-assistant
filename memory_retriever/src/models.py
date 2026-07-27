@@ -160,6 +160,15 @@ class ConversationTurn(Base):
     )
     finalize_digest = Column(String, nullable=True)
     cart_user_id = Column(Integer, nullable=False)
+    shopper_profile_id = Column(
+        String(64),
+        ForeignKey(
+            "shopper_profiles.shopper_profile_id",
+            ondelete="RESTRICT",
+            onupdate="RESTRICT",
+        ),
+        nullable=True,
+    )
     shopper_text = Column(Text, nullable=False)
     assistant_text = Column(Text, nullable=True)
     output_json = Column(Text, nullable=True)

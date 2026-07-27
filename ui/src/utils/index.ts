@@ -224,9 +224,10 @@ export const createApiRequest = (
   query: string,
   image: string = '',
   guardrails: boolean = true,
-  media: MediaAttachment[] = []
+  media: MediaAttachment[] = [],
+  shopperProfileId: string | null = null
 ): ApiRequest => {
-  return {
+  const payload: ApiRequest = {
     user_id: userSession.userId,
     session_id: userSession.sessionId,
     conversation_id: userSession.conversationId,
@@ -237,6 +238,10 @@ export const createApiRequest = (
     media,
     image_bool: !!image,
   };
+  if (shopperProfileId !== null) {
+    payload.shopper_profile_id = shopperProfileId;
+  }
+  return payload;
 };
 
 const getStoredUserId = (): number | null => {

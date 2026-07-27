@@ -19,7 +19,7 @@ Top-level orchestration is via `docker-compose.yaml`; optional local NIM model c
 1. UI posts to `/api/query/stream` (nginx proxy on port `3000`).
 2. Nginx routes `/api/*` to `chain-server:8009`.
 3. Chain server request flow:
-   - `DeepAgentsRuntime` first starts a durable turn in the memory service, which returns bounded model-context-eligible raw turns, the prior turn's selected skill names, and the authoritative cart. Blocked turns remain durable and exactly replayable but are excluded from both the service projection and chain prompt formatter. Graph working state uses a request-scoped pair of `conversation_id` and `request_id`. The separate Slice 1 representative-shopper picker is presentation-only: caller-supplied persona data and the selected profile are not injected into model context.
+   - `DeepAgentsRuntime` first starts a durable turn in the memory service, which returns bounded model-context-eligible raw turns, the prior turn's selected skill names, the authoritative cart, and an optional server-resolved representative-shopper snapshot. Blocked turns remain durable and exactly replayable but are excluded from both the service projection and chain prompt formatter. Graph working state uses a request-scoped pair of `conversation_id` and `request_id`. A selected profile ID is bound immutably to that conversation and renders one compact current-turn context block containing only type, behavior, and saved ZIP. Profile precedence and non-authority rules are also present only for selected-profile turns; Guest receives neither the block nor profile-specific prompt rules. The block is soft guidance: current explicit instructions and recent explicit preferences take precedence, and it cannot establish budget, product constraints or facts, cart intent, skill selection, or tool grants. Unknown caller fields remain backward-compatibly ignored, and caller-supplied persona objects are never injected.
    - Optional input guardrails run before model/tool work; attached media is analyzed through the configured perception client.
    - Deep Agents graph execution has a configurable 45-second default deadline. A timeout captures bounded partial graph messages, clears unsent products, finalizes the durable turn as failed, and deletes the request checkpoint only after that finalization succeeds.
    - Every turn begins with a required model step that semantically selects the smallest applicable set from five registered shopper skills. The latest durable selected names are supplied as a read-only continuity hint; they never authorize tools or replace the fresh selection. Product work uses exactly one primary procedure: product discovery or outfit styling. Budget shopping is a modifier only when the shopper states a budget; cart and policy requests may use their standalone skills. An invalid composition receives its typed reason and one correction attempt; a second invalid composition ends with a deterministic clarification and runs no shopping tool. Multiple activation calls in one response execute none and clarify immediately. The runtime injects the complete selected files and exposes only the union of their declared `tools_granted`; dispatch independently rechecks the selected skills, grant union, and immutable tool policy. Pre-activation, same-batch, and ungranted shopping calls are execution-blocked.
@@ -216,9 +216,11 @@ Key env vars:
   `sqlite:////data/context.db` on the `memory-data` named volume; deleting that
   volume deletes the stored transcript and cart state.
 - The same SQLite database owns five immutable representative shoppers loaded
-  from `shared/configs/memory_retriever/shopper_profiles.json`. Slice 1 selection
-  is tab-scoped UI state only; it is not sent with shopping requests or injected
-  into the model.
+  from `shared/configs/memory_retriever/shopper_profiles.json`. The bundled UI
+  sends only the selected ID. Turn start resolves it transactionally, binds it
+  to the conversation (including Guest as `NULL`), and returns a typed
+  three-field context. Switching profiles therefore requires the new
+  conversation/cart identities created by the picker.
 - Stale active turns are recovered at startup and atomically at the next turn
   start. An exact abandoned retry reopens only the latest conversation sequence,
   preserves its request ID for cart idempotency, and rotates its service-issued
@@ -243,8 +245,9 @@ Key env vars:
   as failed using `agent_timeout` and `grounding_timeout`, respectively. Timeout
   finalization uses the existing durable attempt fence; do not substitute the
   stale-turn abandonment setting for this live execution deadline.
-- Durable raw turns contain shopper/assistant text, selected skill names,
-  bounded replay, and ordered event envelopes. They do not store raw media,
+- Durable raw turns contain shopper/assistant text, the nullable representative
+  profile binding, selected skill names, bounded replay, and ordered event
+  envelopes. They do not store the rendered shopper-context block, raw media,
   model reasoning, or the complete graph/tool transcript. Presented-product
   events and deterministic historical resolution are implemented; active
   anchors and effective preferences remain reserved and unused.

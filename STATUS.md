@@ -13,7 +13,11 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   name, type, behavior, and five-digit ZIP. The UI offers Guest plus those five
   shoppers and exposes details on hover, keyboard focus, or tap. Switching
   shoppers clears visible chat/product/media/metric state and rotates the
-  tab-scoped session, conversation, and cart identities;
+  tab-scoped session, conversation, and cart identities. The UI sends only the
+  selected ID with each turn; memory atomically resolves and binds it to the
+  conversation, stores the nullable foreign key, and returns exactly type,
+  behavior, and ZIP. The runtime injects that snapshot once as bounded soft
+  guidance, absent for Guest and never persisted inside transcript text;
 - a single memory-service SQLite replica now starts each turn durably before
   guardrail/model/tool work, returns bounded model-context-eligible raw turns
   plus the authoritative cart, and finalizes every completed, blocked, or
@@ -93,10 +97,13 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   `langgraph==1.2.7`, and `langgraph-sdk==0.4.2`. The services that resolve
   `orjson` pin `3.11.5`, the last release limited to the Apache-2.0/MIT policy;
   Redis checkpoint packages remain absent;
-- Slice 1 profile selection is presentation-only: `QueryRequest`, durable
-  turns, prompts, shopper skills, and tool authorization remain unchanged.
-  Caller-supplied persona objects are still not accepted or injected into model
-  context; and
+- representative-shopper context cannot create a budget, product requirement,
+  size, color, material, cart intent, product reference, skill selection, tool
+  authorization, product fact, weather fact, or current-location claim.
+  Explicit current-turn instructions take precedence, followed by explicit
+  recent-conversation preferences; unknown caller fields remain ignored for
+  backward compatibility, and caller-supplied persona objects are never
+  injected; and
 - both response paths retain additive agent diagnostics for activated skill
   files, ordered tool calls and arguments, rejected/duplicate calls, bounded
   current-turn product evidence from successful catalog search/detail results,
@@ -301,10 +308,33 @@ lives in [Schema-Driven Catalog Architecture](docs/CATALOG_REFACTOR_PLAN.md).
 
 ## Verification
 
-The newest focused gate is recorded first. Older Slice 0, Slice 2, and Slice 3
-results remain below as comparison points; generated quality and timing
+The newest focused gate is recorded first. Older implementation gates remain
+below as comparison points; generated quality and timing
 artifacts stay in the required local archive rather than versioned source.
 
+- Representative-shopper Slice 2 context gate (2026-07-27): the full offline
+  backend suite passed 1,016 tests with 1 expected xfail; all 9 UI tests passed,
+  UI lint reported 0 errors and 3 pre-existing warnings, and the production
+  build compiled. The existing SQLite lineage upgraded through migration 6;
+  local service smokes confirmed exact selected/Guest context, restrictive
+  profile binding, unknown-ID failure before agent work, and the public request
+  schema. Four direct selected-profile GPT-5.2 turns confirmed Casey supplied
+  no budget skill or price constraint, Jordan supplied no cart intent, Morgan
+  supplied no ungrounded product facts, and Alex's saved ZIP supplied no
+  weather or location claim. The final Guest-only GPT-5.2 app/Judge regression
+  guard completed 48/48 shopper turns and judgments with no collector errors at
+  4.0208/5 and 42/48 turns scoring at least 4. Mean / median / p95 / maximum
+  latency was 19.591s / 18.421s / 35.841s / 39.509s. Against the immediately
+  preceding Slice 1 WIP, average quality improved by 0.1250, score-4-or-better
+  coverage increased by 4 turns, 9/33/6 individual scores
+  improved/tied/regressed, and mean / median / p95 / maximum latency changed by
+  -0.443s / +0.044s / -1.538s / -5.520s. Profile-specific instructions were
+  deliberately removed from Guest prompts before this decisive run. The broad
+  run is a Guest regression/timing guard; direct feature evidence is archived
+  at
+  `~/exec-briefs/retail-shopping-assistant/quality/shopping/selected-profile-smoke/slice2_selected_profiles_20260727T185800Z.md`,
+  with canonical comparisons under
+  `~/exec-briefs/retail-shopping-assistant/quality/shopping/comparisons/`.
 - Representative-shopper Slice 1 gate (2026-07-27): the full offline backend
   suite passed 975 tests with 1 expected xfail; all 7 UI tests passed, UI lint
   reported 0 errors and 3 pre-existing warnings, and the production build
@@ -652,10 +682,11 @@ restore an earlier presented product after restart or on another worker.
 Missing or ambiguous references never authorize a downstream tool. Matching is
 exact, catalog revision is not yet enforced, and catalog replacement can still
 require a fresh search.
-The fixed representative-shopper registry is now a trusted, typed source, but
-Slice 1 does not bind a selection to durable turns or model context.
-Caller-supplied or mutable customer personas remain unavailable until their
-ownership and input-safety contracts are defined.
+The fixed representative-shopper registry is a trusted, typed source and its
+selected row is now bound at durable turn start. It remains static soft
+guidance, not learned preference state. Caller-supplied or mutable customer
+personas remain unavailable until their ownership and input-safety contracts
+are defined.
 
 Judge product evidence is capped at 24 records and 32,000 serialized characters
 per turn. `product_evidence_truncated` makes omissions explicit; a truncated

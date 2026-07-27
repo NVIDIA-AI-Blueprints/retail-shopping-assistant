@@ -13,7 +13,14 @@ from typing import Any, Literal
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 from sqlalchemy import func, text
 
 from .models import (
@@ -21,6 +28,7 @@ from .models import (
     ConversationEvent,
     ConversationProjection,
     ConversationTurn,
+    ShopperProfile,
 )
 from .product_references import (
     PRESENTED_PRODUCTS_EVENT_KEY,
@@ -29,19 +37,60 @@ from .product_references import (
     rebuild_product_reference_index,
     resolve_product_references,
 )
+from .shopper_profiles import SHOPPER_PROFILE_ID_PATTERN
 
 
 DEFAULT_ABANDONED_SECONDS = 300
 DEFAULT_RECENT_TURNS_LIMIT = 8
 MAX_RECENT_TURNS_LIMIT = 50
+SHOPPER_PROFILE_NOT_FOUND = "shopper_profile_not_found"
+CONVERSATION_PROFILE_MISMATCH = "conversation_profile_mismatch"
+REQUEST_INPUT_CONFLICT = "request_id was already used for different turn input"
 
 
 class TurnStartRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     request_id: str = Field(..., min_length=1, max_length=128)
     shopper_text: str = Field(..., min_length=1, max_length=100_000)
     cart_user_id: int = Field(..., ge=0)
     request_digest: str = Field(..., min_length=1, max_length=128)
     catalog_revision: str | None = Field(default=None, max_length=512)
+    shopper_profile_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=64,
+        pattern=SHOPPER_PROFILE_ID_PATTERN,
+    )
+
+
+class ShopperContext(BaseModel):
+    """Profile guidance resolved from the immutable memory-service registry."""
+
+    model_config = ConfigDict(extra="forbid", from_attributes=True, strict=True)
+
+    shopper_type: str = Field(
+        ...,
+        min_length=1,
+        max_length=80,
+        pattern=r"^[a-z][a-z0-9_]*$",
+    )
+    behavior: str = Field(..., min_length=1, max_length=512)
+    zipcode: str = Field(..., pattern=r"^[0-9]{5}$")
+
+    @field_validator("shopper_type", "behavior", "zipcode")
+    @classmethod
+    def _reject_outer_whitespace(cls, value: str) -> str:
+        if value != value.strip():
+            raise ValueError("shopper context must not contain outer whitespace")
+        return value
+
+    @field_validator("behavior")
+    @classmethod
+    def _require_single_line_behavior(cls, value: str) -> str:
+        if "\n" in value or "\r" in value:
+            raise ValueError("shopper behavior must be one line")
+        return value
 
 
 EventType = Literal[
@@ -237,10 +286,25 @@ def _previous_selected_skill_names(
     return _turn_selected_skill_names(previous)
 
 
+def _shopper_context(
+    profile: ShopperProfile | None,
+) -> dict[str, str] | None:
+    if profile is None:
+        return None
+    try:
+        return ShopperContext.model_validate(profile).model_dump(mode="json")
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="shopper_context_invalid",
+        ) from exc
+
+
 def _start_response(
     db,
     turn: ConversationTurn,
     projection: ConversationProjection,
+    shopper_profile: ShopperProfile | None,
     *,
     replayed: bool,
 ) -> dict[str, Any]:
@@ -257,6 +321,7 @@ def _start_response(
         "assistant_text": turn.assistant_text,
         "termination_reason": turn.termination_reason,
         "output": json.loads(turn.output_json) if turn.output_json else None,
+        "shopper_context": _shopper_context(shopper_profile),
     }
 
 
@@ -315,6 +380,44 @@ def _restart_abandoned_turn(
     turn.catalog_revision = request.catalog_revision
 
 
+def _resolve_shopper_profile(
+    db,
+    shopper_profile_id: str | None,
+) -> ShopperProfile | None:
+    if shopper_profile_id is None:
+        return None
+    profile = (
+        db.query(ShopperProfile)
+        .filter_by(shopper_profile_id=shopper_profile_id)
+        .first()
+    )
+    if profile is None:
+        raise HTTPException(
+            status_code=404,
+            detail=SHOPPER_PROFILE_NOT_FOUND,
+        )
+    return profile
+
+
+def _require_conversation_profile(
+    db,
+    conversation_id: str,
+    shopper_profile_id: str | None,
+) -> None:
+    bindings = {
+        row[0]
+        for row in db.query(ConversationTurn.shopper_profile_id)
+        .filter(ConversationTurn.conversation_id == conversation_id)
+        .distinct()
+        .all()
+    }
+    if bindings and bindings != {shopper_profile_id}:
+        raise HTTPException(
+            status_code=409,
+            detail=CONVERSATION_PROFILE_MISMATCH,
+        )
+
+
 def _start_turn(db, conversation_id: str, request: TurnStartRequest) -> dict[str, Any]:
     db.execute(text("BEGIN IMMEDIATE"))
     current_time = time.time()
@@ -338,11 +441,21 @@ def _start_turn(db, conversation_id: str, request: TurnStartRequest) -> dict[str
             existing.request_digest != request.request_digest
             or existing.shopper_text != request.shopper_text
             or existing.cart_user_id != request.cart_user_id
+            or existing.shopper_profile_id != request.shopper_profile_id
         ):
             raise HTTPException(
                 status_code=409,
-                detail="request_id was already used for different turn input",
+                detail=REQUEST_INPUT_CONFLICT,
             )
+        shopper_profile = _resolve_shopper_profile(
+            db,
+            request.shopper_profile_id,
+        )
+        _require_conversation_profile(
+            db,
+            conversation_id,
+            request.shopper_profile_id,
+        )
         if existing.status == "started":
             raise HTTPException(status_code=409, detail="turn_in_progress")
         if existing.status == "abandoned":
@@ -368,14 +481,35 @@ def _start_turn(db, conversation_id: str, request: TurnStartRequest) -> dict[str
                 )
             _restart_abandoned_turn(existing, request, started_at=current_time)
             projection = _get_or_create_projection(db, conversation_id)
-            response = _start_response(db, existing, projection, replayed=False)
+            response = _start_response(
+                db,
+                existing,
+                projection,
+                shopper_profile,
+                replayed=False,
+            )
             db.commit()
             return response
         projection = _get_or_create_projection(db, conversation_id)
-        response = _start_response(db, existing, projection, replayed=True)
+        response = _start_response(
+            db,
+            existing,
+            projection,
+            shopper_profile,
+            replayed=True,
+        )
         db.commit()
         return response
 
+    shopper_profile = _resolve_shopper_profile(
+        db,
+        request.shopper_profile_id,
+    )
+    _require_conversation_profile(
+        db,
+        conversation_id,
+        request.shopper_profile_id,
+    )
     active = (
         db.query(ConversationTurn)
         .filter_by(
@@ -404,6 +538,7 @@ def _start_turn(db, conversation_id: str, request: TurnStartRequest) -> dict[str
         request_digest=request.request_digest,
         attempt_id=uuid4().hex,
         cart_user_id=request.cart_user_id,
+        shopper_profile_id=request.shopper_profile_id,
         shopper_text=request.shopper_text,
         status="started",
         catalog_revision=request.catalog_revision,
@@ -412,7 +547,13 @@ def _start_turn(db, conversation_id: str, request: TurnStartRequest) -> dict[str
     db.add(turn)
     db.flush()
     projection = _get_or_create_projection(db, conversation_id)
-    response = _start_response(db, turn, projection, replayed=False)
+    response = _start_response(
+        db,
+        turn,
+        projection,
+        shopper_profile,
+        replayed=False,
+    )
     db.commit()
     return response
 

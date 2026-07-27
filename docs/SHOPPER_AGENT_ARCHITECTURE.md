@@ -18,17 +18,18 @@ see the [Shopper Agent Leadership Note](SHOPPER_AGENT_LEADERSHIP_NOTE.md).
 | Boundary | Owns | Does not own |
 | --- | --- | --- |
 | Published catalog | Product records, taxonomy, filter values, field roles, prices, details, and retrieval results | Shopper intent, styling judgment, cart state, or inventory |
-| Deep Agents runtime | Semantic intent, skill selection, deterministic selected-skill tool grants, tool selection, and styling judgment | Product facts, policy facts, or cart truth |
-| Memory service | Immutable representative-shopper registry, ordered durable shopper/assistant turns, exact finalized replay, bounded recent-turn reads, presented-product events and compact index, deterministic same-conversation reference resolution, authoritative cart state, and atomic mutation replay records | Catalog facts, model reasoning, learned preferences, sentiment, active anchors, or cross-conversation memory |
+| Deep Agents runtime | Semantic intent, skill selection, deterministic selected-skill tool grants, tool selection, styling judgment, and one server-resolved representative-shopper soft-guidance block | Product facts, policy facts, cart truth, or profile ownership |
+| Memory service | Immutable representative-shopper registry and conversation binding, typed three-field shopper snapshots, ordered durable shopper/assistant turns, exact finalized replay, bounded recent-turn reads, presented-product events and compact index, deterministic same-conversation reference resolution, authoritative cart state, and atomic mutation replay records | Catalog facts, model reasoning, learned preferences, sentiment, active anchors, or cross-conversation memory |
 | Graph checkpointer | Request-scoped working graph/tool state within one chain-server process | Durable transcript storage, cross-turn shopper memory, cross-replica context, or product-ref authorization |
 
 A model-authored semantic query is an internal **ranking preference**, not a
 product fact or shopper-facing explanation. Only catalog tool evidence can
 establish catalog facts. Conversation memory may guide judgment, but it cannot
-override current tool results. Caller-supplied persona data is not injected into
-model context. The Slice 1 UI may select one server-published representative
-shopper, but that selection is not part of a query, durable turn, prompt, skill
-decision, or tool grant until a later slice adds an explicit binding.
+override current tool results. Caller-supplied persona objects are not injected
+into model context. The UI may send only one server-published profile ID;
+memory resolves and binds it at turn start. The runtime renders the returned
+type, behavior, and ZIP once as soft guidance. That context never grants a
+skill/tool or establishes budget, constraints, cart intent, or product facts.
 
 ## 1. Published Catalog Data Foundation
 
@@ -332,6 +333,34 @@ chain server provides the typed list proxy used by the UI. No profile write
 route exists. Selecting another shopper remounts the chat surface and rotates
 the bundled UI's browser identities; it does not restore a profile-specific
 cart or transcript.
+
+Migration 6 adds nullable `conversation_turns.shopper_profile_id` with
+`ON DELETE RESTRICT` and `ON UPDATE RESTRICT`; `NULL` is the explicit Guest
+binding. Within the existing `BEGIN IMMEDIATE` turn-start transaction, memory
+resolves a selected row, rejects an unknown ID without inserting a turn, and
+prevents Guest-to-profile, profile-to-Guest, or profile-to-profile reuse of one
+conversation. The selected ID participates in exact request identity. A valid
+start or finalized replay returns:
+
+```text
+SHOPPER CONTEXT (server-resolved; soft guidance only):
+shopper_type: <type>
+behavior: <exact behavior>
+saved_zipcode: <five-digit ZIP>
+END SHOPPER CONTEXT
+```
+
+The block and its profile-specific precedence/non-authority prompt rules are
+absent for Guest. The block contains no profile ID or display name and is not
+written into raw shopper/assistant text or repeated in recent history.
+Explicit current-turn instructions win, followed by explicit recent
+conversation preferences. Static profile behavior is third-priority interaction
+guidance only. Saved ZIP is neither proof of current/event location nor a
+weather or product requirement. There are no shopper-type-specific code or
+prompt branches. Registry bootstrap and turn-start serialization both require
+the behavior summary to remain one trimmed line. Guest request digests preserve
+their pre-profile canonical shape so older finalized Guest turns still replay
+after migration 6.
 
 The resolved agent dependency boundary remains `deepagents==0.6.12`,
 `langchain==1.3.11`, `langgraph==1.2.7`, and `langgraph-sdk==0.4.2`.

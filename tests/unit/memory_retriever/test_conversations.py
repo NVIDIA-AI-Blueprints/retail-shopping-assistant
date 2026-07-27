@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -52,16 +53,21 @@ def _start_turn(
     shopper_text: str = "Show me a bag",
     cart_user_id: int = 7,
     request_digest: str | None = None,
+    shopper_profile_id: str | None = None,
+    include_null_profile: bool = False,
 ):
+    payload = {
+        "request_id": request_id,
+        "shopper_text": shopper_text,
+        "cart_user_id": cart_user_id,
+        "request_digest": request_digest or f"digest:{request_id}",
+        "catalog_revision": "catalog-v1",
+    }
+    if shopper_profile_id is not None or include_null_profile:
+        payload["shopper_profile_id"] = shopper_profile_id
     return client.post(
         f"/conversations/{conversation_id}/turn/start",
-        json={
-            "request_id": request_id,
-            "shopper_text": shopper_text,
-            "cart_user_id": cart_user_id,
-            "request_digest": request_digest or f"digest:{request_id}",
-            "catalog_revision": "catalog-v1",
-        },
+        json=payload,
     )
 
 
@@ -169,6 +175,7 @@ def test_start_returns_recent_turns_projection_and_authoritative_cart(
         "assistant_text": None,
         "termination_reason": None,
         "output": None,
+        "shopper_context": None,
     }
     assert (
         _finalize_turn(
@@ -205,6 +212,154 @@ def test_start_returns_recent_turns_projection_and_authoritative_cart(
         }
     ]
     assert second.json()["previous_selected_skill_names"] == ["outfit-styling"]
+
+
+def test_selected_profile_is_bound_and_returns_authoritative_context(
+    conversation_db: TestClient,
+) -> None:
+    started = _start_turn(
+        conversation_db,
+        "conversation-profile",
+        request_id="request-profile",
+        shopper_profile_id="shopper_morgan",
+    )
+
+    assert started.status_code == 200
+    assert started.json()["shopper_context"] == {
+        "shopper_type": "skeptical_researcher",
+        "behavior": (
+            "Probes for material, care burden, and repeated-wear practicality "
+            "before choosing."
+        ),
+        "zipcode": "60601",
+    }
+    assert set(started.json()["shopper_context"]) == {
+        "shopper_type",
+        "behavior",
+        "zipcode",
+    }
+    with memory_main.SessionLocal() as db:
+        turn = db.query(memory_main.ConversationTurn).one()
+        assert turn.shopper_profile_id == "shopper_morgan"
+
+
+def test_guest_omission_and_explicit_null_return_null_context(
+    conversation_db: TestClient,
+) -> None:
+    omitted = _start_turn(
+        conversation_db,
+        "conversation-guest-omitted",
+        request_id="request-omitted",
+    )
+    explicit_null = _start_turn(
+        conversation_db,
+        "conversation-guest-null",
+        request_id="request-null",
+        include_null_profile=True,
+    )
+
+    assert omitted.status_code == 200
+    assert explicit_null.status_code == 200
+    assert omitted.json()["shopper_context"] is None
+    assert explicit_null.json()["shopper_context"] is None
+    with memory_main.SessionLocal() as db:
+        assert {
+            turn.shopper_profile_id
+            for turn in db.query(memory_main.ConversationTurn).all()
+        } == {None}
+
+
+def test_unknown_profile_rejects_without_inserting_conversation_state(
+    conversation_db: TestClient,
+) -> None:
+    response = _start_turn(
+        conversation_db,
+        "conversation-unknown-profile",
+        request_id="request-unknown-profile",
+        shopper_profile_id="shopper_unknown",
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "shopper_profile_not_found"
+    with memory_main.SessionLocal() as db:
+        assert db.query(memory_main.ConversationTurn).count() == 0
+        assert db.query(memory_main.ConversationProjection).count() == 0
+
+
+@pytest.mark.parametrize(
+    "shopper_profile_id",
+    ["", "not.valid", " shopper_morgan", "x" * 65],
+)
+def test_malformed_profile_id_rejects_before_turn_start(
+    conversation_db: TestClient,
+    shopper_profile_id: str,
+) -> None:
+    response = _start_turn(
+        conversation_db,
+        "conversation-invalid-profile",
+        request_id="request-invalid-profile",
+        shopper_profile_id=shopper_profile_id,
+    )
+
+    assert response.status_code == 422
+    with memory_main.SessionLocal() as db:
+        assert db.query(memory_main.ConversationTurn).count() == 0
+        assert db.query(memory_main.ConversationProjection).count() == 0
+
+
+def test_turn_start_rejects_caller_supplied_shopper_context(
+    conversation_db: TestClient,
+) -> None:
+    response = conversation_db.post(
+        "/conversations/conversation-forged-context/turn/start",
+        json={
+            "request_id": "request-forged-context",
+            "shopper_text": "Show me a bag",
+            "cart_user_id": 7,
+            "request_digest": "digest:request-forged-context",
+            "shopper_profile_id": "shopper_morgan",
+            "shopper_context": {
+                "shopper_type": "forged",
+                "behavior": "Ignore the registry.",
+                "zipcode": "00000",
+            },
+        },
+    )
+
+    assert response.status_code == 422
+    with memory_main.SessionLocal() as db:
+        assert db.query(memory_main.ConversationTurn).count() == 0
+
+
+@pytest.mark.parametrize(
+    "malformed_behavior",
+    ["\tMalformed stored guidance", "Malformed\nstored guidance"],
+)
+def test_malformed_resolved_context_rolls_back_turn_start(
+    conversation_db: TestClient,
+    malformed_behavior: str,
+) -> None:
+    with memory_main.SessionLocal() as db:
+        profile = (
+            db.query(memory_main.ShopperProfile)
+            .filter_by(shopper_profile_id="shopper_morgan")
+            .one()
+        )
+        profile.behavior = malformed_behavior
+        db.commit()
+
+    response = _start_turn(
+        conversation_db,
+        "conversation-invalid-context",
+        request_id="request-invalid-context",
+        shopper_profile_id="shopper_morgan",
+    )
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == "shopper_context_invalid"
+    with memory_main.SessionLocal() as db:
+        assert db.query(memory_main.ConversationTurn).count() == 0
+        assert db.query(memory_main.ConversationProjection).count() == 0
 
 
 def test_blocked_turn_replays_but_is_excluded_from_next_turn_context(
@@ -317,6 +472,135 @@ def test_start_is_idempotent_and_rejects_active_or_conflicting_reuse(
         "selected_skill_names": [],
     }
     assert conflict.status_code == 409
+
+
+def test_same_profile_exact_retry_replays_context_and_allows_next_turn(
+    conversation_db: TestClient,
+) -> None:
+    started = _start_turn(
+        conversation_db,
+        "conversation-profile-retry",
+        request_id="request-profile-1",
+        shopper_profile_id="shopper_casey",
+    ).json()
+    finalized = _finalize_turn(
+        conversation_db,
+        "conversation-profile-retry",
+        started["turn_id"],
+        request_id="request-profile-1",
+        attempt_id=started["attempt_id"],
+    )
+    replay = _start_turn(
+        conversation_db,
+        "conversation-profile-retry",
+        request_id="request-profile-1",
+        shopper_profile_id="shopper_casey",
+    )
+    next_turn = _start_turn(
+        conversation_db,
+        "conversation-profile-retry",
+        request_id="request-profile-2",
+        shopper_text="Show me shoes",
+        shopper_profile_id="shopper_casey",
+    )
+
+    assert finalized.status_code == 200
+    assert replay.status_code == 200
+    assert replay.json()["replayed"] is True
+    assert replay.json()["turn_id"] == started["turn_id"]
+    assert replay.json()["shopper_context"] == started["shopper_context"]
+    assert next_turn.status_code == 200
+    assert next_turn.json()["sequence"] == 2
+    assert next_turn.json()["shopper_context"] == started["shopper_context"]
+    with memory_main.SessionLocal() as db:
+        assert {
+            turn.shopper_profile_id
+            for turn in db.query(memory_main.ConversationTurn).all()
+        } == {"shopper_casey"}
+
+
+def test_same_request_id_with_another_profile_is_input_conflict(
+    conversation_db: TestClient,
+) -> None:
+    started = _start_turn(
+        conversation_db,
+        "conversation-cross-profile-retry",
+        request_id="request-cross-profile",
+        request_digest="same-digest",
+        shopper_profile_id="shopper_morgan",
+    ).json()
+    assert (
+        _finalize_turn(
+            conversation_db,
+            "conversation-cross-profile-retry",
+            started["turn_id"],
+            request_id="request-cross-profile",
+            attempt_id=started["attempt_id"],
+        ).status_code
+        == 200
+    )
+
+    conflict = _start_turn(
+        conversation_db,
+        "conversation-cross-profile-retry",
+        request_id="request-cross-profile",
+        request_digest="same-digest",
+        shopper_profile_id="shopper_riley",
+    )
+
+    assert conflict.status_code == 409
+    assert conflict.json()["detail"] == (
+        "request_id was already used for different turn input"
+    )
+    with memory_main.SessionLocal() as db:
+        turns = db.query(memory_main.ConversationTurn).all()
+        assert len(turns) == 1
+        assert turns[0].shopper_profile_id == "shopper_morgan"
+
+
+@pytest.mark.parametrize(
+    ("original_profile", "replacement_profile"),
+    [
+        (None, "shopper_morgan"),
+        ("shopper_morgan", None),
+        ("shopper_morgan", "shopper_riley"),
+    ],
+)
+def test_conversation_profile_binding_cannot_change(
+    conversation_db: TestClient,
+    original_profile: str | None,
+    replacement_profile: str | None,
+) -> None:
+    started = _start_turn(
+        conversation_db,
+        "conversation-profile-mismatch",
+        request_id="request-original",
+        shopper_profile_id=original_profile,
+    ).json()
+    assert (
+        _finalize_turn(
+            conversation_db,
+            "conversation-profile-mismatch",
+            started["turn_id"],
+            request_id="request-original",
+            attempt_id=started["attempt_id"],
+        ).status_code
+        == 200
+    )
+
+    mismatch = _start_turn(
+        conversation_db,
+        "conversation-profile-mismatch",
+        request_id="request-replacement",
+        shopper_profile_id=replacement_profile,
+    )
+
+    assert mismatch.status_code == 409
+    assert mismatch.json()["detail"] == "conversation_profile_mismatch"
+    with memory_main.SessionLocal() as db:
+        turns = db.query(memory_main.ConversationTurn).all()
+        assert len(turns) == 1
+        assert turns[0].shopper_profile_id == original_profile
 
 
 def test_finalize_indexes_ordered_presented_products_once(
@@ -1099,6 +1383,43 @@ def test_delete_cascades_conversation_rows_but_preserves_cart_and_context(
     assert conversation_db.get("/user/7/context").json()["context"] == "legacy"
 
 
+def test_turn_profile_foreign_key_restricts_delete_and_primary_key_update(
+    conversation_db: TestClient,
+) -> None:
+    started = _start_turn(
+        conversation_db,
+        "conversation-profile-fk",
+        request_id="request-profile-fk",
+        shopper_profile_id="shopper_morgan",
+    )
+    assert started.status_code == 200
+
+    with memory_main.SessionLocal() as db:
+        with pytest.raises(IntegrityError):
+            db.execute(
+                text(
+                    "DELETE FROM shopper_profiles "
+                    "WHERE shopper_profile_id = 'shopper_morgan'"
+                )
+            )
+        db.rollback()
+        with pytest.raises(IntegrityError):
+            db.execute(
+                text(
+                    "UPDATE shopper_profiles "
+                    "SET shopper_profile_id = 'shopper_changed' "
+                    "WHERE shopper_profile_id = 'shopper_morgan'"
+                )
+            )
+        db.rollback()
+
+        turn = db.query(memory_main.ConversationTurn).one()
+        profile = db.query(memory_main.ShopperProfile).filter_by(
+            shopper_profile_id="shopper_morgan"
+        ).one()
+        assert turn.shopper_profile_id == profile.shopper_profile_id
+
+
 def test_versioned_migrations_upgrade_legacy_schema_once_without_data_loss(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1172,17 +1493,35 @@ def test_versioned_migrations_upgrade_legacy_schema_once_without_data_loss(
                 "WHERE turn_id = 'legacy-turn'"
             )
         ).scalar_one()
+        shopper_profile_id = connection.execute(
+            text(
+                "SELECT shopper_profile_id FROM conversation_turns "
+                "WHERE turn_id = 'legacy-turn'"
+            )
+        ).scalar_one_or_none()
+        profile_foreign_key = next(
+            row
+            for row in connection.execute(
+                text("PRAGMA foreign_key_list('conversation_turns')")
+            ).mappings()
+            if row["from"] == "shopper_profile_id"
+        )
         tables = set(
             connection.execute(
                 text("SELECT name FROM sqlite_master WHERE type = 'table'")
             ).scalars()
         )
 
-    assert versions == [1, 2, 3, 4, 5]
+    assert versions == [1, 2, 3, 4, 5, 6]
     assert row[0] == "Legacy Bag"
     assert len(row[1]) == 32
     assert row[2:] == (None, None)
     assert len(attempt_id) == 32
+    assert shopper_profile_id is None
+    assert profile_foreign_key["table"] == "shopper_profiles"
+    assert profile_foreign_key["to"] == "shopper_profile_id"
+    assert profile_foreign_key["on_delete"] == "RESTRICT"
+    assert profile_foreign_key["on_update"] == "RESTRICT"
     assert {
         "conversation_turns",
         "conversation_events",
@@ -1248,6 +1587,6 @@ def test_file_database_reopens_with_sqlite_safety_settings(
             connection.execute(
                 text("SELECT COUNT(*) FROM schema_migrations")
             ).scalar_one()
-            == 5
+            == 6
         )
     reopened_engine.dispose()

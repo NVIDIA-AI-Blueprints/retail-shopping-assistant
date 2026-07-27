@@ -5,11 +5,22 @@
  * Utility functions for the Shopping Assistant UI
  */
 
-import { FileUploadResult, UserSession, StreamingChunk, ApiRequest, MediaAttachment } from '../types';
+import {
+  ApiRequest,
+  FileUploadResult,
+  MediaAttachment,
+  ShopperProfile,
+  StreamingChunk,
+  UserSession,
+} from '../types';
 import { config } from '../config/config';
 
 const SESSION_STORAGE_KEY = 'shopping_session_identity';
 const LEGACY_USER_ID_KEY = 'shopping_user_id';
+const SHOPPER_PROFILE_STORAGE_KEY = 'shopping_shopper_profile_id';
+const SHOPPER_PROFILE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+const SHOPPER_TYPE_PATTERN = /^[a-z][a-z0-9_]*$/;
+const ZIPCODE_PATTERN = /^[0-9]{5}$/;
 
 /**
  * Convert a file to base64 string
@@ -71,6 +82,93 @@ export const getOrCreateUserSession = (): UserSession => {
 export const clearUserSession = (): void => {
   sessionStorage.removeItem(SESSION_STORAGE_KEY);
   sessionStorage.removeItem(LEGACY_USER_ID_KEY);
+};
+
+/**
+ * Replace the browser-scoped chat/cart identity immediately.
+ */
+export const rotateUserSession = (): UserSession => {
+  clearUserSession();
+  return getOrCreateUserSession();
+};
+
+/**
+ * Read the representative shopper selected in this browser tab.
+ *
+ * This key is intentionally separate from the chat identity so resetting or
+ * rotating a conversation does not silently change the selected shopper.
+ */
+export const getSelectedShopperProfileId = (): string | null => {
+  const storedProfileId = sessionStorage.getItem(SHOPPER_PROFILE_STORAGE_KEY);
+  if (!storedProfileId) return null;
+  if (!SHOPPER_PROFILE_ID_PATTERN.test(storedProfileId)) {
+    sessionStorage.removeItem(SHOPPER_PROFILE_STORAGE_KEY);
+    return null;
+  }
+  return storedProfileId;
+};
+
+/**
+ * Persist only the selected profile ID. Profile contents always come from the
+ * server-owned read endpoint.
+ */
+export const setSelectedShopperProfileId = (
+  shopperProfileId: string | null
+): void => {
+  if (shopperProfileId === null) {
+    sessionStorage.removeItem(SHOPPER_PROFILE_STORAGE_KEY);
+    return;
+  }
+  if (!SHOPPER_PROFILE_ID_PATTERN.test(shopperProfileId)) {
+    throw new Error('Invalid shopper profile ID.');
+  }
+  sessionStorage.setItem(SHOPPER_PROFILE_STORAGE_KEY, shopperProfileId);
+};
+
+/**
+ * Validate the closed shopper-profile list returned by the chain server.
+ */
+export const parseShopperProfiles = (value: unknown): ShopperProfile[] => {
+  if (!Array.isArray(value) || value.length !== 5) {
+    throw new Error('Shopper profiles returned an invalid response.');
+  }
+  if (!value.every(isShopperProfile)) {
+    throw new Error('Shopper profiles returned an invalid response.');
+  }
+
+  const profileIds = value.map((profile) => profile.shopper_profile_id);
+  const shopperTypes = value.map((profile) => profile.shopper_type);
+  if (
+    new Set(profileIds).size !== profileIds.length ||
+    new Set(shopperTypes).size !== shopperTypes.length
+  ) {
+    throw new Error('Shopper profiles returned duplicate identifiers.');
+  }
+  return value;
+};
+
+const isShopperProfile = (value: unknown): value is ShopperProfile => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const profile = value as Record<string, unknown>;
+  return (
+    isTrimmedString(profile.shopper_profile_id, 64) &&
+    SHOPPER_PROFILE_ID_PATTERN.test(profile.shopper_profile_id) &&
+    isTrimmedString(profile.display_name, 80) &&
+    isTrimmedString(profile.shopper_type, 80) &&
+    SHOPPER_TYPE_PATTERN.test(profile.shopper_type) &&
+    isTrimmedString(profile.behavior, 512) &&
+    typeof profile.zipcode === 'string' &&
+    ZIPCODE_PATTERN.test(profile.zipcode)
+  );
+};
+
+const isTrimmedString = (value: unknown, maxLength: number): value is string => {
+  return (
+    typeof value === 'string' &&
+    value.length > 0 &&
+    value.length <= maxLength &&
+    value === value.trim()
+  );
 };
 
 /**

@@ -19,14 +19,16 @@ see the [Shopper Agent Leadership Note](SHOPPER_AGENT_LEADERSHIP_NOTE.md).
 | --- | --- | --- |
 | Published catalog | Product records, taxonomy, filter values, field roles, prices, details, and retrieval results | Shopper intent, styling judgment, cart state, or inventory |
 | Deep Agents runtime | Semantic intent, skill selection, deterministic selected-skill tool grants, tool selection, and styling judgment | Product facts, policy facts, or cart truth |
-| Memory service | Ordered durable shopper/assistant turns, exact finalized replay, bounded recent-turn reads, presented-product events and compact index, deterministic same-conversation reference resolution, authoritative cart state, and atomic mutation replay records | Catalog facts, model reasoning, preferences, sentiment, active anchors, or cross-conversation memory |
+| Memory service | Immutable representative-shopper registry, ordered durable shopper/assistant turns, exact finalized replay, bounded recent-turn reads, presented-product events and compact index, deterministic same-conversation reference resolution, authoritative cart state, and atomic mutation replay records | Catalog facts, model reasoning, learned preferences, sentiment, active anchors, or cross-conversation memory |
 | Graph checkpointer | Request-scoped working graph/tool state within one chain-server process | Durable transcript storage, cross-turn shopper memory, cross-replica context, or product-ref authorization |
 
 A model-authored semantic query is an internal **ranking preference**, not a
 product fact or shopper-facing explanation. Only catalog tool evidence can
 establish catalog facts. Conversation memory may guide judgment, but it cannot
 override current tool results. Caller-supplied persona data is not injected into
-model context.
+model context. The Slice 1 UI may select one server-published representative
+shopper, but that selection is not part of a query, durable turn, prompt, skill
+decision, or tool grant until a later slice adds an explicit binding.
 
 ## 1. Published Catalog Data Foundation
 
@@ -323,6 +325,14 @@ request-local evidence. Active anchors and effective preferences remain
 reserved. Fuzzy/embedding lookup, preference or sentiment extraction,
 cross-conversation lookup, and stale-catalog-revision handling are not included.
 
+Separately, migration 5 creates `shopper_profiles`. Startup validates and
+immutably bootstraps exactly five eval-derived rows from shared memory-service
+configuration. The memory service exposes read-only list/get routes, and the
+chain server provides the typed list proxy used by the UI. No profile write
+route exists. Selecting another shopper remounts the chat surface and rotates
+the bundled UI's browser identities; it does not restore a profile-specific
+cart or transcript.
+
 The resolved agent dependency boundary remains `deepagents==0.6.12`,
 `langchain==1.3.11`, `langgraph==1.2.7`, and `langgraph-sdk==0.4.2`.
 Services that resolve `orjson` pin `3.11.5`, the last upstream release limited
@@ -351,11 +361,13 @@ The serving implementation is split across the
 [Deep Agents runtime](../chain_server/src/deepagents_runtime.py),
 [conversation-memory client](../chain_server/src/conversation_memory.py),
 [conversation-product boundary](../chain_server/src/conversation_products.py),
+[shopper-profile read boundary](../chain_server/src/shopper_profiles.py),
 [shopper tool policy](../chain_server/src/tool_policy.py),
 [skill activation boundary](../chain_server/src/skill_activation.py), and
 [tool-loop controller](../chain_server/src/tool_loop_control.py). The durable
 SQLite boundary is implemented by the memory service's
 [conversation API](../memory_retriever/src/conversations.py),
+[shopper-profile registry](../memory_retriever/src/shopper_profiles.py),
 [product-reference resolver](../memory_retriever/src/product_references.py),
 [models](../memory_retriever/src/models.py), and
 [migrations](../memory_retriever/src/migrations.py).

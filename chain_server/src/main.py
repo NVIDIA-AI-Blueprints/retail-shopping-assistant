@@ -25,6 +25,11 @@ from .agenttypes import State, Cart
 from .config import load_config
 from .deepagents_runtime import DeepAgentsRuntime, create_request_identity
 from .media_perception import MEDIA_ONLY_QUERY
+from .shopper_profiles import (
+    ShopperProfile,
+    ShopperProfilesClient,
+    ShopperProfilesError,
+)
 from shared.model_config import resolve_model_config
 
 # Configure logging
@@ -39,6 +44,7 @@ logger = logging.getLogger(__name__)
 try:
     config = load_config()  # Load and validate configuration
     assistant_runtime = DeepAgentsRuntime(config)
+    shopper_profiles_client = ShopperProfilesClient(config.memory_port)
 except Exception as e:
     logger.error(f"Failed to initialize application: {e}")
     raise
@@ -269,6 +275,22 @@ async def capabilities():
     }
 
 
+@app.get(
+    "/shopper-profiles",
+    response_model=list[ShopperProfile],
+)
+async def list_shopper_profiles() -> list[ShopperProfile]:
+    """Return the reviewed representative shoppers without changing chat context."""
+
+    try:
+        return await asyncio.to_thread(shopper_profiles_client.list_profiles)
+    except ShopperProfilesError as exc:
+        raise HTTPException(
+            status_code=_shopper_profiles_status(exc),
+            detail=str(exc),
+        ) from exc
+
+
 @app.get("/")
 async def root():
     """Root endpoint with API information."""
@@ -280,10 +302,17 @@ async def root():
             "stream": "/query/stream",
             "timing": "/query/timing",
             "capabilities": "/capabilities",
+            "shopper_profiles": "/shopper-profiles",
             "health": "/health",
             "docs": "/docs"
         }
     }
+
+
+def _shopper_profiles_status(error: ShopperProfilesError) -> int:
+    if error.code == "shopper_profiles_response_invalid":
+        return 502
+    return 503
 
 
 _DATA_URL_RE = re.compile(r"^data:([^;]+);base64,(.*)$", re.IGNORECASE | re.DOTALL)

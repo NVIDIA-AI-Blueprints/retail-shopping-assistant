@@ -50,6 +50,9 @@ The Retail Shopping Assistant is an AI-powered blueprint that provides a compreh
   ordered `candidate_set_presented` evidence in SQLite; a typed resolver can
   recover one exact earlier product or require clarification without another
   catalog search or model call
+- 👤 **Representative Shopper Picker**: Five immutable, database-backed
+  shoppers mirror the committed live-evaluation behavior profiles; the UI can
+  select one or Guest and inspect its type, behavior, and ZIP
 - 📚 **Enforced Shopper Skills**: Every turn first semantically selects and
   fully loads the smallest applicable skill set; each selected `SKILL.md`
   declares its role and tool grants, only their grant union becomes
@@ -84,10 +87,17 @@ The application follows a microservices architecture:
 - **Memory Retriever**: Ordered durable turns with start/finalize and exact
   replay, bounded recent-turn reads, typed prior-skill continuity, presented-
   product events and a compact reference index, stable cart-line IDs, atomically
-  idempotent add/remove/quantity mutations, and request-scoped database
-  sessions; standard Compose exposes its host port on loopback only
+  idempotent add/remove/quantity mutations, an immutable five-row representative
+  shopper registry, and request-scoped database sessions; standard Compose
+  exposes its host port on loopback only
 - **Guardrails**: Content safety and moderation
-- **UI**: React-based frontend interface
+- **UI**: React-based frontend interface with Guest/representative-shopper
+  selection
+
+The shopper picker is intentionally presentation-only in this first slice.
+Changing the selection clears visible chat/product state and rotates the
+browser-scoped session, conversation, and cart identities, but shopping
+requests and model context do not receive the selected profile yet.
 
 Every turn still makes a fresh semantic skill-selection decision. The previous
 turn's selected skill names are persisted with its durable output and supplied
@@ -345,9 +355,10 @@ LangGraph `MemorySaver` now holds only one request's working graph state under a
 collision-safe pair of conversation ID and request ID. It is deleted only after
 durable finalization succeeds; a finalize failure preserves that checkpoint.
 The compact historical-product index is capped at 16,384 characters, and its
-typed batch resolver can run at most once per turn. Persona data is not accepted
-as turn context until a typed, bounded, authenticated profile contract is
-designed.
+typed batch resolver can run at most once per turn. Caller-supplied persona data
+is not accepted as turn context. The fixed representative shoppers now have a
+typed, bounded server-owned registry, but Slice 1 selection remains outside the
+query and prompt until the separate context-binding slice.
 
 Catalog values are never copied into agent or catalog code. After replacing the
 JSONL or sidecar, restart and verify the catalog service first, then restart and

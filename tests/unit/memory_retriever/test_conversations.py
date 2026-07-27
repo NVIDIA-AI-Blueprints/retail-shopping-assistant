@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -19,6 +20,9 @@ from memory_retriever.src import main as memory_main
 from memory_retriever.src import product_references
 
 
+REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
 @pytest.fixture
 def conversation_db(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
     test_engine = memory_main.build_engine(
@@ -28,6 +32,10 @@ def conversation_db(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
     session_factory = sessionmaker(bind=test_engine, expire_on_commit=False)
     monkeypatch.setattr(memory_main, "engine", test_engine)
     monkeypatch.setattr(memory_main, "SessionLocal", session_factory)
+    monkeypatch.setenv(
+        "SHARED_CONFIG_ROOT",
+        str(REPO_ROOT / "shared" / "configs"),
+    )
 
     with TestClient(memory_main.app) as client:
         yield client
@@ -1170,7 +1178,7 @@ def test_versioned_migrations_upgrade_legacy_schema_once_without_data_loss(
             ).scalars()
         )
 
-    assert versions == [1, 2, 3, 4]
+    assert versions == [1, 2, 3, 4, 5]
     assert row[0] == "Legacy Bag"
     assert len(row[1]) == 32
     assert row[2:] == (None, None)
@@ -1179,6 +1187,7 @@ def test_versioned_migrations_upgrade_legacy_schema_once_without_data_loss(
         "conversation_turns",
         "conversation_events",
         "conversation_projection",
+        "shopper_profiles",
     } <= tables
     legacy_engine.dispose()
 
@@ -1239,6 +1248,6 @@ def test_file_database_reopens_with_sqlite_safety_settings(
             connection.execute(
                 text("SELECT COUNT(*) FROM schema_migrations")
             ).scalar_one()
-            == 4
+            == 5
         )
     reopened_engine.dispose()

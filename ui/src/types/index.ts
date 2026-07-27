@@ -48,6 +48,16 @@ export interface ChatboxProps {
   selectedProduct: ProductSummary | null;
   onProductSelect: (product: ProductSummary | null) => void;
   onProductsUpdate: (products: ProductSummary[]) => void;
+  onBusyChange: (isBusy: boolean) => void;
+  preserveIdentityOnMount: boolean;
+}
+
+export interface ShopperProfile {
+  shopper_profile_id: string;
+  display_name: string;
+  shopper_type: string;
+  behavior: string;
+  zipcode: string;
 }
 
 export interface ProductDetailPanelProps {

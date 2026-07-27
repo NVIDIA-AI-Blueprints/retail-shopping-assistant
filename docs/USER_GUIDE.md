@@ -63,6 +63,21 @@ category scopes always come from the ingested rows.
 
 ## 💬 Using the Chat Interface
 
+### Representative Shoppers
+
+The navigation bar includes a **Shop as** picker with Guest plus five fictional
+representative shoppers derived from the live-evaluation behavior set. Hover,
+keyboard-focus, or tap a shopper to see the exact behavior summary, internal
+shopper type, and saved ZIP. Only the selected profile ID is retained in the
+current browser tab.
+
+In this first slice, the selection does not change assistant responses and is
+not sent with chat requests. Switching shoppers starts a clean visible session:
+chat, product cards, selected product, attachments, inference activity, and
+metrics are cleared, and fresh session, conversation, and cart identities are
+created. The Reset button keeps the selected shopper while starting another
+clean session. If the profile service cannot load, Guest remains available.
+
 ### Basic Interaction
 
 1. **Type your question** in the chat input box at the bottom
@@ -447,7 +462,9 @@ matching.
 **Q: Can I save my preferences?**
 A: Typed preferences are not extracted or saved between sessions. Conversation
 text may be retained as part of the durable turn transcript, but this release
-does not convert it into a reusable preference profile.
+does not convert it into a reusable preference profile. The five shoppers in
+the **Shop as** picker are fixed evaluation-derived examples, not learned
+customer profiles.
 
 **Q: Is my data private?**
 A: The deployment processes data within its configured services. Shopper and

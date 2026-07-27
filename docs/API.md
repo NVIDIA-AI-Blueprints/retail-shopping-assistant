@@ -22,6 +22,8 @@ The Retail Shopping Assistant API provides a comprehensive interface for an AI-p
 - **Real-time Streaming**: Server-Sent Events (SSE) for live responses
 - **Multi-modal Input**: Text queries, image uploads, and optional VLM-backed video/image understanding
 - **Shopping Cart Management**: Add, remove, and view cart items
+- **Representative Shoppers**: Read five immutable eval-derived shopper
+  profiles for the bundled UI picker
 - **Content Safety**: Built-in guardrails for safe interactions
 - **Performance Monitoring**: Detailed timing information
 
@@ -216,9 +218,9 @@ embedding matching, preferences, sentiment, active anchors, cross-conversation
 lookup, or stale-catalog-revision handling.
 
 Caller-supplied persona data is not part of `QueryRequest` and is not injected
-into model context. Persona support remains deferred until the API has a typed,
-bounded schema, authenticated ownership, input-safety validation, and an
-explicit untrusted-data boundary.
+into model context. Slice 1 exposes a separate read-only representative-shopper
+registry for UI selection, but the selected ID is not sent with a shopping
+request and does not affect assistant behavior yet.
 
 `image` remains supported for backward compatibility and is normalized into the
 same internal media list as `media[]`. New clients should use `media[]` for
@@ -467,6 +469,28 @@ interface StreamingChunk {
 ```
 
 ## 🔄 Endpoints
+
+### GET `/shopper-profiles`
+
+Returns the five immutable representative shoppers in
+`shopper_profile_id` order. The chain server validates and proxies the
+memory-service registry; it does not synthesize a client fallback.
+
+```json
+[
+  {
+    "shopper_profile_id": "shopper_alex",
+    "display_name": "Alex",
+    "shopper_type": "occasion_driven_explorer",
+    "behavior": "Gives occasion and vibe first, answers concise clarification, then asks for a complete look.",
+    "zipcode": "98101"
+  }
+]
+```
+
+Every ZIP is a five-character string. There are no create, update, or delete
+profile endpoints. This endpoint does not mutate or select a shopper and does
+not change `/query/stream` or `/query/timing`.
 
 ### POST `/query/stream`
 
@@ -958,6 +982,21 @@ search round-trips exactly through this endpoint. A missing ID returns HTTP 404.
   "source_uri": null
 }
 ```
+
+### Memory Retriever GET `/shopper-profiles`
+
+Returns the same ordered, bare profile array from SQLite. Startup migration 5
+creates `shopper_profiles`, then an immutable bootstrap inserts any missing
+reviewed rows in one transaction. Identical rows are a no-op; malformed seed
+data, unmanaged rows, or same-ID/different-content drift fails startup rather
+than silently updating a shopper.
+
+### Memory Retriever GET `/shopper-profiles/{shopper_profile_id}`
+
+Returns one profile row or HTTP 404. Profile IDs accept only 1–64 ASCII
+letters, digits, `_`, and `-`, beginning with a letter or digit. These
+unauthenticated memory routes remain internal/loopback-only under standard
+Compose.
 
 ### Memory Retriever POST `/conversations/{conversation_id}/turn/start`
 

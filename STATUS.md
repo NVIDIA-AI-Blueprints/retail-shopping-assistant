@@ -1,11 +1,19 @@
 # Project Status
 
-Updated: 2026-07-24
+Updated: 2026-07-27
 
 ## Current Milestone
 
 The current working tree extends the shopper-serving Deep Agent architecture:
 
+- the memory-service SQLite database now owns an immutable
+  `shopper_profiles` registry bootstrapped from five reviewed rows whose
+  `shopper_type` and `behavior` values map 1:1 to the committed live-evaluation
+  profiles. Memory and chain-server read endpoints expose only ID, display
+  name, type, behavior, and five-digit ZIP. The UI offers Guest plus those five
+  shoppers and exposes details on hover, keyboard focus, or tap. Switching
+  shoppers clears visible chat/product/media/metric state and rotates the
+  tab-scoped session, conversation, and cart identities;
 - a single memory-service SQLite replica now starts each turn durably before
   guardrail/model/tool work, returns bounded model-context-eligible raw turns
   plus the authoritative cart, and finalizes every completed, blocked, or
@@ -85,9 +93,10 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   `langgraph==1.2.7`, and `langgraph-sdk==0.4.2`. The services that resolve
   `orjson` pin `3.11.5`, the last release limited to the Apache-2.0/MIT policy;
   Redis checkpoint packages remain absent;
-- caller-supplied persona data is not injected into model context. Persona
-  support remains deferred until it has a typed, bounded schema, authenticated
-  ownership, and input-safety validation; and
+- Slice 1 profile selection is presentation-only: `QueryRequest`, durable
+  turns, prompts, shopper skills, and tool authorization remain unchanged.
+  Caller-supplied persona objects are still not accepted or injected into model
+  context; and
 - both response paths retain additive agent diagnostics for activated skill
   files, ordered tool calls and arguments, rejected/duplicate calls, bounded
   current-turn product evidence from successful catalog search/detail results,
@@ -296,6 +305,21 @@ The newest focused gate is recorded first. Older Slice 0, Slice 2, and Slice 3
 results remain below as comparison points; generated quality and timing
 artifacts stay in the required local archive rather than versioned source.
 
+- Representative-shopper Slice 1 gate (2026-07-27): the full offline backend
+  suite passed 975 tests with 1 expected xfail; all 7 UI tests passed, UI lint
+  reported 0 errors and 3 pre-existing warnings, and the production build
+  compiled. Direct memory/chain health and profile-list smokes returned the
+  exact five reviewed profiles. The full GPT-5.2 app/Judge regression guard
+  completed 48/48 shopper turns and judgments with no collector errors at
+  3.8958/5 and 38/48 turns scoring at least 4. Mean / median / p95 / maximum
+  latency was 20.034s / 18.377s / 37.379s / 45.029s. Against the immediately
+  preceding WIP, average quality improved by 0.1042, score-4-or-better coverage
+  stayed 38/48, and mean / median / p95 latency improved by 2.807s / 2.286s /
+  6.738s. This is a qualified complete chat-regression guard, not direct Slice
+  1 feature attribution: the fixed collector neither calls `/shopper-profiles`
+  nor sends a selected profile with a query. Canonical comparisons are stored
+  under
+  `~/exec-briefs/retail-shopping-assistant/quality/shopping/comparisons/`.
 - Budget activation-correction gate (2026-07-24): 25 focused tests passed with
   1 existing expected xfail. The budget opener recovered from 1/5 and graph
   recursion failure to 4/5 and normal completion, while latency improved from
@@ -628,8 +652,10 @@ restore an earlier presented product after restart or on another worker.
 Missing or ambiguous references never authorize a downstream tool. Matching is
 exact, catalog revision is not yet enforced, and catalog replacement can still
 require a fresh search.
-Persona support remains intentionally unavailable until a trusted profile
-source and typed validation contract are defined.
+The fixed representative-shopper registry is now a trusted, typed source, but
+Slice 1 does not bind a selection to durable turns or model context.
+Caller-supplied or mutable customer personas remain unavailable until their
+ownership and input-safety contracts are defined.
 
 Judge product evidence is capped at 24 records and 32,000 serialized characters
 per turn. `product_evidence_truncated` makes omissions explicit; a truncated

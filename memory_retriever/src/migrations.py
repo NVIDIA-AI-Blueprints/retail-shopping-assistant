@@ -20,6 +20,7 @@ from .models import (
     ConversationProjection,
     ConversationTurn,
     SchemaMigration,
+    ShopperProfile,
     User,
     new_cart_line_id,
     new_turn_attempt_id,
@@ -172,11 +173,16 @@ def _conversation_attempt_id(connection: Connection) -> None:
         )
 
 
+def _shopper_profiles_schema(connection: Connection) -> None:
+    ShopperProfile.__table__.create(bind=connection, checkfirst=True)
+
+
 _MIGRATIONS = (
     (1, _legacy_schema),
     (2, _conversation_schema),
     (3, _conversation_output),
     (4, _conversation_attempt_id),
+    (5, _shopper_profiles_schema),
 )
 
 

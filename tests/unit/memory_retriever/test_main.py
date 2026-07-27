@@ -12,6 +12,7 @@ against that engine. Every test gets a fresh database through the
 from __future__ import annotations
 
 from itertools import count
+from pathlib import Path
 from typing import Iterator
 
 import pytest
@@ -21,6 +22,9 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import QueuePool, StaticPool
 
 from memory_retriever.src import main as memory_main
+
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 @pytest.fixture
@@ -136,6 +140,10 @@ def test_database_sessions_return_connections_after_each_request(
 
     monkeypatch.setattr(memory_main, "engine", test_engine)
     monkeypatch.setattr(memory_main, "SessionLocal", retained_session)
+    monkeypatch.setenv(
+        "SHARED_CONFIG_ROOT",
+        str(REPO_ROOT / "shared" / "configs"),
+    )
     memory_main.Base.metadata.create_all(bind=test_engine)
 
     with TestClient(memory_main.app) as request_client:

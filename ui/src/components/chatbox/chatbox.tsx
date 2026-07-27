@@ -285,6 +285,8 @@ const Chatbox: React.FC<ChatboxProps> = ({
   selectedProduct,
   onProductSelect,
   onProductsUpdate,
+  onBusyChange,
+  preserveIdentityOnMount,
 }) => {
   const defaultMediaCapabilities: MediaCapabilities = {
     enabled: config.features.imageUpload.enabled,
@@ -322,7 +324,19 @@ const Chatbox: React.FC<ChatboxProps> = ({
   const productsByNameRef = useRef<Map<string, ProductSummary>>(new Map());
   const currentTurnHasMedia = useRef(false);
   const currentTurnGuardrails = useRef(isGuardrailsOn);
-  const handleResetRef = useRef<(() => Promise<void>) | null>(null);
+  const handleResetRef = useRef<((clearIdentity: boolean) => Promise<void>) | null>(null);
+  const initialResetStartedRef = useRef(false);
+
+  useEffect(() => {
+    onBusyChange(isLoading);
+  }, [isLoading, onBusyChange]);
+
+  useEffect(
+    () => () => {
+      onBusyChange(false);
+    },
+    [onBusyChange]
+  );
 
   // Utility functions
   const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -799,7 +813,7 @@ const Chatbox: React.FC<ChatboxProps> = ({
     }
   };
 
-  const handleReset = async () => {
+  const resetChat = async (clearIdentity: boolean) => {
     setMessages([]);
     setImage("");
     setPreviewImage("");
@@ -813,7 +827,9 @@ const Chatbox: React.FC<ChatboxProps> = ({
     productsByNameRef.current.clear();
     onProductSelect(null);
     onProductsUpdate([]);
-    clearUserSession();
+    if (clearIdentity) {
+      clearUserSession();
+    }
 
     // Add welcome messages
     addMessage(
@@ -834,7 +850,11 @@ const Chatbox: React.FC<ChatboxProps> = ({
       updateLastMessage(word + " ");
     }
   };
-  handleResetRef.current = handleReset;
+  handleResetRef.current = resetChat;
+
+  const handleReset = () => {
+    void resetChat(true);
+  };
 
   // Effects
   useEffect(() => {
@@ -875,10 +895,11 @@ const Chatbox: React.FC<ChatboxProps> = ({
   }, []);
 
   useEffect(() => {
-    if (hasBeenOpened) {
-      handleResetRef.current?.();
-    }
-  }, [hasBeenOpened]);
+    if (!hasBeenOpened || initialResetStartedRef.current) return;
+
+    initialResetStartedRef.current = true;
+    void handleResetRef.current?.(!preserveIdentityOnMount);
+  }, [hasBeenOpened, preserveIdentityOnMount]);
 
   return (
     <section className="chatbox">

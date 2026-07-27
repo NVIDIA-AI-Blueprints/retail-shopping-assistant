@@ -34,6 +34,10 @@ from chain_server.src.conversation_products import (
     ProductReferenceResolution,
     ResolveConversationProductsResult,
 )
+from chain_server.src.shopper_profiles import (
+    ShopperProfile,
+    ShopperProfilesError,
+)
 from shared.commerce_contracts import Cart as CommerceCart
 from shared.commerce_contracts import (
     CartLine,
@@ -254,8 +258,86 @@ class TestHealthAndRoot:
         body = response.json()
         assert body["message"] == "Shopping Assistant API"
         assert body["version"] == "1.0.0"
-        for key in ["query", "stream", "timing", "capabilities", "health", "docs"]:
+        for key in [
+            "query",
+            "stream",
+            "timing",
+            "capabilities",
+            "shopper_profiles",
+            "health",
+            "docs",
+        ]:
             assert key in body["endpoints"]
+
+    def test_shopper_profiles_proxy_is_read_only(
+        self,
+        main_module,
+        client: TestClient,
+    ) -> None:
+        profile = ShopperProfile(
+            shopper_profile_id="shopper_alex",
+            display_name="Alex",
+            shopper_type="occasion_driven_explorer",
+            behavior="Starts with an occasion and refines the complete look.",
+            zipcode="98101",
+        )
+
+        class _ProfilesStub:
+            def list_profiles(self):
+                return [profile]
+
+        main_module.shopper_profiles_client = _ProfilesStub()
+
+        listed = client.get("/shopper-profiles")
+
+        assert listed.status_code == 200
+        assert listed.json() == [profile.model_dump(mode="json")]
+        assert "shopper_profile_id" not in main_module.QueryRequest.model_fields
+
+        response_schema = client.get("/openapi.json").json()["paths"][
+            "/shopper-profiles"
+        ]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+        assert response_schema["type"] == "array"
+        assert response_schema["items"]["$ref"].endswith("/ShopperProfile")
+
+    @pytest.mark.parametrize(
+        "error,expected_status",
+        [
+            (
+                ShopperProfilesError(
+                    "shopper_profiles_response_invalid",
+                    "Shopper profiles returned an invalid response.",
+                    status_code=200,
+                ),
+                502,
+            ),
+            (
+                ShopperProfilesError(
+                    "shopper_profiles_request_failed",
+                    "Shopper profiles are temporarily unavailable.",
+                    retryable=True,
+                ),
+                503,
+            ),
+        ],
+    )
+    def test_shopper_profile_proxy_errors_are_stable(
+        self,
+        main_module,
+        client: TestClient,
+        error: ShopperProfilesError,
+        expected_status: int,
+    ) -> None:
+        class _ProfilesStub:
+            def list_profiles(self):
+                raise error
+
+        main_module.shopper_profiles_client = _ProfilesStub()
+
+        response = client.get("/shopper-profiles")
+
+        assert response.status_code == expected_status
+        assert response.json()["detail"] == str(error)
 
 
 class TestTimingEndpoint:

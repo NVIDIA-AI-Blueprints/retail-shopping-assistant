@@ -232,9 +232,10 @@ Filesystem and built-in Deep Agents tools:
    The runtime owns complete skill loading and the pre-tool execution gate;
    deterministic tools own validation, state mutation, idempotency, and
    authorization.
-6. Persona data remains unavailable until a trusted source and typed,
-   input-safe untrusted-data boundary are implemented. A future snapshot is
-   read-only for the turn unless a later feature supports profile updates.
+6. Caller-supplied persona data remains unavailable. Slice 1 publishes a
+   trusted, typed, read-only registry of five fixed representative shoppers,
+   but its UI selection is not yet turn context. A later binding must resolve
+   the server-owned snapshot at turn start and keep it read-only.
 7. Carts are scoped by `cart_id`, not by conversation memory.
 8. Conversation memory is scoped by `conversation_id`, not by customer alone.
 9. Skills describe shopping behavior and domain knowledge. Tools perform
@@ -347,12 +348,14 @@ Persona precedence:
 5. Model assumptions are not allowed as facts.
 
 The current runtime does not accept or inject caller-supplied persona data and
-does not expose a persona-loading tool. A future implementation must use a
-typed, bounded schema, authenticate profile ownership, validate values through
-the input-safety boundary, and present the snapshot explicitly as untrusted
-data rather than system instructions. Individual skills should not
-independently fetch mutable persona state, because that creates inconsistent
-context and hard-to-debug race conditions.
+does not expose a persona-loading tool. Slice 1 adds a typed, bounded,
+server-owned registry of five immutable representative shoppers, while keeping
+the selected ID outside query and prompt context. A later context-binding slice
+must resolve that snapshot at the durable turn-start boundary. User-owned or
+mutable profiles additionally require authenticated ownership and input-safety
+validation. Individual skills should not independently fetch mutable persona
+state, because that creates inconsistent context and hard-to-debug race
+conditions.
 
 ## Tools
 
@@ -378,8 +381,10 @@ The tool layer is small, typed, and deterministic:
   promotion configured through the assistant. Catalog retrieval and price do
   not establish markdown status.
 
-`load_customer_persona` and typed turn-start persona snapshots remain planned;
-neither is available in the current runtime.
+`load_customer_persona` remains unregistered. A typed representative-shopper
+turn-start snapshot is the planned follow-up to the Slice 1 registry and UI
+selection; neither profile loading nor profile context is available to the
+model in this slice.
 
 The active shopper-serving Deep Agents tool registry is documented in
 [Shopper Agent Tool Registry](SHOPPER_AGENT_TOOL_REGISTRY.md). The active skill

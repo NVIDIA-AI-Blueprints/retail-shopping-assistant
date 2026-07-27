@@ -73,4 +73,5 @@ tests/evaluation/results/*
 
 # Environment variables
 .env
-.env.local 
+.env.*
+!.env.example

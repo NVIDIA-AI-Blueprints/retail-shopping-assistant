@@ -21,6 +21,7 @@ see the [Shopper Agent Leadership Note](SHOPPER_AGENT_LEADERSHIP_NOTE.md).
 | Deep Agents runtime | Semantic intent, skill selection, deterministic selected-skill tool grants, tool selection, styling judgment, and one server-resolved representative-shopper soft-guidance block | Product facts, policy facts, cart truth, or profile ownership |
 | Memory service | Immutable representative-shopper registry and conversation binding, typed three-field shopper snapshots, ordered durable shopper/assistant turns, exact finalized replay, bounded recent-turn reads, presented-product events and compact index, deterministic same-conversation reference resolution, authoritative cart state, and atomic mutation replay records | Catalog facts, model reasoning, learned preferences, sentiment, active anchors, or cross-conversation memory |
 | Graph checkpointer | Request-scoped working graph/tool state within one chain-server process | Durable transcript storage, cross-turn shopper memory, cross-replica context, or product-ref authorization |
+| Dormant weather boundary | Closed US ZIP/date request validation, one provider adapter, normalized daily forecast evidence, and sanitized typed failures | Shopper selection, relative-date interpretation, model context, agent registration, styling advice, persistence, or public API |
 
 A model-authored semantic query is an internal **ranking preference**, not a
 product fact or shopper-facing explanation. Only catalog tool evidence can
@@ -30,6 +31,13 @@ into model context. The UI may send only one server-published profile ID;
 memory resolves and binds it at turn start. The runtime renders the returned
 type, behavior, and ZIP once as soft guidance. That context never grants a
 skill/tool or establishes budget, constraints, cart intent, or product facts.
+
+Slice 3 also contains a dormant `get_weather_forecast_tool` factory backed by a
+provider-neutral client contract. Its wrapper is directly testable, but neither
+the wrapper nor its schema is supplied to `create_deep_agent`, the shopping-tool
+policy, a shopper skill, a prompt, FastAPI, or the UI. It does not read the
+saved ZIP or any shopper identity. Disabled startup and health checks make no
+weather request.
 
 ## 1. Published Catalog Data Foundation
 
@@ -450,6 +458,7 @@ skill and is not catalog truth.
 | Promotions boundary | `check_active_promotions_tool` | Global no-I/O application stub; currently reports no active promotion configured through the assistant |
 | Cart | `get_cart_tool`, `view_cart_total_tool`, `add_cart_items_tool`, `remove_cart_item_tool`, `update_cart_items_tool` | Memory service cart |
 | Policy | `get_store_policy_tool` | Operator-managed policy YAML |
+| Dormant weather (not registered) | `get_weather_forecast_tool` | Directly constructed provider-neutral client; Visual Crossing is the first adapter |
 
 `activate_shopper_skills_tool` is an internal control tool, not a commerce
 tool. It is forced at turn start and selects static behavior instructions; it

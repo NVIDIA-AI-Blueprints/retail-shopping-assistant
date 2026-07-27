@@ -6,6 +6,17 @@ Updated: 2026-07-27
 
 The current working tree extends the shopper-serving Deep Agent architecture:
 
+- the chain server now has a dormant, provider-neutral weather forecast
+  contract with a Visual Crossing Timeline adapter and a directly constructible
+  `get_weather_forecast_tool` wrapper. It accepts only an exact five-digit US
+  ZIP plus local today, one ISO date, or a complete inclusive ISO range of at
+  most 15 days; returns bounded normalized daily evidence with attribution;
+  rejects non-live provider sources; and maps transport/provider failures into
+  sanitized typed outcomes. `WEATHER_ENABLED=false` is the default, the key
+  remains an indirect `WEATHER_API_KEY` environment reference scoped only to
+  the chain server, and startup/health paths perform no provider request. The
+  wrapper is deliberately absent from the runtime registry, tool policy, skill
+  grants, prompts, request context, FastAPI, UI, and shopper-profile behavior;
 - the memory-service SQLite database now owns an immutable
   `shopper_profiles` registry bootstrapped from five reviewed rows whose
   `shopper_type` and `behavior` values map 1:1 to the committed live-evaluation
@@ -312,6 +323,27 @@ The newest focused gate is recorded first. Older implementation gates remain
 below as comparison points; generated quality and timing
 artifacts stay in the required local archive rather than versioned source.
 
+- Dormant weather-tool Slice 3 gate (2026-07-27): the full offline backend
+  suite passed 1,136 tests with 1 expected xfail, and the focused
+  weather/configuration/Compose/local-runner suite passed 193 tests. Changed
+  Python passed Ruff; shell syntax, Docker Compose configuration,
+  retail-local-runner skill validation, whitespace checks, and the
+  chain-server image build passed. The decisive GPT-5.2 app/Judge regression
+  guard completed 48/48 shopper turns and judgments without collector,
+  response, timeout, or Judge errors at 3.8958/5, with 40/48 turns scoring at
+  least 4. Mean / median / p95 / maximum latency was 20.525s / 18.187s /
+  36.372s / 38.179s. Against the immediately preceding Slice 2 WIP, average
+  quality moved -0.1250, score-4-or-better coverage moved -2 turns, 3/36/9
+  paired scores improved/tied/regressed, and mean / median / p95 / maximum
+  latency changed by +0.934s / -0.234s / +0.531s / -1.331s. This is a
+  qualified dormant-path guard rather than direct feature evidence: weather
+  was explicitly disabled, `WEATHER_API_KEY` was absent, the tool was
+  unregistered and absent from model context, and zero provider calls were
+  made. No live provider smoke was run. The immutable report is
+  `~/exec-briefs/retail-shopping-assistant/quality/baselines/2026-07-27__architecture_updates__slice3-dormant-weather-tool/quality-report.md`;
+  canonical current/Golden, previous-committed/current, and
+  previous-WIP/current comparisons are under
+  `~/exec-briefs/retail-shopping-assistant/quality/shopping/comparisons/`.
 - Representative-shopper Slice 2 context gate (2026-07-27): the full offline
   backend suite passed 1,016 tests with 1 expected xfail; all 9 UI tests passed,
   UI lint reported 0 errors and 3 pre-existing warnings, and the production
@@ -687,6 +719,14 @@ selected row is now bound at durable turn start. It remains static soft
 guidance, not learned preference state. Caller-supplied or mutable customer
 personas remain unavailable until their ownership and input-safety contracts
 are defined.
+
+The weather tool is not yet a shopper capability. A later leveraging slice must
+define trusted saved-ZIP versus event-location precedence, resolve relative
+dates, register and grant the tool, preserve its output as grounded current-turn
+evidence, display provider attribution and forecast uncertainty, and prevent
+weather from silently establishing waterproofing, warmth, safety, or any other
+catalog constraint. Visual Crossing plan terms must be reviewed before storing
+or displaying forecast data; Slice 3 persists and displays none.
 
 Judge product evidence is capped at 24 records and 32,000 serialized characters
 per turn. `product_evidence_truncated` makes omissions explicit; a truncated

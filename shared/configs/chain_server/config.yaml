@@ -97,6 +97,14 @@ max_catalog_searches_per_turn: 3
 max_product_detail_reads_per_turn: 2
 expose_agent_diagnostics: false
 catalog_search_timeout_seconds: null
+weather:
+  enabled: false
+  provider: visual_crossing
+  base_url: "https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline"
+  api_key_env: WEATHER_API_KEY
+  timeout_seconds: 3.0
+  max_forecast_horizon_days: 15
+  max_range_days: 15
 multimodal: True
 media_input:
   enabled: true

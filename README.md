@@ -54,6 +54,10 @@ The Retail Shopping Assistant is an AI-powered blueprint that provides a compreh
   shoppers mirror the committed live-evaluation behavior profiles; the UI can
   select one or Guest and inspect its type, behavior, and ZIP. The selected ID
   is bound to the durable conversation and resolved into compact soft guidance
+- 🌦️ **Dormant Weather Contract**: A disabled-by-default, directly testable
+  daily forecast tool accepts a five-digit US ZIP plus today, one exact date,
+  or an inclusive date range. It is not registered with the shopper agent and
+  does not yet influence conversation or styling
 - 📚 **Enforced Shopper Skills**: Every turn first semantically selects and
   fully loads the smallest applicable skill set; each selected `SKILL.md`
   declares its role and tool grants, only their grant union becomes
@@ -81,7 +85,8 @@ The application follows a microservices architecture:
   search-schema repair, a category-aware no-I/O availability stub for known
   product refs, a no-I/O active-promotions stub, typed same-conversation product
   resolution, grounded response assembly, a configurable Deep Agents execution
-  deadline, and a request-scoped process-local checkpointer
+  deadline, a request-scoped process-local checkpointer, and an unregistered
+  provider-neutral weather client/tool boundary
 - **Catalog Retriever**: Generative-LLM-free text/image embedding search, hard
   filtering, normalized COSINE relevance scores, and deterministic result
   ranking
@@ -104,6 +109,16 @@ instructions win, and a profile cannot invent a budget, product requirement,
 cart action, product fact, skill choice, or tool permission. Changing the
 selection clears visible chat/product state and rotates the browser-scoped
 session, conversation, and cart identities.
+
+The Slice 3 weather boundary is intentionally dormant. Direct callers can
+construct a typed Visual Crossing adapter for a five-digit US ZIP and an
+optional exact date or inclusive date range, but the wrapper is absent from the
+Deep Agents tool registry, skill grants, prompts, request context, FastAPI, and
+UI. `WEATHER_ENABLED` defaults to `false`; no API key or provider request is
+needed for ordinary startup, health checks, shopper turns, or offline tests.
+Enabling direct construction requires `WEATHER_API_KEY` in the chain-server
+environment. The key is not stored in YAML or an image, and this integration
+does not require MCP.
 
 Every turn still makes a fresh semantic skill-selection decision. The previous
 turn's selected skill names are persisted with its durable output and supplied
@@ -424,6 +439,11 @@ The exact published response is documented in
    named volume. A production shared graph backend and multi-replica memory
    design remain open decisions described in the
    [Deployment Guide](docs/DEPLOYMENT.md).
+
+   Weather remains disabled by default. Leave `WEATHER_ENABLED=false` and
+   `WEATHER_API_KEY` empty for the current shopper experience. An operator
+   testing the dormant client directly may set the key only in the ignored
+   `.env`, process environment, or deployment secret store.
 
 5. **Validate and deploy**:
    ```bash

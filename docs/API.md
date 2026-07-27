@@ -485,6 +485,15 @@ interface StreamingChunk {
 
 ## 🔄 Endpoints
 
+### Weather boundary (no HTTP route)
+
+Slice 3 adds a disabled, directly constructible weather client/tool inside the
+chain server, but it exposes no application, chain-server, or memory-service
+weather endpoint. It is absent from query request/response schemas, agent tool
+registration, prompts, and UI payloads. `/query/stream` and `/query/timing`
+therefore do not perform weather lookups, including when a selected shopper has
+a saved ZIP or a message mentions an event or date.
+
 ### GET `/shopper-profiles`
 
 Returns the five immutable representative shoppers in

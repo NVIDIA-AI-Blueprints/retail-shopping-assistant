@@ -27,6 +27,7 @@ Top-level orchestration is via `docker-compose.yaml`; optional local NIM model c
    - Every search also carries required pre-retrieval `shopper_guidance`: one concise, product-agnostic sentence authored under the active skill. A directly stated unadvertised requirement on a shopper-named scope fails closed. Only a schema-valid proposed inferred requirement on a genuinely open role may consume that distinct scope's one model-owned review. Deterministic code does not classify shopper prose or rewrite malformed arguments. A repair cannot change a shopper-named scope noun. A successful partial search may continue with another valid role and its own one-repair opportunity, but no scope receives two repairs; the configured turn cap remains three successful searches.
    - Cart mutations require explicit product/cart-line refs. Grounding reads actual tool-role messages, separates current-request evidence from prior-turn evidence, and never treats an assistant draft as evidence. Successful searches preserve the taxonomy-independent semantic query as internal ranking evidence, the pre-retrieval `shopper_guidance` as product-agnostic response framing, and each confirmed filter set with the products from that search. A completed search gets one final tools-disabled model step under the active skill, followed by the grounding editor. If the requested outcome depends on an unconfirmed material, fit, comfort, durability, care, weather, or other functional property, the response must disclose that gap and frame results as the closest catalog or styling direction rather than as proven suitable. If that draft or editor is unavailable, deterministic fallback uses search guidance, static skill `response_guidance`, returned names, prices, categories, and search-scoped confirmed filters, followed by the same generic unverified-property disclosure. Scoped zero-result evidence cannot establish absence outside its exact taxonomy and filters. The graph and grounding editor share one execution deadline; a grounding timeout finalizes as failed with `grounding_timeout`, uses the deterministic catalog renderer for search-only evidence, and otherwise returns a fixed retry/cart-check response rather than the unverified draft. Editor errors and empty or whitespace-only editor output use the same fail-closed response rule with `grounding_error`.
    - Optional output guardrails run, then the memory service finalizes the durable turn as completed, blocked, or failed before products, images, content, and metrics are emitted over SSE. An exact retry of a finalized request replays its stored response without model/tool work. Internal diagnostics include bounded current-turn product evidence from successful catalog search and detail results plus bounded `catalog_scope_outcomes` for zero-result scopes; each search scope remains attached to its own products. Public query responses contain an empty diagnostics object by default. `EXPOSE_AGENT_DIAGNOSTICS=true` exposes the detailed trace only for a trusted operator or evaluation deployment. Final-text extraction skips tool, tool-calling, and internal activation messages; if no shopper-facing answer exists, the runtime returns a safe fallback with `incomplete_agent_response`. On graph failure, bounded current-turn messages are captured before checkpoint cleanup.
+   - A provider-neutral daily weather client and `get_weather_forecast_tool` factory exist as a dormant boundary. They accept only a five-digit US ZIP plus today, one exact date, or a complete inclusive date range. `WEATHER_ENABLED=false` is the default. The wrapper is not registered with Deep Agents, granted by a skill, mentioned in prompts, connected to shopper context, exposed through FastAPI, or called by the UI; startup, health checks, and shopper turns make no weather request.
 4. For product discovery, chain server calls catalog retriever:
    - `/query/text` for text-only.
    - `/query/image` for text + image.
@@ -49,6 +50,10 @@ Top-level orchestration is via `docker-compose.yaml`; optional local NIM model c
 - Operator-managed store policy content: `shared/configs/chain_server/store_policies.yaml`
 - Shopper behavior skills and references: `chain_server/skills/shopper/`
 - Image/video perception: `chain_server/src/media_perception.py`
+- Dormant weather request/result contract and Visual Crossing adapter:
+  `chain_server/src/weather.py`
+- Dormant, directly constructible weather wrapper:
+  `chain_server/src/weather_tool.py`
 - Shared request/state models: `chain_server/src/agenttypes.py`
 - `graph.py`, `planner.py`, `retriever.py`, `cart.py`, `chatter.py`, and `summarizer.py` are legacy compatibility paths, not the serving runtime.
 
@@ -131,6 +136,8 @@ The local runner:
 - Starts app services as local processes and uses Docker only for Milvus infra (`etcd`, `minio`, `milvus`).
 - Uses `shared/configs/models.yaml` plus environment overrides.
 - `configure --nim-host http://HOST` writes ignored `.local-run/model-endpoints.env` with remote NIM URLs.
+- Retains `WEATHER_ENABLED` and `WEATHER_API_KEY` only for the chain-server
+  process and removes them from memory, guardrail, catalog, and UI processes.
 - Sets `SHARED_ROOT`, `SHARED_CONFIG_ROOT`, `REACT_APP_API_BASE_URL=http://localhost:8009`, and `BROWSER=none`.
 - Creates runtime files under ignored `.local-run/` and links ignored `ui/public/images -> shared/images`.
 
@@ -202,6 +209,10 @@ Key env vars:
 - `SHARED_CONFIG_ROOT` (local runner / non-container config root)
 - `SHARED_ROOT` (local runner / non-container shared asset root)
 - `REACT_APP_API_BASE_URL` (local React dev server API target)
+- `WEATHER_ENABLED` (dormant direct weather-client construction only; default
+  `false`)
+- `WEATHER_API_KEY` (Visual Crossing server-side key; required only when
+  explicitly constructing the enabled dormant client)
 
 ## 7) Important Gotchas
 
@@ -384,6 +395,13 @@ Key env vars:
   it must not claim a mutation without a successful cart result or invent facts
   absent from catalog detail evidence.
 - The right chat panel is fixed between the nav bar and global footer; keep `ui/src/chatbox.css` aligned with the navbar/footer heights when changing layout.
+- The Slice 3 weather client/tool is deliberately dormant. Keep it out of
+  `DeepAgentsRuntime` registration, `SHOPPING_TOOL_POLICIES`, shopper-skill
+  grants, prompts, request/state models, FastAPI, and UI until a separate
+  leveraging slice defines trusted location/date precedence, grounded evidence,
+  provider attribution, and forecast-uncertainty behavior. It needs no MCP
+  server and must never log the key, prepared URL, ZIP, requested dates,
+  resolved location, provider body, or raw exception.
 
 ## 8) Contribution and Commit Notes
 

@@ -40,6 +40,8 @@ def _clear_model_and_service_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "GROUNDING_REWRITE_MAX_EVIDENCE_CHARS",
         "EXPOSE_AGENT_DIAGNOSTICS",
         "GUARDRAILS_ENABLED",
+        "WEATHER_ENABLED",
+        "WEATHER_API_KEY",
         "LLM_BASE_URL",
         "LLM_MODEL",
         "VLM_BASE_URL",
@@ -85,6 +87,8 @@ class TestChainServerConfigValidation:
         assert config.guardrails_enabled is True
         assert config.grounding_rewrite_enabled is True
         assert config.expose_agent_diagnostics is False
+        assert config.weather.enabled is False
+        assert config.weather.api_key_env == "WEATHER_API_KEY"
         assert config.deepagents_execution_timeout_seconds == 45.0
         assert config.max_product_detail_reads_per_turn == 2
         assert config.grounding_rewrite_max_evidence_chars == 12000
@@ -397,6 +401,59 @@ class TestLoadConfig:
 
         assert config.grounding_rewrite_max_evidence_chars == 6400
 
+    @pytest.mark.parametrize(
+        "raw_value,expected",
+        [
+            ("true", True),
+            ("false", False),
+        ],
+    )
+    def test_weather_enabled_env_override_accepts_explicit_bools(
+        self,
+        write_yaml,
+        valid_config_dict: dict,
+        monkeypatch: pytest.MonkeyPatch,
+        raw_value: str,
+        expected: bool,
+    ) -> None:
+        _clear_model_and_service_env(monkeypatch)
+        monkeypatch.setenv("SHARED_CONFIG_ROOT", str(REPO_ROOT / "shared/configs"))
+        monkeypatch.setenv("LLM_API_KEY", "test-key")
+        monkeypatch.setenv("WEATHER_ENABLED", raw_value)
+        path = write_yaml("config.yaml", valid_config_dict)
+
+        config = load_config(str(path))
+
+        assert config.weather.enabled is expected
+
+    def test_weather_enabled_env_override_rejects_invalid_bool(
+        self, write_yaml, valid_config_dict: dict, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _clear_model_and_service_env(monkeypatch)
+        monkeypatch.setenv("SHARED_CONFIG_ROOT", str(REPO_ROOT / "shared/configs"))
+        monkeypatch.setenv("LLM_API_KEY", "test-key")
+        monkeypatch.setenv("WEATHER_ENABLED", "enabled")
+        path = write_yaml("config.yaml", valid_config_dict)
+
+        with pytest.raises(ValueError, match="WEATHER_ENABLED must be one of"):
+            load_config(str(path))
+
+    def test_weather_secret_remains_an_indirect_environment_reference(
+        self, write_yaml, valid_config_dict: dict, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _clear_model_and_service_env(monkeypatch)
+        monkeypatch.setenv("SHARED_CONFIG_ROOT", str(REPO_ROOT / "shared/configs"))
+        monkeypatch.setenv("LLM_API_KEY", "test-key")
+        secret = "weather-secret-must-not-enter-config"
+        monkeypatch.setenv("WEATHER_API_KEY", secret)
+        path = write_yaml("config.yaml", valid_config_dict)
+
+        config = load_config(str(path))
+
+        assert config.weather.enabled is False
+        assert config.weather.api_key_env == "WEATHER_API_KEY"
+        assert secret not in repr(config)
+
     def test_deepagents_execution_timeout_env_override(
         self, write_yaml, valid_config_dict: dict, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -438,6 +495,24 @@ class TestLoadConfig:
 
 
 class TestRepoPromptContracts:
+    def test_weather_config_is_dormant_and_indirect(self) -> None:
+        config = load_config_data(
+            str(REPO_ROOT / "shared/configs/chain_server/config.yaml")
+        )
+
+        assert config["weather"] == {
+            "enabled": False,
+            "provider": "visual_crossing",
+            "base_url": (
+                "https://weather.visualcrossing.com/"
+                "VisualCrossingWebServices/rest/services/timeline"
+            ),
+            "api_key_env": "WEATHER_API_KEY",
+            "timeout_seconds": 3.0,
+            "max_forecast_horizon_days": 15,
+            "max_range_days": 15,
+        }
+
     def test_budget_only_browse_routes_to_chatter_for_clarification(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

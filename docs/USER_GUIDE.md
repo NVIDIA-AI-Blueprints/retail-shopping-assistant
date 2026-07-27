@@ -77,7 +77,9 @@ request always wins. A profile never supplies an unstated budget, size, color,
 material requirement, cart action, product fact, or weather fact. Saved ZIP is
 background location data only in this slice and does not trigger a weather
 lookup or prove where an event will occur. Guest sends no profile ID and gets no
-profile context.
+profile context. A dormant internal weather client exists for direct operator
+testing, but it is not available to the assistant or UI and does not yet change
+clarification or style guidance.
 
 Switching shoppers starts a clean visible session: chat, product cards,
 selected product, attachments, inference activity, and metrics are cleared, and

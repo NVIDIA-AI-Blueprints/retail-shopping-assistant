@@ -380,11 +380,24 @@ The tool layer is small, typed, and deterministic:
 - `check_active_promotions`: read-only no-I/O stub that reports no active sale or
   promotion configured through the assistant. Catalog retrieval and price do
   not establish markdown status.
+- `get_weather_forecast`: implemented provider-neutral read-only contract for
+  an exact US ZIP and optional ISO date/range, but dormant in Slice 3 and not
+  registered, granted, prompted, or connected to shopper context.
 
 `load_customer_persona` remains unregistered. Representative-shopper context is
 resolved as part of the existing durable turn-start call, not through an
 agent-callable tool. It does not grant skills or tools and is not independently
 refetched by shopper skills.
+
+`get_weather_forecast` is likewise absent from the serving registry. Direct
+construction validates a closed ZIP/date schema, returns bounded normalized
+daily evidence through the Visual Crossing adapter, rejects non-live forecast
+sources, and emits sanitized typed failures. `WEATHER_ENABLED=false` is the
+default and needs no credential; an enabled direct client reads the key only
+from the environment variable named by config. A later leveraging slice owns
+relative-date resolution, trusted location precedence, agent registration,
+grounded weather evidence, attribution display, uncertainty language, and the
+rule that weather cannot silently become a catalog must-have.
 
 The active shopper-serving Deep Agents tool registry is documented in
 [Shopper Agent Tool Registry](SHOPPER_AGENT_TOOL_REGISTRY.md). The active skill

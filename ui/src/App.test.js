@@ -5,7 +5,10 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 
 import App from "./App";
-import { getOrCreateUserSession } from "./utils";
+import {
+  getOrCreateUserSession,
+  getSelectedShopperProfileId,
+} from "./utils";
 
 jest.mock("@mui/icons-material/Menu", () => () => null);
 jest.mock("@mui/icons-material/Send", () => () => null);
@@ -67,15 +70,19 @@ const profiles = [
   },
 ];
 
-const buttonWithText = (container, text) =>
-  Array.from(container.querySelectorAll("button")).find((button) =>
-    button.textContent.includes(text)
-  );
-
 const click = (element) => {
   React.act(() => {
     element.click();
   });
+};
+
+const chooseShopper = async (container, value) => {
+  const select = container.querySelector('[aria-label="Shopper profile"]');
+  React.act(() => {
+    select.value = value;
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await flushEffects();
 };
 
 const flushEffects = async () => {
@@ -154,7 +161,7 @@ describe("App shopper identity lifecycle", () => {
     jest.restoreAllMocks();
   });
 
-  test("Guest requests omit shopper_profile_id through App and Chatbox", async () => {
+  test("requires an explicit choice before Guest can start chatting", async () => {
     // This test uses React createRoot directly, so rendering must be inside act.
     // eslint-disable-next-line testing-library/no-unnecessary-act
     React.act(() => {
@@ -162,6 +169,15 @@ describe("App shopper identity lifecycle", () => {
     });
     await flushEffects();
 
+    expect(container.textContent).toContain("Choose how you’d like to shop");
+    expect(container.querySelector(".input_test")).toBeNull();
+    expect(
+      global.fetch.mock.calls.some(([input]) =>
+        String(input).endsWith("/query/stream")
+      )
+    ).toBe(false);
+
+    await chooseShopper(container, "__guest__");
     await submitQuery(container, "Show me bags");
 
     const streamCall = global.fetch.mock.calls.find(([input]) =>
@@ -171,9 +187,10 @@ describe("App shopper identity lifecycle", () => {
 
     expect(payload.query).toBe("Show me bags");
     expect(payload).not.toHaveProperty("shopper_profile_id");
+    expect(sessionStorage.getItem(SHOPPER_PROFILE_STORAGE_KEY)).not.toBeNull();
   });
 
-  test("shopper switch keeps exactly its rotated identity and manual Reset clears it", async () => {
+  test("profile changes rotate identity while Reset retains the selected mode", async () => {
     const setItemSpy = jest.spyOn(Storage.prototype, "setItem");
 
     // This test uses React createRoot directly, so rendering must be inside act.
@@ -188,10 +205,7 @@ describe("App shopper identity lifecycle", () => {
       ([key]) => key === SESSION_STORAGE_KEY
     ).length;
 
-    click(buttonWithText(container, "Shop as"));
-    click(buttonWithText(container, "Morgan"));
-    click(buttonWithText(container, "Shop as Morgan"));
-    await flushEffects();
+    await chooseShopper(container, "shopper_morgan");
 
     const identityWrites = setItemSpy.mock.calls
       .filter(([key]) => key === SESSION_STORAGE_KEY)
@@ -210,27 +224,75 @@ describe("App shopper identity lifecycle", () => {
     expect(shopperSession.cartId).not.toBe(priorSession.cartId);
 
     await submitQuery(container, "Show me bags");
-    await submitQuery(container, "Which one is under $50?");
+
+    await chooseShopper(container, "shopper_alex");
+    const alexSession = getOrCreateUserSession();
+    expect(alexSession.sessionId).not.toBe(shopperSession.sessionId);
+    expect(alexSession.conversationId).not.toBe(shopperSession.conversationId);
+    expect(alexSession.cartId).not.toBe(shopperSession.cartId);
+    expect(container.querySelectorAll(".messages__item--user")).toHaveLength(0);
+
+    await submitQuery(container, "Find a wedding outfit");
 
     const payloads = global.fetch.mock.calls
       .filter(([input]) => String(input).endsWith("/query/stream"))
       .map(([, request]) => JSON.parse(request.body));
 
     expect(payloads).toHaveLength(2);
+    expect(payloads[0].shopper_profile_id).toBe("shopper_morgan");
+    expect(payloads[0].conversation_id).toBe(shopperSession.conversationId);
+    expect(payloads[0].cart_id).toBe(shopperSession.cartId);
+    expect(payloads[1].shopper_profile_id).toBe("shopper_alex");
+    expect(payloads[1].conversation_id).toBe(alexSession.conversationId);
+    expect(payloads[1].cart_id).toBe(alexSession.cartId);
     payloads.forEach((payload) => {
-      expect(payload.shopper_profile_id).toBe("shopper_morgan");
-      expect(payload.conversation_id).toBe(shopperSession.conversationId);
-      expect(payload.cart_id).toBe(shopperSession.cartId);
       expect(payload).not.toHaveProperty("display_name");
       expect(payload).not.toHaveProperty("shopper_type");
       expect(payload).not.toHaveProperty("behavior");
       expect(payload).not.toHaveProperty("zipcode");
     });
 
+    await chooseShopper(container, "__guest__");
+    const guestSession = getOrCreateUserSession();
+    expect(guestSession.sessionId).not.toBe(alexSession.sessionId);
+    expect(guestSession.conversationId).not.toBe(alexSession.conversationId);
+    expect(guestSession.cartId).not.toBe(alexSession.cartId);
+
+    await submitQuery(container, "Show me shoes");
+    const guestPayload = JSON.parse(
+      global.fetch.mock.calls
+        .filter(([input]) => String(input).endsWith("/query/stream"))
+        .at(-1)[1].body
+    );
+    expect(guestPayload.conversation_id).toBe(guestSession.conversationId);
+    expect(guestPayload.cart_id).toBe(guestSession.cartId);
+    expect(guestPayload).not.toHaveProperty("shopper_profile_id");
+
     click(container.querySelector('[aria-label="Reset conversation"]'));
     expect(sessionStorage.getItem(SESSION_STORAGE_KEY)).toBeNull();
-    expect(sessionStorage.getItem(SHOPPER_PROFILE_STORAGE_KEY)).toBe(
-      "shopper_morgan"
+    expect(sessionStorage.getItem(SHOPPER_PROFILE_STORAGE_KEY)).not.toBeNull();
+    expect(getSelectedShopperProfileId()).toBeNull();
+  });
+
+  test("profile-service failure leaves explicit Guest mode available", async () => {
+    jest.spyOn(console, "warn").mockImplementation(() => {});
+    global.fetch.mockImplementationOnce(() =>
+      Promise.reject(new Error("profiles unavailable"))
     );
+
+    // eslint-disable-next-line testing-library/no-unnecessary-act
+    React.act(() => {
+      root.render(<App />);
+    });
+    await flushEffects();
+
+    const select = container.querySelector('[aria-label="Shopper profile"]');
+    expect(select.textContent).toContain("Guest mode");
+    expect(select.textContent).toContain("Profiles unavailable");
+    expect(container.querySelector(".input_test")).toBeNull();
+
+    await chooseShopper(container, "__guest__");
+
+    expect(container.querySelector(".input_test")).not.toBeNull();
   });
 });

@@ -28,7 +28,7 @@ import ShopperPicker, { ShopperProfilesStatus } from "./ShopperPicker";
 interface NavbarProps {
   shopperProfiles: ShopperProfile[];
   shopperProfilesStatus: ShopperProfilesStatus;
-  selectedShopperProfileId: string | null;
+  selectedShopperProfileId: string | null | undefined;
   isShopperSwitchDisabled: boolean;
   onShopperChange: (shopperProfileId: string | null) => void;
 }

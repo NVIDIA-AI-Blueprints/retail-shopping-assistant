@@ -17,6 +17,8 @@ import { ShopperProfilesStatus } from "./components/ShopperPicker";
 import { config } from "./config/config";
 import { ProductSummary, ShopperProfile } from "./types";
 import {
+  clearSelectedShopperProfileId,
+  clearUserSession,
   getSelectedShopperProfileId,
   parseShopperProfiles,
   rotateUserSession,
@@ -34,7 +36,9 @@ const App: React.FC = () => {
   const [shopperProfiles, setShopperProfiles] = useState<ShopperProfile[]>([]);
   const [shopperProfilesStatus, setShopperProfilesStatus] =
     useState<ShopperProfilesStatus>("loading");
-  const [selectedProfileId, setSelectedProfileId] = useState<string | null>(
+  const [selectedProfileId, setSelectedProfileId] = useState<
+    string | null | undefined
+  >(
     getSelectedShopperProfileId
   );
   const [isChatBusy, setIsChatBusy] = useState(false);
@@ -53,6 +57,14 @@ const App: React.FC = () => {
       instance: instance + 1,
       preserveIdentityOnMount: true,
     }));
+  }, []);
+
+  const clearShopperSelection = useCallback(() => {
+    clearSelectedShopperProfileId();
+    clearUserSession();
+    setSelectedProfileId(undefined);
+    setSelectedProduct(null);
+    setProducts([]);
   }, []);
 
   useEffect(() => {
@@ -75,12 +87,12 @@ const App: React.FC = () => {
 
         const storedProfileId = getSelectedShopperProfileId();
         if (
-          storedProfileId &&
+          typeof storedProfileId === "string" &&
           !profiles.some(
             (profile) => profile.shopper_profile_id === storedProfileId
           )
         ) {
-          startShopperSession(null);
+          clearShopperSelection();
         }
       } catch (error) {
         if (abortController.signal.aborted) return;
@@ -88,21 +100,29 @@ const App: React.FC = () => {
         setShopperProfiles([]);
         setShopperProfilesStatus("unavailable");
 
-        if (getSelectedShopperProfileId() !== null) {
-          startShopperSession(null);
+        if (typeof getSelectedShopperProfileId() === "string") {
+          clearShopperSelection();
         }
       }
     };
 
     loadShopperProfiles();
     return () => abortController.abort();
-  }, [startShopperSession]);
+  }, [clearShopperSelection]);
 
   const handleShopperChange = (shopperProfileId: string | null) => {
     if (isChatBusy || shopperProfileId === selectedProfileId) return;
 
     startShopperSession(shopperProfileId);
   };
+
+  const shopperSessionReady =
+    selectedProfileId === null ||
+    (typeof selectedProfileId === "string" &&
+      shopperProfilesStatus === "ready" &&
+      shopperProfiles.some(
+        (profile) => profile.shopper_profile_id === selectedProfileId
+      ));
 
   return (
     <div className="shopping-app">
@@ -113,22 +133,35 @@ const App: React.FC = () => {
         isShopperSwitchDisabled={isChatBusy}
         onShopperChange={handleShopperChange}
       />
-      <main className="assistant-workspace">
-        <ProductDetailPanel
-          selectedProduct={selectedProduct}
-          products={products}
-          onProductSelect={setSelectedProduct}
-        />
-        <Chatbox
-          key={chatMount.instance}
-          selectedProduct={selectedProduct}
-          selectedShopperProfileId={selectedProfileId}
-          onProductSelect={setSelectedProduct}
-          onProductsUpdate={setProducts}
-          onBusyChange={setIsChatBusy}
-          preserveIdentityOnMount={chatMount.preserveIdentityOnMount}
-        />
-      </main>
+      {shopperSessionReady ? (
+        <main className="assistant-workspace">
+          <ProductDetailPanel
+            selectedProduct={selectedProduct}
+            products={products}
+            onProductSelect={setSelectedProduct}
+          />
+          <Chatbox
+            key={chatMount.instance}
+            selectedProduct={selectedProduct}
+            selectedShopperProfileId={selectedProfileId ?? null}
+            onProductSelect={setSelectedProduct}
+            onProductsUpdate={setProducts}
+            onBusyChange={setIsChatBusy}
+            preserveIdentityOnMount={chatMount.preserveIdentityOnMount}
+          />
+        </main>
+      ) : (
+        <main className="shopper-session-gate">
+          <section aria-labelledby="shopper-session-heading">
+            <p>New shopping session</p>
+            <h1 id="shopper-session-heading">Choose how you’d like to shop</h1>
+            <span>
+              Select Guest mode or one of the five representative shoppers
+              from the <strong>Shop as</strong> menu above.
+            </span>
+          </section>
+        </main>
+      )}
       <Footer />
       <ToastContainer position="top-right" />
     </div>

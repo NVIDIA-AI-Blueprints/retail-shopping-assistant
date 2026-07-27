@@ -51,9 +51,10 @@ The Retail Shopping Assistant is an AI-powered blueprint that provides a compreh
   recover one exact earlier product or require clarification without another
   catalog search or model call
 - 👤 **Representative Shopper Picker**: Five immutable, database-backed
-  shoppers mirror the committed live-evaluation behavior profiles; the UI can
-  select one or Guest and inspect its type, behavior, and ZIP. The selected ID
-  is bound to the durable conversation and resolved into compact soft guidance
+  shoppers mirror the committed live-evaluation behavior profiles; a new UI
+  session requires an explicit dropdown choice of Guest mode or one of those
+  five shoppers before chat starts. The selected ID is bound to the durable
+  conversation and resolved into compact soft guidance
 - 🌦️ **Dormant Weather Contract**: A disabled-by-default, directly testable
   daily forecast tool accepts a five-digit US ZIP plus today, one exact date,
   or an inclusive date range. It is not registered with the shopper agent and
@@ -98,17 +99,19 @@ The application follows a microservices architecture:
   database sessions; standard Compose exposes its host port on loopback only
 - **Guardrails**: Content safety and moderation
 - **UI**: React-based frontend interface with Guest/representative-shopper
-  selection
+  dropdown selection required before a new chat session starts
 
-The UI sends only the selected profile ID; Guest omits it. Durable turn start
-resolves the server-owned row and prevents one conversation from switching
+The UI initially gates chat on an explicit **Shop as** dropdown choice. Guest
+omits the profile ID; a named selection sends only its server-owned ID. Durable
+turn start resolves the row and prevents one conversation from switching
 between Guest and another shopper or between two shoppers. The model receives
 one small current-turn block with `shopper_type`, exact `behavior`, and
 `saved_zipcode`. This is soft interaction/style guidance only: explicit shopper
 instructions win, and a profile cannot invent a budget, product requirement,
 cart action, product fact, skill choice, or tool permission. Changing the
 selection clears visible chat/product state and rotates the browser-scoped
-session, conversation, and cart identities.
+session, conversation, and cart identities. Reset keeps the explicit shopper
+mode while rotating the conversation identity.
 
 The Slice 3 weather boundary is intentionally dormant. Direct callers can
 construct a typed Visual Crossing adapter for a five-digit US ZIP and an

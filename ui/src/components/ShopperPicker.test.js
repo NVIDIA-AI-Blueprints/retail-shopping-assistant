@@ -47,14 +47,10 @@ const profiles = [
   },
 ];
 
-const buttonWithText = (container, text) =>
-  Array.from(container.querySelectorAll("button")).find((button) =>
-    button.textContent.includes(text)
-  );
-
-const click = (element) => {
+const selectValue = (select, value) => {
   React.act(() => {
-    element.click();
+    select.value = value;
+    select.dispatchEvent(new Event("change", { bubbles: true }));
   });
 };
 
@@ -75,7 +71,7 @@ describe("ShopperPicker", () => {
     container.remove();
   });
 
-  test("supports keyboard, hover, and tap-style preview before confirming", () => {
+  test("requires an explicit Guest or representative-shopper selection", () => {
     const onChange = jest.fn();
     // This test uses React createRoot directly, so rendering must be inside act.
     // eslint-disable-next-line testing-library/no-unnecessary-act
@@ -84,61 +80,74 @@ describe("ShopperPicker", () => {
         <ShopperPicker
           profiles={profiles}
           profilesStatus="ready"
-          selectedShopperProfileId={null}
+          selectedShopperProfileId={undefined}
           disabled={false}
           onChange={onChange}
         />
       );
     });
 
-    const trigger = buttonWithText(container, "Shop as");
-    click(trigger);
+    const select = container.querySelector('[aria-label="Shopper profile"]');
+    expect(select.tagName).toBe("SELECT");
+    expect(select.value).toBe("");
+    expect(Array.from(select.options).map((option) => option.text)).toEqual([
+      "Choose shopper",
+      "Guest mode",
+      "Morgan",
+      "Alex",
+      "Casey",
+      "Jordan",
+      "Riley",
+    ]);
 
-    expect(container.querySelector('[role="dialog"]')).not.toBeNull();
-    expect(container.querySelectorAll(".shopper-picker__option")).toHaveLength(6);
-    expect(document.activeElement).toBe(
-      container.querySelector(".shopper-picker__option")
-    );
+    selectValue(select, "__guest__");
+    expect(onChange).toHaveBeenLastCalledWith(null);
 
-    const morgan = buttonWithText(container, "Morgan");
-    React.act(() => {
-      morgan.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
-    });
-    expect(container.querySelector(".shopper-picker__details").textContent).toContain(
-      profiles[0].behavior
-    );
-    expect(container.querySelector(".shopper-picker__details").textContent).toContain(
-      profiles[0].zipcode
-    );
-
-    const riley = buttonWithText(container, "Riley");
-    React.act(() => {
-      riley.focus();
-    });
-    expect(container.querySelector(".shopper-picker__details").textContent).toContain(
-      profiles[4].shopper_type
-    );
-
-    const casey = buttonWithText(container, "Casey");
-    click(casey);
-    expect(container.querySelector(".shopper-picker__details").textContent).toContain(
-      profiles[2].behavior
-    );
-
-    click(buttonWithText(container, "Shop as Casey"));
-    expect(onChange).toHaveBeenCalledWith("shopper_casey");
-    expect(container.querySelector('[role="dialog"]')).toBeNull();
-    expect(document.activeElement).toBe(trigger);
-
-    click(trigger);
-    click(container.querySelector('[aria-label="Close shopper picker"]'));
-    expect(container.querySelector('[role="dialog"]')).toBeNull();
-    expect(document.activeElement).toBe(trigger);
+    selectValue(select, "shopper_morgan");
+    expect(onChange).toHaveBeenLastCalledWith("shopper_morgan");
   });
 
-  test("blocks opening while streaming or while profiles load", () => {
+  test("keeps Guest available while profiles load or are unavailable", () => {
     const onChange = jest.fn();
-    // This test uses React createRoot directly, so rendering must be inside act.
+    // eslint-disable-next-line testing-library/no-unnecessary-act
+    React.act(() => {
+      root.render(
+        <ShopperPicker
+          profiles={[]}
+          profilesStatus="loading"
+          selectedShopperProfileId={undefined}
+          disabled={false}
+          onChange={onChange}
+        />
+      );
+    });
+
+    let select = container.querySelector('[aria-label="Shopper profile"]');
+    expect(select.disabled).toBe(false);
+    expect(select.textContent).toContain("Guest mode");
+    expect(select.textContent).toContain("Loading profiles…");
+    selectValue(select, "__guest__");
+    expect(onChange).toHaveBeenCalledWith(null);
+
+    // eslint-disable-next-line testing-library/no-unnecessary-act
+    React.act(() => {
+      root.render(
+        <ShopperPicker
+          profiles={[]}
+          profilesStatus="unavailable"
+          selectedShopperProfileId={undefined}
+          disabled={false}
+          onChange={onChange}
+        />
+      );
+    });
+
+    select = container.querySelector('[aria-label="Shopper profile"]');
+    expect(select.disabled).toBe(false);
+    expect(select.textContent).toContain("Profiles unavailable");
+    selectValue(select, "__guest__");
+    expect(onChange).toHaveBeenLastCalledWith(null);
+
     // eslint-disable-next-line testing-library/no-unnecessary-act
     React.act(() => {
       root.render(
@@ -151,31 +160,8 @@ describe("ShopperPicker", () => {
         />
       );
     });
-
-    let trigger = buttonWithText(container, "Shop as");
-    expect(trigger.disabled).toBe(true);
-    click(trigger);
-    expect(container.querySelector('[role="dialog"]')).toBeNull();
-
-    // eslint-disable-next-line testing-library/no-unnecessary-act
-    React.act(() => {
-      root.render(
-        <ShopperPicker
-          profiles={[]}
-          profilesStatus="loading"
-          selectedShopperProfileId="shopper_morgan"
-          disabled={false}
-          onChange={onChange}
-        />
-      );
-    });
-
-    trigger = buttonWithText(container, "Shop as");
-    expect(trigger.disabled).toBe(true);
-    expect(trigger.textContent).toContain("Loading…");
-    expect(trigger.title).toBe("Representative shoppers are loading.");
-    click(trigger);
-    expect(container.querySelector('[role="dialog"]')).toBeNull();
-    expect(onChange).not.toHaveBeenCalled();
+    expect(
+      container.querySelector('[aria-label="Shopper profile"]').disabled
+    ).toBe(true);
   });
 });

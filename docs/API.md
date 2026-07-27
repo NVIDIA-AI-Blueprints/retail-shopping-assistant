@@ -516,6 +516,10 @@ Every ZIP is a five-character string. There are no create, update, or delete
 profile endpoints. This endpoint does not mutate or select a shopper and does
 not change `/query/stream` or `/query/timing`.
 
+The bundled UI uses this response to populate a required new-session dropdown
+with the five profiles plus Guest mode. That client-side gate does not change
+the API contract: `shopper_profile_id` remains optional, and Guest omits it.
+
 ### POST `/query/stream`
 
 Returns a Server-Sent Events (SSE) response stream for shopping assistant

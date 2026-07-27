@@ -18,6 +18,7 @@ import { config } from '../config/config';
 const SESSION_STORAGE_KEY = 'shopping_session_identity';
 const LEGACY_USER_ID_KEY = 'shopping_user_id';
 const SHOPPER_PROFILE_STORAGE_KEY = 'shopping_shopper_profile_id';
+const GUEST_SHOPPER_STORAGE_VALUE = '__guest__';
 const SHOPPER_PROFILE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 const SHOPPER_TYPE_PATTERN = /^[a-z][a-z0-9_]*$/;
 const ZIPCODE_PATTERN = /^[0-9]{5}$/;
@@ -93,36 +94,49 @@ export const rotateUserSession = (): UserSession => {
 };
 
 /**
- * Read the representative shopper selected in this browser tab.
+ * Read the shopper mode explicitly selected in this browser tab.
  *
- * This key is intentionally separate from the chat identity so resetting or
- * rotating a conversation does not silently change the selected shopper.
+ * ``undefined`` means the shopper has not chosen yet, ``null`` means Guest,
+ * and a string is a server-owned representative-shopper ID. This key is
+ * intentionally separate from the chat identity so Reset can rotate a
+ * conversation without silently changing the selected shopper mode.
  */
-export const getSelectedShopperProfileId = (): string | null => {
+export const getSelectedShopperProfileId = (): string | null | undefined => {
   const storedProfileId = sessionStorage.getItem(SHOPPER_PROFILE_STORAGE_KEY);
-  if (!storedProfileId) return null;
+  if (!storedProfileId) return undefined;
+  if (storedProfileId === GUEST_SHOPPER_STORAGE_VALUE) return null;
   if (!SHOPPER_PROFILE_ID_PATTERN.test(storedProfileId)) {
     sessionStorage.removeItem(SHOPPER_PROFILE_STORAGE_KEY);
-    return null;
+    return undefined;
   }
   return storedProfileId;
 };
 
 /**
- * Persist only the selected profile ID. Profile contents always come from the
- * server-owned read endpoint.
+ * Persist an explicit Guest or representative-shopper choice. Profile
+ * contents always come from the server-owned read endpoint.
  */
 export const setSelectedShopperProfileId = (
   shopperProfileId: string | null
 ): void => {
   if (shopperProfileId === null) {
-    sessionStorage.removeItem(SHOPPER_PROFILE_STORAGE_KEY);
+    sessionStorage.setItem(
+      SHOPPER_PROFILE_STORAGE_KEY,
+      GUEST_SHOPPER_STORAGE_VALUE
+    );
     return;
   }
   if (!SHOPPER_PROFILE_ID_PATTERN.test(shopperProfileId)) {
     throw new Error('Invalid shopper profile ID.');
   }
   sessionStorage.setItem(SHOPPER_PROFILE_STORAGE_KEY, shopperProfileId);
+};
+
+/**
+ * Return the browser tab to the required unchosen shopper state.
+ */
+export const clearSelectedShopperProfileId = (): void => {
+  sessionStorage.removeItem(SHOPPER_PROFILE_STORAGE_KEY);
 };
 
 /**

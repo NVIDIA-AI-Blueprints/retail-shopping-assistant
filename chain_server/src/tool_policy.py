@@ -107,6 +107,10 @@ SHOPPING_TOOL_POLICIES: Mapping[str, ToolPolicy] = MappingProxyType(
             allowed_skills_any_of=frozenset({"store-policy-answers"}),
             risk="read",
         ),
+        "get_weather_forecast_tool": ToolPolicy(
+            allowed_skills_any_of=frozenset({"event-context"}),
+            risk="read",
+        ),
     }
 )
 

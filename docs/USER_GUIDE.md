@@ -82,9 +82,16 @@ material requirement, cart action, product fact, or weather fact. Saved ZIP is
 not proof of where an event will occur. For occasion-led styling, the assistant
 may treat it as a tentative local-event candidate and naturally ask whether the
 event uses that saved area or is elsewhere when the answer would materially
-change the guidance. It does not echo the ZIP digits. A shopper-stated
-destination or venue always wins. Guest sends no profile ID and has no saved-
-location fallback.
+change the guidance. It does not echo the ZIP digits. For weather, the server
+accepts that saved area only when you explicitly say the event is in `my` or
+`the` usual/home area, or when you answer affirmatively immediately after the
+assistant asks about that area. If it then asks for the date, an immediate
+date-only reply preserves that confirmation. A new explicit place, address,
+postal code, question, negation, uncertainty, or location override rejects
+saved-area mode. A modal lowercase `may be` is treated as uncertainty, while a
+calendar date such as `May 5` remains valid. A shopper-stated destination or
+venue always wins and prevents fallback to the saved ZIP. Guest sends no
+profile ID and has no saved-location fallback.
 
 Location and venue are styling context, not weather or product facts. For
 example, “wedding in Cancun” does not imply a beach; the assistant may ask one
@@ -96,10 +103,64 @@ question. Ceremony and reception both stated as on the sand in Cancun are
 complete for this helper. If you ask to see products now, the assistant starts
 with one grounded requested or core product role and, if location is still
 missing and materially changes the next recommendation, asks only event
-location beside the results; venue is deferred. The assistant performs no
-weather lookup and does not infer wind, temperature, rain, comfort, or product
-performance in this slice. A dormant internal weather client remains
-unavailable to the assistant and UI.
+location beside the results; venue is deferred.
+
+Weather provider calls are disabled by default. When an operator has enabled
+them, the assistant gets one forecast attempt in a turn only after it has an
+accepted saved-area confirmation or one exact place, address, or postal-code
+phrase you supplied, plus an exact event date, complete date range, or the
+exact phrase `next week`. It keeps your place phrase as the authority. If that
+phrase is an abbreviation such as `NYC` or an ambiguous name such as
+`Springfield`, the provider query must keep that exact phrase first and may add
+only one or two region/country qualifiers. It sends `NYC` directly or uses
+`NYC, NY`; it does not rewrite the abbreviation. `Springfield, TX` is one
+possible explicit regional assumption, but it never invents a ZIP or numeric
+component you did not state. An invalidly formed call consumes that attempt
+rather than being retried. The provider resolution is shown so its model-owned
+place assumption is correctable.
+`Next week` is
+resolved server-side from one captured UTC date to the next
+Monday-through-Sunday range; a current negation or different date overrides an
+earlier `next week`. An unambiguous single-day phrase such as
+`tomorrow` is resolved against that same date into an exact day; other
+ambiguous or unresolved relative dates prompt one exact-date question. There
+is no separate weather screen or API response type.
+
+Successful weather guidance contains one server-authored canonical forecast
+block. When you said `next week`, it first shows the
+Monday-through-Sunday dates used. It then includes every validated day's date,
+condition, available low/high temperature, precipitation probability/types,
+[Weather Data Provided by Visual Crossing](https://www.visualcrossing.com/),
+and the warning that forecasts can change. The block appears exactly once and
+cannot be shortened by model-written prose. Only evidence fetched in the
+current turn supports those weather facts. When you give a place, the response
+also states the place the provider resolved so the geographic assumption is
+visible and reversible; that resolved place is omitted when the confirmed saved
+ZIP is used.
+Weather tool inputs/output are redacted from diagnostics and failed-turn
+partial output; saved profile ZIP is also scrubbed from diagnostic string keys
+and values. The final assistant summary remains part of the durable
+conversation and may be exactly replayed, but prior forecast summaries are
+redacted from later graph and grounding-editor discussion, and prior weather
+tool output is not reused as evidence.
+Grounding-editor sentences containing weather-domain fact language or
+fact-shaped dates/values are removed while ordinary grounded styling language
+remains. If none remains, deterministic catalog rendering plus the canonical
+weather block is used.
+When a context-only reply applies weather to options already shown, that
+accepted reuse path bypasses the grounding editor. On success, the server
+renders the exact names from the newest candidate set, one bounded styling
+direction derived from the structured forecast, and the canonical forecast
+block. If the provider fails, it keeps those prior names and shows a typed safe
+weather-failure message.
+
+A forecast may guide general styling, but it does not prove that a product is
+warm, waterproof, breathable, comfortable, safe, surface-suitable, or otherwise
+performance-ready, and it cannot silently create a catalog must-have. Before
+enabling shopper traffic, the operator must confirm that the selected Visual
+Crossing plan permits the intended attribution, display, storage, and sharing,
+including durable assistant summaries and downstream app-model/output-guardrail
+processing.
 
 Changing the dropdown starts a clean visible session: chat, product cards,
 selected product, attachments, inference activity, and metrics are cleared, and

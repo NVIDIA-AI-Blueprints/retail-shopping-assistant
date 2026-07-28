@@ -22,3 +22,10 @@ answers:
     styling context. Do not claim a live forecast or infer heat, humidity, rain,
     wind, breeze, terrain performance, comfort, breathability, or other
     unverified product attributes.
+diagnostic_expectations:
+  - required_skills: [outfit-styling, event-context]
+    forbidden_tools: [get_weather_forecast_tool, search_catalog_tool]
+    weather_tool_calls: 0
+  - required_skills: [outfit-styling, event-context]
+    forbidden_tools: [get_weather_forecast_tool, search_catalog_tool]
+    weather_tool_calls: 0

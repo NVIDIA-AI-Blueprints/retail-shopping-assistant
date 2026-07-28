@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Provider-neutral, dormant daily weather forecast contracts and adapter."""
+"""Provider-neutral daily weather forecast contracts and adapter."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ import re
 from datetime import date as CalendarDate
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Literal, Mapping, Protocol
+from urllib.parse import quote
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import requests
@@ -31,6 +32,7 @@ VISUAL_CROSSING_BASE_URL = (
     "https://weather.visualcrossing.com/"
     "VisualCrossingWebServices/rest/services/timeline"
 )
+VISUAL_CROSSING_ATTRIBUTION_LABEL = "Weather Data Provided by Visual Crossing"
 VISUAL_CROSSING_ATTRIBUTION_URL = "https://www.visualcrossing.com/"
 MAX_PROVIDER_RESPONSE_BYTES = 256 * 1024
 MAX_WEATHER_DAYS = 15
@@ -60,14 +62,14 @@ WeatherFailureCode = Literal[
     "weather_response_invalid",
 ]
 
-_ASCII_ZIP_RE = re.compile(r"^[0-9]{5}$", flags=re.ASCII)
 _ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$", flags=re.ASCII)
 _ISO_DATE_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$", flags=re.ASCII)
+_CONTROL_CHARACTER_RE = re.compile(r"[\x00-\x1f\x7f]")
 _FAILURE_DETAILS: dict[WeatherFailureCode, tuple[str, bool]] = {
     "weather_disabled": ("Weather lookup is disabled.", False),
     "weather_config_invalid": ("Weather configuration is incomplete or invalid.", False),
     "weather_request_invalid": ("The weather request is invalid.", False),
-    "weather_location_not_found": ("The ZIP code could not be resolved.", False),
+    "weather_location_not_found": ("The location could not be resolved.", False),
     "weather_outside_forecast_horizon": (
         "The requested date is outside the live forecast horizon.",
         False,
@@ -111,7 +113,7 @@ _ICON_CONDITIONS: dict[str, WeatherCondition] = {
 
 
 class WeatherConfig(BaseModel):
-    """Closed configuration for direct construction of the dormant client."""
+    """Closed configuration for direct construction of the weather client."""
 
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
@@ -154,20 +156,28 @@ class WeatherConfig(BaseModel):
 
 
 class WeatherRequest(BaseModel):
-    """Closed ZIP and date input accepted by the dormant tool."""
+    """Closed named-location and date input accepted by the weather adapter."""
 
     model_config = ConfigDict(extra="forbid", strict=True)
 
-    zipcode: str
+    location: str = Field(min_length=1, max_length=256)
     date: CalendarDate | None = None
     start_date: CalendarDate | None = None
     end_date: CalendarDate | None = None
 
-    @field_validator("zipcode", mode="before")
+    @field_validator("location", mode="before")
     @classmethod
-    def validate_zipcode(cls, value: Any) -> str:
-        if not isinstance(value, str) or not _ASCII_ZIP_RE.fullmatch(value):
-            raise ValueError("zipcode must be exactly five ASCII digits")
+    def validate_location(cls, value: Any) -> str:
+        if (
+            not isinstance(value, str)
+            or not value
+            or value != value.strip()
+            or len(value) > 256
+            or _CONTROL_CHARACTER_RE.search(value) is not None
+        ):
+            raise ValueError(
+                "location must be one trimmed, single-line place value"
+            )
         return value
 
     @field_validator("date", "start_date", "end_date", mode="before")
@@ -232,8 +242,8 @@ class WeatherDay(BaseModel):
     condition: WeatherCondition
     precipitation_probability_pct: float = Field(ge=0, le=100)
     precipitation_types: list[PrecipitationType]
-    temperature_low_f: float | None = None
-    temperature_high_f: float | None = None
+    temperature_low_f: float | None = Field(default=None, ge=-150, le=150)
+    temperature_high_f: float | None = Field(default=None, ge=-150, le=150)
 
 
 class WeatherResult(BaseModel):
@@ -385,7 +395,7 @@ class VisualCrossingWeatherClient:
             _close_response(response)
 
     def _request_url(self, request: WeatherRequest) -> str:
-        suffix: list[str] = [request.zipcode]
+        suffix: list[str] = [quote(request.location, safe="")]
         explicit_window = request.explicit_window()
         if explicit_window is None:
             suffix.append("today")
@@ -415,6 +425,7 @@ class VisualCrossingWeatherClient:
             or not resolved_location.strip()
             or resolved_location != resolved_location.strip()
             or len(resolved_location) > 512
+            or _CONTROL_CHARACTER_RE.search(resolved_location) is not None
             or not isinstance(timezone_name, str)
             or not timezone_name
             or len(timezone_name) > 128
@@ -470,7 +481,7 @@ class VisualCrossingWeatherClient:
             timezone=timezone_name,
             days=normalized_days,
             attribution=WeatherAttribution(
-                label="Weather Data Provided by Visual Crossing",
+                label=VISUAL_CROSSING_ATTRIBUTION_LABEL,
                 url=VISUAL_CROSSING_ATTRIBUTION_URL,
             ),
         )
@@ -585,6 +596,11 @@ def _normalize_day(
     low = _optional_finite_number(raw_day.get("tempmin"))
     high = _optional_finite_number(raw_day.get("tempmax"))
     if isinstance(low, WeatherFailure) or isinstance(high, WeatherFailure):
+        return weather_failure("weather_response_invalid")
+    if (
+        (low is not None and not -150 <= low <= 150)
+        or (high is not None and not -150 <= high <= 150)
+    ):
         return weather_failure("weather_response_invalid")
     if low is not None and high is not None and low > high:
         return weather_failure("weather_response_invalid")

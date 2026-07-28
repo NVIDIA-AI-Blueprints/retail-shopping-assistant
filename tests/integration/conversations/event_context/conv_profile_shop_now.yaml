@@ -1,13 +1,42 @@
 set_name: Selected-profile shop-now event context
-shopper_profile_id: shopper_alex
+shopper_profile_id: shopper_jordan
 queries:
-  - "Show me dresses to start a semi-formal wedding outfit."
+  - "I’m shopping for a semi-formal wedding"
+  - "NYC, on an outdoor patio next week."
 answers:
   - >-
-    Present grounded dress candidates rather than responding only with a
-    clarification or searching an unrequested second product role. Use the saved
-    ZIP only as a tentative event-location candidate: ask one natural question
-    framed around whether the wedding uses the shopper's usual area or is
-    elsewhere, and defer venue setting rather than combining it into this
-    response. Do not echo ZIP digits, infer weather or venue, ask about dress
-    code, or claim unverified product performance.
+    Treat the occasion alone as a request to start shopping, not as a request
+    for a complete multi-role look. Run one catalog search for one useful core
+    role and present grounded candidates from that role. Use the saved ZIP only
+    as a tentative event-location candidate: ask one natural question framed
+    around whether the wedding is in the shopper's usual area or elsewhere,
+    never a bare where, city, or destination question. Defer venue setting
+    rather than combining it into this response. Do not echo ZIP digits, infer
+    weather or venue, ask about dress code, or claim unverified product
+    performance.
+  - >-
+    Treat this as fulfillment of the prior event-context question, not as a new
+    product or refinement request. Retain the prior grounded candidates and run
+    no new catalog search. Use NYC as the shopper-provided event location
+    without inventing a ZIP, resolve "next week" deterministically to the next
+    calendar Monday-through-Sunday range, and call weather exactly once. State
+    the provider-resolved forecast location as a transparent assumption, give
+    concise patio-relevant styling guidance grounded only in the returned
+    forecast evidence, include the clickable "Weather Data Provided by Visual
+    Crossing" attribution and forecast-can-change warning, and ask no repeated
+    location, ZIP, venue, or date question. Do not claim that a candidate has
+    unverified weather, comfort, or performance properties.
+diagnostic_expectations:
+  - required_skills: [outfit-styling, event-context]
+    required_tools: [search_catalog_tool]
+    forbidden_tools: [get_weather_forecast_tool]
+    tool_call_counts:
+      search_catalog_tool: 1
+    weather_tool_calls: 0
+  - required_skills: [outfit-styling, event-context]
+    required_tools: [get_weather_forecast_tool]
+    forbidden_tools: [search_catalog_tool]
+    tool_call_counts:
+      get_weather_forecast_tool: 1
+      search_catalog_tool: 0
+    weather_tool_calls: 1

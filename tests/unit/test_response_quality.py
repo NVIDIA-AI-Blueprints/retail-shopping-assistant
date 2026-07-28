@@ -4,6 +4,8 @@ import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RESPONSE_QUALITY_PATH = REPO_ROOT / "tests" / "integration" / "response_quality.py"
@@ -92,3 +94,108 @@ def test_judge_test_remains_compatible_without_prior_turns(monkeypatch):
 
     assert result == {"score": 5, "justification": "Clear and complete."}
     assert "ACTUAL PRIOR CONVERSATION" not in captured["messages"][1]["content"]
+
+
+def test_diagnostic_expectations_accept_redacted_event_weather_trace(monkeypatch):
+    response_quality = _load_response_quality(monkeypatch)
+
+    response_quality._validate_diagnostic_expectations(
+        {
+            "required_skills": ["outfit-styling", "event-context"],
+            "forbidden_skills": ["product-discovery"],
+            "required_tools": ["get_weather_forecast_tool"],
+            "forbidden_tools": ["search_catalog_tool"],
+            "tool_call_counts": {"get_weather_forecast_tool": 1},
+            "weather_tool_calls": 1,
+        },
+        {
+            "skill_files_read": [
+                "/shopper/outfit-styling/SKILL.md",
+                "/shopper/event-context/SKILL.md",
+            ],
+            "tool_calls": [
+                {
+                    "tool_name": "get_weather_forecast_tool",
+                    "arguments": {"redacted": True},
+                    "status": "completed",
+                }
+            ],
+        },
+        label="weather turn",
+    )
+
+
+def test_diagnostic_expectations_enforce_exact_tool_call_count(monkeypatch):
+    response_quality = _load_response_quality(monkeypatch)
+
+    with pytest.raises(
+        AssertionError,
+        match="expected 1 search_catalog_tool calls, found 2",
+    ):
+        response_quality._validate_diagnostic_expectations(
+            {"tool_call_counts": {"search_catalog_tool": 1}},
+            {
+                "tool_calls": [
+                    {
+                        "tool_name": "search_catalog_tool",
+                        "status": "rejected",
+                    },
+                    {
+                        "tool_name": "search_catalog_tool",
+                        "status": "completed",
+                    },
+                ]
+            },
+            label="occasion turn",
+        )
+
+
+@pytest.mark.parametrize(
+    ("diagnostics", "message"),
+    [
+        (
+            {
+                "skill_files_read": ["/shopper/outfit-styling/SKILL.md"],
+                "tool_calls": [],
+            },
+            "missing required skill event-context",
+        ),
+        (
+            {
+                "skill_files_read": [
+                    "/shopper/outfit-styling/SKILL.md",
+                    "/shopper/event-context/SKILL.md",
+                ],
+                "tool_calls": [
+                    {
+                        "tool_name": "get_weather_forecast_tool",
+                        "arguments": {
+                            "location": "Seattle",
+                            "location_query": "Seattle, WA",
+                            "relative_date": "next_week",
+                        },
+                        "status": "completed",
+                    }
+                ],
+            },
+            "weather tool arguments were not redacted",
+        ),
+    ],
+)
+def test_diagnostic_expectations_fail_before_judging(
+    monkeypatch,
+    diagnostics,
+    message,
+):
+    response_quality = _load_response_quality(monkeypatch)
+
+    with pytest.raises(AssertionError, match=message):
+        response_quality._validate_diagnostic_expectations(
+            {
+                "required_skills": ["outfit-styling", "event-context"],
+                "required_tools": ["get_weather_forecast_tool"],
+                "weather_tool_calls": 1,
+            },
+            diagnostics,
+            label="weather turn",
+        )

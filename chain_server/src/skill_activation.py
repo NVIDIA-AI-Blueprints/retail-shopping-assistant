@@ -110,6 +110,7 @@ class ShopperSkillActivationMiddleware(AgentMiddleware):
         self._granted_tools: frozenset[str] = frozenset()
         self._activation_validation_failures = 0
         self._clarification_response = ""
+        self._runtime_tool_rejections: dict[str, str] = {}
         self._previous_selected_skills = tuple(
             dict.fromkeys(
                 name
@@ -118,6 +119,16 @@ class ShopperSkillActivationMiddleware(AgentMiddleware):
             )
         )
         self._lock = Lock()
+
+    def deny_tool_for_turn(self, tool_name: str, rejection: str) -> None:
+        """Irreversibly hide and execution-block one shopping tool this turn."""
+
+        if tool_name not in SHOPPING_TOOL_POLICIES:
+            raise ValueError(f"Unknown shopping tool: {tool_name}")
+        if not rejection.startswith("STOP_TOOL_USE:"):
+            raise ValueError("Runtime tool rejection must stop further tool use.")
+        with self._lock:
+            self._runtime_tool_rejections.setdefault(tool_name, rejection)
 
     def activate(
         self,
@@ -230,6 +241,7 @@ class ShopperSkillActivationMiddleware(AgentMiddleware):
             skill_files = dict(self._skill_files)
             selected_skills = self._selected_skills
             granted_tools = self._granted_tools
+            runtime_tool_rejections = dict(self._runtime_tool_rejections)
         if status == "active":
             tools = [
                 candidate
@@ -239,14 +251,19 @@ class ShopperSkillActivationMiddleware(AgentMiddleware):
                     selected_skills,
                     granted_tools,
                 )
+                and _tool_name(candidate) not in runtime_tool_rejections
             ]
             tool_choice = request.tool_choice
-            if isinstance(tool_choice, str) and not _tool_is_visible(
-                tool_choice,
-                selected_skills,
-                granted_tools,
-            ):
-                tool_choice = None
+            if isinstance(tool_choice, str):
+                if (
+                    not _tool_is_visible(
+                        tool_choice,
+                        selected_skills,
+                        granted_tools,
+                    )
+                    or tool_choice in runtime_tool_rejections
+                ):
+                    tool_choice = None
             return request.override(
                 tools=tools,
                 tool_choice=tool_choice,
@@ -310,12 +327,15 @@ class ShopperSkillActivationMiddleware(AgentMiddleware):
             status = self._status
             selected_skills = self._selected_skills
             granted_tools = self._granted_tools
+            runtime_rejection = self._runtime_tool_rejections.get(tool_name)
         if status != "active" or not tool_is_granted(
             tool_name,
             selected_skills,
             granted_tools,
         ):
             return SKILL_TOOL_NOT_GRANTED
+        if runtime_rejection is not None:
+            return runtime_rejection
         return None
 
     def _validate_model_response(self, response: ModelResponse) -> ModelResponse:

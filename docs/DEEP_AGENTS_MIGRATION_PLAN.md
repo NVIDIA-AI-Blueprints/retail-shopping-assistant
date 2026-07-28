@@ -383,24 +383,84 @@ The tool layer is small, typed, and deterministic:
 - `check_active_promotions`: read-only no-I/O stub that reports no active sale or
   promotion configured through the assistant. Catalog retrieval and price do
   not establish markdown status.
-- `get_weather_forecast`: implemented provider-neutral read-only contract for
-  an exact US ZIP and optional ISO date/range, but dormant in Slice 3 and not
-  registered, granted, prompted, or connected to shopper context.
+- `get_weather_forecast_tool`: registered provider-neutral read-only contract
+  for a confirmed saved ZIP or exact shopper-authored place plus a supported
+  event date/window, granted only by `event-context` beside
+  `outfit-styling`.
 
 `load_customer_persona` remains unregistered. Representative-shopper context is
 resolved as part of the existing durable turn-start call, not through an
 agent-callable tool. It does not grant skills or tools and is not independently
 refetched by shopper skills.
 
-`get_weather_forecast` is likewise absent from the serving registry. Direct
-construction validates a closed ZIP/date schema, returns bounded normalized
-daily evidence through the Visual Crossing adapter, rejects non-live forecast
-sources, and emits sanitized typed failures. `WEATHER_ENABLED=false` is the
-default and needs no credential; an enabled direct client reads the key only
-from the environment variable named by config. A later leveraging slice owns
-relative-date resolution, trusted location precedence, agent registration,
-grounded weather evidence, attribution display, uncertainty language, and the
-rule that weather cannot silently become a catalog must-have.
+`get_weather_forecast_tool` is now in the serving registry and immutable policy.
+Only `event-context` grants it, and that modifier still requires
+`outfit-styling`. The request-bound wrapper permits one attempt per turn, and a
+schema-invalid call consumes it. Every call requires `candidate_action`.
+`reuse_prior_candidates` is valid only when a historical candidate set exists
+and the current turn solely supplies event context for those options without
+requesting new or refined products. Once accepted, it irreversibly hides and
+execution-blocks catalog search and closes the remaining tool loop for
+synthesis before provider I/O, so provider failure cannot reopen search.
+`search_new_candidates` is required for an explicit current-turn new/refined
+product request or when no prior candidates can be reused. Accepted reuse asks
+no follow-up question and does not initiate the next product role. Location
+authority is either
+`confirmed_saved_zip`, with both `location` and `location_query` omitted after
+the narrow deterministic usual/home-area confirmation gate, or
+`shopper_provided_location`, with one bounded exact named-place, address, or
+postal-code phrase copied from
+shopper-authored text as `location`. For an abbreviation or geographically
+ambiguous name, optional `location_query` must preserve that exact phrase as
+its first component and may append only one or two comma-separated
+region/country qualifiers. Do not rewrite abbreviations: send `NYC` directly
+or qualify it as `NYC, NY`; `Springfield, TX` is a valid explicit regional
+assumption. It never introduces an unstated ZIP or numeric component. Semantic
+equivalence remains model-owned rather than deterministic proof and is
+correctable through provider-resolution disclosure. A current explicit destination takes
+precedence and forbids silent
+saved-ZIP fallback; questions, negation, or uncertainty reject saved mode.
+Modal lowercase `may be` is uncertainty, while calendar `May 5` remains valid.
+
+The date authority is one exact ISO event date, one complete inclusive range,
+or `relative_date=next_week` when the shopper used the exact phrase `next
+week`. The request wrapper derives the latter from the turn's single captured
+UTC date as the next Monday-through-Sunday range. A current negation or
+different date supersedes an earlier use. An unambiguous single-day
+phrase such as `tomorrow` is resolved by the model against that same anchor
+into an exact ISO date. Other ambiguous or unresolved relative dates receive
+one date clarification.
+
+The Visual Crossing adapter returns bounded normalized daily evidence, rejects
+non-live forecast sources, and emits sanitized typed failures.
+`WEATHER_ENABLED=false` remains the default and needs no credential. Only
+successful current-turn evidence supports forecast claims. For an exact
+shopper-authored location, the projection includes the provider-resolved place
+and deterministic final rendering discloses it as the location assumption,
+making any `location_query` qualification reversible. The resolved place is
+omitted in saved-ZIP mode. Prior durable assistant forecast
+summaries are redacted from graph and grounding-editor recent discussion while
+remaining stored and exactly replayable; prior weather tool messages are
+excluded from prior evidence. Diagnostics and failed-turn partial output redact
+weather arguments/results, and diagnostics recursively scrub saved ZIP from
+string keys and values. Deterministic final rendering appends one exact
+canonical block containing every validated daily date, condition, available
+low/high temperature, precipitation probability/types, attribution, and
+forecast uncertainty. For non-reuse weather paths, grounding-editor sentences
+containing weather-domain fact language or fact-shaped dates/values are
+removed while ordinary grounded styling language remains. Accepted reuse
+bypasses the grounding editor entirely. On success, the server renders the
+exact names from the newest historical candidate set, one bounded styling
+direction derived from structured forecast evidence, and the canonical
+forecast block. On provider failure, it renders those prior names plus the
+typed safe weather failure. Forecast conditions may guide styling judgment, but cannot prove
+product performance or silently become a catalog must-have. No
+weather-specific FastAPI, SSE, or UI shape was added.
+
+Before enabling shopper traffic, the operator must confirm that the selected
+Visual Crossing plan permits the intended attribution, display, storage, and
+sharing, including durable final assistant summaries and processing by the
+downstream app model and output guardrails.
 
 The active shopper-serving Deep Agents tool registry is documented in
 [Shopper Agent Tool Registry](SHOPPER_AGENT_TOOL_REGISTRY.md). The active skill

@@ -44,7 +44,7 @@ EXPECTED_SKILL_POLICY = {
     "event-context": {
         "role": "modifier",
         "exclusive_group": None,
-        "tools_granted": [],
+        "tools_granted": ["get_weather_forecast_tool"],
     },
     "outfit-styling": {
         "role": "primary",
@@ -184,61 +184,106 @@ def test_outfit_styling_owns_domain_judgment_and_clarification() -> None:
     assert "ordinary shop-now occasion request" in normalized
 
 
-def test_event_context_is_a_narrow_no_tool_styling_modifier() -> None:
+def test_event_context_is_a_narrow_weather_styling_modifier() -> None:
     frontmatter, body = _read_skill_path(
         REGISTERED_SKILL_PATHS["event-context"]
     )
     normalized = " ".join(body.lower().split())
 
     assert frontmatter["role"] == "modifier"
-    assert frontmatter["tools_granted"] == []
+    assert frontmatter["tools_granted"] == ["get_weather_forecast_tool"]
     assert "only with `outfit-styling`" in body
     assert "an explicit destination overrides saved zip" in normalized
     assert "cancun does not mean beach" in normalized
     assert "ask at most one short question, never a questionnaire" in normalized
-    assert "that question may confirm destination or venue only" in normalized
-    assert "do not append dress code, event time, product role" in normalized
+    assert "ask for location before date" in normalized
+    assert "do not ask both in one turn" in normalized
+    assert "do not append dress code, time of day, product role" in normalized
     assert "## context authority" in normalized
     assert "## one-question policy" in normalized
+    assert "## forecast lookup" in normalized
     assert "## response mode" in normalized
+    assert "## evidence boundary" in normalized
     assert "exactly two short sentences with no heading or list" in normalized
     assert "one short paragraph of at most four sentences" in normalized
     assert "begin with one grounded requested or core product role" in normalized
-    assert (
-        "if event location is still missing and materially changes the next "
-        "recommendation"
-    ) in normalized
     assert "with saved zip as the only clue" in normalized
     assert "without saved zip, ask the destination directly" in normalized
     assert "do not re-ask established context as a finer variant" in normalized
     assert "invent hypothetical exceptions" in normalized
+    assert "context fulfillment, not a new catalog request" in normalized
+    assert "preserve prior candidates and do not search again" in normalized
     assert "sand-friendly" in normalized
+    assert (
+        "use saved zip for a forecast only after the shopper explicitly "
+        "confirms"
+    ) in normalized
+    assert (
+        "an explicit destination forbids fallback to saved zip"
+    ) in normalized
+    assert "valid forecast location authority" in normalized
+    assert "keep its shortest sufficient phrase exactly" in normalized
+    assert "a separate `location_query`" in normalized
+    assert "must preserve that exact phrase as its first component" in normalized
+    assert "one or two comma-separated" in normalized
+    assert "a common abbreviation such as `nyc` remains unchanged" in normalized
+    assert "ambiguous name such as `springfield`" in normalized
+    assert "`springfield, tx`" in normalized
+    assert "never derive a representative zip" in normalized
+    assert "add an unstated numeric component" in normalized
+    assert "call `get_weather_forecast_tool` at most once in a turn" in normalized
+    assert (
+        "use `confirmed_saved_zip` only after explicit usual-area confirmation"
+    ) in normalized
+    assert (
+        "use `shopper_provided_location` with the exact shopper phrase in "
+        "`location`"
+    ) in normalized
+    assert "supply an exact iso event date or complete inclusive range" in normalized
+    assert "use `relative_date=next_week`" in normalized
+    assert "next calendar monday through sunday" in normalized
+    assert "visual crossing resolves the shopper's phrase" in normalized
+    assert "not as proof of shopper intent" in normalized
+    assert "make no weather claim" in normalized
+    assert "live forecast is not available yet" in normalized
+    assert "only successful current-turn forecast evidence" in normalized
+    assert "weather data provided by visual crossing" in normalized
+    assert "forecasts can change" in normalized
+    assert "never proves that a catalog item is" in normalized
+    assert "never creates an unstated product must-have" in normalized
     response_guidance = frontmatter["response_guidance"].lower()
-    assert 'use "usual area" only if prompt says candidate present' in (
-        response_guidance
-    )
-    assert "never imply a saved/home/usual area" in response_guidance
-    assert "asks event location only when still missing and material" in (
-        response_guidance
-    )
-    assert "never ask dress code, time, role, or preferences" in (
-        response_guidance
-    )
-    assert "explicit destination overrides saved zip" in response_guidance
-    assert "no list or further destination-or-venue question" in response_guidance
-    assert "venue setting covering the relevant event portions is complete" in (
-        response_guidance
-    )
+    assert "explicit location overrides saved zip" in response_guidance
     assert 'never ask "usual area" afterward' in response_guidance
-    assert "not shopping, shipping, availability" in response_guidance
-    assert "one paragraph, up to four sentences, no list" in response_guidance
+    assert "saved zip is tentative" in response_guidance
+    assert '"usual area or elsewhere?"' in response_guidance
+    assert "without a candidate, ask destination" in response_guidance
+    assert "place, address, or postal code is enough" in (
+        response_guidance
+    )
+    assert "keep its shortest exact phrase as authority" in response_guidance
+    assert "`location_query`" in response_guidance
+    assert "never invent a zip" in response_guidance
+    assert "provider resolution as a reversible assumption" in response_guidance
+    assert "ask one question maximum" in response_guidance
+    assert 'exact "next week" means next monday-sunday' in response_guidance
+    assert "context-only does not request products" in (
+        response_guidance
+    )
+    assert "retain prior candidates and do not search again" in response_guidance
+    assert "occasion-only shop-now: one core-role search" in response_guidance
+    assert "not a complete look" in response_guidance
+    assert "preserve the canonical forecast" in response_guidance
+    assert "visual crossing attribution" in response_guidance
+    assert "change warning" in response_guidance
+    assert "weather cannot prove product performance" in response_guidance
+    assert "create an unstated constraint" in response_guidance
     assert "generic advice is possible" in frontmatter["description"]
     assert "do not use for location-independent styling" in (
         frontmatter["description"].lower()
     )
     assert "do not echo its digits" in normalized
-    assert "perform no weather lookup or inference" in normalized
-    assert "get_weather_forecast_tool" not in body
+    assert "get_weather_forecast_tool" in body
+    assert "run exactly one catalog search for one useful core role" in normalized
 
 
 def test_outfit_styling_does_not_own_catalog_transport_or_cart_execution() -> None:

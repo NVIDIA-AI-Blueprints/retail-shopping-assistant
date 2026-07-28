@@ -231,15 +231,24 @@ conversation, and returns exactly `shopper_type`, `behavior`, and `zipcode`.
 The runtime renders that typed snapshot once as soft current-turn guidance.
 Explicit current and recent shopper statements take precedence; the snapshot
 cannot establish budget, product constraints or facts, cart intent, skill
-selection, or tool grants. Saved ZIP does not trigger weather behavior or prove
-current/event location, shopping destination, shipping destination, or
-availability. The no-tool `event-context` modifier may use it only as a
+selection, or tool grants. Saved ZIP does not by itself trigger weather
+behavior or prove current/event location, shopping destination, shipping
+destination, or availability. The `event-context` modifier may use it only as a
 tentative event-location candidate beside outfit styling; explicit
 shopper-stated destination or venue context takes precedence. When that ZIP is
 the only location clue, the helper confirms whether to plan around the
 shopper's usual area or elsewhere instead of requesting a city from scratch.
-The final response editor receives only a candidate-present/candidate-absent
-statement, never ZIP digits.
+The server releases that ZIP to weather only through a narrow confirmation
+gate: a current location-neutral statement explicitly naming `my`/`the`
+usual/home area, a bare affirmative immediately after the assistant's
+usual/home-area question, or an
+immediate strict date-only follow-up to an accepted confirmation. Any exact
+current place, address, postal code, question, negation, uncertainty, or
+location override rejects saved mode. A bounded exact shopper-authored place
+phrase can instead authorize explicit-location mode without converting it to a
+representative ZIP. Modal lowercase `may be` is uncertainty; a calendar date
+such as `May 5` remains valid. The final response editor receives only a
+candidate-present/candidate-absent statement, never ZIP digits.
 The behavior value is validated as one trimmed line at both registry bootstrap
 and turn-start serialization boundaries. Guest turns receive neither the
 context block nor its profile-specific precedence and non-authority prompt
@@ -346,6 +355,16 @@ interface AgentDiagnostics {
   memory_finalize_error?: string;
 }
 ```
+
+Weather is a deliberate exception to the otherwise detailed operator trace:
+every `get_weather_forecast_tool` argument object is replaced with
+`{"redacted": true}`, and its output is omitted from diagnostics. Failed-turn
+`partial_graph_messages` likewise replace weather calls and output with
+redacted placeholders. Saved profile ZIP is recursively scrubbed from
+diagnostic string keys and values. The final shopper-facing forecast summary
+can still be stored as ordinary durable assistant text and exactly replayed,
+but a recognized prior forecast summary is replaced with a redaction marker in
+the next graph and grounding-editor recent discussion.
 
 `final_termination_reason: "memory_start_failed"` means the required durable
 start failed before guardrail/model/tool work. A generic finalize transport or
@@ -495,14 +514,86 @@ interface StreamingChunk {
 
 ### Weather boundary (no HTTP route)
 
-Slice 3 adds a disabled, directly constructible weather client/tool inside the
-chain server, but it exposes no application, chain-server, or memory-service
-weather endpoint. Its tool schema and provider contract are absent from agent
-registration, model-visible tools, query request/response schemas, and UI
-payloads; serving prompts explicitly prohibit weather lookups and inference.
-`/query/stream` and `/query/timing` therefore do not perform weather lookups,
-including when a selected shopper has a saved ZIP or a message mentions an
-event or date.
+The chain server registers `get_weather_forecast_tool` as a read-only internal
+agent tool, granted only by `event-context` beside `outfit-styling`. It exposes
+no application, chain-server, or memory-service weather endpoint and adds no
+field or event to the existing query, SSE, or UI contracts.
+
+`WEATHER_ENABLED=false` is the default. When an operator enables it, a normal
+`/query/stream` or `/query/timing` turn gets one weather-call attempt only after
+event context has both one permitted location authority and either an exact ISO
+event date, a complete inclusive range, or the exact supported relative phrase
+`next week`. A schema-invalid invocation consumes that attempt and cannot be
+repaired or retried:
+
+- `candidate_action` is required. `reuse_prior_candidates` is valid only when
+  a historical candidate set exists and the current turn solely supplies event
+  context for those options without requesting new or refined products. Once
+  accepted, it irreversibly hides and execution-blocks `search_catalog_tool`
+  and closes the remaining tool loop for synthesis before provider I/O; a
+  provider failure does not reopen search. `search_new_candidates` is required
+  for an explicit current-turn new/refined product request or when no reusable
+  historical candidates exist. Accepted reuse asks no follow-up question and
+  does not initiate the next product role;
+- `confirmed_saved_zip`, with both `location` and `location_query` omitted from
+  model arguments, only when the narrow
+  deterministic gate accepts a current location-neutral statement explicitly
+  naming `my`/`the` usual/home area, a bare affirmative directly after the
+  assistant asks about that area, or an immediate strict date-only follow-up to
+  an accepted confirmation;
+- `shopper_provided_location`, with `location` copied as a bounded exact phrase
+  from shopper-authored text. A named place, address, or postal code is
+  sufficient. For an abbreviation or geographically ambiguous name,
+  optional `location_query` must preserve that exact phrase as its first
+  component and may append only one or two comma-separated region/country
+  qualifiers. Do not rewrite abbreviations: send `NYC` directly or qualify it
+  as `NYC, NY`; `Springfield, TX` is a valid explicit regional assumption. It
+  never carries an unstated ZIP or numeric component. Semantic equivalence
+  remains model-owned rather than being presented as deterministic proof, and
+  the provider-resolution disclosure makes the assumption correctable.
+
+A current explicit place, question, negation, uncertainty, or override cue
+rejects saved mode. Current explicit destination takes precedence and prevents
+silent fallback. Modal lowercase `may be` is an uncertainty cue, while calendar
+`May 5` remains a valid date. `relative_date=next_week` is accepted only when
+the shopper used the exact phrase `next week`; the request wrapper resolves it
+from the turn's single captured UTC date to the next Monday-through-Sunday
+range. A current negation or different current date supersedes an earlier
+`next week`. An unambiguous single-day phrase such as `tomorrow` is resolved against
+that same UTC anchor into an exact ISO date. Other ambiguous or unresolved
+relative dates and location-independent requests do not authorize a lookup and
+receive one concise date clarification.
+Only successful current-turn tool evidence supports forecast claims. Prior
+durable assistant forecast summaries are redacted from both the graph and
+grounding-editor recent discussion, while remaining stored and exactly
+replayable; prior weather tool messages are excluded from prior evidence. The
+complete grounding-editor prompt also replaces the selected profile's saved
+ZIP before the editor call. The
+provider-resolved place is included only for
+`shopper_provided_location`, where deterministic response rendering discloses
+it as the forecast-location assumption, making any `location_query`
+normalization reversible. It is omitted in
+`confirmed_saved_zip` mode so saved ZIP resolution is never exposed.
+Rendering then appends exactly one canonical forecast block containing the
+resolved Monday-through-Sunday range when `next week` was used, every validated
+day's date, condition, available low/high temperature, precipitation
+probability/types, the Visual Crossing attribution, and forecast-uncertainty
+language. The model cannot shorten or selectively omit that evidence.
+For non-reuse weather paths, grounding-editor sentences containing
+weather-domain fact language or fact-shaped dates/values are removed while
+ordinary grounded styling language remains. Accepted reuse bypasses the
+grounding editor entirely. On success, the server renders the exact names from
+the newest historical candidate set, one bounded styling direction derived
+from structured forecast evidence, and the canonical forecast block. On
+provider failure, it renders those prior names plus the typed safe weather
+failure. Forecasts
+may guide general styling judgment, but cannot establish product warmth,
+waterproofing, breathability, comfort, safety, terrain performance, or an
+unstated catalog constraint.
+Before enabling shopper traffic, operators must confirm that the selected
+Visual Crossing plan permits the intended attribution, display, storage, and
+sharing. That review must include durable final assistant summaries and
+downstream processing by the app model and output guardrails.
 
 ### GET `/shopper-profiles`
 

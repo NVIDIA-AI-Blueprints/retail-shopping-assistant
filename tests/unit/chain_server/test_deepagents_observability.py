@@ -144,6 +144,104 @@ def test_tool_trace_preserves_model_order_arguments_skills_and_duplicates() -> N
     assert diagnostics["partial_graph_messages"] == []
 
 
+def test_weather_trace_redacts_arguments_and_partial_output() -> None:
+    messages = [
+        HumanMessage(
+            content=(
+                "REQUEST ID: weather-request\n"
+                "USER QUERY: Use the forecast for my event."
+            )
+        ),
+        AIMessage(
+            content="Private draft: 72 degrees near 98101.",
+            tool_calls=[
+                {
+                    "id": "weather-call",
+                    "name": "get_weather_forecast_tool",
+                    "args": {
+                        "location_source": "shopper_provided_location",
+                        "location": "Seattle",
+                        "location_query": "Seattle, WA",
+                        "relative_date": "next_week",
+                    },
+                }
+            ],
+        ),
+        ToolMessage(
+            content=(
+                'WEATHER_FORECAST_EVIDENCE: {"resolved_location":'
+                '"Seattle 98101","temperature_high_f":72,'
+                '"date":"2026-08-01"}'
+            ),
+            name="get_weather_forecast_tool",
+            tool_call_id="weather-call",
+        ),
+    ]
+
+    diagnostics = _collect_agent_diagnostics(
+        messages,
+        request_id="weather-request",
+        final_termination_reason="agent_error",
+        preserve_partial_messages=True,
+    )
+
+    assert diagnostics["tool_calls"] == [
+        {
+            "sequence": 1,
+            "tool_name": "get_weather_forecast_tool",
+            "arguments": {"redacted": True},
+            "status": "completed",
+        }
+    ]
+    partial = diagnostics["partial_graph_messages"]
+    assert partial[0]["content"] == "WEATHER TOOL OUTPUT REDACTED"
+    assert partial[0]["tool_calls"][0]["arguments"] == {"redacted": True}
+    assert partial[1]["content"] == "WEATHER TOOL OUTPUT REDACTED"
+
+    serialized = json.dumps(diagnostics, sort_keys=True)
+    assert "98101" not in serialized
+    assert "2026-08-01" not in serialized
+    assert "Seattle" not in serialized
+    assert "72 degrees" not in serialized
+    assert "temperature_high_f" not in serialized
+
+
+def test_saved_zip_is_redacted_from_failed_trace_without_a_weather_call() -> None:
+    messages = [
+        HumanMessage(content="REQUEST ID: failed-request"),
+        AIMessage(
+            content="I will use 98101 for this request.",
+            tool_calls=[
+                {
+                    "id": "search-call",
+                    "name": "search_catalog_tool",
+                    "args": {
+                        "semantic_query": "event dresses near 98101",
+                        "98101": "unexpected model-authored key",
+                    },
+                }
+            ],
+        ),
+        ToolMessage(
+            content="Search failed while using 98101.",
+            name="search_catalog_tool",
+            tool_call_id="search-call",
+        ),
+    ]
+
+    diagnostics = _collect_agent_diagnostics(
+        messages,
+        request_id="failed-request",
+        final_termination_reason="agent_error",
+        preserve_partial_messages=True,
+        saved_zipcode="98101",
+    )
+
+    serialized = json.dumps(diagnostics, sort_keys=True)
+    assert "98101" not in serialized
+    assert "SAVED ZIP REDACTED" in serialized
+
+
 def test_tool_trace_records_pre_activation_execution_rejection() -> None:
     messages = [
         HumanMessage(content="REQUEST ID: request-gated"),

@@ -1,0 +1,15 @@
+set_name: Non-event product discovery weather isolation
+queries:
+  - "Show me black tote bags under $100."
+answers:
+  - >-
+    Use product discovery, with budget shopping, and present grounded catalog
+    candidates matching the request. Do not activate event context, ask for a
+    destination or date, mention weather or a saved/usual area, or call the
+    weather forecast tool.
+diagnostic_expectations:
+  - required_skills: [product-discovery, budget-shopping]
+    forbidden_skills: [event-context, outfit-styling]
+    required_tools: [search_catalog_tool]
+    forbidden_tools: [get_weather_forecast_tool]
+    weather_tool_calls: 0

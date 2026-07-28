@@ -1,6 +1,8 @@
 set_name: Guest event-location clarification
 queries:
   - "Before showing me products, help me plan an outfit for a wedding."
+  - "It's at an outdoor garden venue in ZIP 98101."
+  - "The wedding is tomorrow. Give me the weather-aware direction before we shop."
 answers:
   - >-
     Ask one concise, natural question about the event destination or venue
@@ -10,3 +12,30 @@ answers:
     rather than implying a saved-location candidate. In this response do not ask
     about dress code, event time, product role, or preferences. Do not turn the
     reply into a broad questionnaire.
+  - >-
+    The shopper has supplied a supported event ZIP and venue but no event date.
+    Ask only one concise question for the exact event date or date range; do not
+    call weather yet, assume today, ask another location or venue question,
+    mention a saved or usual area, show products, or add a questionnaire.
+  - >-
+    Resolve "tomorrow" against the server date and use one current-turn live
+    forecast for the shopper-provided event ZIP. Give a concise styling
+    direction grounded in the returned daily condition, temperature, and
+    precipitation evidence. State the provider-resolved forecast location as a
+    transparent assumption. Call it a forecast, state the resolved calendar
+    date, include a clickable "Weather Data Provided by Visual Crossing"
+    attribution, and warn that forecasts can change and should be rechecked
+    closer to the event. Do not show products, ask another question, infer
+    venue facts beyond the stated outdoor garden, or claim that any product is
+    waterproof, warm, breathable, safe, comfortable, or performance-proven.
+diagnostic_expectations:
+  - required_skills: [outfit-styling, event-context]
+    forbidden_tools: [get_weather_forecast_tool, search_catalog_tool]
+    weather_tool_calls: 0
+  - required_skills: [outfit-styling, event-context]
+    forbidden_tools: [get_weather_forecast_tool, search_catalog_tool]
+    weather_tool_calls: 0
+  - required_skills: [outfit-styling, event-context]
+    required_tools: [get_weather_forecast_tool]
+    forbidden_tools: [search_catalog_tool]
+    weather_tool_calls: 1

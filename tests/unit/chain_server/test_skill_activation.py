@@ -63,7 +63,7 @@ SKILL_TOOL_GRANTS = {
             "view_cart_total_tool",
         }
     ),
-    "event-context": frozenset(),
+    "event-context": frozenset({"get_weather_forecast_tool"}),
     "outfit-styling": frozenset(
         {
             "check_active_promotions_tool",
@@ -187,6 +187,13 @@ def add_cart_items_tool(product_ref: str) -> str:
     """Add a product to the cart."""
 
     return product_ref
+
+
+@tool
+def get_weather_forecast_tool(location_source: str) -> str:
+    """Read event-weather evidence."""
+
+    return location_source
 
 
 def _middleware(
@@ -338,6 +345,7 @@ def _model_request(
             search_catalog_tool,
             get_product_details_tool,
             add_cart_items_tool,
+            get_weather_forecast_tool,
         ],
         state={"messages": messages},
     )
@@ -387,6 +395,7 @@ def _tool_request(
             "remove_cart_item_tool": add_cart_items_tool,
             "update_cart_items_tool": add_cart_items_tool,
             "get_product_details_tool": get_product_details_tool,
+            "get_weather_forecast_tool": get_weather_forecast_tool,
             "search_catalog_tool": search_catalog_tool,
         }[name]
     )
@@ -531,7 +540,7 @@ def test_active_phase_injects_complete_skill_and_exposes_commerce() -> None:
     assert "## Unsupported Commerce Details" in prepared.system_prompt
 
 
-def test_event_context_injects_beside_styling_without_adding_tools() -> None:
+def test_event_context_injects_beside_styling_and_exposes_weather() -> None:
     middleware = _middleware()
     middleware.activate(
         {
@@ -546,10 +555,113 @@ def test_event_context_injects_beside_styling_without_adding_tools() -> None:
     assert [candidate.name for candidate in prepared.tools] == [
         "search_catalog_tool",
         "get_product_details_tool",
+        "get_weather_forecast_tool",
     ]
     assert "# Event Context" in prepared.system_prompt
     assert "# Outfit Styling" in prepared.system_prompt
-    assert middleware._granted_tools == SKILL_TOOL_GRANTS["outfit-styling"]
+    assert middleware._granted_tools == (
+        SKILL_TOOL_GRANTS["outfit-styling"]
+        | SKILL_TOOL_GRANTS["event-context"]
+    )
+
+
+def test_runtime_denial_hides_and_execution_blocks_catalog_search() -> None:
+    middleware = _middleware()
+    middleware.activate(
+        {
+            "/shopper/event-context/SKILL.md": "# Event Context",
+            "/shopper/outfit-styling/SKILL.md": "# Outfit Styling",
+        },
+        ["outfit-styling", "event-context"],
+    )
+    rejection = (
+        "STOP_TOOL_USE: This turn applies event context to prior candidates."
+    )
+
+    middleware.deny_tool_for_turn("search_catalog_tool", rejection)
+    prepared = _capture_request(
+        middleware,
+        _model_request(_activated_messages()),
+    )
+    handled: list[ToolCallRequest] = []
+    blocked = middleware.wrap_tool_call(
+        _tool_request("search_catalog_tool", _activated_messages()),
+        handled.append,
+    )
+
+    assert [candidate.name for candidate in prepared.tools] == [
+        "get_product_details_tool",
+        "get_weather_forecast_tool",
+    ]
+    assert handled == []
+    assert isinstance(blocked, ToolMessage)
+    assert blocked.content == rejection
+
+
+def test_weather_dispatch_requires_event_context_beside_outfit_styling() -> None:
+    messages = [
+        HumanMessage(content=f"REQUEST ID: {REQUEST_ID}"),
+        AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "id": "activation-call",
+                    "name": SKILL_ACTIVATION_TOOL_NAME,
+                    "args": {
+                        "skill_names": ["outfit-styling", "event-context"],
+                    },
+                }
+            ],
+        ),
+        ToolMessage(
+            content=(
+                f"{SKILL_ACTIVATION_COMPLETE} "
+                "/shopper/outfit-styling/SKILL.md, "
+                "/shopper/event-context/SKILL.md"
+            ),
+            name=SKILL_ACTIVATION_TOOL_NAME,
+            tool_call_id="activation-call",
+        ),
+    ]
+    request = _tool_request(
+        "get_weather_forecast_tool",
+        messages,
+        {"location_source": "confirmed_saved_zip"},
+    )
+
+    styling_only = _middleware()
+    styling_only.activate(
+        {"/shopper/outfit-styling/SKILL.md": "# Outfit Styling"},
+        ["outfit-styling"],
+    )
+    blocked_calls: list[ToolCallRequest] = []
+    blocked = styling_only.wrap_tool_call(request, blocked_calls.append)
+
+    assert blocked_calls == []
+    assert isinstance(blocked, ToolMessage)
+    assert str(blocked.content).startswith(SKILL_TOOL_NOT_GRANTED)
+
+    event_styling = _middleware()
+    event_styling.activate(
+        {
+            "/shopper/outfit-styling/SKILL.md": "# Outfit Styling",
+            "/shopper/event-context/SKILL.md": "# Event Context",
+        },
+        ["outfit-styling", "event-context"],
+    )
+    expected = ToolMessage(
+        content="weather result",
+        name="get_weather_forecast_tool",
+        tool_call_id="get_weather_forecast_tool-call",
+    )
+    allowed_calls: list[ToolCallRequest] = []
+    allowed = event_styling.wrap_tool_call(
+        request,
+        lambda prepared: allowed_calls.append(prepared) or expected,
+    )
+
+    assert allowed_calls == [request]
+    assert allowed is expected
 
 
 def test_active_phase_rejects_multiple_shopping_tools_in_one_model_step() -> None:

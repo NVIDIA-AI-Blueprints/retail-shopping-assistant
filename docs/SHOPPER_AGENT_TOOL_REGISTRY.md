@@ -20,28 +20,29 @@ controlled by the activation and loop-control phases described below.
 
 ## Current Runtime Boundary
 
-The active Deep Agents runtime registers eleven app-owned shopper commerce tools
+The active Deep Agents runtime registers twelve app-owned shopper tools
 plus one internal activation control tool. Every turn begins in an activation
 phase where the model sees only `activate_shopper_skills_tool`, its use is
 forced, and parallel tool calls are disabled. After the model semantically
 selects the smallest skill set for the complete current intent, the runtime
 validates those names and deterministically injects the full selected
 `SKILL.md` contents. Only then does the next model step receive the union of
-those skills' declared `tools_granted` from the eleven-tool registry. Every
+those skills' declared `tools_granted` from the twelve-tool registry. Every
 app-owned shopping dispatch independently rechecks the selected skill, grant
 union, and immutable policy before invoking its handler.
 
 For primary shopper procedure selection, `product-discovery` and
 `outfit-styling` are mutually exclusive. `budget-shopping` is a modifier and is
-selected only when the shopper states a budget. The zero-tool `event-context`
+selected only when the shopper states a budget. The `event-context`
 modifier may accompany only `outfit-styling`. It is selected whenever event
 destination or venue context is stated, or when the response would otherwise
-ask about or branch on missing destination or venue context. It does not expand
-the tool union. Cart or policy skills may still join the applicable procedure
-for a genuine multi-intent turn; standalone cart and policy turns do not
-require a product primary. A terse item-only follow-up inside an active
-outfit-building or style-led single-piece thread remains an `outfit-styling`
-task.
+ask about or branch on missing destination or venue context, or when a
+supported forecast would materially change event guidance. It alone adds the
+read-only weather tool to the union. Cart or policy skills may still join the
+applicable procedure for a genuine multi-intent turn; standalone cart and
+policy turns do not require a product primary. A terse item-only follow-up
+inside an active outfit-building or style-led single-piece thread remains an
+`outfit-styling` task.
 
 The model-facing catalog tool accepts one flat executable search. Its fields
 are `semantic_query`, `shopper_guidance`, `requested_product_type`, `taxonomy`,
@@ -245,6 +246,15 @@ semantic queries, raw tool messages, model reasoning, and all other diagnostics
 are discarded. This untrusted, log-sensitive operator/evaluation metadata is
 not shopper-facing response text.
 
+Weather is a stricter exception: diagnostics replace every
+`get_weather_forecast_tool` argument object with `{"redacted": true}` and omit
+its result. Failed-turn partial graph capture also replaces weather calls and
+output with redacted placeholders, and diagnostics recursively scrub saved
+profile ZIP from string keys and values. A grounded final forecast summary
+remains ordinary durable assistant text and can be exactly replayed, but a
+recognized prior summary is replaced with a redaction marker in later graph
+and grounding-editor recent discussion.
+
 Final-response extraction ignores tool messages, assistant messages that still
 contain tool calls, and internal activation markers. If a completed graph has no
 shopper-facing text, the runtime returns a safe retry response and changes the
@@ -264,6 +274,7 @@ termination reason to `incomplete_agent_response`.
 | `get_store_policy_tool` | `read_only_policy` | Operator-managed static policy file | Registered |
 | `check_product_availability_tool` | `read_only_catalog` | Application availability contract; no live inventory source | Registered |
 | `check_active_promotions_tool` | `read_only_promotions` | Application promotions contract; no live promotions source | Registered |
+| `get_weather_forecast_tool` | `read_only_weather` | Current-turn Visual Crossing forecast through the provider-neutral client | Registered |
 
 ## Risk Classes
 
@@ -278,6 +289,7 @@ termination reason to `incomplete_agent_response`.
 | `mutating_cart` | Changes cart contents. | Slice 0 requires the cart-management grant, valid refs, and service-side success. Skill instructions require explicit shopper intent, but server-owned current-turn intent authorization is a later slice. |
 | `read_only_policy` | Reads controlled operator-managed policy content. | Never substitute model knowledge when a topic is absent. |
 | `read_only_promotions` | Reports the deployment's promotion signal without treating catalog results or price as markdown evidence. | Granted by product discovery and outfit styling; currently no active promotion is configured. |
+| `read_only_weather` | Reads bounded live forecast evidence for a qualified event location/date without changing shopper or commerce state. | Granted only by event context beside outfit styling; one attempt per turn, including invalid schema; successful current-turn evidence only. |
 | `future_high_risk` | Checkout, payment, orders, account changes. | Not registered. Requires stronger auth, idempotency, ownership checks, and confirmation policy before use. |
 
 ## Registered Tools
@@ -990,6 +1002,140 @@ Current limitations:
 - There is no live promotions service behind this tool. Product prices and
   catalog search results do not establish sale status.
 
+### `get_weather_forecast_tool`
+
+Purpose: Read one bounded live daily forecast for occasion-led styling after
+the event location authority and exact date/window are established.
+
+Inputs:
+
+- `candidate_action`: required and exactly `reuse_prior_candidates` or
+  `search_new_candidates`.
+- `location_source`: exactly `confirmed_saved_zip` or
+  `shopper_provided_location`.
+- `location`: omitted for `confirmed_saved_zip`; otherwise one bounded exact
+  named-place, address, or postal-code phrase that appears in shopper-authored
+  conversation text.
+- `location_query`: omitted for `confirmed_saved_zip` and optional for
+  `shopper_provided_location`. For an abbreviation or geographically ambiguous
+  `location`, it must preserve the exact shopper-authored location as its first
+  component and may append only one or two comma-separated region/country
+  qualifiers. Do not rewrite abbreviations: send `NYC` directly or qualify it
+  as `NYC, NY`; `Springfield, TX` is a valid explicit regional assumption. It
+  must not add an unstated ZIP or numeric component.
+  Semantic equivalence remains model-owned rather than being presented as
+  deterministic proof, and the provider-resolved place keeps it correctable.
+- Exactly one `date` in ISO `YYYY-MM-DD` form, one complete inclusive
+  `start_date`/`end_date` ISO range, or `relative_date=next_week`. Explicit and
+  relative date modes are mutually exclusive. The maximum range is 15 days.
+
+Preconditions:
+
+- `event-context` and `outfit-styling` are both active.
+- `reuse_prior_candidates` is valid only when a historical candidate set is
+  available and the current turn solely supplies event context for those
+  options without asking for new or refined products.
+  `search_new_candidates` is required for an explicit current-turn new/refined
+  product request or when no prior candidates can be reused. Accepted reuse
+  asks no follow-up question and does not initiate the next product role.
+- `confirmed_saved_zip` is allowed only when the server's narrow deterministic
+  gate accepts a current location-neutral statement explicitly naming
+  `my`/`the` usual/home area, a bare affirmative immediately after the
+  assistant's usual/home-area question, or an immediate strict date-only
+  follow-up to an accepted confirmation.
+- `shopper_provided_location` is allowed only with the exact bounded phrase
+  supplied by the shopper. A current explicit destination overrides and
+  forbids fallback to saved ZIP. `location` remains that provenance authority
+  even when `location_query` supplies the provider-facing place assumption.
+- Any explicit current place, question, negation, uncertainty, or
+  location-override cue rejects saved mode. A grounded shopper-authored place
+  can instead authorize `shopper_provided_location`.
+- Modal lowercase `may be` is an uncertainty cue, while calendar `May 5`
+  remains a valid date.
+- `relative_date=next_week` is allowed only when the shopper used the exact
+  phrase `next week`. The wrapper derives the next Monday-through-Sunday range
+  from the turn's single captured UTC date. A current negation or different
+  date supersedes an earlier `next week`. The model resolves an unambiguous
+  single-day phrase such as `tomorrow` against that same anchor into an exact
+  ISO date. Other ambiguous or unresolved relative dates, an unconfirmed saved
+  area, and location-independent requests do not authorize a call.
+- The request-bound server guard permits one attempt per turn. Native schema
+  validation failure claims that attempt before returning the sanitized
+  invalid-request outcome, so there is no weather repair or retry.
+
+Outputs:
+
+- On success, bounded normalized daily current-turn evidence containing the
+  provider, fetch time, requested window, forecast days, and Visual Crossing
+  attribution.
+- For `shopper_provided_location`, the model-visible projection includes the
+  provider-resolved place and deterministic final rendering discloses it as the
+  forecast-location assumption, making any `location_query` qualification
+  reversible. That field is omitted for
+  `confirmed_saved_zip`; provider timezone remains omitted in both modes.
+  Rendering appends exactly one canonical block containing the resolved
+  Monday-through-Sunday range when `next week` was used, every validated day's
+  date, condition, available low/high temperature, precipitation probability/types,
+  [Weather Data Provided by Visual Crossing](https://www.visualcrossing.com/),
+  and the warning that forecasts can change and should be rechecked closer to
+  the event. Model-authored prose cannot shorten or selectively omit it.
+- For non-reuse weather paths, grounding-editor sentences containing
+  weather-domain fact language or fact-shaped dates/values are removed while
+  ordinary grounded styling language remains.
+- Accepted reuse bypasses the grounding editor entirely. On success, the server
+  renders the exact names from the newest historical candidate set, one
+  bounded styling direction derived from structured forecast evidence, and the
+  canonical forecast block. On provider failure, it renders those prior names
+  plus the typed safe weather failure.
+- On failure, a sanitized typed outcome without provider body, raw exception,
+  request URL, key, requested place/ZIP, dates, or resolved location.
+
+Side effects:
+
+- Once a valid `reuse_prior_candidates` call reaches provider execution, the
+  runtime irreversibly hides and execution-blocks `search_catalog_tool` and
+  closes the remaining tool loop for synthesis. This turn-local control remains
+  closed even when provider lookup fails.
+- No application-state mutation. When `WEATHER_ENABLED=true`, one qualified
+  call may read the configured
+  [Visual Crossing Timeline API](https://www.visualcrossing.com/resources/documentation/weather-api/timeline-weather-api/)
+  endpoint through the existing HTTP dependency; no vendor SDK or MCP server
+  is required.
+
+Failure behavior:
+
+- Disabled/configuration, validation, authentication, rate-limit, timeout,
+  availability, horizon, and provider-response failures produce bounded
+  shopper-safe behavior and no weather claim.
+- Tool arguments and output are redacted from diagnostics and failed-turn
+  partial graph messages. Saved profile ZIP is recursively scrubbed from
+  diagnostic string keys and values.
+
+Skills that grant this tool:
+
+- `event-context` only, with its required `outfit-styling` composition.
+
+Current limitations:
+
+- Forecast evidence is authoritative only in the current turn. Prior durable
+  assistant forecast summaries are redacted from graph and grounding-editor
+  recent discussion while remaining stored and exactly replayable; prior
+  weather tool messages are excluded from prior evidence.
+- Weather can guide general styling judgment but cannot establish climate,
+  venue, dress code, local norms, product warmth, waterproofing,
+  breathability, comfort, safety, surface performance, or an unstated catalog
+  constraint.
+- There is no weather-specific FastAPI route, SSE event, request/response
+  field, or UI component.
+- `WEATHER_ENABLED=false` is the default. Before enabling shopper traffic, the
+  operator must confirm that the selected Visual Crossing plan permits the
+  intended attribution, display, storage, and sharing, including durable final
+  assistant summaries and downstream app-model/output-guardrail processing.
+  Review the current
+  [pricing and edition terms](https://www.visualcrossing.com/weather-data-pricing/)
+  and [service terms](https://www.visualcrossing.com/weather-service-terms/);
+  this repository does not claim which plan is selected.
+
 ## Skill Access Matrix
 
 This matrix is the deterministic per-skill authorization contract. The model
@@ -1005,6 +1151,7 @@ activation.
 | --- | --- |
 | `product-discovery` | `search_catalog_tool`, `get_product_details_tool`, `check_product_availability_tool`, `check_active_promotions_tool`, `resolve_conversation_products_tool` |
 | `outfit-styling` | `search_catalog_tool`, `get_product_details_tool`, `check_product_availability_tool`, `check_active_promotions_tool`, `resolve_conversation_products_tool` |
+| `event-context` | `get_weather_forecast_tool` (only with `outfit-styling`) |
 | `budget-shopping` | None (`tools_granted: []`) |
 | `cart-management` | `get_cart_tool`, `view_cart_total_tool`, `add_cart_items_tool`, `remove_cart_item_tool`, `update_cart_items_tool`, `resolve_conversation_products_tool` |
 | `store-policy-answers` | `get_store_policy_tool` |
@@ -1025,35 +1172,12 @@ but they are not registered tools in the active Deep Agents runtime:
 | Capability | Current status |
 | --- | --- |
 | `load_customer_persona_tool` | Planned. No registered runtime tool. |
-| `get_weather_forecast_tool` | Implemented as a disabled-by-default direct-construction wrapper, but deliberately absent from the runtime registry, immutable policy, skill grants, prompts, context, FastAPI, and UI. |
 | Cross-catalog durable product identity | Planned; requires an upstream stable ID guarantee. |
 | Live inventory, variant, and size availability lookup | Not implemented; the registered no-I/O stub reports deterministic availability for known conversation product refs. |
 | Live promotions lookup | Not implemented; the registered no-I/O stub reports that no active promotion is configured through the assistant. |
 | Checkout, order, payment, address, or account mutation | Not implemented and should be treated as `future_high_risk`. |
 | Outfit styling tool | Not a tool. Styling is model behavior guided by skills over catalog results. |
 | Media perception tool | Not an agent-callable tool. Media analysis runs before the Deep Agents turn and is passed as context. |
-
-The dormant weather wrapper accepts only an exact five-digit US ZIP and one of
-three date modes: no date for the provider-location's local today, one ISO
-calendar date, or a complete inclusive ISO start/end range of at most 15 days.
-It rejects relative phrases, prose locations, coordinates, shopper IDs, mixed
-date modes, partial ranges, historical observations, historical forecasts, and
-statistical long-range estimates. Its normalized daily evidence is bounded to
-15 unique ordered rows and uses a finite condition and precipitation domain.
-Typed failures separate invalid input, disabled/config state, an unresolved ZIP,
-out-of-horizon data, authentication, rate limit, timeout, availability, and
-invalid provider responses without disclosing the key, prepared URL, ZIP,
-requested dates, resolved location, provider body, or raw exception.
-
-The first adapter uses the
-[Visual Crossing Timeline API](https://www.visualcrossing.com/resources/documentation/weather-api/timeline-weather-api/)
-directly through the existing HTTP dependency; no vendor SDK or MCP server is
-required. Normalized results preserve provider attribution metadata. A later
-shopper-facing slice must display the attribution required by the operator's
-license, add forecast-uncertainty language, and review
-[Visual Crossing storage and sharing terms](https://www.visualcrossing.com/weather-service-terms/)
-before persisting or exposing results. Slice 3 stores and displays no forecast
-and makes no weather request during startup, health checks, or shopper turns.
 
 ## Registration Standards For New Tools
 

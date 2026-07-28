@@ -341,20 +341,20 @@ docker stack deploy -c docker-compose.prod.yaml retail-assistant
 | `MEMORY_SQLITE_BUSY_TIMEOUT_MS` | SQLite lock wait for the single memory-service writer | No | `5000` |
 | `MEMORY_TURN_ABANDON_SECONDS` | Age at which startup or the next turn start marks an unfinished `started` turn abandoned | No | `300` |
 | `MEMORY_RECENT_TURNS` | Maximum prior context-eligible raw turns returned at the next durable turn start | No | `8` |
-| `WEATHER_ENABLED` | Permits explicit direct construction of the dormant weather client/tool; does not register it with the shopper agent | No | `false` |
-| `WEATHER_API_KEY` | Visual Crossing server-side credential, read indirectly from the variable named by chain-server weather config | Only when directly constructing an enabled weather client | empty |
+| `WEATHER_ENABLED` | Enables provider calls for the registered event-weather tool; keep false until the selected provider plan's rights are confirmed | No | `false` |
+| `WEATHER_API_KEY` | Visual Crossing server-side credential, read indirectly from the variable named by chain-server weather config | When weather is enabled | empty |
 | `LOCAL_NIM_CACHE` | NIM cache directory | Local only | `~/.cache/nim` |
 | `LOG_LEVEL` | Logging level | No | `INFO` |
 | `NODE_ENV` | Node environment | No | `production` |
 
-### Dormant Weather Tool
+### Event Weather Tool
 
-The chain server includes a provider-neutral daily weather client and a
-`get_weather_forecast_tool` factory, with Visual Crossing as the first adapter.
-Slice 3 leaves it disabled and unregistered: it is not model-visible, not
-granted by any shopper skill, not connected to selected-shopper ZIP, and not
-exposed through FastAPI or the UI. Ordinary startup, health checks, shopper
-turns, and offline tests perform no provider request and require no weather key.
+The chain server registers the provider-neutral
+`get_weather_forecast_tool`, with Visual Crossing as the first adapter. It is a
+read-only capability granted only by `event-context`; that modifier can be
+selected only beside `outfit-styling`. No provider request runs during startup
+or health checks. With the default `WEATHER_ENABLED=false`, qualified shopper
+turns fail closed without a provider call or key.
 
 The complete non-secret configuration is in
 `shared/configs/chain_server/config.yaml`:
@@ -370,16 +370,94 @@ weather:
   max_range_days: 15
 ```
 
-For an explicit direct-client test, set `WEATHER_ENABLED=true` and provide
-`WEATHER_API_KEY` through an ignored `.env`, the process environment, or the
-deployment secret manager. Compose passes those two variables only to
-`chain-server`; it does not bake a value into an image or expose it to catalog,
-memory, guardrail, UI, or local-NIM services. The config stores only the
-variable name, never the secret value. Enabling the client without the named
-key fails closed, and no MCP server is required. The local process runner
-enforces the same boundary by removing both weather variables from memory,
-guardrail, catalog, and React process environments while retaining them for the
-chain server.
+To enable qualified shopper turns or run an explicit direct-client test, set
+`WEATHER_ENABLED=true` and provide `WEATHER_API_KEY` through an ignored `.env`,
+the process environment, or the deployment secret manager. Compose passes those
+two variables only to `chain-server`; it does not bake a value into an image or
+expose it to catalog, memory, guardrail, UI, or local-NIM services. The config
+stores only the variable name, never the secret value. Enabling the client
+without the named key fails closed, and no MCP server is required. The local
+process runner enforces the same boundary by removing both weather variables
+from memory, guardrail, catalog, and React process environments while retaining
+them for the chain server.
+
+The request-bound shopper wrapper permits one call attempt per turn; a
+schema-invalid invocation consumes it. Every call requires
+`candidate_action`. `reuse_prior_candidates` is valid only when historical
+candidates exist and the current turn solely supplies event context for them
+without asking for new or refined products. Once accepted, the runtime
+irreversibly hides and execution-blocks `search_catalog_tool` and closes the
+remaining tool loop for synthesis before provider I/O, so a failed provider
+lookup cannot reopen search. `search_new_candidates` is required for an
+explicit current-turn new/refined product request or when no reusable prior
+candidates exist. Accepted reuse asks no follow-up question and does not
+initiate the next product role.
+
+`confirmed_saved_zip` omits both
+`location` and `location_query` and reaches the weather client only when a
+deterministic gate accepts a current location-neutral statement explicitly
+naming `my`/`the` usual/home area, a bare affirmative immediately after the
+assistant's usual/home-area question, or a strict date-only follow-up
+immediately after an accepted confirmation.
+`shopper_provided_location` instead copies one bounded exact named-place,
+address, or postal-code phrase from shopper-authored text into `location`.
+For an abbreviation or geographically ambiguous name, optional
+`location_query` must preserve that exact phrase as its first component and may
+append only one or two comma-separated region/country qualifiers. Do not
+rewrite abbreviations: send `NYC` directly or qualify it as `NYC, NY`;
+`Springfield, TX` is a valid explicit regional assumption. It never adds an
+unstated ZIP or numeric component. Semantic equivalence remains model-owned
+rather than deterministic proof and is correctable through
+provider-resolution disclosure.
+Any current explicit
+place, question, negation, uncertainty, or location-override cue rejects saved
+mode; explicit destination takes precedence and disables saved-ZIP fallback.
+Modal lowercase `may be` is treated as uncertainty, while calendar `May 5`
+remains a valid date.
+
+The request uses one exact ISO event date, one complete inclusive range, or
+`relative_date=next_week` only when the shopper used the exact phrase `next
+week`. The wrapper resolves that phrase from the turn's single captured UTC
+date to the next Monday-through-Sunday range. A current negation or different
+date supersedes an earlier use. An unambiguous single-day phrase
+such as `tomorrow` is resolved by the model against that same anchor into an
+exact ISO date. Other ambiguous or unresolved relative dates require one date
+clarification.
+
+For `shopper_provided_location`, model-visible evidence includes the
+provider-resolved place and deterministic rendering discloses it as the
+forecast-location assumption, making any `location_query` qualification
+reversible. That field is omitted in `confirmed_saved_zip` mode. Only
+successful current-turn evidence can support a forecast. Prior
+durable assistant forecast summaries are replaced with a redaction marker in
+both graph and grounding-editor recent discussion, while remaining stored and
+exactly replayable; prior weather tool messages are excluded from prior evidence.
+Deterministic final rendering appends one exact canonical block with every
+validated daily date, condition, available low/high temperature, precipitation
+probability/types, Visual Crossing attribution, and forecast-change warning.
+For non-reuse weather paths, grounding-editor sentences containing
+weather-domain fact language or fact-shaped dates/values are removed while
+ordinary grounded styling language remains. Accepted reuse bypasses the
+grounding editor entirely. On success, the server renders the exact names from
+the newest historical candidate set, one bounded styling direction derived
+from structured forecast evidence, and the canonical forecast block. On
+provider failure, it renders those prior names plus the typed safe weather
+failure.
+Weather may inform general styling judgment but does not prove any
+product-performance property or create an unstated catalog constraint.
+
+Weather tool arguments and output are redacted from both operator diagnostics
+and failed-turn partial graph capture. Saved profile ZIP is recursively
+scrubbed from diagnostic string keys and values. The final assistant summary
+remains ordinary durable conversation text: memory can store and exactly
+replay it.
+Before any operator enables shopper traffic, confirm that the selected Visual
+Crossing plan permits the intended attribution, display, storage, and sharing.
+The review must cover that durable summary and forecast processing by the
+downstream app model and output guardrails. The repository does not select a
+plan or assert that these rights have been obtained. Review the current
+[pricing and edition terms](https://www.visualcrossing.com/weather-data-pricing/)
+and [service terms](https://www.visualcrossing.com/weather-service-terms/).
 
 An optional direct provider smoke makes at most one request per invocation:
 
@@ -396,12 +474,10 @@ schema validity, and latency. It never prints the ZIP, dates, location,
 forecast, key, URL, provider body, or raw exception. It is not run by startup,
 CI, health checks, or shopper traffic.
 
-The adapter emits normalized daily forecast evidence and attribution metadata
-but persists nothing. Before a later slice displays or stores this evidence,
-operators must confirm the selected Visual Crossing plan's attribution,
-storage, sharing, and uncertainty requirements in the
-[pricing terms](https://www.visualcrossing.com/weather-data-editions/) and
-[service terms](https://www.visualcrossing.com/weather-service-terms/).
+The direct smoke's output remains metadata-only. It does not exercise the
+agent's narrow saved-ZIP confirmation gate, shopper-authored location
+grounding, `next week` normalization, invalid-schema attempt consumption,
+current-turn evidence, canonical forecast block, or durable summary paths.
 
 ### Durable Conversation Turns
 

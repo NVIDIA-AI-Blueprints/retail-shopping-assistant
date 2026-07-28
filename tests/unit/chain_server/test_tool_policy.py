@@ -30,7 +30,6 @@ def _skill_tool_grants() -> dict[str, frozenset[str]]:
         }
     }
     grants["budget-shopping"] = frozenset()
-    grants["event-context"] = frozenset()
     return grants
 
 
@@ -42,6 +41,7 @@ def test_policy_covers_all_registered_shopping_tools() -> None:
         "get_cart_tool",
         "get_product_details_tool",
         "get_store_policy_tool",
+        "get_weather_forecast_tool",
         "remove_cart_item_tool",
         "resolve_conversation_products_tool",
         "search_catalog_tool",
@@ -67,6 +67,9 @@ def test_policy_covers_all_registered_shopping_tools() -> None:
     assert promotions.allowed_skills_any_of == frozenset(
         {"outfit-styling", "product-discovery"}
     )
+    weather = SHOPPING_TOOL_POLICIES["get_weather_forecast_tool"]
+    assert weather.risk == "read"
+    assert weather.allowed_skills_any_of == frozenset({"event-context"})
 
 
 def test_frontmatter_grants_and_execution_policy_must_match() -> None:
@@ -120,7 +123,7 @@ def test_selected_skills_receive_only_their_declared_union() -> None:
     )
 
 
-def test_event_context_adds_no_tools_to_outfit_styling() -> None:
+def test_event_context_adds_only_weather_to_outfit_styling() -> None:
     grants = _skill_tool_grants()
 
     tools = granted_tools_for_skills(
@@ -128,9 +131,39 @@ def test_event_context_adds_no_tools_to_outfit_styling() -> None:
         grants,
     )
 
-    assert tools == grants["outfit-styling"]
+    assert tools == frozenset(
+        {*grants["outfit-styling"], "get_weather_forecast_tool"}
+    )
+    assert tool_is_granted(
+        "get_weather_forecast_tool",
+        ["outfit-styling", "event-context"],
+        tools,
+    )
     assert not tool_is_granted(
         "add_cart_items_tool",
         ["outfit-styling", "event-context"],
+        tools,
+    )
+
+
+@pytest.mark.parametrize(
+    "selected_skills",
+    [
+        ["outfit-styling"],
+        ["product-discovery"],
+        ["cart-management"],
+        ["store-policy-answers"],
+    ],
+)
+def test_weather_is_not_granted_without_event_context(
+    selected_skills: list[str],
+) -> None:
+    grants = _skill_tool_grants()
+    tools = granted_tools_for_skills(selected_skills, grants)
+
+    assert "get_weather_forecast_tool" not in tools
+    assert not tool_is_granted(
+        "get_weather_forecast_tool",
+        selected_skills,
         tools,
     )

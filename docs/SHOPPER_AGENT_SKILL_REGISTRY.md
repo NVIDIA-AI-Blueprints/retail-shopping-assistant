@@ -67,9 +67,10 @@ alternative primary procedures and must not be selected together.
 shopper states a budget. `event-context` may accompany only `outfit-styling`,
 and is selected whenever event destination or venue context is stated or the
 response would otherwise ask about or branch on missing destination or venue
-context. Generic occasion advice is not a reason to omit it. It grants no
-tools. Within an active outfit-building or style-led single-piece thread, terse
-item-only follow-ups remain `outfit-styling` tasks.
+context, or when a supported forecast would materially change event guidance.
+Generic occasion advice is not a reason to omit it. It alone grants the
+read-only weather tool. Within an active outfit-building or style-led
+single-piece thread, terse item-only follow-ups remain `outfit-styling` tasks.
 
 Runtime taxonomy validation may bind the longest exact advertised suffix in a
 modifier-bearing model phrase (`waterproof boots` to `boots`), but it disables
@@ -204,15 +205,15 @@ outcomes from diagnostics.
 | --- | --- | --- | --- | --- | --- |
 | `product-discovery` | `chain_server/skills/shopper/product-discovery/SKILL.md` | Registered | `primary` / `product_procedure` | Search, details, availability, promotions, same-conversation product resolution | General search, category browsing, filter-driven discovery without styling intent |
 | `outfit-styling` | `chain_server/skills/shopper/outfit-styling/SKILL.md` | Registered | `primary` / `product_procedure` | Search, details, availability, promotions, same-conversation product resolution | Build, complete, or refine a look; coordinate a requested piece with an anchor; use cart evidence only when cart management is also active |
-| `event-context` | `chain_server/skills/shopper/event-context/SKILL.md` | Registered | `modifier` | None | Use stated destination/venue context or resolve a missing context branch; use explicit setting over saved ZIP; combine only with outfit styling |
+| `event-context` | `chain_server/skills/shopper/event-context/SKILL.md` | Registered | `modifier` | Event forecast | Use stated destination/venue context, fetch qualified current event weather, or resolve a missing context branch; use explicit setting over saved ZIP; combine only with outfit styling |
 | `cart-management` | `chain_server/skills/shopper/cart-management/SKILL.md` | Registered | `standalone` | Cart read, total, add, remove, update, same-conversation product resolution | Explicit cart reads and mutations, alone or beside a product procedure |
 | `budget-shopping` | `chain_server/skills/shopper/budget-shopping/SKILL.md` | Registered | `modifier` | None | Stated price ceilings and budget bundles; combine with cart management for cart-total checks |
 | `store-policy-answers` | `chain_server/skills/shopper/store-policy-answers/SKILL.md` | Registered | `standalone` | Policy lookup | Returns, shipping, sizing, payment, price matching, and gift cards |
 
 ## `event-context`
 
-Purpose: add the smallest useful event-location and venue context to
-occasion-led styling without adding a tool.
+Purpose: add the smallest useful event-location, venue, and qualified live
+forecast context to occasion-led styling.
 
 - Runs only beside `outfit-styling`; activation without that primary receives
   one typed correction and then fails closed through the existing deterministic
@@ -228,18 +229,87 @@ occasion-led styling without adding a tool.
   destination-or-venue question, with no headings or lists. With context
   complete, it produces one short paragraph and asks no further event-context
   question.
-- On an ordinary shop-now turn, `outfit-styling` presents one grounded requested
-  or core role and, if location is missing and materially changes the next
-  recommendation, asks only event location alongside the results; venue is
+- On an ordinary occasion-only shop-now turn, `outfit-styling` runs one search
+  for one grounded requested or core role unless the shopper explicitly asks
+  for a complete look or names multiple roles. If location is missing and
+  materially changes the next recommendation, it asks only event location
+  alongside the results. A saved-ZIP candidate requires “usual area or
+  elsewhere?” framing rather than a bare destination question; venue is
   deferred and the plan-first stop rule does not apply.
-- No-tool helper turns reuse the final response editor. It receives only
+- Turns without a forecast call reuse the final response editor. It receives only
   saved-ZIP-candidate presence, not ZIP digits; a successful-search response
   that drops every returned candidate has them restored through deterministic
   grounded rendering.
 - Does not infer that Cancun means beach or that any ZIP or place establishes
   weather, wind, climate, season, dress code, local norms, or product
   performance.
-- Grants no tool and does not register or invoke the dormant weather boundary.
+- Grants `get_weather_forecast_tool` for one attempt per turn. It uses
+  `confirmed_saved_zip`, with both location fields omitted from model
+  arguments, only when the deterministic gate accepts a current
+  location-neutral statement explicitly naming `my`/`the` usual/home area, a
+  bare affirmative immediately after the assistant's usual/home-area question,
+  or an immediate strict date-only follow-up to an accepted confirmation. Any
+  explicit current place, question, negation, uncertainty, or override rejects
+  saved mode. It uses
+  `shopper_provided_location` only with one bounded exact named-place, address,
+  or postal-code phrase copied from shopper-authored text into `location`.
+  Optional `location_query` must preserve that exact phrase as its first
+  component and may append only one or two comma-separated region/country
+  qualifiers. Do not rewrite abbreviations: send `NYC` directly or qualify it
+  as `NYC, NY`; `Springfield, TX` is a valid explicit regional assumption. It
+  never carries an unstated ZIP or numeric component. Semantic equivalence
+  remains model-owned rather than deterministic proof and is correctable
+  through provider-resolution disclosure. Current
+  explicit destination prevents fallback to saved ZIP.
+- Treats modal lowercase `may be` as uncertainty while accepting calendar
+  `May 5` as a valid date.
+- Treats the limit as one attempt: a schema-invalid weather call consumes it
+  and cannot be repaired or retried in that turn.
+- Requires `candidate_action` on every weather call.
+  `reuse_prior_candidates` is valid only when historical candidates exist and
+  the current turn solely adds event context for them without requesting new or
+  refined products. Once accepted, it irreversibly hides and
+  execution-blocks catalog search and closes the remaining tool loop for
+  synthesis before provider I/O, so lookup failure cannot reopen search.
+  `search_new_candidates` is required for an explicit current-turn new/refined
+  product request or when no prior candidates can be reused. Accepted reuse
+  asks no follow-up question and does not initiate the next product role.
+- Requires an exact ISO event date, complete inclusive range, or the typed
+  `relative_date=next_week` mode. That mode is allowed only when the shopper
+  used the exact phrase `next week`, and the server derives the next
+  Monday-through-Sunday range from one captured UTC date. A current negation or
+  different date supersedes an earlier use. The model resolves
+  an unambiguous single-day phrase such as `tomorrow` against that same anchor
+  into an exact ISO date. Other ambiguous or unresolved relative dates require
+  one date clarification.
+- Uses successful current-turn forecast evidence only. The model-visible
+  projection includes the provider-resolved place only for
+  `shopper_provided_location`, and final rendering discloses it as the
+  forecast-location assumption so any `location_query` qualification is
+  reversible. The field is omitted for
+  `confirmed_saved_zip`. Prior durable assistant forecast summaries are
+  redacted from graph and grounding-editor recent discussion while remaining
+  stored and exactly replayable; prior weather tool messages are excluded from
+  prior evidence. Arguments and output are redacted from diagnostics and
+  failed-turn partial output, and saved profile ZIP is scrubbed from diagnostic
+  string keys and values. Final rendering appends one exact canonical block
+  containing every validated daily date, condition, available low/high
+  temperature, precipitation probability/types, Visual Crossing attribution,
+  and forecast uncertainty; model prose cannot shorten or selectively omit it.
+  For non-reuse weather paths, grounding-editor sentences containing
+  weather-domain fact language or fact-shaped dates/values are removed while
+  ordinary grounded styling language remains. Accepted reuse bypasses the
+  grounding editor entirely. On success, the server renders the exact names
+  from the newest historical candidate set, one bounded styling direction
+  derived from structured forecast evidence, and the canonical forecast block.
+  On provider failure, it renders those prior names plus the typed safe weather
+  failure.
+- Treats weather as styling context, never proof of product performance or an
+  unstated catalog constraint. There is no new FastAPI, SSE, or UI shape.
+- Remains disabled at the provider boundary by default. Before an operator
+  enables shopper traffic, the selected Visual Crossing plan's attribution,
+  display, storage, and sharing rights must be confirmed for durable final
+  assistant summaries and downstream app-model/output-guardrail processing.
 
 ## `product-discovery`
 

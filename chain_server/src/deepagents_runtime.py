@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from datetime import date as CalendarDate
 import hashlib
 import json
 import logging
@@ -100,6 +101,20 @@ from .tool_loop_control import (
     ToolLoopControlMiddleware,
     _SERVER_REJECTED_TOOL_CALLS,
 )
+from .weather import (
+    VISUAL_CROSSING_ATTRIBUTION_LABEL,
+    VISUAL_CROSSING_ATTRIBUTION_URL,
+    WeatherFailure,
+    build_weather_client,
+    weather_failure,
+)
+from .weather_tool import (
+    WeatherForecastEvidence,
+    WEATHER_FORECAST_EVIDENCE_PREFIX,
+    WEATHER_FORECAST_FAILURE_PREFIX,
+    get_event_weather_forecast_tool,
+    parse_weather_tool_evidence,
+)
 from shared.commerce_contracts import (
     AddCartItemInput,
     CatalogCapabilities,
@@ -184,6 +199,220 @@ _SEARCH_DIRECTION_EVIDENCE_PREFIX = "SEARCH_DIRECTION_EVIDENCE:"
 _SEARCH_GUIDANCE_EVIDENCE_PREFIX = "SEARCH_GUIDANCE_EVIDENCE:"
 _SEARCH_SCOPE_RELATION_EVIDENCE_PREFIX = "SEARCH_SCOPE_RELATION_EVIDENCE:"
 _CATALOG_SCOPE_OUTCOME_PREFIX = "CATALOG_SCOPE_OUTCOME:"
+_WEATHER_TOOL_NAME = "get_weather_forecast_tool"
+_EVENT_CONTEXT_REUSE_SEARCH_BLOCK = (
+    "STOP_TOOL_USE: This turn applies event context to prior candidates, so "
+    "no new catalog search may run. Answer from the established candidates."
+)
+_WEATHER_DIAGNOSTIC_REDACTION = {"redacted": True}
+_WEATHER_PARTIAL_OUTPUT_REDACTION = "WEATHER TOOL OUTPUT REDACTED"
+_PRIOR_WEATHER_CONTEXT_REDACTION = (
+    "(prior forecast omitted; refresh it before making weather claims)"
+)
+_WEATHER_UNCERTAINTY_TEXT = (
+    "Forecasts can change, so recheck closer to the event."
+)
+_WEATHER_FACT_LANGUAGE_RE = re.compile(
+    r"(?:"
+    r"\b(?:forecasts?|weather|conditions?|outlook|sk(?:y|ies)|"
+    r"sun(?:ny|shine)?|cloud(?:s|y|iness)|overcast|"
+    r"rain(?:s|ed|ing|y|fall)?|shower(?:s|ed|ing)?|"
+    r"drizzl(?:e|es|ed|ing)|downpours?|snow(?:s|ed|ing|y|fall)?|"
+    r"ice|icy|sleet(?:s|ed|ing)?|hail(?:s|ed|ing)?|"
+    r"storm(?:s|ed|ing|y)?|thunder(?:s|ed|ing|storms?)?|lightning|"
+    r"fog(?:s|ged|ging|gy)?|misty?|"
+    r"wind|winds|windy|breez(?:e|es|y)|gust(?:s|y)?|"
+    r"muggy|chilly|balmy|humidity|humid|temperatures?|degrees?|"
+    r"precipitation|flurries|frost|freezing|blizzards?|tornado(?:es)?|"
+    r"hurricanes?|cyclones?|typhoons?|monsoons?|heatwaves?)\b"
+    r"|\b(?:cloud\s+cover|wind\s+chill|heat\s+index|air\s+quality|"
+    r"dew\s*point|uv\s+index|barometric\s+pressure|visibility)\b"
+    r"|\b(?:it(?:['’]s| is| will be)|conditions?\s+(?:are|will be)|"
+    r"day\s+(?:is|will be))\s+"
+    r"(?:clear|sunny|cloudy|rainy|snowy|icy|stormy|foggy)\b"
+    r"|\b(?:clear|sunny|cloudy|rainy|snowy|icy|stormy|foggy)\s+"
+    r"(?:skies|conditions?|forecast|weather|day)\b"
+    r"|\b(?:breezy|hot|cold|warm|cool|chilly|muggy|humid|dry|wet)\s+"
+    r"(?:day|afternoon|morning|evening|night|week|weather|conditions?)\b"
+    r"|\bexpect(?:ed)?\s+(?:clear|sunny|cloudy|rain|showers?|snow|ice|"
+    r"storm|fog|sun|sunshine)\b"
+    r"|\bit(?:['’]ll| will| won['’]t| will not| should| may| might| could)\s+"
+    r"(?:(?:be|stay|remain|turn|get)\s+)?"
+    r"(?:clear|sunny|cloudy|rain|rainy|snow|snowy|ice|icy|"
+    r"storm|stormy|fog|foggy|windy|breezy|hot|cold|humid|dry|wet)\b"
+    r"|\bthere\s+(?:will|won['’]t|will not|should|may|might|could)\s+"
+    r"(?:not\s+)?(?:be\s+)?(?:no\s+)?(?:rain|snow|ice|storm|fog)\b"
+    r"|\b(?:rain|snow|ice|storm|fog)\s+"
+    r"(?:will|won['’]t|will not|should|may|might|could)\s+"
+    r"(?:not\s+)?(?:hold\s+off|continue|start|stop|clear|arrive|be)\b"
+    r"|\b(?:it\s+)?looks?\s+"
+    r"(?:clear|sunny|cloudy|rainy|snowy|icy|stormy|foggy|windy|"
+    r"breezy|hot|cold|humid|dry)\b"
+    r"|\b(?:plan|prepare|dress)\s+for\s+"
+    r"(?:sun|sunshine|rain|showers?|snow|ice|storms?|fog|wind|heat|cold)\b"
+    r"|\b(?:rain|snow|ice|storm|fog)\s+(?:is|are|will be)\b"
+    r"|\b(?:high|low)\s+(?:of\s+)?[-+]?[0-9]+(?:\.[0-9]+)?\b"
+    r"|[-+]?[0-9]+(?:\.[0-9]+)?"
+    r"(?:\s*°\s*[FfCc]|\s+[FfCc]\b|\s*%)"
+    r"|\b[0-9]{4}-[0-9]{2}-[0-9]{2}\b"
+    r"|\b[0-9]{1,2}[/-][0-9]{1,2}[/-][0-9]{2,4}\b"
+    r"|\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|"
+    r"May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|"
+    r"Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.?\s+"
+    r"[0-9]{1,2}(?:st|nd|rd|th)?\b"
+    r")",
+    flags=re.IGNORECASE | re.ASCII,
+)
+_SAVED_AREA_CONFIRMATION_RE = re.compile(
+    r"\b(?:my|the)\s+(?:usual|home)\s+area\b",
+    flags=re.IGNORECASE | re.ASCII,
+)
+_SAVED_AREA_QUESTION_RE = re.compile(
+    r"\b(?:your|the)\s+(?:usual|home)\s+area\b",
+    flags=re.IGNORECASE | re.ASCII,
+)
+_SAVED_AREA_OVERRIDE_RE = re.compile(
+    r"\b(?:not|no\s+longer|elsewhere|somewhere\s+else|outside|away|instead|"
+    r"actually|moved|changed|different|maybe|might|could|unsure|unknown|"
+    r"don't|do\s+not|if)\b",
+    flags=re.IGNORECASE | re.ASCII,
+)
+_SAVED_AREA_MODAL_UNCERTAINTY_RE = re.compile(
+    r"\bmay(?:\s+(?:still|possibly|perhaps|well))?\s+"
+    r"(?:be|use|take|happen|occur)\b",
+    flags=re.IGNORECASE | re.ASCII,
+)
+_RECENT_CONVERSATION_TURN_RE = re.compile(
+    r"(?m)^\[turn [0-9]+\]\nUser: ([^\n]*)\nAssistant: ([^\n]*)$",
+    flags=re.ASCII,
+)
+_SAVED_AREA_BARE_CONFIRMATIONS = frozenset(
+    {
+        "yes",
+        "yes please",
+        "yes that's right",
+        "that's right",
+        "that is right",
+        "correct",
+        "here",
+        "here please",
+        "home area",
+        "my home area",
+        "my usual area",
+        "the home area",
+        "the usual area",
+        "usual area",
+    }
+)
+_DATE_ONLY_CONTEXT_WORDS = frozenset(
+    {
+        "a",
+        "and",
+        "at",
+        "aware",
+        "before",
+        "ceremony",
+        "date",
+        "dates",
+        "day",
+        "direction",
+        "event",
+        "exact",
+        "for",
+        "forecast",
+        "from",
+        "give",
+        "help",
+        "i",
+        "in",
+        "is",
+        "it",
+        "its",
+        "me",
+        "my",
+        "next",
+        "of",
+        "occasion",
+        "on",
+        "outfit",
+        "plan",
+        "please",
+        "reception",
+        "same",
+        "shop",
+        "shopping",
+        "still",
+        "style",
+        "styling",
+        "the",
+        "this",
+        "through",
+        "thru",
+        "to",
+        "today",
+        "tomorrow",
+        "until",
+        "update",
+        "use",
+        "will",
+        "be",
+        "we",
+        "weather",
+        "wedding",
+        "week",
+        "weekend",
+        "s",
+        "st",
+        "nd",
+        "rd",
+        "th",
+        "monday",
+        "tuesday",
+        "wednesday",
+        "thursday",
+        "friday",
+        "saturday",
+        "sunday",
+        "january",
+        "february",
+        "march",
+        "april",
+        "may",
+        "june",
+        "july",
+        "august",
+        "september",
+        "october",
+        "november",
+        "december",
+        "jan",
+        "feb",
+        "mar",
+        "apr",
+        "jun",
+        "jul",
+        "aug",
+        "sep",
+        "sept",
+        "oct",
+        "nov",
+        "dec",
+    }
+)
+_SAVED_AREA_CONFIRMATION_CONTEXT_WORDS = (
+    _DATE_ONLY_CONTEXT_WORDS
+    | {
+        "area",
+        "around",
+        "confirm",
+        "confirmed",
+        "home",
+        "right",
+        "that",
+        "usual",
+        "yes",
+    }
+)
 _MAX_DIAGNOSTIC_PRODUCT_EVIDENCE = 24
 _MAX_DIAGNOSTIC_PRODUCT_FACTS = 40
 _MAX_DIAGNOSTIC_PRODUCT_STRING_CHARS = 500
@@ -253,14 +482,16 @@ _SHOPPER_CONTEXT_SYSTEM_RULES = """Representative-shopper precedence and safety:
 - Cart, catalog, product-detail, and store-policy evidence remain authoritative.
 - A saved ZIP code is not proof of current location, event location, weather,
   or a product requirement. Only event-context may use it as a tentative
-  event-location candidate: keep advice conditional and confirm naturally when
-  location would materially change styling. When it is the only event-location
-  clue, ask whether to plan around the shopper's usual area or somewhere else;
-  do not ask for a city as though no candidate exists. An explicit
-  shopper-stated event destination overrides it; once stated, never use "usual
-  area" framing. A stated venue setting is authoritative for venue but does not
-  establish destination. Perform no weather lookup or weather inference from a
-  ZIP or place name."""
+  event-location candidate. When it is the only clue, ask whether to plan around
+  the shopper's usual area or somewhere else; do not ask for a city as though no
+  candidate exists. Do not echo its digits.
+- Event-context may use the saved ZIP for one forecast only after the shopper
+  explicitly confirms that this event is in the usual area. A current explicit
+  event destination overrides both recent context and saved ZIP; once stated,
+  never use usual-area framing or silently fall back to saved ZIP. A stated
+  venue setting is authoritative for venue but does not establish destination.
+- Never infer weather from a ZIP or place name. Weather facts require successful
+  current-turn forecast evidence and never establish a product requirement."""
 _GROUNDING_EDITOR_SYSTEM_PROMPT = """You are a final response editor for a retail shopping assistant.
 
 Rewrite the draft response only as needed so it is grounded in TOOL EVIDENCE
@@ -282,6 +513,17 @@ Rules:
 - CURRENT-TURN TOOL EVIDENCE is the only evidence for a search or mutation in
   this turn. PRIOR-TURN TOOL EVIDENCE may support direct references to products
   previously shown, but it does not prove that a new search or mutation ran.
+- Only successful current-turn weather evidence supports forecast facts. Prior
+  forecast prose and prior-turn weather evidence are not authoritative for a
+  new turn. If current evidence contains a weather failure, state only the
+  bounded availability problem and never invent conditions.
+- Use successful weather evidence for concise styling judgment, but do not
+  rewrite its date, condition, temperature, precipitation, attribution, or
+  uncertainty summary. The server appends that exact validated forecast block.
+  Do not infer climate, venue, dress code, or local norms from it. Weather may
+  guide general styling judgment only; it cannot prove product warmth,
+  waterproofing, breathability, comfort, safety, terrain performance, or any
+  other product attribute or hard catalog constraint.
 - If TOOL EVIDENCE says there is no direct advertised taxonomy match for one
   requested role, do not claim a search ran for that role. Report that role's
   gap, preserve any other successful current-turn role, and ask whether to
@@ -1646,6 +1888,7 @@ class DeepAgentsRuntime:
         )
         self._conversation_memory = ConversationMemoryClient(config.memory_port)
         self._conversation_products = ConversationProductsClient(config.memory_port)
+        self._weather_client = build_weather_client(config.weather)
 
     def catalog_capabilities(self) -> CatalogCapabilities:
         """Return the process-lifecycle catalog capability contract."""
@@ -1837,6 +2080,7 @@ class DeepAgentsRuntime:
                 result_messages,
                 request_id=identity.request_id,
                 final_termination_reason="completed",
+                saved_zipcode=_saved_zipcode(state.shopper_context),
             )
             state.response = (
                 _no_direct_taxonomy_response(
@@ -1891,6 +2135,7 @@ class DeepAgentsRuntime:
                 request_id=identity.request_id,
                 final_termination_reason=termination_reason,
                 preserve_partial_messages=True,
+                saved_zipcode=_saved_zipcode(state.shopper_context),
             )
             if capture_error:
                 state.agent_diagnostics["partial_graph_capture_error"] = capture_error
@@ -1912,6 +2157,19 @@ class DeepAgentsRuntime:
             state.timings["deepagents_error"] = time.monotonic() - start
             return state
 
+        final_weather_outcome = _current_weather_outcome(
+            result,
+            request_id=identity.request_id,
+        )
+        if isinstance(final_weather_outcome, WeatherForecastEvidence):
+            state.response = _ensure_weather_forecast_evidence(
+                state.response,
+                final_weather_outcome,
+            )
+        state.response = _scrub_saved_zip_from_response(
+            state.response,
+            state.shopper_context,
+        )
         if state.guardrails:
             safety_start = time.monotonic()
             output_safe, output_check_ok = self._check_safety(
@@ -1949,6 +2207,9 @@ class DeepAgentsRuntime:
         # active catalog service before execution.
         if turn_capabilities is None:
             turn_capabilities = self._catalog_capabilities.get()
+        current_utc_date = CalendarDate.fromisoformat(
+            time.strftime("%Y-%m-%d", time.gmtime())
+        )
 
         if not self._profile_registered:
             register_harness_profile(
@@ -1994,6 +2255,9 @@ class DeepAgentsRuntime:
         product_evidence = ProductEvidence()
         product_resolution_used = False
         product_resolution_lock = Lock()
+        prior_weather_candidates = _historical_product_names(state.context)
+        event_context_gate_lock = Lock()
+        event_context_reuses_prior_candidates = False
 
         def _lock_taxonomy_constraint_values(
             scope_key: str | None,
@@ -2072,6 +2336,9 @@ class DeepAgentsRuntime:
             nonlocal pending_no_direct_constraint_clear
             nonlocal pending_taxonomy_constraints
             nonlocal pending_schema_requirements
+            with event_context_gate_lock:
+                if event_context_reuses_prior_candidates:
+                    return _EVENT_CONTEXT_REUSE_SEARCH_BLOCK
             taxonomy = taxonomy or {"category": [], "subcategory": []}
             required_constraints = required_constraints or {}
             capabilities = turn_capabilities
@@ -3295,27 +3562,10 @@ class DeepAgentsRuntime:
             )
             return _format_cart_total(cart)
 
-        shopping_tools = [
-            search_catalog_tool,
-            get_product_details_tool,
-            resolve_conversation_products_tool,
-            get_cart_tool,
-            add_cart_items_tool,
-            remove_cart_item_tool,
-            update_cart_items_tool,
-            view_cart_total_tool,
-            get_store_policy_tool,
-            check_product_availability_tool,
-            check_active_promotions_tool,
-        ]
-        validate_registered_tool_names(
-            {
-                str(
-                    getattr(candidate, "name", None)
-                    or getattr(candidate, "__name__", "")
-                )
-                for candidate in shopping_tools
-            }
+        tool_loop_control = ToolLoopControlMiddleware(
+            catalog_context=format_catalog_capabilities_for_prompt(
+                turn_capabilities
+            )
         )
         skill_gate = ShopperSkillActivationMiddleware(
             request_id=identity.request_id,
@@ -3329,12 +3579,51 @@ class DeepAgentsRuntime:
             },
             previous_selected_skills=state.previous_selected_skill_names,
         )
-        tool_loop_control = ToolLoopControlMiddleware(
-            catalog_context=format_catalog_capabilities_for_prompt(
-                turn_capabilities
-            )
-        )
 
+        def freeze_catalog_search_for_prior_candidates() -> None:
+            nonlocal event_context_reuses_prior_candidates
+            with event_context_gate_lock:
+                event_context_reuses_prior_candidates = True
+            skill_gate.deny_tool_for_turn(
+                "search_catalog_tool",
+                _EVENT_CONTEXT_REUSE_SEARCH_BLOCK,
+            )
+            tool_loop_control.close_for_synthesis()
+
+        weather_forecast_tool = get_event_weather_forecast_tool(
+            self._weather_client,
+            saved_zipcode=_saved_zipcode(state.shopper_context),
+            saved_zip_authorized=_saved_zip_authorized_for_weather(state),
+            shopper_provided_texts=_shopper_authored_texts(state),
+            current_date=current_utc_date,
+            prior_candidates_available=bool(prior_weather_candidates),
+            on_reuse_prior_candidates=(
+                freeze_catalog_search_for_prior_candidates
+            ),
+        )
+        shopping_tools = [
+            search_catalog_tool,
+            get_product_details_tool,
+            resolve_conversation_products_tool,
+            get_cart_tool,
+            add_cart_items_tool,
+            remove_cart_item_tool,
+            update_cart_items_tool,
+            view_cart_total_tool,
+            get_store_policy_tool,
+            check_product_availability_tool,
+            check_active_promotions_tool,
+            weather_forecast_tool,
+        ]
+        validate_registered_tool_names(
+            {
+                str(
+                    getattr(candidate, "name", None)
+                    or getattr(candidate, "__name__", "")
+                )
+                for candidate in shopping_tools
+            }
+        )
         @tool(args_schema=skill_activation_input, return_direct=False)
         def activate_shopper_skills_tool(
             skill_names: list[str],
@@ -3349,9 +3638,10 @@ class DeepAgentsRuntime:
             without styling intent. These are alternative primary procedures,
             never a pair. Add budget-shopping only as a modifier when the shopper
             states a budget. Add event-context only beside outfit-styling, and add
-            it whenever an event destination or venue is stated or the guidance
-            would otherwise ask about or branch on missing destination or venue
-            context. Generic occasion advice is not a reason to omit it. Keep
+                it whenever an event destination or venue is stated, a supported
+                forecast would materially change event guidance, or the guidance
+                would otherwise ask about or branch on missing destination or venue
+                context. Generic occasion advice is not a reason to omit it. Keep
             outfit-styling as the primary skill throughout an
             active outfit-building thread, including its single-piece follow-up
             searches.
@@ -3388,6 +3678,7 @@ class DeepAgentsRuntime:
             system_prompt=self._system_prompt(
                 turn_capabilities,
                 shopper_context=state.shopper_context,
+                current_utc_date=current_utc_date,
             ),
             middleware=[tool_loop_control, skill_gate],
             backend=skills_backend,
@@ -3466,13 +3757,30 @@ class DeepAgentsRuntime:
             max_chars=max_evidence_chars,
             request_id=request_id,
         )
+        prior_messages = [
+            message
+            for message in _prior_turn_messages(
+                _result_messages(result),
+                request_id,
+            )
+            if not _message_contains_weather_evidence(message)
+        ]
         prior_evidence = _collect_message_grounding_evidence(
-            _prior_turn_messages(_result_messages(result), request_id),
+            prior_messages,
             max_chars=max_evidence_chars,
         )
         search_only = bool(current_evidence) and _has_search_only_tool_evidence(
             result,
             request_id=request_id,
+        )
+        weather_outcome, weather_candidate_action = (
+            _current_weather_outcome_and_action(
+                result,
+                request_id=request_id,
+            )
+        )
+        reuses_prior_candidates = (
+            weather_candidate_action == "reuse_prior_candidates"
         )
         current_search_groups = _search_result_groups(
             result,
@@ -3482,7 +3790,30 @@ class DeepAgentsRuntime:
         enforce_event_context = self._event_context_response_guidance_active(
             state
         )
+        if reuses_prior_candidates and weather_outcome is not None:
+            if isinstance(weather_outcome, WeatherFailure):
+                return self._grounding_failure_fallback(
+                    state,
+                    result,
+                    request_id=request_id,
+                    weather_outcome=weather_outcome,
+                )
+            deterministic_styling = _compose_prior_candidate_weather_styling(
+                state.context,
+                weather_outcome,
+            )
+            return _ensure_weather_forecast_evidence(
+                deterministic_styling,
+                weather_outcome,
+            )
         if not getattr(self.config, "grounding_rewrite_enabled", True):
+            if weather_outcome is not None:
+                return self._grounding_failure_fallback(
+                    state,
+                    result,
+                    request_id=request_id,
+                    weather_outcome=weather_outcome,
+                )
             if search_only:
                 return self._rewrite_search_only_response(
                     state,
@@ -3491,12 +3822,13 @@ class DeepAgentsRuntime:
                 )
             return _scrub_internal_shopper_language(draft_response)
         if not draft_response:
-            if not search_only:
+            if not search_only and weather_outcome is None:
                 return draft_response
-            return self._rewrite_search_only_response(
+            return self._grounding_failure_fallback(
                 state,
                 result,
                 request_id=request_id,
+                weather_outcome=weather_outcome,
             )
         if (
             not current_evidence
@@ -3581,9 +3913,28 @@ class DeepAgentsRuntime:
                 "venue setting.\n\n"
                 f"{_GROUNDING_EDITOR_SYSTEM_PROMPT}"
             )
+        if isinstance(weather_outcome, WeatherForecastEvidence):
+            weather_editor_rule = (
+                "Highest-priority successful-weather output rule:\n"
+                "- Return one or two concise styling sentences before the "
+                "server-authored forecast block.\n"
+                "- Use the supplied forecast evidence silently for styling "
+                "judgment. Do not restate its resolved place, dates, condition "
+                "words, temperatures, precipitation, attribution, or "
+                "uncertainty; the server appends those exact facts.\n"
+                "- When the shopper's turn only supplies event context, retain "
+                "relevant exact candidate names from RECENT DISCUSSION or the "
+                "HISTORICAL PRODUCT INDEX as previously shown options. Add no "
+                "new product facts and do not promise or run another search.\n"
+                "- Ask no repeated location, venue, or date question.\n\n"
+            )
+            editor_system_prompt = weather_editor_rule + editor_system_prompt
+        recent_discussion = _redact_prior_weather_assistant_text(
+            state.context
+        )
         prompt = (
             f"USER QUERY:\n{state.query}\n\n"
-            f"RECENT DISCUSSION:\n{state.context or '(none)'}\n\n"
+            f"RECENT DISCUSSION:\n{recent_discussion or '(none)'}\n\n"
             f"{event_context_prompt}"
             f"CURRENT CART:\n{_format_cart(state.cart)}\n\n"
             f"AVAILABLE IMAGES:\n{_format_retrieved_images(state.retrieved)}\n\n"
@@ -3592,6 +3943,10 @@ class DeepAgentsRuntime:
             "PRIOR-TURN TOOL EVIDENCE:\n"
             f"{prior_evidence or '(none)'}\n\n"
             f"DRAFT RESPONSE:\n{draft_response}"
+        )
+        prompt = _scrub_saved_zip_from_response(
+            prompt,
+            state.shopper_context,
         )
         try:
             active_timeout = (
@@ -3635,7 +3990,12 @@ class DeepAgentsRuntime:
                     result,
                     request_id=request_id,
                 )
-            return _GROUNDING_FAILURE_RESPONSE
+            return self._grounding_failure_fallback(
+                state,
+                result,
+                request_id=request_id,
+                weather_outcome=weather_outcome,
+            )
         except Exception:  # noqa: BLE001 - response editor has a safe fallback.
             logger.exception("Grounding response editor failed")
             state.timings["grounding_rewrite"] = time.monotonic() - start
@@ -3653,7 +4013,12 @@ class DeepAgentsRuntime:
                     result,
                     request_id=request_id,
                 )
-            return _GROUNDING_FAILURE_RESPONSE
+            return self._grounding_failure_fallback(
+                state,
+                result,
+                request_id=request_id,
+                weather_outcome=weather_outcome,
+            )
 
         state.timings["grounding_rewrite"] = time.monotonic() - start
         state.token_usage = _merge_token_usage(
@@ -3679,7 +4044,12 @@ class DeepAgentsRuntime:
                     result,
                     request_id=request_id,
                 )
-            return _GROUNDING_FAILURE_RESPONSE
+            return self._grounding_failure_fallback(
+                state,
+                result,
+                request_id=request_id,
+                weather_outcome=weather_outcome,
+            )
         _add_model_usage(
             state,
             "app_llm_grounding_editor",
@@ -3687,6 +4057,13 @@ class DeepAgentsRuntime:
             calls=1,
             detail="Final response grounding rewrite",
         )
+        if isinstance(weather_outcome, WeatherFailure):
+            return self._grounding_failure_fallback(
+                state,
+                result,
+                request_id=request_id,
+                weather_outcome=weather_outcome,
+            )
         if enforce_event_context and has_current_search_candidates and not (
             _response_mentions_search_candidate(
                 rewritten,
@@ -3701,10 +4078,29 @@ class DeepAgentsRuntime:
             )
             if search_only:
                 return candidate_fallback
-            return _scrub_internal_shopper_language(
+            rewritten = _scrub_internal_shopper_language(
                 f"{candidate_fallback}\n\n{rewritten.strip()}"
             )
-        return _scrub_internal_shopper_language(rewritten)
+        rewritten = _scrub_internal_shopper_language(rewritten)
+        if isinstance(weather_outcome, WeatherForecastEvidence):
+            rewritten = _strip_weather_fact_sentences(rewritten)
+            if not has_current_search_candidates:
+                rewritten = _ensure_prior_weather_candidates(
+                    rewritten,
+                    state.context,
+                )
+            if not rewritten.strip():
+                return self._grounding_failure_fallback(
+                    state,
+                    result,
+                    request_id=request_id,
+                    weather_outcome=weather_outcome,
+                )
+            rewritten = _ensure_weather_forecast_evidence(
+                rewritten,
+                weather_outcome,
+            )
+        return rewritten
 
     def _rewrite_search_only_response(
         self,
@@ -3727,6 +4123,37 @@ class DeepAgentsRuntime:
                 "\n".join(shopper_guidance)
                 or self._active_skill_response_guidance(state)
             ),
+        )
+
+    def _grounding_failure_fallback(
+        self,
+        state: State,
+        result: Any,
+        *,
+        request_id: str,
+        weather_outcome: WeatherForecastEvidence | WeatherFailure | None,
+    ) -> str:
+        """Compose deterministic catalog and weather evidence on editor failure."""
+
+        parts: list[str] = []
+        if _search_result_groups(result, request_id=request_id):
+            parts.append(
+                self._rewrite_search_only_response(
+                    state,
+                    result,
+                    request_id=request_id,
+                )
+            )
+        elif weather_outcome is not None:
+            prior_candidates = _historical_product_names(state.context)
+            if prior_candidates:
+                parts.append(_prior_weather_candidates_text(prior_candidates))
+        if weather_outcome is not None:
+            parts.append(_format_weather_outcome(weather_outcome))
+        return (
+            _scrub_internal_shopper_language("\n\n".join(parts))
+            if parts
+            else _GROUNDING_FAILURE_RESPONSE
         )
 
     def _active_skill_response_guidance(self, state: State) -> str:
@@ -3803,8 +4230,13 @@ class DeepAgentsRuntime:
         capabilities: CatalogCapabilities,
         *,
         shopper_context: ShopperContext | None = None,
+        current_utc_date: CalendarDate | None = None,
     ) -> str:
         catalog_context = format_catalog_capabilities_for_prompt(capabilities)
+        current_utc_date = current_utc_date or CalendarDate.fromisoformat(
+            time.strftime("%Y-%m-%d", time.gmtime())
+        )
+        weather_enabled = _weather_lookup_enabled(self.config.weather)
         shopper_context_rules = (
             f"\n{_SHOPPER_CONTEXT_SYSTEM_RULES}\n"
             if shopper_context is not None
@@ -3842,6 +4274,37 @@ by product details.
 Catalog capabilities:
 {catalog_context}
 
+Event-weather boundary:
+- Current server date is {current_utc_date.isoformat()} UTC. For the shopper's
+  exact phrase "next week", use the tool's next_week mode; the server resolves
+  it to the next Monday-through-Sunday range. Resolve other unambiguous
+  shopper-stated relative dates against this anchor; otherwise ask one date
+  question.
+- Weather lookup is {'enabled' if weather_enabled else 'disabled'} for this
+  deployment. When disabled, do not call it and do not ask a question solely
+  to obtain forecast inputs.
+- Weather is an event-context helper only. Call it at most once in a turn and,
+  when both weather and product search are needed, call weather first.
+- Every weather call must declare its candidate action. Use
+  `reuse_prior_candidates` only when the shopper's current turn supplies event
+  context for already-shown candidates and asks for no new products or
+  refinement. That action closes catalog search for the rest of this turn, so
+  answer from the established candidates. Use `search_new_candidates` only
+  when the current turn explicitly requests new or refined products, or there
+  are no prior candidates to reuse.
+- A successful lookup requires a shopper-stated place plus an exact date,
+  complete inclusive range, or the bounded next_week mode. Keep the shortest
+  sufficient shopper-authored place phrase in `location`. If it is ambiguous,
+  `location_query` may preserve that exact phrase as its first component and
+  append only one or two comma-separated region/country qualifiers. Do not
+  rewrite abbreviations: send NYC directly or qualify it as NYC, NY. Never add
+  a ZIP or numeric component the shopper did not state, and never substitute
+  the saved profile location. The provider resolves the query; the final
+  response states the resolved place as a transparent, reversible assumption.
+- Ask only the single next missing fact when it materially changes the next
+  recommendation: establish location before date. Do not ask a date question
+  for generic advice or when weather would not change the guidance.
+
 Rules:
 - Every turn begins with shopper-skill activation. Select the smallest set of
   registered skills that covers the complete current intent, then follow the
@@ -3856,7 +4319,7 @@ Rules:
   advice is not a reason to omit it. Never use it with product discovery or by
   itself.
 - "Usual area," "home area," or saved-location framing is allowed only when the
-  current turn includes a SHOPPER CONTEXT block with Saved ZIP. Without that
+  current turn includes a server-resolved saved-ZIP block. Without that
   block there is no saved-location candidate: ask the event destination
   directly and never imply that a saved, home, or usual area exists.
 - Style-led fashion selection belongs to outfit styling even when the shopper
@@ -4114,6 +4577,7 @@ Rules:
         return prompt
 
     def _build_user_message(self, state: State, identity: RequestIdentity) -> str:
+        recent_discussion = _redact_prior_weather_assistant_text(state.context)
         sections = [
             (
                 f"REQUEST ID: {identity.request_id}\n"
@@ -4134,7 +4598,7 @@ Rules:
                 f"MEDIA ATTACHED:\n{_format_media_summary(state.media)}",
                 f"MEDIA ANALYSIS:\n{state.media_analysis or '(none)'}",
                 f"CURRENT CART:\n{_format_cart(state.cart)}",
-                f"RECENT DISCUSSION:\n{state.context or '(none)'}",
+                f"RECENT DISCUSSION:\n{recent_discussion or '(none)'}",
             ]
         )
         return "\n\n".join(sections)
@@ -4287,6 +4751,10 @@ Rules:
         state.response = turn.assistant_text or (
             "That earlier request did not complete. Please retry with a new request."
         )
+        state.response = _scrub_saved_zip_from_response(
+            state.response,
+            state.shopper_context,
+        )
         if turn.output is not None:
             state.product_results = [
                 product.model_dump(mode="json")
@@ -4313,6 +4781,10 @@ Rules:
     ) -> bool:
         """Persist one terminal turn without changing its shopper response."""
 
+        state.response = _scrub_saved_zip_from_response(
+            state.response,
+            state.shopper_context,
+        )
         reason = termination_reason or str(
             state.agent_diagnostics.get("final_termination_reason") or "completed"
         )
@@ -4464,6 +4936,7 @@ def _collect_agent_diagnostics(
     request_id: str,
     final_termination_reason: str,
     preserve_partial_messages: bool = False,
+    saved_zipcode: str | None = None,
 ) -> dict[str, Any]:
     """Collect current-turn skill, tool, and termination diagnostics."""
 
@@ -4517,7 +4990,11 @@ def _collect_agent_diagnostics(
             entry = {
                 "sequence": sequence,
                 "tool_name": call["tool_name"],
-                "arguments": call["arguments"],
+                "arguments": (
+                    dict(_WEATHER_DIAGNOSTIC_REDACTION)
+                    if call["tool_name"] == _WEATHER_TOOL_NAME
+                    else call["arguments"]
+                ),
                 "status": status,
             }
             if rejection_reason:
@@ -4561,7 +5038,7 @@ def _collect_agent_diagnostics(
         diagnostics["partial_graph_messages"] = partial
         if truncated:
             diagnostics["partial_graph_messages_truncated"] = True
-    return diagnostics
+    return _redact_saved_zip_from_diagnostics(diagnostics, saved_zipcode)
 
 
 def _safe_collect_agent_diagnostics(
@@ -4570,6 +5047,7 @@ def _safe_collect_agent_diagnostics(
     request_id: str,
     final_termination_reason: str,
     preserve_partial_messages: bool = False,
+    saved_zipcode: str | None = None,
 ) -> dict[str, Any]:
     """Collect diagnostics without allowing tracing to change turn behavior."""
 
@@ -4579,6 +5057,7 @@ def _safe_collect_agent_diagnostics(
             request_id=request_id,
             final_termination_reason=final_termination_reason,
             preserve_partial_messages=preserve_partial_messages,
+            saved_zipcode=saved_zipcode,
         )
     except Exception as exc:  # noqa: BLE001 - diagnostics must fail independently.
         error_type = type(exc).__name__
@@ -4846,6 +5325,10 @@ def _tool_rejection_reason(content: str) -> str | None:
             "product_detail_read_limit",
         ),
         (
+            _EVENT_CONTEXT_REUSE_SEARCH_BLOCK,
+            "event_context_reuses_prior_candidates",
+        ),
+        (
             "The catalog search request does not match current capabilities:",
             "invalid_catalog_request",
         ),
@@ -4897,10 +5380,19 @@ def _serialize_partial_graph_messages(
     relevant = [
         message for message in messages if _message_type(message) in {"ai", "tool"}
     ]
+    contains_weather = any(
+        _message_contains_weather_evidence(message)
+        for message in relevant
+    )
     truncated = len(relevant) > 24
     serialized: list[dict[str, Any]] = []
     for message in relevant[-24:]:
         content = _content_to_text(_value(message, "content"))
+        weather_tool_message = _message_contains_weather_evidence(message)
+        if weather_tool_message:
+            content = _WEATHER_PARTIAL_OUTPUT_REDACTION
+        elif contains_weather and _message_type(message) == "ai" and content:
+            content = "WEATHER-DERIVED ASSISTANT CONTENT REDACTED"
         content_truncated = len(content) > 2000
         payload: dict[str, Any] = {
             "type": _message_type(message),
@@ -4912,14 +5404,39 @@ def _serialize_partial_graph_messages(
                 payload[field] = str(value)
         tool_calls = _value(message, "tool_calls")
         if tool_calls:
-            payload["tool_calls"] = [
-                _normalized_tool_call(call) for call in tool_calls
-            ]
+            normalized_calls = []
+            for raw_call in tool_calls:
+                call = _normalized_tool_call(raw_call)
+                if call["tool_name"] == _WEATHER_TOOL_NAME:
+                    call["arguments"] = dict(_WEATHER_DIAGNOSTIC_REDACTION)
+                normalized_calls.append(call)
+            payload["tool_calls"] = normalized_calls
         if content_truncated:
             payload["truncated"] = True
             truncated = True
         serialized.append(payload)
     return serialized, truncated
+
+
+def _message_contains_weather_evidence(message: Any) -> bool:
+    content = _content_to_text(_value(message, "content"))
+    if content.startswith(
+        (
+            SKILL_ACTIVATION_REQUIRED,
+            SKILL_TOOL_NOT_GRANTED,
+        )
+    ):
+        return False
+    if str(_value(message, "name") or "") == _WEATHER_TOOL_NAME:
+        return True
+    if content.startswith(
+        (WEATHER_FORECAST_EVIDENCE_PREFIX, WEATHER_FORECAST_FAILURE_PREFIX)
+    ):
+        return True
+    return any(
+        str(_value(call, "name") or "") == _WEATHER_TOOL_NAME
+        for call in (_value(message, "tool_calls") or [])
+    )
 
 
 def _message_type(message: Any) -> str:
@@ -4939,6 +5456,37 @@ def _diagnostic_json_value(value: Any) -> Any:
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
     return str(value)
+
+
+def _redact_saved_zip_from_diagnostics(
+    value: dict[str, Any],
+    saved_zipcode: str | None,
+) -> dict[str, Any]:
+    """Remove the server-resolved profile ZIP from every diagnostic field."""
+
+    if not saved_zipcode:
+        return value
+    pattern = re.compile(
+        rf"(?<![0-9]){re.escape(saved_zipcode)}(?![0-9])"
+    )
+
+    def scrub(candidate: Any) -> Any:
+        if isinstance(candidate, str):
+            return pattern.sub("SAVED ZIP REDACTED", candidate)
+        if isinstance(candidate, dict):
+            return {
+                (
+                    scrub(key)
+                    if isinstance(key, str)
+                    else key
+                ): scrub(item)
+                for key, item in candidate.items()
+            }
+        if isinstance(candidate, (list, tuple)):
+            return [scrub(item) for item in candidate]
+        return candidate
+
+    return scrub(value)
 
 
 def _diagnostic_product_evidence(
@@ -5187,7 +5735,17 @@ def _has_search_only_tool_evidence(result: Any, *, request_id: str) -> bool:
         content = _content_to_text(_value(message, "content"))
         if not name and "SEARCH_RESULT_GROUNDING_NOTE" in content:
             name = "search_catalog_tool"
-        if name in {SKILL_ACTIVATION_TOOL_NAME, "read_file"}:
+        if (
+            name in {SKILL_ACTIVATION_TOOL_NAME, "read_file"}
+            or content.startswith(
+                (
+                    SKILL_ACTIVATION_COMPLETE,
+                    SKILL_ACTIVATION_REQUIRED,
+                    SKILL_TOOL_NOT_GRANTED,
+                    "SHOPPER_SKILL_ACTIVATION_FAILED:",
+                )
+            )
+        ):
             continue
         tool_names.append(name)
         if name == "search_catalog_tool" and "SEARCH_RESULT_GROUNDING_NOTE" in (
@@ -5198,6 +5756,388 @@ def _has_search_only_tool_evidence(result: Any, *, request_id: str) -> bool:
         has_search_result
         and set(tool_names) == {"search_catalog_tool"}
     )
+
+
+def _current_weather_outcome_and_action(
+    result: Any,
+    *,
+    request_id: str,
+) -> tuple[
+    WeatherForecastEvidence | WeatherFailure | None,
+    str | None,
+]:
+    """Return weather evidence and the action from its exact tool call."""
+
+    messages = _current_turn_messages(_result_messages(result), request_id)
+    actions_by_call_id: dict[str, str] = {}
+    for message in messages:
+        if _message_type(message) != "ai":
+            continue
+        for raw_call in _value(message, "tool_calls") or []:
+            call = _normalized_tool_call(raw_call)
+            if (
+                call["tool_name"] != _WEATHER_TOOL_NAME
+                or not call["tool_call_id"]
+            ):
+                continue
+            action = call["arguments"].get("candidate_action")
+            if action in {
+                "reuse_prior_candidates",
+                "search_new_candidates",
+            }:
+                actions_by_call_id[call["tool_call_id"]] = str(action)
+
+    for message in messages:
+        if _message_type(message) != "tool":
+            continue
+        name = str(_value(message, "name") or "")
+        content = _content_to_text(_value(message, "content"))
+        if content.startswith(
+            (
+                SKILL_ACTIVATION_REQUIRED,
+                SKILL_TOOL_NOT_GRANTED,
+            )
+        ):
+            continue
+        if name != _WEATHER_TOOL_NAME and not content.startswith(
+            (WEATHER_FORECAST_EVIDENCE_PREFIX, WEATHER_FORECAST_FAILURE_PREFIX)
+        ):
+            continue
+        parsed = parse_weather_tool_evidence(content)
+        action = actions_by_call_id.get(
+            str(_value(message, "tool_call_id") or "")
+        )
+        if isinstance(parsed, (WeatherForecastEvidence, WeatherFailure)):
+            return parsed, action
+        return weather_failure("weather_response_invalid"), action
+    return None, None
+
+
+def _current_weather_outcome(
+    result: Any,
+    *,
+    request_id: str,
+) -> WeatherForecastEvidence | WeatherFailure | None:
+    """Return the one validated current-turn weather outcome, if present."""
+
+    outcome, _action = _current_weather_outcome_and_action(
+        result,
+        request_id=request_id,
+    )
+    return outcome
+
+
+def _escape_markdown_inline(value: str) -> str:
+    """Escape provider-owned text before placing it in Markdown."""
+
+    return re.sub(r"([\\`*_\[\]\(\)<>])", r"\\\1", value)
+
+
+def _format_weather_outcome(
+    outcome: WeatherForecastEvidence | WeatherFailure,
+) -> str:
+    """Render a deterministic shopper-safe weather success or failure."""
+
+    if isinstance(outcome, WeatherFailure):
+        if outcome.code == "weather_outside_forecast_horizon":
+            return (
+                "A live forecast is not available for those event dates yet, "
+                "so I won't assume the conditions. We can plan conditionally "
+                "now and recheck closer to the event."
+            )
+        if outcome.code == "weather_location_not_found":
+            return (
+                "I couldn't resolve that event location, so I don't have "
+                "forecast conditions to use. Please add the state, region, "
+                "or country."
+            )
+        if outcome.code in {
+            "weather_timeout",
+            "weather_rate_limited",
+            "weather_unavailable",
+        }:
+            return (
+                "I couldn't retrieve the live forecast right now, so I won't "
+                "assume the conditions. We can keep the styling direction "
+                "conditional and retry later."
+            )
+        if outcome.code in {
+            "weather_disabled",
+            "weather_config_invalid",
+            "weather_auth_failed",
+        }:
+            return (
+                "Live weather guidance is unavailable right now, so I won't "
+                "assume the event conditions. I can still plan from the stated "
+                "destination and venue."
+            )
+        return (
+            "I couldn't establish a valid live forecast for that event place "
+            "and date, so I won't assume the conditions."
+        )
+
+    lines: list[str] = []
+    if outcome.resolved_location:
+        lines.append(
+            "Forecast location used: "
+            f"{_escape_markdown_inline(outcome.resolved_location)}."
+        )
+    if outcome.relative_date == "next_week":
+        start_label = outcome.requested_window.start_date.strftime(
+            "%b %d, %Y"
+        ).replace(" 0", " ")
+        end_label = outcome.requested_window.end_date.strftime(
+            "%b %d, %Y"
+        ).replace(" 0", " ")
+        lines.append(
+            f'Interpreting "next week" as {start_label} through {end_label}.'
+        )
+    if len(outcome.days) == 1:
+        lines.append("Live forecast:")
+    else:
+        lines.append("Live forecast for the event window:")
+    for day in outcome.days:
+        details = [day.condition.replace("_", " ")]
+        if (
+            day.temperature_low_f is not None
+            and day.temperature_high_f is not None
+        ):
+            details.append(
+                f"{day.temperature_low_f:g}–{day.temperature_high_f:g}°F"
+            )
+        elif day.temperature_high_f is not None:
+            details.append(f"high {day.temperature_high_f:g}°F")
+        elif day.temperature_low_f is not None:
+            details.append(f"low {day.temperature_low_f:g}°F")
+        details.append(
+            f"{day.precipitation_probability_pct:g}% precipitation chance"
+        )
+        if day.precipitation_types:
+            details.append(
+                "possible "
+                + ", ".join(
+                    value.replace("_", " ")
+                    for value in day.precipitation_types
+                )
+            )
+        date_label = day.date.strftime("%b %d, %Y").replace(" 0", " ")
+        lines.append(f"- {date_label}: " + "; ".join(details) + ".")
+    lines.append(
+        f"[{VISUAL_CROSSING_ATTRIBUTION_LABEL}]"
+        f"({VISUAL_CROSSING_ATTRIBUTION_URL}). "
+        f"{_WEATHER_UNCERTAINTY_TEXT}"
+    )
+    return "\n".join(lines)
+
+
+def _ensure_weather_forecast_evidence(
+    response: str,
+    outcome: WeatherForecastEvidence,
+) -> str:
+    """Append the exact validated forecast block once."""
+
+    canonical = _format_weather_outcome(outcome)
+    if canonical in response:
+        return response
+    if not response.strip():
+        return canonical
+    return response.rstrip() + "\n\n" + canonical
+
+
+def _strip_weather_fact_sentences(response: str) -> str:
+    """Retain editor styling prose while removing restated forecast facts."""
+
+    retained_lines: list[str] = []
+    for raw_line in response.splitlines():
+        stripped = raw_line.strip()
+        if not stripped:
+            if retained_lines and retained_lines[-1]:
+                retained_lines.append("")
+            continue
+        if (
+            "{" in stripped
+            or "}" in stripped
+            or re.match(r'^"[^"]{1,64}"\s*:', stripped) is not None
+        ):
+            continue
+        sentences = re.split(r"(?<=[!?])\s+|(?<=\.)\s+(?![0-9])", stripped)
+        retained: list[str] = []
+        for sentence in sentences:
+            if not sentence:
+                continue
+            if _WEATHER_FACT_LANGUAGE_RE.search(sentence) is None:
+                retained.append(sentence)
+                continue
+            causal_parts = re.split(
+                r"\s+(?:because|since|as)\s+",
+                sentence,
+                maxsplit=1,
+                flags=re.IGNORECASE,
+            )
+            if (
+                len(causal_parts) == 2
+                and causal_parts[0].strip()
+                and _WEATHER_FACT_LANGUAGE_RE.search(causal_parts[0]) is None
+            ):
+                retained.append(causal_parts[0].rstrip(" ,;:") + ".")
+                continue
+            for clause in re.split(r"[;,]\s+", sentence):
+                safe_clause = clause.strip()
+                if (
+                    safe_clause
+                    and _WEATHER_FACT_LANGUAGE_RE.search(safe_clause) is None
+                    and re.match(
+                        r"^(?:so|therefore|thus|hence)\b",
+                        safe_clause,
+                        flags=re.IGNORECASE,
+                    )
+                    is None
+                ):
+                    retained.append(safe_clause.rstrip(" ,;:.") + ".")
+        if retained:
+            retained_lines.append(" ".join(retained))
+    while retained_lines and not retained_lines[-1]:
+        retained_lines.pop()
+    return "\n".join(retained_lines).strip()
+
+
+def _compose_prior_candidate_weather_styling(
+    context: str,
+    weather_outcome: WeatherForecastEvidence,
+) -> str:
+    """Render prior candidates with bounded server-owned styling direction."""
+
+    names = _historical_product_names(context)
+    parts = [
+        _prior_weather_candidates_text(names) if names else "",
+        _deterministic_weather_styling_direction(weather_outcome),
+    ]
+    return "\n\n".join(
+        part for part in parts if part
+    )
+
+
+def _deterministic_weather_styling_direction(
+    outcome: WeatherForecastEvidence,
+) -> str:
+    precipitation_types = {
+        precipitation_type
+        for day in outcome.days
+        for precipitation_type in day.precipitation_types
+    }
+    conditions = {day.condition for day in outcome.days}
+    precipitation_chance = any(
+        day.precipitation_probability_pct is not None
+        and day.precipitation_probability_pct >= 30
+        for day in outcome.days
+    )
+    low_temperature = min(
+        (
+            day.temperature_low_f
+            for day in outcome.days
+            if day.temperature_low_f is not None
+        ),
+        default=None,
+    )
+    high_temperature = max(
+        (
+            day.temperature_high_f
+            for day in outcome.days
+            if day.temperature_high_f is not None
+        ),
+        default=None,
+    )
+    if precipitation_types.intersection({"snow", "freezing_rain", "ice"}) or (
+        "snow" in conditions
+    ):
+        return (
+            "Styling direction: keep the established options polished and "
+            "flexible with streamlined accessories, an optional outer layer, "
+            "and a compact weather backup."
+        )
+    if "rain" in precipitation_types or conditions.intersection(
+        {"rain", "storm"}
+    ):
+        return (
+            "Styling direction: keep the look polished and flexible with "
+            "streamlined accessories, a removable layer, and a compact rain "
+            "backup."
+        )
+    if precipitation_chance:
+        return (
+            "Styling direction: keep the established options polished and "
+            "flexible with streamlined accessories and a compact weather backup."
+        )
+    if low_temperature is not None and low_temperature <= 60:
+        return (
+            "Styling direction: keep the established options polished and "
+            "flexible with streamlined accessories and a removable layer."
+        )
+    if high_temperature is not None and high_temperature >= 80:
+        return (
+            "Styling direction: keep the established options polished with "
+            "streamlined accessories and make any optional layer easy to remove."
+        )
+    return (
+        "Styling direction: keep the established options polished and flexible "
+        "with streamlined accessories and adaptable finishing pieces."
+    )
+
+
+def _historical_product_names(
+    context: str,
+    *,
+    max_names: int = 6,
+) -> tuple[str, ...]:
+    """Read exact names from the newest server-formatted historical set."""
+
+    candidate_lines = [
+        line for line in context.splitlines() if line.startswith("- set=")
+    ]
+    if not candidate_lines:
+        return ()
+    _prefix, separator, records = candidate_lines[-1].partition(": ")
+    if not separator:
+        return ()
+    names: list[str] = []
+    for record in records.split("; "):
+        position, colon, remainder = record.partition(":")
+        if not colon or not position.isdigit():
+            continue
+        name_and_category, ref_separator, product_ref = remainder.rpartition(
+            " <"
+        )
+        if (
+            not ref_separator
+            or not product_ref.endswith(">")
+            or not product_ref[:-1]
+        ):
+            continue
+        name = re.sub(r"\s+\[[^\]\n]*\]$", "", name_and_category).strip()
+        if name and name not in names:
+            names.append(name)
+        if len(names) >= max_names:
+            break
+    return tuple(names)
+
+
+def _prior_weather_candidates_text(names: tuple[str, ...]) -> str:
+    return "Previously shown options still in play: " + ", ".join(names) + "."
+
+
+def _ensure_prior_weather_candidates(response: str, context: str) -> str:
+    """Keep a context-only forecast follow-up attached to grounded options."""
+
+    names = _historical_product_names(context)
+    missing = tuple(
+        name
+        for name in names
+        if name.casefold() not in response.casefold()
+    )
+    if not missing:
+        return response
+    prefix = _prior_weather_candidates_text(missing)
+    return f"{prefix}\n\n{response.strip()}" if response.strip() else prefix
 
 
 def _has_successful_non_search_tool_evidence(
@@ -5217,6 +6157,16 @@ def _has_successful_non_search_tool_evidence(
             "read_file",
             "search_catalog_tool",
         }:
+            continue
+        if (
+            tool_name == _WEATHER_TOOL_NAME
+            and not isinstance(
+                parse_weather_tool_evidence(
+                    _content_to_text(_value(message, "content"))
+                ),
+                WeatherForecastEvidence,
+            )
+        ):
             continue
         if _tool_call_status(tool_name, message)[0] == "completed":
             return True
@@ -5889,6 +6839,10 @@ def _collect_message_grounding_evidence(
 
 
 def _customer_safe_tool_evidence(content: str) -> str:
+    if content.startswith(
+        (WEATHER_FORECAST_EVIDENCE_PREFIX, WEATHER_FORECAST_FAILURE_PREFIX)
+    ):
+        return _customer_safe_weather_evidence(content)
     if content.startswith(SEARCH_VALIDATION_ERROR_PREFIX):
         return (
             "CUSTOMER_SAFE_INVALID_SEARCH_EVIDENCE: No valid catalog search "
@@ -5971,6 +6925,61 @@ def _customer_safe_tool_evidence(content: str) -> str:
             ),
         )
     return _summarize_cart_evidence(content)
+
+
+def _customer_safe_weather_evidence(content: str) -> str:
+    parsed = parse_weather_tool_evidence(content)
+    if isinstance(parsed, WeatherForecastEvidence):
+        lines = [
+            (
+                "CUSTOMER_SAFE_WEATHER_FORECAST_EVIDENCE: This is bounded "
+                "current-turn live forecast evidence. Call it a forecast and "
+                "do not infer climate, venue, product attributes, performance, "
+                "comfort, or safety from it."
+            ),
+            "FORECAST_FETCHED_AT: " + parsed.fetched_at.isoformat(),
+            (
+                "FORECAST_WINDOW: "
+                + json.dumps(
+                    parsed.requested_window.model_dump(mode="json"),
+                    sort_keys=True,
+                )
+            ),
+        ]
+        if parsed.resolved_location:
+            lines.append(
+                "FORECAST_LOCATION_USED: " + parsed.resolved_location
+            )
+        if parsed.relative_date:
+            lines.append(
+                "FORECAST_RELATIVE_DATE: " + parsed.relative_date
+            )
+        lines.extend(
+            "FORECAST_DAY: "
+            + json.dumps(day.model_dump(mode="json"), sort_keys=True)
+            for day in parsed.days
+        )
+        lines.extend(
+            [
+                (
+                    "FORECAST_ATTRIBUTION: "
+                    f"[{parsed.attribution.label}]"
+                    f"({parsed.attribution.url})"
+                ),
+                "FORECAST_UNCERTAINTY: " + _WEATHER_UNCERTAINTY_TEXT,
+            ]
+        )
+        return "\n".join(lines)
+    if isinstance(parsed, WeatherFailure):
+        return (
+            "CUSTOMER_SAFE_WEATHER_FAILURE_EVIDENCE: No forecast facts were "
+            "established. Do not claim conditions. Stable outcome: "
+            + json.dumps(parsed.model_dump(mode="json"), sort_keys=True)
+        )
+    return (
+        "CUSTOMER_SAFE_WEATHER_FAILURE_EVIDENCE: Weather evidence was invalid. "
+        "No forecast facts were established; do not claim conditions."
+    )
 
 
 def _summarize_product_evidence(
@@ -6545,6 +7554,48 @@ def _scrub_internal_shopper_language(text: str) -> str:
     return scrubbed
 
 
+def _saved_zipcode(shopper_context: ShopperContext | None) -> str | None:
+    return (
+        shopper_context.zipcode
+        if shopper_context is not None
+        else None
+    )
+
+
+def _weather_lookup_enabled(weather_config: Any) -> bool:
+    """Return whether configured weather lookup can make provider requests."""
+
+    api_key_env = str(getattr(weather_config, "api_key_env", ""))
+    weather_key = os.environ.get(api_key_env, "") if api_key_env else ""
+    return bool(
+        getattr(weather_config, "enabled", False)
+        and weather_key
+        and weather_key == weather_key.strip()
+    )
+
+
+def _scrub_saved_zip_from_response(
+    text: str,
+    shopper_context: ShopperContext | None,
+) -> str:
+    """Keep the selected profile's saved ZIP out of shopper-facing text."""
+
+    if shopper_context is None or not shopper_context.zipcode:
+        return text
+    scrubbed = re.sub(
+        rf"(?<![0-9]){re.escape(shopper_context.zipcode)}(?![0-9])",
+        "your usual area",
+        text,
+    )
+    return scrubbed.replace(
+        "ZIP code your usual area",
+        "your usual area",
+    ).replace(
+        "ZIP your usual area",
+        "your usual area",
+    )
+
+
 def _format_cart_add_result(added: list[str], failed: list[str], cart: Cart) -> str:
     lines = ["CART_ADD_RESULT"]
     if added:
@@ -6686,6 +7737,174 @@ def _format_shopper_context(context: ShopperContext | None) -> str:
         f"saved_zipcode: {context.zipcode}\n"
         "END SHOPPER CONTEXT"
     )
+
+
+def _shopper_authored_texts(state: State) -> tuple[str, ...]:
+    """Return bounded shopper text for exact event-location provenance."""
+
+    return tuple(
+        dict.fromkeys(
+            text.strip()
+            for text in [state.query, *_recent_shopper_texts(state.context)]
+            if text.strip()
+        )
+    )
+
+
+def _saved_zip_authorized_for_weather(state: State) -> bool:
+    """Recognize a narrow, recent confirmation before releasing saved ZIP."""
+
+    if state.shopper_context is None:
+        return False
+
+    current = state.query.strip()
+    if _saved_area_override_present(current) or _contains_exact_zip(current):
+        return False
+    recent_turns = _recent_conversation_turns(state.context)
+    if _saved_area_confirmation_present(current):
+        return True
+    if (
+        _bare_saved_area_confirmation(current)
+        and recent_turns
+        and _assistant_asked_about_saved_area(recent_turns[-1][1])
+    ):
+        return True
+
+    if not _date_only_followup(current) or not recent_turns:
+        return False
+    prior_shopper = recent_turns[-1][0]
+    if (
+        _saved_area_override_present(prior_shopper)
+        or _contains_exact_zip(prior_shopper)
+    ):
+        return False
+    if _saved_area_confirmation_present(prior_shopper):
+        return True
+    return (
+        _bare_saved_area_confirmation(prior_shopper)
+        and len(recent_turns) >= 2
+        and _assistant_asked_about_saved_area(recent_turns[-2][1])
+    )
+
+
+def _recent_conversation_turns(
+    context: str,
+) -> list[tuple[str, str]]:
+    return [
+        (match.group(1).strip(), match.group(2).strip())
+        for match in _RECENT_CONVERSATION_TURN_RE.finditer(context)
+    ]
+
+
+def _recent_shopper_texts(context: str) -> list[str]:
+    turns = _recent_conversation_turns(context)
+    if turns:
+        return [shopper for shopper, _assistant in turns]
+    return [
+        line.removeprefix("User:").strip()
+        for line in context.splitlines()
+        if line.startswith("User:")
+    ]
+
+
+def _redact_prior_weather_assistant_text(context: str) -> str:
+    """Remove stale forecast facts while retaining prior styling discussion."""
+
+    if not context:
+        return context
+    redacted: list[str] = []
+    weather_markers = (
+        "Forecast location used:",
+        'Interpreting "next week" as ',
+        "Live forecast:",
+        "Live forecast for the event window:",
+        VISUAL_CROSSING_ATTRIBUTION_LABEL,
+        VISUAL_CROSSING_ATTRIBUTION_URL,
+    )
+    for line in context.splitlines():
+        marker_positions = [
+            position
+            for marker in weather_markers
+            if (position := line.find(marker)) >= 0
+        ]
+        if line.startswith("Assistant: ") and marker_positions:
+            forecast_start = min(marker_positions)
+            if forecast_start >= 0:
+                styling_prefix = line[:forecast_start].rstrip()
+                if styling_prefix != "Assistant:":
+                    redacted.append(
+                        f"{styling_prefix} {_PRIOR_WEATHER_CONTEXT_REDACTION}"
+                    )
+                    continue
+            redacted.append("Assistant: " + _PRIOR_WEATHER_CONTEXT_REDACTION)
+        else:
+            redacted.append(line)
+    return "\n".join(redacted)
+
+
+def _saved_area_confirmation_present(text: str) -> bool:
+    if (
+        "?" in text
+        or _saved_area_override_present(text)
+        or _contains_exact_zip(text)
+        or _SAVED_AREA_CONFIRMATION_RE.search(text) is None
+    ):
+        return False
+    remaining = _SAVED_AREA_CONFIRMATION_RE.sub(" ", text)
+    words = {
+        word.lower()
+        for word in re.findall(r"[A-Za-z]+", remaining, flags=re.ASCII)
+    }
+    return words.issubset(_SAVED_AREA_CONFIRMATION_CONTEXT_WORDS)
+
+
+def _saved_area_override_present(text: str) -> bool:
+    return (
+        _SAVED_AREA_OVERRIDE_RE.search(text) is not None
+        or _SAVED_AREA_MODAL_UNCERTAINTY_RE.search(text) is not None
+    )
+
+
+def _contains_exact_zip(text: str) -> bool:
+    return (
+        re.search(
+            r"(?<![0-9])[0-9]{5}(?![0-9])",
+            text,
+            flags=re.ASCII,
+        )
+        is not None
+    )
+
+
+def _bare_saved_area_confirmation(text: str) -> bool:
+    normalized = re.sub(
+        r"[^a-z0-9']+",
+        " ",
+        text.replace("’", "'").lower(),
+        flags=re.ASCII,
+    ).strip()
+    return normalized in _SAVED_AREA_BARE_CONFIRMATIONS
+
+
+def _assistant_asked_about_saved_area(text: str) -> bool:
+    return (
+        "?" in text
+        and _SAVED_AREA_QUESTION_RE.search(text) is not None
+    )
+
+
+def _date_only_followup(text: str) -> bool:
+    if (
+        not text.strip()
+        or _contains_exact_zip(text)
+        or _saved_area_override_present(text)
+    ):
+        return False
+    words = {
+        word.lower()
+        for word in re.findall(r"[A-Za-z]+", text, flags=re.ASCII)
+    }
+    return words.issubset(_DATE_ONLY_CONTEXT_WORDS)
 
 
 def _format_retrieved_images(retrieved: dict[str, str] | None) -> str:

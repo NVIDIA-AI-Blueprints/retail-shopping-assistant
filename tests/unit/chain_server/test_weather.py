@@ -188,7 +188,7 @@ class TestWeatherConfig:
             session=disabled_session,
         )
         assert_failure(
-            disabled.get_forecast(WeatherRequest(zipcode=ZIPCODE)),
+            disabled.get_forecast(WeatherRequest(location=ZIPCODE)),
             "weather_disabled",
             False,
         )
@@ -201,7 +201,7 @@ class TestWeatherConfig:
             session=missing_session,
         )
         assert_failure(
-            missing.get_forecast(WeatherRequest(zipcode=ZIPCODE)),
+            missing.get_forecast(WeatherRequest(location=ZIPCODE)),
             "weather_config_invalid",
             False,
         )
@@ -220,24 +220,44 @@ class TestWeatherConfig:
             clock=lambda: NOW,
         )
 
-        outcome = client.get_forecast(WeatherRequest(zipcode=ZIPCODE))
+        outcome = client.get_forecast(WeatherRequest(location=ZIPCODE))
 
         assert isinstance(outcome, WeatherResult)
         assert session.calls[0]["params"]["key"] == SECRET
 
 
 class TestWeatherRequest:
-    @pytest.mark.parametrize("zipcode", ["98101", "01002"])
-    def test_accepts_exact_ascii_zipcodes(self, zipcode: str) -> None:
-        assert WeatherRequest(zipcode=zipcode).zipcode == zipcode
+    @pytest.mark.parametrize(
+        "location",
+        [
+            "98101",
+            "Denver",
+            "Cancún, Mexico",
+            "Paris, France",
+            "St. John's, Newfoundland and Labrador",
+        ],
+    )
+    def test_accepts_named_places_and_postal_codes(self, location: str) -> None:
+        assert WeatherRequest(location=location).location == location
 
     @pytest.mark.parametrize(
-        "zipcode",
-        ["9810", "981011", " 98101", "98101 ", "９８１０１", "٩٨١٠١", 98101],
+        "location",
+        [
+            "",
+            " Denver",
+            "Denver ",
+            "Denver\nColorado",
+            "Paris\x7fFrance",
+            "x" * 257,
+            98101,
+        ],
     )
-    def test_rejects_non_exact_ascii_zipcodes(self, zipcode: Any) -> None:
+    def test_rejects_unsafe_or_unbounded_locations(
+        self,
+        location: Any,
+    ) -> None:
         with pytest.raises(ValidationError):
-            WeatherRequest(zipcode=zipcode)
+            WeatherRequest(location=location)
 
     @pytest.mark.parametrize(
         "values",
@@ -256,16 +276,16 @@ class TestWeatherRequest:
     )
     def test_rejects_invalid_or_open_date_modes(self, values: dict[str, Any]) -> None:
         with pytest.raises(ValidationError):
-            WeatherRequest(zipcode=ZIPCODE, **values)
+            WeatherRequest(location=ZIPCODE, **values)
 
     def test_accepts_today_single_and_inclusive_range_modes(self) -> None:
-        assert WeatherRequest(zipcode=ZIPCODE).explicit_window() is None
+        assert WeatherRequest(location=ZIPCODE).explicit_window() is None
         assert WeatherRequest(
-            zipcode=ZIPCODE,
+            location=ZIPCODE,
             date="2026-07-28",
         ).explicit_window() == (date(2026, 7, 28), date(2026, 7, 28))
         assert WeatherRequest(
-            zipcode=ZIPCODE,
+            location=ZIPCODE,
             start_date="2026-07-28",
             end_date="2026-07-29",
         ).explicit_window() == (date(2026, 7, 28), date(2026, 7, 29))
@@ -290,7 +310,7 @@ class TestVisualCrossingSuccess:
         )
         client, session = client_for(response)
 
-        outcome = client.get_forecast(WeatherRequest(zipcode=ZIPCODE))
+        outcome = client.get_forecast(WeatherRequest(location=ZIPCODE))
 
         assert isinstance(outcome, WeatherResult)
         assert outcome.fetched_at == NOW
@@ -334,12 +354,30 @@ class TestVisualCrossingSuccess:
         client, _ = client_for(FakeResponse(payload([raw_day(requested)])))
 
         outcome = client.get_forecast(
-            WeatherRequest(zipcode=ZIPCODE, date=requested)
+            WeatherRequest(location=ZIPCODE, date=requested)
         )
 
         assert isinstance(outcome, WeatherResult)
         assert [item.date for item in outcome.days] == [requested]
         assert outcome.requested_window.start_date == requested
+
+    def test_named_location_is_one_percent_encoded_path_segment(self) -> None:
+        requested = TODAY + timedelta(days=1)
+        client, session = client_for(
+            FakeResponse(payload([raw_day(requested)]))
+        )
+
+        outcome = client.get_forecast(
+            WeatherRequest(
+                location="Cancún/Quintana Roo, Mexico",
+                date=requested,
+            )
+        )
+
+        assert isinstance(outcome, WeatherResult)
+        assert session.calls[0]["url"].endswith(
+            "/Canc%C3%BAn%2FQuintana%20Roo%2C%20Mexico/2026-07-28"
+        )
 
     def test_inclusive_range_is_complete_and_ordered(self) -> None:
         requested_days = [TODAY + timedelta(days=offset) for offset in range(1, 4)]
@@ -349,7 +387,7 @@ class TestVisualCrossingSuccess:
 
         outcome = client.get_forecast(
             WeatherRequest(
-                zipcode=ZIPCODE,
+                location=ZIPCODE,
                 start_date=requested_days[0],
                 end_date=requested_days[-1],
             )
@@ -398,7 +436,7 @@ class TestVisualCrossingSuccess:
             )
         )
 
-        outcome = client.get_forecast(WeatherRequest(zipcode=ZIPCODE))
+        outcome = client.get_forecast(WeatherRequest(location=ZIPCODE))
 
         assert isinstance(outcome, WeatherResult)
         assert outcome.days[0].condition == expected
@@ -424,7 +462,7 @@ class TestVisualCrossingSuccess:
             )
         )
 
-        outcome = client.get_forecast(WeatherRequest(zipcode=ZIPCODE))
+        outcome = client.get_forecast(WeatherRequest(location=ZIPCODE))
 
         assert isinstance(outcome, WeatherResult)
         assert outcome.days[0].precipitation_types == [
@@ -462,7 +500,7 @@ class TestVisualCrossingFailures:
         )
         client, _ = client_for(response)
 
-        outcome = client.get_forecast(WeatherRequest(zipcode=ZIPCODE))
+        outcome = client.get_forecast(WeatherRequest(location=ZIPCODE))
 
         failure = assert_failure(outcome, code, retryable)
         assert "provider body" not in failure.model_dump_json()
@@ -493,7 +531,7 @@ class TestVisualCrossingFailures:
         )
 
         outcome = client.get_forecast(
-            WeatherRequest(zipcode=ZIPCODE, date=TODAY + timedelta(days=1))
+            WeatherRequest(location=ZIPCODE, date=TODAY + timedelta(days=1))
         )
 
         failure = assert_failure(
@@ -518,7 +556,7 @@ class TestVisualCrossingFailures:
         )
         client, _ = client_for(response)
 
-        outcome = client.get_forecast(WeatherRequest(zipcode=ZIPCODE))
+        outcome = client.get_forecast(WeatherRequest(location=ZIPCODE))
 
         assert_failure(outcome, "weather_timeout", True)
         assert response.closed is True
@@ -543,7 +581,7 @@ class TestVisualCrossingFailures:
     ) -> None:
         client, _ = client_for(response)
 
-        outcome = client.get_forecast(WeatherRequest(zipcode=ZIPCODE))
+        outcome = client.get_forecast(WeatherRequest(location=ZIPCODE))
 
         assert_failure(outcome, "weather_response_invalid", False)
         assert response.closed is True
@@ -568,12 +606,19 @@ class TestVisualCrossingFailures:
                     "days": "invalid",
                 }
             ).encode(),
+            json.dumps(
+                {
+                    "resolvedAddress": "Seattle\nWashington",
+                    "timezone": "America/Los_Angeles",
+                    "days": [],
+                }
+            ).encode(),
         ],
     )
     def test_rejects_malformed_provider_payloads(self, body: bytes) -> None:
         client, _ = client_for(FakeResponse(body=body))
 
-        outcome = client.get_forecast(WeatherRequest(zipcode=ZIPCODE))
+        outcome = client.get_forecast(WeatherRequest(location=ZIPCODE))
 
         assert_failure(outcome, "weather_response_invalid", False)
 
@@ -587,7 +632,7 @@ class TestVisualCrossingFailures:
         )
         client, _ = client_for(FakeResponse(body=body))
 
-        outcome = client.get_forecast(WeatherRequest(zipcode=ZIPCODE))
+        outcome = client.get_forecast(WeatherRequest(location=ZIPCODE))
 
         assert_failure(outcome, "weather_response_invalid", False)
 
@@ -595,7 +640,7 @@ class TestVisualCrossingFailures:
         body = b'{"number":' + (b"9" * 10_000) + b"}"
         client, _ = client_for(FakeResponse(body=body))
 
-        outcome = client.get_forecast(WeatherRequest(zipcode=ZIPCODE))
+        outcome = client.get_forecast(WeatherRequest(location=ZIPCODE))
 
         assert_failure(outcome, "weather_response_invalid", False)
 
@@ -604,7 +649,7 @@ class TestVisualCrossingFailures:
         day["precipprob"] = 10**4_000
         client, _ = client_for(FakeResponse(payload([day])))
 
-        outcome = client.get_forecast(WeatherRequest(zipcode=ZIPCODE))
+        outcome = client.get_forecast(WeatherRequest(location=ZIPCODE))
 
         assert_failure(outcome, "weather_response_invalid", False)
 
@@ -626,7 +671,7 @@ class TestVisualCrossingFailures:
     ) -> None:
         client, _ = client_for(FakeResponse(payload(days)))
 
-        outcome = client.get_forecast(WeatherRequest(zipcode=ZIPCODE))
+        outcome = client.get_forecast(WeatherRequest(location=ZIPCODE))
 
         assert_failure(outcome, "weather_response_invalid", False)
 
@@ -639,7 +684,7 @@ class TestVisualCrossingFailures:
             FakeResponse(payload([raw_day(TODAY, source=source)]))
         )
 
-        outcome = client.get_forecast(WeatherRequest(zipcode=ZIPCODE))
+        outcome = client.get_forecast(WeatherRequest(location=ZIPCODE))
 
         assert_failure(outcome, "weather_outside_forecast_horizon", False)
 
@@ -650,7 +695,7 @@ class TestVisualCrossingFailures:
         )
 
         outcome = client.get_forecast(
-            WeatherRequest(zipcode=ZIPCODE, date=future)
+            WeatherRequest(location=ZIPCODE, date=future)
         )
 
         assert_failure(outcome, "weather_outside_forecast_horizon", False)
@@ -668,7 +713,7 @@ class TestVisualCrossingFailures:
         )
 
         outcome = client.get_forecast(
-            WeatherRequest(zipcode=ZIPCODE, date=requested)
+            WeatherRequest(location=ZIPCODE, date=requested)
         )
 
         assert_failure(outcome, "weather_outside_forecast_horizon", False)
@@ -683,6 +728,8 @@ class TestVisualCrossingFailures:
             {"preciptype": ["hail"]},
             {"preciptype": "rain"},
             {"tempmin": float("inf")},
+            {"tempmin": -151},
+            {"tempmax": 151},
             {"tempmin": 80, "tempmax": 70},
             {"icon": 4},
         ],
@@ -695,7 +742,7 @@ class TestVisualCrossingFailures:
         day.update(changes)
         client, _ = client_for(FakeResponse(payload([day])))
 
-        outcome = client.get_forecast(WeatherRequest(zipcode=ZIPCODE))
+        outcome = client.get_forecast(WeatherRequest(location=ZIPCODE))
 
         assert_failure(outcome, "weather_response_invalid", False)
 
@@ -708,7 +755,7 @@ class TestVisualCrossingFailures:
 
         outcome = client.get_forecast(
             WeatherRequest(
-                zipcode=ZIPCODE,
+                location=ZIPCODE,
                 start_date=days[0],
                 end_date=days[-1],
             )

@@ -22,12 +22,12 @@ Top-level orchestration is via `docker-compose.yaml`; optional local NIM model c
    - `DeepAgentsRuntime` first starts a durable turn in the memory service, which returns bounded model-context-eligible raw turns, the prior turn's selected skill names, the authoritative cart, and an optional server-resolved representative-shopper snapshot. Blocked turns remain durable and exactly replayable but are excluded from both the service projection and chain prompt formatter. Graph working state uses a request-scoped pair of `conversation_id` and `request_id`. A selected profile ID is bound immutably to that conversation and renders one compact current-turn context block containing only type, behavior, and saved ZIP. Profile precedence and non-authority rules are also present only for selected-profile turns; Guest receives neither the block nor profile-specific prompt rules. The block is soft guidance: current explicit instructions and recent explicit preferences take precedence, and it cannot establish budget, product constraints or facts, cart intent, skill selection, or tool grants. Unknown caller fields remain backward-compatibly ignored, and caller-supplied persona objects are never injected.
    - Optional input guardrails run before model/tool work; attached media is analyzed through the configured perception client.
    - Deep Agents graph execution has a configurable 45-second default deadline. A timeout captures bounded partial graph messages, clears unsent products, finalizes the durable turn as failed, and deletes the request checkpoint only after that finalization succeeds.
-   - Every turn begins with a required model step that semantically selects the smallest applicable set from six registered shopper skills. The latest durable selected names are supplied as a read-only continuity hint; they never authorize tools or replace the fresh selection. Product work uses exactly one primary procedure: product discovery or outfit styling. Budget shopping is a modifier only when the shopper states a budget. Event context is a no-tool modifier used only beside outfit styling; select it whenever an event destination or venue is stated, or when the response would otherwise ask about or branch on missing destination or venue context. Cart and policy requests may use their standalone skills. An invalid composition receives its typed reason and one correction attempt; a second invalid composition ends with a deterministic clarification and runs no shopping tool. Multiple activation calls in one response execute none and clarify immediately. The runtime injects the complete selected files and exposes only the union of their declared `tools_granted`; dispatch independently rechecks the selected skills, grant union, and immutable tool policy. Pre-activation, same-batch, and ungranted shopping calls are execution-blocked.
+   - Every turn begins with a required model step that semantically selects the smallest applicable set from six registered shopper skills. The latest durable selected names are supplied as a read-only continuity hint; they never authorize tools or replace the fresh selection. Product work uses exactly one primary procedure: product discovery or outfit styling. Budget shopping is a modifier only when the shopper states a budget. Event context is a modifier used only beside outfit styling; it alone grants the read-only weather tool. Select it whenever an event destination or venue is stated, a supported forecast would materially change event guidance, or the response would otherwise ask about or branch on missing destination or venue context. Cart and policy requests may use their standalone skills. An invalid composition receives its typed reason and one correction attempt; a second invalid composition ends with a deterministic clarification and runs no shopping tool. Multiple activation calls in one response execute none and clarify immediately. The runtime injects the complete selected files and exposes only the union of their declared `tools_granted`; dispatch independently rechecks the selected skills, grant union, and immutable tool policy. Pre-activation, same-batch, and ungranted shopping calls are execution-blocked.
    - Catalog capabilities generate `search_catalog_tool`'s flat schema with exact taxonomy values and non-taxonomy required-constraint properties. The model may call it with a direct advertised scope or, when a shopper-named type is not separately advertised, one model-selected faithful advertised parent category. In the parent path, the shopper's type stays in `requested_product_type` and the semantic query, the category is the only taxonomy filter, and returned products remain closest alternatives under their actual catalog types. Model-authored catalog absence is not exposed. If neither a direct type nor one faithful parent can be selected, the assistant asks one concise clarification directly without a tool call or absence claim. Deterministic code validates and maps search values but does not interpret shopper language. Each text search carries `requested_product_type`: the shortest product noun or true umbrella from the shopper's current turn or direct antecedent, excluding color, material, fit, occasion, weather, and style modifiers. For a genuinely open role, it is the one advertised subcategory selected for that role. It is provenance, not taxonomy or ranking text, and is `null` only for image-only search. Each call has at most one category.
    - Every search also carries required pre-retrieval `shopper_guidance`: one concise, product-agnostic sentence authored under the active skill. A directly stated unadvertised requirement on a shopper-named scope fails closed. Only a schema-valid proposed inferred requirement on a genuinely open role may consume that distinct scope's one model-owned review. Deterministic code does not classify shopper prose or rewrite malformed arguments. A repair cannot change a shopper-named scope noun. A successful partial search may continue with another valid role and its own one-repair opportunity, but no scope receives two repairs; the configured turn cap remains three successful searches.
    - Cart mutations require explicit product/cart-line refs. Grounding reads actual tool-role messages, separates current-request evidence from prior-turn evidence, and never treats an assistant draft as evidence. Successful searches preserve the taxonomy-independent semantic query as internal ranking evidence, the pre-retrieval `shopper_guidance` as product-agnostic response framing, and each confirmed filter set with the products from that search. A completed search gets one final tools-disabled model step under the active skill, followed by the grounding editor. Selected event-context turns also use that final editor; it receives only saved-ZIP-candidate presence, never digits, and deterministic grounded rendering restores candidates if a successful-search edit drops all of them. If the requested outcome depends on an unconfirmed material, fit, comfort, durability, care, weather, or other functional property, the response must disclose that gap and frame results as the closest catalog or styling direction rather than as proven suitable. If that draft or editor is unavailable, deterministic fallback uses search guidance, static skill `response_guidance`, returned names, prices, categories, and search-scoped confirmed filters, followed by the same generic unverified-property disclosure. Scoped zero-result evidence cannot establish absence outside its exact taxonomy and filters. The graph and grounding editor share one execution deadline; a grounding timeout finalizes as failed with `grounding_timeout`, uses the deterministic catalog renderer for search-only evidence, and otherwise returns a fixed retry/cart-check response rather than the unverified draft. Editor errors and empty or whitespace-only editor output use the same fail-closed response rule with `grounding_error`.
-   - Optional output guardrails run, then the memory service finalizes the durable turn as completed, blocked, or failed before products, images, content, and metrics are emitted over SSE. An exact retry of a finalized request replays its stored response without model/tool work. Internal diagnostics include bounded current-turn product evidence from successful catalog search and detail results plus bounded `catalog_scope_outcomes` for zero-result scopes; each search scope remains attached to its own products. Public query responses contain an empty diagnostics object by default. `EXPOSE_AGENT_DIAGNOSTICS=true` exposes the detailed trace only for a trusted operator or evaluation deployment. Final-text extraction skips tool, tool-calling, and internal activation messages; if no shopper-facing answer exists, the runtime returns a safe fallback with `incomplete_agent_response`. On graph failure, bounded current-turn messages are captured before checkpoint cleanup.
-   - A provider-neutral daily weather client and `get_weather_forecast_tool` factory exist as a dormant boundary. They accept only a five-digit US ZIP plus today, one exact date, or a complete inclusive date range. `WEATHER_ENABLED=false` is the default. The wrapper is not registered with Deep Agents, granted by a skill, mentioned in prompts, connected to shopper context, exposed through FastAPI, or called by the UI; startup, health checks, and shopper turns make no weather request.
+   - Optional output guardrails run, then the memory service finalizes the durable turn as completed, blocked, or failed before products, images, content, and metrics are emitted over SSE. An exact retry of a finalized request replays its stored response without model/tool work. Internal diagnostics include bounded current-turn product evidence from successful catalog search and detail results plus bounded `catalog_scope_outcomes` for zero-result scopes; each search scope remains attached to its own products. Weather tool arguments/output are always redacted from diagnostics and failed-turn partial graph capture, and the saved profile ZIP is recursively scrubbed from diagnostic string keys and values. Public query responses contain an empty diagnostics object by default. `EXPOSE_AGENT_DIAGNOSTICS=true` exposes the detailed trace only for a trusted operator or evaluation deployment. Final-text extraction skips tool, tool-calling, and internal activation messages; if no shopper-facing answer exists, the runtime returns a safe fallback with `incomplete_agent_response`. On graph failure, bounded current-turn messages are captured before checkpoint cleanup.
+   - The registered, read-only `get_weather_forecast_tool` uses a provider-neutral daily weather client with Visual Crossing as the first adapter. `WEATHER_ENABLED=false` remains the default, and startup and health checks make no provider request. Event context gets one call attempt per turn; an invalid schema consumes it. Every call requires `candidate_action`: `reuse_prior_candidates` is valid only when historical candidates exist and the current turn solely supplies event context without requesting new/refined products; once accepted, it irreversibly hides and execution-blocks catalog search and closes the remaining tool loop for synthesis before provider I/O, so lookup failure cannot reopen search. `search_new_candidates` is required for an explicit current-turn new/refined product request or when no reusable prior candidates exist. Accepted reuse asks no follow-up question and does not initiate the next product role. The one tool accepts `confirmed_saved_zip` with no model-authored location or `shopper_provided_location`, where `location` is one bounded exact span from current or recent shopper text. A city, city plus region/country, address, or postal code is sufficient. Optional `location_query` must preserve that exact shopper phrase as its first component and may append only one or two comma-separated region/country qualifiers. Do not rewrite abbreviations: send `NYC` directly or qualify it as `NYC, NY`; `Springfield, TX` is a valid explicit regional assumption. It must never contain an unstated ZIP or numeric component or replace the authoritative shopper phrase. The adapter queries the provider with `location_query` when present and otherwise with `location`. Saved ZIP is released only by the narrow deterministic confirmation gate: a current location-neutral statement explicitly naming `my`/`the` usual/home area, a bare affirmative immediately after the assistant's usual/home-area question, or a strict date-only follow-up immediately after an accepted confirmation. Any explicit current location, negation, uncertainty, or override rejects saved mode; modal `may be` is uncertainty while calendar `May 5` remains valid. An explicit destination takes precedence. The date must be an exact ISO date/complete range, except that the exact shopper phrase `next week` is resolved server-side from one captured UTC date to the next Monday-through-Sunday range. An unambiguous single-day phrase such as `tomorrow` may be normalized by the model to an exact ISO date against that same prompt-visible UTC anchor; a genuinely ambiguous or unresolved relative date gets one concise clarification. Only successful current-turn evidence supports forecast claims. Provider-resolved place is omitted for saved mode; for an explicit shopper location it is included in bounded evidence and final output only as a transparent, reversible provider assumption, not proof of the event location. Prior durable forecast summaries are replaced in graph/editor recent discussion with a refresh placeholder, and prior weather tool messages are excluded from prior evidence. Deterministic final rendering appends exactly one canonical block containing the server-resolved `next week` range when used, every validated daily date, condition, available temperature, precipitation fact, attribution, and uncertainty warning. Accepted reuse bypasses the grounding editor entirely. On success, the server renders the exact names from the newest historical candidate set, one bounded styling direction derived from structured forecast evidence, and the canonical forecast block. On provider failure, it renders those prior names plus the typed safe weather failure. Weather never proves product performance or creates an unstated catalog constraint. No weather-specific FastAPI, SSE, or UI shape is added.
 4. For product discovery, chain server calls catalog retriever:
    - `/query/text` for text-only.
    - `/query/image` for text + image.
@@ -50,9 +50,9 @@ Top-level orchestration is via `docker-compose.yaml`; optional local NIM model c
 - Operator-managed store policy content: `shared/configs/chain_server/store_policies.yaml`
 - Shopper behavior skills and references: `chain_server/skills/shopper/`
 - Image/video perception: `chain_server/src/media_perception.py`
-- Dormant weather request/result contract and Visual Crossing adapter:
+- Weather request/result contract and Visual Crossing adapter:
   `chain_server/src/weather.py`
-- Dormant, directly constructible weather wrapper:
+- Direct and request-bound weather tool wrappers:
   `chain_server/src/weather_tool.py`
 - Shared request/state models: `chain_server/src/agenttypes.py`
 - `graph.py`, `planner.py`, `retriever.py`, `cart.py`, `chatter.py`, and `summarizer.py` are legacy compatibility paths, not the serving runtime.
@@ -166,9 +166,13 @@ Current test assets:
 - Focused event-context live fixtures live under
   `tests/integration/conversations/event_context/`. Their optional top-level
   `shopper_profile_id` is sent on every turn in that file; omission is Guest.
-  The three-file, four-turn gate covers Guest plan-first behavior,
-  selected-profile location precedence, and selected-profile shop-now catalog
-  behavior; it remains separate from the full shopping cohort.
+  The five-file, ten-turn gate covers Guest plan-first behavior,
+  selected-profile location precedence, confirmed and overridden event ZIPs,
+  selected-profile shop-now catalog behavior, and non-event weather isolation;
+  it remains separate from the full shopping cohort. The selected-profile
+  shop-now fixture uses Jordan's minimal occasion request and requires exactly
+  one catalog-search attempt, followed by a named-place `next week` turn that
+  requires one weather call and no repeated catalog search.
 - Multi-turn Judge prompts include the actual generated prior shopper and
   assistant turns plus bounded current-turn structured catalog evidence. The
   generated history is authoritative when it conflicts with a reference
@@ -224,10 +228,10 @@ Key env vars:
 - `SHARED_CONFIG_ROOT` (local runner / non-container config root)
 - `SHARED_ROOT` (local runner / non-container shared asset root)
 - `REACT_APP_API_BASE_URL` (local React dev server API target)
-- `WEATHER_ENABLED` (dormant direct weather-client construction only; default
-  `false`)
-- `WEATHER_API_KEY` (Visual Crossing server-side key; required only when
-  explicitly constructing the enabled dormant client)
+- `WEATHER_ENABLED` (enables provider calls for the registered event-weather
+  capability; default `false`)
+- `WEATHER_API_KEY` (Visual Crossing server-side key; required when weather is
+  enabled)
 
 ## 7) Important Gotchas
 
@@ -417,26 +421,88 @@ Key env vars:
   it must not claim a mutation without a successful cart result or invent facts
   absent from catalog detail evidence.
 - The right chat panel is fixed between the nav bar and global footer; keep `ui/src/chatbox.css` aligned with the navbar/footer heights when changing layout.
-- The no-tool `event-context` modifier may use a selected profile's saved ZIP
+- The `event-context` modifier may use a selected profile's saved ZIP
   only as a tentative event-location candidate. Explicit shopper-stated
   destination and venue context take precedence. When a shopper explicitly
   asks to plan before products and material location/venue context is missing,
   answer in exactly two short sentences: one conditional direction and one
   destination-or-venue question. With that context complete, use one short
   paragraph and ask no further event-context question. Ordinary shop-now
-  occasion requests begin with one grounded requested or core role and, if
+  occasion-only requests run one search for one grounded core role unless the
+  shopper explicitly requests a complete look or names multiple roles. If
   location is still missing and materially changes the next recommendation,
-  ask only event location alongside the results; defer venue. Saved ZIP is
-  never shopping, shipping, availability, or current location. Never infer
-  venue, weather, wind, climate, or product performance from a ZIP, place name,
-  or venue setting.
-- The Slice 3 weather client/tool is deliberately dormant. Keep it out of
-  `DeepAgentsRuntime` registration, `SHOPPING_TOOL_POLICIES`, shopper-skill
-  grants, prompts, request/state models, FastAPI, and UI until a separate
-  leveraging slice defines trusted location/date precedence, grounded evidence,
-  provider attribution, and forecast-uncertainty behavior. It needs no MCP
-  server and must never log the key, prepared URL, ZIP, requested dates,
-  resolved location, provider body, or raw exception.
+  ask only event location alongside the results; with a saved-ZIP candidate,
+  that question must ask whether the event is in the shopper's usual area or
+  elsewhere, never discard the candidate for a bare destination question.
+  Defer venue. Saved ZIP is never shopping, shipping, availability, or current
+  location. Never infer venue, weather, wind, climate, or product performance
+  from a ZIP, place name, or venue setting.
+- `get_weather_forecast_tool` is registered read-only and granted only by
+  `event-context`, whose composition still requires `outfit-styling`. It may
+  receive one attempt per turn only after either confirmed saved-ZIP authority
+  or an exact bounded location span from current/recent shopper text is
+  established; a schema-invalid call consumes the attempt. Every call requires
+  `candidate_action`. Use `reuse_prior_candidates` only when historical
+  candidates exist and the current turn solely supplies event context without
+  asking for new/refined products. Once accepted, it irreversibly hides and
+  execution-blocks catalog search and closes the remaining tool loop for
+  synthesis before provider I/O, so lookup failure cannot reopen search. Use
+  `search_new_candidates` for an explicit current-turn new/refined product
+  request or when no reusable prior candidates exist. Accepted reuse asks no
+  follow-up question and does not initiate the next product role. Saved mode
+  accepts no model-authored location and reaches weather only through the narrow
+  current/recent confirmation gate: a location-neutral statement explicitly
+  naming `my`/`the` usual/home area, a bare affirmative immediately after the
+  assistant asks about that area, or the immediately following strict date-only
+  turn. Any explicit current location, negation, uncertainty, or override
+  rejects saved mode; explicit shopper location always wins. Shopper-provided
+  mode keeps the exact city, region/country, address, or postal phrase in
+  `location`. Optional `location_query` must preserve that exact phrase as its
+  first component and may append only one or two comma-separated region/country
+  qualifiers. Do not rewrite abbreviations: send `NYC` directly or use
+  `NYC, NY`; `Springfield, TX` is a valid explicit regional assumption. Never
+  add an unstated ZIP or numeric component or replace the shopper-authored
+  authority phrase. Send `location_query` to the provider when present;
+  otherwise send `location`.
+  Semantic equivalence remains model-owned rather than deterministic proof and
+  is correctable through the disclosed provider resolution.
+  Require an exact ISO date/range except for exact shopper-authored `next week`;
+  resolve that phrase server-side from one UTC turn anchor to the next
+  Monday-through-Sunday range. A current negation or different date supersedes
+  an earlier use. The model may normalize an unambiguous
+  single-day phrase such as `tomorrow` to an exact ISO date against that same
+  prompt-visible UTC anchor; genuinely ambiguous or unresolved relative dates
+  require one concise clarification.
+  Weather output is current-turn evidence only and is redacted from tool
+  diagnostics and failed-turn partial output; diagnostic string keys and
+  values also scrub the saved profile ZIP, and the entire grounding-editor
+  prompt replaces that ZIP before the editor call. Omit provider-resolved place in
+  saved mode. For an explicit shopper location, expose it only as a
+  transparent, reversible provider assumption in bounded evidence and final
+  output, never as proof of event location. Prior assistant forecast summaries
+  are redacted from both graph and editor recent discussion, and prior weather
+  tool messages are not prior evidence. Deterministic final rendering appends
+  one exact canonical block with every validated date, condition, available
+  temperature, precipitation fact, Visual Crossing attribution, and forecast
+  uncertainty.
+  For non-reuse weather paths, grounding-editor sentences containing
+  weather-domain fact language or fact-shaped dates/values are removed while
+  ordinary grounded styling language remains. Accepted reuse bypasses the
+  grounding editor entirely. On success, the server renders the exact names
+  from the newest historical candidate set, one bounded styling direction
+  derived from structured forecast evidence, and the canonical forecast block.
+  On provider failure, it renders those prior names plus the typed safe weather
+  failure.
+  Never turn forecast conditions into an unstated catalog constraint or claim
+  product warmth, waterproofing, comfort, safety, or other performance without
+  catalog evidence.
+- Before enabling `WEATHER_ENABLED` for shopper traffic, the operator must
+  confirm that the selected Visual Crossing plan permits the intended
+  attribution, display, storage, and sharing. That review must include durable
+  final assistant summaries and forecast processing by the downstream app
+  model and output guardrails. Keep the key in the named environment variable;
+  never log the key, prepared URL, shopper location or location query, ZIP,
+  requested dates, resolved location, provider body, or raw exception.
 
 ## 8) Contribution and Commit Notes
 

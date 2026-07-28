@@ -1,0 +1,36 @@
+set_name: Selected-profile confirmed and overridden event ZIP
+shopper_profile_id: shopper_alex
+queries:
+  - "The wedding is in my usual area tomorrow. Before products, give me the weather-aware outfit direction."
+  - "Actually, the event moved to ZIP 10001 and is still tomorrow. Update the direction."
+answers:
+  - >-
+    Treat "in my usual area" as explicit confirmation for this event and resolve
+    "tomorrow" against the server date. Use one current-turn live forecast from
+    the selected profile's saved ZIP without echoing its digits. Give a concise
+    styling direction grounded in the returned daily evidence, call it a
+    forecast, state the resolved calendar date, include a clickable "Weather
+    Data Provided by Visual Crossing" attribution, and warn that forecasts can
+    change and should be rechecked closer to the event. Do not expose the saved
+    ZIP or state a provider-resolved place in saved-location mode. Do not show
+    products, ask another question, or turn weather into proof of product
+    warmth, waterproofing, comfort, breathability, safety, or surface
+    performance.
+  - >-
+    The current explicit shopper-provided ZIP overrides both the prior
+    usual-area confirmation and the selected profile's saved ZIP. Use exactly
+    one fresh current-turn forecast for that explicit ZIP and the still-active
+    tomorrow date; do not reuse the prior forecast or fall back to the saved
+    location. State the provider-resolved forecast location as a transparent
+    assumption. Give the updated concise direction, state the resolved date,
+    retain the clickable Visual Crossing attribution and forecast-can-change
+    warning, and make no product-performance guarantees or catalog search.
+diagnostic_expectations:
+  - required_skills: [outfit-styling, event-context]
+    required_tools: [get_weather_forecast_tool]
+    forbidden_tools: [search_catalog_tool]
+    weather_tool_calls: 1
+  - required_skills: [outfit-styling, event-context]
+    required_tools: [get_weather_forecast_tool]
+    forbidden_tools: [search_catalog_tool]
+    weather_tool_calls: 1

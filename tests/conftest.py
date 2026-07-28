@@ -29,6 +29,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from chain_server.src.weather import WeatherConfig
+
 
 # Several service modules read API keys at import time. Set harmless defaults
 # before any test imports them so we never trip on KeyError during collection.
@@ -74,6 +76,7 @@ def base_config() -> SimpleNamespace:
         grounding_rewrite_max_evidence_chars=12000,
         expose_agent_diagnostics=False,
         catalog_search_timeout_seconds=None,
+        weather=WeatherConfig(),
         multimodal=True,
         media_input=SimpleNamespace(
             enabled=True,
@@ -121,6 +124,7 @@ def valid_config_dict() -> Dict[str, Any]:
         "grounding_rewrite_max_evidence_chars": 12000,
         "expose_agent_diagnostics": False,
         "catalog_search_timeout_seconds": None,
+        "weather": WeatherConfig().model_dump(),
         "multimodal": True,
         "guardrails_enabled": True,
         "unsafe_message": "Sorry, I can only help with shopping questions.",

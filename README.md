@@ -55,14 +55,16 @@ The Retail Shopping Assistant is an AI-powered blueprint that provides a compreh
   session requires an explicit dropdown choice of Guest mode or one of those
   five shoppers before chat starts. The selected ID is bound to the durable
   conversation and resolved into compact soft guidance
-- 📍 **Minimal Event Context**: A no-tool styling helper uses explicit event
+- 📍 **Grounded Event Context**: A styling modifier uses explicit event
   destination and venue context, or naturally confirms whether a selected
   profile's saved area applies. It never assumes that a destination determines
-  the venue and performs no weather lookup
-- 🌦️ **Dormant Weather Contract**: A disabled-by-default, directly testable
-  daily forecast tool accepts a five-digit US ZIP plus today, one exact date,
-  or an inclusive date range. It is not registered with the shopper agent and
-  does not yet influence conversation or styling
+  the venue
+- 🌦️ **Guarded Event Forecasts**: A registered read-only weather tool is
+  granted only by event context beside outfit styling. It accepts a confirmed
+  saved ZIP or an exact shopper-stated place, plus an exact event date/range or
+  the exact phrase `next week`, gets one attempt per turn, and appends a
+  canonical attributed forecast block. Provider calls remain disabled by
+  default
 - 📚 **Enforced Shopper Skills**: Every turn first semantically selects and
   fully loads the smallest applicable skill set; each selected `SKILL.md`
   declares its role and tool grants, only their grant union becomes
@@ -85,13 +87,13 @@ The Retail Shopping Assistant is an AI-powered blueprint that provides a compreh
 
 The application follows a microservices architecture:
 - **Chain Server**: Deep Agents SDK orchestration with six registered shopper
-  skills, a required per-turn activation phase, an eleven-tool registry with
+  skills, a required per-turn activation phase, a twelve-tool registry with
   deterministic per-skill binding, capability-derived search schemas, bounded
   search-schema repair, a category-aware no-I/O availability stub for known
   product refs, a no-I/O active-promotions stub, typed same-conversation product
   resolution, grounded response assembly, a configurable Deep Agents execution
-  deadline, a request-scoped process-local checkpointer, and an unregistered
-  provider-neutral weather client/tool boundary
+  deadline, a request-scoped process-local checkpointer, and a registered
+  event-scoped provider-neutral weather boundary
 - **Catalog Retriever**: Generative-LLM-free text/image embedding search, hard
   filtering, normalized COSINE relevance scores, and deterministic result
   ranking
@@ -117,33 +119,104 @@ selection clears visible chat/product state and rotates the browser-scoped
 session, conversation, and cart identities. Reset keeps the explicit shopper
 mode while rotating the conversation identity.
 
-For occasion-led styling, the `event-context` modifier can accompany
-`outfit-styling` without granting another tool. An explicit event destination
-or venue wins over the selected profile's saved ZIP. When the ZIP is the only
-location clue and location would materially change the recommendation, the
-assistant keeps any starting direction conditional and asks at most one
-natural confirmation without echoing the ZIP. A destination such as Cancun
-does not establish that the event is on a beach; Guest has no saved-location
-fallback. On an explicit plan-before-products turn, missing material context
-produces exactly two short sentences: one conditional direction, then one
-destination-or-venue question. With context complete, the answer stays to one
-short paragraph and asks no further event-context question. Normal shop-now
-occasion requests begin with a grounded requested or core product role and, if
-location is still missing and materially changes the next recommendation, ask
-only event location alongside the results; venue is deferred. The response
-boundary receives only whether a saved-ZIP candidate exists, not its digits. It
-applies the same guidance to no-tool turns and restores deterministic grounded
-candidates if a successful-search rewrite drops every returned product.
+For occasion-led styling, the `event-context` modifier accompanies only
+`outfit-styling` and is the sole skill that grants
+`get_weather_forecast_tool`. An explicit event destination or venue wins over
+the selected profile's saved ZIP. When the ZIP is the only location clue and
+location would materially change the recommendation, the assistant keeps any
+starting direction conditional and asks at most one natural confirmation
+around whether the event is in the shopper's usual area or elsewhere, without
+echoing the ZIP; it must not discard that candidate and ask a bare destination
+question. A destination such as Cancun does not establish that the event is on
+a beach; Guest has no saved-location fallback. On an explicit
+plan-before-products turn, missing material context produces exactly two short
+sentences: one conditional direction, then one destination-or-venue question.
+With context complete, the answer stays to one short paragraph and asks no
+further event-context question. An occasion-only shop-now request that does not
+ask for a complete look or name multiple roles runs one catalog search for one
+grounded core role. If location is still missing and materially changes the
+next recommendation, it asks only event location alongside the results; venue
+is deferred. The response boundary receives only whether a saved-ZIP candidate
+exists, not its digits, and restores deterministic grounded candidates if a
+successful-search rewrite drops every returned product.
 
-The Slice 3 weather boundary is intentionally dormant. Direct callers can
-construct a typed Visual Crossing adapter for a five-digit US ZIP and an
-optional exact date or inclusive date range, but the wrapper is absent from the
-Deep Agents tool registry, skill grants, prompts, request context, FastAPI, and
-UI. `WEATHER_ENABLED` defaults to `false`; no API key or provider request is
-needed for ordinary startup, health checks, shopper turns, or offline tests.
-Enabling direct construction requires `WEATHER_API_KEY` in the chain-server
-environment. The key is not stored in YAML or an image, and this integration
-does not require MCP.
+Weather provider calls remain disabled by default. When an operator enables
+`WEATHER_ENABLED` and supplies `WEATHER_API_KEY` to the chain server, event
+context gets one forecast attempt in a turn. Every call must declare
+`candidate_action`. `reuse_prior_candidates` is valid only when a historical
+candidate set exists and the current turn solely supplies event context for
+those options without asking for new or refined products. Once accepted, it
+irreversibly hides and execution-blocks catalog search and closes the remaining
+tool loop for synthesis before provider I/O, so a failed forecast cannot reopen
+search. `search_new_candidates` is required for an explicit current-turn new
+or refined product request, or when no prior candidates can be reused.
+Accepted reuse completes the context turn: the response asks no follow-up
+question and does not initiate the next product role. The same tool has two
+location authority modes. In `confirmed_saved_zip` mode it accepts no
+model-authored location and releases the selected profile's saved ZIP only
+after a narrow
+deterministic confirmation: a current location-neutral statement explicitly
+naming `my`/`the` usual/home area, a bare affirmative directly after the
+assistant's usual/home-area question, or an immediate strict date-only
+follow-up to an accepted confirmation. In `shopper_provided_location` mode,
+`location` must be a bounded exact span copied from the shopper's current or
+recent text; a city, city plus region/country, address, or postal code is
+sufficient. When that authority phrase is an abbreviation or ambiguous place
+name, optional `location_query` must preserve it as the first component and may
+append only one or two comma-separated region/country qualifiers. Do not
+rewrite abbreviations: send `NYC` directly or qualify it as `NYC, NY`;
+`Springfield, TX` is a valid explicit regional assumption. It never contains
+an unstated ZIP or numeric component and never replaces the authoritative
+shopper phrase.
+The adapter queries the provider with `location_query` when present and
+otherwise with `location`; the provider-resolved place makes that assumption
+visible and reversible. Semantic normalization remains model-owned rather than
+being presented as deterministic proof, and it is correctable through that
+disclosed provider resolution. Any explicit current location, negation, uncertainty,
+or override rejects saved mode, and explicit destination always wins. Modal
+`may be` is uncertainty; calendar `May 5` remains a valid date.
+
+An exact ISO event date or complete date range remains the normal date
+contract. The exact shopper phrase `next week` is the sole server-owned
+relative-date shortcut: the server captures one UTC date for the turn and
+resolves it to the next Monday-through-Sunday range for both the tool and
+prompt. A current negation or different date supersedes an earlier `next week`.
+The model may resolve an unambiguous single-day phrase such as
+`tomorrow` against that same prompt-visible UTC anchor and send the exact ISO
+date; a genuinely ambiguous or unresolved relative date gets one concise
+clarification. A schema-invalid call consumes the one attempt.
+Provider-resolved place is omitted in saved-ZIP mode. For an explicit shopper
+location, it is included in bounded current-turn evidence and the final
+forecast block as a transparent, reversible provider assumption, not proof
+that the event is there. Prior durable assistant forecast summaries are
+replaced with a refresh placeholder in both graph and grounding-editor recent
+discussion, and prior weather tool messages are excluded from prior evidence.
+Weather arguments/output are redacted from diagnostics and failed-turn partial
+capture; saved profile ZIP is also scrubbed from diagnostic string keys and
+values, and the complete grounding-editor prompt replaces those saved digits
+before the editor call. Final rendering appends one exact canonical block with the resolved
+Monday-through-Sunday range when `next week` was used, every validated daily
+date, condition, available temperature, precipitation fact, the supplied
+Visual Crossing attribution, and the forecast-change warning.
+For non-reuse weather paths, grounding-editor sentences containing
+weather-domain fact language or fact-shaped dates/values are removed while
+ordinary grounded styling language remains. Accepted reuse bypasses the
+grounding editor entirely. On success, the server renders the exact names from
+the newest historical candidate set, one bounded styling direction derived
+from structured forecast evidence, and the canonical forecast block. On
+provider failure, it renders those prior names plus the typed safe weather
+failure. Forecast conditions cannot prove
+product warmth, waterproofing,
+breathability, comfort, safety, or another catalog attribute or create an
+unstated hard constraint. This uses the existing query/SSE/UI response shapes
+and requires no MCP server.
+
+Before enabling weather for shopper traffic, the operator must confirm that the
+selected Visual Crossing plan permits the intended attribution, display,
+storage, and sharing. Include durable final assistant summaries and processing
+by the downstream app model and output guardrails in that review. The key is
+kept in the named server-side environment variable and is never stored in YAML
+or an image.
 
 Every turn still makes a fresh semantic skill-selection decision. The previous
 turn's selected skill names are persisted with its durable output and supplied
@@ -465,10 +538,12 @@ The exact published response is documented in
    design remain open decisions described in the
    [Deployment Guide](docs/DEPLOYMENT.md).
 
-   Weather remains disabled by default. Leave `WEATHER_ENABLED=false` and
-   `WEATHER_API_KEY` empty for the current shopper experience. An operator
-   testing the dormant client directly may set the key only in the ignored
-   `.env`, process environment, or deployment secret store.
+   Weather remains disabled by default. Leave `WEATHER_ENABLED=false` unless
+   the operator has confirmed that the selected Visual Crossing plan permits
+   the intended shopper-facing attribution, display, storage, and sharing,
+   including durable assistant summaries and downstream app-model/guardrail
+   processing. When approved, set `WEATHER_API_KEY` only in the ignored `.env`,
+   process environment, or deployment secret store.
 
 5. **Validate and deploy**:
    ```bash

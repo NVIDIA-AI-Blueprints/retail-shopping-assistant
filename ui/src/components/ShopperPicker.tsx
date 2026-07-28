@@ -45,9 +45,11 @@ const ShopperPicker: React.FC<ShopperPickerProps> = ({
   };
 
   return (
-    <label className="shopper-picker">
+    <label className="shopper-picker" htmlFor="shopper-profile">
       <span className="shopper-picker__label">Shop as</span>
       <select
+        id="shopper-profile"
+        name="shopper-profile"
         className="shopper-picker__select"
         aria-label="Shopper profile"
         value={selectedValue}

@@ -30,6 +30,9 @@ interface ChatMount {
   preserveIdentityOnMount: boolean;
 }
 
+const SHOPPER_PROFILE_RETRY_DELAY_MS = 5000;
+const SHOPPER_PROFILE_LOAD_ATTEMPTS = 2;
+
 const App: React.FC = () => {
   const [selectedProduct, setSelectedProduct] = useState<ProductSummary | null>(null);
   const [products, setProducts] = useState<ProductSummary[]>([]);
@@ -69,8 +72,22 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const abortController = new AbortController();
+    let attemptCount = 0;
+    let profilesLoaded = false;
+    let requestInFlight = false;
+    let retryTimer: number | undefined;
 
     const loadShopperProfiles = async () => {
+      if (
+        abortController.signal.aborted ||
+        profilesLoaded ||
+        requestInFlight
+      ) {
+        return;
+      }
+
+      requestInFlight = true;
+      attemptCount += 1;
       try {
         const response = await fetch(
           `${config.api.baseUrl}${config.api.endpoints.shopperProfiles}`,
@@ -82,6 +99,7 @@ const App: React.FC = () => {
         const profiles = parseShopperProfiles(await response.json());
         if (abortController.signal.aborted) return;
 
+        profilesLoaded = true;
         setShopperProfiles(profiles);
         setShopperProfilesStatus("ready");
 
@@ -99,15 +117,46 @@ const App: React.FC = () => {
         console.warn("Failed to load representative shoppers", error);
         setShopperProfiles([]);
         setShopperProfilesStatus("unavailable");
-
-        if (typeof getSelectedShopperProfileId() === "string") {
-          clearShopperSelection();
+        if (attemptCount < SHOPPER_PROFILE_LOAD_ATTEMPTS) {
+          retryTimer = window.setTimeout(() => {
+            retryTimer = undefined;
+            void loadShopperProfiles();
+          }, SHOPPER_PROFILE_RETRY_DELAY_MS);
         }
+      } finally {
+        requestInFlight = false;
       }
     };
 
-    loadShopperProfiles();
-    return () => abortController.abort();
+    const retryUnavailableProfiles = () => {
+      if (
+        abortController.signal.aborted ||
+        profilesLoaded ||
+        requestInFlight
+      ) {
+        return;
+      }
+
+      if (retryTimer !== undefined) {
+        window.clearTimeout(retryTimer);
+        retryTimer = undefined;
+      }
+      attemptCount = 0;
+      void loadShopperProfiles();
+    };
+
+    window.addEventListener("focus", retryUnavailableProfiles);
+    window.addEventListener("online", retryUnavailableProfiles);
+    void loadShopperProfiles();
+
+    return () => {
+      abortController.abort();
+      if (retryTimer !== undefined) {
+        window.clearTimeout(retryTimer);
+      }
+      window.removeEventListener("focus", retryUnavailableProfiles);
+      window.removeEventListener("online", retryUnavailableProfiles);
+    };
   }, [clearShopperSelection]);
 
   const handleShopperChange = (shopperProfileId: string | null) => {

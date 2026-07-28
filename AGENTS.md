@@ -138,7 +138,13 @@ The local runner:
 - `configure --nim-host http://HOST` writes ignored `.local-run/model-endpoints.env` with remote NIM URLs.
 - Retains `WEATHER_ENABLED` and `WEATHER_API_KEY` only for the chain-server
   process and removes them from memory, guardrail, catalog, and UI processes.
-- Sets `SHARED_ROOT`, `SHARED_CONFIG_ROOT`, `REACT_APP_API_BASE_URL=http://localhost:8009`, and `BROWSER=none`.
+- Sets `SHARED_ROOT`, `SHARED_CONFIG_ROOT`,
+  `REACT_APP_API_BASE_URL=/local-api`, and `BROWSER=none`; the scoped React
+  development proxy forwards that same-origin prefix to the chain server
+  without the package-proxy Host restriction, so remote browsers need only
+  port `3000` forwarded. Development responses use `Cache-Control: no-store`
+  so a forwarding layer cannot retain a bundle with an obsolete browser API
+  base URL.
 - Creates runtime files under ignored `.local-run/` and links ignored `ui/public/images -> shared/images`.
 
 If a remote NIM host is needed, ask for the base host URL and run `configure`; do not hard-code private hosts in committed files.
@@ -194,7 +200,10 @@ Integration outputs are generated under `tests/integration/conversations/<TEST_P
 - Catalog image helpers read assets from `SHARED_ROOT` when set, otherwise `/app/shared`.
 - Catalog data and role-sidecar paths can be overridden with
   `CATALOG_DATA_SOURCE` and `CATALOG_SCHEMA_SOURCE`.
-- UI API base URL defaults to `/api` for nginx, but local development can set `REACT_APP_API_BASE_URL` to the chain-server URL.
+- UI API base URL defaults to `/api` for nginx. The local runner uses
+  `/local-api` together with the scoped React development proxy; other local
+  setups may set `REACT_APP_API_BASE_URL` to a directly reachable chain-server
+  URL.
 - Use `python scripts/model_config.py show --validate` to inspect resolved endpoints without printing secrets.
 
 Key env vars:
@@ -227,7 +236,9 @@ Key env vars:
   - External app entrypoint is usually `http://localhost:3000` through nginx.
   - Standard Compose binds memory port `8011` to host loopback only. Containers
     use `http://memory-retriever:8011` on the private Compose network.
-- UI API base URL defaults to `/api` (nginx path), but local runner overrides it to `http://localhost:8009`.
+- UI API base URL defaults to `/api` (nginx path). The local runner uses
+  same-origin requests plus the React development proxy so the browser does not
+  need direct access to port `8009`.
 - The memory service stores ordered shopper/assistant turns and cart state in a
   single-replica SQLite database. Compose uses
   `sqlite:////data/context.db` on the `memory-data` named volume; deleting that

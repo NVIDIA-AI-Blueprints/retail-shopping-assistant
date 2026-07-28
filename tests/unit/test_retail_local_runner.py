@@ -114,6 +114,6 @@ def test_ui_process_does_not_receive_weather_environment(
     process_env = captured["env"]
     assert isinstance(process_env, dict)
     assert process_env["UNRELATED_SETTING"] == "preserved"
-    assert process_env["REACT_APP_API_BASE_URL"] == "http://localhost:8009"
+    assert process_env["REACT_APP_API_BASE_URL"] == "/local-api"
     assert "WEATHER_ENABLED" not in process_env
     assert "WEATHER_API_KEY" not in process_env

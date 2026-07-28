@@ -72,7 +72,9 @@ shows a short selection screen and does not start chat until you explicitly
 choose one of those six modes. Only a named profile's ID is retained in the
 current browser tab and sent with a chat request; profile contents are resolved
 by the server. An explicit Guest choice is retained as a mode but sends no
-profile ID.
+profile ID. After a named profile is selected, a compact strip beneath the
+navigation shows its display name, shopper type, saved ZIP, and behavior. Guest
+mode does not show a profile strip.
 
 The selected behavior may guide interaction and styling, while your explicit
 request always wins. A profile never supplies an unstated budget, size, color,
@@ -105,6 +107,9 @@ fresh session, conversation, and cart identities are created. A conversation
 cannot switch between Guest and a profile or between two profiles. The Reset
 button keeps the explicitly selected shopper mode while starting another clean
 conversation. If the profile service cannot load, Guest mode remains available.
+The UI makes one delayed automatic retry, then retries when the browser returns
+online or the tab regains focus. It does not poll for the lifetime of the app,
+and a recovered picker does not interrupt an active Guest conversation.
 
 ### Basic Interaction
 

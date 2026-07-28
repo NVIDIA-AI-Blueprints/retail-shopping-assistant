@@ -115,6 +115,49 @@ body {
   opacity: 0.55;
 }
 
+.shopper-profile-summary {
+  align-items: center;
+  background: #f5f8ef;
+  border-bottom: 1px solid var(--line);
+  border-top: 1px solid var(--line);
+  color: var(--ink);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  min-height: 42px;
+  padding: 7px 20px;
+}
+
+.shopper-profile-summary__eyebrow {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.shopper-profile-summary strong {
+  font-size: 0.9rem;
+}
+
+.shopper-profile-summary__tag {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 0.74rem;
+  font-weight: 500;
+  padding: 3px 7px;
+  text-transform: capitalize;
+  white-space: nowrap;
+}
+
+.shopper-profile-summary__behavior {
+  color: #374047;
+  flex: 1 1 320px;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  min-width: 0;
+}
+
 .shopper-session-gate {
   align-items: center;
   display: flex;
@@ -818,6 +861,15 @@ body {
 
   .shopper-picker__label {
     display: none;
+  }
+
+  .shopper-profile-summary {
+    align-items: flex-start;
+    padding: 8px 12px;
+  }
+
+  .shopper-profile-summary__behavior {
+    flex-basis: 100%;
   }
 
   .assistant-workspace {

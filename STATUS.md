@@ -31,6 +31,11 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   and returns exactly type, behavior, and ZIP. The runtime injects that snapshot
   once as bounded soft guidance, absent for Guest and never persisted inside
   transcript text;
+- startup migration 7 removes three obsolete derived conversation-response
+  cache columns from earlier local SQLite schemas. It preserves authoritative
+  turns, events, projections, carts, and profiles while allowing current
+  durable-turn inserts to proceed and restores the unique one-started-turn
+  index;
 - a single memory-service SQLite replica now starts each turn durably before
   guardrail/model/tool work, returns bounded model-context-eligible raw turns
   plus the authoritative cart, and finalizes every completed, blocked, or

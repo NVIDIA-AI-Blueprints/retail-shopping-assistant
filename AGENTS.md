@@ -232,6 +232,11 @@ Key env vars:
   single-replica SQLite database. Compose uses
   `sqlite:////data/context.db` on the `memory-data` named volume; deleting that
   volume deletes the stored transcript and cart state.
+- Startup migration 7 removes the obsolete `diagnostics_json`,
+  `start_response_body`, and `finalize_response_body` derived-cache columns
+  left by an earlier local schema. Authoritative turn, event, projection, cart,
+  and profile data are preserved, and the one-started-turn partial unique index
+  is restored; do not delete the database to resolve that upgrade.
 - The same SQLite database owns five immutable representative shoppers loaded
   from `shared/configs/memory_retriever/shopper_profiles.json`. The bundled UI
   sends only the selected ID. Turn start resolves it transactionally, binds it

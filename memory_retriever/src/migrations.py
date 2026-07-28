@@ -189,6 +189,30 @@ def _conversation_shopper_profile(connection: Connection) -> None:
         )
 
 
+def _remove_obsolete_conversation_turn_columns(connection: Connection) -> None:
+    """Remove superseded caches and restore the active-turn uniqueness gate."""
+
+    for column_name in (
+        "diagnostics_json",
+        "start_response_body",
+        "finalize_response_body",
+    ):
+        if column_name in _table_columns(connection, "conversation_turns"):
+            connection.execute(
+                text(
+                    "ALTER TABLE conversation_turns "
+                    f"DROP COLUMN {column_name}"
+                )
+            )
+    connection.execute(
+        text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_conversation_started "
+            "ON conversation_turns (conversation_id) "
+            "WHERE status = 'started'"
+        )
+    )
+
+
 _MIGRATIONS = (
     (1, _legacy_schema),
     (2, _conversation_schema),
@@ -196,6 +220,7 @@ _MIGRATIONS = (
     (4, _conversation_attempt_id),
     (5, _shopper_profiles_schema),
     (6, _conversation_shopper_profile),
+    (7, _remove_obsolete_conversation_turn_columns),
 )
 
 

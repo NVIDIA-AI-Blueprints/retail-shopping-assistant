@@ -1450,6 +1450,8 @@ def test_versioned_migrations_upgrade_legacy_schema_once_without_data_loss(
                 "cart_user_id INTEGER NOT NULL, shopper_text TEXT NOT NULL, "
                 "assistant_text TEXT, status TEXT NOT NULL, "
                 "termination_reason TEXT, catalog_revision TEXT, "
+                "diagnostics_json TEXT, start_response_body TEXT NOT NULL, "
+                "finalize_response_body TEXT, "
                 "started_at REAL NOT NULL, completed_at REAL)"
             )
         )
@@ -1457,10 +1459,11 @@ def test_versioned_migrations_upgrade_legacy_schema_once_without_data_loss(
             text(
                 "INSERT INTO conversation_turns ("
                 "turn_id, conversation_id, sequence, request_id, "
-                "request_digest, cart_user_id, shopper_text, status, started_at"
+                "request_digest, cart_user_id, shopper_text, status, "
+                "start_response_body, started_at"
                 ") VALUES ("
                 "'legacy-turn', 'legacy-conversation', 1, 'legacy-request', "
-                "'legacy-digest', 7, 'Remember this', 'completed', 1.0)"
+                "'legacy-digest', 7, 'Remember this', 'completed', '{}', 1.0)"
             )
         )
     monkeypatch.setattr(memory_main, "engine", legacy_engine)
@@ -1472,6 +1475,22 @@ def test_versioned_migrations_upgrade_legacy_schema_once_without_data_loss(
 
     memory_main._run_schema_migrations()
     memory_main._run_schema_migrations()
+
+    with memory_main.SessionLocal() as db:
+        db.add(
+            memory_main.ConversationTurn(
+                turn_id="current-turn",
+                conversation_id="current-conversation",
+                sequence=1,
+                request_id="current-request",
+                request_digest="current-digest",
+                cart_user_id=8,
+                shopper_text="Start a current turn",
+                status="started",
+                started_at=2.0,
+            )
+        )
+        db.commit()
 
     with legacy_engine.connect() as connection:
         versions = (
@@ -1499,6 +1518,19 @@ def test_versioned_migrations_upgrade_legacy_schema_once_without_data_loss(
                 "WHERE turn_id = 'legacy-turn'"
             )
         ).scalar_one_or_none()
+        turn_columns = set(
+            connection.execute(
+                text("PRAGMA table_info('conversation_turns')")
+            ).scalars(index=1)
+        )
+        turn_count = connection.execute(
+            text("SELECT COUNT(*) FROM conversation_turns")
+        ).scalar_one()
+        turn_indexes = set(
+            connection.execute(
+                text("PRAGMA index_list('conversation_turns')")
+            ).scalars(index=1)
+        )
         profile_foreign_key = next(
             row
             for row in connection.execute(
@@ -1512,12 +1544,19 @@ def test_versioned_migrations_upgrade_legacy_schema_once_without_data_loss(
             ).scalars()
         )
 
-    assert versions == [1, 2, 3, 4, 5, 6]
+    assert versions == [1, 2, 3, 4, 5, 6, 7]
     assert row[0] == "Legacy Bag"
     assert len(row[1]) == 32
     assert row[2:] == (None, None)
     assert len(attempt_id) == 32
     assert shopper_profile_id is None
+    assert {
+        "diagnostics_json",
+        "start_response_body",
+        "finalize_response_body",
+    }.isdisjoint(turn_columns)
+    assert turn_count == 2
+    assert "uq_conversation_started" in turn_indexes
     assert profile_foreign_key["table"] == "shopper_profiles"
     assert profile_foreign_key["to"] == "shopper_profile_id"
     assert profile_foreign_key["on_delete"] == "RESTRICT"
@@ -1587,6 +1626,6 @@ def test_file_database_reopens_with_sqlite_safety_settings(
             connection.execute(
                 text("SELECT COUNT(*) FROM schema_migrations")
             ).scalar_one()
-            == 6
+            == 7
         )
     reopened_engine.dispose()

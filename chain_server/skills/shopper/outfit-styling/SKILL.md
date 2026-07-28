@@ -27,6 +27,11 @@ internal reasoning to the shopper.
   the established outfit goal.
 - Do not combine it with `product-discovery`. Styling supplies the fashion
   judgment; other skills may accompany it for cart or budget responsibilities.
+- Use `event-context` as a modifier whenever an event destination or venue is
+  stated, or when the response would otherwise ask about or branch on missing
+  destination or venue context. A generic event answer is not a substitute for
+  loading it. Ask no separate event questions outside its one-question
+  boundary.
 - Preserve accepted parts of the look. Change only the piece or quality the
   shopper wants changed.
 
@@ -75,6 +80,20 @@ internal reasoning to the shopper.
 
 - Ask one concise question when a style-led single-piece request does not name
   a product role, or when the anchor or historical reference is ambiguous.
+- When an occasion-led shopper explicitly asks to plan before products and
+  material destination or venue context is missing, follow `event-context`:
+  give at most one brief conditional direction and one short confirmation
+  question. Do not answer with a venue menu, outfit blueprints, a checklist, or
+  unrelated preference questions first.
+- When the shopper asks to plan before products, the compact
+  `event-context` response gate overrides this skill's general response style.
+- If that plan-first turn already has all material destination and venue
+  context, give one short direction paragraph and ask no further event-context
+  question. Ask another styling question only if it is material to the next
+  shopping step.
+- For an ordinary shop-now occasion request, begin with one grounded useful core
+  role and ask at most one event-context question alongside the result. Do not
+  apply the plan-first stop rule.
 - If a missing detail would materially change the recommendation, give one
   useful provisional direction and then ask the question.
 - Do not invent a product category merely to avoid clarification.

@@ -77,11 +77,27 @@ profile ID.
 The selected behavior may guide interaction and styling, while your explicit
 request always wins. A profile never supplies an unstated budget, size, color,
 material requirement, cart action, product fact, or weather fact. Saved ZIP is
-background location data only in this slice and does not trigger a weather
-lookup or prove where an event will occur. Guest sends no profile ID and gets no
-profile context. A dormant internal weather client exists for direct operator
-testing, but it is not available to the assistant or UI and does not yet change
-clarification or style guidance.
+not proof of where an event will occur. For occasion-led styling, the assistant
+may treat it as a tentative local-event candidate and naturally ask whether the
+event uses that saved area or is elsewhere when the answer would materially
+change the guidance. It does not echo the ZIP digits. A shopper-stated
+destination or venue always wins. Guest sends no profile ID and has no saved-
+location fallback.
+
+Location and venue are styling context, not weather or product facts. For
+example, “wedding in Cancun” does not imply a beach; the assistant may ask one
+short destination-or-venue question if it matters. If you explicitly ask to
+plan before seeing products and context is missing, the assistant uses exactly
+two short sentences: one conditional direction, then that question. With
+context complete, it uses one short paragraph and asks no further event-context
+question. Ceremony and reception both stated as on the sand in Cancun are
+complete for this helper. If you ask to see products now, the assistant starts
+with one grounded requested or core product role and, if location is still
+missing and materially changes the next recommendation, asks only event
+location beside the results; venue is deferred. The assistant performs no
+weather lookup and does not infer wind, temperature, rain, comfort, or product
+performance in this slice. A dormant internal weather client remains
+unavailable to the assistant and UI.
 
 Changing the dropdown starts a clean visible session: chat, product cards,
 selected product, attachments, inference activity, and metrics are cleared, and

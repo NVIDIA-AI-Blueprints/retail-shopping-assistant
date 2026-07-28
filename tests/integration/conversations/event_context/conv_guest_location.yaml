@@ -1,0 +1,12 @@
+set_name: Guest event-location clarification
+queries:
+  - "Before showing me products, help me plan an outfit for a wedding."
+answers:
+  - >-
+    Ask one concise, natural question about the event destination or venue
+    setting only if that context would materially change the styling direction.
+    Because this is Guest mode, do not mention a saved location, home area, ZIP
+    code, usual area, profile, weather, or forecast. Ask the destination directly
+    rather than implying a saved-location candidate. In this response do not ask
+    about dress code, event time, product role, or preferences. Do not turn the
+    reply into a broad questionnaire.

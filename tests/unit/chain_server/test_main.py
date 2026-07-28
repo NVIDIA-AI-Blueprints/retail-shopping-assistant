@@ -830,7 +830,46 @@ class TestSystemPrompt:
             in normalized
         )
         assert "not proof of current location, event location, weather" in normalized
+        assert "Only event-context may use it as a tentative event-location" in (
+            normalized
+        )
+        assert "confirm naturally when location would materially change styling" in (
+            normalized
+        )
+        assert "ask whether to plan around the shopper's usual area" in normalized
+        assert "do not ask for a city as though no candidate exists" in normalized
+        assert "An explicit shopper-stated event destination overrides it" in (
+            normalized
+        )
+        assert 'once stated, never use "usual area" framing' in normalized
+        assert "authoritative for venue but does not establish destination" in normalized
         assert "Perform no weather lookup or weather inference" in normalized
+        assert (
+            "Select it whenever an event destination or venue is stated, or "
+            "when the response would otherwise ask about or branch on missing"
+            in normalized
+        )
+        assert "Generic occasion advice is not a reason to omit it" in normalized
+        assert "If the shopper explicitly asks to plan before seeing products" in (
+            normalized
+        )
+        assert (
+            "An outfit request with a season, weather need, occasion, or "
+            "style/vibe already has enough direction"
+        ) in normalized
+        assert "search the most useful core role first" in normalized
+        assert "exactly two short sentences, no heading or list" in normalized
+        assert "one-short-paragraph boundary" in normalized
+        assert "Without that block there is no saved-location candidate" in normalized
+        assert "never imply that a saved, home, or usual area exists" in normalized
+        assert "ask no further destination-or-venue question" in normalized
+        assert "usual-area framing is forbidden" in normalized
+        assert "ask only one location question alongside it" in normalized
+        assert "defer venue setting" in normalized
+        assert "terrain performance, salt-air, breeze" in normalized
+        assert "venue setting that covers the relevant event portions" in normalized
+        assert "Do not re-ask it as a finer variant" in normalized
+        assert "invent hypothetical exceptions" in normalized
         assert "strict_budget_style_mixer" not in normalized
 
     def test_budget_oriented_profile_remains_non_authoritative(
@@ -2988,6 +3027,7 @@ class TestDeepAgentsRuntimeRefs:
         assert activation_schema["properties"]["skill_names"]["items"]["enum"] == [
             "budget-shopping",
             "cart-management",
+            "event-context",
             "outfit-styling",
             "product-discovery",
             "store-policy-answers",
@@ -3080,15 +3120,18 @@ class TestDeepAgentsRuntimeRefs:
             "view_cart_total_tool",
             "resolve_conversation_products_tool",
         }
+        assert skill_gate._skill_tool_grants["event-context"] == set()
         activation_result = tools_by_name["activate_shopper_skills_tool"](
-            ["outfit-styling"],
+            ["outfit-styling", "event-context"],
         )
         assert activation_result == (
             "SHOPPER_SKILL_ACTIVATION_COMPLETE: "
-            "/shopper/outfit-styling/SKILL.md"
+            "/shopper/outfit-styling/SKILL.md, "
+            "/shopper/event-context/SKILL.md"
         )
         assert set(skill_gate._skill_files) == {
-            "/shopper/outfit-styling/SKILL.md"
+            "/shopper/outfit-styling/SKILL.md",
+            "/shopper/event-context/SKILL.md",
         }
         assert skill_gate._granted_tools == {
             "search_catalog_tool",
@@ -3097,10 +3140,13 @@ class TestDeepAgentsRuntimeRefs:
             "check_active_promotions_tool",
             "resolve_conversation_products_tool",
         }
-        selected = runtime_mod._shopper_skill_registry(
+        registry = runtime_mod._shopper_skill_registry(
             runtime._shopper_skills_root()
-        )["outfit-styling"]
-        assert skill_gate._skill_files == {selected.path: selected.content}
+        )
+        assert skill_gate._skill_files == {
+            registry["outfit-styling"].path: registry["outfit-styling"].content,
+            registry["event-context"].path: registry["event-context"].content,
+        }
         assert captured["backend"].cwd == (
             Path(__file__).resolve().parents[3] / "chain_server" / "skills"
         )
@@ -5010,6 +5056,11 @@ class TestDeepAgentsRuntimeRefs:
         state = State(
             user_id=111,
             query="Style practical sandals for an outdoor dinner.",
+            shopper_context=ShopperContext(
+                shopper_type="skeptical_researcher",
+                behavior="Checks assumptions before choosing.",
+                zipcode="60601",
+            ),
             product_results=[
                 {
                     "product_id": "prod_sandal",
@@ -5065,10 +5116,194 @@ class TestDeepAgentsRuntimeRefs:
         ) in editor_prompt
         assert "DRAFT RESPONSE" in editor_prompt
         assert "will not sink in wet grass" in editor_prompt
+        assert "SHOPPER LOCATION CANDIDATE" not in editor_prompt
+        assert "ACTIVE SKILL RESPONSE GUIDANCE" not in editor_prompt
+        assert "A saved ZIP candidate is present" not in editor_prompt
+        assert "60601" not in editor_prompt
         editor_system_prompt = editor_calls[0][0]["content"]
         assert "say that property is not confirmed" in editor_system_prompt
         assert "closest catalog or styling direction" in editor_system_prompt
         assert state.model_usage["app_llm_grounding_editor"]["status"] == "used"
+
+    @pytest.mark.parametrize("with_cart_evidence", [False, True])
+    @pytest.mark.asyncio
+    async def test_event_search_editor_omitting_candidates_uses_catalog_fallback(
+        self,
+        base_config,
+        monkeypatch: pytest.MonkeyPatch,
+        with_cart_evidence: bool,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+        from langchain_core.messages import AIMessage
+
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+
+        class CandidateOmittingEditor:
+            async def ainvoke(self, messages):
+                return AIMessage(
+                    content=(
+                        (
+                            "The requested cart update is confirmed. "
+                            "Is the wedding in your usual area, or somewhere else?"
+                        )
+                        if with_cart_evidence
+                        else (
+                            "I can pull dress options once you confirm the "
+                            "event location."
+                        )
+                    )
+                )
+
+        monkeypatch.setattr(
+            runtime,
+            "_create_chat_model",
+            lambda: CandidateOmittingEditor(),
+        )
+        state = State(
+            user_id=111,
+            query="Show me dresses for a wedding.",
+            product_results=[
+                {
+                    "product_id": "prod_dress",
+                    "display_name": "Wedding Guest Dress",
+                    "category": "dresses",
+                    "price": {"amount": 99.0, "currency": "USD"},
+                }
+            ],
+            agent_diagnostics={
+                "skill_files_read": [
+                    "/shopper/outfit-styling/SKILL.md",
+                    "/shopper/event-context/SKILL.md",
+                ],
+                "final_termination_reason": "completed",
+            },
+        )
+        messages = [
+            {"role": "user", "content": "REQUEST ID: current-request"},
+            {
+                "role": "tool",
+                "name": "search_catalog_tool",
+                "content": (
+                    "SEARCH_RESULT_GROUNDING_NOTE: grounded.\n"
+                    "SEARCH_GUIDANCE_EVIDENCE: "
+                    '{"text": "This dress is a grounded starting role."}\n'
+                    "PRODUCT_REF: prod_dress\n"
+                    "NAME: Wedding Guest Dress\n"
+                    "CATEGORY: dresses\n"
+                    "PRICE: $99.00 USD"
+                ),
+            },
+        ]
+        if with_cart_evidence:
+            messages.append(
+                {
+                    "role": "tool",
+                    "name": "add_cart_items_tool",
+                    "content": "CART_MUTATION_RESULT: requested item added.",
+                }
+            )
+        result = {"messages": messages}
+
+        response = await runtime._rewrite_response_for_grounding(
+            state,
+            result,
+            "I found a dress option.",
+            request_id="current-request",
+        )
+
+        assert "**Wedding Guest Dress**" in response
+        assert "$99.00 USD" in response
+        if with_cart_evidence:
+            assert "The requested cart update is confirmed." in response
+            assert response.index("Wedding Guest Dress") < response.index(
+                "Is the wedding"
+            )
+        else:
+            assert "I can pull dress options" not in response
+        assert state.model_usage["app_llm_grounding_editor"]["status"] == "used"
+
+    @pytest.mark.asyncio
+    async def test_event_context_prior_only_evidence_uses_non_search_editor(
+        self,
+        base_config,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+        from langchain_core.messages import AIMessage
+
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+        captured: dict[str, object] = {}
+
+        class PriorEvidenceEditor:
+            async def ainvoke(self, messages):
+                captured["messages"] = messages
+                return AIMessage(
+                    content=(
+                        "Start with one polished anchor. Is the event in your "
+                        "usual area, or somewhere else?"
+                    )
+                )
+
+        monkeypatch.setattr(
+            runtime,
+            "_create_chat_model",
+            lambda: PriorEvidenceEditor(),
+        )
+        state = State(
+            user_id=111,
+            query="Before products, help me plan a wedding outfit.",
+            shopper_context=ShopperContext(
+                shopper_type="skeptical_researcher",
+                behavior="Checks assumptions before choosing.",
+                zipcode="60601",
+            ),
+            agent_diagnostics={
+                "skill_files_read": [
+                    "/shopper/outfit-styling/SKILL.md",
+                    "/shopper/event-context/SKILL.md",
+                ],
+                "final_termination_reason": "completed",
+            },
+        )
+        result = {
+            "messages": [
+                {
+                    "role": "tool",
+                    "name": "get_cart_tool",
+                    "content": "PRIOR CART: one saved item.",
+                },
+                {"role": "user", "content": "REQUEST ID: current-request"},
+                {
+                    "role": "tool",
+                    "name": "activate_shopper_skills_tool",
+                    "content": (
+                        "SHOPPER_SKILL_ACTIVATION_COMPLETE: "
+                        "/shopper/outfit-styling/SKILL.md, "
+                        "/shopper/event-context/SKILL.md"
+                    ),
+                },
+            ]
+        }
+
+        response = await runtime._rewrite_response_for_grounding(
+            state,
+            result,
+            "Start with one polished anchor.",
+            request_id="current-request",
+        )
+
+        assert response.startswith("Start with one polished anchor.")
+        messages = captured["messages"]
+        system_prompt = messages[0]["content"]
+        user_prompt = messages[1]["content"]
+        assert (
+            "Do not claim that current evidence returned a product candidate"
+            in system_prompt
+        )
+        assert "The current catalog search already succeeded" not in system_prompt
+        assert "must name at least one returned candidate" not in system_prompt
+        assert "CURRENT-TURN TOOL EVIDENCE:\n(none)" in user_prompt
+        assert "PRIOR CART: one saved item." in user_prompt
 
     @pytest.mark.asyncio
     async def test_search_only_editor_failure_uses_safe_catalog_fallback(
@@ -5396,6 +5631,205 @@ class TestDeepAgentsRuntimeRefs:
         assert "searched product role" in guidance
         assert "confirmed prices" in guidance
         assert "color relationship" not in guidance
+
+    @pytest.mark.asyncio
+    async def test_grounding_editor_receives_active_skill_response_guidance(
+        self,
+        base_config,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+        from langchain_core.messages import AIMessage
+
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+        captured: dict[str, object] = {}
+
+        class FakeEditor:
+            async def ainvoke(self, messages):
+                captured["messages"] = messages
+                return AIMessage(
+                    content="Wedding Guest Dress is a grounded styling response."
+                )
+
+        monkeypatch.setattr(runtime, "_create_chat_model", lambda: FakeEditor())
+        state = State(
+            user_id=111,
+            query="Show me a useful place to start for a wedding in Cancun.",
+            shopper_context=ShopperContext(
+                shopper_type="skeptical_researcher",
+                behavior="Checks assumptions before choosing.",
+                zipcode="60601",
+            ),
+            agent_diagnostics={
+                "skill_files_read": [
+                    "/shopper/outfit-styling/SKILL.md",
+                    "/shopper/event-context/SKILL.md",
+                ],
+                "final_termination_reason": "completed",
+            },
+        )
+        result = {
+            "messages": [
+                {"role": "user", "content": "REQUEST ID: current-request"},
+                {
+                    "role": "tool",
+                    "name": "search_catalog_tool",
+                    "content": (
+                        "SEARCH_RESULT_GROUNDING_NOTE: grounded.\n"
+                        "PRODUCT_REF: prod_dress\n"
+                        "NAME: Wedding Guest Dress\n"
+                        "CATEGORY: dresses\n"
+                        "PRICE: $99.00 USD"
+                    ),
+                },
+            ]
+        }
+
+        response = await runtime._rewrite_response_for_grounding(
+            state,
+            result,
+            "Here is a grounded dress candidate.",
+            request_id="current-request",
+        )
+
+        assert response == "Wedding Guest Dress is a grounded styling response."
+        messages = captured["messages"]
+        editor_system_prompt = messages[0]["content"]
+        editor_user_prompt = messages[1]["content"]
+        assert "SHOPPER LOCATION CANDIDATE" in editor_user_prompt
+        assert "A saved ZIP candidate is present" in editor_user_prompt
+        assert "60601" not in editor_user_prompt
+        assert "ACTIVE SKILL RESPONSE GUIDANCE" in editor_user_prompt
+        assert 'use "usual area" only if prompt says candidate present' in (
+            editor_user_prompt.lower()
+        )
+        assert "Explicit destination overrides saved ZIP" in editor_user_prompt
+        assert 'never ask "usual area" afterward' in editor_user_prompt
+        assert "never imply a saved/home/usual area" in editor_user_prompt
+        assert "asks event location only when still missing and material" in (
+            editor_user_prompt
+        )
+        assert "never ask dress code, time, role, or preferences" in (
+            editor_user_prompt.lower()
+        )
+        assert "never shopping, shipping, or availability context" in (
+            editor_system_prompt
+        )
+        assert "must name at least one returned candidate exactly" in (
+            editor_system_prompt
+        )
+        assert "Do not replace candidates with a promise" in editor_system_prompt
+        assert "If event location is still missing and material" in (
+            editor_system_prompt
+        )
+        assert "Do not ask that question after an explicit destination" in (
+            editor_system_prompt
+        )
+        assert "ask for location twice" in editor_system_prompt
+        assert "Apply that boundary to the final text" in editor_system_prompt
+        assert "usual area" not in response.lower()
+
+    def test_grounding_editor_guest_location_context_has_no_saved_candidate(
+        self,
+        base_config,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+        guidance = runtime._grounding_shopper_location_context(
+            State(user_id=111, query="Help me dress for a wedding.")
+        )
+
+        assert "No saved ZIP candidate is present" in guidance
+        assert "Ask the event destination directly" in guidance
+        assert '"usual" area' in guidance
+
+    @pytest.mark.asyncio
+    async def test_event_context_no_tool_response_uses_guidance_editor(
+        self,
+        base_config,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+        from langchain_core.messages import AIMessage
+
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+        captured: dict[str, object] = {}
+
+        class FakeEditor:
+            async def ainvoke(self, messages):
+                captured["messages"] = messages
+                return AIMessage(
+                    content=(
+                        "Use a polished midi silhouette with dressy flats and "
+                        "one refined accent."
+                    )
+                )
+
+        monkeypatch.setattr(runtime, "_create_chat_model", lambda: FakeEditor())
+        state = State(
+            user_id=111,
+            query=(
+                "The ceremony and reception are in Cancun on the sand. "
+                "What direction should I take before we shop?"
+            ),
+            shopper_context=ShopperContext(
+                shopper_type="skeptical_researcher",
+                behavior="Checks assumptions before choosing.",
+                zipcode="60601",
+            ),
+            agent_diagnostics={
+                "skill_files_read": [
+                    "/shopper/outfit-styling/SKILL.md",
+                    "/shopper/event-context/SKILL.md",
+                ],
+                "final_termination_reason": "completed",
+            },
+        )
+        result = {
+            "messages": [
+                {"role": "user", "content": "REQUEST ID: current-request"},
+                {
+                    "role": "tool",
+                    "name": "activate_shopper_skills_tool",
+                    "content": (
+                        "SHOPPER_SKILL_ACTIVATION_COMPLETE: "
+                        "/shopper/outfit-styling/SKILL.md, "
+                        "/shopper/event-context/SKILL.md"
+                    ),
+                },
+            ]
+        }
+
+        response = await runtime._rewrite_response_for_grounding(
+            state,
+            result,
+            (
+                "Try a midi dress with flats. Should I use your usual area "
+                "or Cancun?"
+            ),
+            request_id="current-request",
+        )
+
+        assert response.endswith("one refined accent.")
+        messages = captured["messages"]
+        system_prompt = messages[0]["content"]
+        user_prompt = messages[1]["content"]
+        assert system_prompt.startswith(
+            "You are the final event-context response editor."
+        )
+        assert "Explicit destination overrides saved ZIP" in system_prompt
+        assert "venue setting covering the relevant event portions is complete" in (
+            system_prompt.lower()
+        )
+        assert "never where products will be bought, shipped, or available" in (
+            system_prompt
+        )
+        assert "Remove any draft question that repeats" in system_prompt
+        assert "CURRENT-TURN TOOL EVIDENCE:\n(none)" in user_prompt
+        assert "Explicit destination overrides saved ZIP" in user_prompt
+        assert "A saved ZIP candidate is present" in user_prompt
+        assert "60601" not in user_prompt
 
     @pytest.mark.asyncio
     async def test_search_only_missing_draft_uses_safe_catalog_fallback(

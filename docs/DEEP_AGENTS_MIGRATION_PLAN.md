@@ -38,14 +38,15 @@ Current constraints:
   over deterministic catalog, conversation-product, cart, policy,
   availability, and promotions functions, plus one internal skill-activation
   control tool.
-- Five shopper-facing skills are discovered under
-  `chain_server/skills/shopper/`: product discovery, outfit styling, cart
-  management, budget shopping, and store-policy answers.
+- Six shopper-facing skills are discovered under
+  `chain_server/skills/shopper/`: product discovery, outfit styling, event
+  context, cart management, budget shopping, and store-policy answers.
 - Activation instructions designate product discovery and outfit styling as
   alternative primary procedures and prohibit selecting both. Product work
   uses one of them; standalone cart and policy turns do not need a primary.
   Budget shopping may modify either procedure only when the shopper states a
-  budget.
+  budget. Event context is a no-tool modifier used only with outfit styling for
+  destination/venue precedence and minimum-question guidance.
 - Registration is not activation. Every turn begins with a forced structured
   selection from those registered names. The runtime deterministically loads
   and injects each selected `SKILL.md` in full before it exposes any shopping
@@ -54,8 +55,10 @@ Current constraints:
   turn is eligible for model context. Otherwise there is no hint. The names do
   not force routing or satisfy the activation gate. Shopping calls issued before
   activation or in the same model batch are rejected at execution time.
-- Caller-supplied persona data is not injected into model context. Persona
-  support remains deferred until its trust and validation contract is defined.
+- Arbitrary caller-supplied persona data is not injected into model context.
+  The UI may send one ID from the fixed server-owned representative-shopper
+  registry; durable turn start resolves and binds its typed behavior and ZIP
+  snapshot, while Guest receives no profile block.
 - Optional `session_id`, `conversation_id`, and `cart_id` fields are accepted,
   and the bundled UI now sends browser-session identifiers on every turn.
   Legacy callers that send only `user_id` are still mapped to deterministic

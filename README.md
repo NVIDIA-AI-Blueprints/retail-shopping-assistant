@@ -55,6 +55,10 @@ The Retail Shopping Assistant is an AI-powered blueprint that provides a compreh
   session requires an explicit dropdown choice of Guest mode or one of those
   five shoppers before chat starts. The selected ID is bound to the durable
   conversation and resolved into compact soft guidance
+- 📍 **Minimal Event Context**: A no-tool styling helper uses explicit event
+  destination and venue context, or naturally confirms whether a selected
+  profile's saved area applies. It never assumes that a destination determines
+  the venue and performs no weather lookup
 - 🌦️ **Dormant Weather Contract**: A disabled-by-default, directly testable
   daily forecast tool accepts a five-digit US ZIP plus today, one exact date,
   or an inclusive date range. It is not registered with the shopper agent and
@@ -80,7 +84,7 @@ The Retail Shopping Assistant is an AI-powered blueprint that provides a compreh
 [Open the architecture diagram at full size](docs/images/shopper-agent-architecture.svg).
 
 The application follows a microservices architecture:
-- **Chain Server**: Deep Agents SDK orchestration with five registered shopper
+- **Chain Server**: Deep Agents SDK orchestration with six registered shopper
   skills, a required per-turn activation phase, an eleven-tool registry with
   deterministic per-skill binding, capability-derived search schemas, bounded
   search-schema repair, a category-aware no-I/O availability stub for known
@@ -112,6 +116,24 @@ cart action, product fact, skill choice, or tool permission. Changing the
 selection clears visible chat/product state and rotates the browser-scoped
 session, conversation, and cart identities. Reset keeps the explicit shopper
 mode while rotating the conversation identity.
+
+For occasion-led styling, the `event-context` modifier can accompany
+`outfit-styling` without granting another tool. An explicit event destination
+or venue wins over the selected profile's saved ZIP. When the ZIP is the only
+location clue and location would materially change the recommendation, the
+assistant keeps any starting direction conditional and asks at most one
+natural confirmation without echoing the ZIP. A destination such as Cancun
+does not establish that the event is on a beach; Guest has no saved-location
+fallback. On an explicit plan-before-products turn, missing material context
+produces exactly two short sentences: one conditional direction, then one
+destination-or-venue question. With context complete, the answer stays to one
+short paragraph and asks no further event-context question. Normal shop-now
+occasion requests begin with a grounded requested or core product role and, if
+location is still missing and materially changes the next recommendation, ask
+only event location alongside the results; venue is deferred. The response
+boundary receives only whether a saved-ZIP candidate exists, not its digits. It
+applies the same guidance to no-tool turns and restores deterministic grounded
+candidates if a successful-search rewrite drops every returned product.
 
 The Slice 3 weather boundary is intentionally dormant. Direct callers can
 construct a typed Visual Crossing adapter for a five-digit US ZIP and an

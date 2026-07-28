@@ -15,6 +15,7 @@ REGISTERED_SKILL_PATHS = {
     for name in (
         "budget-shopping",
         "cart-management",
+        "event-context",
         "outfit-styling",
         "product-discovery",
         "store-policy-answers",
@@ -39,6 +40,11 @@ EXPECTED_SKILL_POLICY = {
             "view_cart_total_tool",
             "resolve_conversation_products_tool",
         ],
+    },
+    "event-context": {
+        "role": "modifier",
+        "exclusive_group": None,
+        "tools_granted": [],
     },
     "outfit-styling": {
         "role": "primary",
@@ -172,6 +178,67 @@ def test_outfit_styling_owns_domain_judgment_and_clarification() -> None:
     assert "do not turn the anchor's" in normalized
     assert "same or a matching value" in normalized
     assert "do not dump an unexplained product list" in normalized
+    assert "`event-context` response gate overrides" in normalized
+    assert "give one short direction paragraph and ask no further" in normalized
+    assert "ask another styling question only if it is material" in normalized
+    assert "ordinary shop-now occasion request" in normalized
+
+
+def test_event_context_is_a_narrow_no_tool_styling_modifier() -> None:
+    frontmatter, body = _read_skill_path(
+        REGISTERED_SKILL_PATHS["event-context"]
+    )
+    normalized = " ".join(body.lower().split())
+
+    assert frontmatter["role"] == "modifier"
+    assert frontmatter["tools_granted"] == []
+    assert "only with `outfit-styling`" in body
+    assert "an explicit destination overrides saved zip" in normalized
+    assert "cancun does not mean beach" in normalized
+    assert "ask at most one short question, never a questionnaire" in normalized
+    assert "that question may confirm destination or venue only" in normalized
+    assert "do not append dress code, event time, product role" in normalized
+    assert "## context authority" in normalized
+    assert "## one-question policy" in normalized
+    assert "## response mode" in normalized
+    assert "exactly two short sentences with no heading or list" in normalized
+    assert "one short paragraph of at most four sentences" in normalized
+    assert "begin with one grounded requested or core product role" in normalized
+    assert (
+        "if event location is still missing and materially changes the next "
+        "recommendation"
+    ) in normalized
+    assert "with saved zip as the only clue" in normalized
+    assert "without saved zip, ask the destination directly" in normalized
+    assert "do not re-ask established context as a finer variant" in normalized
+    assert "invent hypothetical exceptions" in normalized
+    assert "sand-friendly" in normalized
+    response_guidance = frontmatter["response_guidance"].lower()
+    assert 'use "usual area" only if prompt says candidate present' in (
+        response_guidance
+    )
+    assert "never imply a saved/home/usual area" in response_guidance
+    assert "asks event location only when still missing and material" in (
+        response_guidance
+    )
+    assert "never ask dress code, time, role, or preferences" in (
+        response_guidance
+    )
+    assert "explicit destination overrides saved zip" in response_guidance
+    assert "no list or further destination-or-venue question" in response_guidance
+    assert "venue setting covering the relevant event portions is complete" in (
+        response_guidance
+    )
+    assert 'never ask "usual area" afterward' in response_guidance
+    assert "not shopping, shipping, availability" in response_guidance
+    assert "one paragraph, up to four sentences, no list" in response_guidance
+    assert "generic advice is possible" in frontmatter["description"]
+    assert "do not use for location-independent styling" in (
+        frontmatter["description"].lower()
+    )
+    assert "do not echo its digits" in normalized
+    assert "perform no weather lookup or inference" in normalized
+    assert "get_weather_forecast_tool" not in body
 
 
 def test_outfit_styling_does_not_own_catalog_transport_or_cart_execution() -> None:

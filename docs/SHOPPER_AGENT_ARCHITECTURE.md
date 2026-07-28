@@ -366,9 +366,15 @@ written into raw shopper/assistant text or repeated in recent history.
 Explicit current-turn instructions win, followed by explicit recent
 conversation preferences. Static profile behavior is third-priority interaction
 guidance only. Saved ZIP is neither proof of current/event location nor a
-weather or product requirement. There are no shopper-type-specific code or
-prompt branches. Registry bootstrap and turn-start serialization both require
-the behavior summary to remain one trimmed line. Guest request digests preserve
+weather or product requirement, shopping or shipping destination, or
+availability signal. The zero-tool `event-context` modifier may use it only as
+a tentative event-location candidate beside `outfit-styling`; a shopper-stated
+destination or venue wins. When ZIP is the only location clue, the helper asks
+whether to plan around the shopper's usual area or elsewhere rather than
+requesting a city from scratch. The final response editor receives only whether
+that candidate exists, never ZIP digits. There are no shopper-type-specific
+code branches. Registry bootstrap and turn-start serialization both require the
+behavior summary to remain one trimmed line. Guest request digests preserve
 their pre-profile canonical shape so older finalized Guest turns still replay
 after migration 6.
 
@@ -413,7 +419,7 @@ SQLite boundary is implemented by the memory service's
 
 ## 3. Skills and Their Tools
 
-Five shopper skills are registered. Their frontmatter grants are an
+Six shopper skills are registered. Their frontmatter grants are an
 authorization boundary: the model sees only the union for the current selected
 skills, and dispatch checks the same grant against an independent immutable
 policy. Tool schemas and wrappers still enforce refs, filters, service state,
@@ -423,15 +429,32 @@ and mutation preconditions.
 | --- | --- | --- | --- |
 | [`product-discovery`](../chain_server/skills/shopper/product-discovery/SKILL.md) | `primary`, `product_procedure` | Non-styling search, browse, filters, and product facts | `search_catalog_tool`, `get_product_details_tool`, `check_product_availability_tool`, `check_active_promotions_tool`, `resolve_conversation_products_tool` |
 | [`outfit-styling`](../chain_server/skills/shopper/outfit-styling/SKILL.md) | `primary`, `product_procedure` | Build, complete, compare, balance, or refine a look | `search_catalog_tool`, `get_product_details_tool`, `check_product_availability_tool`, `check_active_promotions_tool`, `resolve_conversation_products_tool` |
+| [`event-context`](../chain_server/skills/shopper/event-context/SKILL.md) | `modifier` | Use stated event destination/venue context or resolve a material missing destination/venue before styling branches; treat saved ZIP as tentative | None; combine only with `outfit-styling` |
 | [`budget-shopping`](../chain_server/skills/shopper/budget-shopping/SKILL.md) | `modifier` | Add budget procedure when the shopper states a price ceiling or bundle budget | None; combine with the applicable product or cart skill |
 | [`cart-management`](../chain_server/skills/shopper/cart-management/SKILL.md) | `standalone` | Cart reads, adds, removals, and quantity changes, alone or beside product work | `get_cart_tool`, `view_cart_total_tool`, `add_cart_items_tool`, `remove_cart_item_tool`, `update_cart_items_tool`, `resolve_conversation_products_tool` |
 | [`store-policy-answers`](../chain_server/skills/shopper/store-policy-answers/SKILL.md) | `standalone` | Returns, shipping, sizing, payment, price matching, and gift cards | `get_store_policy_tool` |
 
 `product-discovery` and `outfit-styling` are mutually exclusive primary
 procedures. `budget-shopping` modifies the applicable primary only when the
-shopper states a budget. A genuine multi-intent turn activates every needed
-skill once; for example, styling under a budget with an explicit add request
-uses `outfit-styling`, `budget-shopping`, and `cart-management`.
+shopper states a budget. `event-context` modifies only `outfit-styling`. It is
+selected whenever destination/venue context is stated or the response would
+otherwise ask about or branch on a missing destination/venue. On explicit
+plan-before-products turns, missing material context produces exactly two short
+sentences: one conditional direction, then one destination-or-venue question.
+With context complete, it produces one short paragraph and asks no further
+event-context question. It gives explicit event context precedence over saved
+ZIP and grants no tool. Ordinary shop-now occasion requests present one
+grounded requested or core role and, if location is still missing and
+materially changes the next recommendation, ask only event location alongside
+the results; venue is deferred. A genuine multi-intent turn activates every
+needed skill once; for example, event styling under a budget with an explicit
+add request uses `outfit-styling`, `event-context`, `budget-shopping`, and
+`cart-management`.
+
+No-tool event-context turns reuse the final response editor to enforce the same
+compact boundary. Search-bearing event-context turns must preserve at least one
+exact returned product in final text; if the editor omits every candidate, the
+deterministic grounded catalog renderer restores them.
 
 The styling skill owns fashion procedure and clarification: anchors, color,
 proportion, silhouette, formality, occasion, texture, and concise explanation.

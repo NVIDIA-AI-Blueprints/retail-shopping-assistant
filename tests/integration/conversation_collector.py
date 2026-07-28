@@ -4,6 +4,7 @@ import requests
 import time
 import os
 import random
+import re
 
 parser = argparse.ArgumentParser(
                     prog='ConvTest',
@@ -33,6 +34,7 @@ INPUT_DIRECTORY = f"conversations/{sub_path}"
 OUTPUT_DIRECTORY = f"{INPUT_DIRECTORY}/{args.result_directory}"
 API_ENDPOINT = f"http://{args.host}:{args.port}/{args.uri}"
 REQUEST_DELAY = 0.5
+SHOPPER_PROFILE_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 
 # Ensure the output directory exists
 os.makedirs(OUTPUT_DIRECTORY, exist_ok=True)
@@ -57,6 +59,17 @@ for filename in yaml_files:
 
     set_name = query_set.get('set_name', filename)
     queries = query_set.get('queries', [])
+    shopper_profile_id = query_set.get('shopper_profile_id')
+    if (
+        shopper_profile_id is not None
+        and (
+            not isinstance(shopper_profile_id, str)
+            or SHOPPER_PROFILE_ID_PATTERN.fullmatch(shopper_profile_id) is None
+        )
+    ):
+        raise ValueError(
+            f"Invalid shopper_profile_id in {filename}: expected a bounded ID."
+        )
     results = []
 
     print(f"Processing file: {filename} (set: {set_name})")
@@ -67,6 +80,9 @@ for filename in yaml_files:
             "query": query,
             "guardrails": not args.disable_guardrails,
             }
+        if shopper_profile_id is not None:
+            payload["shopper_profile_id"] = shopper_profile_id
+        request_started = time.perf_counter()
         try:
             response = requests.post(API_ENDPOINT, json=payload, timeout=args.request_timeout)
             response.raise_for_status()
@@ -77,12 +93,16 @@ for filename in yaml_files:
                 "content": response_text,
                 "response": response_text,
                 "timing": data.get("timings", "No timing collected." ),
+                "client_elapsed_seconds": time.perf_counter() - request_started,
+                "token_usage": data.get("token_usage", {}),
+                "model_usage": data.get("model_usage", {}),
                 "agent_diagnostics": data.get("agent_diagnostics", {}),
             })
         except Exception as e:
             results.append({
                 "query": query,
-                "response": f"Error: {str(e)}"
+                "response": f"Error: {str(e)}",
+                "client_elapsed_seconds": time.perf_counter() - request_started,
             })
         time.sleep(REQUEST_DELAY)
 
@@ -90,6 +110,7 @@ for filename in yaml_files:
     with open(output_path, 'w') as f:
         yaml.dump({
             "set_name": set_name,
+            "shopper_profile_id": shopper_profile_id,
             "results": results
         }, f, sort_keys=False)
 

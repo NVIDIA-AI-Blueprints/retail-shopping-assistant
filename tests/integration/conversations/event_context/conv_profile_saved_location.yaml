@@ -1,0 +1,24 @@
+set_name: Selected-profile event-location precedence
+shopper_profile_id: shopper_alex
+queries:
+  - "Before we look at products, help me think through a semi-formal wedding outfit."
+  - "The ceremony and reception are both on the sand at a beach in Cancun, and I don't want heels. What direction should I take before we shop?"
+answers:
+  - >-
+    Treat the selected profile's ZIP only as a tentative local-event candidate.
+    Give at most a brief conditional starting direction and ask one natural
+    question framed around whether the wedding uses the shopper's usual area or
+    is elsewhere; do not ask for a city as though no location candidate exists.
+    The same question may also ask for venue setting if it is materially useful.
+    Do not echo the ZIP digits, claim that the wedding is local, infer weather,
+    or ask about dress code, event time, product role, or preferences in this
+    response. Do not ask a broad questionnaire.
+  - >-
+    The shopper's explicit Cancun ceremony-and-reception beach-on-sand setting
+    overrides the saved ZIP and is sufficient event context, so do not ask where
+    the wedding is, whether it is indoors or outdoors, whether it is on sand
+    versus a boardwalk, or whether a significant indoor portion remains. Give a
+    concise polished direction using flat footwear and the stated setting as
+    styling context. Do not claim a live forecast or infer heat, humidity, rain,
+    wind, breeze, terrain performance, comfort, breathability, or other
+    unverified product attributes.

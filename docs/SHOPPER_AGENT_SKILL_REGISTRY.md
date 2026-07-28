@@ -64,8 +64,12 @@ gate. A multi-intent turn may
 activate more than one skill, but `product-discovery` and `outfit-styling` are
 alternative primary procedures and must not be selected together.
 `budget-shopping` may accompany the applicable primary procedure only when the
-shopper states a budget. Within an active outfit-building or style-led
-single-piece thread, terse item-only follow-ups remain `outfit-styling` tasks.
+shopper states a budget. `event-context` may accompany only `outfit-styling`,
+and is selected whenever event destination or venue context is stated or the
+response would otherwise ask about or branch on missing destination or venue
+context. Generic occasion advice is not a reason to omit it. It grants no
+tools. Within an active outfit-building or style-led single-piece thread, terse
+item-only follow-ups remain `outfit-styling` tasks.
 
 Runtime taxonomy validation may bind the longest exact advertised suffix in a
 modifier-bearing model phrase (`waterproof boots` to `boots`), but it disables
@@ -200,9 +204,42 @@ outcomes from diagnostics.
 | --- | --- | --- | --- | --- | --- |
 | `product-discovery` | `chain_server/skills/shopper/product-discovery/SKILL.md` | Registered | `primary` / `product_procedure` | Search, details, availability, promotions, same-conversation product resolution | General search, category browsing, filter-driven discovery without styling intent |
 | `outfit-styling` | `chain_server/skills/shopper/outfit-styling/SKILL.md` | Registered | `primary` / `product_procedure` | Search, details, availability, promotions, same-conversation product resolution | Build, complete, or refine a look; coordinate a requested piece with an anchor; use cart evidence only when cart management is also active |
+| `event-context` | `chain_server/skills/shopper/event-context/SKILL.md` | Registered | `modifier` | None | Use stated destination/venue context or resolve a missing context branch; use explicit setting over saved ZIP; combine only with outfit styling |
 | `cart-management` | `chain_server/skills/shopper/cart-management/SKILL.md` | Registered | `standalone` | Cart read, total, add, remove, update, same-conversation product resolution | Explicit cart reads and mutations, alone or beside a product procedure |
 | `budget-shopping` | `chain_server/skills/shopper/budget-shopping/SKILL.md` | Registered | `modifier` | None | Stated price ceilings and budget bundles; combine with cart management for cart-total checks |
 | `store-policy-answers` | `chain_server/skills/shopper/store-policy-answers/SKILL.md` | Registered | `standalone` | Policy lookup | Returns, shipping, sizing, payment, price matching, and gift cards |
+
+## `event-context`
+
+Purpose: add the smallest useful event-location and venue context to
+occasion-led styling without adding a tool.
+
+- Runs only beside `outfit-styling`; activation without that primary receives
+  one typed correction and then fails closed through the existing deterministic
+  clarification boundary.
+- Gives explicit current-turn destination and venue setting precedence over
+  explicit recent context for the same event, with saved ZIP last as a
+  tentative candidate to confirm.
+- When saved ZIP is the only location candidate, asks whether to plan around
+  the shopper's usual area or elsewhere; Guest instead supplies destination or
+  venue context from scratch.
+- On an explicit plan-before-products turn, missing material context produces
+  exactly two short sentences: one conditional direction, then one
+  destination-or-venue question, with no headings or lists. With context
+  complete, it produces one short paragraph and asks no further event-context
+  question.
+- On an ordinary shop-now turn, `outfit-styling` presents one grounded requested
+  or core role and, if location is missing and materially changes the next
+  recommendation, asks only event location alongside the results; venue is
+  deferred and the plan-first stop rule does not apply.
+- No-tool helper turns reuse the final response editor. It receives only
+  saved-ZIP-candidate presence, not ZIP digits; a successful-search response
+  that drops every returned candidate has them restored through deterministic
+  grounded rendering.
+- Does not infer that Cancun means beach or that any ZIP or place establishes
+  weather, wind, climate, season, dress code, local norms, or product
+  performance.
+- Grants no tool and does not register or invoke the dormant weather boundary.
 
 ## `product-discovery`
 

@@ -231,11 +231,19 @@ conversation, and returns exactly `shopper_type`, `behavior`, and `zipcode`.
 The runtime renders that typed snapshot once as soft current-turn guidance.
 Explicit current and recent shopper statements take precedence; the snapshot
 cannot establish budget, product constraints or facts, cart intent, skill
-selection, or tool grants. Saved ZIP is background data only and does not
-trigger weather behavior. The behavior value is validated as one trimmed line
-at both registry bootstrap and turn-start serialization boundaries. Guest turns
-receive neither the context block nor its profile-specific precedence and
-non-authority prompt rules.
+selection, or tool grants. Saved ZIP does not trigger weather behavior or prove
+current/event location, shopping destination, shipping destination, or
+availability. The no-tool `event-context` modifier may use it only as a
+tentative event-location candidate beside outfit styling; explicit
+shopper-stated destination or venue context takes precedence. When that ZIP is
+the only location clue, the helper confirms whether to plan around the
+shopper's usual area or elsewhere instead of requesting a city from scratch.
+The final response editor receives only a candidate-present/candidate-absent
+statement, never ZIP digits.
+The behavior value is validated as one trimmed line at both registry bootstrap
+and turn-start serialization boundaries. Guest turns receive neither the
+context block nor its profile-specific precedence and non-authority prompt
+rules.
 
 `image` remains supported for backward compatibility and is normalized into the
 same internal media list as `media[]`. New clients should use `media[]` for
@@ -489,10 +497,12 @@ interface StreamingChunk {
 
 Slice 3 adds a disabled, directly constructible weather client/tool inside the
 chain server, but it exposes no application, chain-server, or memory-service
-weather endpoint. It is absent from query request/response schemas, agent tool
-registration, prompts, and UI payloads. `/query/stream` and `/query/timing`
-therefore do not perform weather lookups, including when a selected shopper has
-a saved ZIP or a message mentions an event or date.
+weather endpoint. Its tool schema and provider contract are absent from agent
+registration, model-visible tools, query request/response schemas, and UI
+payloads; serving prompts explicitly prohibit weather lookups and inference.
+`/query/stream` and `/query/timing` therefore do not perform weather lookups,
+including when a selected shopper has a saved ZIP or a message mentions an
+event or date.
 
 ### GET `/shopper-profiles`
 

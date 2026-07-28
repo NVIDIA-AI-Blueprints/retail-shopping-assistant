@@ -33,11 +33,15 @@ union, and immutable policy before invoking its handler.
 
 For primary shopper procedure selection, `product-discovery` and
 `outfit-styling` are mutually exclusive. `budget-shopping` is a modifier and is
-selected only when the shopper states a budget. Cart or policy skills may still
-join the applicable procedure for a genuine multi-intent turn; standalone cart
-and policy turns do not require a product primary. A terse item-only follow-up
-inside an active outfit-building or style-led single-piece thread remains an
-`outfit-styling` task.
+selected only when the shopper states a budget. The zero-tool `event-context`
+modifier may accompany only `outfit-styling`. It is selected whenever event
+destination or venue context is stated, or when the response would otherwise
+ask about or branch on missing destination or venue context. It does not expand
+the tool union. Cart or policy skills may still join the applicable procedure
+for a genuine multi-intent turn; standalone cart and policy turns do not
+require a product primary. A terse item-only follow-up inside an active
+outfit-building or style-led single-piece thread remains an `outfit-styling`
+task.
 
 The model-facing catalog tool accepts one flat executable search. Its fields
 are `semantic_query`, `shopper_guidance`, `requested_product_type`, `taxonomy`,
@@ -493,6 +497,11 @@ Failure behavior:
   instead of the unverified draft. Other editor failures and empty or
   whitespace-only successful editor responses use the same fail-closed response
   with `grounding_error`.
+- No-tool `event-context` turns also use the final response editor under that
+  deadline. It receives only whether a saved-ZIP candidate exists, never the
+  digits. For a successful event-context search, edited text must preserve at
+  least one exact returned product or deterministic grounded rendering restores
+  the missing candidates.
 - If the Deep Agents loop fails after catalog search has returned products, the
   runtime clears the failed thread checkpoint and returns a grounded partial
   product summary instead of a generic shopper-facing error.

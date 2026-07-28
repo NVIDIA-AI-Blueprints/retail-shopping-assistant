@@ -1,6 +1,6 @@
 # Project Status
 
-Updated: 2026-07-27
+Updated: 2026-07-28
 
 ## Current Milestone
 
@@ -46,8 +46,9 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   finalization, and preserved on finalize failure. The compact reference index
   is capped at 16,384 characters and resolution is enforced at most once per
   turn;
-- five shopper skills are registered for product discovery, outfit styling,
-  cart management, budget shopping, and controlled store-policy answers. A
+- six shopper skills are registered for product discovery, outfit styling,
+  event context, cart management, budget shopping, and controlled store-policy
+  answers. A
   required first model step selects the smallest applicable set each turn; the
   runtime then injects the complete selected files. Their frontmatter declares
   `role`, optional `exclusive_group`, and `tools_granted`; only the selected
@@ -60,6 +61,21 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   hint. They neither force routing nor unlock tools.
   Terse item-only follow-ups inside an active outfit-building or style-led
   single-piece thread still select `outfit-styling` from conversation context.
+  Event context is a zero-tool modifier available only beside outfit styling.
+  It is selected whenever an event destination or venue is stated, or when the
+  response would otherwise ask about or branch on missing destination or venue
+  context.
+  Explicit current or recent event destination and venue setting take
+  precedence; saved ZIP is only a tentative event-location candidate to
+  confirm as the shopper's usual area or elsewhere, never shopping, shipping,
+  availability, or current location. Plan-first with missing context receives
+  exactly two short sentences: one conditional direction, then one
+  destination-or-venue question. With context complete, it uses one short
+  paragraph and asks no further event-context question. Shop-now begins with
+  one grounded requested or core role and, if location is still missing and
+  materially changes the next recommendation, asks only event location
+  alongside results; venue is deferred. The helper never assumes that a
+  destination establishes a venue and performs no weather lookup or inference.
   Outfit styling is a focused fashion procedure for anchors, clarification,
   color, proportion, silhouette, formality, occasion, texture, and response
   judgment. It retains search, details, availability, and same-conversation
@@ -73,6 +89,11 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   search-only turns receive one tools-disabled synthesis under that skill and
   then the grounding editor; deterministic candidate formatting remains the
   fail-closed fallback when synthesis or editing cannot produce an answer.
+  No-tool event-context turns also use a compact final editor under the shared
+  deadline. That editor receives only saved-ZIP-candidate presence, never ZIP
+  digits. On search-bearing event-context turns, the final text must retain at
+  least one exact returned candidate; deterministic candidate rendering
+  restores any missing candidates.
   Grounding now requires an explicit gap when the requested outcome depends on
   a functional product property absent from evidence, and deterministic
   fallback carries the same generic unverified-property disclosure. Selection and
@@ -325,6 +346,25 @@ The newest focused gate is recorded first. Older implementation gates remain
 below as comparison points; generated quality and timing
 artifacts stay in the required local archive rather than versioned source.
 
+- Styling-weather guidance Slice 2 event-context gate (2026-07-28): the final
+  offline gate passed 58 tests with 1 expected xfail; changed Python passed
+  Ruff, all three Golden YAML files parsed, and whitespace checks passed. The
+  focused GPT-5.2 app/Judge gate completed 4/4 target turns and 4/4 judgments at
+  5.0000/5, with every turn selecting `outfit-styling` plus the no-tool
+  `event-context` helper. Mean / median / p95 / maximum target time was 10.215s
+  / 9.012s / 14.755s / 15.698s. Guest made no saved-location assumption, the
+  selected-profile opener asked whether the event was in the shopper's usual
+  area or elsewhere without exposing ZIP digits, explicit Cancun-on-sand
+  context overrode that candidate, and the shop-now turn returned grounded
+  catalog dresses before its one location question. The gate used 13 app
+  completions, 4 Judge calls, one catalog search, and one text-embedding call;
+  no Challenger, full cohort, weather, cart, or policy call ran. Versus the
+  immediately prior cleanly paired four-turn WIP, quality held at 5.00 while
+  mean latency rose 0.192s and p95/max improved 0.493s/0.556s. The immutable
+  report is
+  `~/exec-briefs/retail-shopping-assistant/quality/baselines/2026-07-28__styling-weather-guidance__event-context-slice2-commit-ready/quality-report.md`;
+  the Staging comparison remains explicitly incomparable because scenario scope
+  and Judge treatment differ.
 - Styling-weather guidance Slice 1 profile-selection gate (2026-07-27): all 10
   focused UI tests passed, UI lint reported 0 errors and 3 pre-existing
   warnings, the production build compiled, and whitespace checks passed. This
@@ -596,7 +636,7 @@ artifacts stay in the required local archive rather than versioned source.
   and product evidence scope, provenance, size bounds, and truncation.
 - Focused evaluator coverage: 62 collected/passed in the full suite, including strict evidence allowlisting,
   aggregate-size rejection, legacy defaults, and turn-scoped Judge propagation.
-- Focused shopper-skill registry coverage validates all five `role` and
+- Focused shopper-skill registry coverage validates all six `role` and
   `tools_granted` declarations.
 - Focused runtime, commerce-adapter, and memory-service modules: 165
   collected/passed in the full suite.
@@ -732,13 +772,15 @@ guidance, not learned preference state. Caller-supplied or mutable customer
 personas remain unavailable until their ownership and input-safety contracts
 are defined.
 
-The weather tool is not yet a shopper capability. A later leveraging slice must
-define trusted saved-ZIP versus event-location precedence, resolve relative
-dates, register and grant the tool, preserve its output as grounded current-turn
-evidence, display provider attribution and forecast uncertainty, and prevent
-weather from silently establishing waterproofing, warmth, safety, or any other
-catalog constraint. Visual Crossing plan terms must be reviewed before storing
-or displaying forecast data; Slice 3 persists and displays none.
+The weather tool is not yet a shopper capability. The no-tool event-context
+helper now defines saved-ZIP versus explicit event-location and venue
+precedence, but it performs no forecast lookup or inference. A later leveraging
+slice must resolve relative dates, register and grant the weather tool only to
+that helper, preserve its output as grounded current-turn evidence, display
+provider attribution and forecast uncertainty, and prevent weather from
+silently establishing waterproofing, warmth, safety, or any other catalog
+constraint. Visual Crossing plan terms must be reviewed before storing or
+displaying forecast data; the dormant boundary persists and displays none.
 
 Judge product evidence is capped at 24 records and 32,000 serialized characters
 per turn. `product_evidence_truncated` makes omissions explicit; a truncated

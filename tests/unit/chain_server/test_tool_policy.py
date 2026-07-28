@@ -30,6 +30,7 @@ def _skill_tool_grants() -> dict[str, frozenset[str]]:
         }
     }
     grants["budget-shopping"] = frozenset()
+    grants["event-context"] = frozenset()
     return grants
 
 
@@ -115,5 +116,21 @@ def test_selected_skills_receive_only_their_declared_union() -> None:
     assert not tool_is_granted(
         "add_cart_items_tool",
         ["outfit-styling", "budget-shopping"],
+        tools,
+    )
+
+
+def test_event_context_adds_no_tools_to_outfit_styling() -> None:
+    grants = _skill_tool_grants()
+
+    tools = granted_tools_for_skills(
+        ["outfit-styling", "event-context"],
+        grants,
+    )
+
+    assert tools == grants["outfit-styling"]
+    assert not tool_is_granted(
+        "add_cart_items_tool",
+        ["outfit-styling", "event-context"],
         tools,
     )

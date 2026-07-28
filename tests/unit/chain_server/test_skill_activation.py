@@ -63,6 +63,7 @@ SKILL_TOOL_GRANTS = {
             "view_cart_total_tool",
         }
     ),
+    "event-context": frozenset(),
     "outfit-styling": frozenset(
         {
             "check_active_promotions_tool",
@@ -197,6 +198,9 @@ def _middleware(
         skill_descriptions={
             "budget-shopping": "Use as a budget modifier.",
             "cart-management": "Use for cart operations.",
+            "event-context": (
+                "Use with outfit styling when event location or venue matters."
+            ),
             "outfit-styling": (
                 "Use for outfit completion and conversational mid-browse styling."
             ),
@@ -210,7 +214,12 @@ def _middleware(
 
 def test_activation_schema_rejects_two_primary_procedures() -> None:
     activation_input = _skill_activation_input_model(
-        ("budget-shopping", "outfit-styling", "product-discovery")
+        (
+            "budget-shopping",
+            "event-context",
+            "outfit-styling",
+            "product-discovery",
+        )
     )
 
     with pytest.raises(ValueError, match="select exactly one primary procedure"):
@@ -222,6 +231,19 @@ def test_activation_schema_rejects_two_primary_procedures() -> None:
         skill_names=["outfit-styling", "budget-shopping"],
     )
     assert selected.skill_names == ["outfit-styling", "budget-shopping"]
+
+    selected_with_event = activation_input(
+        skill_names=[
+            "outfit-styling",
+            "event-context",
+            "budget-shopping",
+        ],
+    )
+    assert selected_with_event.skill_names == [
+        "outfit-styling",
+        "event-context",
+        "budget-shopping",
+    ]
 
 
 def test_activation_schema_requires_primary_for_budget_only() -> None:
@@ -236,6 +258,51 @@ def test_activation_schema_requires_primary_for_budget_only() -> None:
         activation_input(
             skill_names=["budget-shopping"],
         )
+
+
+@pytest.mark.parametrize(
+    "skill_names",
+    [
+        ["event-context"],
+        ["event-context", "product-discovery"],
+    ],
+)
+def test_activation_schema_requires_outfit_styling_for_event_context(
+    skill_names: list[str],
+) -> None:
+    activation_input = _skill_activation_input_model(
+        ("event-context", "outfit-styling", "product-discovery")
+    )
+
+    with pytest.raises(ValueError, match="event-context requires outfit-styling"):
+        activation_input(skill_names=skill_names)
+
+
+def test_repeated_invalid_event_context_selection_clarifies_without_tools() -> None:
+    activation_input = _skill_activation_input_model(
+        ("event-context", "outfit-styling", "product-discovery")
+    )
+    middleware = _middleware()
+
+    with pytest.raises(ValueError) as captured:
+        activation_input(skill_names=["event-context"])
+
+    first = middleware.handle_activation_validation_error(captured.value)
+    second = middleware.handle_activation_validation_error(captured.value)
+    response = middleware.wrap_model_call(
+        _model_request(),
+        lambda _: pytest.fail("clarification must not call the model"),
+    )
+
+    assert first.startswith("SHOPPER_SKILL_ACTIVATION_INVALID:")
+    assert "requires outfit-styling" in first
+    assert "Pair it with outfit-styling for occasion-led fashion guidance" in first
+    assert second.startswith(
+        "SHOPPER_SKILL_ACTIVATION_CLARIFICATION_REQUIRED:"
+    )
+    assert response.result[0].content == (
+        "What outfit or event would you like help styling?"
+    )
 
 
 def test_activation_schema_allows_standalone_cart_and_policy_skills() -> None:
@@ -381,11 +448,20 @@ def test_pending_phase_forces_only_the_activation_tool() -> None:
     assert "Required Shopper Skill Selection" in prepared.system_prompt
     assert "outfit-styling: Use for outfit completion" in prepared.system_prompt
     assert "product-discovery: Use for browsing" in prepared.system_prompt
+    assert "event-context: Use with outfit styling" in prepared.system_prompt
     assert "never select both" in prepared.system_prompt
     assert "budget shopping may accompany either" in prepared.system_prompt
+    assert "Event context may accompany outfit" in prepared.system_prompt
+    normalized_prompt = " ".join(prepared.system_prompt.split())
+    assert (
+        "Select it whenever an event destination or venue is stated, or when "
+        "the response would otherwise ask about or branch on missing destination"
+        in normalized_prompt
+    )
+    assert "generic advice is not a reason to omit it" in normalized_prompt
     assert (
         "Do not switch to product discovery merely because the current turn asks"
-        in prepared.system_prompt
+        in normalized_prompt
     )
 
 
@@ -453,6 +529,27 @@ def test_active_phase_injects_complete_skill_and_exposes_commerce() -> None:
     assert "# Outfit Styling" in prepared.system_prompt
     assert "## Conversational Mid-Browse" in prepared.system_prompt
     assert "## Unsupported Commerce Details" in prepared.system_prompt
+
+
+def test_event_context_injects_beside_styling_without_adding_tools() -> None:
+    middleware = _middleware()
+    middleware.activate(
+        {
+            "/shopper/event-context/SKILL.md": "# Event Context",
+            "/shopper/outfit-styling/SKILL.md": "# Outfit Styling",
+        },
+        ["outfit-styling", "event-context"],
+    )
+
+    prepared = _capture_request(middleware, _model_request(_activated_messages()))
+
+    assert [candidate.name for candidate in prepared.tools] == [
+        "search_catalog_tool",
+        "get_product_details_tool",
+    ]
+    assert "# Event Context" in prepared.system_prompt
+    assert "# Outfit Styling" in prepared.system_prompt
+    assert middleware._granted_tools == SKILL_TOOL_GRANTS["outfit-styling"]
 
 
 def test_active_phase_rejects_multiple_shopping_tools_in_one_model_step() -> None:

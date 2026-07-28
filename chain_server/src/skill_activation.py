@@ -38,6 +38,9 @@ SKILL_ACTIVATION_CLARIFICATION_REQUIRED = (
 )
 SKILL_ACTIVATION_MULTIPLE_PRIMARY = "multiple_primary_procedures"
 SKILL_ACTIVATION_MODIFIER_REQUIRES_PRIMARY = "modifier_requires_primary"
+SKILL_ACTIVATION_EVENT_CONTEXT_REQUIRES_STYLING = (
+    "event_context_requires_styling"
+)
 SKILL_ACTIVATION_REQUIRED = (
     "SKILL_ACTIVATION_REQUIRED: Shopper skills must be selected and loaded "
     "before any shopping tool can run. Retry after activation completes."
@@ -62,13 +65,18 @@ semantic selection, not keyword matching. Do not attempt another tool in the
 same response. The runtime will load the complete selected instructions before
 the next model step. Outfit styling and product discovery are alternative
 primary procedures, so never select both; budget shopping may accompany either
-only when the shopper states a budget. Keep the primary procedure aligned with
-the active conversation task: an outfit-building or styling thread continues
-to use outfit styling for piece-by-piece searches until the shopper changes
-tasks. Do not switch to product discovery merely because the current turn asks
-for one product type; a terse item-only follow-up does not by itself end an
-active outfit task. Do not mention this activation step or skill names to the
-shopper."""
+only when the shopper states a budget. Event context may accompany outfit
+styling only. Select it whenever an event destination or venue is stated, or
+when the response would otherwise ask about or branch on missing destination or
+venue context. An occasion-led styling request with no established setting
+qualifies when location or venue could change the direction; generic advice is
+not a reason to omit it. Keep the primary procedure aligned with the active
+conversation task:
+an outfit-building or styling thread continues to use outfit styling for
+piece-by-piece searches until the shopper changes tasks. Do not switch to
+product discovery merely because the current turn asks for one product type; a
+terse item-only follow-up does not by itself end an active outfit task. Do not
+mention this activation step or skill names to the shopper."""
 
 _ACTIVATION_FAILED_PROMPT = """## Shopper Skill Activation Failed
 
@@ -442,6 +450,7 @@ def _activation_validation_issue(error: Any) -> str:
     for detail in errors:
         issue = str(_value(detail, "type") or "")
         if issue in {
+            SKILL_ACTIVATION_EVENT_CONTEXT_REQUIRES_STYLING,
             SKILL_ACTIVATION_MODIFIER_REQUIRES_PRIMARY,
             SKILL_ACTIVATION_MULTIPLE_PRIMARY,
         }:
@@ -450,6 +459,12 @@ def _activation_validation_issue(error: Any) -> str:
 
 
 def _activation_validation_feedback(issue: str) -> str:
+    if issue == SKILL_ACTIVATION_EVENT_CONTEXT_REQUIRES_STYLING:
+        return (
+            "event-context is a modifier and requires outfit-styling. "
+            "Pair it with outfit-styling for occasion-led fashion guidance; "
+            "otherwise remove it."
+        )
     if issue == SKILL_ACTIVATION_MODIFIER_REQUIRES_PRIMARY:
         return (
             "budget-shopping is a modifier and requires exactly one primary "
@@ -464,6 +479,8 @@ def _activation_validation_feedback(issue: str) -> str:
 
 
 def _activation_clarification(issue: str) -> str:
+    if issue == SKILL_ACTIVATION_EVENT_CONTEXT_REQUIRES_STYLING:
+        return "What outfit or event would you like help styling?"
     if issue == SKILL_ACTIVATION_MODIFIER_REQUIRES_PRIMARY:
         return "What product or outfit would you like to find within your budget?"
     return "What product or shopping task would you like help with?"

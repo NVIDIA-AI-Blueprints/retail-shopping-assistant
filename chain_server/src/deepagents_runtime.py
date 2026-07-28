@@ -76,6 +76,7 @@ from .conversation_products import (
 from .media_perception import MediaPerceptionClient
 from .skill_activation import (
     SKILL_ACTIVATION_COMPLETE,
+    SKILL_ACTIVATION_EVENT_CONTEXT_REQUIRES_STYLING,
     SKILL_ACTIVATION_MODIFIER_REQUIRES_PRIMARY,
     SKILL_ACTIVATION_MULTIPLE_PRIMARY,
     SKILL_ACTIVATION_REQUIRED,
@@ -250,9 +251,16 @@ _SHOPPER_CONTEXT_SYSTEM_RULES = """Representative-shopper precedence and safety:
   grants a shopper skill or tool. Never expose the internal type label to the
   shopper.
 - Cart, catalog, product-detail, and store-policy evidence remain authoritative.
-- A saved ZIP code is background location data only. It is not proof of current
-  location, event location, weather, or a product requirement. Perform no
-  weather lookup or weather inference from it."""
+- A saved ZIP code is not proof of current location, event location, weather,
+  or a product requirement. Only event-context may use it as a tentative
+  event-location candidate: keep advice conditional and confirm naturally when
+  location would materially change styling. When it is the only event-location
+  clue, ask whether to plan around the shopper's usual area or somewhere else;
+  do not ask for a city as though no candidate exists. An explicit
+  shopper-stated event destination overrides it; once stated, never use "usual
+  area" framing. A stated venue setting is authoritative for venue but does not
+  establish destination. Perform no weather lookup or weather inference from a
+  ZIP or place name."""
 _GROUNDING_EDITOR_SYSTEM_PROMPT = """You are a final response editor for a retail shopping assistant.
 
 Rewrite the draft response only as needed so it is grounded in TOOL EVIDENCE
@@ -1374,6 +1382,14 @@ class _ShopperSkillActivationInput(BaseModel):
                 "budget-shopping requires exactly one primary procedure: "
                 "outfit-styling or product-discovery",
             )
+        if (
+            "event-context" in selected
+            and "outfit-styling" not in selected
+        ):
+            raise PydanticCustomError(
+                SKILL_ACTIVATION_EVENT_CONTEXT_REQUIRES_STYLING,
+                "event-context requires outfit-styling",
+            )
         return self
 
 
@@ -1397,7 +1413,12 @@ def _skill_activation_input_model(
                     "cover the current turn's complete intent. For product search "
                     "or styling, select exactly one primary procedure: outfit-"
                     "styling or product-discovery, never both. Cart and policy "
-                    "intents may select their standalone skill without a primary."
+                    "intents may select their standalone skill without a primary. "
+                    "Select event-context only with outfit-styling, and select "
+                    "it whenever an event destination or venue is stated or the "
+                    "response would otherwise ask about or branch on missing "
+                    "destination or venue context. Generic occasion advice is "
+                    "not a reason to omit it."
                 ),
             ),
         ),
@@ -3327,8 +3348,12 @@ class DeepAgentsRuntime:
             also uses outfit-styling. Use product-discovery for search and browse
             without styling intent. These are alternative primary procedures,
             never a pair. Add budget-shopping only as a modifier when the shopper
-            states a budget. Keep outfit-styling as the primary skill throughout
-            an active outfit-building thread, including its single-piece follow-up
+            states a budget. Add event-context only beside outfit-styling, and add
+            it whenever an event destination or venue is stated or the guidance
+            would otherwise ask about or branch on missing destination or venue
+            context. Generic occasion advice is not a reason to omit it. Keep
+            outfit-styling as the primary skill throughout an
+            active outfit-building thread, including its single-piece follow-up
             searches.
 
             """
@@ -3449,6 +3474,14 @@ class DeepAgentsRuntime:
             result,
             request_id=request_id,
         )
+        current_search_groups = _search_result_groups(
+            result,
+            request_id=request_id,
+        )
+        has_current_search_candidates = bool(current_search_groups)
+        enforce_event_context = self._event_context_response_guidance_active(
+            state
+        )
         if not getattr(self.config, "grounding_rewrite_enabled", True):
             if search_only:
                 return self._rewrite_search_only_response(
@@ -3465,13 +3498,93 @@ class DeepAgentsRuntime:
                 result,
                 request_id=request_id,
             )
-        if not current_evidence and not prior_evidence:
+        if (
+            not current_evidence
+            and not prior_evidence
+            and not enforce_event_context
+        ):
             return _scrub_internal_shopper_language(draft_response)
 
         start = time.monotonic()
+        active_skill_guidance = (
+            self._active_skill_response_guidance(state)
+            if enforce_event_context
+            else ""
+        )
+        shopper_location_context = (
+            self._grounding_shopper_location_context(state)
+            if enforce_event_context
+            else ""
+        )
+        event_context_prompt = ""
+        if enforce_event_context:
+            event_context_prompt = (
+                "SHOPPER LOCATION CANDIDATE:\n"
+                f"{shopper_location_context}\n\n"
+                "ACTIVE SKILL RESPONSE GUIDANCE:\n"
+                f"{active_skill_guidance}\n\n"
+            )
+        editor_system_prompt = _GROUNDING_EDITOR_SYSTEM_PROMPT
+        skill_guidance_only = (
+            enforce_event_context
+            and not current_evidence
+            and not prior_evidence
+        )
+        if skill_guidance_only:
+            editor_system_prompt = (
+                "You are the final event-context response editor. Return only "
+                "the shopper-facing response.\n\n"
+                "Apply this response boundary exactly:\n"
+                f"{active_skill_guidance}\n\n"
+                "Shopper location-candidate status:\n"
+                f"{shopper_location_context}\n\n"
+                "Use only USER QUERY and RECENT DISCUSSION for event facts. "
+                "Saved ZIP is only a tentative event-location candidate, never "
+                "where products will be bought, shipped, or available. Remove "
+                "any draft question that repeats an established destination or "
+                "venue. Preserve the useful styling direction, but add no "
+                "products, location facts, weather, or performance claims."
+            )
+        elif enforce_event_context and has_current_search_candidates:
+            editor_system_prompt = (
+                "Highest-priority event-context response boundary:\n"
+                f"{active_skill_guidance}\n\n"
+                "Shopper location-candidate status:\n"
+                f"{shopper_location_context}\n\n"
+                "The current catalog search already succeeded. The final "
+                "response must name at least one returned candidate exactly as "
+                "shown in CURRENT-TURN TOOL EVIDENCE. Do not replace candidates "
+                "with a promise to pull, find, or search for products. If event "
+                "location is still missing and material, put its single "
+                "confirmation question after the candidate set. Do not ask that "
+                "question after an explicit destination, open with a location "
+                "request, say location is required first, or ask for location "
+                "twice. "
+                "Saved ZIP is only a tentative event-location candidate, never "
+                "shopping, shipping, or availability context. "
+                "Apply that boundary to the final text. Remove any draft "
+                "question that repeats an established event destination or "
+                "venue setting.\n\n"
+                f"{_GROUNDING_EDITOR_SYSTEM_PROMPT}"
+            )
+        elif enforce_event_context:
+            editor_system_prompt = (
+                "Highest-priority event-context response boundary:\n"
+                f"{active_skill_guidance}\n\n"
+                "Shopper location-candidate status:\n"
+                f"{shopper_location_context}\n\n"
+                "Apply that boundary to the final text using only USER QUERY, "
+                "RECENT DISCUSSION, and the supplied tool evidence. Do not claim "
+                "that current evidence returned a product candidate unless one "
+                "is shown, and do not invent a candidate. Remove any draft "
+                "question that repeats an established event destination or "
+                "venue setting.\n\n"
+                f"{_GROUNDING_EDITOR_SYSTEM_PROMPT}"
+            )
         prompt = (
             f"USER QUERY:\n{state.query}\n\n"
             f"RECENT DISCUSSION:\n{state.context or '(none)'}\n\n"
+            f"{event_context_prompt}"
             f"CURRENT CART:\n{_format_cart(state.cart)}\n\n"
             f"AVAILABLE IMAGES:\n{_format_retrieved_images(state.retrieved)}\n\n"
             "CURRENT-TURN TOOL EVIDENCE:\n"
@@ -3493,7 +3606,7 @@ class DeepAgentsRuntime:
                     [
                         {
                             "role": "system",
-                            "content": _GROUNDING_EDITOR_SYSTEM_PROMPT,
+                            "content": editor_system_prompt,
                         },
                         {"role": "user", "content": prompt},
                     ]
@@ -3574,6 +3687,23 @@ class DeepAgentsRuntime:
             calls=1,
             detail="Final response grounding rewrite",
         )
+        if enforce_event_context and has_current_search_candidates and not (
+            _response_mentions_search_candidate(
+                rewritten,
+                result,
+                request_id=request_id,
+            )
+        ):
+            candidate_fallback = self._rewrite_search_only_response(
+                state,
+                result,
+                request_id=request_id,
+            )
+            if search_only:
+                return candidate_fallback
+            return _scrub_internal_shopper_language(
+                f"{candidate_fallback}\n\n{rewritten.strip()}"
+            )
         return _scrub_internal_shopper_language(rewritten)
 
     def _rewrite_search_only_response(
@@ -3610,6 +3740,26 @@ class DeepAgentsRuntime:
             if skill.path in active_paths
         ]
         return "\n".join(guidance)
+
+    @staticmethod
+    def _event_context_response_guidance_active(state: State) -> bool:
+        return "/shopper/event-context/SKILL.md" in set(
+            state.agent_diagnostics.get("skill_files_read", [])
+        )
+
+    @staticmethod
+    def _grounding_shopper_location_context(state: State) -> str:
+        shopper_context = state.shopper_context
+        if shopper_context is not None and shopper_context.zipcode:
+            return (
+                "A saved ZIP candidate is present. Do not expose its digits. "
+                'Event-context may use "usual area or elsewhere" framing only '
+                "to confirm event location, never shopping or availability."
+            )
+        return (
+            "No saved ZIP candidate is present. Ask the event destination "
+            'directly; never imply a saved, home, or "usual" area.'
+        )
 
     def _build_search_only_response(
         self,
@@ -3700,6 +3850,15 @@ Rules:
 - Outfit styling and product discovery are alternative primary procedures;
   never activate both. Budget shopping may accompany either only as a modifier
   when the shopper states a budget.
+- Event context may accompany outfit styling only. Select it whenever an event
+  destination or venue is stated, or when the response would otherwise ask
+  about or branch on missing destination or venue context. Generic occasion
+  advice is not a reason to omit it. Never use it with product discovery or by
+  itself.
+- "Usual area," "home area," or saved-location framing is allowed only when the
+  current turn includes a SHOPPER CONTEXT block with Saved ZIP. Without that
+  block there is no saved-location candidate: ask the event destination
+  directly and never imply that a saved, home, or usual area exists.
 - Style-led fashion selection belongs to outfit styling even when the shopper
   asks for one statement or balancing piece. Product discovery is for browse
   and filter intent without styling judgment.
@@ -3748,7 +3907,23 @@ Rules:
 - An outfit request with a season, weather need, occasion, or style/vibe already
   has enough direction to begin with a grounded partial outfit. Do not answer
   only with a questionnaire; search the most useful core role first and ask at
-  most one concise follow-up while presenting the grounded result.
+  most one concise follow-up while presenting the grounded result. If the
+  shopper explicitly asks to plan before seeing products, do not search yet.
+  When event-context identifies a material missing destination or venue in that
+  plan-first turn, its compact response gate overrides the general styling
+  response: exactly two short sentences, no heading or list, ending with its
+  single destination-or-venue confirmation question. When the needed event
+  context is already established, follow its one-short-paragraph boundary and
+  ask no further destination-or-venue question. Once the shopper states an
+  explicit event destination, it overrides saved ZIP and usual-area framing is
+  forbidden. Treat an explicitly established venue setting that covers the
+  relevant event portions as complete. Do not re-ask it as a finer variant or
+  invent hypothetical exceptions. Do not add geographic condition language
+  such as terrain performance, salt-air, breeze, heat, or weather suitability.
+  For an ordinary shop-now event request, show the grounded core role first and
+  ask only one location question alongside it when event location remains
+  missing and material; defer venue setting until the next recommendation
+  needs it.
 - An unspecified request for one style-led piece, such as a statement piece,
   does not identify a product role. Ask one concise category or occasion question
   before searching. This does not apply to an outfit or complete-look request,
@@ -5210,6 +5385,23 @@ def _search_result_groups(result: Any, *, request_id: str) -> list[dict[str, Any
             }
         )
     return groups
+
+
+def _response_mentions_search_candidate(
+    response: str,
+    result: Any,
+    *,
+    request_id: str,
+) -> bool:
+    """Return whether final text preserves at least one current search candidate."""
+
+    normalized_response = response.casefold()
+    return any(
+        str(product.get("name") or "").casefold() in normalized_response
+        for group in _search_result_groups(result, request_id=request_id)
+        for product in group.get("products") or []
+        if str(product.get("name") or "").strip()
+    )
 
 
 def _grouped_search_response_lines(

@@ -1,0 +1,13 @@
+set_name: Selected-profile shop-now event context
+shopper_profile_id: shopper_alex
+queries:
+  - "Show me dresses to start a semi-formal wedding outfit."
+answers:
+  - >-
+    Present grounded dress candidates rather than responding only with a
+    clarification or searching an unrequested second product role. Use the saved
+    ZIP only as a tentative event-location candidate: ask one natural question
+    framed around whether the wedding uses the shopper's usual area or is
+    elsewhere, and defer venue setting rather than combining it into this
+    response. Do not echo ZIP digits, infer weather or venue, ask about dress
+    code, or claim unverified product performance.

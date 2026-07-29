@@ -206,12 +206,16 @@ claims, surface guarantees, and internal refs.
 The editor receives only the remaining shared model-stage deadline. A timeout
 finalizes the turn as failed with `grounding_timeout`; search-only evidence uses
 deterministic catalog rendering, protected context-only evidence uses
-deterministic
-event assembly, and other non-search turns receive a fixed retry/cart-check
-response instead of the unverified draft. Ordinary editor
-errors and empty or whitespace-only output use the same fail-closed response
-with `grounding_error`; invalid protected context-only output instead falls
-back deterministically.
+deterministic event assembly, and current product-detail evidence uses a
+deterministic verified-detail renderer containing only current names, prices,
+categories, and listed fields, followed by a typed weather outcome when
+present. Only a current result named `get_product_details_tool` with the
+canonical successful-detail marker at its start qualifies. It preserves
+evidence rather than inventing comparative judgment.
+Other non-search turns receive a fixed retry/cart-check response instead of the
+unverified draft. Ordinary editor errors and empty or whitespace-only output
+use the same evidence split with `grounding_error`; invalid protected
+context-only output instead falls back deterministically.
 Grounding is enabled by default and can be disabled with
 `GROUNDING_REWRITE_ENABLED=false`; the evidence window is controlled by
 `GROUNDING_REWRITE_MAX_EVIDENCE_CHARS`.
@@ -296,7 +300,8 @@ forecast context to occasion-led styling.
   shopper-authored event text and the server-owned deterministic weather
   styling direction. Any current non-weather business-tool activity or evidence
   uses normal grounding, preserving comparisons, product details, cart work,
-  and policy answers.
+  and policy answers. After successful weather, that same activity prevents
+  response postprocessing from restoring unrelated historical-product names.
 - Does not infer that Cancun means beach or that any ZIP or place establishes
   outdoor/indoor setting, terrain, weather, wind, climate, season, dress code,
   local norms, or product performance.
@@ -517,6 +522,19 @@ from current-turn evidence, the skill can submit exact descriptors from the
 read-only historical-product index. The durable resolver returns 0/1/many;
 missing and ambiguous references require one clarification, and only a unique
 match can authorize a downstream tool.
+
+An established-product comparison is a procedure within this skill, not a new
+skill, deterministic intent branch, or rediscovery request. The model submits
+all compared prior products in one batched resolver call and, after every
+required product resolves uniquely, calls the scalar detail tool once per ref in
+separate model steps. The default two-read cap covers one pair; larger
+comparisons cannot receive more than two detail reads in the turn. Missing or
+ambiguous required products clarify without a substitute search. The response
+compares only item-specific confirmed fields, keeps styling judgment separate,
+and treats weather as optional additional evidence that never replaces product
+facts or proves performance. This orchestration is model-owned; deterministic
+code enforces exact refs, limits, and evidence grounding rather than comparison
+intent or pair completeness.
 
 Cart and budget responsibilities stay with their owning skills. When
 `cart-management` is co-active, confirmed cart lines may be styling anchors;

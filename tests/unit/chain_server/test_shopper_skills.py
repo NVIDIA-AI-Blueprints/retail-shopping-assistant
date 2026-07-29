@@ -184,6 +184,24 @@ def test_outfit_styling_owns_domain_judgment_and_clarification() -> None:
     assert "ordinary shop-now occasion request" in normalized
 
 
+def test_outfit_styling_compares_prior_products_through_current_evidence() -> None:
+    _, body = _read_skill()
+    normalized = " ".join(body.lower().split())
+
+    assert "## compare established products" in normalized
+    assert "not a request to search for those products again" in normalized
+    assert "newest historical-product index" in normalized
+    assert "every compared product together" in normalized
+    assert "single `resolve_conversation_products_tool` call" in normalized
+    assert "never invent a fuzzy alias" in normalized
+    assert "ambiguous or not found" in normalized
+    assert "once for each uniquely resolved product_ref" in normalized
+    assert "separate model steps" in normalized
+    assert "compare only item-specific confirmed fields" in normalized
+    assert "weather is optional additional evidence" in normalized
+    assert "never a substitute for product resolution or detail reads" in normalized
+
+
 def test_event_context_is_a_narrow_weather_styling_modifier() -> None:
     frontmatter, body = _read_skill_path(
         REGISTERED_SKILL_PATHS["event-context"]

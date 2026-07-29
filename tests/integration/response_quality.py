@@ -105,6 +105,31 @@ def _validate_diagnostic_expectations(
                 f"found {actual_count}"
             )
 
+    expected_detail_names = expected.get("required_product_detail_names")
+    if expected_detail_names is not None:
+        product_evidence = trace.get("product_evidence") or []
+        if not isinstance(product_evidence, list):
+            raise AssertionError(
+                f"{label}: agent_diagnostics.product_evidence must be a list"
+            )
+        actual_detail_names = {
+            str(record.get("product_name") or "")
+            for record in product_evidence
+            if isinstance(record, dict)
+            and record.get("source_tool") == "get_product_details_tool"
+            and record.get("evidence_type") == "product_detail"
+            and record.get("product_name")
+        }
+        required_detail_names = {
+            str(name) for name in expected_detail_names
+        }
+        if actual_detail_names != required_detail_names:
+            raise AssertionError(
+                f"{label}: expected product detail evidence "
+                f"{sorted(required_detail_names)}, found "
+                f"{sorted(actual_detail_names)}"
+            )
+
     weather_calls = [
         call
         for call in normalized_calls

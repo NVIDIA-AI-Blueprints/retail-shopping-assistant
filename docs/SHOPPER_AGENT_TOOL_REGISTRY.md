@@ -553,11 +553,16 @@ Failure behavior:
   rendering as fail-closed fallback. The grounding editor receives only the
   remaining shared model-stage deadline. A timeout finalizes as failed with
   `grounding_timeout`; a structurally selected context-only event turn uses
-  deterministic event assembly, while other non-search turns receive a fixed
-  retry/cart-check response instead of the unverified draft. Other ordinary
-  editor failures and empty or whitespace-only successful editor responses use
-  the same fail-closed response with `grounding_error`; invalid structured
-  context-only event output instead falls back deterministically.
+  deterministic event assembly, while current product-detail evidence uses a
+  deterministic verified-detail renderer containing only current names, prices,
+  categories, and listed fields, followed by a typed weather outcome when
+  present. Only a current result named `get_product_details_tool` whose content
+  starts with the canonical successful-detail marker qualifies. It does not
+  invent comparative judgment. Other non-search turns receive a fixed
+  retry/cart-check response instead of the unverified draft.
+  Other ordinary editor failures and empty or whitespace-only successful editor
+  responses use the same evidence split with `grounding_error`; invalid
+  structured context-only event output instead falls back deterministically.
 - The protected event decision renderer is selected only when `event-context`
   is active, no current non-weather business-tool activity occurred, and a
   current typed weather outcome (success or failure) exists. Missing
@@ -569,6 +574,8 @@ Failure behavior:
   editor only bounded shopper-authored event text and the server-owned
   deterministic weather styling direction. Any attempted current non-weather
   business tool keeps the response on normal evidence grounding.
+  After successful weather, the same current non-weather activity prevents
+  response postprocessing from restoring unrelated historical-product names.
   For a successful event-context search, edited text must preserve at least one
   exact returned product or deterministic grounded rendering restores the
   missing candidates.
@@ -604,6 +611,9 @@ Preconditions:
 
 - The ref must exist in request-local product evidence.
 - The agent must not pass display names as refs.
+- For an explicit two-product comparison, the model calls this scalar tool once
+  per uniquely resolved ref in separate model steps before answering. The
+  default cap of two fits one pair.
 - The per-turn product-detail read cap applies. When reached, the tool returns
   a `STOP_TOOL_USE` instruction so the agent answers from details already read.
 
@@ -626,6 +636,9 @@ Typical use:
 - Detail expansion after a product search.
 - Detailed comparison tables or claims about materials, dimensions, pockets,
   closures, care, comfort, or outdoor practicality.
+- Established-product comparison does not itself authorize catalog search.
+  Weather may be additional event evidence but cannot replace either detail
+  read or establish product performance.
 - Not required for the first broad no-anchor outfit recommendation; the agent
   should search by item role and keep the initial explanation modest.
 
@@ -651,6 +664,8 @@ Current limitations:
 - Historical authorization requires one unique durable same-conversation
   resolution in the current request. The resolver does not perform fuzzy
   matching or enforce catalog-revision freshness.
+- Calls are scalar and sequential. More than two products cannot all receive
+  detail reads under the default cap; a later call returns `STOP_TOOL_USE`.
 
 ### `resolve_conversation_products_tool`
 
@@ -669,6 +684,8 @@ Preconditions:
 
 - Use only when the needed product is not already established by current-turn
   search or another unique resolution.
+- For a comparison, submit every compared prior product together in this one
+  batched call. Do not resolve one member and search again for another.
 - Use exact values exposed in the read-only historical-product index. Do not
   submit free-form prose or use the tool to browse.
 - The runtime permits one batched call per turn. A second call returns
@@ -697,6 +714,8 @@ Failure behavior:
 - Service or payload failure returns a clarification instruction; the runtime
   does not guess or silently search for a substitute.
 - Zero or multiple matches do not authorize any product.
+- Under the comparison procedure, any required ambiguous or missing member
+  produces one concise clarification and no substitute search.
 
 Skills that grant this tool:
 
@@ -709,6 +728,9 @@ Current limitations:
 - Matching is exact after trimming and case normalization; no fuzzy or semantic
   matching is implemented.
 - Resolution is limited to durable presented-product events in one conversation.
+- Submitting every comparison member together and requiring a complete pair is
+  model-owned skill procedure. The deterministic resolver reports each
+  descriptor independently and authorizes only its unique matches.
 - Preferences, sentiment, active anchors, cross-conversation history, and
   stale-catalog-revision invalidation are not implemented.
 
@@ -1158,7 +1180,10 @@ Outputs:
 - When current non-weather business-tool activity exists, the response follows
   normal business-evidence grounding. In that path, editor sentences containing
   weather-domain fact language or fact-shaped dates/values are removed while
-  ordinary grounded styling language remains.
+  ordinary grounded styling language remains. Successful-weather
+  postprocessing does not restore unrelated historical-product names, and an
+  editor failure preserves current verified detail facts plus the typed weather
+  output.
 - The protected event decision renderer is selected structurally only when
   `event-context` is active, no current non-weather business-tool activity
   occurred, and a current typed weather outcome (success or failure) exists.

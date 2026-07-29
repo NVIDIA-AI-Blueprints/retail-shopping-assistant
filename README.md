@@ -143,7 +143,9 @@ outdoor/indoor setting, or terrain. The response boundary receives only whether
 a saved-ZIP candidate exists, not its digits, and restores deterministic
 grounded candidates if a successful-search rewrite drops every returned
 product. Current-turn non-weather business-tool evidence always uses ordinary
-grounding. The protected decision renderer is selected structurally only when
+grounding and, after successful weather, prevents the response postprocessor
+from restoring unrelated names from the historical-product index. The
+protected decision renderer is selected structurally only when
 event context is active, there is no current non-weather business-tool activity,
 and a current typed weather outcome (success or failure) exists. Missing
 location/venue or an empty draft skips its decision editor. A separate
@@ -160,6 +162,18 @@ codes; malformed or ungrounded output falls back. The server renders fixed
 phrases and assembles exact prior names when present, the deterministic weather
 direction, only the accepted location/venue/date question, and any typed weather
 outcome or canonical forecast block.
+
+An explicit comparison of established candidates remains part of
+`outfit-styling`; it does not create a comparison skill, deterministic intent
+router, or rediscovery search. When either product is absent from current-turn
+evidence, the model submits every compared prior product in the one batched
+historical-resolution call, then reads details once per uniquely resolved ref in
+separate model steps. The default two-read cap fits one pair. A missing or
+ambiguous required product produces one concise clarification with no substitute
+search. Weather is optional additional event evidence and never replaces the
+product procedure or proves product performance. This sequence is model-owned
+semantic procedure; deterministic handlers enforce exact refs, per-tool limits,
+and evidence boundaries rather than classifying comparison intent.
 
 Weather provider calls remain disabled by default. When an operator enables
 `WEATHER_ENABLED` and supplies `WEATHER_API_KEY` to the chain server, event
@@ -378,11 +392,16 @@ durable conversation turn, and then deletes its request checkpoint. The
 grounding editor receives only the remaining time. Its timeout is finalized as
 failed with `grounding_timeout`: search-only turns use the existing deterministic
 catalog renderer, the protected context-only path uses deterministic event
-assembly, and other non-search turns return a fixed retry/cart-check response
-instead of the unverified draft. Outside the protected context-only path,
-editor errors and empty or whitespace-only output follow the same fail-closed
-response rule with `grounding_error`; invalid protected decisions fall back
-deterministically.
+assembly, and turns with current product-detail evidence deterministically retain
+only those verified names, prices, categories, and listed detail fields, followed
+by the typed weather outcome when present. Only a current tool-role result named
+`get_product_details_tool` that begins with the server's canonical successful-
+detail marker can enter that fallback. Other non-search turns return a fixed
+retry/cart-check response instead of the unverified draft. Outside the protected
+context-only path, editor errors and empty or whitespace-only output follow the
+same evidence-preserving rule with `grounding_error`; invalid protected decisions
+fall back deterministically. The verified-detail fallback does not invent a
+comparative judgment.
 
 For the serving-agent flow, see
 [Shopper Agent Architecture](docs/SHOPPER_AGENT_ARCHITECTURE.md). The

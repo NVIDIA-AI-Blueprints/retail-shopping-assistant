@@ -92,7 +92,15 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   refinement, replacement, search, check, cart, or policy request continues
   through the normal selected-skill procedure. This is model-facing procedural
   guidance, not a deterministic intent router or execution gate; grants and
-  dispatch checks are unchanged. A date question may appear
+  dispatch checks are unchanged. Established-product comparison remains inside
+  `outfit-styling`, with no new comparison skill or router: every compared prior
+  product is submitted in the one batched resolver call, each uniquely resolved
+  ref receives one scalar detail read in a separate model step, and the default
+  two-read cap covers one pair. Missing or ambiguous required products produce
+  one clarification without a substitute search. Weather is optional additional
+  evidence and never replaces this product procedure or proves product
+  performance. This is model-owned semantic procedure; exact ref, limit, and
+  evidence checks remain deterministic. A date question may appear
   only when activation selected `event_date`. Current-turn non-weather
   business-tool evidence always uses ordinary grounding. The protected decision
   renderer is selected structurally only when event context is active, there is
@@ -101,7 +109,8 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   deterministically retain prior candidates; prior candidates with a nonempty
   draft stay on ordinary grounding only when there is no current weather
   outcome. A comparison that calls only weather remains protected; current
-  non-weather business activity guarantees ordinary grounding.
+  non-weather business activity guarantees ordinary grounding and prevents
+  successful-weather postprocessing from restoring unrelated historical names.
   The Visual Crossing adapter returns
   bounded normalized daily evidence, rejects non-live provider sources, and
   maps transport/provider failures into sanitized typed outcomes.
@@ -264,8 +273,14 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   configurable 45-second default deadline. A graph timeout captures bounded
   partial state and finalizes as failed with `agent_timeout`; a grounding timeout
   finalizes as failed with `grounding_timeout`, uses deterministic catalog
-  rendering for search-only evidence, and otherwise returns a fixed
-  retry/cart-check response instead of the unverified draft. The checkpoint is
+  rendering for search-only evidence, deterministic event assembly for the
+  protected path, and a deterministic verified-detail fallback when current
+  product-detail evidence exists. That fallback preserves only current names,
+  prices, categories, and listed detail fields from a named detail-tool result
+  beginning with the canonical successful-detail marker, then appends any typed
+  weather outcome; it does not invent comparative judgment. Other non-search
+  turns use the fixed retry/cart-check response. Editor errors and empty output
+  follow the same evidence-preserving split with `grounding_error`. The checkpoint is
   released only after durable finalization. Database sessions
   remain request-scoped and are always returned to the SQLAlchemy pool after
   successful and failed API requests;
@@ -488,6 +503,19 @@ The newest focused gate is recorded first. Older implementation gates remain
 below as comparison points; generated quality and timing
 artifacts stay in the required local archive rather than versioned source.
 
+- Styling-weather evidence-driven comparison Slice 2 gate (2026-07-29): the new
+  three-turn fixture under
+  `tests/integration/conversations/event_context_comparison/` passed its focused
+  live diagnostic preflight 3/3 with no Judge, and the full offline suite passed
+  1,388 tests with 1 expected xfail. The comparison turn selected the existing
+  outfit-styling and event-context skills, resolved both prior dresses in one
+  batched call, read exactly two product details for Intricate Lace Gown and
+  Wavy Hem Satin Dress, and made zero catalog-search and zero weather calls.
+  Average turn time was 23.79s versus 21.28s for the prior committed behavior
+  (+2.51s); the comparison turn was 36.11s versus 30.59s (+5.52s). All turns
+  completed within the runtime deadline. No broader event-context set, shopping
+  cohort, Challenger, or Judge ran. The canonical focused comparison is
+  `~/exec-briefs/retail-shopping-assistant/quality/shopping/targeted/event_context/comparison_grounding_slice2/comparisons/previous_committed__to__current_wip.md`.
 - Styling-weather additive-boundary Slice 1 gate (2026-07-29): the full offline
   suite passed 1,382 tests with 1 expected xfail. The focused two-turn
   `conv_profile_shop_now.yaml` live run passed 2/2 diagnostic expectations with

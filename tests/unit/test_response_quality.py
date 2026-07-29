@@ -150,6 +150,54 @@ def test_diagnostic_expectations_enforce_exact_tool_call_count(monkeypatch):
         )
 
 
+def test_diagnostic_expectations_require_exact_product_detail_set(monkeypatch):
+    response_quality = _load_response_quality(monkeypatch)
+    expectations = {
+        "required_product_detail_names": [
+            "Intricate Lace Gown",
+            "Wavy Hem Satin Dress",
+        ]
+    }
+    diagnostics = {
+        "tool_calls": [],
+        "product_evidence": [
+            {
+                "product_name": "Intricate Lace Gown",
+                "source_tool": "get_product_details_tool",
+                "evidence_type": "product_detail",
+            },
+            {
+                "product_name": "Wavy Hem Satin Dress",
+                "source_tool": "get_product_details_tool",
+                "evidence_type": "product_detail",
+            },
+        ],
+    }
+
+    response_quality._validate_diagnostic_expectations(
+        expectations,
+        diagnostics,
+        label="comparison turn",
+    )
+
+    diagnostics["product_evidence"].append(
+        {
+            "product_name": "Elegant Embroidered Lace Dress",
+            "source_tool": "get_product_details_tool",
+            "evidence_type": "product_detail",
+        }
+    )
+    with pytest.raises(
+        AssertionError,
+        match="expected product detail evidence",
+    ):
+        response_quality._validate_diagnostic_expectations(
+            expectations,
+            diagnostics,
+            label="comparison turn",
+        )
+
+
 @pytest.mark.parametrize(
     ("diagnostics", "message"),
     [

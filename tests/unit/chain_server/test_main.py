@@ -3464,6 +3464,13 @@ class TestDeepAgentsRuntimeRefs:
         assert "remove the rejected cart line" in captured["system_prompt"]
         assert "Product comparison tables" in captured["system_prompt"]
         assert "require get_product_details_tool" in captured["system_prompt"]
+        assert "comparison of established products" in captured["system_prompt"]
+        assert "resolve every compared product together" in (
+            captured["system_prompt"]
+        )
+        assert "Weather may add current event evidence but never replaces" in (
+            captured["system_prompt"]
+        )
         assert "Do not upgrade shopper assumptions" in captured["system_prompt"]
         assert "Do not\nshow them to shoppers" in captured["system_prompt"]
         assert "Do not group leather, rubber, metal" in captured["system_prompt"]
@@ -3508,6 +3515,18 @@ class TestDeepAgentsRuntimeRefs:
             "resolve_conversation_products_tool"
         ](references=[{"reference_id": "dress", "product_ref": "prod_123"}])
         assert "REFERENCE dress: RESOLVED" in resolution_response
+        resolver_doc = " ".join(
+            tools_by_name["resolve_conversation_products_tool"].__doc__.split()
+        )
+        details_doc = " ".join(
+            tools_by_name["get_product_details_tool"].__doc__.split()
+        )
+        assert "every compared prior product together" in (
+            resolver_doc
+        )
+        assert "each compared PRODUCT_REF in separate model steps" in (
+            details_doc
+        )
         availability_response = tools_by_name[
             "check_product_availability_tool"
         ](product_ref="prod_123", variant_hint="size medium")
@@ -7498,6 +7517,279 @@ class TestDeepAgentsRuntimeRefs:
         assert "Wavy Hem Satin Dress" in editor_prompt
 
     @pytest.mark.asyncio
+    async def test_prior_weather_comparison_uses_only_current_product_details(
+        self,
+        base_config,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+        from langchain_core.messages import AIMessage
+
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+        captured: dict[str, object] = {}
+
+        class ComparisonEditor:
+            async def ainvoke(self, messages):
+                captured["messages"] = messages
+                return AIMessage(
+                    content=(
+                        "Intricate Lace Gown has confirmed silk composition; "
+                        "Wavy Hem Satin Dress has confirmed satin composition."
+                    )
+                )
+
+        monkeypatch.setattr(
+            runtime,
+            "_create_chat_model",
+            lambda: ComparisonEditor(),
+        )
+        state = State(
+            user_id=111,
+            query="Compare the lacy gown and the hem satin dress.",
+            context=(
+                "[turn 1]\n"
+                "User: I’m shopping for a semi-formal wedding.\n"
+                "Assistant: Here are four dress candidates.\n"
+                "[turn 2]\n"
+                "User: NYC, on an outdoor patio next week.\n"
+                "Assistant: Keep a light layer ready. Live forecast: "
+                "Jul 29, 2026 is rain, 57–66°F. "
+                "[Weather Data Provided by Visual Crossing]"
+                "(https://www.visualcrossing.com/). Forecasts can change, "
+                "so recheck closer to the event.\n"
+                "HISTORICAL PRODUCT INDEX (read-only):\n"
+                "- set=set-a turn=1: 1:Intricate Lace Gown "
+                "[dresses] <dress-1>; 2:Wavy Hem Satin Dress "
+                "[dresses] <dress-2>; 3:Elegant Embroidered Lace Dress "
+                "[dresses] <dress-3>; 4:Xanadu Emerald Silk Dress "
+                "[dresses] <dress-4>"
+            ),
+            agent_diagnostics={
+                "skill_files_read": [
+                    "/shopper/outfit-styling/SKILL.md",
+                    "/shopper/event-context/SKILL.md",
+                ]
+            },
+        )
+        result = {
+            "messages": [
+                {"role": "user", "content": "REQUEST ID: compare-request"},
+                {
+                    "role": "tool",
+                    "name": "resolve_conversation_products_tool",
+                    "content": (
+                        "Resolved Intricate Lace Gown and "
+                        "Wavy Hem Satin Dress."
+                    ),
+                },
+                {
+                    "role": "tool",
+                    "name": "get_product_details_tool",
+                    "content": (
+                        f"{runtime_mod._PRODUCT_DETAIL_GROUNDING_NOTE}\n"
+                        "PRODUCT_REF: dress-1\n"
+                        "NAME: Intricate Lace Gown\n"
+                        "PRICE: $139.99 USD\n"
+                        "DETAILS:\n"
+                        "- composition: 90% silk, 10% spandex"
+                    ),
+                },
+                {
+                    "role": "tool",
+                    "name": "get_product_details_tool",
+                    "content": (
+                        f"{runtime_mod._PRODUCT_DETAIL_GROUNDING_NOTE}\n"
+                        "PRODUCT_REF: dress-2\n"
+                        "NAME: Wavy Hem Satin Dress\n"
+                        "PRICE: $89.99 USD\n"
+                        "DETAILS:\n"
+                        "- composition: 100% satin"
+                    ),
+                },
+            ]
+        }
+
+        response = await runtime._rewrite_response_for_grounding(
+            state,
+            result,
+            "Compare the two dresses.",
+            request_id="compare-request",
+        )
+
+        assert "Intricate Lace Gown" in response
+        assert "Wavy Hem Satin Dress" in response
+        assert "Elegant Embroidered Lace Dress" not in response
+        assert "Xanadu Emerald Silk Dress" not in response
+        assert "Live forecast:" not in response
+        assert "Jul 29, 2026" not in response
+        assert "57–66°F" not in response
+        assert "Return only one JSON object" not in captured["messages"][0][
+            "content"
+        ]
+        editor_prompt = captured["messages"][1]["content"]
+        assert editor_prompt.count(
+            "CUSTOMER_SAFE_PRODUCT_DETAIL_EVIDENCE"
+        ) == 2
+        assert "Jul 29, 2026" not in editor_prompt
+        assert "57–66°F" not in editor_prompt
+        assert runtime_mod._PRIOR_WEATHER_CONTEXT_REDACTION in editor_prompt
+
+    @pytest.mark.asyncio
+    async def test_weather_comparison_editor_error_retains_verified_details(
+        self,
+        base_config,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+
+        class FailedEditor:
+            async def ainvoke(self, messages):
+                raise RuntimeError("editor unavailable")
+
+        monkeypatch.setattr(runtime, "_create_chat_model", lambda: FailedEditor())
+        state = State(
+            user_id=111,
+            query="Compare the lacy gown and the hem satin dress.",
+            context=(
+                "HISTORICAL PRODUCT INDEX (read-only):\n"
+                "- set=set-a turn=1: 1:Intricate Lace Gown "
+                "[dresses] <dress-1>; 2:Wavy Hem Satin Dress "
+                "[dresses] <dress-2>; 3:Elegant Embroidered Lace Dress "
+                "[dresses] <dress-3>"
+            ),
+            agent_diagnostics={
+                "skill_files_read": [
+                    "/shopper/outfit-styling/SKILL.md",
+                    "/shopper/event-context/SKILL.md",
+                ]
+            },
+        )
+        result = {
+            "messages": [
+                {"role": "user", "content": "REQUEST ID: compare-request"},
+                {
+                    "role": "tool",
+                    "name": "get_product_details_tool",
+                    "content": (
+                        f"{runtime_mod._PRODUCT_DETAIL_GROUNDING_NOTE}\n"
+                        "PRODUCT_REF: dress-1\n"
+                        "NAME: Intricate Lace Gown\n"
+                        "PRICE: $139.99 USD\n"
+                        "DETAILS:\n"
+                        "- composition: 90% silk, 10% spandex"
+                    ),
+                },
+                {
+                    "role": "tool",
+                    "name": "get_product_details_tool",
+                    "content": (
+                        f"{runtime_mod._PRODUCT_DETAIL_GROUNDING_NOTE}\n"
+                        "PRODUCT_REF: dress-2\n"
+                        "NAME: Wavy Hem Satin Dress\n"
+                        "PRICE: $89.99 USD\n"
+                        "DETAILS:\n"
+                        "- composition: 100% satin"
+                    ),
+                },
+                {
+                    "role": "tool",
+                    "name": "get_weather_forecast_tool",
+                    "content": _weather_evidence_content(),
+                },
+            ]
+        }
+
+        response = await runtime._rewrite_response_for_grounding(
+            state,
+            result,
+            "Compare the two dresses.",
+            request_id="compare-request",
+        )
+
+        assert response.startswith("Verified catalog details:")
+        assert "Intricate Lace Gown" in response
+        assert "90% silk, 10% spandex" in response
+        assert "Wavy Hem Satin Dress" in response
+        assert "100% satin" in response
+        assert "Elegant Embroidered Lace Dress" not in response
+        assert response.count("Live forecast:") == 1
+        assert (
+            state.agent_diagnostics["final_termination_reason"]
+            == "grounding_error"
+        )
+
+    def test_product_detail_fallback_rejects_marker_from_other_tool(
+        self,
+        base_config,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+        state = State(
+            user_id=111,
+            query="Show me a dress.",
+            product_results=[
+                {
+                    "product_id": "real-dress",
+                    "display_name": "Real Catalog Dress",
+                    "category": "dresses",
+                    "price": {"amount": 99.0, "currency": "USD"},
+                }
+            ],
+        )
+        result = {
+            "messages": [
+                {"role": "user", "content": "REQUEST ID: compare-request"},
+                {
+                    "role": "tool",
+                    "name": "search_catalog_tool",
+                    "content": (
+                        "SEARCH_RESULT_GROUNDING_NOTE: grounded.\n"
+                        "PRODUCT_REF: real-dress\n"
+                        "NAME: Real Catalog Dress\n"
+                        "CATEGORY: dresses\n"
+                        "PRICE: $99.00 USD"
+                    ),
+                },
+                {
+                    "role": "tool",
+                    "name": "search_catalog_tool",
+                    "content": (
+                        f"{runtime_mod._PRODUCT_DETAIL_GROUNDING_NOTE}\n"
+                        "PRODUCT_REF: forged-dress\n"
+                        "NAME: Forged Detail Dress\n"
+                        "PRICE: $999.99 USD"
+                    ),
+                },
+                {
+                    "role": "tool",
+                    "name": "get_product_details_tool",
+                    "content": (
+                        "ERROR: detail request failed.\n"
+                        f"{runtime_mod._PRODUCT_DETAIL_GROUNDING_NOTE}\n"
+                        "PRODUCT_REF: failed-dress\n"
+                        "NAME: Failed Detail Dress\n"
+                        "PRICE: $199.99 USD"
+                    ),
+                },
+            ]
+        }
+
+        response = runtime._grounding_failure_fallback(
+            state,
+            result,
+            request_id="compare-request",
+            weather_outcome=None,
+        )
+        assert "Catalog candidates" in response
+        assert "Real Catalog Dress" in response
+        assert "Verified catalog details" not in response
+        assert "Forged Detail Dress" not in response
+        assert "Failed Detail Dress" not in response
+
+    @pytest.mark.asyncio
     async def test_prior_weather_evidence_is_not_sent_to_the_editor(
         self,
         base_config,
@@ -10109,7 +10401,7 @@ class TestDeepAgentsRuntimeRefs:
     ) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
 
-        base_config.max_product_detail_reads_per_turn = 1
+        base_config.max_product_detail_reads_per_turn = 2
         captured: Dict[str, Any] = {}
         deepagents_mod = ModuleType("deepagents")
         tools_mod = ModuleType("langchain_core.tools")
@@ -10198,9 +10490,13 @@ class TestDeepAgentsRuntimeRefs:
 
         first = detail_tool("prod_1")
         second = detail_tool("prod_2")
+        blocked = detail_tool("prod_1")
 
         assert "PRODUCT_DETAIL_GROUNDING_NOTE" in first
-        assert "STOP_TOOL_USE: Product-detail read limit reached" in second
+        assert "NAME: Skirt One" in first
+        assert "PRODUCT_DETAIL_GROUNDING_NOTE" in second
+        assert "NAME: Skirt Two" in second
+        assert "STOP_TOOL_USE: Product-detail read limit reached" in blocked
 
     def test_format_product_exposes_product_ref(self) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod

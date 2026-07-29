@@ -212,7 +212,15 @@ The detailed contracts and implementation live in:
    historical resolver once with one or more exact descriptors from the compact
    index. Its 0/1/many result requires clarification for zero or many; only one
    match enters request-local product evidence. Resolution is deterministic and
-   makes no catalog, embedding, or separate model call. Before
+   makes no catalog, embedding, or separate model call. An established
+   two-product styling comparison remains inside `outfit-styling`; it does not
+   activate another skill or repeat catalog search. The model submits both prior
+   products in that one resolver call, then reads each unique ref through the
+   scalar detail tool in separate model steps. The default two-read cap covers
+   one pair. Any required zero/many resolution clarifies without a substitute
+   search, and weather is optional additional evidence rather than a replacement
+   for product facts. This sequence is semantic skill procedure, not a
+   deterministic comparison-intent or pair-completeness gate. Before
    retrieval, every text search includes one nonempty, product-agnostic
    `shopper_guidance` sentence authored under the active skill; image-only search
    uses empty guidance. A shopper-named type not separately advertised may use
@@ -362,12 +370,16 @@ The detailed contracts and implementation live in:
    `agent_timeout`. A grounding timeout finalizes as failed with
    `grounding_timeout`; search-only evidence uses deterministic catalog
    rendering, protected context-only evidence uses deterministic event
-   assembly, and
-   other non-search turns receive a fixed retry/cart-check response instead of
-   the unverified draft. Ordinary editor errors and empty or
-   whitespace-only output use the same response rule and finalize as failed
-   with `grounding_error`; invalid protected context-only output instead
-   falls back deterministically. Only a successful durable
+   assembly, and current product-detail evidence uses a deterministic verified-
+   detail renderer containing only current names, prices, categories, and listed
+   fields, followed by a typed weather outcome when present. It accepts only a
+   current tool-role result named `get_product_details_tool` that begins with the
+   server's canonical successful-detail marker. It preserves facts, not a
+   model-authored comparison judgment. Other non-search turns receive a fixed
+   retry/cart-check response instead of the unverified draft. Ordinary
+   editor errors and empty or whitespace-only output use the same evidence split
+   and finalize as failed with `grounding_error`; invalid protected context-only
+   output instead falls back deterministically. Only a successful durable
    finalize permits checkpoint deletion and admission of the next conversation turn. An
    already-started synchronous tool operation may finish while graph
    cancellation propagates; cart idempotency and the timeout response's
@@ -558,7 +570,9 @@ weather styling direction; the server renders exact prior names, the accepted
 question, and any typed weather failure or canonical success block. Any current
 non-weather business-tool activity or evidence uses the normal grounding path,
 so comparisons, product details, cart work, and policy answers cannot be
-replaced by a context-only weather response.
+replaced by a context-only weather response. After successful weather, that same
+activity prevents the response postprocessor from restoring unrelated names
+from the historical-product index.
 
 A forecast gets one model-visible attempt on an eligible date-bearing turn and
 requires one bounded exact named-place, address, or postal-code phrase or the

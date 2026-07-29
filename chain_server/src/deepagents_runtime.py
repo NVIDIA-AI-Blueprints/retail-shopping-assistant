@@ -3287,8 +3287,9 @@ class DeepAgentsRuntime:
             """Get detailed facts (material, care, dimensions, closures) for a
             product established in this turn by search or historical-product
             resolution. Requires a PRODUCT_REF — not a product name. Do NOT call
-            for initial recommendations. Stop immediately if STOP_TOOL_USE is
-            returned.
+            for initial recommendations. For an explicit comparison, call once
+            for each compared PRODUCT_REF in separate model steps before
+            answering. Stop immediately if STOP_TOOL_USE is returned.
             """
 
             nonlocal product_detail_reads_this_turn
@@ -3339,9 +3340,11 @@ class DeepAgentsRuntime:
         ) -> str:
             """Resolve products the shopper refers to from earlier in this
             conversation. Use only when a needed product was not established
-            in the current turn. Submit exact descriptors from the historical
-            product index. If a reference is missing or ambiguous, ask one
-            concise clarification; do not guess or search for a substitute.
+            in the current turn. For a comparison, submit every compared prior
+            product together in this one batched call. Use exact descriptors
+            from the historical product index. If a reference is missing or
+            ambiguous, ask one concise clarification; do not guess or search
+            for a substitute.
             """
 
             nonlocal product_resolution_used
@@ -3902,12 +3905,15 @@ class DeepAgentsRuntime:
         enforce_event_context = self._event_context_response_guidance_active(
             state
         )
-        protected_event_response = (
-            enforce_event_context
-            and not _has_current_non_weather_business_tool_activity(
+        has_current_non_weather_business_activity = (
+            _has_current_non_weather_business_tool_activity(
                 result,
                 request_id=request_id,
             )
+        )
+        protected_event_response = (
+            enforce_event_context
+            and not has_current_non_weather_business_activity
             and (
                 weather_outcome is not None
                 or (
@@ -4318,7 +4324,7 @@ class DeepAgentsRuntime:
         rewritten = _scrub_internal_shopper_language(rewritten)
         if isinstance(weather_outcome, WeatherForecastEvidence):
             rewritten = _strip_weather_fact_sentences(rewritten)
-            if not has_current_search_candidates:
+            if not has_current_non_weather_business_activity:
                 rewritten = _ensure_prior_weather_candidates(
                     rewritten,
                     state.context,
@@ -4370,7 +4376,13 @@ class DeepAgentsRuntime:
         """Compose deterministic catalog and weather evidence on editor failure."""
 
         parts: list[str] = []
-        if _search_result_groups(result, request_id=request_id):
+        detail_fallback = _format_product_detail_fallback(
+            result,
+            request_id=request_id,
+        )
+        if detail_fallback:
+            parts.append(detail_fallback)
+        elif _search_result_groups(result, request_id=request_id):
             parts.append(
                 self._rewrite_search_only_response(
                     state,
@@ -4669,6 +4681,14 @@ Rules:
   reads per user turn. Product details are for direct product fact questions,
   cart or comparison follow-ups, or already-shortlisted items; they are not
   required for an initial no-anchor outfit recommendation.
+- A comparison of established products is part of the active primary procedure,
+  not a new catalog search. If any compared product is only in the historical
+  index, resolve every compared product together in the turn's single batched
+  resolver call. Then call product details once per uniquely resolved ref, in
+  separate model steps, before comparing. A missing or ambiguous required
+  product needs one concise clarification; do not guess, substitute, or search
+  again. Weather may add current event evidence but never replaces product
+  resolution or detail reads.
 - If a tool returns STOP_TOOL_USE, stop tool calling immediately and produce the
   best concise shopper-facing answer from the evidence already available.
 - A tool result is enough to produce a final answer. Once you have at least one
@@ -6778,6 +6798,72 @@ def _format_search_only_response(
                 "Product-specific material, construction, length, fit, comfort, "
                 "care, or weather performance remains unverified unless listed "
                 "above as a catalog-confirmed filter."
+            ),
+        )
+    )
+    return "\n".join(lines)
+
+
+def _format_product_detail_fallback(
+    result: Any,
+    *,
+    request_id: str,
+) -> str:
+    """Render verified current-turn detail facts when final editing fails."""
+
+    records: list[dict[str, Any]] = []
+    seen_refs: set[str] = set()
+    for message in _current_turn_messages(_result_messages(result), request_id):
+        if _message_type(message) != "tool":
+            continue
+        if str(_value(message, "name") or "") != "get_product_details_tool":
+            continue
+        content = _content_to_text(_value(message, "content"))
+        if not content.startswith(_PRODUCT_DETAIL_GROUNDING_NOTE):
+            continue
+        for record in _product_evidence_records(content):
+            product_ref = str(record.get("product_ref") or "").strip()
+            if not product_ref or product_ref in seen_refs:
+                continue
+            seen_refs.add(product_ref)
+            records.append(record)
+
+    if not records:
+        return ""
+
+    lines = ["Verified catalog details:"]
+    for record in records:
+        name = _escape_markdown_inline(str(record.get("name") or "").strip())
+        if not name:
+            continue
+        summary = [f"**{name}**"]
+        price = str(record.get("price") or "").strip()
+        if price:
+            summary.append(_escape_markdown_inline(price))
+        category = str(record.get("category") or "").strip()
+        if category:
+            summary.append(
+                _escape_markdown_inline(category.replace("_", " "))
+            )
+        lines.append("- " + " — ".join(summary))
+        for detail in record.get("details") or []:
+            label, separator, value = str(detail).partition(":")
+            if not separator or not label.strip() or not value.strip():
+                continue
+            lines.append(
+                "  - "
+                f"{_escape_markdown_inline(label.strip())}: "
+                f"{_escape_markdown_inline(value.strip())}"
+            )
+    if len(lines) == 1:
+        return ""
+    lines.extend(
+        (
+            "",
+            (
+                "Only the listed fields are confirmed. Any missing material, "
+                "construction, fit, care, comfort, or performance detail "
+                "remains unavailable."
             ),
         )
     )

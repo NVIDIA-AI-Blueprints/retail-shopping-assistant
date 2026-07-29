@@ -47,8 +47,8 @@ Every shopper turn uses two model phases inside the same Deep Agents run:
    `activate_shopper_skills_tool`, forces that tool choice, and disables
    parallel tool calls. The model selects the smallest registered skill set
    that semantically covers the complete current intent. Whenever it selects
-   `event-context`, the same call must bind `event_context_action` and
-   `event_context_next_question`; both fields are omitted otherwise. The model
+   `event-context`, the same call must bind
+   `event_context_next_question`; that field is omitted otherwise. The model
    selects the latter from current and recent shopper conversation:
    `event_location` only when destination is missing and material,
    `event_venue` only after destination is established when venue or setting is
@@ -83,16 +83,23 @@ and is selected whenever event destination or venue context is stated or the
 response would otherwise ask about or branch on missing destination or venue
 context, or when a supported forecast would materially change event guidance.
 Generic occasion advice is not a reason to omit it. It alone grants the
-read-only weather tool. `reuse_prior_candidates` is valid only for a
-context-only turn with established candidates; an initial event turn or
-explicit new/refined-product request uses `search_new_candidates`. With
-established candidates, search-new also requires a trimmed, 1–240-character
-`event_context_product_work_quote` whose case-insensitive text is an exact
-substring of the current shopper message. The model owns the semantic claims
-that this is the shortest span and explicitly requests product, cart, or policy
-work beyond event context. Within an active
+read-only weather tool. Its grant combines additively with the tools granted by
+`outfit-styling` and any selected standalone skill. Event context never revokes
+or narrows product, cart, or policy tools; only its weather capability may be
+hidden or execution-blocked when the forecast prerequisites are not
+established. Product work remains owned by the selected primary skill. Within an active
 outfit-building or style-led single-piece thread, terse item-only follow-ups
 remain `outfit-styling` tasks.
+
+For event-context turns, the successful activation result and the
+`outfit-styling` procedure repeat the additive boundary also advertised by
+catalog search. A reply that only supplies a destination, venue, or date
+requested in the prior response is context fulfillment, so prior candidates
+remain in play without repeated non-weather product work. Explicit same-turn
+comparison, refinement, replacement, search, check, cart, or policy requests
+still use their normal selected-skill procedures. This is semantic instruction
+for the model, not a deterministic intent rule, skill-selection shortcut, tool
+grant, or execution gate.
 
 Runtime taxonomy validation may bind the longest exact advertised suffix in a
 modifier-bearing model phrase (`waterproof boots` to `boots`), but it disables
@@ -198,11 +205,12 @@ tool-backed responses use the grounding editor to remove unsupported product
 claims, surface guarantees, and internal refs.
 The editor receives only the remaining shared model-stage deadline. A timeout
 finalizes the turn as failed with `grounding_timeout`; search-only evidence uses
-deterministic catalog rendering, structured accepted reuse uses deterministic
+deterministic catalog rendering, protected context-only evidence uses
+deterministic
 event assembly, and other non-search turns receive a fixed retry/cart-check
 response instead of the unverified draft. Ordinary editor
 errors and empty or whitespace-only output use the same fail-closed response
-with `grounding_error`; invalid structured accepted-reuse output instead falls
+with `grounding_error`; invalid protected context-only output instead falls
 back deterministically.
 Grounding is enabled by default and can be disabled with
 `GROUNDING_REWRITE_ENABLED=false`; the evidence window is controlled by
@@ -221,8 +229,8 @@ return `{}` for this field by default; trusted operator/evaluation deployments
 must explicitly set `EXPOSE_AGENT_DIAGNOSTICS=true`. On graph failure, bounded
 current-turn assistant/tool messages are captured before checkpoint cleanup.
 Raw weather arguments/output are the exception: they remain redacted, while
-the weather tool-call record retains only categorical `candidate_action`,
-`request_shape`, `location_source`, `provider_input`, and `outcome`, with no
+the weather tool-call record retains only categorical `request_shape`,
+`location_source`, `provider_input`, and `outcome`, with no
 place, ZIP, date, resolved place, URL, body, or exception. Saved profile ZIP
 and failed-turn weather content remain scrubbed.
 The Judge retains only product evidence/truncation and those catalog scope
@@ -266,15 +274,29 @@ forecast context to occasion-led styling.
   or elsewhere?” framing rather than a bare destination question. Once
   destination is established, activation may instead select one material
   venue/setting question; the plan-first stop rule does not apply.
-- Non-reuse turns without a current weather outcome use the final response
-  editor when draft text exists. It receives only saved-ZIP-candidate presence,
-  not ZIP digits, plus the question boundary from the accepted activation; a
-  successful-search response
-  that drops every returned candidate has them restored through deterministic
-  grounded rendering. Missing-location or missing-venue accepted reuse skips
-  the reuse editor. Other eligible reuse with a nonempty draft gives a narrow
-  tools-disabled decision editor only bounded shopper-authored event text and
-  the server-owned deterministic weather styling direction.
+- Activation owns only `event_context_next_question`. It is required exactly
+  with this skill and is one of `event_location`, `event_venue`, `event_date`,
+  or `none` under the semantic conditions above; it is omitted without this
+  skill. The server does not infer a question from enabled weather or missing
+  context.
+- The modifier composes additively with `outfit-styling`. Its helper may hide
+  and execution-block only `get_weather_forecast_tool` when the selected
+  question or missing bounded authority prevents a qualified forecast. It
+  never hides product, cart, or policy tools and never closes the overall tool
+  loop. Consuming the one weather attempt closes only weather for that turn.
+- Protected event decision rendering is selected from evidence rather than an
+  activation action. It applies only when event context is active, there is no
+  current non-weather business-tool activity, and a current typed weather
+  outcome (success or failure) exists. Missing-location/venue or an empty draft
+  skips that editor. A separate prior-candidate fallback uses deterministic
+  event assembly only when the draft is empty; prior candidates with a nonempty
+  draft remain on ordinary grounding only when there is no current weather
+  outcome. A comparison that calls only weather remains protected. Other
+  protected weather-outcome turns give the narrow decision editor only bounded
+  shopper-authored event text and the server-owned deterministic weather
+  styling direction. Any current non-weather business-tool activity or evidence
+  uses normal grounding, preserving comparisons, product details, cart work,
+  and policy answers.
 - Does not infer that Cancun means beach or that any ZIP or place establishes
   outdoor/indoor setting, terrain, weather, wind, climate, season, dress code,
   local norms, or product performance.
@@ -309,27 +331,6 @@ forecast context to occasion-led styling.
   `max_provider_attempts: 2` permits one internal retry only for timeout or
   HTTP 5xx. HTTP 400 maps to generic `weather_request_invalid`; other 4xx,
   connection, and response-validation failures are not retried.
-- Activation owns `event_context_action` and
-  `event_context_next_question`. The latter is required exactly with this skill
-  and is one of `event_location`, `event_venue`, `event_date`, or `none` under
-  the semantic conditions above; it is omitted without this skill. The server
-  does not infer a question from enabled weather or missing context.
-  `reuse_prior_candidates` is valid only when historical candidates exist and
-  the current turn solely adds event context for them without requesting new or
-  refined products. It immediately hides and execution-blocks catalog search,
-  product details, historical-product resolution, availability, and
-  promotions. Accepted `event_location` or `event_venue` also hides and
-  execution-blocks weather; reuse closes immediately, while search-new leaves
-  normal product work open. Without date authority it also hides weather and closes the loop
-  for a tools-disabled response that may ask only the activation-selected
-  question. With date authority, the
-  weather call must copy that action exactly into `candidate_action`; mismatch
-  fails before provider I/O, and consuming the reuse attempt closes the
-  remaining loop before validation/provider work.
-  `search_new_candidates` is required for an initial event turn, an explicit
-  current-turn new/refined-product request, or when no prior candidates can be
-  reused, and leaves normal granted product work open. Reuse does not initiate
-  the next product role.
 - Requires an exact ISO event date, complete inclusive range, or the typed
   `relative_date=next_week` mode. That mode is allowed only when the shopper
   used the exact phrase `next week`. Exact `<weekday> next week` also requires
@@ -361,9 +362,9 @@ forecast context to occasion-led styling.
   containing every validated daily date, condition, available low/high
   temperature, precipitation probability/types, Visual Crossing attribution,
   and forecast uncertainty; model prose cannot shorten or selectively omit it.
-  For non-reuse weather paths, grounding-editor sentences containing
-  weather-domain fact language or fact-shaped dates/values are removed while
-  ordinary grounded styling language remains. Eligible reuse accepts no
+  Normal grounding removes weather-domain fact language or fact-shaped
+  dates/values that lack current weather evidence while preserving ordinary
+  grounded styling language. Protected context-only rendering accepts no
   free-form shopper-facing styling. Its exact two-key JSON decision must contain
   an exact shopper-authored venue quote and one or two distinct allowlisted
   adjustment codes. Malformed, ungrounded, extra-key, duplicate, unknown, or

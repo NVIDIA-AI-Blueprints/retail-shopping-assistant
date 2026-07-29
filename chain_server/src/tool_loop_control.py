@@ -82,18 +82,6 @@ class ToolLoopControlMiddleware(AgentMiddleware):
         self._observed_tool_results: set[str] = set()
         self._lock = Lock()
 
-    def close_for_synthesis(self) -> None:
-        """Irreversibly close this turn's tool loop after context fulfillment."""
-
-        with self._lock:
-            self._repair_pending = False
-            self._repair_pending_key = None
-            self._repair_pending_scope_lock = None
-            self._repair_pending_fields_lock = None
-            self._repair_feedback = ""
-            self._clear_in_flight_repair()
-            self._synthesis_required = True
-
     def wrap_model_call(
         self,
         request: ModelRequest,

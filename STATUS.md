@@ -65,41 +65,44 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   call, the adapter makes at most one additional provider attempt, only after
   a timeout or HTTP 5xx response. HTTP 400 maps to generic invalid request
   rather than claiming the shopper's location was unresolved. The mandatory
-  skill-activation call owns `event_context_action` and
-  `event_context_next_question`, each required exactly when `event-context` is
-  selected and omitted otherwise. The activation model chooses the latter from
-  current and recent shopper conversation: `event_location` only when
-  destination is missing and material, `event_venue` only after destination is
-  established when venue or setting is missing and material, `event_date` only
-  after destination and any material venue are established when live weather
-  is enabled and material and a bounded date is neither established nor
-  explicitly unavailable, and `none` otherwise. An explicitly shopper-stated
-  outdoor patio, beach, garden, rooftop, or open-air setting makes enabled live
-  weather
+  skill-activation call owns `event_context_next_question`, required exactly
+  when `event-context` is selected and omitted otherwise. The activation model
+  chooses it from current and recent shopper conversation: `event_location`
+  only when destination is missing and material, `event_venue` only after
+  destination is established when venue or setting is missing and material,
+  `event_date` only after destination and any material venue are established
+  when live weather is enabled and material and a bounded date is neither
+  established nor explicitly unavailable, and `none` otherwise. An explicitly
+  shopper-stated outdoor patio, beach, garden, rooftop, or open-air setting
+  makes enabled live weather
   material; destination plus that setting but no bounded date selects
   `event_date`. This remains model-owned semantic guidance, not deterministic
   keyword or alias parsing. The server trusts only the accepted activation
   result and does not infer a question from enabled weather or missing context.
-  Accepted `event_location` or `event_venue` hides and
-  execution-blocks weather; reuse closes immediately, while search-new leaves
-  normal product work open. `reuse_prior_candidates` is valid only when a
-  historical candidate set exists and the current turn solely adds event
-  context without requesting new or refined products. It immediately hides and
-  execution-blocks catalog search, product details, historical-product
-  resolution, availability, and promotions. Without date authority it also
-  hides weather and closes for a tools-disabled response, which may ask only
-  the activation-selected question. With date authority, the weather call
-  must repeat the activation action exactly in `candidate_action`; mismatch
-  fails before provider I/O, and consuming the reuse attempt closes the
-  remaining loop. `search_new_candidates` applies to an initial event turn or
-  explicit current-turn new/refined product request and leaves normal granted
-  product work available. With prior candidates, it also requires a trimmed,
-  1–240-character `event_context_product_work_quote` whose case-insensitive
-  text is an exact substring of the current shopper message. The model owns the
-  semantic claims that it is the shortest span and explicitly requests product,
-  cart, or policy work; event context alone does not qualify.
-  Reuse does not initiate the next product role. The
-  Visual Crossing adapter returns
+  Accepted `event_location` or `event_venue` hides and execution-blocks
+  weather. Event context is additive and may gate only weather; every
+  non-weather tool in the selected grant union remains available for normal
+  product, comparison, cart, and policy work. Consuming the one forecast
+  attempt does not close those business tools. Successful event-context
+  activation, the model-visible catalog-search description, and the
+  outfit-styling procedure now repeat one semantic reminder: a reply that only
+  supplies the destination, venue, or date requested in the prior response is
+  context fulfillment, so established candidates remain in play without a
+  repeated non-weather product call. An explicit same-turn comparison,
+  refinement, replacement, search, check, cart, or policy request continues
+  through the normal selected-skill procedure. This is model-facing procedural
+  guidance, not a deterministic intent router or execution gate; grants and
+  dispatch checks are unchanged. A date question may appear
+  only when activation selected `event_date`. Current-turn non-weather
+  business-tool evidence always uses ordinary grounding. The protected decision
+  renderer is selected structurally only when event context is active, there is
+  no current non-weather business-tool activity, and a current typed weather
+  outcome (success or failure) exists. A separate empty-draft fallback may
+  deterministically retain prior candidates; prior candidates with a nonempty
+  draft stay on ordinary grounding only when there is no current weather
+  outcome. A comparison that calls only weather remains protected; current
+  non-weather business activity guarantees ordinary grounding.
+  The Visual Crossing adapter returns
   bounded normalized daily evidence, rejects non-live provider sources, and
   maps transport/provider failures into sanitized typed outcomes.
   `WEATHER_ENABLED=false` remains the default, the key remains an indirect
@@ -112,25 +115,25 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   assistant forecast summaries are redacted from graph and grounding-editor
   recent discussion, and prior weather tool messages are excluded from prior
   evidence. Diagnostics and failed-turn partial output redact weather
-  arguments/output. Diagnostics preserve only categorical candidate action,
-  date shape, location-source kind, provider-input kind, and typed outcome;
-  they expose no location, ZIP, date, resolved place, URL, body, or exception.
+  arguments/output. Diagnostics preserve only categorical date shape,
+  location-source kind, provider-input kind, and typed outcome; they expose no
+  location, ZIP, date, resolved place, URL, body, or exception.
   Diagnostics also scrub saved ZIP from string keys and values, and the
   complete grounding-editor prompt replaces those saved digits before the
   editor call. Deterministic final rendering appends exactly one canonical block
   with every validated daily date, condition, available temperature,
   precipitation fact, attribution, and forecast uncertainty.
-  For non-reuse weather paths, grounding-editor sentences containing
+  For ordinary-grounding weather paths, grounding-editor sentences containing
   weather-domain fact language or fact-shaped dates/values are removed while
-  ordinary grounded styling language remains. Missing-location or
-  missing-venue accepted reuse skips the structured editor. Other eligible
-  reuse exposes only bounded shopper-authored event text and the server-owned
-  deterministic weather styling direction, and accepts only exact JSON with a
-  grounded venue quote plus one or two distinct allowlisted adjustment codes.
-  Malformed, ungrounded, or invalid output falls back. The server maps valid
-  codes to fixed phrases and deterministically assembles exact newest prior
-  names, its weather direction, only the accepted question, and the typed
-  failure or canonical forecast block.
+  ordinary grounded styling language remains. Missing-location/venue or an
+  empty draft skips the protected decision editor. Other protected
+  weather-outcome turns expose only bounded shopper-authored event text and the
+  server-owned deterministic weather styling direction, and accept only exact
+  JSON with a grounded venue quote plus one or two distinct allowlisted
+  adjustment codes. Malformed, ungrounded, or invalid output falls back. The
+  server maps valid codes to fixed phrases and deterministically assembles exact
+  newest prior names when present, its weather direction, only the accepted
+  question, and the typed failure or canonical forecast block.
   Weather cannot prove product performance or create an unstated catalog
   constraint.
   This adds no weather-specific FastAPI, SSE, or UI shape. Before an operator
@@ -221,14 +224,17 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   search-only turns receive one tools-disabled synthesis under that skill and
   then the grounding editor; deterministic candidate formatting remains the
   fail-closed fallback when synthesis or editing cannot produce an answer.
-  Event-context non-reuse turns without a current weather outcome use a compact
-  final editor under the shared deadline when draft text exists. That editor receives only
-  saved-ZIP-candidate presence, never ZIP digits. On search-bearing
+  Event-context turns without a current weather outcome use a compact final
+  editor under the shared deadline when draft text exists. That editor receives
+  only saved-ZIP-candidate presence, never ZIP digits. On search-bearing
   event-context turns, the final text must retain at least one exact returned
   candidate; deterministic candidate rendering restores any missing
-  candidates. Eligible context-only reuse uses the structured decision editor
-  described above when draft text exists; a missing/invalid quote, malformed
-  JSON, or invalid adjustment set uses the deterministic fallback.
+  candidates. Current-turn non-weather business-tool evidence always follows
+  ordinary grounding. A nonempty no-tool draft with prior candidates but no
+  current weather outcome also remains on ordinary grounding. The structurally
+  selected protected weather-outcome path uses the decision editor described
+  above only when draft text exists; an empty draft or invalid decision uses
+  deterministic event assembly.
   Grounding now requires an explicit gap when the requested outcome depends on
   a functional product property absent from evidence, and deterministic
   fallback carries the same generic unverified-property disclosure. Selection and
@@ -482,6 +488,20 @@ The newest focused gate is recorded first. Older implementation gates remain
 below as comparison points; generated quality and timing
 artifacts stay in the required local archive rather than versioned source.
 
+- Styling-weather additive-boundary Slice 1 gate (2026-07-29): the full offline
+  suite passed 1,382 tests with 1 expected xfail. The focused two-turn
+  `conv_profile_shop_now.yaml` live run passed 2/2 diagnostic expectations with
+  no Judge. The initial turn selected outfit styling plus event context and
+  made one catalog search without weather. The
+  context-fulfillment turn retained those candidates, made exactly one weather
+  call, and made no repeated catalog search; weather arguments remained
+  redacted. Average turn time was 18.15s, 0.17s faster than the identical
+  committed feature baseline at 18.32s and 9.38s faster than the prior WIP at
+  27.54s, which had repeated the search. The earlier 4.50/5 like-for-like Judge
+  score remains the latest paid quality baseline. No Judge or broader
+  integration cohort ran. The focused comparison is
+  `~/exec-briefs/retail-shopping-assistant/quality/shopping/targeted/event_context/additive_boundary_slice1/comparisons/targeted_feature_baseline__to__current_wip.md`;
+  the prior-WIP comparison is in the same directory.
 - Styling-weather focused live-fixture Slice 3 gate (2026-07-29): two committed
   three-turn regressions now live under
   `tests/integration/conversations/event_context_weather_guidance/`, separate
@@ -1010,11 +1030,12 @@ Prior-summary redaction from graph/editor context,
 prior-weather-tool exclusion from prior evidence, raw weather and saved-ZIP
 diagnostic redaction plus categorical weather call tracing, fail-closed rejection of
 grounding-editor prose containing weather-domain fact language or fact-shaped
-dates/values on non-reuse paths, one exact canonical block with all validated
-daily forecast facts plus attribution/uncertainty, structured accepted-reuse
-venue/adjustment selection followed by deterministic fixed-phrase, exact-name,
-typed-question, and weather-outcome assembly, without a provider-driven
-location re-ask, and the
+dates/values on ordinary-grounding paths, one exact canonical block with all
+validated daily forecast facts plus attribution/uncertainty, and structurally
+selected protected weather-outcome venue/adjustment selection plus a separate
+prior-candidate-only empty-draft deterministic fallback, followed by fixed-
+phrase, exact-name, typed-question, and weather-outcome assembly without a
+provider-driven location re-ask, and the
 prohibition on deriving product performance or catalog
 constraints also remain mandatory.
 

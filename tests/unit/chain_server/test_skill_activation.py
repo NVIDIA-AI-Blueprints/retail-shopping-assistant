@@ -190,6 +190,13 @@ def get_product_details_tool(product_ref: str) -> str:
 
 
 @tool
+def resolve_conversation_products_tool(references: list[str]) -> str:
+    """Resolve products shown earlier in the conversation."""
+
+    return ", ".join(references)
+
+
+@tool
 def add_cart_items_tool(product_ref: str) -> str:
     """Add a product to the cart."""
 
@@ -201,6 +208,13 @@ def get_weather_forecast_tool(location_source: str) -> str:
     """Read event-weather evidence."""
 
     return location_source
+
+
+@tool
+def get_store_policy_tool(topic: str) -> str:
+    """Read one configured store policy."""
+
+    return topic
 
 
 def _middleware(
@@ -234,7 +248,6 @@ def test_activation_schema_rejects_two_primary_procedures() -> None:
             "outfit-styling",
             "product-discovery",
         ),
-        prior_candidates_available=False,
     )
 
     with pytest.raises(ValueError, match="select exactly one primary procedure"):
@@ -253,7 +266,6 @@ def test_activation_schema_rejects_two_primary_procedures() -> None:
             "event-context",
             "budget-shopping",
         ],
-        event_context_action="search_new_candidates",
         event_context_next_question="event_location",
     )
     assert selected_with_event.skill_names == [
@@ -261,44 +273,20 @@ def test_activation_schema_rejects_two_primary_procedures() -> None:
         "event-context",
         "budget-shopping",
     ]
-    assert selected_with_event.event_context_action == "search_new_candidates"
     assert selected_with_event.event_context_next_question == "event_location"
 
 
-def test_activation_schema_binds_event_context_action() -> None:
+def test_activation_schema_binds_only_event_context_question() -> None:
     activation_input = _skill_activation_input_model(
         ("cart-management", "event-context", "outfit-styling"),
-        prior_candidates_available=True,
-        current_shopper_text="Show me a different dress for the wedding.",
     )
 
     with pytest.raises(
         ValueError,
-        match="event_context_action is required exactly",
-    ):
-        activation_input(
-            skill_names=["outfit-styling", "event-context"],
-        )
-
-    with pytest.raises(
-        ValueError,
-        match="event_context_action is required exactly",
-    ):
-        activation_input(
-            skill_names=["outfit-styling"],
-            event_context_action="search_new_candidates",
-            event_context_next_question="none",
-            event_context_product_work_quote="Show me a different dress",
-        )
-
-    with pytest.raises(
-        ValueError,
         match="event_context_next_question is required exactly",
     ):
         activation_input(
             skill_names=["outfit-styling", "event-context"],
-            event_context_action="search_new_candidates",
-            event_context_product_work_quote="Show me a different dress",
         )
 
     with pytest.raises(
@@ -308,82 +296,34 @@ def test_activation_schema_binds_event_context_action() -> None:
         activation_input(
             skill_names=["outfit-styling"],
             event_context_next_question="none",
-        )
-
-    with pytest.raises(
-        ValueError,
-        match="solely applies event context",
-    ):
-        activation_input(
-            skill_names=[
-                "outfit-styling",
-                "event-context",
-                "cart-management",
-            ],
-            event_context_action="reuse_prior_candidates",
-            event_context_next_question="none",
-        )
-
-    with pytest.raises(ValueError, match="exact current-turn product-work quote"):
-        activation_input(
-            skill_names=["outfit-styling", "event-context"],
-            event_context_action="search_new_candidates",
-            event_context_next_question="none",
-        )
-
-    with pytest.raises(ValueError, match="exact bounded span"):
-        activation_input(
-            skill_names=["outfit-styling", "event-context"],
-            event_context_action="search_new_candidates",
-            event_context_next_question="none",
-            event_context_product_work_quote="Show me a different suit",
         )
 
     selected = activation_input(
-        skill_names=["outfit-styling", "event-context"],
-        event_context_action="search_new_candidates",
+        skill_names=[
+            "outfit-styling",
+            "event-context",
+            "cart-management",
+        ],
         event_context_next_question="event_date",
-        event_context_product_work_quote="Show me a different dress",
     )
-    assert selected.event_context_product_work_quote == (
-        "Show me a different dress"
-    )
+    assert selected.skill_names == [
+        "outfit-styling",
+        "event-context",
+        "cart-management",
+    ]
     assert selected.event_context_next_question == "event_date"
 
 
-def test_activation_schema_rejects_reuse_without_prior_candidates() -> None:
+def test_dynamic_event_question_gets_typed_activation_feedback() -> None:
     activation_input = _skill_activation_input_model(
         ("event-context", "outfit-styling"),
-        prior_candidates_available=False,
-    )
-
-    with pytest.raises(ValueError, match="search_new_candidates"):
-        activation_input(
-            skill_names=["outfit-styling", "event-context"],
-            event_context_action="reuse_prior_candidates",
-            event_context_next_question="none",
-        )
-
-    selected = activation_input(
-        skill_names=["outfit-styling", "event-context"],
-        event_context_action="search_new_candidates",
-        event_context_next_question="event_location",
-    )
-    assert selected.event_context_action == "search_new_candidates"
-
-
-def test_dynamic_event_action_literal_gets_typed_activation_feedback() -> None:
-    activation_input = _skill_activation_input_model(
-        ("event-context", "outfit-styling"),
-        prior_candidates_available=False,
     )
     middleware = _middleware()
 
     with pytest.raises(ValueError) as captured:
         activation_input(
             skill_names=["outfit-styling", "event-context"],
-            event_context_action="reuse_prior_candidates",
-            event_context_next_question="none",
+            event_context_next_question="destination",
         )
 
     first = middleware.handle_activation_validation_error(captured.value)
@@ -394,52 +334,11 @@ def test_dynamic_event_action_literal_gets_typed_activation_feedback() -> None:
     )
 
     assert first.startswith("SHOPPER_SKILL_ACTIVATION_INVALID:")
-    assert "otherwise use search_new_candidates" in first
+    assert "event_context_next_question" in first
     assert second.startswith(
         "SHOPPER_SKILL_ACTIVATION_CLARIFICATION_REQUIRED:"
     )
-    assert response.result[0].content == (
-        "Should I apply this event context to the options already shown, "
-        "or search for new options?"
-    )
-
-
-@pytest.mark.parametrize(
-    "invalid_fields",
-    [
-        {"event_context_next_question": "destination"},
-        {
-            "event_context_next_question": "none",
-            "event_context_product_work_quote": "",
-        },
-    ],
-)
-def test_dynamic_event_context_fields_get_typed_activation_feedback(
-    invalid_fields: dict[str, str],
-) -> None:
-    activation_input = _skill_activation_input_model(
-        ("event-context", "outfit-styling"),
-        prior_candidates_available=True,
-        current_shopper_text="Show me a different dress.",
-    )
-    middleware = _middleware()
-
-    with pytest.raises(ValueError) as captured:
-        activation_input(
-            skill_names=["outfit-styling", "event-context"],
-            event_context_action="search_new_candidates",
-            **invalid_fields,
-        )
-
-    feedback = middleware.handle_activation_validation_error(captured.value)
-
-    assert feedback.startswith("SHOPPER_SKILL_ACTIVATION_INVALID:")
-    assert "event_context_next_question" in feedback
-    assert "event_context_product_work_quote" in feedback
-    assert "choose event_venue only after destination is established" in (
-        feedback
-    )
-    assert "Never infer venue from destination" in feedback
+    assert response.result[0].content == "What event detail should I plan around?"
 
 
 def test_activation_schema_requires_primary_for_budget_only() -> None:
@@ -533,8 +432,10 @@ def _model_request(
             activate_shopper_skills_tool,
             search_catalog_tool,
             get_product_details_tool,
+            resolve_conversation_products_tool,
             add_cart_items_tool,
             get_weather_forecast_tool,
+            get_store_policy_tool,
         ],
         state={"messages": messages},
     )
@@ -585,6 +486,10 @@ def _tool_request(
             "update_cart_items_tool": add_cart_items_tool,
             "get_product_details_tool": get_product_details_tool,
             "get_weather_forecast_tool": get_weather_forecast_tool,
+            "get_store_policy_tool": get_store_policy_tool,
+            "resolve_conversation_products_tool": (
+                resolve_conversation_products_tool
+            ),
             "search_catalog_tool": search_catalog_tool,
         }[name]
     )
@@ -650,11 +555,11 @@ def test_pending_phase_forces_only_the_activation_tool() -> None:
     assert "never select both" in prepared.system_prompt
     assert "budget shopping may accompany either" in prepared.system_prompt
     assert "Event context may accompany outfit" in prepared.system_prompt
-    assert "reuse_prior_candidates" in prepared.system_prompt
     normalized_prompt = " ".join(prepared.system_prompt.split())
-    assert "typed action and its one permitted next-question" in (
+    assert "one permitted `event_context_next_question` decision" in (
         normalized_prompt
     )
+    assert "Event context is additive" in normalized_prompt
     assert "`event_venue` only after destination is established" in (
         normalized_prompt
     )
@@ -731,6 +636,7 @@ def test_active_phase_injects_complete_skill_and_exposes_commerce() -> None:
     assert [candidate.name for candidate in prepared.tools] == [
         "search_catalog_tool",
         "get_product_details_tool",
+        "resolve_conversation_products_tool",
     ]
     assert prepared.tool_choice is None
     assert prepared.model_settings["parallel_tool_calls"] is False
@@ -754,6 +660,7 @@ def test_event_context_injects_beside_styling_and_exposes_weather() -> None:
     assert [candidate.name for candidate in prepared.tools] == [
         "search_catalog_tool",
         "get_product_details_tool",
+        "resolve_conversation_products_tool",
         "get_weather_forecast_tool",
     ]
     assert "# Event Context" in prepared.system_prompt
@@ -764,7 +671,109 @@ def test_event_context_injects_beside_styling_and_exposes_weather() -> None:
     )
 
 
-def test_runtime_denial_hides_and_execution_blocks_catalog_search() -> None:
+def test_weather_result_does_not_hide_or_block_later_business_tools() -> None:
+    middleware = _middleware()
+    middleware.activate(
+        {
+            "/shopper/cart-management/SKILL.md": "# Cart Management",
+            "/shopper/event-context/SKILL.md": "# Event Context",
+            "/shopper/outfit-styling/SKILL.md": "# Outfit Styling",
+            "/shopper/store-policy-answers/SKILL.md": "# Store Policy Answers",
+        },
+        [
+            "outfit-styling",
+            "event-context",
+            "cart-management",
+            "store-policy-answers",
+        ],
+    )
+    messages = [
+        HumanMessage(content=f"REQUEST ID: {REQUEST_ID}"),
+        AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "id": "activation-call",
+                    "name": SKILL_ACTIVATION_TOOL_NAME,
+                    "args": {
+                        "skill_names": [
+                            "outfit-styling",
+                            "event-context",
+                            "cart-management",
+                            "store-policy-answers",
+                        ],
+                        "event_context_next_question": "none",
+                    },
+                }
+            ],
+        ),
+        ToolMessage(
+            content=(
+                f"{SKILL_ACTIVATION_COMPLETE} "
+                "/shopper/outfit-styling/SKILL.md, "
+                "/shopper/event-context/SKILL.md, "
+                "/shopper/cart-management/SKILL.md, "
+                "/shopper/store-policy-answers/SKILL.md"
+            ),
+            name=SKILL_ACTIVATION_TOOL_NAME,
+            tool_call_id="activation-call",
+        ),
+    ]
+    weather_request = _tool_request(
+        "get_weather_forecast_tool",
+        messages,
+        {"location_source": "shopper_provided_location"},
+    )
+    weather_result = ToolMessage(
+        content="weather evidence",
+        name="get_weather_forecast_tool",
+        tool_call_id="get_weather_forecast_tool-call",
+    )
+
+    assert middleware.wrap_tool_call(
+        weather_request,
+        lambda prepared: weather_result,
+    ) is weather_result
+
+    messages_after_weather = [*messages, weather_result]
+    prepared = _capture_request(
+        middleware,
+        _model_request(messages_after_weather),
+    )
+    assert [candidate.name for candidate in prepared.tools] == [
+        "search_catalog_tool",
+        "get_product_details_tool",
+        "resolve_conversation_products_tool",
+        "add_cart_items_tool",
+        "get_weather_forecast_tool",
+        "get_store_policy_tool",
+    ]
+
+    for tool_name, args in (
+        (
+            "resolve_conversation_products_tool",
+            {"references": ["Intricate Lace Gown", "Wavy Hem Satin Dress"]},
+        ),
+        ("get_product_details_tool", {"product_ref": "dress-1"}),
+        ("add_cart_items_tool", {"product_ref": "dress-1"}),
+        ("get_store_policy_tool", {"topic": "returns"}),
+    ):
+        request = _tool_request(tool_name, messages_after_weather, args)
+        expected = ToolMessage(
+            content=f"{tool_name} result",
+            name=tool_name,
+            tool_call_id=f"{tool_name}-call",
+        )
+        handled: list[ToolCallRequest] = []
+        result = middleware.wrap_tool_call(
+            request,
+            lambda candidate: handled.append(candidate) or expected,
+        )
+        assert handled == [request]
+        assert result is expected
+
+
+def test_runtime_denial_hides_only_weather_and_preserves_product_tools() -> None:
     middleware = _middleware()
     middleware.activate(
         {
@@ -773,24 +782,23 @@ def test_runtime_denial_hides_and_execution_blocks_catalog_search() -> None:
         },
         ["outfit-styling", "event-context"],
     )
-    rejection = (
-        "STOP_TOOL_USE: This turn applies event context to prior candidates."
-    )
+    rejection = "STOP_TOOL_USE: Event date authority is incomplete."
 
-    middleware.deny_tool_for_turn("search_catalog_tool", rejection)
+    middleware.deny_tool_for_turn("get_weather_forecast_tool", rejection)
     prepared = _capture_request(
         middleware,
         _model_request(_activated_messages()),
     )
     handled: list[ToolCallRequest] = []
     blocked = middleware.wrap_tool_call(
-        _tool_request("search_catalog_tool", _activated_messages()),
+        _tool_request("get_weather_forecast_tool", _activated_messages()),
         handled.append,
     )
 
     assert [candidate.name for candidate in prepared.tools] == [
+        "search_catalog_tool",
         "get_product_details_tool",
-        "get_weather_forecast_tool",
+        "resolve_conversation_products_tool",
     ]
     assert handled == []
     assert isinstance(blocked, ToolMessage)
@@ -1029,6 +1037,7 @@ def test_browse_only_product_discovery_rejects_cart_mutation() -> None:
     assert [candidate.name for candidate in prepared.tools] == [
         "search_catalog_tool",
         "get_product_details_tool",
+        "resolve_conversation_products_tool",
     ]
     request = _tool_request(
         "add_cart_items_tool",
@@ -1079,7 +1088,8 @@ def test_cart_management_exposes_cart_mutation_but_not_catalog_search() -> None:
     prepared = _capture_request(middleware, _model_request(messages))
 
     assert [candidate.name for candidate in prepared.tools] == [
-        "add_cart_items_tool"
+        "resolve_conversation_products_tool",
+        "add_cart_items_tool",
     ]
     request = _tool_request("add_cart_items_tool", messages)
     expected = ToolMessage(content="cart updated", tool_call_id="add-call")

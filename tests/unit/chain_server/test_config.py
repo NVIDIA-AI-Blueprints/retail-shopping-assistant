@@ -509,6 +509,7 @@ class TestRepoPromptContracts:
             ),
             "api_key_env": "WEATHER_API_KEY",
             "timeout_seconds": 3.0,
+            "max_provider_attempts": 2,
             "max_forecast_horizon_days": 15,
             "max_range_days": 15,
         }

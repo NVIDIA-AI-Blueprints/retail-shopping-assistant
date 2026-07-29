@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from datetime import date as CalendarDate
 from datetime import datetime, timedelta, timezone
 import json
@@ -175,10 +174,6 @@ class EventWeatherRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid", strict=True)
 
-    candidate_action: Literal[
-        "reuse_prior_candidates",
-        "search_new_candidates",
-    ]
     location_source: Literal[
         "confirmed_saved_zip",
         "shopper_provided_location",
@@ -389,17 +384,13 @@ def get_event_weather_forecast_tool(
     saved_zip_authorized: bool,
     shopper_provided_texts: Collection[str],
     current_date: CalendarDate | None = None,
-    prior_candidates_available: bool = False,
-    on_attempt_consumed: Callable[[], None] | None = None,
-    candidate_action_authorized: Callable[[str], bool] | None = None,
 ) -> BaseTool:
     """Build one request-bound, event-context-only forecast tool.
 
-    The prior activation owns candidate action, while the server releases the
-    saved ZIP only after its narrow confirmation gate and verifies that an
-    explicit named place came verbatim from shopper-authored text. The
-    provider-resolved location is returned so a geographic assumption is
-    transparent.
+    The server releases the saved ZIP only after its narrow confirmation gate
+    and verifies that an explicit named place came verbatim from shopper-authored
+    text. The provider-resolved location is returned so a geographic assumption
+    is transparent.
     """
 
     shopper_texts = tuple(
@@ -417,23 +408,13 @@ def get_event_weather_forecast_tool(
             attempted = True
             return True
 
-    def begin_attempt() -> bool:
-        claimed = claim_attempt()
-        if claimed and on_attempt_consumed is not None:
-            on_attempt_consumed()
-        return claimed
-
     def invalid_weather_request(_error: Any) -> str:
-        begin_attempt()
+        claim_attempt()
         return _weather_failure_evidence(
             weather_failure("weather_request_invalid")
         )
 
     def get_weather_forecast(
-        candidate_action: Literal[
-            "reuse_prior_candidates",
-            "search_new_candidates",
-        ],
         location_source: Literal[
             "confirmed_saved_zip",
             "shopper_provided_location",
@@ -446,21 +427,7 @@ def get_event_weather_forecast_tool(
         start_date: str | None = None,
         end_date: str | None = None,
     ) -> str:
-        if not begin_attempt():
-            return _weather_failure_evidence(
-                weather_failure("weather_request_invalid")
-            )
-        if (
-            candidate_action_authorized is not None
-            and not candidate_action_authorized(candidate_action)
-        ):
-            return _weather_failure_evidence(
-                weather_failure("weather_request_invalid")
-            )
-        if (
-            candidate_action == "reuse_prior_candidates"
-            and not prior_candidates_available
-        ):
+        if not claim_attempt():
             return _weather_failure_evidence(
                 weather_failure("weather_request_invalid")
             )
@@ -560,9 +527,6 @@ def get_event_weather_forecast_tool(
         description=(
             "Get one live daily forecast for event styling, only after the "
             "event place and exact date or complete date range are established. "
-            "Copy the event_context_action already bound by shopper-skill "
-            "activation into candidate_action exactly; do not reinterpret it "
-            "at weather-call time. "
             "Use confirmed_saved_zip only after the shopper explicitly confirms "
             "the event is in their usual area, and omit location in that mode. "
             "Otherwise use shopper_provided_location and copy the shortest "

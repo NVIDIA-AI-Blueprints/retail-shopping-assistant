@@ -16,7 +16,7 @@ from pathlib import Path
 import re
 from threading import Lock
 import time
-from typing import Any, AsyncIterator, ClassVar, Literal
+from typing import Any, AsyncIterator, Literal
 import unicodedata
 import uuid
 
@@ -77,7 +77,7 @@ from .conversation_products import (
 from .media_perception import MediaPerceptionClient
 from .skill_activation import (
     SKILL_ACTIVATION_COMPLETE,
-    SKILL_ACTIVATION_EVENT_ACTION_INVALID,
+    SKILL_ACTIVATION_EVENT_CONTEXT_INVALID,
     SKILL_ACTIVATION_EVENT_CONTEXT_REQUIRES_STYLING,
     SKILL_ACTIVATION_MODIFIER_REQUIRES_PRIMARY,
     SKILL_ACTIVATION_MULTIPLE_PRIMARY,
@@ -202,31 +202,12 @@ _SEARCH_GUIDANCE_EVIDENCE_PREFIX = "SEARCH_GUIDANCE_EVIDENCE:"
 _SEARCH_SCOPE_RELATION_EVIDENCE_PREFIX = "SEARCH_SCOPE_RELATION_EVIDENCE:"
 _CATALOG_SCOPE_OUTCOME_PREFIX = "CATALOG_SCOPE_OUTCOME:"
 _WEATHER_TOOL_NAME = "get_weather_forecast_tool"
-EventContextCandidateAction = Literal[
-    "reuse_prior_candidates",
-    "search_new_candidates",
-]
 EventContextNextQuestion = Literal[
     "event_location",
     "event_venue",
     "event_date",
     "none",
 ]
-_EVENT_CONTEXT_REUSE_SEARCH_BLOCK = (
-    "STOP_TOOL_USE: This turn applies event context to prior candidates, so "
-    "no new catalog search may run. Answer from the established candidates."
-)
-_EVENT_CONTEXT_REUSE_PRODUCT_BLOCK = (
-    "STOP_TOOL_USE: This turn applies event context to prior candidates, so "
-    "no product lookup may run. Answer from the established candidates."
-)
-_EVENT_CONTEXT_PRODUCT_READ_TOOLS = (
-    "search_catalog_tool",
-    "get_product_details_tool",
-    "resolve_conversation_products_tool",
-    "check_product_availability_tool",
-    "check_active_promotions_tool",
-)
 _EVENT_CONTEXT_DATE_REQUIRED_WEATHER_BLOCK = (
     "STOP_TOOL_USE: No shopper-authored event date is established for this "
     "turn. Do not call weather or invent a date argument."
@@ -238,6 +219,15 @@ _EVENT_CONTEXT_LOCATION_REQUIRED_WEATHER_BLOCK = (
 _EVENT_CONTEXT_VENUE_REQUIRED_WEATHER_BLOCK = (
     "STOP_TOOL_USE: Event venue or setting is still the activation-owned next "
     "question, so weather lookup cannot run this turn."
+)
+_EVENT_CONTEXT_ADDITIVE_ACTIVATION_REMINDER = (
+    "EVENT_CONTEXT_ADDITIVE_BOUNDARY: Tool availability is not a product "
+    "request. A shopper reply that only supplies the destination, venue, or "
+    "date requested in the prior response is context fulfillment, even when "
+    "it changes styling advice: preserve established candidates and do not "
+    "call a non-weather business tool. A same-turn comparison, refinement, "
+    "replacement, search, check, cart request, or policy request continues "
+    "its selected skill's normal tool procedure."
 )
 _WEATHER_DIAGNOSTIC_REDACTION = {"redacted": True}
 _WEATHER_PARTIAL_OUTPUT_REDACTION = "WEATHER TOOL OUTPUT REDACTED"
@@ -786,7 +776,7 @@ _UNSUPPORTED_GUIDANCE_PATTERN = re.compile(
     flags=re.IGNORECASE,
 )
 
-_REUSE_EVENT_ADJUSTMENT_PHRASES = {
+_CONTEXT_ONLY_EVENT_ADJUSTMENT_PHRASES = {
     "streamlined_accessories": "keep accessories streamlined",
     "lower_profile_footwear": "favor lower-profile footwear",
     "polished_unfussy_finish": (
@@ -1650,17 +1640,8 @@ class _ShopperSkillActivationInput(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    _prior_candidates_available: ClassVar[bool] = False
-    _current_shopper_text: ClassVar[str] = ""
-
     skill_names: list[str]
-    event_context_action: EventContextCandidateAction | None = None
     event_context_next_question: EventContextNextQuestion | None = None
-    event_context_product_work_quote: str | None = Field(
-        default=None,
-        min_length=1,
-        max_length=240,
-    )
 
     @model_validator(mode="after")
     def primary_procedures_are_exclusive(self) -> "_ShopperSkillActivationInput":
@@ -1689,80 +1670,23 @@ class _ShopperSkillActivationInput(BaseModel):
                 "event-context requires outfit-styling",
             )
         event_context_selected = "event-context" in selected
-        if event_context_selected != (self.event_context_action is not None):
-            raise PydanticCustomError(
-                SKILL_ACTIVATION_EVENT_ACTION_INVALID,
-                "event_context_action is required exactly when event-context "
-                "is selected",
-            )
         if event_context_selected != (
             self.event_context_next_question is not None
         ):
             raise PydanticCustomError(
-                SKILL_ACTIVATION_EVENT_ACTION_INVALID,
+                SKILL_ACTIVATION_EVENT_CONTEXT_INVALID,
                 "event_context_next_question is required exactly when "
                 "event-context is selected",
-            )
-        if (
-            self.event_context_action == "reuse_prior_candidates"
-            and selected != {"outfit-styling", "event-context"}
-        ):
-            raise PydanticCustomError(
-                SKILL_ACTIVATION_EVENT_ACTION_INVALID,
-                "reuse_prior_candidates is valid only when the turn solely "
-                "applies event context beside outfit styling",
-            )
-        quote_required = (
-            self._prior_candidates_available
-            and self.event_context_action == "search_new_candidates"
-        )
-        quote = self.event_context_product_work_quote
-        if quote_required != (quote is not None):
-            raise PydanticCustomError(
-                SKILL_ACTIVATION_EVENT_ACTION_INVALID,
-                "search_new_candidates requires an exact current-turn "
-                "product-work quote when prior candidates exist; reuse and "
-                "initial event turns omit it",
-            )
-        if quote is not None and (
-            quote != quote.strip()
-            or quote.casefold()
-            not in self._current_shopper_text.casefold()
-        ):
-            raise PydanticCustomError(
-                SKILL_ACTIVATION_EVENT_ACTION_INVALID,
-                "event_context_product_work_quote must be an exact bounded "
-                "span from the current shopper message",
             )
         return self
 
 
 def _skill_activation_input_model(
     skill_names: tuple[str, ...],
-    *,
-    prior_candidates_available: bool = True,
-    current_shopper_text: str = "",
 ) -> type[BaseModel]:
     """Create the semantic skill-selection schema from the active registry."""
 
     skill_name_type = Literal.__getitem__(skill_names)
-    event_action_values = (
-        (
-            "reuse_prior_candidates",
-            "search_new_candidates",
-        )
-        if prior_candidates_available
-        else ("search_new_candidates",)
-    )
-    event_action_type = Literal.__getitem__(event_action_values)
-    reuse_guidance = (
-        "Use reuse_prior_candidates only when the current turn solely adds "
-        "event context to established candidates and requests no new or "
-        "refined products. "
-        if prior_candidates_available
-        else "No established candidates are available, so event-context must "
-        "use search_new_candidates. "
-    )
     activation_model = create_model(
         "ShopperSkillActivationInput",
         __base__=_ShopperSkillActivationInput,
@@ -1783,19 +1707,6 @@ def _skill_activation_input_model(
                     "response would otherwise ask about or branch on missing "
                     "destination or venue context. Generic occasion advice is "
                     "not a reason to omit it."
-                ),
-            ),
-        ),
-        event_context_action=(
-            event_action_type | None,
-            Field(
-                default=None,
-                description=(
-                    "Required exactly when event-context is selected; omit "
-                    "otherwise. "
-                    f"{reuse_guidance}"
-                    "Use search_new_candidates for an initial event-shopping "
-                    "turn or any explicit request for new or refined products."
                 ),
             ),
         ),
@@ -1825,28 +1736,7 @@ def _skill_activation_input_model(
                 ),
             ),
         ),
-        event_context_product_work_quote=(
-            str | None,
-            Field(
-                default=None,
-                min_length=1,
-                max_length=240,
-                description=(
-                    "With established candidates, required only for "
-                    "search_new_candidates: copy the shortest exact span from "
-                    "the current shopper message that explicitly requests "
-                    "product, cart, or policy work beyond applying event "
-                    "context. Place, venue, date, weather, or usual-area "
-                    "confirmation alone never qualifies; use "
-                    "reuse_prior_candidates and omit this field. Omit it when "
-                    "there are no established candidates or when event-context "
-                    "is not selected."
-                ),
-            ),
-        ),
     )
-    activation_model._prior_candidates_available = prior_candidates_available
-    activation_model._current_shopper_text = current_shopper_text
     return activation_model
 
 
@@ -2409,11 +2299,8 @@ class DeepAgentsRuntime:
         if skills_backend is None:
             raise RuntimeError("Shopper skill backend is unavailable.")
         skill_registry = _shopper_skill_registry(skills_root)
-        prior_weather_candidates = _historical_product_names(state.context)
         skill_activation_input = _skill_activation_input_model(
             tuple(skill_registry),
-            prior_candidates_available=bool(prior_weather_candidates),
-            current_shopper_text=state.query,
         )
         retrieved: dict[str, str] = {}
         state.retrieved = retrieved
@@ -2441,9 +2328,6 @@ class DeepAgentsRuntime:
         product_evidence = ProductEvidence()
         product_resolution_used = False
         product_resolution_lock = Lock()
-        event_context_gate_lock = Lock()
-        event_context_reuses_prior_candidates = False
-        event_context_candidate_action: EventContextCandidateAction | None = None
 
         def _lock_taxonomy_constraint_values(
             scope_key: str | None,
@@ -2512,7 +2396,12 @@ class DeepAgentsRuntime:
             discovery or outfit styling is active. Select exact values from the
             current Catalog capabilities. Do not use for a product already
             established in this conversation, and do not repeat a completed hard-
-            filter scope with different semantic wording.
+            filter scope with different semantic wording. Tool availability is
+            not a search request. Do not call when the current shopper message
+            only supplies the event destination, venue, or date requested in the
+            prior response; preserve established candidates. If that same message
+            also asks for a comparison, refinement, replacement, or new product,
+            follow the active primary skill's normal procedure.
             """
 
             nonlocal catalog_searches_this_turn
@@ -2522,9 +2411,6 @@ class DeepAgentsRuntime:
             nonlocal pending_no_direct_constraint_clear
             nonlocal pending_taxonomy_constraints
             nonlocal pending_schema_requirements
-            with event_context_gate_lock:
-                if event_context_reuses_prior_candidates:
-                    return _EVENT_CONTEXT_REUSE_SEARCH_BLOCK
             taxonomy = taxonomy or {"category": [], "subcategory": []}
             required_constraints = required_constraints or {}
             capabilities = turn_capabilities
@@ -3771,51 +3657,12 @@ class DeepAgentsRuntime:
             shopper_authored_texts
         )
 
-        def reserve_prior_candidates_for_event_context(
-            *,
-            close_tool_loop: bool,
-        ) -> None:
-            nonlocal event_context_reuses_prior_candidates
-            with event_context_gate_lock:
-                event_context_reuses_prior_candidates = True
-            for tool_name in _EVENT_CONTEXT_PRODUCT_READ_TOOLS:
-                skill_gate.deny_tool_for_turn(
-                    tool_name,
-                    (
-                        _EVENT_CONTEXT_REUSE_SEARCH_BLOCK
-                        if tool_name == "search_catalog_tool"
-                        else _EVENT_CONTEXT_REUSE_PRODUCT_BLOCK
-                    ),
-                )
-            if close_tool_loop:
-                tool_loop_control.close_for_synthesis()
-
-        def weather_candidate_action_authorized(action: str) -> bool:
-            with event_context_gate_lock:
-                return action == event_context_candidate_action
-
-        def close_reuse_loop_after_weather_attempt() -> None:
-            with event_context_gate_lock:
-                reuse_selected = (
-                    event_context_candidate_action
-                    == "reuse_prior_candidates"
-                )
-            if reuse_selected:
-                reserve_prior_candidates_for_event_context(
-                    close_tool_loop=True,
-                )
-
         weather_forecast_tool = get_event_weather_forecast_tool(
             self._weather_client,
             saved_zipcode=_saved_zipcode(state.shopper_context),
             saved_zip_authorized=_saved_zip_authorized_for_weather(state),
             shopper_provided_texts=shopper_authored_texts,
             current_date=current_utc_date,
-            prior_candidates_available=bool(prior_weather_candidates),
-            on_attempt_consumed=close_reuse_loop_after_weather_attempt,
-            candidate_action_authorized=(
-                weather_candidate_action_authorized
-            ),
         )
         if not weather_date_available:
             skill_gate.deny_tool_for_turn(
@@ -3848,9 +3695,7 @@ class DeepAgentsRuntime:
         @tool(args_schema=skill_activation_input, return_direct=False)
         def activate_shopper_skills_tool(
             skill_names: list[str],
-            event_context_action: EventContextCandidateAction | None = None,
             event_context_next_question: EventContextNextQuestion | None = None,
-            event_context_product_work_quote: str | None = None,
         ) -> str:
             """Select and load shopper behavior skills for this turn. This is
             the required first step before answering or calling shopping tools.
@@ -3869,11 +3714,7 @@ class DeepAgentsRuntime:
             outfit-styling as the primary skill throughout an
             active outfit-building thread, including its single-piece follow-up
             searches.
-            When event-context is selected, set event_context_action to
-            reuse_prior_candidates only if this turn solely supplies event
-            context for established candidates and requests no new or refined
-            products. Otherwise set it to search_new_candidates. The action is
-            omitted when event-context is not selected. Also set exactly one
+            When event-context is selected, set exactly one
             event_context_next_question: event_location only when destination
             is still missing and material; event_venue only after destination
             is established when venue/setting is missing and material;
@@ -3888,27 +3729,17 @@ class DeepAgentsRuntime:
             setting matters; after
             the shopper confirms a beach setting, choose event_date when live
             weather is enabled and material. Omit it when event-context is not
-            selected. When established
-            candidates exist, search_new_candidates also requires
-            event_context_product_work_quote: the shortest exact span from the
-            current shopper message that explicitly requests product, cart, or
-            policy work beyond applying event context. Event place, venue,
-            date, weather, or usual-area confirmation does not qualify.
+            selected. Event context is additive: it never replaces the primary
+            skill's product work or tool grants.
 
             """
-
-            nonlocal event_context_candidate_action
 
             try:
                 validated_activation = skill_activation_input.model_validate(
                     {
                         "skill_names": skill_names,
-                        "event_context_action": event_context_action,
                         "event_context_next_question": (
                             event_context_next_question
-                        ),
-                        "event_context_product_work_quote": (
-                            event_context_product_work_quote
                         ),
                     }
                 )
@@ -3916,9 +3747,6 @@ class DeepAgentsRuntime:
                 return skill_gate.handle_activation_validation_error(exc)
             selected_names = list(
                 dict.fromkeys(validated_activation.skill_names)
-            )
-            validated_event_action = (
-                validated_activation.event_context_action
             )
             validated_next_question = (
                 validated_activation.event_context_next_question
@@ -3937,8 +3765,6 @@ class DeepAgentsRuntime:
                 )
             if not activated:
                 return "SHOPPER_SKILL_ACTIVATION_ALREADY_COMPLETE"
-            with event_context_gate_lock:
-                event_context_candidate_action = validated_event_action
             if validated_next_question == "event_location":
                 skill_gate.deny_tool_for_turn(
                     _WEATHER_TOOL_NAME,
@@ -3949,18 +3775,16 @@ class DeepAgentsRuntime:
                     _WEATHER_TOOL_NAME,
                     _EVENT_CONTEXT_VENUE_REQUIRED_WEATHER_BLOCK,
                 )
-            if validated_event_action == "reuse_prior_candidates":
-                reserve_prior_candidates_for_event_context(
-                    close_tool_loop=(
-                        not weather_date_available
-                        or validated_next_question
-                        in {"event_location", "event_venue"}
-                    ),
-                )
-            return (
+            activation_result = (
                 f"{SKILL_ACTIVATION_COMPLETE} "
                 + ", ".join(selected_files)
             )
+            if "event-context" in selected_names:
+                return (
+                    f"{activation_result}\n"
+                    f"{_EVENT_CONTEXT_ADDITIVE_ACTIVATION_REMINDER}"
+                )
+            return activation_result
 
         activate_shopper_skills_tool.handle_validation_error = (
             skill_gate.handle_activation_validation_error
@@ -4067,35 +3891,44 @@ class DeepAgentsRuntime:
             result,
             request_id=request_id,
         )
-        weather_outcome, weather_candidate_action = (
-            _current_weather_outcome_and_action(
-                result,
-                request_id=request_id,
-            )
-        )
-        (
-            _accepted_event_context_action,
-            event_context_next_question,
-        ) = _current_event_context_activation(
+        weather_outcome = _current_weather_outcome(
             result,
             request_id=request_id,
         )
-        reuses_prior_candidates = (
-            weather_candidate_action == "reuse_prior_candidates"
+        event_context_next_question = _current_event_context_next_question(
+            result,
+            request_id=request_id,
+        )
+        enforce_event_context = self._event_context_response_guidance_active(
+            state
+        )
+        protected_event_response = (
+            enforce_event_context
+            and not _has_current_non_weather_business_tool_activity(
+                result,
+                request_id=request_id,
+            )
+            and (
+                weather_outcome is not None
+                or (
+                    not draft_response.strip()
+                    and bool(_historical_product_names(state.context))
+                )
+            )
         )
         if (
-            reuses_prior_candidates
+            protected_event_response
             and event_context_next_question
             in {"event_location", "event_venue"}
         ):
-            return _compose_prior_candidate_event_response(
+            return _compose_context_only_event_response(
                 state,
                 styling="",
                 next_question=event_context_next_question,
                 weather_outcome=weather_outcome,
             )
-        if reuses_prior_candidates and not draft_response.strip():
-            return _compose_prior_candidate_event_response(
+        if protected_event_response and not draft_response.strip():
+            return _compose_context_only_event_response(
                 state,
                 styling="",
                 next_question=event_context_next_question,
@@ -4106,12 +3939,9 @@ class DeepAgentsRuntime:
             request_id=request_id,
         )
         has_current_search_candidates = bool(current_search_groups)
-        enforce_event_context = self._event_context_response_guidance_active(
-            state
-        )
         if not getattr(self.config, "grounding_rewrite_enabled", True):
-            if reuses_prior_candidates:
-                return _compose_prior_candidate_event_response(
+            if protected_event_response:
+                return _compose_context_only_event_response(
                     state,
                     styling="",
                     next_question=event_context_next_question,
@@ -4177,7 +4007,7 @@ class DeepAgentsRuntime:
             and not current_evidence
             and not prior_evidence
         )
-        if enforce_event_context and reuses_prior_candidates:
+        if protected_event_response:
             editor_system_prompt = (
                 "You select a tiny event-setting styling decision. Return only "
                 "one JSON object with exactly these keys:\n"
@@ -4254,7 +4084,7 @@ class DeepAgentsRuntime:
             )
         if (
             isinstance(weather_outcome, WeatherForecastEvidence)
-            and not reuses_prior_candidates
+            and not protected_event_response
         ):
             weather_editor_rule = (
                 "Highest-priority successful-weather output rule:\n"
@@ -4271,7 +4101,7 @@ class DeepAgentsRuntime:
                 "- Ask no repeated location, venue, or date question.\n\n"
             )
             editor_system_prompt = weather_editor_rule + editor_system_prompt
-        if enforce_event_context and reuses_prior_candidates:
+        if protected_event_response:
             shopper_event_text = "\n".join(
                 f"- {text}" for text in _shopper_authored_texts(state)
             )
@@ -4352,8 +4182,8 @@ class DeepAgentsRuntime:
                     result,
                     request_id=request_id,
                 )
-            if reuses_prior_candidates:
-                return _compose_prior_candidate_event_response(
+            if protected_event_response:
+                return _compose_context_only_event_response(
                     state,
                     styling="",
                     next_question=event_context_next_question,
@@ -4382,8 +4212,8 @@ class DeepAgentsRuntime:
                     result,
                     request_id=request_id,
                 )
-            if reuses_prior_candidates:
-                return _compose_prior_candidate_event_response(
+            if protected_event_response:
+                return _compose_context_only_event_response(
                     state,
                     styling="",
                     next_question=event_context_next_question,
@@ -4420,8 +4250,8 @@ class DeepAgentsRuntime:
                     result,
                     request_id=request_id,
                 )
-            if reuses_prior_candidates:
-                return _compose_prior_candidate_event_response(
+            if protected_event_response:
+                return _compose_context_only_event_response(
                     state,
                     styling="",
                     next_question=event_context_next_question,
@@ -4440,10 +4270,10 @@ class DeepAgentsRuntime:
             calls=1,
             detail="Final response grounding rewrite",
         )
-        if reuses_prior_candidates:
-            return _compose_prior_candidate_event_response(
+        if protected_event_response:
+            return _compose_context_only_event_response(
                 state,
-                styling=_render_reuse_event_styling_decision(
+                styling=_render_context_only_event_styling_decision(
                     rewritten,
                     shopper_texts=_shopper_authored_texts(state),
                 ),
@@ -4451,11 +4281,22 @@ class DeepAgentsRuntime:
                 weather_outcome=weather_outcome,
             )
         if isinstance(weather_outcome, WeatherFailure):
-            return self._grounding_failure_fallback(
-                state,
-                result,
-                request_id=request_id,
-                weather_outcome=weather_outcome,
+            rewritten = _strip_weather_fact_sentences(
+                _scrub_internal_shopper_language(rewritten)
+            )
+            if not rewritten.strip():
+                return self._grounding_failure_fallback(
+                    state,
+                    result,
+                    request_id=request_id,
+                    weather_outcome=weather_outcome,
+                )
+            return "\n\n".join(
+                (
+                    rewritten,
+                    _conditional_weather_styling_direction(),
+                    _format_weather_outcome(weather_outcome),
+                )
             )
         if enforce_event_context and has_current_search_candidates and not (
             _response_mentions_search_candidate(
@@ -4683,12 +4524,15 @@ Event-weather boundary:
   to obtain forecast inputs.
 - Weather is an event-context helper only. Call it at most once in a turn and,
   when both weather and product search are needed, call weather first.
-- Shopper-skill activation already bound the turn's `event_context_action`.
-  Copy that exact value into the weather call's `candidate_action`; do not
-  reinterpret it. A mismatch fails before provider I/O. On
-  `reuse_prior_candidates`, product reads are already blocked and consuming
-  the one weather attempt closes the remaining tool loop. On
-  `search_new_candidates`, normal granted product work remains available.
+- Event context is additive. It may grant weather beside outfit styling, but it
+  never removes product tools granted by the primary skill. Use only the tools
+  needed for the shopper's current request.
+- Tool availability is not a request to use it. When the current shopper turn
+  only supplies an event destination, venue, or date requested in the prior
+  response, preserve the established candidates and do not call a non-weather
+  business tool. If that same turn also asks to compare, refine, replace,
+  search, check, or change something, continue the primary or standalone
+  skill's normal tool procedure.
 - A successful lookup requires a shopper-stated place plus an exact date,
   complete inclusive range, or the bounded next_week mode, including its
   required weekday when the shopper supplied one. Keep the shortest sufficient
@@ -5686,9 +5530,6 @@ def _weather_diagnostic_summary(
 ) -> dict[str, str]:
     """Return non-sensitive weather request shape and typed outcome."""
 
-    action = arguments.get("candidate_action")
-    if action not in {"reuse_prior_candidates", "search_new_candidates"}:
-        action = "invalid"
     if arguments.get("relative_date") == "next_week":
         weekday = arguments.get("weekday")
         if weekday in {
@@ -5739,7 +5580,6 @@ def _weather_diagnostic_summary(
         else:
             outcome = "weather_response_invalid"
     return {
-        "candidate_action": str(action),
         "request_shape": request_shape,
         "location_source": str(location_source),
         "provider_input": provider_input,
@@ -5799,10 +5639,6 @@ def _tool_rejection_reason(content: str) -> str | None:
         (
             "STOP_TOOL_USE: Product-detail read limit reached",
             "product_detail_read_limit",
-        ),
-        (
-            _EVENT_CONTEXT_REUSE_SEARCH_BLOCK,
-            "event_context_reuses_prior_candidates",
         ),
         (
             "The catalog search request does not match current capabilities:",
@@ -6234,15 +6070,44 @@ def _has_search_only_tool_evidence(result: Any, *, request_id: str) -> bool:
     )
 
 
-def _current_event_context_activation(
+def _has_current_non_weather_business_tool_activity(
     result: Any,
     *,
     request_id: str,
-) -> tuple[str | None, str | None]:
-    """Return the server-accepted event action and next-question boundary."""
+) -> bool:
+    """Return whether this turn attempted any non-weather business capability."""
+
+    for message in _current_turn_messages(_result_messages(result), request_id):
+        if _message_type(message) != "tool":
+            continue
+        name = str(_value(message, "name") or "")
+        content = _content_to_text(_value(message, "content"))
+        if name in {SKILL_ACTIVATION_TOOL_NAME, "read_file", _WEATHER_TOOL_NAME}:
+            continue
+        if content.startswith(
+            (
+                SKILL_ACTIVATION_COMPLETE,
+                SKILL_ACTIVATION_REQUIRED,
+                SKILL_TOOL_NOT_GRANTED,
+                "SHOPPER_SKILL_ACTIVATION_FAILED:",
+                WEATHER_FORECAST_EVIDENCE_PREFIX,
+                WEATHER_FORECAST_FAILURE_PREFIX,
+            )
+        ):
+            continue
+        return True
+    return False
+
+
+def _current_event_context_next_question(
+    result: Any,
+    *,
+    request_id: str,
+) -> str | None:
+    """Return the server-accepted event-context question boundary."""
 
     messages = _current_turn_messages(_result_messages(result), request_id)
-    activation_by_call_id: dict[str, tuple[str | None, str | None]] = {}
+    activation_by_call_id: dict[str, str | None] = {}
     for message in messages:
         if _message_type(message) != "ai":
             continue
@@ -6253,15 +6118,6 @@ def _current_event_context_activation(
                 or not call["tool_call_id"]
             ):
                 continue
-            action = call["arguments"].get("event_context_action")
-            accepted_action = (
-                str(action)
-                if action in {
-                    "reuse_prior_candidates",
-                    "search_new_candidates",
-                }
-                else None
-            )
             next_question = call["arguments"].get(
                 "event_context_next_question"
             )
@@ -6275,10 +6131,7 @@ def _current_event_context_activation(
                 }
                 else None
             )
-            activation_by_call_id[call["tool_call_id"]] = (
-                accepted_action,
-                accepted_next_question,
-            )
+            activation_by_call_id[call["tool_call_id"]] = accepted_next_question
 
     for message in messages:
         if _message_type(message) != "tool":
@@ -6291,29 +6144,18 @@ def _current_event_context_activation(
         ):
             return activation_by_call_id.get(
                 str(_value(message, "tool_call_id") or ""),
-                (None, None),
             )
-    return None, None
+    return None
 
 
-def _current_weather_outcome_and_action(
+def _current_weather_outcome(
     result: Any,
     *,
     request_id: str,
-) -> tuple[
-    WeatherForecastEvidence | WeatherFailure | None,
-    str | None,
-]:
-    """Return weather evidence and the server-accepted activation action."""
+) -> WeatherForecastEvidence | WeatherFailure | None:
+    """Return the one validated current-turn weather outcome, if present."""
 
-    messages = _current_turn_messages(_result_messages(result), request_id)
-    accepted_activation_action, _next_question = (
-        _current_event_context_activation(
-            result,
-            request_id=request_id,
-        )
-    )
-    for message in messages:
+    for message in _current_turn_messages(_result_messages(result), request_id):
         if _message_type(message) != "tool":
             continue
         name = str(_value(message, "name") or "")
@@ -6331,26 +6173,9 @@ def _current_weather_outcome_and_action(
             continue
         parsed = parse_weather_tool_evidence(content)
         if isinstance(parsed, (WeatherForecastEvidence, WeatherFailure)):
-            return parsed, accepted_activation_action
-        return (
-            weather_failure("weather_response_invalid"),
-            accepted_activation_action,
-        )
-    return None, accepted_activation_action
-
-
-def _current_weather_outcome(
-    result: Any,
-    *,
-    request_id: str,
-) -> WeatherForecastEvidence | WeatherFailure | None:
-    """Return the one validated current-turn weather outcome, if present."""
-
-    outcome, _action = _current_weather_outcome_and_action(
-        result,
-        request_id=request_id,
-    )
-    return outcome
+            return parsed
+        return weather_failure("weather_response_invalid")
+    return None
 
 
 def _escape_markdown_inline(value: str) -> str:
@@ -6536,22 +6361,6 @@ def _strip_weather_fact_sentences(response: str) -> str:
     return "\n".join(retained_lines).strip()
 
 
-def _compose_prior_candidate_weather_styling(
-    context: str,
-    weather_outcome: WeatherForecastEvidence,
-) -> str:
-    """Render prior candidates with bounded server-owned styling direction."""
-
-    names = _historical_product_names(context)
-    parts = [
-        _prior_weather_candidates_text(names) if names else "",
-        _deterministic_weather_styling_direction(weather_outcome),
-    ]
-    return "\n\n".join(
-        part for part in parts if part
-    )
-
-
 def _deterministic_weather_styling_direction(
     outcome: WeatherForecastEvidence,
 ) -> str:
@@ -6675,7 +6484,7 @@ def _ensure_prior_weather_candidates(response: str, context: str) -> str:
     return f"{prefix}\n\n{response.strip()}" if response.strip() else prefix
 
 
-def _render_reuse_event_styling_decision(
+def _render_context_only_event_styling_decision(
     response: str,
     *,
     shopper_texts: tuple[str, ...],
@@ -6704,7 +6513,7 @@ def _render_reuse_event_styling_decision(
         or any(not isinstance(value, str) for value in adjustments)
         or len(set(adjustments)) != len(adjustments)
         or any(
-            value not in _REUSE_EVENT_ADJUSTMENT_PHRASES
+            value not in _CONTEXT_ONLY_EVENT_ADJUSTMENT_PHRASES
             for value in adjustments
         )
     ):
@@ -6724,7 +6533,7 @@ def _render_reuse_event_styling_decision(
         return ""
 
     phrases = [
-        _REUSE_EVENT_ADJUSTMENT_PHRASES[value]
+        _CONTEXT_ONLY_EVENT_ADJUSTMENT_PHRASES[value]
         for value in adjustments
     ]
     if len(phrases) == 1:
@@ -6759,14 +6568,14 @@ def _event_context_followup_question(
     return "Where is the event taking place?"
 
 
-def _compose_prior_candidate_event_response(
+def _compose_context_only_event_response(
     state: State,
     *,
     styling: str,
     next_question: str | None,
     weather_outcome: WeatherForecastEvidence | WeatherFailure | None,
 ) -> str:
-    """Compose reuse from exact candidates, bounded judgment, and typed facts."""
+    """Compose a no-business-tool event turn from bounded, grounded context."""
 
     names = _historical_product_names(state.context)
     parts: list[str] = []

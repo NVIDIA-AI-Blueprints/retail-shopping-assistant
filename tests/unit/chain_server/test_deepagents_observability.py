@@ -159,7 +159,6 @@ def test_weather_trace_redacts_arguments_and_partial_output() -> None:
                     "id": "weather-call",
                     "name": "get_weather_forecast_tool",
                     "args": {
-                        "candidate_action": "reuse_prior_candidates",
                         "location_source": "shopper_provided_location",
                         "location": "Seattle",
                         "location_query": "Seattle, WA",
@@ -194,7 +193,6 @@ def test_weather_trace_redacts_arguments_and_partial_output() -> None:
             "arguments": {"redacted": True},
             "status": "completed",
             "weather": {
-                "candidate_action": "reuse_prior_candidates",
                 "request_shape": "relative_exact_date",
                 "location_source": "shopper_provided_location",
                 "provider_input": "location_query",

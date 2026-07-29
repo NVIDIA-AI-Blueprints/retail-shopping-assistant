@@ -115,15 +115,17 @@ now, the assistant starts with one grounded requested or core product role and
 may ask only that same selected question beside the results.
 
 When you reply with only destination, venue, or date after options were already
-shown, the assistant keeps those options and does no catalog search, detail
-lookup, prior-product resolution, availability check, or promotion check. If
-the selected follow-up is destination or venue, it does not call weather; this
-context-only reuse reply also closes immediately after the one question. If the
-selected follow-up is date, it asks only for that date. If no follow-up is
-needed, it acknowledges the context without starting the next product role.
-If you instead ask for a different or refined product, the normal shopping
-tools stay available, but weather remains unavailable while destination or a
-material venue/setting is still missing.
+shown, the assistant keeps those options and normally needs no catalog search,
+detail lookup, prior-product resolution, availability check, or promotion
+check. If the selected follow-up is destination or venue, it does not call
+weather. If the selected follow-up is date, it asks only for that date. If no
+follow-up is needed, it acknowledges the context without starting the next
+product role. These are conversational choices, not revoked capabilities:
+event context adds weather to the outfit-styling capabilities and never removes
+the normal product tools or closes their loop. If you instead ask to compare,
+inspect, replace, or refine products, those normal shopping tools remain
+available. Weather can still be unavailable when its own destination, venue, or
+date authority is missing.
 
 Weather provider calls are disabled by default. When an operator has enabled
 them, the assistant gets at most one model-visible forecast-tool attempt on an
@@ -174,20 +176,28 @@ visible and reversible; that resolved place is omitted when the confirmed saved
 ZIP is used.
 Raw weather tool inputs/output are redacted from diagnostics and failed-turn
 partial output. Diagnostics retain only categorical call shape and outcome,
-never your place, ZIP, date, resolved place, URL, provider body, or exception;
-saved profile ZIP is also scrubbed from diagnostic string keys and values. The
-final assistant summary remains part of the durable
+specifically `request_shape`, `location_source`, `provider_input`, and
+`outcome`; they never retain your place, ZIP, date, resolved place, URL,
+provider body, or exception. Saved profile ZIP is also scrubbed from diagnostic
+string keys and values. The final assistant summary remains part of the durable
 conversation and may be exactly replayed, but prior forecast summaries are
 redacted from later graph and grounding-editor discussion, and prior weather
 tool output is not reused as evidence.
-Grounding-editor sentences containing weather-domain fact language or
-fact-shaped dates/values are removed while ordinary grounded styling language
-remains. If none remains, deterministic catalog rendering plus the canonical
-weather block is used.
-When a context-only reply applies event or weather context to options already
-shown, missing location or setting goes straight to the one selected question
-without another editor call. Once that context is established, a narrow
-decision step sees only bounded shopper-authored event text and a
+When product, cart, policy, availability, promotion, or historical-product
+work occurs in the current turn, its evidence follows the normal grounding
+path. Weather-domain fact language or fact-shaped dates/values written by the
+editor is removed while ordinary grounded styling language remains; the server
+adds the canonical weather block separately.
+The protected event decision renderer is selected structurally only when event
+context is active, the current turn has no non-weather business-tool activity,
+and a current typed weather outcome (success or failure) exists. Missing
+location/setting or an empty draft skips that decision step. A separate
+prior-candidate fallback deterministically keeps the options only when the draft
+is empty; a nonempty no-tool comparison or refinement stays on ordinary
+grounding only when there is no current weather outcome. A comparison that calls
+only weather remains protected, while current non-weather business activity
+guarantees ordinary grounding. Other protected weather-outcome turns give the
+narrow decision step only bounded shopper-authored event text and a
 server-generated weather styling direction. It returns structured choices, not
 shopper-facing prose: an exact setting quote from your words and one or two
 allowlisted adjustments. Invalid or invented output is ignored. The server

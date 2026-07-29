@@ -42,6 +42,13 @@ internal reasoning to the shopper.
 - A shopper-owned item, uploaded image, known catalog product, or confirmed
   candidate group may be an anchor. An anchor is context, not a request to
   search for that item again.
+- Tool availability is not a search request. When `event-context` is active, a
+  current reply that only supplies the destination, venue, or date requested
+  in the prior response is context fulfillment, even when it changes styling
+  advice. Preserve the established candidates and run no non-weather business
+  tool. If that same reply also asks for a comparison, refinement,
+  replacement, new product, cart action, or policy answer, continue the
+  selected skill's normal procedure.
 - Search only the role requested now. For one named role, include its faithful
   advertised kinds together; do not fill spare search capacity with adjacent
   categories. A dress is not a bottom and does not satisfy a request for

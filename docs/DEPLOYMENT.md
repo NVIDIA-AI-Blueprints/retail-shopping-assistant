@@ -389,10 +389,10 @@ invocation consumes its attempt with no model repair. Within a valid call,
 `max_provider_attempts: 2` allows one client-internal retry only
 after a timeout or HTTP 5xx. HTTP 400 maps to generic
 `weather_request_invalid`; other 4xx, connection, and response-validation
-failures are not retried. The mandatory activation step owns
-`event_context_action` and `event_context_next_question`; both are required
-exactly with `event-context` and omitted otherwise. The activation model chooses
-the latter from current and recent shopper conversation: `event_location` only
+failures are not retried. The mandatory activation step owns only
+`event_context_next_question` for event context. It is required exactly with
+`event-context` and omitted otherwise. The activation model chooses it from
+current and recent shopper conversation: `event_location` only
 when destination is missing and material, `event_venue` only after destination
 is established when venue or setting is missing and material, `event_date`
 only after destination and any material venue are established when live weather
@@ -404,28 +404,15 @@ activation selects `event_date`. This remains model-owned semantic guidance,
 not deterministic keyword or alias parsing. Only the accepted activation
 result authorizes that event-context follow-up; the server does not infer one
 from weather configuration or missing context.
-Accepted `event_location` or `event_venue` hides and execution-blocks weather;
-reuse closes immediately, while search-new leaves normal product work open.
+Accepted `event_location` or `event_venue` hides and execution-blocks weather.
 Never infer beach, outdoor/indoor setting, or terrain from a destination.
-`reuse_prior_candidates` is valid only when historical
-candidates exist and the current turn solely supplies event context for them
-without asking for new or refined products. It immediately hides and
-execution-blocks catalog search, product details, historical-product
-resolution, availability, and promotions. Without date authority it also hides
-weather and closes the loop for a tools-disabled response that may ask only the
-activation-selected question.
-With date authority, the weather call must echo the activation action exactly
-in `candidate_action`; mismatch fails before provider I/O, and consuming the
-reuse attempt closes the remaining tool loop before validation/provider work.
-`search_new_candidates` is required for an initial event turn, an explicit
-current-turn new/refined-product request, or when no reusable prior candidates
-exist and leaves normal granted product work available. With prior candidates,
-it also requires a trimmed, 1–240-character
-`event_context_product_work_quote` whose case-insensitive text is an exact
-substring of the current shopper message. The model owns the semantic claims
-that it is the shortest span and explicitly requests product, cart, or policy
-work beyond event context. Reuse does not
-initiate the next product role.
+Missing location or date authority may also deny weather. Those weather
+decisions never revoke catalog, detail, historical-product resolution,
+availability, promotions, cart, or policy tools granted by the other selected
+skills, and they do not close the primary skill's normal tool loop.
+`event-context` contributes the weather tool additively to the selected grant
+union; every business tool retains its ordinary independent validation,
+budget, and synthesis behavior.
 
 `confirmed_saved_zip` omits both
 `location` and `location_query` and reaches the weather client only when a
@@ -479,30 +466,36 @@ exactly replayable; prior weather tool messages are excluded from prior evidence
 Deterministic final rendering appends one exact canonical block with every
 validated daily date, condition, available low/high temperature, precipitation
 probability/types, Visual Crossing attribution, and forecast-change warning.
-Event-context non-reuse turns without a current weather outcome use the final
-editor when draft text exists, and that editor receives the accepted typed
-question boundary. Missing-location or missing-venue accepted reuse skips the
-reuse editor. Other eligible reuse with a nonempty draft gives a narrow
-tools-disabled decision editor only bounded shopper-authored event text and the
-server-owned deterministic weather styling direction.
-For non-reuse weather paths, grounding-editor sentences containing
+The protected event decision renderer is selected structurally when
+`event-context` is active, no current non-weather business-tool activity
+occurred, and a current typed weather outcome (success or failure) exists.
+Missing-location/venue or an empty draft skips its decision editor. A separate
+prior-candidate fallback uses deterministic event assembly only when the draft
+is empty; prior candidates with a nonempty draft stay on ordinary grounding
+only when there is no current weather outcome. A comparison that calls only
+weather remains protected. Other protected weather-outcome turns with a
+nonempty draft give that narrow editor only bounded shopper-authored event text
+and the server-owned deterministic weather styling direction. Any attempted
+current non-weather business tool keeps the response on the normal
+business-evidence grounding path.
+For ordinary weather-plus-business paths, grounding-editor sentences containing
 weather-domain fact language or fact-shaped dates/values are removed while
-ordinary grounded styling language remains. Eligible reuse accepts only exact
-two-key JSON containing a shopper-grounded venue quote plus one or two distinct
-allowlisted adjustment codes. Malformed/extra-key output, a missing or
-non-shopper quote, and unknown/duplicate/wrong-cardinality codes fall back. The
-server maps valid codes to fixed phrases and deterministically assembles exact
-prior names, its weather direction, only the accepted question, and the typed
-weather failure or canonical success block. It never asks for state, region,
-country, or finer location solely because the lookup failed.
+ordinary grounded styling language remains. The context-only decision accepts
+only exact two-key JSON containing a shopper-grounded venue quote plus one or
+two distinct allowlisted adjustment codes. Malformed/extra-key output, a
+missing or non-shopper quote, and unknown/duplicate/wrong-cardinality codes fall
+back. The server maps valid codes to fixed phrases and deterministically
+assembles exact prior names, its weather direction, only the accepted question,
+and the typed weather failure or canonical success block. It never asks for
+state, region, country, or finer location solely because the lookup failed.
 Weather may inform general styling judgment but does not prove any
 product-performance property or create an unstated catalog constraint.
 
 Raw weather tool arguments and output are redacted from both operator
 diagnostics and failed-turn partial graph capture. The tool-call record retains
-only categorical `candidate_action`, `request_shape`, `location_source`,
-`provider_input`, and `outcome`; it never includes a location, ZIP, date,
-resolved place, URL, body, or exception. Saved profile ZIP is recursively
+only categorical `request_shape`, `location_source`, `provider_input`, and
+`outcome`; it never includes a location, ZIP, date, resolved place, URL, body,
+or exception. Saved profile ZIP is recursively
 scrubbed from diagnostic string keys and values. The final assistant summary
 remains ordinary durable conversation text: memory can store and exactly
 replay it.
@@ -557,12 +550,13 @@ active graph and grounding editor. The editor receives only the remaining time.
 A graph timeout records `agent_timeout`, captures bounded partial graph messages,
 clears unsent products and images, and finalizes the durable turn as failed. A
 grounding timeout records `grounding_timeout` and also finalizes as failed;
-search-only evidence uses deterministic catalog rendering, structured accepted
-reuse uses deterministic event assembly, and other non-search turns receive a
-fixed retry/cart-check response instead of the unverified draft. The
+search-only evidence uses deterministic catalog rendering, structurally
+selected context-only event turns use deterministic event assembly, and other
+non-search turns receive a fixed retry/cart-check response instead of the
+unverified draft. The
 same response rule applies to ordinary editor errors and empty or
 whitespace-only output, recorded as `grounding_error`. Invalid structured
-accepted-reuse output instead falls back deterministically. The request
+context-only event output instead falls back deterministically. The request
 checkpoint is deleted only after finalization succeeds. This live deadline is separate from
 `MEMORY_TURN_ABANDON_SECONDS`, which handles unfinished turns left by a crash or
 process loss.

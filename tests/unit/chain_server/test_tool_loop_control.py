@@ -106,17 +106,6 @@ def test_normal_phase_preserves_activation_and_shopping_tools() -> None:
     assert "advertised boots" not in prepared.system_prompt
 
 
-def test_explicit_context_fulfillment_closes_the_tool_loop() -> None:
-    middleware = ToolLoopControlMiddleware()
-
-    middleware.close_for_synthesis()
-    prepared = _capture_model_request(middleware)
-
-    assert prepared.tools == []
-    assert prepared.tool_choice == "none"
-    assert "Tool Loop Closed" in prepared.system_prompt
-
-
 @pytest.mark.parametrize(
     "content",
     [

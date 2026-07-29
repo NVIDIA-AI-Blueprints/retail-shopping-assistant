@@ -196,8 +196,8 @@ def test_event_context_is_a_narrow_weather_styling_modifier() -> None:
     assert "an explicit destination overrides saved zip" in normalized
     assert "cancun does not mean beach" in normalized
     assert "ask at most one short question, never a questionnaire" in normalized
-    assert "ask for location before date" in normalized
-    assert "do not ask both in one turn" in normalized
+    assert "`event_location` only when destination is missing" in normalized
+    assert "do not ask more than one in a turn" in normalized
     assert "do not append dress code, time of day, product role" in normalized
     assert "## context authority" in normalized
     assert "## one-question policy" in normalized
@@ -213,6 +213,13 @@ def test_event_context_is_a_narrow_weather_styling_modifier() -> None:
     assert "invent hypothetical exceptions" in normalized
     assert "context fulfillment, not a new catalog request" in normalized
     assert "preserve prior candidates and do not search again" in normalized
+    assert "product tools granted by other selected skills remain available" in (
+        normalized
+    )
+    assert "a weather attempt does not close the tool loop" in normalized
+    assert "no current non-weather business-tool activity exists" in normalized
+    assert "a current typed weather outcome" in normalized
+    assert "separate empty-draft fallback" in normalized
     assert "sand-friendly" in normalized
     assert (
         "use saved zip for a forecast only after the shopper explicitly "
@@ -241,7 +248,7 @@ def test_event_context_is_a_narrow_weather_styling_modifier() -> None:
     ) in normalized
     assert "supply an exact iso event date or complete inclusive range" in normalized
     assert "use `relative_date=next_week`" in normalized
-    assert "next calendar monday through sunday" in normalized
+    assert "next calendar monday-through-sunday window" in normalized
     assert "visual crossing resolves the shopper's phrase" in normalized
     assert "not as proof of shopper intent" in normalized
     assert "make no weather claim" in normalized
@@ -257,19 +264,13 @@ def test_event_context_is_a_narrow_weather_styling_modifier() -> None:
     assert "saved zip is tentative" in response_guidance
     assert '"usual area or elsewhere?"' in response_guidance
     assert "without a candidate, ask destination" in response_guidance
-    assert "place, address, or postal code is enough" in (
-        response_guidance
-    )
-    assert "keep its shortest exact phrase as authority" in response_guidance
-    assert "`location_query`" in response_guidance
-    assert "never invent a zip" in response_guidance
-    assert "provider resolution as a reversible assumption" in response_guidance
     assert "ask one question maximum" in response_guidance
-    assert 'exact "next week" means next monday-sunday' in response_guidance
-    assert "context-only does not request products" in (
+    assert 'bare "next week" means the full window' in response_guidance
+    assert "this helper is additive" in response_guidance
+    assert "never suppresses product tools" in response_guidance
+    assert "an explicit comparison, refinement, or new-product request" in (
         response_guidance
     )
-    assert "retain prior candidates and do not search again" in response_guidance
     assert "occasion-only shop-now: one core-role search" in response_guidance
     assert "not a complete look" in response_guidance
     assert "preserve the canonical forecast" in response_guidance

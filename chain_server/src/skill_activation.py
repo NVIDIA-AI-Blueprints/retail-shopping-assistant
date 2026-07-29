@@ -41,7 +41,7 @@ SKILL_ACTIVATION_MODIFIER_REQUIRES_PRIMARY = "modifier_requires_primary"
 SKILL_ACTIVATION_EVENT_CONTEXT_REQUIRES_STYLING = (
     "event_context_requires_styling"
 )
-SKILL_ACTIVATION_EVENT_ACTION_INVALID = "event_context_action_invalid"
+SKILL_ACTIVATION_EVENT_CONTEXT_INVALID = "event_context_invalid"
 SKILL_ACTIVATION_REQUIRED = (
     "SKILL_ACTIVATION_REQUIRED: Shopper skills must be selected and loaded "
     "before any shopping tool can run. Retry after activation completes."
@@ -72,10 +72,7 @@ when the response would otherwise ask about or branch on missing destination or
 venue context. An occasion-led styling request with no established setting
 qualifies when location or venue could change the direction; generic advice is
 not a reason to omit it. Whenever event context is selected, also declare its
-typed action and its one permitted next-question decision. Use
-`reuse_prior_candidates` only when the current turn solely adds event context
-to established candidates and requests no new or refined products; otherwise
-use `search_new_candidates`. Set `event_context_next_question` to
+one permitted `event_context_next_question` decision. Set it to
 `event_location` only when destination is still missing and material; set it to
 `event_venue` only after destination is established when venue/setting is still
 missing and material; set it to `event_date` only after destination and any
@@ -90,14 +87,9 @@ setting from the destination. For example, after "the wedding is in Cancun,"
 choose
 `event_venue` when the setting materially changes styling; after the shopper
 then says "it's on the beach," choose `event_date` when live weather is enabled
-and material. With established candidates,
-`search_new_candidates` also requires
-`event_context_product_work_quote`: copy the shortest exact current-message
-span that explicitly requests product, cart, or policy work beyond applying
-event context. Place, venue, date, weather, and usual-area confirmation alone
-never qualify. For example, after candidates are shown, "NYC, on an outdoor
-patio" and "Friday next week" require reuse, while "show me a different dress"
-requires search-new with that exact request span. Keep the primary procedure
+and material. Event context is additive: it contributes only event guidance,
+its one question boundary, and optional weather capability. It never removes
+tools granted by outfit styling or another selected skill. Keep the primary procedure
 aligned with the active conversation task:
 an outfit-building or styling thread continues to use outfit styling for
 piece-by-piece searches until the shopper changes tasks. Do not switch to
@@ -497,14 +489,10 @@ def _activation_validation_issue(error: Any) -> str:
     for detail in errors:
         issue = str(_value(detail, "type") or "")
         location = tuple(_value(detail, "loc") or ())
-        if {
-            "event_context_action",
-            "event_context_next_question",
-            "event_context_product_work_quote",
-        }.intersection(location):
-            return SKILL_ACTIVATION_EVENT_ACTION_INVALID
+        if "event_context_next_question" in location:
+            return SKILL_ACTIVATION_EVENT_CONTEXT_INVALID
         if issue in {
-            SKILL_ACTIVATION_EVENT_ACTION_INVALID,
+            SKILL_ACTIVATION_EVENT_CONTEXT_INVALID,
             SKILL_ACTIVATION_EVENT_CONTEXT_REQUIRES_STYLING,
             SKILL_ACTIVATION_MODIFIER_REQUIRES_PRIMARY,
             SKILL_ACTIVATION_MULTIPLE_PRIMARY,
@@ -514,25 +502,17 @@ def _activation_validation_issue(error: Any) -> str:
 
 
 def _activation_validation_feedback(issue: str) -> str:
-    if issue == SKILL_ACTIVATION_EVENT_ACTION_INVALID:
+    if issue == SKILL_ACTIVATION_EVENT_CONTEXT_INVALID:
         return (
-            "event-context requires one matching event_context_action and one "
-            "event_context_next_question. Use "
-            "reuse_prior_candidates only when this turn solely adds event "
-            "context to established candidates and requests no new or refined "
-            "products; otherwise use search_new_candidates. With established "
-            "candidates, search_new_candidates must include the shortest exact "
-            "current-message event_context_product_work_quote that explicitly "
-            "requests product, cart, or policy work beyond event context. "
-            "Place, venue, date, weather, or usual-area confirmation alone "
-            "requires reuse. Choose event_location only when destination is "
+            "event-context requires one event_context_next_question. Choose "
+            "event_location only when destination is "
             "still missing and material; choose event_venue only after "
             "destination is established when venue/setting is missing and "
             "material; choose event_date only after destination and any "
             "material venue are established, weather is enabled and material, "
             "and no bounded date is established or explicitly unavailable; "
             "otherwise choose none. Never infer venue from destination. Omit "
-            "all event-context fields when event-context is not selected."
+            "event_context_next_question when event-context is not selected."
         )
     if issue == SKILL_ACTIVATION_EVENT_CONTEXT_REQUIRES_STYLING:
         return (
@@ -554,11 +534,8 @@ def _activation_validation_feedback(issue: str) -> str:
 
 
 def _activation_clarification(issue: str) -> str:
-    if issue == SKILL_ACTIVATION_EVENT_ACTION_INVALID:
-        return (
-            "Should I apply this event context to the options already shown, "
-            "or search for new options?"
-        )
+    if issue == SKILL_ACTIVATION_EVENT_CONTEXT_INVALID:
+        return "What event detail should I plan around?"
     if issue == SKILL_ACTIVATION_EVENT_CONTEXT_REQUIRES_STYLING:
         return "What outfit or event would you like help styling?"
     if issue == SKILL_ACTIVATION_MODIFIER_REQUIRES_PRIMARY:

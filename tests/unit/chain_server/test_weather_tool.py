@@ -101,9 +101,6 @@ def _event_tool(
     saved_zip_authorized: bool = True,
     shopper_provided_texts: set[str] | None = None,
     current_date: date = CURRENT_DATE,
-    prior_candidates_available: bool = False,
-    on_attempt_consumed=None,
-    candidate_action_authorized=None,
 ):
     return get_event_weather_forecast_tool(
         client,
@@ -115,9 +112,6 @@ def _event_tool(
             else shopper_provided_texts
         ),
         current_date=current_date,
-        prior_candidates_available=prior_candidates_available,
-        on_attempt_consumed=on_attempt_consumed,
-        candidate_action_authorized=candidate_action_authorized,
     )
 
 
@@ -176,7 +170,6 @@ def test_event_tool_has_closed_authority_and_date_schema() -> None:
     assert tool.name == "get_weather_forecast_tool"
     assert tool.return_direct is False
     assert set(tool.args) == {
-        "candidate_action",
         "location_source",
         "location",
         "location_query",
@@ -215,92 +208,17 @@ def test_event_tool_has_closed_authority_and_date_schema() -> None:
     assert SHOPPING_TOOL_POLICIES[tool.name].risk == "read"
 
 
-def test_reusing_prior_candidates_requires_evidence() -> None:
-    rejected_client = RecordingClient()
-    rejected_tool = _event_tool(
-        rejected_client,
-    )
-
-    rejected = rejected_tool.invoke(
-        {
-            "candidate_action": "reuse_prior_candidates",
-            "location_source": "confirmed_saved_zip",
-            "date": FORECAST_DATE.isoformat(),
-        }
-    )
-
-    assert parse_weather_tool_evidence(rejected) == weather_failure(
-        "weather_request_invalid"
-    )
-    assert rejected_client.requests == []
-
-    accepted_client = RecordingClient()
-    accepted_tool = _event_tool(
-        accepted_client,
-        prior_candidates_available=True,
-    )
-
-    accepted = accepted_tool.invoke(
-        {
-            "candidate_action": "reuse_prior_candidates",
-            "location_source": "confirmed_saved_zip",
-            "date": FORECAST_DATE.isoformat(),
-        }
-    )
-
-    assert parse_weather_tool_evidence(accepted) == weather_failure(
-        "weather_disabled"
-    )
-    assert accepted_client.requests == [
-        WeatherRequest(location=SAVED_ZIPCODE, date=FORECAST_DATE)
-    ]
-
-
-def test_weather_candidate_action_must_match_activation_authority() -> None:
+def test_schema_invalid_attempt_is_consumed_and_cannot_retry() -> None:
     client = RecordingClient(_success_result())
-    attempts: list[str] = []
-    tool = _event_tool(
-        client,
-        prior_candidates_available=True,
-        on_attempt_consumed=lambda: attempts.append("consumed"),
-        candidate_action_authorized=lambda action: (
-            action == "search_new_candidates"
-        ),
-    )
-
-    result = tool.invoke(
-        {
-            "candidate_action": "reuse_prior_candidates",
-            "location_source": "confirmed_saved_zip",
-            "date": FORECAST_DATE.isoformat(),
-        }
-    )
-
-    assert parse_weather_tool_evidence(result) == weather_failure(
-        "weather_request_invalid"
-    )
-    assert client.requests == []
-    assert attempts == ["consumed"]
-
-
-def test_schema_invalid_attempt_notifies_once_and_cannot_retry() -> None:
-    client = RecordingClient(_success_result())
-    attempts: list[str] = []
-    tool = _event_tool(
-        client,
-        prior_candidates_available=True,
-        on_attempt_consumed=lambda: attempts.append("consumed"),
-    )
+    tool = _event_tool(client)
 
     invalid = tool.invoke(
         {
-            "candidate_action": "reuse_prior_candidates",
             "location_source": "confirmed_saved_zip",
         }
     )
     retry = tool.invoke(
         {
-            "candidate_action": "reuse_prior_candidates",
             "location_source": "confirmed_saved_zip",
             "date": FORECAST_DATE.isoformat(),
         }
@@ -313,27 +231,6 @@ def test_schema_invalid_attempt_notifies_once_and_cannot_retry() -> None:
         "weather_request_invalid"
     )
     assert client.requests == []
-    assert attempts == ["consumed"]
-
-
-def test_new_candidate_request_keeps_catalog_search_open() -> None:
-    client = RecordingClient()
-    tool = _event_tool(
-        client,
-        prior_candidates_available=True,
-    )
-
-    result = tool.invoke(
-        {
-            "candidate_action": "search_new_candidates",
-            "location_source": "confirmed_saved_zip",
-            "date": FORECAST_DATE.isoformat(),
-        }
-    )
-
-    assert parse_weather_tool_evidence(result) == weather_failure(
-        "weather_disabled"
-    )
 
 
 def test_confirmed_saved_zip_is_server_supplied_and_not_exposed() -> None:
@@ -342,7 +239,6 @@ def test_confirmed_saved_zip_is_server_supplied_and_not_exposed() -> None:
 
     result = tool.invoke(
         {
-            "candidate_action": "search_new_candidates",
             "location_source": "confirmed_saved_zip",
             "date": FORECAST_DATE.isoformat(),
         }
@@ -377,7 +273,6 @@ def test_unconfirmed_saved_zip_never_reaches_the_client() -> None:
 
     result = tool.invoke(
         {
-            "candidate_action": "search_new_candidates",
             "location_source": "confirmed_saved_zip",
             "date": FORECAST_DATE.isoformat(),
         }
@@ -400,7 +295,6 @@ def test_shopper_place_is_verbatim_grounded_and_resolution_is_visible() -> None:
 
     success = explicit_tool.invoke(
         {
-            "candidate_action": "search_new_candidates",
             "location_source": "shopper_provided_location",
             "location": EXPLICIT_LOCATION,
             "location_query": "NYC, NY",
@@ -427,7 +321,6 @@ def test_shopper_place_is_verbatim_grounded_and_resolution_is_visible() -> None:
     ungrounded_tool = _event_tool(ungrounded_client)
     failure = ungrounded_tool.invoke(
         {
-            "candidate_action": "search_new_candidates",
             "location_source": "shopper_provided_location",
             "location": "New York, New York",
             "location_query": "New York, NY",
@@ -465,7 +358,6 @@ def test_shopper_named_locations_reach_the_client_verbatim(
 
     result = tool.invoke(
         {
-            "candidate_action": "search_new_candidates",
             "location_source": "shopper_provided_location",
             "location": location,
             "date": FORECAST_DATE.isoformat(),
@@ -485,7 +377,6 @@ def test_location_authority_forwards_the_exact_shopper_text_span() -> None:
 
     result = tool.invoke(
         {
-            "candidate_action": "search_new_candidates",
             "location_source": "shopper_provided_location",
             "location": "nyc",
             "date": FORECAST_DATE.isoformat(),
@@ -507,7 +398,6 @@ def test_location_authority_rejects_a_rewritten_place_phrase() -> None:
 
     result = tool.invoke(
         {
-            "candidate_action": "search_new_candidates",
             "location_source": "shopper_provided_location",
             "location": "New York",
             "date": FORECAST_DATE.isoformat(),
@@ -533,7 +423,6 @@ def test_location_query_may_make_an_ambiguous_place_assumption() -> None:
 
     result = tool.invoke(
         {
-            "candidate_action": "search_new_candidates",
             "location_source": "shopper_provided_location",
             "location": "Springfield",
             "location_query": "Springfield, TX",
@@ -558,7 +447,6 @@ def test_location_query_cannot_add_an_unstated_representative_zip() -> None:
 
     result = tool.invoke(
         {
-            "candidate_action": "search_new_candidates",
             "location_source": "shopper_provided_location",
             "location": "Denver",
             "location_query": "Denver, CO 80202",
@@ -595,7 +483,6 @@ def test_location_query_cannot_rewrite_the_authoritative_place(
 
     result = tool.invoke(
         {
-            "candidate_action": "search_new_candidates",
             "location_source": "shopper_provided_location",
             "location": shopper_location,
             "location_query": location_query,
@@ -614,27 +501,19 @@ def test_location_query_cannot_rewrite_the_authoritative_place(
     [
         {
             "location_source": "confirmed_saved_zip",
-            "date": FORECAST_DATE.isoformat(),
-        },
-        {
-            "candidate_action": "search_new_candidates",
-            "location_source": "confirmed_saved_zip",
             "location": SAVED_ZIPCODE,
             "date": FORECAST_DATE.isoformat(),
         },
         {
-            "candidate_action": "search_new_candidates",
             "location_source": "confirmed_saved_zip",
             "location_query": "Seattle, WA",
             "date": FORECAST_DATE.isoformat(),
         },
         {
-            "candidate_action": "search_new_candidates",
             "location_source": "shopper_provided_location",
             "date": FORECAST_DATE.isoformat(),
         },
         {
-            "candidate_action": "search_new_candidates",
             "location_source": "shopper_provided_location",
             "location": EXPLICIT_LOCATION,
         },
@@ -671,7 +550,6 @@ def test_next_week_is_server_resolved_to_next_monday_through_sunday(
 
     result = tool.invoke(
         {
-            "candidate_action": "search_new_candidates",
             "location_source": "shopper_provided_location",
             "location": EXPLICIT_LOCATION,
             "relative_date": "next_week",
@@ -703,7 +581,6 @@ def test_next_week_success_preserves_server_owned_relative_provenance() -> None:
 
     result = tool.invoke(
         {
-            "candidate_action": "search_new_candidates",
             "location_source": "shopper_provided_location",
             "location": EXPLICIT_LOCATION,
             "location_query": "NYC, NY",
@@ -761,7 +638,6 @@ def test_weekday_next_week_is_server_resolved_to_one_exact_date(
 
     result = tool.invoke(
         {
-            "candidate_action": "search_new_candidates",
             "location_source": "shopper_provided_location",
             "location": "NYC",
             "location_query": "NYC, NY",
@@ -805,7 +681,6 @@ def test_relative_weekday_ignores_unrelated_uncertainty(
 
     result = tool.invoke(
         {
-            "candidate_action": "search_new_candidates",
             "location_source": "shopper_provided_location",
             "location": "NYC",
             "relative_date": "next_week",
@@ -847,7 +722,6 @@ def test_exact_weekday_next_week_rejects_omission_or_mismatch(
         },
     )
     arguments = {
-        "candidate_action": "search_new_candidates",
         "location_source": "shopper_provided_location",
         "location": "NYC",
         "relative_date": "next_week",
@@ -872,7 +746,6 @@ def test_bare_next_week_rejects_an_invented_weekday() -> None:
 
     result = tool.invoke(
         {
-            "candidate_action": "search_new_candidates",
             "location_source": "shopper_provided_location",
             "location": "NYC",
             "relative_date": "next_week",
@@ -897,7 +770,6 @@ def test_mixed_weekdays_next_week_fail_closed() -> None:
 
     result = tool.invoke(
         {
-            "candidate_action": "search_new_candidates",
             "location_source": "shopper_provided_location",
             "location": "NYC",
             "relative_date": "next_week",
@@ -931,7 +803,6 @@ def test_ambiguous_or_retracted_relative_weekday_fails_closed(
 
     result = tool.invoke(
         {
-            "candidate_action": "search_new_candidates",
             "location_source": "shopper_provided_location",
             "location": "NYC",
             "relative_date": "next_week",
@@ -951,7 +822,6 @@ def test_weekday_requires_next_week_mode() -> None:
 
     result = tool.invoke(
         {
-            "candidate_action": "search_new_candidates",
             "location_source": "shopper_provided_location",
             "location": "NYC",
             "weekday": "friday",
@@ -974,7 +844,6 @@ def test_next_week_requires_shopper_authored_relative_language() -> None:
 
     result = tool.invoke(
         {
-            "candidate_action": "search_new_candidates",
             "location_source": "shopper_provided_location",
             "location": EXPLICIT_LOCATION,
             "relative_date": "next_week",
@@ -1029,7 +898,6 @@ def test_current_date_override_cannot_reuse_prior_next_week(
 
     result = tool.invoke(
         {
-            "candidate_action": "search_new_candidates",
             "location_source": "shopper_provided_location",
             "location": "NYC",
             "relative_date": "next_week",
@@ -1055,7 +923,6 @@ def test_latest_prior_negation_supersedes_older_next_week() -> None:
 
     result = tool.invoke(
         {
-            "candidate_action": "search_new_candidates",
             "location_source": "shopper_provided_location",
             "location": "NYC",
             "relative_date": "next_week",
@@ -1080,7 +947,6 @@ def test_standalone_weekday_correction_cannot_reuse_prior_relative_weekday() -> 
 
     result = tool.invoke(
         {
-            "candidate_action": "search_new_candidates",
             "location_source": "shopper_provided_location",
             "location": "NYC",
             "relative_date": "next_week",
@@ -1109,7 +975,6 @@ def test_current_relative_weekday_supersedes_prior_relative_weekday() -> None:
 
     result = tool.invoke(
         {
-            "candidate_action": "search_new_candidates",
             "location_source": "shopper_provided_location",
             "location": "NYC",
             "relative_date": "next_week",
@@ -1212,7 +1077,6 @@ def test_location_followup_may_use_prior_unsuperseded_next_week() -> None:
 
     result = tool.invoke(
         {
-            "candidate_action": "search_new_candidates",
             "location_source": "shopper_provided_location",
             "location": "NYC",
             "relative_date": "next_week",
@@ -1230,7 +1094,6 @@ def test_relative_and_explicit_date_modes_are_mutually_exclusive() -> None:
 
     result = tool.invoke(
         {
-            "candidate_action": "search_new_candidates",
             "location_source": "shopper_provided_location",
             "location": EXPLICIT_LOCATION,
             "relative_date": "next_week",
@@ -1248,7 +1111,6 @@ def test_event_tool_allows_only_one_attempt_per_turn() -> None:
     client = RecordingClient(_success_result())
     tool = _event_tool(client)
     arguments = {
-        "candidate_action": "search_new_candidates",
         "location_source": "confirmed_saved_zip",
         "date": FORECAST_DATE.isoformat(),
     }
@@ -1269,13 +1131,11 @@ def test_schema_invalid_event_call_consumes_the_turn_attempt() -> None:
 
     invalid = tool.invoke(
         {
-            "candidate_action": "search_new_candidates",
             "location_source": "confirmed_saved_zip",
         }
     )
     retry = tool.invoke(
         {
-            "candidate_action": "search_new_candidates",
             "location_source": "confirmed_saved_zip",
             "date": FORECAST_DATE.isoformat(),
         }
@@ -1316,7 +1176,6 @@ def test_direct_and_event_wrappers_sanitize_client_exceptions() -> None:
     event_tool = _event_tool(event_client)
     event_result = event_tool.invoke(
         {
-            "candidate_action": "search_new_candidates",
             "location_source": "confirmed_saved_zip",
             "date": FORECAST_DATE.isoformat(),
         }

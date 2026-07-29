@@ -1,0 +1,62 @@
+set_name: Selected-profile named-place exact relative weekday
+shopper_profile_id: shopper_jordan
+queries:
+  - "I’m shopping for a semi-formal wedding"
+  - "NYC, on an outdoor patio."
+  - "Ahh, it’s on Friday next week."
+answers:
+  - >-
+    Treat the occasion alone as a request to start shopping, not as a request
+    for a complete multi-role look. Run one catalog search for one useful core
+    role and present grounded candidates from that role. Use the saved ZIP only
+    as a tentative event-location candidate and ask one natural question about
+    whether the wedding is in the shopper's usual area or elsewhere. Do not
+    echo ZIP digits, infer weather or venue, or ask about dress code.
+  - >-
+    Treat this as event-context fulfillment, not a new product request.
+    Preserve the prior grounded candidates and run no product or weather tool.
+    Accept NYC as the event destination and the outdoor patio as the explicit
+    venue setting. Ask only for the event date or complete date range; do not
+    repeat the location or venue question.
+  - >-
+    Treat this as date fulfillment for the same event, not a new product
+    request. Preserve the exact prior candidates and call weather exactly once
+    for NYC. Resolve "Friday next week" to the Friday inside the next
+    Monday-through-Sunday window, state the provider-resolved location as a
+    transparent assumption, render only that exact day's canonical attributed
+    forecast and forecast-change warning, add product-agnostic patio guidance,
+    and ask no repeated question.
+diagnostic_expectations:
+  - required_skills: [outfit-styling, event-context]
+    required_tools: [search_catalog_tool]
+    forbidden_tools:
+      - get_weather_forecast_tool
+      - get_product_details_tool
+      - resolve_conversation_products_tool
+      - check_product_availability_tool
+      - check_active_promotions_tool
+    tool_call_counts:
+      search_catalog_tool: 1
+      get_weather_forecast_tool: 0
+  - required_skills: [outfit-styling, event-context]
+    forbidden_tools:
+      - search_catalog_tool
+      - get_weather_forecast_tool
+      - get_product_details_tool
+      - resolve_conversation_products_tool
+      - check_product_availability_tool
+      - check_active_promotions_tool
+    tool_call_counts:
+      search_catalog_tool: 0
+      get_weather_forecast_tool: 0
+  - required_skills: [outfit-styling, event-context]
+    required_tools: [get_weather_forecast_tool]
+    forbidden_tools:
+      - search_catalog_tool
+      - get_product_details_tool
+      - resolve_conversation_products_tool
+      - check_product_availability_tool
+      - check_active_promotions_tool
+    tool_call_counts:
+      search_catalog_tool: 0
+      get_weather_forecast_tool: 1

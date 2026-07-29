@@ -1,0 +1,58 @@
+set_name: Selected-profile named-place venue clarification
+shopper_profile_id: shopper_jordan
+queries:
+  - "I’m shopping for a semi-formal wedding in Cancun."
+  - "It’s on the beach."
+  - "It’s on Friday next week."
+answers:
+  - >-
+    Start with one grounded core dress search. Treat Cancun as the explicit
+    destination but do not infer a beach, outdoor, indoor, or terrain setting.
+    Ask only for the material venue or setting; do not ask for the date yet and
+    do not call weather.
+  - >-
+    Treat the beach setting as event-context fulfillment, not a new product
+    request. Preserve the prior candidates, run no product or weather tool,
+    apply only product-agnostic venue guidance, and ask only for the event date
+    or complete date range.
+  - >-
+    Treat the date as event-context fulfillment, not a new product request.
+    Preserve the exact prior candidates, call weather exactly once for Cancun,
+    and apply both the explicit beach setting and returned forecast through
+    product-agnostic guidance. Do not rank or describe a prior product as
+    beach-ready, sand-suitable, or performance-proven. Include the exact
+    attributed forecast and ask no repeated question.
+diagnostic_expectations:
+  - required_skills: [outfit-styling, event-context]
+    required_tools: [search_catalog_tool]
+    forbidden_tools:
+      - get_weather_forecast_tool
+      - get_product_details_tool
+      - resolve_conversation_products_tool
+      - check_product_availability_tool
+      - check_active_promotions_tool
+    tool_call_counts:
+      search_catalog_tool: 1
+      get_weather_forecast_tool: 0
+  - required_skills: [outfit-styling, event-context]
+    forbidden_tools:
+      - search_catalog_tool
+      - get_weather_forecast_tool
+      - get_product_details_tool
+      - resolve_conversation_products_tool
+      - check_product_availability_tool
+      - check_active_promotions_tool
+    tool_call_counts:
+      search_catalog_tool: 0
+      get_weather_forecast_tool: 0
+  - required_skills: [outfit-styling, event-context]
+    required_tools: [get_weather_forecast_tool]
+    forbidden_tools:
+      - search_catalog_tool
+      - get_product_details_tool
+      - resolve_conversation_products_tool
+      - check_product_availability_tool
+      - check_active_promotions_tool
+    tool_call_counts:
+      search_catalog_tool: 0
+      get_weather_forecast_tool: 1

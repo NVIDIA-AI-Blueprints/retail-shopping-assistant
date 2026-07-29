@@ -482,6 +482,24 @@ The newest focused gate is recorded first. Older implementation gates remain
 below as comparison points; generated quality and timing
 artifacts stay in the required local archive rather than versioned source.
 
+- Styling-weather focused live-fixture Slice 3 gate (2026-07-29): two committed
+  three-turn regressions now live under
+  `tests/integration/conversations/event_context_weather_guidance/`, separate
+  from both the broader event-context set and the full shopping cohort. A
+  no-Judge live run and diagnostic preflight passed all 6 turns. Both scenarios
+  performed one initial
+  search, no business-tool call while asking only for the missing date, then
+  one exact-relative-weekday weather call with no repeated product read. Typed
+  activation followed location → venue/date → none as applicable, NYC used a
+  qualified `location_query`, Cancun used the direct named place, and neither
+  trace contained rejected or duplicate tool calls. Average turn time was
+  14.64s, and the two focused dataset-shape tests passed; runtime code was
+  unchanged from the Slice 2 commit, whose latest
+  judged baseline remains 4.67/5 at 16.08s. No Judge, Challenger, broader
+  event-context set, or shopping cohort ran for this fixture-only slice. The
+  local timing/trace comparison is
+  `~/exec-briefs/retail-shopping-assistant/quality/shopping/targeted/event_context/committed_weather_guidance_fixture/comparisons/previous_committed__to__current_wip.md`;
+  the golden comparison is in the same directory.
 - Styling-weather exact-relative-weekday Slice 2 gate (2026-07-29): the focused
   weather/event-context suite passed 523 tests with 1 expected xfail, changed
   Python compiled, and

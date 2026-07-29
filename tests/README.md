@@ -20,8 +20,10 @@ tests/
 │   ├── conversations/
 │   │   ├── shopping/
 │   │   │   └── conv_*.yaml # Full shopping golden conversations
-│   │   └── event_context/
-│   │       └── conv_*.yaml # Focused profile/Guest event-location gate
+│   │   ├── event_context/
+│   │   │   └── conv_*.yaml # Broader profile/Guest event-context gate
+│   │   └── event_context_weather_guidance/
+│   │       └── conv_*.yaml # Thin location→venue→date weather regression
 │   ├── conversation_collector.py
 │   ├── response_quality.py
 │   ├── time_breakdown.py
@@ -93,19 +95,34 @@ python skills/retail-test-runner/scripts/run_retail_tests.py integration \
   --skip-quality
 ```
 
-The files under `integration/conversations/<TEST_PATH>/conv_*.yaml` are the
-committed golden reference for integration quality checks. Each file contains
-fixed queries plus expected answers. A file may set one optional top-level
+The files under `integration/conversations/<TEST_PATH>/conv_*.yaml` are
+committed scenario references for integration checks; the canonical shopping
+golden remains `integration/conversations/shopping/conv_*.yaml`. Each file
+contains fixed queries plus expected answers. A file may set one optional top-level
 `shopper_profile_id`; the collector sends that server-owned ID on every turn in
-the file, while omission or `null` remains Guest. The focused
-`event_context/` set uses three files and four total turns so selected-profile
-location precedence, Guest isolation, and ordinary shop-now product behavior
-can be judged without running the full shopping cohort. The collector records
-client elapsed time, application token and model-call usage, model-usage
-summaries, and trusted diagnostics when the endpoint exposes them. Generated
-response output, judge output, plots, timing summaries, and comparisons are
-ignored artifacts and should not be committed unless that is an explicit
-project decision.
+the file, while omission or `null` remains Guest. The focused `event_context/`
+set covers selected-profile location precedence, Guest isolation, shop-now
+behavior, saved-location override, and non-event weather isolation without
+running the full shopping cohort. The thinner
+`event_context_weather_guidance/` set contains two three-turn regressions: NYC
+plus an outdoor patio plus an exact relative weekday, and Cancun followed by an
+explicit beach setting and then the date. Both assert one initial search, no
+product/weather reads while collecting the one missing context field, and one
+weather call with no repeated product read after the date.
+
+Run only that targeted feature set with:
+
+```bash
+python skills/retail-test-runner/scripts/run_retail_tests.py integration \
+  --test-path event_context_weather_guidance \
+  --skip-quality
+```
+
+The collector records client elapsed time, application token and model-call
+usage, model-usage summaries, and trusted diagnostics when the endpoint exposes
+them. Generated response output, judge output, plots, timing summaries, and
+comparisons are ignored artifacts and should not be committed unless that is
+an explicit project decision.
 
 Endpoint results are written to the ignored directory
 `integration/conversations/<TEST_PATH>/results/`. LLM-as-judge

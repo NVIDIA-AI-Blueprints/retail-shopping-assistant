@@ -4,6 +4,10 @@ This document is the short architectural map of the serving shopper agent. It
 shows where product truth is published, how skills control model behavior, and
 which tools connect the agent to application services.
 
+For the source-audited serving snapshot and minimum focused validation policy
+as of 2026-07-29, see
+[Shopper Deep Agent Architecture — 2026-07-29](SHOPPER_DEEP_AGENT_ARCHITECTURE_2026-07-29.md).
+
 ## Architecture at a Glance
 
 ![Shopper Deep Agent architecture](images/shopper-agent-architecture.svg)

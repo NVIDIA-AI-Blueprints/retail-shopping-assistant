@@ -15,6 +15,7 @@ Welcome to the Retail Shopping Assistant documentation! This hub provides compre
 - **[Catalog Architecture](CATALOG_REFACTOR_PLAN.md)** - Start here for JSONL ingestion, advertised capabilities, agent discovery, and validated retrieval
 - **[Commerce Contracts](COMMERCE_CONTRACTS.md)** - Internal product, cart, and commerce tool contracts
 - **[Shopper Agent Architecture](SHOPPER_AGENT_ARCHITECTURE.md)** - Published catalog, turn flow, skill-to-tool mapping, and memory boundaries
+- **[Shopper Deep Agent Architecture — 2026-07-29](SHOPPER_DEEP_AGENT_ARCHITECTURE_2026-07-29.md)** - Dated serving-flow snapshot, three-turn live gate, and minimum validation policy
 - **[Shopper Agent Leadership Note](SHOPPER_AGENT_LEADERSHIP_NOTE.md)** - Executive request flow, memory ownership, worked example, and prioritized next steps
 - **[Shopper Agent Tool Registry](SHOPPER_AGENT_TOOL_REGISTRY.md)** - Registered Deep Agents tools for the shopper-serving agent
 - **[Shopper Agent Skill Registry](SHOPPER_AGENT_SKILL_REGISTRY.md)** - Registered Deep Agents skills and tuning loop for shopper-facing behavior
@@ -47,6 +48,7 @@ Welcome to the Retail Shopping Assistant documentation! This hub provides compre
 | [Catalog Architecture](CATALOG_REFACTOR_PLAN.md) | Understand the end-to-end ingest, capability advertisement, agent discovery, and validated retrieval flow | Developers, architects |
 | [Commerce Contracts](COMMERCE_CONTRACTS.md) | Internal product, cart, and commerce tool contracts | Developers, architects |
 | [Shopper Agent Architecture](SHOPPER_AGENT_ARCHITECTURE.md) | Understand the published catalog, turn flow, skill-to-tool mapping, and memory boundaries | Developers, architects |
+| [Shopper Deep Agent Architecture — 2026-07-29](SHOPPER_DEEP_AGENT_ARCHITECTURE_2026-07-29.md) | Review the dated Deep Agent serving flow, focused three-turn proof, and minimum validation ladder | Developers, architects, evaluators |
 | [Shopper Agent Leadership Note](SHOPPER_AGENT_LEADERSHIP_NOTE.md) | Understand the executive flow, state ownership, worked example, and next architecture priorities | Senior leaders, architects, product owners |
 | [Shopper Agent Tool Registry](SHOPPER_AGENT_TOOL_REGISTRY.md) | Registered Deep Agents tools, risk classes, and skill access boundaries for the shopper-serving agent | Developers, architects, evaluators |
 | [Shopper Agent Skill Registry](SHOPPER_AGENT_SKILL_REGISTRY.md) | Registered Deep Agents skills, runtime loading, and markdown tuning workflow for shopper-facing behavior | Developers, architects, evaluators |

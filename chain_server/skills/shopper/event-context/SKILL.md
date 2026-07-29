@@ -14,13 +14,15 @@ response_guidance: >-
   Explicit location overrides saved ZIP: never ask "usual area" afterward, fall
   back, or echo digits. Saved ZIP is tentative: ask "usual area or elsewhere?"
   Without a candidate, ask destination. A stated place, address, or postal code
-  is enough. Keep its shortest exact phrase as authority; a separate
-  `location_query` starts with it and adds only 1-2 region/country qualifiers.
-  Never invent a ZIP. State provider resolution as a reversible assumption.
+  is enough. Keep its shortest exact phrase as authority. For an abbreviation
+  or ambiguous name, require a separate `location_query` that starts with it
+  and adds only 1-2 region/country qualifiers. Never invent a ZIP. State
+  provider resolution as a reversible assumption.
   Ask one question maximum. Exact "next week" means next Monday-Sunday.
   Context-only does not request products: retain prior candidates and do not
   search again. Accepted reuse bypasses editor: exact prior names + bounded
-  forecast styling + canonical block; failure: names + safe failure.
+  forecast styling + canonical block; failure: exact prior names + conditional
+  weather-flexible styling/recheck + safe failure, with no location re-ask.
   Occasion-only shop-now: one core-role search, not a complete look. Preserve
   the canonical forecast, Visual Crossing attribution, and change warning. No
   dress-code, time, role, or preference questions. Weather cannot prove product
@@ -59,10 +61,12 @@ tools_granted:
   fallback to saved ZIP.
 - A shopper-stated city, region, country, address, or postal code is valid
   forecast location authority. Keep its shortest sufficient phrase exactly in
-  `location`. A separate `location_query`, if supplied, must preserve that
-  exact phrase as its first component and may append only one or two
+  `location`. For an abbreviation or ambiguous place, a separate
+  `location_query` is required and must preserve that exact phrase as its first
+  component while appending only one or two
   comma-separated region/country qualifiers. A common abbreviation such as
-  `NYC` remains unchanged: send it directly or qualify it as `NYC, NY`. An
+  `NYC` remains unchanged in the authority field and is qualified as
+  `NYC, NY` in `location_query`. An
   ambiguous name such as `Springfield` may become `Springfield, TX` as an
   explicit regional assumption. Never derive a representative ZIP, add an
   unstated numeric component, replace the authority phrase, or substitute the
@@ -89,7 +93,9 @@ tools_granted:
 
 - Call `get_weather_forecast_tool` at most once in a turn, before catalog search
   when both are needed. A schema-invalid call consumes that one attempt; do not
-  repair or retry it. Never call when deployment context says it is disabled.
+  repair or retry it at the model layer. The client may internally retry once
+  only after timeout or HTTP 5xx. Never call when deployment context says it is
+  disabled.
 - Set `candidate_action=reuse_prior_candidates` when the current turn only
   supplies event context for candidates already shown and asks for no new
   products or refinement. This closes catalog search for the rest of the turn,
@@ -100,22 +106,28 @@ tools_granted:
 - Use `confirmed_saved_zip` only after explicit usual-area confirmation and omit
   both location fields from the call and only when the narrow server gate above
   can accept it. Otherwise use `shopper_provided_location` with the exact
-  shopper phrase in `location`. If needed, keep that exact phrase as the first
-  component of `location_query` and append only one or two comma-separated
-  region/country qualifiers. Do not rewrite an abbreviation: send `NYC`
-  directly or use `NYC, NY`. Never add a ZIP or numeric component the shopper
-  did not state or replace the source phrase.
+  shopper phrase in `location`. For an abbreviation or ambiguous name, require
+  `location_query`, keep that exact phrase as its first component, and append
+  only one or two comma-separated region/country qualifiers. For `NYC`, keep
+  `location="NYC"` and use `location_query="NYC, NY"`. Omit the query only
+  when `location` is already sufficiently qualified. Never add a ZIP or numeric
+  component the shopper did not state or replace the source phrase.
 - Supply an exact ISO event date or complete inclusive range. For the shopper's
   exact phrase "next week", use `relative_date=next_week`; the server resolves
   it to the next calendar Monday through Sunday from the current UTC date.
   A current negation or different date supersedes an earlier "next week".
   State that resolved range so the assumption is correctable. Never substitute
   today, history, climate, or a statistical outlook.
-- Visual Crossing resolves the shopper's phrase in the same forecast request.
-  Treat the returned place as the location used, not as proof of shopper intent.
+- Visual Crossing resolves the shopper's phrase in the same Timeline forecast
+  request. Do not synthesize a representative ZIP or use a separate geocoder.
+  Treat its returned `resolvedAddress` as the location used and a reversible
+  assumption, not as proof of shopper intent.
 - On a disabled, invalid, unavailable, or out-of-horizon result, make no weather
-  claim. Give conditional styling guidance; say a live forecast is not
-  available yet when the requested date is outside the forecast horizon.
+  claim. HTTP 400 is a generic invalid request, not proof that the shopper's
+  place is wrong. Preserve candidates, give conditional styling/recheck
+  guidance, and never ask for state, region, country, or finer location solely
+  because lookup failed. Say a live forecast is not available yet when the
+  requested date is outside the forecast horizon.
 
 ## Response Mode
 
@@ -164,7 +176,8 @@ tools_granted:
   On success, the server renders the exact names from the newest historical
   candidate set, one bounded styling direction derived from structured
   forecast evidence, and the canonical forecast block. On provider failure, it
-  renders those prior names plus the typed safe weather failure.
+  renders those prior names, one conditional weather-flexible styling/recheck
+  direction, and the typed safe weather failure without re-asking location.
 - For non-reuse weather paths, grounding-editor sentences containing weather-domain fact language or
   fact-shaped dates/values are removed while ordinary grounded styling
   language about color, layering, or silhouette remains. If none remains,

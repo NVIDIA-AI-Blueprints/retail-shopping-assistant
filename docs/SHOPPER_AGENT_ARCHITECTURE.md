@@ -21,7 +21,7 @@ see the [Shopper Agent Leadership Note](SHOPPER_AGENT_LEADERSHIP_NOTE.md).
 | Deep Agents runtime | Semantic intent, skill selection, deterministic selected-skill tool grants, tool selection, styling judgment, and one server-resolved representative-shopper soft-guidance block | Product facts, policy facts, cart truth, or profile ownership |
 | Memory service | Immutable representative-shopper registry and conversation binding, typed three-field shopper snapshots, ordered durable shopper/assistant turns, exact finalized replay, bounded recent-turn reads, presented-product events and compact index, deterministic same-conversation reference resolution, authoritative cart state, and atomic mutation replay records | Catalog facts, model reasoning, learned preferences, sentiment, active anchors, or cross-conversation memory |
 | Graph checkpointer | Request-scoped working graph/tool state within one chain-server process | Durable transcript storage, cross-turn shopper memory, cross-replica context, or product-ref authorization |
-| Event-weather boundary | Closed location/date authority validation, exact shopper location provenance, optional exact-prefix region/country qualifiers, one provider adapter, server-owned `next week` normalization, normalized current-turn forecast evidence, sanitized typed failures, diagnostic redaction, deterministic location disclosure, attribution, and uncertainty | Product facts or constraints, a rewritten shopper place, an unstated ZIP, hidden geographic assumptions, prior-turn forecast authority, provider-plan rights, or a public weather API |
+| Event-weather boundary | Closed location/date authority validation, exact shopper location provenance, optional exact-prefix region/country qualifiers, direct Visual Crossing resolution, server-owned `next week` normalization, normalized current-turn forecast evidence, sanitized typed failures, redacted raw data plus categorical tracing, deterministic location disclosure, attribution, and uncertainty | Product facts or constraints, a rewritten shopper place, an unstated ZIP, hidden geographic assumptions, prior-turn forecast authority, provider-plan rights, or a public weather API |
 
 A model-authored semantic query is an internal **ranking preference**, not a
 product fact or shopper-facing explanation. Only catalog tool evidence can
@@ -35,20 +35,30 @@ skill/tool or establishes budget, constraints, cart intent, or product facts.
 The provider-neutral `get_weather_forecast_tool` is registered read-only and
 granted only by `event-context`, which composes only with `outfit-styling`.
 `WEATHER_ENABLED=false` remains the default, and disabled startup and health
-checks make no provider request. The request-bound wrapper accepts one attempt
-per turn after location and date authority are established; an invalid schema
-consumes the attempt. Saved ZIP reaches the weather client only through the
+checks make no provider request. The request-bound wrapper accepts one
+model-visible attempt per turn after location and date authority are
+established; an invalid schema consumes the attempt. Within a valid call,
+`max_provider_attempts: 2` permits one internal retry only for timeout or HTTP
+5xx. HTTP 400 maps to generic `weather_request_invalid`; other 4xx,
+connection, and response-validation failures are not retried. Saved ZIP reaches
+the weather client only through the
 narrow deterministic current/recent confirmation gate, with both `location`
 and `location_query` omitted. Otherwise the wrapper accepts one bounded exact
 named-place, address, or postal-code phrase from shopper-authored text in
-`location`. Optional
-`location_query` must preserve that exact phrase as its first component and may
-append only one or two comma-separated region/country qualifiers. Abbreviations
-are not rewritten: send `NYC` directly or qualify it as `NYC, NY`;
-`Springfield, TX` is a valid explicit regional assumption. It never adds an
-unstated ZIP or numeric component.
+`location`. For an abbreviation or ambiguous name, `location_query` is
+required: it must preserve that exact phrase as its first component and append
+only one or two comma-separated region/country qualifiers. Keep
+`location="NYC"` and use `location_query="NYC, NY"`; `Springfield, TX` is a
+valid explicit regional assumption. It never adds an unstated ZIP or numeric
+component and is omitted only when `location` is already sufficiently
+qualified.
 Semantic equivalence remains model-owned rather than deterministic proof and
 is correctable through the disclosed provider resolution.
+The adapter sends the bounded named place directly to Visual Crossing
+Timeline, using `location_query` only in the qualifier-preserving form above;
+it does not synthesize a ZIP or call a separate geocoder. Visual Crossing's
+`resolvedAddress` becomes the reversible `resolved_location` assumption for
+shopper-provided mode.
 An explicit place, negation, uncertainty, or override rejects saved mode.
 Modal lowercase `may be` is uncertainty, while calendar `May 5` remains valid.
 An exact shopper phrase `next week` is normalized from one captured UTC date to
@@ -484,7 +494,8 @@ with an explicit add request uses `outfit-styling`, `event-context`,
 `budget-shopping`, and `cart-management`.
 
 Event-context turns without a forecast call reuse the final response editor to
-enforce the same compact boundary. A forecast gets one attempt per turn after
+enforce the same compact boundary. A forecast gets one model-visible tool
+attempt per turn after
 the shopper supplies one bounded exact named-place, address, or postal-code
 phrase or passes the narrow saved-area confirmation gate, and after a supported
 date/window is established. Every call declares `candidate_action`.
@@ -497,12 +508,17 @@ synthesis before provider I/O, so provider failure cannot reopen search.
 product request or when no reusable prior candidates exist. Accepted reuse
 asks no follow-up question and does not initiate the next product role.
 `location` retains that exact authority phrase;
-for an abbreviation or ambiguous place, optional `location_query` must preserve
-that phrase as its first component and may append only one or two
-comma-separated region/country qualifiers. Send `NYC` directly or use
-`NYC, NY`; do not rewrite the abbreviation or add an unstated ZIP or numeric
-component. Semantic equivalence remains model-owned and correctable through
-provider resolution.
+for an abbreviation or ambiguous place, `location_query` is required: it must
+preserve that phrase as its first component and append only one or two
+comma-separated region/country qualifiers. Keep `location="NYC"` and use
+`location_query="NYC, NY"`; do not rewrite the authority phrase or add an
+unstated ZIP or numeric component. Omit the query only when `location` is
+already sufficiently qualified. Semantic equivalence remains model-owned and
+correctable through provider resolution.
+The adapter sends that bounded named place directly to Visual Crossing
+Timeline and uses no representative-ZIP table or separate geocoder. Within a
+valid tool call it may retry only a timeout or HTTP 5xx once; HTTP 400 remains
+a generic invalid-request outcome rather than location proof.
 The exact
 phrase `next week` is resolved server-side from one UTC anchor to the next
 Monday-through-Sunday range, unless a current negation or different date
@@ -528,8 +544,9 @@ ordinary grounded styling language remains. Accepted reuse bypasses the
 grounding editor entirely. On success, the server renders the exact names from
 the newest historical candidate set, one bounded styling direction derived
 from structured forecast evidence, and the canonical forecast block. On
-provider failure, it renders those prior names plus the typed safe weather
-failure. Weather remains styling context rather than
+provider failure, it preserves those prior names, adds one conditional
+weather-flexible styling/recheck direction, and appends the typed safe failure
+without re-asking for a finer location. Weather remains styling context rather than
 product-performance proof or an implicit catalog constraint.
 Search-bearing event-context turns must preserve at least one exact returned
 product in final text; if the editor omits every candidate, the deterministic
@@ -567,9 +584,12 @@ skill and is not catalog truth.
 tool. It is forced at turn start and selects static behavior instructions; it
 does not read or mutate catalog, cart, or policy state.
 
-Weather arguments and output are redacted from diagnostics and failed-turn
-partial graph capture, and saved profile ZIP is recursively scrubbed from
-diagnostic string keys and values. Final forecast summaries remain durable
+Raw weather arguments and output are redacted from diagnostics and failed-turn
+partial graph capture. The weather call record retains only categorical
+`candidate_action`, `request_shape`, `location_source`, `provider_input`, and
+`outcome`, with no place, ZIP, date, resolved place, URL, body, or exception.
+Saved profile ZIP is recursively scrubbed from diagnostic string keys and
+values. Final forecast summaries remain durable
 assistant text, but recognized summaries are redacted from later graph and
 grounding-editor recent discussion.
 Before provider calls are enabled for shoppers, the operator must confirm that

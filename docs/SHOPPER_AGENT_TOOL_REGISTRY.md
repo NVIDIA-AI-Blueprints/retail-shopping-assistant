@@ -246,11 +246,14 @@ semantic queries, raw tool messages, model reasoning, and all other diagnostics
 are discarded. This untrusted, log-sensitive operator/evaluation metadata is
 not shopper-facing response text.
 
-Weather is a stricter exception: diagnostics replace every
+Weather is a stricter exception: diagnostics replace every raw
 `get_weather_forecast_tool` argument object with `{"redacted": true}` and omit
-its result. Failed-turn partial graph capture also replaces weather calls and
-output with redacted placeholders, and diagnostics recursively scrub saved
-profile ZIP from string keys and values. A grounded final forecast summary
+its result. The call record retains only categorical `candidate_action`,
+`request_shape`, `location_source`, `provider_input`, and `outcome`; it never
+includes a place, ZIP, date, resolved place, URL, body, or exception.
+Failed-turn partial graph capture also replaces weather calls and output with
+redacted placeholders, and diagnostics recursively scrub saved profile ZIP
+from string keys and values. A grounded final forecast summary
 remains ordinary durable assistant text and can be exactly replayed, but a
 recognized prior summary is replaced with a redaction marker in later graph
 and grounding-editor recent discussion.
@@ -289,7 +292,7 @@ termination reason to `incomplete_agent_response`.
 | `mutating_cart` | Changes cart contents. | Slice 0 requires the cart-management grant, valid refs, and service-side success. Skill instructions require explicit shopper intent, but server-owned current-turn intent authorization is a later slice. |
 | `read_only_policy` | Reads controlled operator-managed policy content. | Never substitute model knowledge when a topic is absent. |
 | `read_only_promotions` | Reports the deployment's promotion signal without treating catalog results or price as markdown evidence. | Granted by product discovery and outfit styling; currently no active promotion is configured. |
-| `read_only_weather` | Reads bounded live forecast evidence for a qualified event location/date without changing shopper or commerce state. | Granted only by event context beside outfit styling; one attempt per turn, including invalid schema; successful current-turn evidence only. |
+| `read_only_weather` | Reads bounded live forecast evidence for a qualified event location/date without changing shopper or commerce state. | Granted only by event context beside outfit styling; one model-visible attempt per turn, including invalid schema; a valid call allows at most two provider attempts for timeout/5xx only; successful current-turn evidence only. |
 | `future_high_risk` | Checkout, payment, orders, account changes. | Not registered. Requires stronger auth, idempotency, ownership checks, and confirmation policy before use. |
 
 ## Registered Tools
@@ -1016,15 +1019,20 @@ Inputs:
 - `location`: omitted for `confirmed_saved_zip`; otherwise one bounded exact
   named-place, address, or postal-code phrase that appears in shopper-authored
   conversation text.
-- `location_query`: omitted for `confirmed_saved_zip` and optional for
-  `shopper_provided_location`. For an abbreviation or geographically ambiguous
-  `location`, it must preserve the exact shopper-authored location as its first
-  component and may append only one or two comma-separated region/country
-  qualifiers. Do not rewrite abbreviations: send `NYC` directly or qualify it
-  as `NYC, NY`; `Springfield, TX` is a valid explicit regional assumption. It
-  must not add an unstated ZIP or numeric component.
+- `location_query`: omitted for `confirmed_saved_zip`. For
+  `shopper_provided_location`, it is required when `location` is an abbreviation
+  or geographically ambiguous: it must preserve the exact shopper-authored
+  location as its first component and append only one or two comma-separated
+  region/country qualifiers. Keep `location="NYC"` and use
+  `location_query="NYC, NY"`; `Springfield, TX` is a valid explicit regional
+  assumption. It must not add an unstated ZIP or numeric component. Omit it
+  only when `location` is already sufficiently qualified.
   Semantic equivalence remains model-owned rather than being presented as
   deterministic proof, and the provider-resolved place keeps it correctable.
+  The adapter sends this bounded named place directly to Visual Crossing
+  Timeline and does not synthesize a ZIP or call a separate geocoder.
+  Visual Crossing's `resolvedAddress` becomes the reversible
+  `resolved_location` assumption for shopper-provided mode.
 - Exactly one `date` in ISO `YYYY-MM-DD` form, one complete inclusive
   `start_date`/`end_date` ISO range, or `relative_date=next_week`. Explicit and
   relative date modes are mutually exclusive. The maximum range is 15 days.
@@ -1059,9 +1067,13 @@ Preconditions:
   single-day phrase such as `tomorrow` against that same anchor into an exact
   ISO date. Other ambiguous or unresolved relative dates, an unconfirmed saved
   area, and location-independent requests do not authorize a call.
-- The request-bound server guard permits one attempt per turn. Native schema
+- The request-bound server guard permits one model-visible attempt per turn.
+  Native schema
   validation failure claims that attempt before returning the sanitized
-  invalid-request outcome, so there is no weather repair or retry.
+  invalid-request outcome, so there is no model weather repair. Within a valid
+  call, `max_provider_attempts: 2` permits one internal retry only after timeout
+  or HTTP 5xx. HTTP 400 maps to generic `weather_request_invalid`; other 4xx,
+  connection, and response-validation failures are not retried.
 
 Outputs:
 
@@ -1085,8 +1097,9 @@ Outputs:
 - Accepted reuse bypasses the grounding editor entirely. On success, the server
   renders the exact names from the newest historical candidate set, one
   bounded styling direction derived from structured forecast evidence, and the
-  canonical forecast block. On provider failure, it renders those prior names
-  plus the typed safe weather failure.
+  canonical forecast block. On provider failure, it preserves those prior
+  names, adds one conditional weather-flexible styling/recheck direction, and
+  appends the typed safe failure without asking for a finer location.
 - On failure, a sanitized typed outcome without provider body, raw exception,
   request URL, key, requested place/ZIP, dates, or resolved location.
 
@@ -1097,7 +1110,7 @@ Side effects:
   closes the remaining tool loop for synthesis. This turn-local control remains
   closed even when provider lookup fails.
 - No application-state mutation. When `WEATHER_ENABLED=true`, one qualified
-  call may read the configured
+  call may make at most two attempts against the configured
   [Visual Crossing Timeline API](https://www.visualcrossing.com/resources/documentation/weather-api/timeline-weather-api/)
   endpoint through the existing HTTP dependency; no vendor SDK or MCP server
   is required.
@@ -1106,10 +1119,14 @@ Failure behavior:
 
 - Disabled/configuration, validation, authentication, rate-limit, timeout,
   availability, horizon, and provider-response failures produce bounded
-  shopper-safe behavior and no weather claim.
-- Tool arguments and output are redacted from diagnostics and failed-turn
-  partial graph messages. Saved profile ZIP is recursively scrubbed from
-  diagnostic string keys and values.
+  shopper-safe behavior and no weather claim. HTTP 400 never proves the
+  shopper's place is wrong. Existing candidates remain visible with
+  conditional styling/recheck guidance, and lookup failure alone never asks
+  for state, region, country, or a finer location.
+- Raw tool arguments and output are redacted from diagnostics and failed-turn
+  partial graph messages. Only the categorical weather summary named above
+  remains. Saved profile ZIP is recursively scrubbed from diagnostic string
+  keys and values.
 
 Skills that grant this tool:
 

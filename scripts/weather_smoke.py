@@ -4,9 +4,9 @@
 
 """Run one explicit, redacted direct weather-client smoke.
 
-The command reads its closed request from ``WEATHER_SMOKE_ZIP`` and optionally
+The command reads its closed request from ``WEATHER_SMOKE_LOCATION`` and optionally
 ``WEATHER_SMOKE_DATE`` or the complete pair ``WEATHER_SMOKE_START_DATE`` /
-``WEATHER_SMOKE_END_DATE``. It never prints the ZIP, dates, resolved location,
+``WEATHER_SMOKE_END_DATE``. It never prints the location, dates, resolved location,
 forecast values, provider body, key, prepared URL, or raw exception.
 """
 
@@ -51,7 +51,7 @@ def _weather_config() -> WeatherConfig:
 
 def _weather_request() -> WeatherRequest:
     return WeatherRequest(
-        zipcode=os.environ.get("WEATHER_SMOKE_ZIP", ""),
+        location=os.environ.get("WEATHER_SMOKE_LOCATION", ""),
         date=os.environ.get("WEATHER_SMOKE_DATE") or None,
         start_date=os.environ.get("WEATHER_SMOKE_START_DATE") or None,
         end_date=os.environ.get("WEATHER_SMOKE_END_DATE") or None,

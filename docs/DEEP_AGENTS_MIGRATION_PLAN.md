@@ -395,8 +395,9 @@ refetched by shopper skills.
 
 `get_weather_forecast_tool` is now in the serving registry and immutable policy.
 Only `event-context` grants it, and that modifier still requires
-`outfit-styling`. The request-bound wrapper permits one attempt per turn, and a
-schema-invalid call consumes it. Every call requires `candidate_action`.
+`outfit-styling`. The request-bound wrapper permits one model-visible attempt
+per turn, and a schema-invalid call consumes it. Every call requires
+`candidate_action`.
 `reuse_prior_candidates` is valid only when a historical candidate set exists
 and the current turn solely supplies event context for those options without
 requesting new or refined products. Once accepted, it irreversibly hides and
@@ -411,11 +412,12 @@ the narrow deterministic usual/home-area confirmation gate, or
 `shopper_provided_location`, with one bounded exact named-place, address, or
 postal-code phrase copied from
 shopper-authored text as `location`. For an abbreviation or geographically
-ambiguous name, optional `location_query` must preserve that exact phrase as
-its first component and may append only one or two comma-separated
-region/country qualifiers. Do not rewrite abbreviations: send `NYC` directly
-or qualify it as `NYC, NY`; `Springfield, TX` is a valid explicit regional
-assumption. It never introduces an unstated ZIP or numeric component. Semantic
+ambiguous name, `location_query` is required: it must preserve that exact
+phrase as its first component and append only one or two comma-separated
+region/country qualifiers. Keep `location="NYC"` and use
+`location_query="NYC, NY"`; `Springfield, TX` is a valid explicit regional
+assumption. It never introduces an unstated ZIP or numeric component and is
+omitted only when `location` is already sufficiently qualified. Semantic
 equivalence remains model-owned rather than deterministic proof and is
 correctable through provider-resolution disclosure. A current explicit destination takes
 precedence and forbids silent
@@ -431,8 +433,12 @@ phrase such as `tomorrow` is resolved by the model against that same anchor
 into an exact ISO date. Other ambiguous or unresolved relative dates receive
 one date clarification.
 
-The Visual Crossing adapter returns bounded normalized daily evidence, rejects
-non-live forecast sources, and emits sanitized typed failures.
+The Visual Crossing adapter sends the bounded shopper-authored named place
+directly to Timeline without a synthesized ZIP or separate geocoder, returns
+bounded normalized daily evidence, rejects non-live forecast sources, and
+emits sanitized typed failures. One model-visible tool attempt is allowed; a
+valid call can retry internally once only after timeout or HTTP 5xx, while HTTP
+400 remains a generic invalid-request outcome.
 `WEATHER_ENABLED=false` remains the default and needs no credential. Only
 successful current-turn evidence supports forecast claims. For an exact
 shopper-authored location, the projection includes the provider-resolved place
@@ -442,8 +448,9 @@ omitted in saved-ZIP mode. Prior durable assistant forecast
 summaries are redacted from graph and grounding-editor recent discussion while
 remaining stored and exactly replayable; prior weather tool messages are
 excluded from prior evidence. Diagnostics and failed-turn partial output redact
-weather arguments/results, and diagnostics recursively scrub saved ZIP from
-string keys and values. Deterministic final rendering appends one exact
+raw weather arguments/results; the tool-call record retains only categorical
+call shape and outcome, and diagnostics recursively scrub saved ZIP from string
+keys and values. Deterministic final rendering appends one exact
 canonical block containing every validated daily date, condition, available
 low/high temperature, precipitation probability/types, attribution, and
 forecast uncertainty. For non-reuse weather paths, grounding-editor sentences
@@ -452,8 +459,9 @@ removed while ordinary grounded styling language remains. Accepted reuse
 bypasses the grounding editor entirely. On success, the server renders the
 exact names from the newest historical candidate set, one bounded styling
 direction derived from structured forecast evidence, and the canonical
-forecast block. On provider failure, it renders those prior names plus the
-typed safe weather failure. Forecast conditions may guide styling judgment, but cannot prove
+forecast block. On provider failure, it preserves those prior names, adds
+conditional weather-flexible styling/recheck guidance, and appends the typed
+safe failure without re-asking location. Forecast conditions may guide styling judgment, but cannot prove
 product performance or silently become a catalog must-have. No
 weather-specific FastAPI, SSE, or UI shape was added.
 

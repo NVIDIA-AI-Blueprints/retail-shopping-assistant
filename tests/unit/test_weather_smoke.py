@@ -20,6 +20,7 @@ def _run_smoke(overrides: dict[str, str]) -> subprocess.CompletedProcess[str]:
     environment = os.environ.copy()
     for name in (
         "WEATHER_API_KEY",
+        "WEATHER_SMOKE_LOCATION",
         "WEATHER_SMOKE_DATE",
         "WEATHER_SMOKE_START_DATE",
         "WEATHER_SMOKE_END_DATE",
@@ -40,7 +41,7 @@ def test_disabled_smoke_makes_no_request_and_redacts_inputs() -> None:
     result = _run_smoke(
         {
             "WEATHER_ENABLED": "false",
-            "WEATHER_SMOKE_ZIP": "98101",
+            "WEATHER_SMOKE_LOCATION": "NYC, NY",
             "WEATHER_SMOKE_DATE": "2026-07-28",
         }
     )
@@ -50,7 +51,7 @@ def test_disabled_smoke_makes_no_request_and_redacts_inputs() -> None:
     assert output["outcome"] == "weather_disabled"
     assert output["mode"] == "single_date"
     assert output["window_days"] == 1
-    assert "98101" not in result.stdout + result.stderr
+    assert "NYC, NY" not in result.stdout + result.stderr
     assert "2026-07-28" not in result.stdout + result.stderr
 
 
@@ -58,7 +59,7 @@ def test_enabled_smoke_without_key_fails_before_transport() -> None:
     result = _run_smoke(
         {
             "WEATHER_ENABLED": "true",
-            "WEATHER_SMOKE_ZIP": "98101",
+            "WEATHER_SMOKE_LOCATION": "NYC, NY",
         }
     )
 
@@ -66,20 +67,20 @@ def test_enabled_smoke_without_key_fails_before_transport() -> None:
     output = json.loads(result.stdout)
     assert output["outcome"] == "weather_config_invalid"
     assert output["schema_valid"] is True
-    assert "98101" not in result.stdout + result.stderr
+    assert "NYC, NY" not in result.stdout + result.stderr
 
 
 def test_invalid_config_and_request_use_distinct_failure_codes() -> None:
     invalid_config = _run_smoke(
         {
             "WEATHER_ENABLED": "sometimes",
-            "WEATHER_SMOKE_ZIP": "98101",
+            "WEATHER_SMOKE_LOCATION": "NYC, NY",
         }
     )
     invalid_request = _run_smoke(
         {
             "WEATHER_ENABLED": "false",
-            "WEATHER_SMOKE_ZIP": "98101",
+            "WEATHER_SMOKE_LOCATION": "NYC, NY",
             "WEATHER_SMOKE_DATE": "next week",
         }
     )
@@ -92,5 +93,5 @@ def test_invalid_config_and_request_use_distinct_failure_codes() -> None:
         + invalid_request.stdout
         + invalid_request.stderr
     )
-    assert "98101" not in combined
+    assert "NYC, NY" not in combined
     assert "next week" not in combined

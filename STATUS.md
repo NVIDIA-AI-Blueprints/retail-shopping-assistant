@@ -1,6 +1,6 @@
 # Project Status
 
-Updated: 2026-07-28
+Updated: 2026-07-29
 
 ## Current Milestone
 
@@ -24,16 +24,19 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   `shopper_provided_location`, where `location` contains a bounded exact span
   from current or recent shopper text. The authority span may be a city, city
   plus region/country, address, or postal code. For an abbreviation or
-  ambiguous name, optional `location_query` must preserve that exact phrase as
-  its first component and may append only one or two comma-separated
-  region/country qualifiers. Do not rewrite abbreviations: send `NYC` directly
-  or qualify it as `NYC, NY`; `Springfield, TX` is a valid explicit regional
+  ambiguous name, `location_query` is required: it must preserve that exact
+  phrase as its first component and append only one or two comma-separated
+  region/country qualifiers. Keep `location="NYC"` and use
+  `location_query="NYC, NY"`; `Springfield, TX` is a valid explicit regional
   assumption. It cannot contain an unstated ZIP or numeric component or replace
-  the authoritative shopper phrase.
-  The provider query uses `location_query` when present and otherwise uses
-  `location`. Semantic normalization remains model-owned rather than being
-  presented as deterministic proof, and provider resolution makes it
-  correctable. Saved ZIP is released only after the existing narrow
+  the authoritative shopper phrase, and is omitted only when `location` is
+  already sufficiently qualified.
+  The adapter passes `location_query` when present and otherwise passes
+  `location` unchanged to Visual Crossing's Timeline endpoint; Visual Crossing
+  resolves the named place in that same request and returns the transparent,
+  correctable place assumption. There is no alias table, representative ZIP,
+  or separate geocoder. Semantic normalization remains model-owned rather than
+  deterministic proof. Saved ZIP is released only after the existing narrow
   deterministic confirmation: a
   current location-neutral statement explicitly naming `my`/`the` usual/home
   area, a bare affirmative immediately after the assistant's usual/home-area
@@ -48,8 +51,12 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   an earlier use. The model may resolve an unambiguous single-day
   phrase such as `tomorrow` against the same prompt-visible UTC anchor and send
   the exact ISO date; a genuinely ambiguous or unresolved relative date gets
-  one concise clarification. A server-owned guard permits one attempt per
-  turn, and an invalid schema consumes it. Every call also requires
+  one concise clarification. A server-owned guard permits one model-visible
+  tool attempt per turn, and an invalid schema consumes it. Within a valid
+  call, the adapter makes at most one additional provider attempt, only after
+  a timeout or HTTP 5xx response. HTTP 400 maps to generic invalid request
+  rather than claiming the shopper's location was unresolved. Every call also
+  requires
   `candidate_action`. `reuse_prior_candidates` is valid only when a historical
   candidate set exists and the current turn solely adds event context without
   requesting new or refined products. Once accepted, it irreversibly hides and
@@ -71,9 +78,12 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   assistant forecast summaries are redacted from graph and grounding-editor
   recent discussion, and prior weather tool messages are excluded from prior
   evidence. Diagnostics and failed-turn partial output redact weather
-  arguments/output; diagnostics also scrub saved ZIP from string keys and
-  values, and the complete grounding-editor prompt replaces those saved digits
-  before the editor call. Deterministic final rendering appends exactly one canonical block
+  arguments/output. Diagnostics preserve only categorical candidate action,
+  date shape, location-source kind, provider-input kind, and typed outcome;
+  they expose no location, ZIP, date, resolved place, URL, body, or exception.
+  Diagnostics also scrub saved ZIP from string keys and values, and the
+  complete grounding-editor prompt replaces those saved digits before the
+  editor call. Deterministic final rendering appends exactly one canonical block
   with every validated daily date, condition, available temperature,
   precipitation fact, attribution, and forecast uncertainty.
   For non-reuse weather paths, grounding-editor sentences containing
@@ -82,8 +92,9 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   grounding editor entirely. On success, the server renders the exact names
   from the newest historical candidate set, one bounded styling direction
   derived from structured forecast evidence, and the canonical forecast
-  block. On provider failure, it renders those prior names plus the typed safe
-  weather failure.
+  block. On every provider/configuration/validation failure, it renders those
+  prior names, one conditional weather-flexible styling direction, and the
+  typed safe failure without asking for a finer location.
   Weather cannot prove product performance or create an unstated catalog
   constraint.
   This adds no weather-specific FastAPI, SSE, or UI shape. Before an operator
@@ -434,6 +445,22 @@ The newest focused gate is recorded first. Older implementation gates remain
 below as comparison points; generated quality and timing
 artifacts stay in the required local archive rather than versioned source.
 
+- Styling-weather provider-resolution Slice 1 gate (2026-07-29): the focused
+  weather/event-context suite passed 238 tests, changed Python compiled, and
+  whitespace checks passed. A direct named-place Visual Crossing smoke
+  succeeded. The exact two-turn live scenario then proved one catalog search
+  and no weather call on turn 1, followed by one weather call and no repeated
+  search on turn 2. The safe trace recorded
+  `shopper_provided_location` + `location_query` + `relative_range` +
+  `success`; raw place/date arguments remained redacted. All four prior dress
+  names, provider-resolution disclosure, the canonical attributed forecast,
+  and the recheck warning reached final text with no repeated context question.
+  Focused Judge scores were 5/5 and 4/5 (4.50/5 overall). Average turn time was
+  18.32s versus 17.88s for the immediately prior WIP (+0.44s); quality held at
+  4.50/5. No Challenger or full shopping cohort ran. The canonical local
+  comparison is
+  `~/exec-briefs/retail-shopping-assistant/quality/shopping/targeted/event_context/named_place_next_week/comparisons/previous_wip__to__current_wip.md`;
+  the golden comparison is in the same directory.
 - Styling-weather guidance weather/location leveraging gate (2026-07-28): the
   final focused offline gate passed 481 tests with 1 expected xfail. The final
   paid two-turn app/Judge run scored 5/5 on the occasion-shopping turn and 4/5
@@ -885,25 +912,29 @@ processing by the downstream app model and output guardrails; the repository
 does not claim which plan is selected or that those rights have been obtained.
 When enabled, the narrow current/recent saved-area confirmation gate, rejection
 of saved mode on any explicit current location/negation/override, exact
-shopper-span provenance, the rule that optional `location_query` preserves the
-exact shopper phrase first and appends only one or two region/country
+shopper-span provenance, the rule that abbreviation/ambiguous-place
+`location_query` is required, preserves the exact shopper phrase first, and
+appends only one or two region/country
 qualifiers, the prohibition on rewriting abbreviations or adding an unstated
 ZIP or numeric component, the single UTC-anchored interpretation of exact
 `next week` as the next Monday-through-Sunday range, same-anchor ISO normalization for
 unambiguous single-day phrases, one clarification for genuinely ambiguous or
-unresolved relative dates, one-attempt-per-turn enforcement including
-invalid-schema consumption, and current-turn-only evidence remain mandatory.
+unresolved relative dates, one model-visible attempt per turn including
+invalid-schema consumption, at most one internal retry for timeout/HTTP 5xx,
+generic invalid-request handling for HTTP 400, and current-turn-only evidence
+remain mandatory.
 Provider-resolved place must stay omitted for saved mode and appear for
 explicit shopper location only as a transparent, reversible assumption.
 Prior-summary redaction from graph/editor context,
-prior-weather-tool exclusion from prior evidence, weather and saved-ZIP
-diagnostic redaction across keys and values, fail-closed rejection of
+prior-weather-tool exclusion from prior evidence, raw weather and saved-ZIP
+diagnostic redaction plus categorical weather call tracing, fail-closed rejection of
 grounding-editor prose containing weather-domain fact language or fact-shaped
 dates/values on non-reuse paths, one exact canonical block with all validated
 daily forecast facts plus attribution/uncertainty, accepted-reuse bypass of the
 grounding editor with exact newest candidate names and bounded
-structured-forecast styling (or those names plus a typed safe provider
-failure), and the prohibition on deriving product performance or catalog
+structured-forecast styling (or those names plus conditional
+weather-flexible styling/recheck guidance and a typed safe failure, without a
+provider-driven location re-ask), and the prohibition on deriving product performance or catalog
 constraints also remain mandatory.
 
 Judge product evidence is capped at 24 records and 32,000 serialized characters

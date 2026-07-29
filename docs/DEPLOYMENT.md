@@ -366,6 +366,7 @@ weather:
   base_url: https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline
   api_key_env: WEATHER_API_KEY
   timeout_seconds: 3.0
+  max_provider_attempts: 2
   max_forecast_horizon_days: 15
   max_range_days: 15
 ```
@@ -381,8 +382,12 @@ process runner enforces the same boundary by removing both weather variables
 from memory, guardrail, catalog, and React process environments while retaining
 them for the chain server.
 
-The request-bound shopper wrapper permits one call attempt per turn; a
-schema-invalid invocation consumes it. Every call requires
+The request-bound shopper wrapper permits one model-visible call attempt per
+turn; a schema-invalid invocation consumes it with no model repair. Within a
+valid call, `max_provider_attempts: 2` allows one client-internal retry only
+after a timeout or HTTP 5xx. HTTP 400 maps to generic
+`weather_request_invalid`; other 4xx, connection, and response-validation
+failures are not retried. Every call requires
 `candidate_action`. `reuse_prior_candidates` is valid only when historical
 candidates exist and the current turn solely supplies event context for them
 without asking for new or refined products. Once accepted, the runtime
@@ -401,14 +406,20 @@ assistant's usual/home-area question, or a strict date-only follow-up
 immediately after an accepted confirmation.
 `shopper_provided_location` instead copies one bounded exact named-place,
 address, or postal-code phrase from shopper-authored text into `location`.
-For an abbreviation or geographically ambiguous name, optional
-`location_query` must preserve that exact phrase as its first component and may
-append only one or two comma-separated region/country qualifiers. Do not
-rewrite abbreviations: send `NYC` directly or qualify it as `NYC, NY`;
-`Springfield, TX` is a valid explicit regional assumption. It never adds an
-unstated ZIP or numeric component. Semantic equivalence remains model-owned
+For an abbreviation or geographically ambiguous name, `location_query` is
+required: it must preserve that exact phrase as its first component and append
+only one or two comma-separated region/country qualifiers. Keep
+`location="NYC"` and use `location_query="NYC, NY"`; `Springfield, TX` is a
+valid explicit regional assumption. It never adds an unstated ZIP or numeric
+component and is omitted only when `location` is already sufficiently
+qualified. Semantic equivalence remains model-owned
 rather than deterministic proof and is correctable through
 provider-resolution disclosure.
+The adapter sends this bounded named place directly to Visual Crossing
+Timeline, using `location_query` only in that qualifier-preserving form. It
+does not synthesize a ZIP or use a separate geocoder. Visual Crossing's
+`resolvedAddress` becomes the reversible `resolved_location` assumption shown
+for shopper-provided mode.
 Any current explicit
 place, question, negation, uncertainty, or location-override cue rejects saved
 mode; explicit destination takes precedence and disables saved-ZIP fallback.
@@ -441,13 +452,18 @@ ordinary grounded styling language remains. Accepted reuse bypasses the
 grounding editor entirely. On success, the server renders the exact names from
 the newest historical candidate set, one bounded styling direction derived
 from structured forecast evidence, and the canonical forecast block. On
-provider failure, it renders those prior names plus the typed safe weather
-failure.
+provider failure, it preserves those prior names, adds one conditional
+weather-flexible styling/recheck direction, and appends the typed safe failure.
+It never asks for state, region, country, or finer location solely because the
+lookup failed.
 Weather may inform general styling judgment but does not prove any
 product-performance property or create an unstated catalog constraint.
 
-Weather tool arguments and output are redacted from both operator diagnostics
-and failed-turn partial graph capture. Saved profile ZIP is recursively
+Raw weather tool arguments and output are redacted from both operator
+diagnostics and failed-turn partial graph capture. The tool-call record retains
+only categorical `candidate_action`, `request_shape`, `location_source`,
+`provider_input`, and `outcome`; it never includes a location, ZIP, date,
+resolved place, URL, body, or exception. Saved profile ZIP is recursively
 scrubbed from diagnostic string keys and values. The final assistant summary
 remains ordinary durable conversation text: memory can store and exactly
 replay it.
@@ -459,18 +475,19 @@ plan or assert that these rights have been obtained. Review the current
 [pricing and edition terms](https://www.visualcrossing.com/weather-data-pricing/)
 and [service terms](https://www.visualcrossing.com/weather-service-terms/).
 
-An optional direct provider smoke makes at most one request per invocation:
+An optional direct provider smoke makes one invocation and at most the
+configured two provider attempts; only timeout or HTTP 5xx triggers the second:
 
 ```bash
 python scripts/weather_smoke.py
 ```
 
 Before running it, set `WEATHER_ENABLED=true`, `WEATHER_API_KEY`, and
-`WEATHER_SMOKE_ZIP` in the private process environment. Optionally set either
+`WEATHER_SMOKE_LOCATION` in the private process environment. Optionally set either
 `WEATHER_SMOKE_DATE` or the complete
 `WEATHER_SMOKE_START_DATE`/`WEATHER_SMOKE_END_DATE` pair. The command prints
 only provider/config label, request mode, window length, outcome category,
-schema validity, and latency. It never prints the ZIP, dates, location,
+schema validity, and latency. It never prints the exact location, dates,
 forecast, key, URL, provider body, or raw exception. It is not run by startup,
 CI, health checks, or shopper traffic.
 

@@ -4149,6 +4149,8 @@ class DeepAgentsRuntime:
             if prior_candidates:
                 parts.append(_prior_weather_candidates_text(prior_candidates))
         if weather_outcome is not None:
+            if isinstance(weather_outcome, WeatherFailure):
+                parts.append(_conditional_weather_styling_direction())
             parts.append(_format_weather_outcome(weather_outcome))
         return (
             _scrub_internal_shopper_language("\n\n".join(parts))
@@ -4295,12 +4297,14 @@ Event-weather boundary:
 - A successful lookup requires a shopper-stated place plus an exact date,
   complete inclusive range, or the bounded next_week mode. Keep the shortest
   sufficient shopper-authored place phrase in `location`. If it is ambiguous,
-  `location_query` may preserve that exact phrase as its first component and
-  append only one or two comma-separated region/country qualifiers. Do not
-  rewrite abbreviations: send NYC directly or qualify it as NYC, NY. Never add
-  a ZIP or numeric component the shopper did not state, and never substitute
-  the saved profile location. The provider resolves the query; the final
-  response states the resolved place as a transparent, reversible assumption.
+  or is an abbreviation, `location_query` is required: preserve that exact
+  phrase as its first component and append only one or two comma-separated
+  region/country qualifiers. For NYC, send `location="NYC"` and
+  `location_query="NYC, NY"`. Omit `location_query` only when `location` is
+  already sufficiently qualified. Never rewrite the authority phrase, add a
+  ZIP or numeric component the shopper did not state, or substitute the saved
+  profile location. The provider resolves the query; the final response states
+  the resolved place as a transparent, reversible assumption.
 - Ask only the single next missing fact when it materially changes the next
   recommendation: establish location before date. Do not ask a date question
   for generic advice or when weather would not change the guidance.
@@ -4997,6 +5001,11 @@ def _collect_agent_diagnostics(
                 ),
                 "status": status,
             }
+            if call["tool_name"] == _WEATHER_TOOL_NAME:
+                entry["weather"] = _weather_diagnostic_summary(
+                    call["arguments"],
+                    result_message,
+                )
             if rejection_reason:
                 entry["rejection_reason"] = rejection_reason
             restored_fields = restored_fields_by_call.get(call["tool_call_id"])
@@ -5269,6 +5278,59 @@ def _tool_results_by_call_id(messages: list[Any]) -> dict[str, Any]:
         if tool_call_id:
             results[tool_call_id] = message
     return results
+
+
+def _weather_diagnostic_summary(
+    arguments: dict[str, Any],
+    result_message: Any | None,
+) -> dict[str, str]:
+    """Return non-sensitive weather request shape and typed outcome."""
+
+    action = arguments.get("candidate_action")
+    if action not in {"reuse_prior_candidates", "search_new_candidates"}:
+        action = "invalid"
+    if arguments.get("relative_date") == "next_week":
+        request_shape = "relative_range"
+    elif arguments.get("date"):
+        request_shape = "exact_date"
+    elif arguments.get("start_date") and arguments.get("end_date"):
+        request_shape = "date_range"
+    else:
+        request_shape = "invalid"
+
+    location_source = arguments.get("location_source")
+    if location_source not in {
+        "confirmed_saved_zip",
+        "shopper_provided_location",
+    }:
+        location_source = "invalid"
+    if location_source == "confirmed_saved_zip":
+        provider_input = "saved_zip"
+    elif arguments.get("location_query"):
+        provider_input = "location_query"
+    elif arguments.get("location"):
+        provider_input = "location"
+    else:
+        provider_input = "invalid"
+
+    outcome = "not_executed"
+    if result_message is not None:
+        parsed = parse_weather_tool_evidence(
+            _content_to_text(_value(result_message, "content"))
+        )
+        if isinstance(parsed, WeatherForecastEvidence):
+            outcome = "success"
+        elif isinstance(parsed, WeatherFailure):
+            outcome = parsed.code
+        else:
+            outcome = "weather_response_invalid"
+    return {
+        "candidate_action": str(action),
+        "request_shape": request_shape,
+        "location_source": str(location_source),
+        "provider_input": provider_input,
+        "outcome": outcome,
+    }
 
 
 def _normalized_tool_call(raw_call: Any) -> dict[str, Any]:
@@ -5842,14 +5904,7 @@ def _format_weather_outcome(
         if outcome.code == "weather_outside_forecast_horizon":
             return (
                 "A live forecast is not available for those event dates yet, "
-                "so I won't assume the conditions. We can plan conditionally "
-                "now and recheck closer to the event."
-            )
-        if outcome.code == "weather_location_not_found":
-            return (
-                "I couldn't resolve that event location, so I don't have "
-                "forecast conditions to use. Please add the state, region, "
-                "or country."
+                "so I won't assume the conditions."
             )
         if outcome.code in {
             "weather_timeout",
@@ -5858,8 +5913,7 @@ def _format_weather_outcome(
         }:
             return (
                 "I couldn't retrieve the live forecast right now, so I won't "
-                "assume the conditions. We can keep the styling direction "
-                "conditional and retry later."
+                "assume the conditions."
             )
         if outcome.code in {
             "weather_disabled",
@@ -5928,6 +5982,16 @@ def _format_weather_outcome(
         f"{_WEATHER_UNCERTAINTY_TEXT}"
     )
     return "\n".join(lines)
+
+
+def _conditional_weather_styling_direction() -> str:
+    """Return useful styling guidance without asserting forecast facts."""
+
+    return (
+        "Keep the look weather-flexible with a removable layer and, if the "
+        "event is outdoors, a footwear backup for wet or uneven ground; "
+        "recheck the forecast closer to the event."
+    )
 
 
 def _ensure_weather_forecast_evidence(

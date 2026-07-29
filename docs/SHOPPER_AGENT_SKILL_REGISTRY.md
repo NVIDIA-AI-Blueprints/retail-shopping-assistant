@@ -196,6 +196,11 @@ bounded `catalog_scope_outcomes` for `zero_results`. Public query responses
 return `{}` for this field by default; trusted operator/evaluation deployments
 must explicitly set `EXPOSE_AGENT_DIAGNOSTICS=true`. On graph failure, bounded
 current-turn assistant/tool messages are captured before checkpoint cleanup.
+Raw weather arguments/output are the exception: they remain redacted, while
+the weather tool-call record retains only categorical `candidate_action`,
+`request_shape`, `location_source`, `provider_input`, and `outcome`, with no
+place, ZIP, date, resolved place, URL, body, or exception. Saved profile ZIP
+and failed-turn weather content remain scrubbed.
 The Judge retains only product evidence/truncation and those catalog scope
 outcomes from diagnostics.
 
@@ -243,7 +248,7 @@ forecast context to occasion-led styling.
 - Does not infer that Cancun means beach or that any ZIP or place establishes
   weather, wind, climate, season, dress code, local norms, or product
   performance.
-- Grants `get_weather_forecast_tool` for one attempt per turn. It uses
+- Grants `get_weather_forecast_tool` for one model-visible attempt per turn. It uses
   `confirmed_saved_zip`, with both location fields omitted from model
   arguments, only when the deterministic gate accepts a current
   location-neutral statement explicitly naming `my`/`the` usual/home area, a
@@ -253,18 +258,25 @@ forecast context to occasion-led styling.
   saved mode. It uses
   `shopper_provided_location` only with one bounded exact named-place, address,
   or postal-code phrase copied from shopper-authored text into `location`.
-  Optional `location_query` must preserve that exact phrase as its first
-  component and may append only one or two comma-separated region/country
-  qualifiers. Do not rewrite abbreviations: send `NYC` directly or qualify it
-  as `NYC, NY`; `Springfield, TX` is a valid explicit regional assumption. It
-  never carries an unstated ZIP or numeric component. Semantic equivalence
+  For an abbreviation or ambiguous name, `location_query` is required: it must
+  preserve that exact phrase as its first component and append only one or two
+  comma-separated region/country qualifiers. Keep `location="NYC"` and use
+  `location_query="NYC, NY"`; `Springfield, TX` is a valid explicit regional
+  assumption. It never carries an unstated ZIP or numeric component and is
+  omitted only when `location` is already sufficiently qualified. Semantic equivalence
   remains model-owned rather than deterministic proof and is correctable
-  through provider-resolution disclosure. Current
+  through provider-resolution disclosure. The adapter sends the bounded named
+  place directly to Visual Crossing Timeline and uses no synthesized ZIP or
+  separate geocoder; Visual Crossing's `resolvedAddress` becomes the reversible
+  `resolved_location` assumption. Current
   explicit destination prevents fallback to saved ZIP.
 - Treats modal lowercase `may be` as uncertainty while accepting calendar
   `May 5` as a valid date.
-- Treats the limit as one attempt: a schema-invalid weather call consumes it
-  and cannot be repaired or retried in that turn.
+- Treats the model limit as one attempt: a schema-invalid weather call consumes
+  it and cannot be repaired in that turn. Within a valid call,
+  `max_provider_attempts: 2` permits one internal retry only for timeout or
+  HTTP 5xx. HTTP 400 maps to generic `weather_request_invalid`; other 4xx,
+  connection, and response-validation failures are not retried.
 - Requires `candidate_action` on every weather call.
   `reuse_prior_candidates` is valid only when historical candidates exist and
   the current turn solely adds event context for them without requesting new or
@@ -290,9 +302,10 @@ forecast context to occasion-led styling.
   `confirmed_saved_zip`. Prior durable assistant forecast summaries are
   redacted from graph and grounding-editor recent discussion while remaining
   stored and exactly replayable; prior weather tool messages are excluded from
-  prior evidence. Arguments and output are redacted from diagnostics and
-  failed-turn partial output, and saved profile ZIP is scrubbed from diagnostic
-  string keys and values. Final rendering appends one exact canonical block
+  prior evidence. Raw arguments and output are redacted from diagnostics and
+  failed-turn partial output; only the categorical weather summary above
+  remains, and saved profile ZIP is scrubbed from diagnostic string keys and
+  values. Final rendering appends one exact canonical block
   containing every validated daily date, condition, available low/high
   temperature, precipitation probability/types, Visual Crossing attribution,
   and forecast uncertainty; model prose cannot shorten or selectively omit it.
@@ -302,8 +315,9 @@ forecast context to occasion-led styling.
   grounding editor entirely. On success, the server renders the exact names
   from the newest historical candidate set, one bounded styling direction
   derived from structured forecast evidence, and the canonical forecast block.
-  On provider failure, it renders those prior names plus the typed safe weather
-  failure.
+  On provider failure, it preserves those prior names, adds one conditional
+  weather-flexible styling/recheck direction, and appends the typed safe
+  failure without asking for a finer location.
 - Treats weather as styling context, never proof of product performance or an
   unstated catalog constraint. There is no new FastAPI, SSE, or UI shape.
 - Remains disabled at the provider boundary by default. Before an operator

@@ -88,6 +88,15 @@ class EventWeatherRequest(BaseModel):
         default=None,
         min_length=1,
         max_length=256,
+        description=(
+            "Provider-facing named place. Required when location is an "
+            "abbreviation or geographically ambiguous: preserve the exact "
+            "location as the first component and append one or two "
+            "comma-separated region/country qualifiers (for example, "
+            "location='NYC', location_query='NYC, NY'). Omit only when "
+            "location is already sufficiently qualified. Never add an "
+            "unstated ZIP or numeric component."
+        ),
     )
     relative_date: Literal["next_week"] | None = None
     date: str | None = None
@@ -401,13 +410,14 @@ def get_event_weather_forecast_tool(
             "Otherwise use shopper_provided_location and copy the shortest "
             "sufficient place phrase verbatim from shopper-authored text, such "
             "as Denver, Cancun, Paris France, or a stated postal code. Keep "
-            "that phrase in location. When it is ambiguous, location_query may "
-            "preserve that exact phrase as its first component and append only "
-            "a standard region and/or country qualifier (for example, "
-            "Springfield to Springfield, TX). Do not rewrite abbreviations; "
-            "send NYC directly or qualify it as NYC, NY. Never add a ZIP the "
-            "shopper did not state. The provider-resolved place will be "
-            "disclosed. "
+            "that phrase in location. For an abbreviation or geographically "
+            "ambiguous name, location_query is required: preserve the exact "
+            "phrase as its first component and append only a standard region "
+            "and/or country qualifier (for example, NYC to NYC, NY or "
+            "Springfield to Springfield, TX). Never rewrite the authority "
+            "phrase or add a ZIP the shopper did not state. Omit "
+            "location_query only when location is already sufficiently "
+            "qualified. The provider-resolved place will be disclosed. "
             "Convert unambiguous relative date "
             "language: use relative_date=next_week only for the shopper's exact "
             "'next week' wording; otherwise use an exact ISO date or complete "

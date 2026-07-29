@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Offline contract tests for the dormant weather client and provider adapter."""
+"""Offline contract tests for the serving weather client and provider adapter."""
 
 from __future__ import annotations
 
@@ -78,6 +78,20 @@ class FakeSession:
         return self.response
 
 
+class SequenceSession:
+    def __init__(self, outcomes: list[FakeResponse | Exception]) -> None:
+        self.outcomes = list(outcomes)
+        self.calls: list[dict[str, Any]] = []
+
+    def get(self, url: str, **kwargs: Any) -> FakeResponse:
+        self.calls.append({"url": url, **kwargs})
+        assert self.outcomes
+        outcome = self.outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+
 def raw_day(
     day: date,
     *,
@@ -145,6 +159,7 @@ class TestWeatherConfig:
         assert config.provider == "visual_crossing"
         assert config.api_key_env == "WEATHER_API_KEY"
         assert config.timeout_seconds == 3.0
+        assert config.max_provider_attempts == 2
         assert config.max_forecast_horizon_days == 15
         assert config.max_range_days == 15
         assert config.model_dump().get("api_key") is None
@@ -166,6 +181,10 @@ class TestWeatherConfig:
             ("timeout_seconds", "3.0"),
             ("timeout_seconds", float("inf")),
             ("timeout_seconds", float("nan")),
+            ("max_provider_attempts", 0),
+            ("max_provider_attempts", 3),
+            ("max_provider_attempts", True),
+            ("max_provider_attempts", "2"),
             ("max_forecast_horizon_days", 0),
             ("max_forecast_horizon_days", True),
             ("max_forecast_horizon_days", "15"),
@@ -379,6 +398,23 @@ class TestVisualCrossingSuccess:
             "/Canc%C3%BAn%2FQuintana%20Roo%2C%20Mexico/2026-07-28"
         )
 
+    def test_qualified_nyc_uses_exact_timeline_location_and_date(self) -> None:
+        requested = TODAY + timedelta(days=1)
+        client, session = client_for(
+            FakeResponse(payload([raw_day(requested)]))
+        )
+
+        outcome = client.get_forecast(
+            WeatherRequest(location="NYC, NY", date=requested)
+        )
+
+        assert isinstance(outcome, WeatherResult)
+        assert session.calls[0]["url"].endswith(
+            "/NYC%2C%20NY/2026-07-28"
+        )
+        assert session.calls[0]["params"]["include"] == "days"
+        assert session.calls[0]["params"]["unitGroup"] == "us"
+
     def test_inclusive_range_is_complete_and_ordered(self) -> None:
         requested_days = [TODAY + timedelta(days=offset) for offset in range(1, 4)]
         client, session = client_for(
@@ -478,7 +514,7 @@ class TestVisualCrossingFailures:
         "status_code,code,retryable",
         [
             (302, "weather_response_invalid", False),
-            (400, "weather_location_not_found", False),
+            (400, "weather_request_invalid", False),
             (401, "weather_auth_failed", False),
             (403, "weather_auth_failed", False),
             (404, "weather_response_invalid", False),
@@ -505,6 +541,84 @@ class TestVisualCrossingFailures:
         failure = assert_failure(outcome, code, retryable)
         assert "provider body" not in failure.model_dump_json()
         assert response.closed is True
+
+    @pytest.mark.parametrize("status_code", [400, 401, 403, 429])
+    def test_does_not_retry_non_transient_statuses(
+        self,
+        status_code: int,
+    ) -> None:
+        response = FakeResponse(body=b"sanitized", status_code=status_code)
+        client, session = client_for(response)
+
+        client.get_forecast(WeatherRequest(location=ZIPCODE))
+
+        assert len(session.calls) == 1
+
+    @pytest.mark.parametrize(
+        "first_outcome",
+        [
+            FakeResponse(body=b"temporary", status_code=503),
+            requests.Timeout("sensitive timeout"),
+        ],
+    )
+    def test_retries_one_transient_failure_then_returns_success(
+        self,
+        first_outcome: FakeResponse | Exception,
+    ) -> None:
+        success = FakeResponse(payload([raw_day(TODAY, source="comb")]))
+        session = SequenceSession([first_outcome, success])
+        client = VisualCrossingWeatherClient(
+            enabled_config(max_provider_attempts=2),
+            SECRET,
+            session=session,
+            clock=lambda: NOW,
+        )
+
+        outcome = client.get_forecast(WeatherRequest(location="NYC"))
+
+        assert isinstance(outcome, WeatherResult)
+        assert len(session.calls) == 2
+        if isinstance(first_outcome, FakeResponse):
+            assert first_outcome.closed is True
+        assert success.closed is True
+
+    def test_does_not_retry_generic_connection_failure(self) -> None:
+        session = SequenceSession(
+            [
+                requests.ConnectionError("sensitive connection"),
+                FakeResponse(payload([raw_day(TODAY)])),
+            ]
+        )
+        client = VisualCrossingWeatherClient(
+            enabled_config(max_provider_attempts=2),
+            SECRET,
+            session=session,
+            clock=lambda: NOW,
+        )
+
+        outcome = client.get_forecast(WeatherRequest(location="NYC"))
+
+        assert_failure(outcome, "weather_unavailable", True)
+        assert len(session.calls) == 1
+
+    def test_stops_after_two_transient_attempts(self) -> None:
+        session = SequenceSession(
+            [
+                requests.Timeout("first sensitive timeout"),
+                requests.Timeout("second sensitive timeout"),
+            ]
+        )
+        client = VisualCrossingWeatherClient(
+            enabled_config(max_provider_attempts=2),
+            SECRET,
+            session=session,
+            clock=lambda: NOW,
+        )
+
+        outcome = client.get_forecast(WeatherRequest(location="NYC"))
+
+        assert_failure(outcome, "weather_timeout", True)
+        assert len(session.calls) == 2
 
     @pytest.mark.parametrize(
         "error,code",
@@ -548,6 +662,9 @@ class TestVisualCrossingFailures:
             "VisualCrossingWebServices",
         ):
             assert sensitive not in combined
+        assert len(session.calls) == (
+            2 if isinstance(error, requests.Timeout) else 1
+        )
 
     def test_stream_timeout_is_typed_and_response_is_closed(self) -> None:
         response = FakeResponse(
@@ -616,11 +733,12 @@ class TestVisualCrossingFailures:
         ],
     )
     def test_rejects_malformed_provider_payloads(self, body: bytes) -> None:
-        client, _ = client_for(FakeResponse(body=body))
+        client, session = client_for(FakeResponse(body=body))
 
         outcome = client.get_forecast(WeatherRequest(location=ZIPCODE))
 
         assert_failure(outcome, "weather_response_invalid", False)
+        assert len(session.calls) == 1
 
     def test_rejects_pathologically_nested_json_without_raw_exception(self) -> None:
         body = (

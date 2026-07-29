@@ -53,7 +53,6 @@ WeatherFailureCode = Literal[
     "weather_disabled",
     "weather_config_invalid",
     "weather_request_invalid",
-    "weather_location_not_found",
     "weather_outside_forecast_horizon",
     "weather_auth_failed",
     "weather_rate_limited",
@@ -69,7 +68,6 @@ _FAILURE_DETAILS: dict[WeatherFailureCode, tuple[str, bool]] = {
     "weather_disabled": ("Weather lookup is disabled.", False),
     "weather_config_invalid": ("Weather configuration is incomplete or invalid.", False),
     "weather_request_invalid": ("The weather request is invalid.", False),
-    "weather_location_not_found": ("The location could not be resolved.", False),
     "weather_outside_forecast_horizon": (
         "The requested date is outside the live forecast horizon.",
         False,
@@ -122,6 +120,7 @@ class WeatherConfig(BaseModel):
     base_url: str = VISUAL_CROSSING_BASE_URL
     api_key_env: str = "WEATHER_API_KEY"
     timeout_seconds: StrictFloat = 3.0
+    max_provider_attempts: StrictInt = 2
     max_forecast_horizon_days: StrictInt = MAX_WEATHER_DAYS
     max_range_days: StrictInt = MAX_WEATHER_DAYS
 
@@ -145,6 +144,13 @@ class WeatherConfig(BaseModel):
     def validate_timeout(cls, value: float) -> float:
         if not math.isfinite(value) or value <= 0:
             raise ValueError("timeout_seconds must be finite and positive")
+        return value
+
+    @field_validator("max_provider_attempts")
+    @classmethod
+    def validate_max_provider_attempts(cls, value: int) -> int:
+        if isinstance(value, bool) or not 1 <= value <= 2:
+            raise ValueError("weather max_provider_attempts must be 1 or 2")
         return value
 
     @field_validator("max_forecast_horizon_days", "max_range_days")
@@ -296,7 +302,7 @@ def weather_failure(code: WeatherFailureCode) -> WeatherFailure:
 
 
 class WeatherClient(Protocol):
-    """Provider-neutral weather client used by the dormant wrapper."""
+    """Provider-neutral weather client used by the serving event-context tool."""
 
     def get_forecast(self, request: WeatherRequest) -> WeatherOutcome:
         """Return normalized evidence or a typed, sanitized failure."""
@@ -354,6 +360,22 @@ class VisualCrossingWeatherClient:
         ):
             return weather_failure("weather_request_invalid")
 
+        outcome: WeatherOutcome = weather_failure("weather_unavailable")
+        for attempt in range(self._config.max_provider_attempts):
+            outcome, retry_provider_attempt = self._get_forecast_once(request)
+            if not (
+                retry_provider_attempt
+                and attempt + 1 < self._config.max_provider_attempts
+            ):
+                return outcome
+        return outcome
+
+    def _get_forecast_once(
+        self,
+        request: WeatherRequest,
+    ) -> tuple[WeatherOutcome, bool]:
+        """Issue one sanitized provider attempt for an already-valid request."""
+
         url = self._request_url(request)
         response: _Response | None = None
         try:
@@ -375,22 +397,25 @@ class VisualCrossingWeatherClient:
                 stream=True,
             )
         except requests.Timeout:
-            return weather_failure("weather_timeout")
+            return weather_failure("weather_timeout"), True
         except requests.RequestException:
-            return weather_failure("weather_unavailable")
+            return weather_failure("weather_unavailable"), False
 
         try:
             status_failure = _status_failure(response.status_code)
             if status_failure is not None:
-                return status_failure
+                return (
+                    status_failure,
+                    500 <= response.status_code <= 599,
+                )
             body = _read_bounded_body(response)
             if isinstance(body, WeatherFailure):
-                return body
-            return self._normalize_response(request, body)
+                return body, False
+            return self._normalize_response(request, body), False
         except requests.Timeout:
-            return weather_failure("weather_timeout")
+            return weather_failure("weather_timeout"), True
         except requests.RequestException:
-            return weather_failure("weather_unavailable")
+            return weather_failure("weather_unavailable"), False
         finally:
             _close_response(response)
 
@@ -516,7 +541,7 @@ def _status_failure(status_code: int) -> WeatherFailure | None:
     if status_code == 200:
         return None
     if status_code == 400:
-        return weather_failure("weather_location_not_found")
+        return weather_failure("weather_request_invalid")
     if status_code in {401, 403}:
         return weather_failure("weather_auth_failed")
     if status_code == 429:

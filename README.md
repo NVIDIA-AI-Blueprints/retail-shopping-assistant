@@ -62,7 +62,7 @@ The Retail Shopping Assistant is an AI-powered blueprint that provides a compreh
 - 🌦️ **Guarded Event Forecasts**: A registered read-only weather tool is
   granted only by event context beside outfit styling. It accepts a confirmed
   saved ZIP or an exact shopper-stated place, plus an exact event date/range or
-  the exact phrase `next week`, gets one attempt per turn, and appends a
+  the exact phrase `next week`, gets one model-visible call per turn, and appends a
   canonical attributed forecast block. Provider calls remain disabled by
   default
 - 📚 **Enforced Shopper Skills**: Every turn first semantically selects and
@@ -142,7 +142,7 @@ successful-search rewrite drops every returned product.
 
 Weather provider calls remain disabled by default. When an operator enables
 `WEATHER_ENABLED` and supplies `WEATHER_API_KEY` to the chain server, event
-context gets one forecast attempt in a turn. Every call must declare
+context gets one model-visible forecast-tool attempt in a turn. Every call must declare
 `candidate_action`. `reuse_prior_candidates` is valid only when a historical
 candidate set exists and the current turn solely supplies event context for
 those options without asking for new or refined products. Once accepted, it
@@ -162,17 +162,19 @@ follow-up to an accepted confirmation. In `shopper_provided_location` mode,
 `location` must be a bounded exact span copied from the shopper's current or
 recent text; a city, city plus region/country, address, or postal code is
 sufficient. When that authority phrase is an abbreviation or ambiguous place
-name, optional `location_query` must preserve it as the first component and may
-append only one or two comma-separated region/country qualifiers. Do not
-rewrite abbreviations: send `NYC` directly or qualify it as `NYC, NY`;
+name, `location_query` is required: it must preserve the phrase as the first
+component and append only one or two comma-separated region/country qualifiers.
+Keep `location="NYC"` and use `location_query="NYC, NY"`;
 `Springfield, TX` is a valid explicit regional assumption. It never contains
 an unstated ZIP or numeric component and never replaces the authoritative
-shopper phrase.
-The adapter queries the provider with `location_query` when present and
-otherwise with `location`; the provider-resolved place makes that assumption
-visible and reversible. Semantic normalization remains model-owned rather than
-being presented as deterministic proof, and it is correctable through that
-disclosed provider resolution. Any explicit current location, negation, uncertainty,
+shopper phrase. Omit it only when `location` is already sufficiently qualified.
+The adapter passes `location_query` when present and otherwise passes
+`location` unchanged to Visual Crossing's Timeline endpoint; Visual Crossing
+resolves the named place in that same forecast request. Its returned place
+makes the assumption visible and reversible. No alias table, representative
+ZIP, or separate geocoder rewrites the shopper's place. Semantic normalization
+remains model-owned rather than deterministic proof. Any explicit current
+location, negation, uncertainty,
 or override rejects saved mode, and explicit destination always wins. Modal
 `may be` is uncertainty; calendar `May 5` remains a valid date.
 
@@ -184,7 +186,11 @@ prompt. A current negation or different date supersedes an earlier `next week`.
 The model may resolve an unambiguous single-day phrase such as
 `tomorrow` against that same prompt-visible UTC anchor and send the exact ISO
 date; a genuinely ambiguous or unresolved relative date gets one concise
-clarification. A schema-invalid call consumes the one attempt.
+clarification. A schema-invalid call consumes the one model-visible tool
+attempt. Within a valid call, the adapter may make one additional provider
+attempt only after a timeout or HTTP 5xx response. HTTP 400 remains a generic
+invalid-request outcome; it is not proof that the shopper's location was
+unresolved.
 Provider-resolved place is omitted in saved-ZIP mode. For an explicit shopper
 location, it is included in bounded current-turn evidence and the final
 forecast block as a transparent, reversible provider assumption, not proof
@@ -192,9 +198,12 @@ that the event is there. Prior durable assistant forecast summaries are
 replaced with a refresh placeholder in both graph and grounding-editor recent
 discussion, and prior weather tool messages are excluded from prior evidence.
 Weather arguments/output are redacted from diagnostics and failed-turn partial
-capture; saved profile ZIP is also scrubbed from diagnostic string keys and
-values, and the complete grounding-editor prompt replaces those saved digits
-before the editor call. Final rendering appends one exact canonical block with the resolved
+capture. Diagnostics retain only categorical weather call metadata—candidate
+action, date shape, location-source kind, provider-input kind, and typed
+outcome—with no location, ZIP, date, resolved place, URL, body, or exception.
+Saved profile ZIP is also scrubbed from diagnostic string keys and values, and
+the complete grounding-editor prompt replaces those saved digits before the
+editor call. Final rendering appends one exact canonical block with the resolved
 Monday-through-Sunday range when `next week` was used, every validated daily
 date, condition, available temperature, precipitation fact, the supplied
 Visual Crossing attribution, and the forecast-change warning.
@@ -204,8 +213,10 @@ ordinary grounded styling language remains. Accepted reuse bypasses the
 grounding editor entirely. On success, the server renders the exact names from
 the newest historical candidate set, one bounded styling direction derived
 from structured forecast evidence, and the canonical forecast block. On
-provider failure, it renders those prior names plus the typed safe weather
-failure. Forecast conditions cannot prove
+provider failure, it renders those prior names, one conditional
+weather-flexible styling direction, and the typed safe weather failure. A
+provider failure never becomes a demand for a finer location. Forecast
+conditions cannot prove
 product warmth, waterproofing,
 breathability, comfort, safety, or another catalog attribute or create an
 unstated hard constraint. This uses the existing query/SSE/UI response shapes

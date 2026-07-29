@@ -916,8 +916,8 @@ class TestSystemPrompt:
             in normalized
         )
         assert (
-            "Do not rewrite abbreviations: send NYC directly or qualify it as "
-            "NYC, NY"
+            "For NYC, send `location=\"NYC\"` and "
+            "`location_query=\"NYC, NY\"`"
         ) in normalized
         assert (
             "Never add a ZIP or numeric component the shopper did not state"
@@ -6450,11 +6450,26 @@ class TestDeepAgentsRuntimeRefs:
         assert "Wavy Hem Satin Dress" in response
         assert "Forecast location used: New York, NY, United States." in response
 
+    @pytest.mark.parametrize(
+        "failure_code",
+        [
+            "weather_disabled",
+            "weather_config_invalid",
+            "weather_request_invalid",
+            "weather_outside_forecast_horizon",
+            "weather_auth_failed",
+            "weather_rate_limited",
+            "weather_timeout",
+            "weather_unavailable",
+            "weather_response_invalid",
+        ],
+    )
     @pytest.mark.asyncio
     async def test_context_only_weather_provider_failure_keeps_prior_options(
         self,
         base_config,
         monkeypatch: pytest.MonkeyPatch,
+        failure_code: str,
     ) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
         runtime = runtime_mod.DeepAgentsRuntime(base_config)
@@ -6508,9 +6523,7 @@ class TestDeepAgentsRuntimeRefs:
                     "tool_call_id": "weather-call",
                     "content": (
                         f"{WEATHER_FORECAST_FAILURE_PREFIX} "
-                        + weather_failure(
-                            "weather_unavailable"
-                        ).model_dump_json()
+                        + weather_failure(failure_code).model_dump_json()
                     ),
                 },
             ]
@@ -6525,7 +6538,24 @@ class TestDeepAgentsRuntimeRefs:
 
         assert "Elegant Embroidered Lace Dress" in response
         assert "Wavy Hem Satin Dress" in response
-        assert "couldn't retrieve the live forecast" in response
+        assert "removable layer" in response
+        assert "footwear backup" in response
+        assert "sunny" not in response.lower()
+        assert "°F" not in response
+        assert "state, region" not in response
+
+    def test_provider_bad_request_does_not_blame_or_requestion_shopper(
+        self,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        response = runtime_mod._format_weather_outcome(
+            weather_failure("weather_request_invalid")
+        )
+
+        assert "valid live forecast" in response
+        assert "add the state" not in response
+        assert "which location" not in response.lower()
 
     def test_provider_location_is_markdown_escaped(self) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod

@@ -182,6 +182,18 @@ def test_event_tool_has_closed_authority_and_date_schema() -> None:
         "start_date",
         "end_date",
     }
+    query_schema = tool.args_schema.model_json_schema()["properties"][
+        "location_query"
+    ]
+    assert "Required when location is an abbreviation" in query_schema[
+        "description"
+    ]
+    assert "location='NYC', location_query='NYC, NY'" in query_schema[
+        "description"
+    ]
+    assert "For an abbreviation or geographically ambiguous name" in (
+        tool.description
+    )
     assert SHOPPING_TOOL_POLICIES[tool.name].allowed_skills_any_of == frozenset(
         {"event-context"}
     )

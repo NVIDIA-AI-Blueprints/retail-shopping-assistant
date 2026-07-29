@@ -206,3 +206,51 @@ def test_default_progress_archive_preserves_previous_latest_and_progress(monkeyp
     assert "4.00/5" in comparison_text
     assert "+1.00" in comparison_text
     assert "-1.00s" in comparison_text
+
+
+def test_skip_quality_still_runs_diagnostic_validation_and_stops_on_failure(
+    monkeypatch,
+) -> None:
+    runner = load_runner_module()
+    stages: list[list[str]] = []
+    fail_validator = False
+
+    def fake_run(command, *, cwd, env):
+        del cwd, env
+        stages.append(command)
+        return (
+            7
+            if fail_validator and command[1] == "diagnostic_validation.py"
+            else 0
+        )
+
+    monkeypatch.setattr(runner, "run", fake_run)
+    args = Namespace(
+        no_local_archive=True,
+        compare_with=None,
+        skip_quality=True,
+        no_preflight=True,
+        test_path="event_context_comparison",
+        result_directory="results",
+        host="localhost",
+        port=8009,
+        uri="query/timing",
+        request_timeout=90,
+        disable_guardrails=True,
+    )
+
+    assert runner.run_integration(args, "python", {}) == 0
+    assert [stage[1] for stage in stages] == [
+        "conversation_collector.py",
+        "diagnostic_validation.py",
+        "time_breakdown.py",
+    ]
+
+    stages.clear()
+    fail_validator = True
+    status = runner.run_integration(args, "python", {})
+    assert status == 7
+    assert [stage[1] for stage in stages] == [
+        "conversation_collector.py",
+        "diagnostic_validation.py",
+    ]

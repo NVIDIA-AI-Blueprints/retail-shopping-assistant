@@ -6,6 +6,33 @@ Updated: 2026-07-29
 
 The current working tree extends the shopper-serving Deep Agent architecture:
 
+- the single-semantic-authority correction removes the uncommitted selected-
+  skill completion reviewer, its candidate-deletion/re-entry path, correction-
+  mode tool reopening, reviewer state, configuration, diagnostics, and
+  frontmatter. Serving runtime code and configuration therefore return to the
+  committed `c00c448` architecture: one Deep Agent owns semantic skill/tool
+  procedure, while deterministic code validates grants, structured arguments,
+  evidence, and factual grounding. The only serving-behavior delta is one
+  positive `event-context` instruction telling that same agent to call its
+  already-granted weather tool once when activation accepted `none`, live
+  weather is material, and valid location/date authority is present. A new
+  Judge-free diagnostic stage makes the focused three-turn fixture fail closed
+  unless it observes `event_location → none → none`, exactly search → weather →
+  historical resolution plus two detail reads, the redacted named-place weather
+  trace, required product evidence, stable response names, a natural saved-area
+  question, and no ZIP exposure or rediscovery. The one live focused run passed
+  all three turns with 14 app-model calls and 192,753 tokens versus the failed
+  reviewer WIP's 19 calls and 243,754 tokens. Average turn time improved from
+  25.43s to 20.25s; against the prior committed focused run it improved from
+  23.79s to 20.25s. Nineteen focused offline tests passed. No Judge,
+  Challenger, broader integration cohort, or repository-wide unit suite ran.
+  The deterministic gate proves the architecture, redaction, tool sequence,
+  and evidence path; the archived transcript contains the direct styling
+  comparison, but its semantic quality was not Judge-scored.
+  The canonical comparisons are
+  `~/exec-briefs/retail-shopping-assistant/quality/shopping/targeted/event_context/post_answer_completion_slice3/comparisons/failed_missing_reviewer_context__to__single_authority_current_wip.md`
+  and
+  `~/exec-briefs/retail-shopping-assistant/quality/shopping/targeted/event_context/post_answer_completion_slice3/comparisons/previous_committed__to__single_authority_current_wip.md`;
 - local app-code mode now keeps React browser API requests under a scoped
   `/local-api` prefix on port `3000` and forwards them through the development
   proxy to the chain server without Create React App's package-proxy Host

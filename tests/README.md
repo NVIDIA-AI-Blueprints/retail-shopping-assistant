@@ -22,9 +22,12 @@ tests/
 │   │   │   └── conv_*.yaml # Full shopping golden conversations
 │   │   ├── event_context/
 │   │   │   └── conv_*.yaml # Broader profile/Guest event-context gate
-│   │   └── event_context_weather_guidance/
-│   │       └── conv_*.yaml # Thin location→venue→date weather regression
+│   │   ├── event_context_weather_guidance/
+│   │   │   └── conv_*.yaml # Thin location→venue→date weather regression
+│   │   └── event_context_comparison/
+│   │       └── conv_*.yaml # Search→weather→prior-product comparison proof
 │   ├── conversation_collector.py
+│   ├── diagnostic_validation.py
 │   ├── response_quality.py
 │   ├── time_breakdown.py
 │   └── quality_plots.py
@@ -109,6 +112,13 @@ plus an outdoor patio plus an exact relative weekday, and Cancun followed by an
 explicit beach setting and then the date. Both assert one initial search, no
 product/weather reads while collecting the one missing context field, and one
 weather call with no repeated product read after the date.
+The `event_context_comparison/` fixture follows one complete three-turn
+occasion conversation: initial wedding candidates, live NYC patio weather, and
+a later comparison of two prior products. Its deterministic expectations
+require exactly search; then weather; then conversation-product resolution plus
+two product-detail reads, with the expected grounded product names carried
+through the responses. It also verifies the accepted event-question decision
+on every turn and the categorical, redacted named-place weather trace.
 
 Run only that targeted feature set with:
 
@@ -117,6 +127,24 @@ python skills/retail-test-runner/scripts/run_retail_tests.py integration \
   --test-path event_context_weather_guidance \
   --skip-quality
 ```
+
+Run only the focused event-to-comparison architecture proof with:
+
+```bash
+python skills/retail-test-runner/scripts/run_retail_tests.py integration \
+  --test-path event_context_comparison \
+  --skip-quality
+```
+
+After collection, `diagnostic_validation.py` always checks the committed
+skill, tool, sequence, evidence, weather, and stable-response expectations
+before timing or optional Judge work. `--skip-quality` disables
+the paid Judge stage and its derived quality plots; it does not disable this
+deterministic live gate or timing. A diagnostic failure stops the run and
+prevents archiving a false success. This is a structural architecture,
+redaction, tool-sequence, and evidence proof rather than a semantic styling
+quality score; use the saved transcript, manual review, or the optional Judge
+for that separate assessment.
 
 The collector records client elapsed time, application token and model-call
 usage, model-usage summaries, and trusted diagnostics when the endpoint exposes

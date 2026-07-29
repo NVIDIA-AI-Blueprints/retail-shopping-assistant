@@ -137,6 +137,12 @@ tools_granted:
   `event_date`. Otherwise continue without collecting weather-only context.
   Never invent `next_week` as a placeholder. A weather attempt does not close
   the tool loop or revoke product, cart, or policy capabilities.
+- When activation selected `none`, enabled live weather is material, and the
+  shopper has supplied both valid location authority and a bounded date, call
+  `get_weather_forecast_tool` once before answering. This positive completion
+  step also applies when the current reply only fulfills previously requested
+  context. A typed success or failure completes the attempt; answer truthfully
+  from that outcome and never substitute climate assumptions.
 - Use `confirmed_saved_zip` only after explicit usual-area confirmation and omit
   both location fields from the call and only when the narrow server gate above
   can accept it. Otherwise use `shopper_provided_location` with the exact

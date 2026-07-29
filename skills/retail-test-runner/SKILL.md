@@ -37,6 +37,10 @@ The runner:
 - Can send `guardrails=false` on live integration requests with `--disable-guardrails`.
 - Bounds each live request with `--request-timeout <seconds>`.
 - Uses `--result-directory <name>` consistently across collection, timing plots, and response-quality judging.
+- Always runs the deterministic committed diagnostic validator immediately
+  after collection and before timing or optional Judge work. `--skip-quality`
+  skips the paid Judge and its derived quality plots, but not deterministic
+  diagnostics or timing. Diagnostic failure stops the run.
 
 ## Unit Tests
 
@@ -62,7 +66,9 @@ cd tests
 The integration suite lives under `tests/integration` and drives live HTTP endpoints. Before running it:
 
 - Ensure the chain server is running and reachable at `http://localhost:8009`.
-- Choose an existing scenario directory under `tests/integration/conversations/`, usually `shopping` or `rails`.
+- Choose an existing scenario directory under
+  `tests/integration/conversations/`, usually `shopping`, `rails`, or the
+  focused `event_context_comparison` three-turn proof.
 - For LLM-as-judge scoring, set explicit judge configuration in the repo-root
   `.env` or launching shell: `JUDGE_BASE_URL`, `JUDGE_MODEL`,
   `JUDGE_API_KEY_ENV`, and the API key variable named by `JUDGE_API_KEY_ENV`.
@@ -79,6 +85,10 @@ The committed scenario files under
 `tests/integration/conversations/<TEST_PATH>/conv_*.yaml` are the golden
 reference: each file contains fixed queries plus expected answers. Generated
 run output is ignored and should not be committed unless explicitly requested.
+Per-turn `diagnostic_expectations` are enforced without an LLM Judge by
+`tests/integration/diagnostic_validation.py`, including exact business-tool
+sequences, accepted event-question decisions, evidence, redacted weather
+traces, and response phrases when declared.
 
 By default, integration runs are also archived under the ignored local archive
 root `tests/integration/conversations/<TEST_PATH>/quality_progress/`. Set

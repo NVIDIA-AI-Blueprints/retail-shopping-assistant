@@ -23,6 +23,14 @@ see the [Shopper Agent Leadership Note](SHOPPER_AGENT_LEADERSHIP_NOTE.md).
 | Graph checkpointer | Request-scoped working graph/tool state within one chain-server process | Durable transcript storage, cross-turn shopper memory, cross-replica context, or product-ref authorization |
 | Event-weather boundary | Closed location/venue/date question ordering and weather authority validation, exact shopper location provenance, optional exact-prefix region/country qualifiers, direct Visual Crossing resolution, server-owned bare-range and exact-weekday `next week` normalization, normalized current-turn forecast evidence, sanitized typed failures, redacted raw data plus categorical tracing, deterministic location disclosure, attribution, and uncertainty | Product facts or constraints, a rewritten shopper place, an unstated ZIP, inferred beach/outdoor/indoor/terrain setting, prior-turn forecast authority, provider-plan rights, or a public weather API |
 
+A serving turn has one semantic procedure authority: the Deep Agent that
+selects the skills, reads their complete instructions, and uses their granted
+tools. The runtime does not add a post-answer semantic completion reviewer,
+operation plan, or correction loop that can discard a candidate and reopen
+tools. The separate tools-disabled grounding editor cannot select skills,
+authorize evidence, or invoke tools; deterministic rendering remains
+authoritative when it cannot safely preserve the tool evidence.
+
 A model-authored semantic query is an internal **ranking preference**, not a
 product fact or shopper-facing explanation. Only catalog tool evidence can
 establish catalog facts. Conversation memory may guide judgment, but it cannot

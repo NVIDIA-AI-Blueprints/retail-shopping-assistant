@@ -175,6 +175,15 @@ product procedure or proves product performance. This sequence is model-owned
 semantic procedure; deterministic handlers enforce exact refs, per-tool limits,
 and evidence boundaries rather than classifying comparison intent.
 
+The same Deep Agent owns that semantic procedure from skill activation through
+the candidate answer. There is no post-answer semantic completion reviewer or
+second correction trajectory that can discard the answer and reopen tools.
+When live weather is enabled and material, event context has accepted `none`,
+and the shopper has supplied valid location and date authority, the selected
+skill tells that same agent to make its one weather call before answering.
+Deterministic layers remain limited to tool authorization, typed validation,
+evidence accounting, and factual grounding.
+
 Weather provider calls remain disabled by default. When an operator enables
 `WEATHER_ENABLED` and supplies `WEATHER_API_KEY` to the chain server, event
 context gets at most one model-visible forecast-tool attempt on a turn with

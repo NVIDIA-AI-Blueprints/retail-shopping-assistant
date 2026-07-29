@@ -34,6 +34,30 @@ def test_event_context_comparison_dataset_is_one_three_turn_gate() -> None:
     )
 
     comparison = conversation["diagnostic_expectations"][2]
+    assert [
+        item["required_business_sequence"]
+        for item in conversation["diagnostic_expectations"]
+    ] == [
+        ["search_catalog_tool"],
+        ["get_weather_forecast_tool"],
+        [
+            "resolve_conversation_products_tool",
+            "get_product_details_tool",
+            "get_product_details_tool",
+        ],
+    ]
+    assert [
+        item["required_event_context_next_question"]
+        for item in conversation["diagnostic_expectations"]
+    ] == ["event_location", "none", "none"]
+    assert conversation["diagnostic_expectations"][1][
+        "required_weather_trace"
+    ] == {
+        "request_shape": "relative_range",
+        "location_source": "shopper_provided_location",
+        "provider_input": "location_query",
+        "outcome": "success",
+    }
     assert comparison["required_tools"] == [
         "resolve_conversation_products_tool",
         "get_product_details_tool",
@@ -50,3 +74,10 @@ def test_event_context_comparison_dataset_is_one_three_turn_gate() -> None:
     ]
     assert "search_catalog_tool" in comparison["forbidden_tools"]
     assert "get_weather_forecast_tool" in comparison["forbidden_tools"]
+    assert comparison["required_response_phrases"] == [
+        "Intricate Lace Gown",
+        "Wavy Hem Satin Dress",
+    ]
+    assert "Previously shown options still in play" in (
+        comparison["forbidden_response_phrases"]
+    )

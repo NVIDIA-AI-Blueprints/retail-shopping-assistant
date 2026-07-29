@@ -653,11 +653,12 @@ def run_integration(args: argparse.Namespace, python_bin: str, env: dict[str, st
             str(args.request_timeout),
         ]
         + (["--disable-guardrails"] if args.disable_guardrails else []),
+        [python_bin, "diagnostic_validation.py"],
         [python_bin, "time_breakdown.py"],
     ]
 
     if not args.skip_quality:
-        stages.insert(1, [python_bin, "response_quality.py"])
+        stages.insert(2, [python_bin, "response_quality.py"])
         stages.append([python_bin, "quality_plots.py"])
 
     for stage in stages:

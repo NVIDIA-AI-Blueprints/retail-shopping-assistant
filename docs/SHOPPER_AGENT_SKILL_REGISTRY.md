@@ -288,6 +288,11 @@ forecast context to occasion-led styling.
   question or missing bounded authority prevents a qualified forecast. It
   never hides product, cart, or policy tools and never closes the overall tool
   loop. Consuming the one weather attempt closes only weather for that turn.
+- When activation selected `none`, live weather is enabled and material, and
+  valid location and bounded date authority are established, the selected
+  skill directs the same Deep Agent to make that one weather attempt before
+  answering. A typed success or failure completes the attempt; no post-answer
+  reviewer reopens the procedure.
 - Protected event decision rendering is selected from evidence rather than an
   activation action. It applies only when event context is active, there is no
   current non-weather business-tool activity, and a current typed weather

@@ -7,7 +7,18 @@ from collections import Counter
 from datetime import datetime, timezone
 import os
 import json
+from pathlib import Path
+import sys
 import yaml
+
+INTEGRATION_DIR = Path(__file__).resolve().parent
+if str(INTEGRATION_DIR) not in sys.path:
+    sys.path.insert(0, str(INTEGRATION_DIR))
+
+from diagnostic_validation import (  # noqa: E402, F401
+    _preflight_diagnostic_expectations,
+    _validate_diagnostic_expectations,
+)
 
 
 def _required_env(name: str) -> str:
@@ -45,140 +56,6 @@ def _format_prior_turns(prior_turns: Sequence[Dict[str, str]] | None) -> str:
             ]
         )
     return "\n".join(lines)
-
-
-def _validate_diagnostic_expectations(
-    expectations: Dict | None,
-    diagnostics: Dict | None,
-    *,
-    label: str = "turn",
-) -> None:
-    """Fail before judging when the live skill/tool trace violates the fixture."""
-
-    expected = expectations or {}
-    trace = diagnostics or {}
-    skill_files = set(trace.get("skill_files_read") or [])
-    tool_calls = trace.get("tool_calls") or []
-    if not isinstance(tool_calls, list):
-        raise AssertionError(f"{label}: agent_diagnostics.tool_calls must be a list")
-
-    normalized_calls = [
-        call for call in tool_calls if isinstance(call, dict)
-    ]
-    called_tools = {
-        str(call.get("tool_name") or "")
-        for call in normalized_calls
-    }
-    completed_tools = {
-        str(call.get("tool_name") or "")
-        for call in normalized_calls
-        if call.get("status") == "completed"
-    }
-
-    for skill_name in expected.get("required_skills", []):
-        path = f"/shopper/{skill_name}/SKILL.md"
-        if path not in skill_files:
-            raise AssertionError(f"{label}: missing required skill {skill_name}")
-    for skill_name in expected.get("forbidden_skills", []):
-        path = f"/shopper/{skill_name}/SKILL.md"
-        if path in skill_files:
-            raise AssertionError(f"{label}: forbidden skill selected {skill_name}")
-    for tool_name in expected.get("required_tools", []):
-        if tool_name not in completed_tools:
-            raise AssertionError(
-                f"{label}: required tool did not complete {tool_name}"
-            )
-    for tool_name in expected.get("forbidden_tools", []):
-        if tool_name in called_tools:
-            raise AssertionError(f"{label}: forbidden tool called {tool_name}")
-
-    for tool_name, expected_count in (
-        expected.get("tool_call_counts") or {}
-    ).items():
-        actual_count = sum(
-            call.get("tool_name") == tool_name
-            for call in normalized_calls
-        )
-        if actual_count != expected_count:
-            raise AssertionError(
-                f"{label}: expected {expected_count} {tool_name} calls, "
-                f"found {actual_count}"
-            )
-
-    expected_detail_names = expected.get("required_product_detail_names")
-    if expected_detail_names is not None:
-        product_evidence = trace.get("product_evidence") or []
-        if not isinstance(product_evidence, list):
-            raise AssertionError(
-                f"{label}: agent_diagnostics.product_evidence must be a list"
-            )
-        actual_detail_names = {
-            str(record.get("product_name") or "")
-            for record in product_evidence
-            if isinstance(record, dict)
-            and record.get("source_tool") == "get_product_details_tool"
-            and record.get("evidence_type") == "product_detail"
-            and record.get("product_name")
-        }
-        required_detail_names = {
-            str(name) for name in expected_detail_names
-        }
-        if actual_detail_names != required_detail_names:
-            raise AssertionError(
-                f"{label}: expected product detail evidence "
-                f"{sorted(required_detail_names)}, found "
-                f"{sorted(actual_detail_names)}"
-            )
-
-    weather_calls = [
-        call
-        for call in normalized_calls
-        if call.get("tool_name") == "get_weather_forecast_tool"
-    ]
-    expected_weather_calls = expected.get("weather_tool_calls")
-    if (
-        expected_weather_calls is not None
-        and len(weather_calls) != expected_weather_calls
-    ):
-        raise AssertionError(
-            f"{label}: expected {expected_weather_calls} weather calls, "
-            f"found {len(weather_calls)}"
-        )
-    for call in weather_calls:
-        if call.get("arguments") != {"redacted": True}:
-            raise AssertionError(
-                f"{label}: weather tool arguments were not redacted"
-            )
-
-
-def _preflight_diagnostic_expectations(
-    query_dir: str,
-    result_dir: str,
-    filenames: Sequence[str],
-) -> None:
-    """Validate every trace before the first paid Judge request."""
-
-    for filename in filenames:
-        with open(os.path.join(query_dir, filename), "r") as query_file:
-            query_data = yaml.safe_load(query_file) or {}
-        with open(os.path.join(result_dir, filename), "r") as result_file:
-            result_data = yaml.safe_load(result_file) or {}
-        expectations = query_data.get("diagnostic_expectations") or [
-            {} for _ in query_data.get("queries", [])
-        ]
-        result_entries = result_data.get("results") or []
-        if len(expectations) != len(result_entries):
-            raise AssertionError(
-                f"Mismatch in diagnostic expectation counts in {filename}"
-            )
-        for index, (expected, result) in enumerate(
-            zip(expectations, result_entries)
-        ):
-            _validate_diagnostic_expectations(
-                expected,
-                result.get("agent_diagnostics"),
-                label=f"{filename} turn {index}",
-            )
 
 
 def _write_quality_summary(output_path: str, result_directory: str) -> None:

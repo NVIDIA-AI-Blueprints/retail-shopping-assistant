@@ -29,6 +29,7 @@ from chain_server.src.weather_tool import (
     get_event_weather_forecast_tool,
     get_weather_forecast_tool,
     parse_weather_tool_evidence,
+    weather_date_context_available,
 )
 
 
@@ -101,7 +102,8 @@ def _event_tool(
     shopper_provided_texts: set[str] | None = None,
     current_date: date = CURRENT_DATE,
     prior_candidates_available: bool = False,
-    on_reuse_prior_candidates=None,
+    on_attempt_consumed=None,
+    candidate_action_authorized=None,
 ):
     return get_event_weather_forecast_tool(
         client,
@@ -114,7 +116,8 @@ def _event_tool(
         ),
         current_date=current_date,
         prior_candidates_available=prior_candidates_available,
-        on_reuse_prior_candidates=on_reuse_prior_candidates,
+        on_attempt_consumed=on_attempt_consumed,
+        candidate_action_authorized=candidate_action_authorized,
     )
 
 
@@ -178,6 +181,7 @@ def test_event_tool_has_closed_authority_and_date_schema() -> None:
         "location",
         "location_query",
         "relative_date",
+        "weekday",
         "date",
         "start_date",
         "end_date",
@@ -191,7 +195,18 @@ def test_event_tool_has_closed_authority_and_date_schema() -> None:
     assert "location='NYC', location_query='NYC, NY'" in query_schema[
         "description"
     ]
+    relative_date_schema = tool.args_schema.model_json_schema()["properties"][
+        "relative_date"
+    ]
+    assert "Never use this as a placeholder" in relative_date_schema[
+        "description"
+    ]
     assert "For an abbreviation or geographically ambiguous name" in (
+        tool.description
+    )
+    assert "exact '<weekday> next week' phrase" in tool.description
+    assert "matching lowercase weekday" in tool.description
+    assert "do not call this tool; apply the event-context" in (
         tool.description
     )
     assert SHOPPING_TOOL_POLICIES[tool.name].allowed_skills_any_of == frozenset(
@@ -200,12 +215,10 @@ def test_event_tool_has_closed_authority_and_date_schema() -> None:
     assert SHOPPING_TOOL_POLICIES[tool.name].risk == "read"
 
 
-def test_reusing_prior_candidates_requires_evidence_and_closes_search() -> None:
+def test_reusing_prior_candidates_requires_evidence() -> None:
     rejected_client = RecordingClient()
-    rejected_callbacks: list[str] = []
     rejected_tool = _event_tool(
         rejected_client,
-        on_reuse_prior_candidates=lambda: rejected_callbacks.append("closed"),
     )
 
     rejected = rejected_tool.invoke(
@@ -220,14 +233,11 @@ def test_reusing_prior_candidates_requires_evidence_and_closes_search() -> None:
         "weather_request_invalid"
     )
     assert rejected_client.requests == []
-    assert rejected_callbacks == []
 
     accepted_client = RecordingClient()
-    accepted_callbacks: list[str] = []
     accepted_tool = _event_tool(
         accepted_client,
         prior_candidates_available=True,
-        on_reuse_prior_candidates=lambda: accepted_callbacks.append("closed"),
     )
 
     accepted = accepted_tool.invoke(
@@ -244,16 +254,73 @@ def test_reusing_prior_candidates_requires_evidence_and_closes_search() -> None:
     assert accepted_client.requests == [
         WeatherRequest(location=SAVED_ZIPCODE, date=FORECAST_DATE)
     ]
-    assert accepted_callbacks == ["closed"]
+
+
+def test_weather_candidate_action_must_match_activation_authority() -> None:
+    client = RecordingClient(_success_result())
+    attempts: list[str] = []
+    tool = _event_tool(
+        client,
+        prior_candidates_available=True,
+        on_attempt_consumed=lambda: attempts.append("consumed"),
+        candidate_action_authorized=lambda action: (
+            action == "search_new_candidates"
+        ),
+    )
+
+    result = tool.invoke(
+        {
+            "candidate_action": "reuse_prior_candidates",
+            "location_source": "confirmed_saved_zip",
+            "date": FORECAST_DATE.isoformat(),
+        }
+    )
+
+    assert parse_weather_tool_evidence(result) == weather_failure(
+        "weather_request_invalid"
+    )
+    assert client.requests == []
+    assert attempts == ["consumed"]
+
+
+def test_schema_invalid_attempt_notifies_once_and_cannot_retry() -> None:
+    client = RecordingClient(_success_result())
+    attempts: list[str] = []
+    tool = _event_tool(
+        client,
+        prior_candidates_available=True,
+        on_attempt_consumed=lambda: attempts.append("consumed"),
+    )
+
+    invalid = tool.invoke(
+        {
+            "candidate_action": "reuse_prior_candidates",
+            "location_source": "confirmed_saved_zip",
+        }
+    )
+    retry = tool.invoke(
+        {
+            "candidate_action": "reuse_prior_candidates",
+            "location_source": "confirmed_saved_zip",
+            "date": FORECAST_DATE.isoformat(),
+        }
+    )
+
+    assert parse_weather_tool_evidence(invalid) == weather_failure(
+        "weather_request_invalid"
+    )
+    assert parse_weather_tool_evidence(retry) == weather_failure(
+        "weather_request_invalid"
+    )
+    assert client.requests == []
+    assert attempts == ["consumed"]
 
 
 def test_new_candidate_request_keeps_catalog_search_open() -> None:
     client = RecordingClient()
-    callbacks: list[str] = []
     tool = _event_tool(
         client,
         prior_candidates_available=True,
-        on_reuse_prior_candidates=lambda: callbacks.append("closed"),
     )
 
     result = tool.invoke(
@@ -267,7 +334,6 @@ def test_new_candidate_request_keeps_catalog_search_open() -> None:
     assert parse_weather_tool_evidence(result) == weather_failure(
         "weather_disabled"
     )
-    assert callbacks == []
 
 
 def test_confirmed_saved_zip_is_server_supplied_and_not_exposed() -> None:
@@ -661,6 +727,244 @@ def test_next_week_success_preserves_server_owned_relative_provenance() -> None:
     ]
 
 
+@pytest.mark.parametrize(
+    ("weekday", "offset"),
+    [
+        ("monday", 0),
+        ("tuesday", 1),
+        ("wednesday", 2),
+        ("thursday", 3),
+        ("friday", 4),
+        ("saturday", 5),
+        ("sunday", 6),
+    ],
+)
+def test_weekday_next_week_is_server_resolved_to_one_exact_date(
+    weekday: str,
+    offset: int,
+) -> None:
+    next_monday = date(2026, 8, 3)
+    event_date = next_monday + timedelta(days=offset)
+    client = RecordingClient(
+        _success_result(
+            resolved_location="New York, New York, United States",
+            start_date=event_date,
+            end_date=event_date,
+        )
+    )
+    tool = _event_tool(
+        client,
+        shopper_provided_texts={
+            f"The wedding is in NYC on {weekday.title()} next week."
+        },
+    )
+
+    result = tool.invoke(
+        {
+            "candidate_action": "search_new_candidates",
+            "location_source": "shopper_provided_location",
+            "location": "NYC",
+            "location_query": "NYC, NY",
+            "relative_date": "next_week",
+            "weekday": weekday,
+        }
+    )
+
+    parsed = parse_weather_tool_evidence(result)
+    assert isinstance(parsed, WeatherForecastEvidence)
+    assert parsed.relative_date == "next_week"
+    assert parsed.weekday == weekday
+    assert parsed.requested_window == WeatherRequestedWindow(
+        start_date=event_date,
+        end_date=event_date,
+    )
+    assert client.requests == [
+        WeatherRequest(location="NYC, NY", date=event_date)
+    ]
+
+
+@pytest.mark.parametrize(
+    "shopper_text",
+    [
+        "The wedding is in NYC Friday next week, maybe outdoors.",
+        "The venue is possibly outside; the NYC wedding is Friday next week.",
+        "I did not say blue. The NYC wedding is Friday next week.",
+    ],
+)
+def test_relative_weekday_ignores_unrelated_uncertainty(
+    shopper_text: str,
+) -> None:
+    event_date = date(2026, 8, 7)
+    client = RecordingClient(
+        _success_result(start_date=event_date, end_date=event_date)
+    )
+    tool = _event_tool(
+        client,
+        shopper_provided_texts={shopper_text},
+    )
+
+    result = tool.invoke(
+        {
+            "candidate_action": "search_new_candidates",
+            "location_source": "shopper_provided_location",
+            "location": "NYC",
+            "relative_date": "next_week",
+            "weekday": "friday",
+        }
+    )
+
+    parsed = parse_weather_tool_evidence(result)
+    assert isinstance(parsed, WeatherForecastEvidence)
+    assert parsed.weekday == "friday"
+    assert client.requests == [WeatherRequest(location="NYC", date=event_date)]
+
+
+def test_relative_weekday_evidence_rejects_a_different_calendar_weekday() -> None:
+    thursday = date(2026, 8, 6)
+    result = _success_result(start_date=thursday, end_date=thursday)
+
+    with pytest.raises(ValueError, match="relative weekday"):
+        WeatherForecastEvidence(
+            provider=result.provider,
+            fetched_at=result.fetched_at,
+            requested_window=result.requested_window,
+            relative_date="next_week",
+            weekday="friday",
+            days=result.days,
+            attribution=result.attribution,
+        )
+
+
+@pytest.mark.parametrize("supplied_weekday", [None, "thursday"])
+def test_exact_weekday_next_week_rejects_omission_or_mismatch(
+    supplied_weekday: str | None,
+) -> None:
+    client = RecordingClient(_success_result())
+    tool = _event_tool(
+        client,
+        shopper_provided_texts={
+            "The wedding is in NYC on Friday next week."
+        },
+    )
+    arguments = {
+        "candidate_action": "search_new_candidates",
+        "location_source": "shopper_provided_location",
+        "location": "NYC",
+        "relative_date": "next_week",
+    }
+    if supplied_weekday is not None:
+        arguments["weekday"] = supplied_weekday
+
+    result = tool.invoke(arguments)
+
+    assert parse_weather_tool_evidence(result) == weather_failure(
+        "weather_request_invalid"
+    )
+    assert client.requests == []
+
+
+def test_bare_next_week_rejects_an_invented_weekday() -> None:
+    client = RecordingClient(_success_result())
+    tool = _event_tool(
+        client,
+        shopper_provided_texts={"The wedding is in NYC next week."},
+    )
+
+    result = tool.invoke(
+        {
+            "candidate_action": "search_new_candidates",
+            "location_source": "shopper_provided_location",
+            "location": "NYC",
+            "relative_date": "next_week",
+            "weekday": "friday",
+        }
+    )
+
+    assert parse_weather_tool_evidence(result) == weather_failure(
+        "weather_request_invalid"
+    )
+    assert client.requests == []
+
+
+def test_mixed_weekdays_next_week_fail_closed() -> None:
+    client = RecordingClient(_success_result())
+    tool = _event_tool(
+        client,
+        shopper_provided_texts={
+            "The wedding could be Friday next week or Saturday next week."
+        },
+    )
+
+    result = tool.invoke(
+        {
+            "candidate_action": "search_new_candidates",
+            "location_source": "shopper_provided_location",
+            "location": "NYC",
+            "relative_date": "next_week",
+            "weekday": "friday",
+        }
+    )
+
+    assert parse_weather_tool_evidence(result) == weather_failure(
+        "weather_request_invalid"
+    )
+    assert client.requests == []
+
+
+@pytest.mark.parametrize(
+    "shopper_text",
+    [
+        "The wedding is Friday next week or Saturday.",
+        "The wedding is Friday or Saturday next week.",
+        "Maybe Friday next week.",
+        "I didn't say Friday next week.",
+    ],
+)
+def test_ambiguous_or_retracted_relative_weekday_fails_closed(
+    shopper_text: str,
+) -> None:
+    client = RecordingClient(_success_result())
+    tool = _event_tool(
+        client,
+        shopper_provided_texts={shopper_text},
+    )
+
+    result = tool.invoke(
+        {
+            "candidate_action": "search_new_candidates",
+            "location_source": "shopper_provided_location",
+            "location": "NYC",
+            "relative_date": "next_week",
+            "weekday": "friday",
+        }
+    )
+
+    assert parse_weather_tool_evidence(result) == weather_failure(
+        "weather_request_invalid"
+    )
+    assert client.requests == []
+
+
+def test_weekday_requires_next_week_mode() -> None:
+    client = RecordingClient(_success_result())
+    tool = _event_tool(client)
+
+    result = tool.invoke(
+        {
+            "candidate_action": "search_new_candidates",
+            "location_source": "shopper_provided_location",
+            "location": "NYC",
+            "weekday": "friday",
+            "date": FORECAST_DATE.isoformat(),
+        }
+    )
+
+    assert parse_weather_tool_evidence(result) == weather_failure(
+        "weather_request_invalid"
+    )
+    assert client.requests == []
+
+
 def test_next_week_requires_shopper_authored_relative_language() -> None:
     client = RecordingClient(_success_result())
     tool = _event_tool(
@@ -692,6 +996,23 @@ def test_next_week_requires_shopper_authored_relative_language() -> None:
         "Next week, actually September 10.",
         "Use September 10 instead.",
         "The wedding is tomorrow.",
+        "Don't use next week.",
+        "I can't do next week.",
+        "Next week has been canceled.",
+        "No next week.",
+        "Next week is off.",
+        "Next week is no longer the date.",
+        "I changed it from next week.",
+        "The date changed; I don't know the new date.",
+        "That date is no longer right.",
+        "That date won't work.",
+        "We don't have a date yet.",
+        "We haven't set the date.",
+        "We need a new date.",
+        "I'll send the new date later.",
+        "That isn't the date anymore.",
+        "The date no longer works.",
+        "The date is up in the air.",
     ],
 )
 def test_current_date_override_cannot_reuse_prior_next_week(
@@ -745,6 +1066,132 @@ def test_latest_prior_negation_supersedes_older_next_week() -> None:
         "weather_request_invalid"
     )
     assert client.requests == []
+
+
+def test_standalone_weekday_correction_cannot_reuse_prior_relative_weekday() -> None:
+    client = RecordingClient(_success_result())
+    tool = _event_tool(
+        client,
+        shopper_provided_texts=(
+            "Saturday instead.",
+            "The wedding was originally Friday next week.",
+        ),
+    )
+
+    result = tool.invoke(
+        {
+            "candidate_action": "search_new_candidates",
+            "location_source": "shopper_provided_location",
+            "location": "NYC",
+            "relative_date": "next_week",
+            "weekday": "friday",
+        }
+    )
+
+    assert parse_weather_tool_evidence(result) == weather_failure(
+        "weather_request_invalid"
+    )
+    assert client.requests == []
+
+
+def test_current_relative_weekday_supersedes_prior_relative_weekday() -> None:
+    event_date = date(2026, 8, 8)
+    client = RecordingClient(
+        _success_result(start_date=event_date, end_date=event_date)
+    )
+    tool = _event_tool(
+        client,
+        shopper_provided_texts=(
+            "Actually, Saturday next week.",
+            "The wedding in NYC was originally Friday next week.",
+        ),
+    )
+
+    result = tool.invoke(
+        {
+            "candidate_action": "search_new_candidates",
+            "location_source": "shopper_provided_location",
+            "location": "NYC",
+            "relative_date": "next_week",
+            "weekday": "saturday",
+        }
+    )
+
+    parsed = parse_weather_tool_evidence(result)
+    assert isinstance(parsed, WeatherForecastEvidence)
+    assert parsed.weekday == "saturday"
+    assert client.requests == [WeatherRequest(location="NYC", date=event_date)]
+
+
+@pytest.mark.parametrize(
+    ("shopper_texts", "expected"),
+    [
+        ((), False),
+        (("NYC, on an outdoor patio.",), False),
+        (("The wedding is next week.",), True),
+        (("The wedding is Friday next week.",), True),
+        (("The wedding is tomorrow.",), True),
+        (("The wedding is 2026-09-10.",), True),
+        (("The wedding is September 10.",), True),
+        (("Use September 10 instead.",), True),
+        (("September 10 through September 12.",), True),
+        (("September 10, 2026 through September 12, 2026.",), True),
+        (("2026-09-10 to 2026-09-12.",), True),
+        (("September 10 or September 12.",), False),
+        (("The wedding is not September 10.",), False),
+        (("I need a wedding dress in NYC, size 8/10.",), False),
+        (("Friday next week, maybe outdoors.",), True),
+        (
+            ("The venue is possibly outside; wedding Friday next week.",),
+            True,
+        ),
+        (
+            ("I did not say blue. The wedding is Friday next week.",),
+            True,
+        ),
+        (("September 10, maybe outdoors.",), True),
+        (("Tomorrow, maybe on a patio.",), True),
+        (("Friday next week, maybe.",), False),
+        (("September 10, maybe.",), False),
+        (("The wedding is Friday next week or Saturday.",), False),
+        (("The wedding is Friday or Saturday next week.",), False),
+        (("Maybe Friday next week.",), False),
+        (("I didn't say Friday next week.",), False),
+        (
+            (
+                "NYC, on an outdoor patio.",
+                "The wedding is Friday next week.",
+            ),
+            True,
+        ),
+        (
+            (
+                "Saturday instead.",
+                "The wedding was Friday next week.",
+            ),
+            False,
+        ),
+        (
+            (
+                "Don't use next week.",
+                "The wedding was Friday next week.",
+            ),
+            False,
+        ),
+        (
+            (
+                "The date changed; I don't know the new date.",
+                "The wedding was Friday next week.",
+            ),
+            False,
+        ),
+    ],
+)
+def test_weather_date_context_visibility_uses_latest_shopper_authority(
+    shopper_texts: tuple[str, ...],
+    expected: bool,
+) -> None:
+    assert weather_date_context_available(shopper_texts) is expected
 
 
 def test_location_followup_may_use_prior_unsuperseded_next_week() -> None:

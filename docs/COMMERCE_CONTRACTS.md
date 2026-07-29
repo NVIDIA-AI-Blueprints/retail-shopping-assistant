@@ -32,11 +32,12 @@ The main design decision is separation:
 The stacked commerce-tool work now has runtime wiring through the Deep Agents
 SDK adapter:
 
-- `DeepAgentsRuntime` registers eleven request-scoped tools: catalog search,
+- `DeepAgentsRuntime` registers twelve request-scoped shopping tools: catalog search,
   product details, same-conversation product resolution, cart read, cart total,
   cart add, cart remove, cart quantity update, store-policy lookup, and product
-  availability, plus active-promotions status. These use the internal commerce
-  adapters plus deterministic cart-total calculation.
+  availability, plus active-promotions status and read-only event weather.
+  Commerce tools use the internal adapters plus deterministic cart-total
+  calculation; event weather stays behind its separate authority boundary.
 - Deep Agents cart mutation tools use explicit refs: `PRODUCT_REF` values
   returned by catalog search for add operations, and `CART_LINE_ID` values
   returned by cart reads for remove operations. They do not perform hidden

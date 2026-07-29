@@ -94,23 +94,44 @@ venue always wins and prevents fallback to the saved ZIP. Guest sends no
 profile ID and has no saved-location fallback.
 
 Location and venue are styling context, not weather or product facts. For
-example, “wedding in Cancun” does not imply a beach; the assistant may ask one
-short destination-or-venue question if it matters. If you explicitly ask to
-plan before seeing products and context is missing, the assistant uses exactly
-two short sentences: one conditional direction, then that question. With
-context complete, it uses one short paragraph and asks no further event-context
-question. Ceremony and reception both stated as on the sand in Cancun are
-complete for this helper. If you ask to see products now, the assistant starts
-with one grounded requested or core product role and, if location is still
-missing and materially changes the next recommendation, asks only event
-location beside the results; venue is deferred.
+example, “wedding in Cancun” does not imply a beach, outdoor or indoor setting,
+or terrain. The assistant chooses at most one relevant follow-up from the
+current and recent conversation, in order: destination if it is missing and
+material; venue or setting only after destination is established and that
+setting is missing and material; date only after destination and any material
+setting are established, live weather is enabled and material, and the date is
+neither known nor explicitly unavailable; otherwise no event-context question.
+An explicitly stated outdoor patio, beach, garden, rooftop, or open-air setting
+makes enabled live weather relevant. For example, “Cancun” may lead to one
+setting question; after you answer “on the beach,” the assistant asks for the
+date when it is still missing. This is interpreted conversationally, not
+through a fixed place or venue lookup table.
+If you explicitly ask to plan before seeing products and context is missing,
+the assistant uses exactly two short sentences and may include only that one
+selected question. With context complete, it uses one short paragraph and asks
+no further event-context question. Ceremony and reception both stated as on
+the sand in Cancun are complete for this helper. If you ask to see products
+now, the assistant starts with one grounded requested or core product role and
+may ask only that same selected question beside the results.
+
+When you reply with only destination, venue, or date after options were already
+shown, the assistant keeps those options and does no catalog search, detail
+lookup, prior-product resolution, availability check, or promotion check. If
+the selected follow-up is destination or venue, it does not call weather; this
+context-only reuse reply also closes immediately after the one question. If the
+selected follow-up is date, it asks only for that date. If no follow-up is
+needed, it acknowledges the context without starting the next product role.
+If you instead ask for a different or refined product, the normal shopping
+tools stay available, but weather remains unavailable while destination or a
+material venue/setting is still missing.
 
 Weather provider calls are disabled by default. When an operator has enabled
-them, the assistant gets one model-visible forecast-tool attempt in a turn only
-after it has an
-accepted saved-area confirmation or one exact place, address, or postal-code
-phrase you supplied, plus an exact event date, complete date range, or the
-exact phrase `next week`. It keeps your place phrase as the authority. If that
+them, the assistant gets at most one model-visible forecast-tool attempt on an
+eligible turn with an exact event date, complete date range, bare `next week`,
+or exact `<weekday> next week`. A forecast call also needs an accepted
+saved-area confirmation or one exact place, address, or postal-code phrase you
+supplied. It keeps your place
+phrase as the authority. If that
 phrase is an abbreviation such as `NYC` or an ambiguous name such as
 `Springfield`, the provider query must keep that exact phrase first and add
 only one or two region/country qualifiers. It keeps `location="NYC"` and uses
@@ -124,18 +145,26 @@ consumes the model attempt. A valid call may retry once only after timeout or
 HTTP 5xx; HTTP 400 is treated as a generic invalid request, not proof that your
 place is wrong. The provider resolution is shown so its model-owned place
 assumption is correctable.
-`Next week` is
-resolved server-side from one captured UTC date to the next
-Monday-through-Sunday range; a current negation or different date overrides an
-earlier `next week`. An unambiguous single-day phrase such as
+`Friday next week` is resolved server-side from one captured UTC date to that
+Friday inside the next Monday-through-Sunday window. Bare `next week` means
+the full window. The assistant must preserve a weekday you supplied; omission,
+mismatch, mixed weekdays, negation, or a later correction fails closed instead
+of silently using the wrong day. If the date is missing, the tool stays hidden
+instead of receiving a placeholder call. When enabled weather would materially
+affect guidance, the assistant asks for the date directly; otherwise it does
+not collect weather-only context. An unambiguous
+single-day phrase such as
 `tomorrow` is resolved against that same date into an exact day; other
-ambiguous or unresolved relative dates prompt one exact-date question. There
-is no separate weather screen or API response type.
+ambiguous or unresolved relative dates may prompt one exact-date question only
+after the earlier destination/setting checks and under that same
+enabled-and-material rule. There is no separate weather screen
+or API response type.
 
 Successful weather guidance contains one server-authored canonical forecast
-block. When you said `next week`, it first shows the
-Monday-through-Sunday dates used. It then includes every validated day's date,
-condition, available low/high temperature, precipitation probability/types,
+block. For `Friday next week`, it first shows the one exact interpreted date;
+for bare `next week`, it shows the Monday-through-Sunday dates used. It then
+includes every validated day's date, condition, available low/high temperature,
+precipitation probability/types,
 [Weather Data Provided by Visual Crossing](https://www.visualcrossing.com/),
 and the warning that forecasts can change. The block appears exactly once and
 cannot be shortened by model-written prose. Only evidence fetched in the
@@ -155,13 +184,16 @@ Grounding-editor sentences containing weather-domain fact language or
 fact-shaped dates/values are removed while ordinary grounded styling language
 remains. If none remains, deterministic catalog rendering plus the canonical
 weather block is used.
-When a context-only reply applies weather to options already shown, that
-accepted reuse path bypasses the grounding editor. On success, the server
-renders the exact names from the newest candidate set, one bounded styling
-direction derived from the structured forecast, and the canonical forecast
-block. If the provider fails, it keeps those prior names, adds conditional
-weather-flexible styling/recheck guidance, and shows a typed safe failure
-without asking for a finer location solely because lookup failed.
+When a context-only reply applies event or weather context to options already
+shown, missing location or setting goes straight to the one selected question
+without another editor call. Once that context is established, a narrow
+decision step sees only bounded shopper-authored event text and a
+server-generated weather styling direction. It returns structured choices, not
+shopper-facing prose: an exact setting quote from your words and one or two
+allowlisted adjustments. Invalid or invented output is ignored. The server
+renders fixed phrases, the exact prior names, its weather direction, only the
+one selected follow-up, and any safe weather failure or canonical forecast
+block.
 
 A forecast may guide general styling, but it does not prove that a product is
 warm, waterproof, breathable, comfortable, safe, surface-suitable, or otherwise

@@ -35,6 +35,7 @@ from chain_server.src.skill_activation import (
     SKILL_ACTIVATION_REQUIRED,
     SKILL_ACTIVATION_TOOL_NAME,
     SKILL_TOOL_NOT_GRANTED,
+    _ACTIVATION_PROMPT,
     ShopperSkillActivationError,
     ShopperSkillActivationMiddleware,
     selected_skill_names_for_turn,
@@ -84,6 +85,12 @@ SKILL_TOOL_GRANTS = {
     ),
     "store-policy-answers": frozenset({"get_store_policy_tool"}),
 }
+
+
+def test_activation_prompt_makes_explicit_outdoor_weather_material() -> None:
+    compact_prompt = " ".join(_ACTIVATION_PROMPT.split())
+    assert "outdoor patio, beach, garden, rooftop, or" in compact_prompt
+    assert "choose `event_date`, not `none`" in compact_prompt
 
 
 class _RecordingToolModel(BaseChatModel):
@@ -226,7 +233,8 @@ def test_activation_schema_rejects_two_primary_procedures() -> None:
             "event-context",
             "outfit-styling",
             "product-discovery",
-        )
+        ),
+        prior_candidates_available=False,
     )
 
     with pytest.raises(ValueError, match="select exactly one primary procedure"):
@@ -245,12 +253,193 @@ def test_activation_schema_rejects_two_primary_procedures() -> None:
             "event-context",
             "budget-shopping",
         ],
+        event_context_action="search_new_candidates",
+        event_context_next_question="event_location",
     )
     assert selected_with_event.skill_names == [
         "outfit-styling",
         "event-context",
         "budget-shopping",
     ]
+    assert selected_with_event.event_context_action == "search_new_candidates"
+    assert selected_with_event.event_context_next_question == "event_location"
+
+
+def test_activation_schema_binds_event_context_action() -> None:
+    activation_input = _skill_activation_input_model(
+        ("cart-management", "event-context", "outfit-styling"),
+        prior_candidates_available=True,
+        current_shopper_text="Show me a different dress for the wedding.",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="event_context_action is required exactly",
+    ):
+        activation_input(
+            skill_names=["outfit-styling", "event-context"],
+        )
+
+    with pytest.raises(
+        ValueError,
+        match="event_context_action is required exactly",
+    ):
+        activation_input(
+            skill_names=["outfit-styling"],
+            event_context_action="search_new_candidates",
+            event_context_next_question="none",
+            event_context_product_work_quote="Show me a different dress",
+        )
+
+    with pytest.raises(
+        ValueError,
+        match="event_context_next_question is required exactly",
+    ):
+        activation_input(
+            skill_names=["outfit-styling", "event-context"],
+            event_context_action="search_new_candidates",
+            event_context_product_work_quote="Show me a different dress",
+        )
+
+    with pytest.raises(
+        ValueError,
+        match="event_context_next_question is required exactly",
+    ):
+        activation_input(
+            skill_names=["outfit-styling"],
+            event_context_next_question="none",
+        )
+
+    with pytest.raises(
+        ValueError,
+        match="solely applies event context",
+    ):
+        activation_input(
+            skill_names=[
+                "outfit-styling",
+                "event-context",
+                "cart-management",
+            ],
+            event_context_action="reuse_prior_candidates",
+            event_context_next_question="none",
+        )
+
+    with pytest.raises(ValueError, match="exact current-turn product-work quote"):
+        activation_input(
+            skill_names=["outfit-styling", "event-context"],
+            event_context_action="search_new_candidates",
+            event_context_next_question="none",
+        )
+
+    with pytest.raises(ValueError, match="exact bounded span"):
+        activation_input(
+            skill_names=["outfit-styling", "event-context"],
+            event_context_action="search_new_candidates",
+            event_context_next_question="none",
+            event_context_product_work_quote="Show me a different suit",
+        )
+
+    selected = activation_input(
+        skill_names=["outfit-styling", "event-context"],
+        event_context_action="search_new_candidates",
+        event_context_next_question="event_date",
+        event_context_product_work_quote="Show me a different dress",
+    )
+    assert selected.event_context_product_work_quote == (
+        "Show me a different dress"
+    )
+    assert selected.event_context_next_question == "event_date"
+
+
+def test_activation_schema_rejects_reuse_without_prior_candidates() -> None:
+    activation_input = _skill_activation_input_model(
+        ("event-context", "outfit-styling"),
+        prior_candidates_available=False,
+    )
+
+    with pytest.raises(ValueError, match="search_new_candidates"):
+        activation_input(
+            skill_names=["outfit-styling", "event-context"],
+            event_context_action="reuse_prior_candidates",
+            event_context_next_question="none",
+        )
+
+    selected = activation_input(
+        skill_names=["outfit-styling", "event-context"],
+        event_context_action="search_new_candidates",
+        event_context_next_question="event_location",
+    )
+    assert selected.event_context_action == "search_new_candidates"
+
+
+def test_dynamic_event_action_literal_gets_typed_activation_feedback() -> None:
+    activation_input = _skill_activation_input_model(
+        ("event-context", "outfit-styling"),
+        prior_candidates_available=False,
+    )
+    middleware = _middleware()
+
+    with pytest.raises(ValueError) as captured:
+        activation_input(
+            skill_names=["outfit-styling", "event-context"],
+            event_context_action="reuse_prior_candidates",
+            event_context_next_question="none",
+        )
+
+    first = middleware.handle_activation_validation_error(captured.value)
+    second = middleware.handle_activation_validation_error(captured.value)
+    response = middleware.wrap_model_call(
+        _model_request(),
+        lambda _: pytest.fail("clarification must not call the model"),
+    )
+
+    assert first.startswith("SHOPPER_SKILL_ACTIVATION_INVALID:")
+    assert "otherwise use search_new_candidates" in first
+    assert second.startswith(
+        "SHOPPER_SKILL_ACTIVATION_CLARIFICATION_REQUIRED:"
+    )
+    assert response.result[0].content == (
+        "Should I apply this event context to the options already shown, "
+        "or search for new options?"
+    )
+
+
+@pytest.mark.parametrize(
+    "invalid_fields",
+    [
+        {"event_context_next_question": "destination"},
+        {
+            "event_context_next_question": "none",
+            "event_context_product_work_quote": "",
+        },
+    ],
+)
+def test_dynamic_event_context_fields_get_typed_activation_feedback(
+    invalid_fields: dict[str, str],
+) -> None:
+    activation_input = _skill_activation_input_model(
+        ("event-context", "outfit-styling"),
+        prior_candidates_available=True,
+        current_shopper_text="Show me a different dress.",
+    )
+    middleware = _middleware()
+
+    with pytest.raises(ValueError) as captured:
+        activation_input(
+            skill_names=["outfit-styling", "event-context"],
+            event_context_action="search_new_candidates",
+            **invalid_fields,
+        )
+
+    feedback = middleware.handle_activation_validation_error(captured.value)
+
+    assert feedback.startswith("SHOPPER_SKILL_ACTIVATION_INVALID:")
+    assert "event_context_next_question" in feedback
+    assert "event_context_product_work_quote" in feedback
+    assert "choose event_venue only after destination is established" in (
+        feedback
+    )
+    assert "Never infer venue from destination" in feedback
 
 
 def test_activation_schema_requires_primary_for_budget_only() -> None:
@@ -461,7 +650,17 @@ def test_pending_phase_forces_only_the_activation_tool() -> None:
     assert "never select both" in prepared.system_prompt
     assert "budget shopping may accompany either" in prepared.system_prompt
     assert "Event context may accompany outfit" in prepared.system_prompt
+    assert "reuse_prior_candidates" in prepared.system_prompt
     normalized_prompt = " ".join(prepared.system_prompt.split())
+    assert "typed action and its one permitted next-question" in (
+        normalized_prompt
+    )
+    assert "`event_venue` only after destination is established" in (
+        normalized_prompt
+    )
+    assert "Never infer a beach, outdoor, indoor, or terrain setting" in (
+        normalized_prompt
+    )
     assert (
         "Select it whenever an event destination or venue is stated, or when "
         "the response would otherwise ask about or branch on missing destination"

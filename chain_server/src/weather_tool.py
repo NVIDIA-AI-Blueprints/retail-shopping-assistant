@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 import json
 import re
 from threading import Lock
-from typing import Any, Collection, Literal
+from typing import Any, Collection, Literal, cast
 
 from langchain_core.tools import BaseTool, StructuredTool
 from pydantic import (
@@ -45,29 +45,129 @@ _LOCATION_NUMBER_RE = re.compile(
     flags=re.ASCII,
 )
 _NEXT_WEEK_RE = re.compile(r"\bnext\s+week\b", flags=re.IGNORECASE)
+_WEEKDAY_NEXT_WEEK_RE = re.compile(
+    r"\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)"
+    r"\s+next\s+week\b",
+    flags=re.IGNORECASE | re.ASCII,
+)
+_MONTH_DAY_PATTERN = (
+    r"(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|"
+    r"Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|"
+    r"Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.?\s+"
+    r"[0-9]{1,2}(?:st|nd|rd|th)?(?:,?\s+[0-9]{4})?"
+)
+_STRONG_DATE_SIGNAL_RE = re.compile(
+    rf"(?:"
+    rf"\b[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}\b"
+    rf"|\b{_MONTH_DAY_PATTERN}\b"
+    rf"|\b(?:today|tomorrow)\b"
+    rf")",
+    flags=re.IGNORECASE | re.ASCII,
+)
+_DATE_RANGE_CONNECTOR_RE = re.compile(
+    r"\s*(?:through|to|until|[-–—])\s*",
+    flags=re.IGNORECASE,
+)
+_UNSUPPORTED_RELATIVE_DATE_RE = re.compile(
+    r"\b(?:this\s+week|next\s+month)\b",
+    flags=re.IGNORECASE | re.ASCII,
+)
+_DATE_AUTHORITY_UNCERTAINTY_RE = re.compile(
+    r"(?:"
+    r"\b(?:maybe|perhaps|possibly|unsure|uncertain|unknown|tbd)\b"
+    r"|\bnot\s+sure\b"
+    r"|\bto\s+be\s+determined\b"
+    r"|\b(?:might|may)\s+(?:be|change|move|happen)\b"
+    r"|\b(?:don['’]t|do\s+not)\s+know\b.{0,40}"
+    r"\b(?:date|day|when|new)\b"
+    r"|\bdid(?:n['’]t|\s+not)\s+say\b"
+    r")",
+    flags=re.IGNORECASE,
+)
+_DATE_UNCERTAINTY_BEFORE_RE = re.compile(
+    r"(?:"
+    r"\b(?:maybe|perhaps|possibly|unsure|uncertain|unknown|tbd)\b"
+    r"|\bnot\s+sure\b"
+    r"|\bto\s+be\s+determined\b"
+    r"|\b(?:might|may)\s+(?:be|change|move|happen)\b"
+    r"|\b(?:don['’]t|do\s+not)\s+know\b"
+    r"|\bdid(?:n['’]t|\s+not)\s+say\b"
+    r").{0,40}$",
+    flags=re.IGNORECASE,
+)
+_DATE_UNCERTAINTY_AFTER_RE = re.compile(
+    r"^\s*[,;]?\s*(?:maybe|perhaps|possibly|unsure|uncertain|unknown|"
+    r"not\s+sure|tbd|to\s+be\s+determined)\s*[.!?]?\s*$",
+    flags=re.IGNORECASE,
+)
+_DATE_TOPIC_RE = re.compile(
+    r"\b(?:date|when|schedule|timing|new\s+day)\b",
+    flags=re.IGNORECASE,
+)
+_DATE_WORD_RE = re.compile(r"\bdate\b", flags=re.IGNORECASE)
+_GENERIC_DATE_RETRACTION_RE = re.compile(
+    r"(?:"
+    r"\b(?:date|day|schedule|timing)\b.{0,40}"
+    r"\b(?:changed|moved|wrong|off|cancel(?:l?ed)?|"
+    r"unknown|unsure|uncertain|tbd|no\s+longer\s+right|"
+    r"(?:won['’]t|will\s+not|doesn['’]t|does\s+not)\s+work)\b"
+    r"|\b(?:changed|moved|cancel(?:l?ed)?)\b.{0,40}"
+    r"\b(?:date|day|schedule|timing)\b"
+    r"|\b(?:no|without)\s+(?:new\s+)?(?:date|day)\b"
+    r"|\b(?:don['’]t|do\s+not)\s+have\s+(?:a\s+)?date\b"
+    r"|\b(?:haven['’]t|have\s+not)\s+set\s+(?:the\s+)?date\b"
+    r")",
+    flags=re.IGNORECASE,
+)
 _NEXT_WEEK_NEGATED_BEFORE_RE = re.compile(
-    r"\b(?:forget|ignore|cancel|skip|not|isn['’]t|is\s+not|no\s+longer)\b"
+    r"\b(?:forget|ignore|cancel|skip|not|no|isn['’]t|is\s+not|"
+    r"no\s+longer|can['’]t\s+do|cannot\s+do|"
+    r"don['’]t\s+use|do\s+not\s+use|"
+    r"didn['’]t\s+say|did\s+not\s+say|changed\s+it\s+from|"
+    r"change(?:d)?\s+(?:it\s+)?from)\b"
     r".{0,40}\bnext\s+week\b",
     flags=re.IGNORECASE,
 )
 _NEXT_WEEK_NEGATED_AFTER_RE = re.compile(
-    r"\bnext\s+week\b.{0,40}\b(?:wrong|instead|cancel(?:led)?|changed|"
+    r"\bnext\s+week\b.{0,40}\b(?:wrong|cancel(?:l?ed)?|changed|"
     r"doesn['’]t\s+work|won['’]t\s+work|will\s+not\s+work|"
-    r"isn['’]t\s+right|is\s+not\s+right|is\s+out|was\s+wrong)\b",
+    r"isn['’]t\s+right|is\s+not\s+right|is\s+out|was\s+wrong|"
+    r"is\s+off|is\s+no\s+longer(?:\s+the\s+date)?)\b",
     flags=re.IGNORECASE,
 )
-_OTHER_DATE_RE = re.compile(
-    r"(?:"
-    r"\b[0-9]{4}-[0-9]{2}-[0-9]{2}\b"
-    r"|\b[0-9]{1,2}[/-][0-9]{1,2}(?:[/-][0-9]{2,4})?\b"
-    r"|\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|"
-    r"Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|"
-    r"Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.?\s+"
-    r"[0-9]{1,2}(?:st|nd|rd|th)?\b"
-    r"|\b(?:today|tomorrow|this\s+week|next\s+month)\b"
-    r")",
+_WEEKDAY_RE = re.compile(
+    r"\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b",
     flags=re.IGNORECASE | re.ASCII,
 )
+_DATE_NEGATED_BEFORE_RE = re.compile(
+    r"\b(?:forget|ignore|skip|not|isn['’]t|is\s+not|"
+    r"don['’]t\s+use|do\s+not\s+use)\b.{0,40}$",
+    flags=re.IGNORECASE,
+)
+_DATE_NEGATED_AFTER_RE = re.compile(
+    r"^.{0,40}\b(?:wrong|cancel(?:l?ed)?|changed|"
+    r"isn['’]t\s+right|is\s+not\s+right|is\s+off)\b",
+    flags=re.IGNORECASE,
+)
+
+RelativeWeekday = Literal[
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+    "sunday",
+]
+_RELATIVE_WEEKDAY_OFFSETS: dict[RelativeWeekday, int] = {
+    "monday": 0,
+    "tuesday": 1,
+    "wednesday": 2,
+    "thursday": 3,
+    "friday": 4,
+    "saturday": 5,
+    "sunday": 6,
+}
 
 
 class EventWeatherRequest(BaseModel):
@@ -98,7 +198,22 @@ class EventWeatherRequest(BaseModel):
             "unstated ZIP or numeric component."
         ),
     )
-    relative_date: Literal["next_week"] | None = None
+    relative_date: Literal["next_week"] | None = Field(
+        default=None,
+        description=(
+            "Use only when the shopper's latest authoritative date phrase "
+            "contains the exact words 'next week'. Never use this as a "
+            "placeholder when the event date is missing."
+        ),
+    )
+    weekday: RelativeWeekday | None = Field(
+        default=None,
+        description=(
+            "Exact weekday inside next week. Required only when the shopper's "
+            "latest authoritative date phrase is exactly '<weekday> next "
+            "week'; otherwise omit it."
+        ),
+    )
     date: str | None = None
     start_date: str | None = None
     end_date: str | None = None
@@ -144,6 +259,8 @@ class EventWeatherRequest(BaseModel):
             raise ValueError(
                 "relative_date is mutually exclusive with explicit dates"
             )
+        if self.weekday is not None and self.relative_date != "next_week":
+            raise ValueError("weekday requires relative_date=next_week")
         if self.relative_date is not None:
             return self
         if (
@@ -172,6 +289,7 @@ class WeatherForecastEvidence(BaseModel):
     fetched_at: datetime
     requested_window: WeatherRequestedWindow
     relative_date: Literal["next_week"] | None = None
+    weekday: RelativeWeekday | None = None
     resolved_location: str | None = Field(
         default=None,
         min_length=1,
@@ -210,6 +328,18 @@ class WeatherForecastEvidence(BaseModel):
             or self.attribution.url != VISUAL_CROSSING_ATTRIBUTION_URL
         ):
             raise ValueError("weather forecast evidence is inconsistent")
+        if self.weekday is not None and self.relative_date != "next_week":
+            raise ValueError("weather weekday provenance is inconsistent")
+        if self.relative_date == "next_week":
+            expected_relative_days = 1 if self.weekday is not None else 7
+            if expected_count != expected_relative_days:
+                raise ValueError("weather relative-date window is inconsistent")
+            if (
+                self.weekday is not None
+                and start.weekday()
+                != _RELATIVE_WEEKDAY_OFFSETS[self.weekday]
+            ):
+                raise ValueError("weather relative weekday is inconsistent")
         return self
 
 
@@ -260,14 +390,16 @@ def get_event_weather_forecast_tool(
     shopper_provided_texts: Collection[str],
     current_date: CalendarDate | None = None,
     prior_candidates_available: bool = False,
-    on_reuse_prior_candidates: Callable[[], None] | None = None,
+    on_attempt_consumed: Callable[[], None] | None = None,
+    candidate_action_authorized: Callable[[str], bool] | None = None,
 ) -> BaseTool:
     """Build one request-bound, event-context-only forecast tool.
 
-    The model selects semantic authority, while the server releases the saved
-    ZIP only after its narrow confirmation gate and verifies that an explicit
-    named place came verbatim from shopper-authored text. The provider-resolved
-    location is returned so a geographic assumption is transparent.
+    The prior activation owns candidate action, while the server releases the
+    saved ZIP only after its narrow confirmation gate and verifies that an
+    explicit named place came verbatim from shopper-authored text. The
+    provider-resolved location is returned so a geographic assumption is
+    transparent.
     """
 
     shopper_texts = tuple(
@@ -285,8 +417,14 @@ def get_event_weather_forecast_tool(
             attempted = True
             return True
 
+    def begin_attempt() -> bool:
+        claimed = claim_attempt()
+        if claimed and on_attempt_consumed is not None:
+            on_attempt_consumed()
+        return claimed
+
     def invalid_weather_request(_error: Any) -> str:
-        claim_attempt()
+        begin_attempt()
         return _weather_failure_evidence(
             weather_failure("weather_request_invalid")
         )
@@ -303,11 +441,19 @@ def get_event_weather_forecast_tool(
         location: str | None = None,
         location_query: str | None = None,
         relative_date: Literal["next_week"] | None = None,
+        weekday: RelativeWeekday | None = None,
         date: str | None = None,
         start_date: str | None = None,
         end_date: str | None = None,
     ) -> str:
-        if not claim_attempt():
+        if not begin_attempt():
+            return _weather_failure_evidence(
+                weather_failure("weather_request_invalid")
+            )
+        if (
+            candidate_action_authorized is not None
+            and not candidate_action_authorized(candidate_action)
+        ):
             return _weather_failure_evidence(
                 weather_failure("weather_request_invalid")
             )
@@ -318,13 +464,24 @@ def get_event_weather_forecast_tool(
             return _weather_failure_evidence(
                 weather_failure("weather_request_invalid")
             )
-        if (
-            relative_date == "next_week"
-            and not _shopper_stated_next_week(shopper_texts)
-        ):
-            return _weather_failure_evidence(
-                weather_failure("weather_request_invalid")
+        if relative_date == "next_week":
+            if not _shopper_stated_next_week(shopper_texts):
+                return _weather_failure_evidence(
+                    weather_failure("weather_request_invalid")
+                )
+            weekday_required, authoritative_weekday = (
+                _shopper_stated_relative_weekday(shopper_texts)
             )
+            if (
+                weekday_required
+                and (
+                    authoritative_weekday is None
+                    or weekday != authoritative_weekday
+                )
+            ) or (not weekday_required and weekday is not None):
+                return _weather_failure_evidence(
+                    weather_failure("weather_request_invalid")
+                )
 
         if location_source == "confirmed_saved_zip":
             selected_location = (
@@ -363,18 +520,20 @@ def get_event_weather_forecast_tool(
                 start_date = request_date + timedelta(
                     days=7 - request_date.weekday()
                 )
-                end_date = start_date + timedelta(days=6)
+                if weekday is None:
+                    end_date = start_date + timedelta(days=6)
+                else:
+                    date = start_date + timedelta(
+                        days=_RELATIVE_WEEKDAY_OFFSETS[weekday]
+                    )
+                    start_date = None
+                    end_date = None
             request = WeatherRequest(
                 location=selected_location,
                 date=date,
                 start_date=start_date,
                 end_date=end_date,
             )
-            if (
-                candidate_action == "reuse_prior_candidates"
-                and on_reuse_prior_candidates is not None
-            ):
-                on_reuse_prior_candidates()
             outcome = client.get_forecast(request)
             if isinstance(outcome, WeatherResult):
                 return _weather_success_evidence(
@@ -383,6 +542,7 @@ def get_event_weather_forecast_tool(
                         location_source == "shopper_provided_location"
                     ),
                     relative_date=relative_date,
+                    weekday=weekday,
                 )
             if isinstance(outcome, WeatherFailure):
                 return _weather_failure_evidence(outcome)
@@ -400,11 +560,9 @@ def get_event_weather_forecast_tool(
         description=(
             "Get one live daily forecast for event styling, only after the "
             "event place and exact date or complete date range are established. "
-            "Set candidate_action=reuse_prior_candidates only when this turn "
-            "supplies event context for candidates already shown and does not "
-            "ask for new or refined products; that action closes catalog search "
-            "for the rest of the turn. Otherwise set "
-            "candidate_action=search_new_candidates. "
+            "Copy the event_context_action already bound by shopper-skill "
+            "activation into candidate_action exactly; do not reinterpret it "
+            "at weather-call time. "
             "Use confirmed_saved_zip only after the shopper explicitly confirms "
             "the event is in their usual area, and omit location in that mode. "
             "Otherwise use shopper_provided_location and copy the shortest "
@@ -419,9 +577,17 @@ def get_event_weather_forecast_tool(
             "location_query only when location is already sufficiently "
             "qualified. The provider-resolved place will be disclosed. "
             "Convert unambiguous relative date "
-            "language: use relative_date=next_week only for the shopper's exact "
-            "'next week' wording; otherwise use an exact ISO date or complete "
-            "inclusive ISO range. "
+            "language: for the shopper's exact '<weekday> next week' phrase, "
+            "use relative_date=next_week and the matching lowercase weekday; "
+            "the server resolves that one day inside the next "
+            "Monday-through-Sunday window. For bare 'next week', use "
+            "relative_date=next_week and omit weekday so the server resolves "
+            "the full window. Never omit or change a shopper-stated weekday. "
+            "Otherwise use an exact ISO date or complete inclusive ISO range. "
+            "If the shopper has not supplied one of those date forms, do not "
+            "call this tool; apply the event-context minimum-question rule "
+            "instead. Never use next_week merely to satisfy the required date "
+            "input. "
             "Call at most once per turn."
         ),
         args_schema=EventWeatherRequest,
@@ -437,12 +603,14 @@ def _weather_success_evidence(
     *,
     include_resolved_location: bool,
     relative_date: Literal["next_week"] | None,
+    weekday: RelativeWeekday | None,
 ) -> str:
     payload = WeatherForecastEvidence(
         provider=result.provider,
         fetched_at=result.fetched_at,
         requested_window=result.requested_window,
         relative_date=relative_date,
+        weekday=weekday,
         resolved_location=(
             result.resolved_location
             if include_resolved_location
@@ -507,22 +675,181 @@ def _resolve_shopper_authored_location(
     return None
 
 
+def _statement_weekdays(text: str) -> set[RelativeWeekday]:
+    return {
+        cast(RelativeWeekday, match.group(0).casefold())
+        for match in _WEEKDAY_RE.finditer(text)
+    }
+
+
+def _has_generic_date_retraction(text: str) -> bool:
+    if _DATE_WORD_RE.search(text) is not None:
+        return True
+    if _GENERIC_DATE_RETRACTION_RE.search(text) is not None:
+        return True
+    return (
+        _DATE_TOPIC_RE.search(text) is not None
+        and _DATE_AUTHORITY_UNCERTAINTY_RE.search(text) is not None
+    )
+
+
+def _same_clause_before(text: str, start: int) -> str:
+    before = text[max(0, start - 40) : start]
+    separator = max(before.rfind(mark) for mark in ".!?;")
+    return before[separator + 1 :]
+
+
+def _date_signal_is_uncertain(
+    text: str,
+    *,
+    start: int,
+    end: int,
+) -> bool:
+    before = _same_clause_before(text, start)
+    after = text[end : end + 40]
+    return (
+        _DATE_UNCERTAINTY_BEFORE_RE.search(before) is not None
+        or _DATE_UNCERTAINTY_AFTER_RE.fullmatch(after) is not None
+    )
+
+
+def _strong_date_signal_decision(text: str) -> bool | None:
+    """Classify a bounded exact-date signal without interpreting slash values."""
+
+    matches = tuple(_STRONG_DATE_SIGNAL_RE.finditer(text))
+    if not matches:
+        return None
+    if len(matches) > 2:
+        return False
+    if len(matches) == 2 and _DATE_RANGE_CONNECTOR_RE.fullmatch(
+        text[matches[0].end() : matches[1].start()]
+    ) is None:
+        return False
+
+    start = matches[0].start()
+    end = matches[-1].end()
+    before = _same_clause_before(text, start)
+    after = text[end : end + 40]
+    if (
+        _date_signal_is_uncertain(text, start=start, end=end)
+        or _DATE_NEGATED_BEFORE_RE.search(before) is not None
+        or _DATE_NEGATED_AFTER_RE.search(after) is not None
+    ):
+        return False
+    return True
+
+
+def _next_week_decision(text: str) -> bool | None:
+    """Classify one shopper turn's bounded next-week authority."""
+
+    has_next_week = _NEXT_WEEK_RE.search(text) is not None
+    strong_date_decision = _strong_date_signal_decision(text)
+    if has_next_week:
+        next_week_matches = tuple(_NEXT_WEEK_RE.finditer(text))
+        next_week_match = next_week_matches[0]
+        same_clause_with_signal = (
+            _same_clause_before(text, next_week_match.start())
+            + next_week_match.group(0)
+        )
+        negated_before = (
+            _NEXT_WEEK_NEGATED_BEFORE_RE.search(same_clause_with_signal)
+            is not None
+        )
+        weekdays = _statement_weekdays(text)
+        qualified_weekdays = {
+            cast(RelativeWeekday, match.group(1).casefold())
+            for match in _WEEKDAY_NEXT_WEEK_RE.finditer(text)
+        }
+        if (
+            len(next_week_matches) != 1
+            or _date_signal_is_uncertain(
+                text,
+                start=next_week_match.start(),
+                end=next_week_match.end(),
+            )
+            or negated_before
+            or _NEXT_WEEK_NEGATED_AFTER_RE.search(text) is not None
+            or strong_date_decision is not None
+            or _UNSUPPORTED_RELATIVE_DATE_RE.search(text) is not None
+            or len(weekdays) > 1
+            or (bool(weekdays) and qualified_weekdays != weekdays)
+        ):
+            return False
+        return True
+    if (
+        strong_date_decision is not None
+        or _UNSUPPORTED_RELATIVE_DATE_RE.search(text) is not None
+        or _WEEKDAY_RE.search(text) is not None
+        or _has_generic_date_retraction(text)
+    ):
+        return False
+    return None
+
+
+def _authoritative_next_week_statement(
+    shopper_texts: Collection[str],
+) -> tuple[str | None, bool | None]:
+    """Return the latest date-relevant shopper turn and its decision."""
+
+    texts = tuple(shopper_texts)
+    if not texts:
+        return None, None
+
+    current_decision = _next_week_decision(texts[0])
+    if current_decision is not None:
+        return texts[0], current_decision
+    for text in reversed(texts[1:]):
+        prior_decision = _next_week_decision(text)
+        if prior_decision is not None:
+            return text, prior_decision
+    return None, None
+
+
 def _shopper_stated_next_week(shopper_texts: Collection[str]) -> bool:
+    _statement, decision = _authoritative_next_week_statement(shopper_texts)
+    return decision is True
+
+
+def _shopper_stated_relative_weekday(
+    shopper_texts: Collection[str],
+) -> tuple[bool, RelativeWeekday | None]:
+    """Return whether an exact weekday is required and its unambiguous value."""
+
+    statement, decision = _authoritative_next_week_statement(shopper_texts)
+    if statement is None or decision is not True:
+        return False, None
+    weekdays = _statement_weekdays(statement)
+    qualified_weekdays = {
+        cast(RelativeWeekday, match.group(1).casefold())
+        for match in _WEEKDAY_NEXT_WEEK_RE.finditer(statement)
+    }
+    if not weekdays:
+        return False, None
+    if len(weekdays) != 1 or qualified_weekdays != weekdays:
+        return True, None
+    return True, next(iter(weekdays))
+
+
+def weather_date_context_available(
+    shopper_texts: Collection[str],
+) -> bool:
+    """Return whether the latest shopper date authority can support a lookup."""
+
     texts = tuple(shopper_texts)
     if not texts:
         return False
 
     def decision(text: str) -> bool | None:
-        has_next_week = _NEXT_WEEK_RE.search(text) is not None
-        if has_next_week:
-            if (
-                _NEXT_WEEK_NEGATED_BEFORE_RE.search(text) is not None
-                or _NEXT_WEEK_NEGATED_AFTER_RE.search(text) is not None
-                or _OTHER_DATE_RE.search(text) is not None
-            ):
-                return False
-            return True
-        if _OTHER_DATE_RE.search(text) is not None:
+        if _NEXT_WEEK_RE.search(text) is not None:
+            return _next_week_decision(text)
+        strong_date_decision = _strong_date_signal_decision(text)
+        if strong_date_decision is not None:
+            return strong_date_decision
+        if (
+            _UNSUPPORTED_RELATIVE_DATE_RE.search(text) is not None
+            or _WEEKDAY_RE.search(text) is not None
+            or _has_generic_date_retraction(text)
+        ):
             return False
         return None
 

@@ -164,6 +164,7 @@ def test_weather_trace_redacts_arguments_and_partial_output() -> None:
                         "location": "Seattle",
                         "location_query": "Seattle, WA",
                         "relative_date": "next_week",
+                        "weekday": "friday",
                     },
                 }
             ],
@@ -194,7 +195,7 @@ def test_weather_trace_redacts_arguments_and_partial_output() -> None:
             "status": "completed",
             "weather": {
                 "candidate_action": "reuse_prior_candidates",
-                "request_shape": "relative_range",
+                "request_shape": "relative_exact_date",
                 "location_source": "shopper_provided_location",
                 "provider_input": "location_query",
                 "outcome": "weather_response_invalid",
@@ -210,6 +211,7 @@ def test_weather_trace_redacts_arguments_and_partial_output() -> None:
     assert "98101" not in serialized
     assert "2026-08-01" not in serialized
     assert "Seattle" not in serialized
+    assert "friday" not in serialized
     assert "72 degrees" not in serialized
     assert "temperature_high_f" not in serialized
 

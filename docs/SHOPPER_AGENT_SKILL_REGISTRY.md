@@ -46,7 +46,21 @@ Every shopper turn uses two model phases inside the same Deep Agents run:
 1. The activation phase exposes only the internal
    `activate_shopper_skills_tool`, forces that tool choice, and disables
    parallel tool calls. The model selects the smallest registered skill set
-   that semantically covers the complete current intent.
+   that semantically covers the complete current intent. Whenever it selects
+   `event-context`, the same call must bind `event_context_action` and
+   `event_context_next_question`; both fields are omitted otherwise. The model
+   selects the latter from current and recent shopper conversation:
+   `event_location` only when destination is missing and material,
+   `event_venue` only after destination is established when venue or setting is
+   missing and material, `event_date` only after destination and any material
+   venue are established when live weather is enabled and material and a
+   bounded date is neither established nor explicitly unavailable, and `none`
+   otherwise. An explicitly shopper-stated outdoor patio, beach, garden,
+   rooftop, or open-air setting makes enabled live weather material; with
+   destination and that setting but no bounded date, select `event_date`. This
+   remains model-owned semantic guidance, not deterministic keyword or alias
+   parsing. Only the value from a successfully accepted activation authorizes
+   an event-context follow-up.
 2. The runtime validates the selected names, injects the complete selected
    `SKILL.md` contents into the system context, removes the activation tool, and
    exposes only the union of those skills' `tools_granted` for the next model
@@ -69,8 +83,16 @@ and is selected whenever event destination or venue context is stated or the
 response would otherwise ask about or branch on missing destination or venue
 context, or when a supported forecast would materially change event guidance.
 Generic occasion advice is not a reason to omit it. It alone grants the
-read-only weather tool. Within an active outfit-building or style-led
-single-piece thread, terse item-only follow-ups remain `outfit-styling` tasks.
+read-only weather tool. `reuse_prior_candidates` is valid only for a
+context-only turn with established candidates; an initial event turn or
+explicit new/refined-product request uses `search_new_candidates`. With
+established candidates, search-new also requires a trimmed, 1–240-character
+`event_context_product_work_quote` whose case-insensitive text is an exact
+substring of the current shopper message. The model owns the semantic claims
+that this is the shortest span and explicitly requests product, cart, or policy
+work beyond event context. Within an active
+outfit-building or style-led single-piece thread, terse item-only follow-ups
+remain `outfit-styling` tasks.
 
 Runtime taxonomy validation may bind the longest exact advertised suffix in a
 modifier-bearing model phrase (`waterproof boots` to `boots`), but it disables
@@ -176,10 +198,12 @@ tool-backed responses use the grounding editor to remove unsupported product
 claims, surface guarantees, and internal refs.
 The editor receives only the remaining shared model-stage deadline. A timeout
 finalizes the turn as failed with `grounding_timeout`; search-only evidence uses
-deterministic catalog rendering, while other turns receive a fixed
-retry/cart-check response instead of the unverified draft. Editor errors and
-empty or whitespace-only output use the same fail-closed response with
-`grounding_error`.
+deterministic catalog rendering, structured accepted reuse uses deterministic
+event assembly, and other non-search turns receive a fixed retry/cart-check
+response instead of the unverified draft. Ordinary editor
+errors and empty or whitespace-only output use the same fail-closed response
+with `grounding_error`; invalid structured accepted-reuse output instead falls
+back deterministically.
 Grounding is enabled by default and can be disabled with
 `GROUNDING_REWRITE_ENABLED=false`; the evidence window is controlled by
 `GROUNDING_REWRITE_MAX_EVIDENCE_CHARS`.
@@ -230,25 +254,33 @@ forecast context to occasion-led styling.
   the shopper's usual area or elsewhere; Guest instead supplies destination or
   venue context from scratch.
 - On an explicit plan-before-products turn, missing material context produces
-  exactly two short sentences: one conditional direction, then one
-  destination-or-venue question, with no headings or lists. With context
-  complete, it produces one short paragraph and asks no further event-context
-  question.
+  exactly two short sentences with no headings or lists. It may include only
+  the location, venue, or date question selected by activation; `none` permits no
+  event-context follow-up. With context complete, it produces one short
+  paragraph and asks no further event-context question.
 - On an ordinary occasion-only shop-now turn, `outfit-styling` runs one search
   for one grounded requested or core role unless the shopper explicitly asks
   for a complete look or names multiple roles. If location is missing and
-  materially changes the next recommendation, it asks only event location
-  alongside the results. A saved-ZIP candidate requires “usual area or
-  elsewhere?” framing rather than a bare destination question; venue is
-  deferred and the plan-first stop rule does not apply.
-- Turns without a forecast call reuse the final response editor. It receives only
-  saved-ZIP-candidate presence, not ZIP digits; a successful-search response
+  materially changes the next recommendation, activation selects only event
+  location alongside the results. A saved-ZIP candidate requires “usual area
+  or elsewhere?” framing rather than a bare destination question. Once
+  destination is established, activation may instead select one material
+  venue/setting question; the plan-first stop rule does not apply.
+- Non-reuse turns without a current weather outcome use the final response
+  editor when draft text exists. It receives only saved-ZIP-candidate presence,
+  not ZIP digits, plus the question boundary from the accepted activation; a
+  successful-search response
   that drops every returned candidate has them restored through deterministic
-  grounded rendering.
+  grounded rendering. Missing-location or missing-venue accepted reuse skips
+  the reuse editor. Other eligible reuse with a nonempty draft gives a narrow
+  tools-disabled decision editor only bounded shopper-authored event text and
+  the server-owned deterministic weather styling direction.
 - Does not infer that Cancun means beach or that any ZIP or place establishes
-  weather, wind, climate, season, dress code, local norms, or product
-  performance.
-- Grants `get_weather_forecast_tool` for one model-visible attempt per turn. It uses
+  outdoor/indoor setting, terrain, weather, wind, climate, season, dress code,
+  local norms, or product performance.
+- Grants `get_weather_forecast_tool` for one model-visible attempt on an
+  eligible turn with bounded date authority; otherwise the runtime hides and
+  execution-blocks it. It uses
   `confirmed_saved_zip`, with both location fields omitted from model
   arguments, only when the deterministic gate accepts a current
   location-neutral statement explicitly naming `my`/`the` usual/home area, a
@@ -277,23 +309,43 @@ forecast context to occasion-led styling.
   `max_provider_attempts: 2` permits one internal retry only for timeout or
   HTTP 5xx. HTTP 400 maps to generic `weather_request_invalid`; other 4xx,
   connection, and response-validation failures are not retried.
-- Requires `candidate_action` on every weather call.
+- Activation owns `event_context_action` and
+  `event_context_next_question`. The latter is required exactly with this skill
+  and is one of `event_location`, `event_venue`, `event_date`, or `none` under
+  the semantic conditions above; it is omitted without this skill. The server
+  does not infer a question from enabled weather or missing context.
   `reuse_prior_candidates` is valid only when historical candidates exist and
   the current turn solely adds event context for them without requesting new or
-  refined products. Once accepted, it irreversibly hides and
-  execution-blocks catalog search and closes the remaining tool loop for
-  synthesis before provider I/O, so lookup failure cannot reopen search.
-  `search_new_candidates` is required for an explicit current-turn new/refined
-  product request or when no prior candidates can be reused. Accepted reuse
-  asks no follow-up question and does not initiate the next product role.
+  refined products. It immediately hides and execution-blocks catalog search,
+  product details, historical-product resolution, availability, and
+  promotions. Accepted `event_location` or `event_venue` also hides and
+  execution-blocks weather; reuse closes immediately, while search-new leaves
+  normal product work open. Without date authority it also hides weather and closes the loop
+  for a tools-disabled response that may ask only the activation-selected
+  question. With date authority, the
+  weather call must copy that action exactly into `candidate_action`; mismatch
+  fails before provider I/O, and consuming the reuse attempt closes the
+  remaining loop before validation/provider work.
+  `search_new_candidates` is required for an initial event turn, an explicit
+  current-turn new/refined-product request, or when no prior candidates can be
+  reused, and leaves normal granted product work open. Reuse does not initiate
+  the next product role.
 - Requires an exact ISO event date, complete inclusive range, or the typed
   `relative_date=next_week` mode. That mode is allowed only when the shopper
-  used the exact phrase `next week`, and the server derives the next
-  Monday-through-Sunday range from one captured UTC date. A current negation or
-  different date supersedes an earlier use. The model resolves
+  used the exact phrase `next week`. Exact `<weekday> next week` also requires
+  the matching lowercase `weekday`, and the server derives that exact day
+  inside the next Monday-through-Sunday window from one captured UTC date.
+  Bare `next week` omits `weekday` and derives the full range. Missing,
+  mismatched, mixed, negated, or superseded weekday authority fails closed.
+  Without a bounded shopper-authored date signal, the runtime hides and
+  execution-blocks weather for that turn. A direct date question is permitted
+  only when accepted activation selected `event_date`; the server does not
+  collect or infer weather-only context otherwise.
+  The model resolves
   an unambiguous single-day phrase such as `tomorrow` against that same anchor
-  into an exact ISO date. Other ambiguous or unresolved relative dates require
-  one date clarification.
+  into an exact ISO date. Other ambiguous or unresolved relative dates can
+  authorize one date clarification only through accepted `event_date` under
+  that same ordering and enabled-and-material rule.
 - Uses successful current-turn forecast evidence only. The model-visible
   projection includes the provider-resolved place only for
   `shopper_provided_location`, and final rendering discloses it as the
@@ -311,13 +363,14 @@ forecast context to occasion-led styling.
   and forecast uncertainty; model prose cannot shorten or selectively omit it.
   For non-reuse weather paths, grounding-editor sentences containing
   weather-domain fact language or fact-shaped dates/values are removed while
-  ordinary grounded styling language remains. Accepted reuse bypasses the
-  grounding editor entirely. On success, the server renders the exact names
-  from the newest historical candidate set, one bounded styling direction
-  derived from structured forecast evidence, and the canonical forecast block.
-  On provider failure, it preserves those prior names, adds one conditional
-  weather-flexible styling/recheck direction, and appends the typed safe
-  failure without asking for a finer location.
+  ordinary grounded styling language remains. Eligible reuse accepts no
+  free-form shopper-facing styling. Its exact two-key JSON decision must contain
+  an exact shopper-authored venue quote and one or two distinct allowlisted
+  adjustment codes. Malformed, ungrounded, extra-key, duplicate, unknown, or
+  wrong-cardinality output falls back. The server maps valid codes to fixed
+  phrases and deterministically assembles exact prior names, its weather
+  direction, only the accepted question, and the typed weather failure or
+  canonical success block.
 - Treats weather as styling context, never proof of product performance or an
   unstated catalog constraint. There is no new FastAPI, SSE, or UI shape.
 - Remains disabled at the provider boundary by default. Before an operator

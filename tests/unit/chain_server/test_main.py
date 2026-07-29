@@ -14,6 +14,7 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
 import importlib
+import json
 from pathlib import Path
 import sys
 from types import ModuleType, SimpleNamespace
@@ -115,6 +116,7 @@ def _weather_evidence_content(
     forecast_date: date = date(2026, 7, 29),
     forecast_end_date: date | None = None,
     relative_date: str | None = None,
+    weekday: str | None = None,
     resolved_location: str | None = None,
 ) -> str:
     end_date = forecast_end_date or forecast_date
@@ -126,6 +128,7 @@ def _weather_evidence_content(
             end_date=end_date,
         ),
         relative_date=relative_date,
+        weekday=weekday,
         resolved_location=resolved_location,
         days=[
             WeatherDay(
@@ -147,6 +150,43 @@ def _weather_evidence_content(
         f"{WEATHER_FORECAST_EVIDENCE_PREFIX} "
         + evidence.model_dump_json()
     )
+
+
+def _event_context_activation_messages(
+    action: str,
+    *,
+    next_question: str = "none",
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "role": "assistant",
+            "tool_calls": [
+                {
+                    "id": "event-context-activation",
+                    "name": "activate_shopper_skills_tool",
+                    "args": {
+                        "skill_names": [
+                            "outfit-styling",
+                            "event-context",
+                        ],
+                        "event_context_action": action,
+                        "event_context_next_question": next_question,
+                    },
+                }
+            ],
+            "content": "",
+        },
+        {
+            "role": "tool",
+            "name": "activate_shopper_skills_tool",
+            "tool_call_id": "event-context-activation",
+            "content": (
+                "SHOPPER_SKILL_ACTIVATION_COMPLETE: "
+                "/shopper/outfit-styling/SKILL.md, "
+                "/shopper/event-context/SKILL.md"
+            ),
+        },
+    ]
 
 
 class _ConversationMemoryStub:
@@ -902,6 +942,13 @@ class TestSystemPrompt:
             "Weather facts require successful current-turn forecast evidence"
         ) in normalized
         assert "Current server date is" in normalized
+        assert 'exact phrase "<weekday> next week"' in normalized
+        assert "matching lowercase weekday" in normalized
+        assert "Never omit or change a shopper-stated weekday" in normalized
+        assert "Never call weather to discover or prompt for missing context" in (
+            normalized
+        )
+        assert "do not invent next_week or any date argument" in normalized
         assert "Weather lookup is disabled for this deployment" in normalized
         assert "Call it at most once in a turn" in normalized
         assert "call weather first" in normalized
@@ -3195,7 +3242,12 @@ class TestDeepAgentsRuntimeRefs:
         activation_schema = tools_by_name[
             "activate_shopper_skills_tool"
         ].args_schema.model_json_schema()
-        assert set(activation_schema["properties"]) == {"skill_names"}
+        assert set(activation_schema["properties"]) == {
+            "skill_names",
+            "event_context_action",
+            "event_context_next_question",
+            "event_context_product_work_quote",
+        }
         assert set(activation_schema["required"]) == {"skill_names"}
         assert activation_schema["properties"]["skill_names"]["items"]["enum"] == [
             "budget-shopping",
@@ -3205,6 +3257,28 @@ class TestDeepAgentsRuntimeRefs:
             "product-discovery",
             "store-policy-answers",
         ]
+        assert {
+            option.get("const")
+            for option in activation_schema["properties"][
+                "event_context_action"
+            ]["anyOf"]
+        } == {"search_new_candidates", None}
+        next_question_options = activation_schema["properties"][
+            "event_context_next_question"
+        ]["anyOf"]
+        assert next_question_options[0]["enum"] == [
+            "event_location",
+            "event_venue",
+            "event_date",
+            "none",
+        ]
+        assert next_question_options[1]["type"] == "null"
+        assert "only event-context follow-up" in activation_schema[
+            "properties"
+        ]["event_context_next_question"]["description"]
+        assert "shortest exact span" in activation_schema["properties"][
+            "event_context_product_work_quote"
+        ]["description"]
         search_schema = tools_by_name["search_catalog_tool"].args_schema
         assert search_schema is not runtime_mod.SearchCatalogToolArguments
         assert set(search_schema.model_fields) == {
@@ -3280,6 +3354,7 @@ class TestDeepAgentsRuntimeRefs:
             "location",
             "location_query",
             "relative_date",
+            "weekday",
             "date",
             "start_date",
             "end_date",
@@ -3287,7 +3362,8 @@ class TestDeepAgentsRuntimeRefs:
         assert captured_weather["shopper_provided_texts"] == ("hello",)
         assert captured_weather["current_date"] == date(2026, 7, 28)
         assert captured_weather["prior_candidates_available"] is False
-        assert callable(captured_weather["on_reuse_prior_candidates"])
+        assert callable(captured_weather["on_attempt_consumed"])
+        assert callable(captured_weather["candidate_action_authorized"])
         assert "Current server date is 2026-07-28 UTC" in captured[
             "system_prompt"
         ]
@@ -3300,6 +3376,9 @@ class TestDeepAgentsRuntimeRefs:
             tool_loop_control,
             runtime_mod.ToolLoopControlMiddleware,
         )
+        assert skill_gate._runtime_tool_rejections[
+            "get_weather_forecast_tool"
+        ] == runtime_mod._EVENT_CONTEXT_DATE_REQUIRED_WEATHER_BLOCK
         assert skill_gate._skill_tool_grants["outfit-styling"] == {
             "search_catalog_tool",
             "get_product_details_tool",
@@ -3320,6 +3399,8 @@ class TestDeepAgentsRuntimeRefs:
         }
         activation_result = tools_by_name["activate_shopper_skills_tool"](
             ["outfit-styling", "event-context"],
+            event_context_action="search_new_candidates",
+            event_context_next_question="event_location",
         )
         assert activation_result == (
             "SHOPPER_SKILL_ACTIVATION_COMPLETE: "
@@ -3338,6 +3419,12 @@ class TestDeepAgentsRuntimeRefs:
             "resolve_conversation_products_tool",
             "get_weather_forecast_tool",
         }
+        assert captured_weather["candidate_action_authorized"](
+            "search_new_candidates"
+        )
+        assert not captured_weather["candidate_action_authorized"](
+            "reuse_prior_candidates"
+        )
         registry = runtime_mod._shopper_skill_registry(
             runtime._shopper_skills_root()
         )
@@ -3531,22 +3618,205 @@ class TestDeepAgentsRuntimeRefs:
         assert update_requests[0][0].quantity == 2
         assert update_requests[0][1] == base_config.memory_port
 
-        captured_weather["on_reuse_prior_candidates"]()
-        blocked_context_search = tools_by_name["search_catalog_tool"](
-            semantic_query="a new layer",
-            requested_product_type="sweater",
-            taxonomy={},
-            required_constraints={},
-            shopper_guidance="Keep the prior candidates.",
+        prior_context = (
+            "HISTORICAL PRODUCT INDEX (read-only):\n"
+            "- set=set-a turn=1: 1:Intricate Lace Gown "
+            "[dresses] <dress-a>"
         )
-        assert blocked_context_search == (
-            runtime_mod._EVENT_CONTEXT_REUSE_SEARCH_BLOCK
+        runtime._create_agent(
+            State(
+                user_id=111,
+                query="NYC, on an outdoor patio.",
+                context=prior_context,
+            ),
+            identity,
         )
-        assert (
-            skill_gate._runtime_tool_rejections["search_catalog_tool"]
-            == runtime_mod._EVENT_CONTEXT_REUSE_SEARCH_BLOCK
+        context_tools = {fn.__name__: fn for fn in captured["tools"]}
+        context_loop_control, context_skill_gate = captured["middleware"]
+        context_activation = context_tools["activate_shopper_skills_tool"](
+            skill_names=["outfit-styling", "event-context"],
+            event_context_action="reuse_prior_candidates",
+            event_context_next_question="event_date",
         )
-        assert tool_loop_control._synthesis_required is True
+
+        assert context_activation.startswith(
+            runtime_mod.SKILL_ACTIVATION_COMPLETE
+        )
+        assert set(context_skill_gate._runtime_tool_rejections).issuperset(
+            runtime_mod._EVENT_CONTEXT_PRODUCT_READ_TOOLS
+        )
+        assert context_skill_gate._runtime_tool_rejections[
+            "search_catalog_tool"
+        ] == runtime_mod._EVENT_CONTEXT_REUSE_SEARCH_BLOCK
+        assert context_skill_gate._runtime_tool_rejections[
+            "get_product_details_tool"
+        ] == runtime_mod._EVENT_CONTEXT_REUSE_PRODUCT_BLOCK
+        assert context_loop_control._synthesis_required is True
+        assert captured_weather["candidate_action_authorized"](
+            "reuse_prior_candidates"
+        )
+        assert not captured_weather["candidate_action_authorized"](
+            "search_new_candidates"
+        )
+
+        runtime._create_agent(
+            State(
+                user_id=111,
+                query="NYC, on an outdoor patio Friday next week.",
+                context=prior_context,
+            ),
+            identity,
+        )
+        dated_context_tools = {
+            fn.__name__: fn for fn in captured["tools"]
+        }
+        dated_context_loop, dated_context_gate = captured["middleware"]
+        dated_context_activation = dated_context_tools[
+            "activate_shopper_skills_tool"
+        ](
+            skill_names=["outfit-styling", "event-context"],
+            event_context_action="reuse_prior_candidates",
+            event_context_next_question="none",
+        )
+
+        assert dated_context_activation.startswith(
+            runtime_mod.SKILL_ACTIVATION_COMPLETE
+        )
+        assert dated_context_loop._synthesis_required is False
+        assert set(
+            dated_context_gate._runtime_tool_rejections
+        ).issuperset(runtime_mod._EVENT_CONTEXT_PRODUCT_READ_TOOLS)
+        captured_weather["on_attempt_consumed"]()
+        assert dated_context_loop._synthesis_required is True
+
+        runtime._create_agent(
+            State(
+                user_id=111,
+                query="The wedding is Friday next week.",
+                context=prior_context,
+            ),
+            identity,
+        )
+        missing_location_tools = {
+            fn.__name__: fn for fn in captured["tools"]
+        }
+        missing_location_loop, missing_location_gate = captured["middleware"]
+        missing_location_activation = missing_location_tools[
+            "activate_shopper_skills_tool"
+        ](
+            skill_names=["outfit-styling", "event-context"],
+            event_context_action="reuse_prior_candidates",
+            event_context_next_question="event_location",
+        )
+
+        assert missing_location_activation.startswith(
+            runtime_mod.SKILL_ACTIVATION_COMPLETE
+        )
+        assert missing_location_gate._runtime_tool_rejections[
+            "get_weather_forecast_tool"
+        ] == runtime_mod._EVENT_CONTEXT_LOCATION_REQUIRED_WEATHER_BLOCK
+        assert missing_location_loop._synthesis_required is True
+
+        runtime._create_agent(
+            State(
+                user_id=111,
+                query="The wedding is in Cancun Friday next week.",
+                context=prior_context,
+            ),
+            identity,
+        )
+        missing_venue_tools = {
+            fn.__name__: fn for fn in captured["tools"]
+        }
+        missing_venue_loop, missing_venue_gate = captured["middleware"]
+        missing_venue_activation = missing_venue_tools[
+            "activate_shopper_skills_tool"
+        ](
+            skill_names=["outfit-styling", "event-context"],
+            event_context_action="reuse_prior_candidates",
+            event_context_next_question="event_venue",
+        )
+
+        assert missing_venue_activation.startswith(
+            runtime_mod.SKILL_ACTIVATION_COMPLETE
+        )
+        assert missing_venue_gate._runtime_tool_rejections[
+            "get_weather_forecast_tool"
+        ] == runtime_mod._EVENT_CONTEXT_VENUE_REQUIRED_WEATHER_BLOCK
+        assert missing_venue_loop._synthesis_required is True
+
+        runtime._create_agent(
+            State(
+                user_id=111,
+                query=(
+                    "Show me a different dress for the wedding Friday next "
+                    "week."
+                ),
+                context=prior_context,
+            ),
+            identity,
+        )
+        missing_location_search_tools = {
+            fn.__name__: fn for fn in captured["tools"]
+        }
+        (
+            missing_location_search_loop,
+            missing_location_search_gate,
+        ) = captured["middleware"]
+        missing_location_search_activation = missing_location_search_tools[
+            "activate_shopper_skills_tool"
+        ](
+            skill_names=["outfit-styling", "event-context"],
+            event_context_action="search_new_candidates",
+            event_context_next_question="event_location",
+            event_context_product_work_quote="Show me a different dress",
+        )
+
+        assert missing_location_search_activation.startswith(
+            runtime_mod.SKILL_ACTIVATION_COMPLETE
+        )
+        assert missing_location_search_gate._runtime_tool_rejections[
+            "get_weather_forecast_tool"
+        ] == runtime_mod._EVENT_CONTEXT_LOCATION_REQUIRED_WEATHER_BLOCK
+        assert "search_catalog_tool" not in (
+            missing_location_search_gate._runtime_tool_rejections
+        )
+        assert missing_location_search_loop._synthesis_required is False
+
+        runtime._create_agent(
+            State(
+                user_id=111,
+                query=(
+                    "Show me a different dress for the NYC wedding Friday "
+                    "next week."
+                ),
+                context=prior_context,
+            ),
+            identity,
+        )
+        new_product_tools = {fn.__name__: fn for fn in captured["tools"]}
+        new_product_loop, new_product_gate = captured["middleware"]
+        new_product_activation = new_product_tools[
+            "activate_shopper_skills_tool"
+        ](
+            skill_names=["outfit-styling", "event-context"],
+            event_context_action="search_new_candidates",
+            event_context_next_question="none",
+            event_context_product_work_quote="Show me a different dress",
+        )
+
+        assert new_product_activation.startswith(
+            runtime_mod.SKILL_ACTIVATION_COMPLETE
+        )
+        assert "search_catalog_tool" not in (
+            new_product_gate._runtime_tool_rejections
+        )
+        assert "get_product_details_tool" not in (
+            new_product_gate._runtime_tool_rejections
+        )
+        assert new_product_loop._synthesis_required is False
+        captured_weather["on_attempt_consumed"]()
+        assert new_product_loop._synthesis_required is False
 
     def test_shopper_agent_tool_registry_matches_registered_tool_names(self) -> None:
         registry_path = (
@@ -6181,18 +6451,31 @@ class TestDeepAgentsRuntimeRefs:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
+        from langchain_core.messages import AIMessage
+
         runtime = runtime_mod.DeepAgentsRuntime(base_config)
 
-        class UnexpectedEditor:
+        captured: dict[str, object] = {}
+
+        class VenueAwareEditor:
             async def ainvoke(self, messages):
-                raise AssertionError(
-                    "accepted candidate reuse must bypass the response editor"
+                captured["messages"] = messages
+                return AIMessage(
+                    content=json.dumps(
+                        {
+                            "venue_quote": "outdoor patio",
+                            "adjustments": [
+                                "streamlined_accessories",
+                                "lower_profile_footwear",
+                            ],
+                        }
+                    )
                 )
 
         monkeypatch.setattr(
             runtime,
             "_create_chat_model",
-            lambda: UnexpectedEditor(),
+            lambda: VenueAwareEditor(),
         )
         state = State(
             user_id=111,
@@ -6217,6 +6500,9 @@ class TestDeepAgentsRuntimeRefs:
         result = {
             "messages": [
                 {"role": "user", "content": "REQUEST ID: weather-request"},
+                *_event_context_activation_messages(
+                    "reuse_prior_candidates"
+                ),
                 {
                     "role": "assistant",
                     "tool_calls": [
@@ -6253,8 +6539,9 @@ class TestDeepAgentsRuntimeRefs:
 
         assert "Elegant Embroidered Lace Dress" in response
         assert "Wavy Hem Satin Dress" in response
+        assert "venue detail (“outdoor patio”)" in response
+        assert "lower-profile footwear" in response
         assert "removable layer" in response
-        assert "compact rain backup" in response
         assert "sunny" not in response.lower()
         assert "80°F" not in response
         assert "?" not in response
@@ -6266,6 +6553,18 @@ class TestDeepAgentsRuntimeRefs:
             in response
         )
         assert response.count("Live forecast for the event window:") == 1
+        editor_system_prompt = captured["messages"][0]["content"]
+        assert "Return only one JSON object" in editor_system_prompt
+        assert "A destination alone is not a venue" in editor_system_prompt
+        editor_prompt = captured["messages"][1]["content"]
+        assert "SHOPPER-AUTHORED EVENT TEXT" in editor_prompt
+        assert "outdoor patio" in editor_prompt
+        assert "Assistant:" not in editor_prompt
+        assert "Elegant Embroidered Lace Dress" not in editor_prompt
+        assert "Wavy Hem Satin Dress" not in editor_prompt
+        assert "Unsafe weather draft" not in editor_prompt
+        assert "CURRENT CART" not in editor_prompt
+        assert "TOOL EVIDENCE" not in editor_prompt
 
     def test_context_only_weather_response_is_fully_deterministic(
         self,
@@ -6315,12 +6614,73 @@ class TestDeepAgentsRuntimeRefs:
         assert "compact rain backup" in response
         assert response.count("Styling direction:") == 1
 
-    def test_weather_action_is_bound_to_its_exact_tool_result(self) -> None:
+    def test_reuse_event_styling_renders_only_validated_decision(
+        self,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        styling = runtime_mod._render_reuse_event_styling_decision(
+            json.dumps(
+                {
+                    "venue_quote": "BEACH",
+                    "adjustments": [
+                        "streamlined_accessories",
+                        "lower_profile_footwear",
+                    ],
+                }
+            ),
+            shopper_texts=("It’s on the beach.",),
+        )
+
+        assert styling == (
+            "Based on your venue detail (“beach”), keep accessories "
+            "streamlined and favor lower-profile footwear."
+        )
+
+    @pytest.mark.parametrize(
+        "response",
+        [
+            "The Marina wrap at €89 is the safest choice.",
+            "For the beach, favor breathable linen and stable sandals.",
+            "Can you confirm whether the venue is outdoors.",
+            '{"venue_quote":"beach","adjustments":["unknown"]}',
+            (
+                '{"venue_quote":"beach","adjustments":'
+                '["streamlined_accessories","streamlined_accessories"]}'
+            ),
+            (
+                '{"venue_quote":"beach","adjustments":'
+                '["streamlined_accessories"],"extra":"invented"}'
+            ),
+            (
+                '{"venue_quote":"assistant-inferred beach","adjustments":'
+                '["streamlined_accessories"]}'
+            ),
+        ],
+    )
+    def test_reuse_event_styling_rejects_unstructured_or_unauthorized_output(
+        self,
+        response: str,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        assert (
+            runtime_mod._render_reuse_event_styling_decision(
+                response,
+                shopper_texts=("The event is in Cancun.",),
+            )
+            == ""
+        )
+
+    def test_weather_response_mode_uses_accepted_activation_action(self) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
 
         result = {
             "messages": [
                 {"role": "user", "content": "REQUEST ID: weather-request"},
+                *_event_context_activation_messages(
+                    "search_new_candidates"
+                ),
                 {
                     "role": "assistant",
                     "tool_calls": [
@@ -6345,7 +6705,12 @@ class TestDeepAgentsRuntimeRefs:
                     "role": "tool",
                     "name": "get_weather_forecast_tool",
                     "tool_call_id": "reuse-call",
-                    "content": _weather_evidence_content(),
+                    "content": (
+                        f"{WEATHER_FORECAST_FAILURE_PREFIX} "
+                        + weather_failure(
+                            "weather_request_invalid"
+                        ).model_dump_json()
+                    ),
                 },
             ]
         }
@@ -6354,9 +6719,285 @@ class TestDeepAgentsRuntimeRefs:
             result,
             request_id="weather-request",
         )
+        accepted_action, next_question = (
+            runtime_mod._current_event_context_activation(
+                result,
+                request_id="weather-request",
+            )
+        )
 
-        assert isinstance(outcome, WeatherForecastEvidence)
-        assert action == "reuse_prior_candidates"
+        assert outcome == weather_failure("weather_request_invalid")
+        assert action == "search_new_candidates"
+        assert accepted_action == "search_new_candidates"
+        assert next_question == "none"
+
+    @pytest.mark.asyncio
+    async def test_empty_context_only_date_turn_uses_minimal_fallback(
+        self,
+        base_config,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        monkeypatch.setenv("TEST_WEATHER_API_KEY", "configured")
+        base_config.weather = SimpleNamespace(
+            enabled=True,
+            api_key_env="TEST_WEATHER_API_KEY",
+        )
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+        state = State(
+            user_id=111,
+            query="NYC, on an outdoor patio.",
+            context=(
+                "HISTORICAL PRODUCT INDEX (read-only):\n"
+                "- set=set-a turn=1: 1:Elegant Embroidered Lace Dress "
+                "[dresses] <dress-a>"
+            ),
+            agent_diagnostics={
+                "skill_files_read": [
+                    "/shopper/outfit-styling/SKILL.md",
+                    "/shopper/event-context/SKILL.md",
+                ]
+            },
+        )
+        result = {
+            "messages": [
+                {"role": "user", "content": "REQUEST ID: weather-request"},
+                *_event_context_activation_messages(
+                    "reuse_prior_candidates",
+                    next_question="event_date",
+                ),
+            ]
+        }
+
+        response = await runtime._rewrite_response_for_grounding(
+            state,
+            result,
+            "",
+            request_id="weather-request",
+        )
+
+        assert response == (
+            "Previously shown options still in play: Elegant Embroidered Lace "
+            "Dress.\n\nI’ll apply the event setting before refining the "
+            "guidance.\n\nWhat date or date range is the event?"
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("query", "shopper_context", "expected"),
+        [
+            (
+                "It will be outdoors.",
+                ShopperContext(
+                    shopper_type="impatient_decisive",
+                    behavior="Answers briefly.",
+                    zipcode="10001",
+                ),
+                (
+                    "Previously shown options still in play: Elegant "
+                    "Embroidered Lace Dress.\n\nI’ll apply the event setting "
+                    "before refining the guidance.\n\nIs the event in your "
+                    "usual area or elsewhere?"
+                ),
+            ),
+            (
+                "It will be outdoors.",
+                None,
+                (
+                    "Previously shown options still in play: Elegant "
+                    "Embroidered Lace Dress.\n\nI’ll apply the event setting "
+                    "before refining the guidance.\n\nWhere is the event "
+                    "taking place?"
+                ),
+            ),
+            (
+                "It is not in my usual area; the location is still TBD.",
+                ShopperContext(
+                    shopper_type="impatient_decisive",
+                    behavior="Answers briefly.",
+                    zipcode="10001",
+                ),
+                (
+                    "Previously shown options still in play: Elegant "
+                    "Embroidered Lace Dress.\n\nI’ll apply the event setting "
+                    "before refining the guidance.\n\nWhere is the event "
+                    "taking place?"
+                ),
+            ),
+            (
+                "It will be in Cancun, but I have not said what the setting is.",
+                ShopperContext(
+                    shopper_type="impatient_decisive",
+                    behavior="Answers briefly.",
+                    zipcode="10001",
+                ),
+                (
+                    "Previously shown options still in play: Elegant "
+                    "Embroidered Lace Dress.\n\nI’ll apply the event setting "
+                    "before refining the guidance.\n\nWhat kind of venue or "
+                    "setting is planned for the event?"
+                ),
+            ),
+        ],
+    )
+    async def test_empty_context_only_location_turn_uses_activation_boundary(
+        self,
+        base_config,
+        query: str,
+        shopper_context: ShopperContext | None,
+        expected: str,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+        state = State(
+            user_id=111,
+            query=query,
+            shopper_context=shopper_context,
+            context=(
+                "HISTORICAL PRODUCT INDEX (read-only):\n"
+                "- set=set-a turn=1: 1:Elegant Embroidered Lace Dress "
+                "[dresses] <dress-a>"
+            ),
+            agent_diagnostics={
+                "skill_files_read": [
+                    "/shopper/outfit-styling/SKILL.md",
+                    "/shopper/event-context/SKILL.md",
+                ]
+            },
+        )
+        result = {
+            "messages": [
+                {"role": "user", "content": "REQUEST ID: weather-request"},
+                *_event_context_activation_messages(
+                    "reuse_prior_candidates",
+                    next_question=(
+                        "event_venue"
+                        if "Cancun" in query
+                        else "event_location"
+                    ),
+                ),
+            ]
+        }
+
+        response = await runtime._rewrite_response_for_grounding(
+            state,
+            result,
+            "",
+            request_id="weather-request",
+        )
+
+        assert response == expected
+
+    @pytest.mark.asyncio
+    async def test_missing_venue_reuse_skips_editor_even_with_agent_draft(
+        self,
+        base_config,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+
+        class UnexpectedEditor:
+            async def ainvoke(self, messages):
+                raise AssertionError("missing-venue reuse must not run editor")
+
+        monkeypatch.setattr(
+            runtime,
+            "_create_chat_model",
+            lambda: UnexpectedEditor(),
+        )
+        state = State(
+            user_id=111,
+            query="The wedding is in Cancun.",
+            context=(
+                "HISTORICAL PRODUCT INDEX (read-only):\n"
+                "- set=set-a turn=1: 1:Elegant Embroidered Lace Dress "
+                "[dresses] <dress-a>"
+            ),
+            agent_diagnostics={
+                "skill_files_read": [
+                    "/shopper/outfit-styling/SKILL.md",
+                    "/shopper/event-context/SKILL.md",
+                ]
+            },
+        )
+        result = {
+            "messages": [
+                {"role": "user", "content": "REQUEST ID: weather-request"},
+                *_event_context_activation_messages(
+                    "reuse_prior_candidates",
+                    next_question="event_venue",
+                ),
+            ]
+        }
+
+        response = await runtime._rewrite_response_for_grounding(
+            state,
+            result,
+            "Infer a beach and recommend sandals.",
+            request_id="weather-request",
+        )
+
+        assert "beach" not in response.lower()
+        assert "sandals" not in response.lower()
+        assert response.endswith(
+            "What kind of venue or setting is planned for the event?"
+        )
+
+    @pytest.mark.asyncio
+    async def test_empty_context_only_turn_with_no_question_stays_neutral(
+        self,
+        base_config,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        monkeypatch.setenv("TEST_WEATHER_API_KEY", "configured")
+        base_config.weather = SimpleNamespace(
+            enabled=True,
+            api_key_env="TEST_WEATHER_API_KEY",
+        )
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+        state = State(
+            user_id=111,
+            query="The date is still TBD.",
+            context=(
+                "HISTORICAL PRODUCT INDEX (read-only):\n"
+                "- set=set-a turn=1: 1:Elegant Embroidered Lace Dress "
+                "[dresses] <dress-a>"
+            ),
+            agent_diagnostics={
+                "skill_files_read": [
+                    "/shopper/outfit-styling/SKILL.md",
+                    "/shopper/event-context/SKILL.md",
+                ]
+            },
+        )
+        result = {
+            "messages": [
+                {"role": "user", "content": "REQUEST ID: weather-request"},
+                *_event_context_activation_messages(
+                    "reuse_prior_candidates",
+                    next_question="none",
+                ),
+            ]
+        }
+
+        response = await runtime._rewrite_response_for_grounding(
+            state,
+            result,
+            "",
+            request_id="weather-request",
+        )
+
+        assert response == (
+            "Previously shown options still in play: Elegant Embroidered Lace "
+            "Dress.\n\nI’ll keep the options already shown and apply the event "
+            "setting you provided."
+        )
 
     def test_wintry_evidence_uses_a_weather_not_rain_backup(self) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
@@ -6429,6 +7070,9 @@ class TestDeepAgentsRuntimeRefs:
         result = {
             "messages": [
                 {"role": "user", "content": "REQUEST ID: weather-request"},
+                *_event_context_activation_messages(
+                    "reuse_prior_candidates"
+                ),
                 {
                     "role": "tool",
                     "name": "get_weather_forecast_tool",
@@ -6472,18 +7116,28 @@ class TestDeepAgentsRuntimeRefs:
         failure_code: str,
     ) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
+        from langchain_core.messages import AIMessage
+
         runtime = runtime_mod.DeepAgentsRuntime(base_config)
 
-        class UnexpectedEditor:
+        class VenueAwareEditor:
             async def ainvoke(self, messages):
-                raise AssertionError(
-                    "accepted candidate reuse must bypass the response editor"
+                return AIMessage(
+                    content=json.dumps(
+                        {
+                            "venue_quote": "outdoor patio",
+                            "adjustments": [
+                                "polished_unfussy_finish",
+                                "streamlined_accessories",
+                            ],
+                        }
+                    )
                 )
 
         monkeypatch.setattr(
             runtime,
             "_create_chat_model",
-            lambda: UnexpectedEditor(),
+            lambda: VenueAwareEditor(),
         )
         state = State(
             user_id=111,
@@ -6504,6 +7158,9 @@ class TestDeepAgentsRuntimeRefs:
         result = {
             "messages": [
                 {"role": "user", "content": "REQUEST ID: weather-request"},
+                *_event_context_activation_messages(
+                    "reuse_prior_candidates"
+                ),
                 {
                     "role": "assistant",
                     "tool_calls": [
@@ -6538,8 +7195,8 @@ class TestDeepAgentsRuntimeRefs:
 
         assert "Elegant Embroidered Lace Dress" in response
         assert "Wavy Hem Satin Dress" in response
-        assert "removable layer" in response
-        assert "footwear backup" in response
+        assert "venue detail (“outdoor patio”)" in response
+        assert "keep accessories streamlined" in response
         assert "sunny" not in response.lower()
         assert "°F" not in response
         assert "state, region" not in response
@@ -6556,6 +7213,33 @@ class TestDeepAgentsRuntimeRefs:
         assert "valid live forecast" in response
         assert "add the state" not in response
         assert "which location" not in response.lower()
+
+    def test_relative_weekday_forecast_renders_one_exact_interpreted_date(
+        self,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        content = _weather_evidence_content(
+            forecast_date=date(2026, 8, 7),
+            relative_date="next_week",
+            weekday="friday",
+            resolved_location="New York, New York, United States",
+        )
+        outcome = WeatherForecastEvidence.model_validate_json(
+            content.removeprefix(WEATHER_FORECAST_EVIDENCE_PREFIX).strip()
+        )
+
+        response = runtime_mod._format_weather_outcome(outcome)
+        safe_evidence = runtime_mod._customer_safe_weather_evidence(content)
+
+        assert (
+            'Interpreting "Friday next week" as Aug 7, 2026.'
+            in response
+        )
+        assert "through" not in response
+        assert "Live forecast:" in response
+        assert "Live forecast for the event window:" not in response
+        assert "FORECAST_RELATIVE_WEEKDAY: friday" in safe_evidence
 
     def test_provider_location_is_markdown_escaped(self) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
@@ -6949,6 +7633,66 @@ class TestDeepAgentsRuntimeRefs:
         assert "73–82°F" not in redacted
         assert runtime_mod._PRIOR_WEATHER_CONTEXT_REDACTION in redacted
 
+    def test_prior_weather_redaction_handles_relative_weekday_canonical_block(
+        self,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        context = (
+            "[turn 1]\n"
+            "User: Style me for the wedding.\n"
+            "Assistant: Keep the navy dress. Forecast location used: "
+            "New York, NY, United States. Interpreting \"Friday next week\" as "
+            "Aug 7, 2026. Live forecast: - Aug 7, 2026: rain; 73–82°F…"
+        )
+
+        redacted = runtime_mod._redact_prior_weather_assistant_text(context)
+
+        assert "Keep the navy dress." in redacted
+        assert "Friday next week" not in redacted
+        assert "Aug 7" not in redacted
+        assert "73–82°F" not in redacted
+        assert runtime_mod._PRIOR_WEATHER_CONTEXT_REDACTION in redacted
+
+    def test_prior_weather_redaction_handles_saved_zip_relative_weekday(
+        self,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        context = (
+            "[turn 1]\n"
+            "User: Style me for the wedding.\n"
+            "Assistant: Keep the navy dress. "
+            "Interpreting \"Friday next week\" as Aug 7, 2026. "
+            "Live forecast: - Aug 7, 2026: rain; 73–82°F…"
+        )
+
+        redacted = runtime_mod._redact_prior_weather_assistant_text(context)
+
+        assert "Keep the navy dress." in redacted
+        assert 'Interpreting "' not in redacted
+        assert "Friday next week" not in redacted
+        assert "Aug 7" not in redacted
+        assert "73–82°F" not in redacted
+        assert runtime_mod._PRIOR_WEATHER_CONTEXT_REDACTION in redacted
+
+    def test_prior_weather_redaction_preserves_non_weather_interpretation(
+        self,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        context = (
+            "[turn 1]\n"
+            "User: I like navy.\n"
+            "Assistant: Interpreting \"navy\" as your preferred color, "
+            "I would start with the satin dress."
+        )
+
+        redacted = runtime_mod._redact_prior_weather_assistant_text(context)
+
+        assert redacted == context
+        assert runtime_mod._PRIOR_WEATHER_CONTEXT_REDACTION not in redacted
+
     @pytest.mark.asyncio
     async def test_search_and_weather_editor_error_preserves_both_evidence_sets(
         self,
@@ -7057,6 +7801,10 @@ class TestDeepAgentsRuntimeRefs:
         result = {
             "messages": [
                 {"role": "user", "content": "REQUEST ID: current-request"},
+                *_event_context_activation_messages(
+                    "search_new_candidates",
+                    next_question="event_date",
+                ),
                 {
                     "role": "tool",
                     "name": "search_catalog_tool",
@@ -7085,6 +7833,11 @@ class TestDeepAgentsRuntimeRefs:
         assert "SHOPPER LOCATION CANDIDATE" in editor_user_prompt
         assert "A saved ZIP candidate is present" in editor_user_prompt
         assert "60601" not in editor_user_prompt
+        assert (
+            "SERVER-ACCEPTED EVENT-CONTEXT QUESTION BOUNDARY"
+            in editor_user_prompt
+        )
+        assert "destination is already established" in editor_user_prompt
         assert "ACTIVE SKILL RESPONSE GUIDANCE" in editor_user_prompt
         assert "ask one question maximum" in (
             editor_user_prompt.lower()
@@ -7096,7 +7849,9 @@ class TestDeepAgentsRuntimeRefs:
         assert "`location_query`" in editor_user_prompt
         assert "Never invent a ZIP." in editor_user_prompt
         assert 'ask "usual area or elsewhere?"' in editor_user_prompt
-        assert "Without a candidate, ask destination" in editor_user_prompt
+        assert "without a candidate, ask destination" in (
+            editor_user_prompt.lower()
+        )
         assert "occasion-only shop-now: one core-role search" in (
             editor_user_prompt.lower()
         )
@@ -7107,6 +7862,9 @@ class TestDeepAgentsRuntimeRefs:
             editor_user_prompt.lower()
         )
         assert "never shopping, shipping, or availability context" in (
+            editor_system_prompt
+        )
+        assert "do not ask about location, usual/home area" in (
             editor_system_prompt
         )
         assert "must name at least one returned candidate exactly" in (

@@ -101,7 +101,8 @@ The application follows a microservices architecture:
   product refs, a no-I/O active-promotions stub, typed same-conversation product
   resolution, grounded response assembly, a configurable Deep Agents execution
   deadline, a request-scoped process-local checkpointer, and a registered
-  event-scoped provider-neutral weather boundary
+  scope-bound provider-neutral weather boundary whose model-visible execution
+  tool accepts no location/date arguments
 - **Catalog Retriever**: Generative-LLM-free text/image embedding search, hard
   filtering, normalized COSINE relevance scores, and deterministic result
   ranking
@@ -191,43 +192,46 @@ and evidence boundaries rather than classifying comparison intent.
 The same Deep Agent owns that semantic procedure from skill activation through
 the candidate answer. There is no post-answer semantic completion reviewer or
 second correction trajectory that can discard the answer and reopen tools.
-When live weather is enabled and material, event context has accepted `none`,
-and the shopper has supplied valid location and date authority, the selected
-skill tells that same agent to make its one weather call before answering.
+When live weather is enabled and material, a scope update has supplied valid
+location/date authority or the shopper explicitly requests a refresh of an
+unchanged complete scope, the selected skill tells that same agent to make its
+one weather call before answering.
 Deterministic layers remain limited to tool authorization, typed validation,
 evidence accounting, and factual grounding.
 
 Weather provider calls remain disabled by default. When an operator enables
-`WEATHER_ENABLED` and supplies `WEATHER_API_KEY` to the chain server, event
-context gets at most one model-visible forecast-tool attempt on a turn with
-bounded shopper-authored date authority; without that date signal, the runtime
-hides and execution-blocks it for the turn. A call additionally requires one of
-the bounded location-authority modes below. Whenever activation selects
-`event-context`, it must also bind `event_context_next_question`; the field is
-omitted otherwise. The same activation may optionally bind one listed
-`weather_receipt_id`, but only with `event-context`,
-`event_context_next_question=none`, and an unchanged exact event
-location/date scope. A changed or uncertain location/date, or an explicit
-refresh request, leaves the receipt unbound and requires fresh evidence before
-weather facts can be reused. Binding a receipt hides and execution-blocks
-another weather call for that turn. The next-question value is the model's
-semantic decision from the current and recent shopper conversation:
-`event_location` only when destination is missing and material, `event_venue`
-only after destination is established when venue or setting is missing and
-material, `event_date` only after destination and any material venue are
-established when live weather is enabled and material and a bounded date is
-neither established nor explicitly unavailable, and `none` otherwise. Only
-the accepted activation result authorizes that one event-context follow-up.
-Before building that activation schema, the runtime applies the same closed
-shopper-authored weather-date authority parser used by the weather tool gate to
-the current shopper turn only. When that turn contains an accepted bounded
-date, including bare `next week`, `event_date` is absent from the allowed enum,
-preventing a contradictory date question. Dates in prior raw turns remain
-available to the semantic agent and weather adapter but cannot narrow the enum,
-because event identity remains model-owned; a date for one wedding therefore
-cannot suppress the safe question when the shopper introduces another. Weather
-tool eligibility remains a separate check that may use bounded current and
-recent shopper authority.
+`WEATHER_ENABLED` and supplies `WEATHER_API_KEY` to the chain server,
+`event-context` supports event and non-event weather-aware styling beside
+`outfit-styling`. The mandatory activation step makes the semantic continuity
+decision and may submit one typed `weather_scope` update: `continue` retains
+omitted fields only for the same event, trip, or weather-planning subject;
+`replace` clears omitted fields for a new subject. Only location/date authority
+from the current shopper turn can enter that update. The durable singleton—not
+the rolling summary or recent prose—is the only cross-turn weather authority.
+As a fail-safe, supplying a location under `continue` when the scope already
+has one clears the older date unless the current turn supplies a new window
+too.
+
+The forecast tool is model-visible but has an empty argument schema. After
+activation, the runtime derives the provider location and exact date window
+solely from the effective typed scope. An incomplete scope or an accepted
+location/venue/date question hides and execution-blocks only weather. Thus a
+new Seattle subject with no date cannot inherit an older NYC date or reach the
+provider. The same scope also handles “What should I wear in Denver next week?”
+without creating an event or asking for a venue.
+A scope update that produces a complete effective scope requires the
+zero-argument weather call before prose. For an unchanged complete scope,
+activation sets `weather_refresh=true` only when the shopper explicitly asks
+for a fresh forecast; comparisons and other turns do not auto-refresh.
+
+Activation may optionally bind one listed `weather_receipt_id` only with
+`event-context`, `event_context_next_question=none`, no scope update, no refresh
+request, and deterministic equality to the effective location/date scope. A
+bound receipt blocks a redundant weather call. The accepted next-question
+value remains the model's semantic one-question decision: location when
+material and missing, venue only for an occasion, date when live weather is
+material and the typed scope lacks a bounded window, or none. This is not an
+intent classifier or event-anchor registry.
 An explicitly shopper-stated outdoor patio, beach, garden, rooftop, or open-air
 setting makes enabled live weather material; with destination and that setting
 but no bounded date, activation selects `event_date`. Skill selection,
@@ -248,33 +252,15 @@ that same reply also asks to compare, refine, replace, search, check, manage the
 cart, or answer policy, the normal selected-skill procedure still applies. This
 is procedural model guidance, not a deterministic intent router or tool gate,
 and it changes neither grants nor dispatch authorization. A date question may
-appear only when activation selected
-`event_date`. The same weather tool has two location authority modes. In
-`confirmed_saved_zip` mode it accepts no
-model-authored location and releases the selected profile's saved ZIP only
-after a narrow
-deterministic confirmation: a current location-neutral statement explicitly
-naming `my`/`the` usual/home area, a bare affirmative directly after the
-assistant's usual/home-area question, or an immediate strict date-only
-follow-up to an accepted confirmation. In `shopper_provided_location` mode,
-`location` must be a bounded exact span copied from the shopper's current or
-recent text; a city, city plus region/country, address, or postal code is
-sufficient. When that authority phrase is an abbreviation or ambiguous place
-name, `location_query` is required: it must preserve the phrase as the first
-component and append only one or two comma-separated region/country qualifiers.
-Keep `location="NYC"` and use `location_query="NYC, NY"`;
-`Springfield, TX` is a valid explicit regional assumption. It never contains
-an unstated ZIP or numeric component and never replaces the authoritative
-shopper phrase. Omit it only when `location` is already sufficiently qualified.
-The adapter passes `location_query` when present and otherwise passes
-`location` unchanged to Visual Crossing's Timeline endpoint; Visual Crossing
-resolves the named place in that same forecast request. Its returned place
-makes the assumption visible and reversible. No alias table, representative
-ZIP, or separate geocoder rewrites the shopper's place. Semantic normalization
-remains model-owned rather than deterministic proof. Any explicit current
-location, negation, uncertainty,
-or override rejects saved mode, and explicit destination always wins. Modal
-`may be` is uncertainty; calendar `May 5` remains a valid date.
+appear only when activation selected `event_date`. Scope compilation accepts
+either a confirmed saved area or a shopper-provided current location. Saved ZIP
+remains behind the narrow current-turn confirmation gate and is never
+model-visible. A shopper location must be copied from the current turn; an
+optional provider qualifier preserves that phrase and appends only
+region/country context, such as `NYC` → `NYC, NY`. No alias table,
+representative ZIP, or separate geocoder is used. Visual Crossing resolves the
+named place in the same forecast request and the returned place remains a
+transparent, correctable assumption.
 
 An exact ISO event date or complete date range remains the normal date
 contract. The exact shopper phrase `next week` is the sole server-owned
@@ -284,23 +270,17 @@ and resolves it to one exact day inside the next Monday-through-Sunday window.
 For bare `next week`, `weekday` is omitted and the server resolves the full
 window. Missing, invented, mismatched, or mixed weekdays fail closed. A current
 negation, standalone weekday correction, or different date supersedes an
-earlier relative date. Without a bounded shopper-authored date signal, the
-runtime hides and execution-blocks weather for that turn. When weather is
-enabled and material after destination and any material venue are established,
-activation may select `event_date`; only that accepted value permits the date
-question. If the current shopper turn contains a bounded date accepted by the
-shared authority parser, that value is absent from the activation enum. Prior
-raw-turn dates remain semantic context rather than deterministic enum
-authority, while weather tool eligibility may still use bounded current and
-recent shopper authority. The server does not collect or infer weather-only
-context otherwise.
+earlier relative date. Without a complete effective location/date scope, the
+runtime hides and execution-blocks weather for that turn. Prior raw-turn dates
+can inform the model's semantic `continue`/`replace` decision but cannot flow
+directly into the adapter. The scoped tool accepts no date or location
+arguments from the post-activation model.
 The model may resolve an unambiguous
 single-day phrase such as
 `tomorrow` against that same prompt-visible UTC anchor and send the exact ISO
 date; a genuinely ambiguous or unresolved relative date gets one concise
-clarification only under that same enabled-and-material rule. A schema-invalid
-call consumes the one model-visible tool
-attempt. Within a valid call, the adapter may make one additional provider
+clarification only under that same enabled-and-material rule. Within a
+scope-valid call, the adapter may make one additional provider
 attempt only after a timeout or HTTP 5xx response. HTTP 400 remains a generic
 invalid-request outcome; it is not proof that the shopper's location was
 unresolved.
@@ -328,6 +308,8 @@ Weather arguments/output are redacted from diagnostics and failed-turn partial
 capture. Diagnostics retain only categorical weather call metadata—date shape,
 location-source kind, provider-input kind, and typed outcome—with no location,
 ZIP, date, resolved place, URL, body, or exception.
+Activation diagnostics preserve the model-submitted next question and expose
+the separately accepted server boundary when normalization changes it.
 Saved profile ZIP is also scrubbed from diagnostic string keys and values, and
 the complete grounding-editor prompt replaces those saved digits before the
 editor call. Final rendering appends one exact canonical block with the resolved

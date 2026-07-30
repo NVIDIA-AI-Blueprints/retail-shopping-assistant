@@ -51,8 +51,7 @@ from shared.weather_receipts import (
 from shared.weather_scope import (
     CurrentWeatherScope,
     CurrentWeatherScopeTransition,
-    WeatherScopeLocationAuthority,
-    WeatherScopeWindowAuthority,
+    apply_current_weather_scope_transition,
 )
 
 
@@ -938,38 +937,12 @@ def _next_current_weather_scope(
     current_scope: CurrentWeatherScope,
     transition: CurrentWeatherScopeTransition | None,
 ) -> CurrentWeatherScope:
-    if transition is None:
-        return current_scope
-    retained_location = (
-        current_scope.location if transition.action == "continue" else None
+    return apply_current_weather_scope_transition(
+        current_scope,
+        transition,
+        source_turn_id=turn.turn_id,
+        source_sequence=turn.sequence,
     )
-    retained_window = (
-        current_scope.window if transition.action == "continue" else None
-    )
-    next_location = (
-        WeatherScopeLocationAuthority(
-            value=transition.location_scope,
-            source_turn_id=turn.turn_id,
-            source_sequence=turn.sequence,
-        )
-        if transition.location_scope is not None
-        else retained_location
-    )
-    next_window = (
-        WeatherScopeWindowAuthority(
-            value=transition.requested_window,
-            source_turn_id=turn.turn_id,
-            source_sequence=turn.sequence,
-        )
-        if transition.requested_window is not None
-        else retained_window
-    )
-    next_scope = CurrentWeatherScope(
-        revision=current_scope.revision + 1,
-        location=next_location,
-        window=next_window,
-    )
-    return next_scope
 
 
 def _advance_current_weather_scope(

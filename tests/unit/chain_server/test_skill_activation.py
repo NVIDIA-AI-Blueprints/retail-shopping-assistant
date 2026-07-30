@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-import json
 from typing import Any, cast
 
 import pytest
@@ -29,7 +28,6 @@ from chain_server.src.catalog_execution import CatalogSearchExecution
 from chain_server.src.deepagents_runtime import (
     DeepAgentsRuntime,
     RequestIdentity,
-    _current_turn_weather_date_available,
     _skill_activation_input_model,
 )
 from chain_server.src.skill_activation import (
@@ -43,7 +41,6 @@ from chain_server.src.skill_activation import (
     selected_skill_names_for_turn,
 )
 from chain_server.src.tool_loop_control import SERVER_CATALOG_CLARIFICATION
-from chain_server.src.weather_tool import weather_date_context_available
 from shared.commerce_contracts import (
     CatalogCapabilities,
     CatalogFilterCapability,
@@ -209,10 +206,10 @@ def add_cart_items_tool(product_ref: str) -> str:
 
 
 @tool
-def get_weather_forecast_tool(location_source: str) -> str:
+def get_weather_forecast_tool() -> str:
     """Read event-weather evidence."""
 
-    return location_source
+    return "weather evidence"
 
 
 @tool
@@ -319,80 +316,100 @@ def test_activation_schema_binds_only_event_context_question() -> None:
     assert selected.event_context_next_question == "event_date"
 
 
-def test_bounded_weather_date_removes_event_date_from_activation_schema() -> None:
+def test_activation_schema_accepts_one_semantic_weather_scope_transition() -> None:
     activation_input = _skill_activation_input_model(
         ("event-context", "outfit-styling"),
-        weather_date_available=True,
     )
+
+    accepted = activation_input(
+        skill_names=["outfit-styling", "event-context"],
+        event_context_next_question="event_date",
+        weather_scope={
+            "action": "replace",
+            "location_source": "shopper_provided_location",
+            "location": "Seattle",
+        },
+    )
+
+    assert accepted.weather_scope.action == "replace"
+    assert accepted.weather_scope.location == "Seattle"
+    assert accepted.weather_scope.date is None
+
+
+def test_weather_scope_requires_event_context() -> None:
+    activation_input = _skill_activation_input_model(
+        ("event-context", "outfit-styling"),
+    )
+
+    with pytest.raises(ValueError, match="weather_scope requires event-context"):
+        activation_input(
+            skill_names=["outfit-styling"],
+            weather_scope={"action": "replace"},
+        )
+
+
+def test_weather_scope_and_durable_receipt_are_mutually_exclusive() -> None:
+    activation_input = _skill_activation_input_model(
+        ("event-context", "outfit-styling"),
+        ("weather-receipt",),
+    )
+
+    with pytest.raises(ValueError, match="weather receipt binding requires"):
+        activation_input(
+            skill_names=["outfit-styling", "event-context"],
+            event_context_next_question="none",
+            weather_scope={
+                "action": "continue",
+                "date": "2026-08-03",
+            },
+            weather_receipt_id="weather-receipt",
+        )
+
+
+def test_weather_refresh_requires_unchanged_event_context_scope() -> None:
+    activation_input = _skill_activation_input_model(
+        ("event-context", "outfit-styling"),
+        ("weather-receipt",),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="weather_refresh requires event-context",
+    ):
+        activation_input(
+            skill_names=["outfit-styling"],
+            weather_refresh=True,
+        )
+
+    with pytest.raises(
+        ValueError,
+        match="weather_refresh requires event-context",
+    ):
+        activation_input(
+            skill_names=["outfit-styling", "event-context"],
+            event_context_next_question="none",
+            weather_scope={
+                "action": "continue",
+                "date": "2026-08-03",
+            },
+            weather_refresh=True,
+        )
+
+    with pytest.raises(ValueError, match="weather receipt binding requires"):
+        activation_input(
+            skill_names=["outfit-styling", "event-context"],
+            event_context_next_question="none",
+            weather_refresh=True,
+            weather_receipt_id="weather-receipt",
+        )
 
     accepted = activation_input(
         skill_names=["outfit-styling", "event-context"],
         event_context_next_question="none",
+        weather_refresh=True,
     )
 
-    assert accepted.event_context_next_question == "none"
-    with pytest.raises(ValueError):
-        activation_input(
-            skill_names=["outfit-styling", "event-context"],
-            event_context_next_question="event_date",
-        )
-    question_schema = activation_input.model_json_schema()["properties"][
-        "event_context_next_question"
-    ]
-    assert "event_date" not in json.dumps(question_schema)
-
-
-def test_bare_next_week_shapes_activation_as_a_bounded_date() -> None:
-    date_available = weather_date_context_available(
-        ("NYC, on an outdoor patio next week.",)
-    )
-    activation_input = _skill_activation_input_model(
-        ("event-context", "outfit-styling"),
-        weather_date_available=date_available,
-    )
-
-    assert date_available is True
-    with pytest.raises(ValueError):
-        activation_input(
-            skill_names=["outfit-styling", "event-context"],
-            event_context_next_question="event_date",
-        )
-
-
-def test_prior_event_date_cannot_narrow_a_new_event_activation() -> None:
-    state = State(
-        user_id=1,
-        query="Now help with a different wedding in Cancun on the beach.",
-        context=(
-            "User: The first wedding is August 3 in NYC.\n"
-            "Assistant: I can plan around that date."
-        ),
-    )
-
-    assert _current_turn_weather_date_available(state) is False
-    activation_input = _skill_activation_input_model(
-        ("event-context", "outfit-styling"),
-        weather_date_available=_current_turn_weather_date_available(state),
-    )
-    accepted = activation_input(
-        skill_names=["outfit-styling", "event-context"],
-        event_context_next_question="event_date",
-    )
-    assert accepted.event_context_next_question == "event_date"
-
-
-def test_missing_weather_date_keeps_event_date_in_activation_schema() -> None:
-    activation_input = _skill_activation_input_model(
-        ("event-context", "outfit-styling"),
-        weather_date_available=False,
-    )
-
-    accepted = activation_input(
-        skill_names=["outfit-styling", "event-context"],
-        event_context_next_question="event_date",
-    )
-
-    assert accepted.event_context_next_question == "event_date"
+    assert accepted.weather_refresh is True
 
 
 def test_dynamic_event_question_gets_typed_activation_feedback() -> None:
@@ -648,11 +665,20 @@ def test_pending_phase_forces_only_the_activation_tool() -> None:
         normalized_prompt
     )
     assert (
-        "Select it whenever an event destination or venue is stated, or when "
-        "the response would otherwise ask about or branch on missing destination"
+        "Select it for event or non-event styling whenever destination, date, "
+        "venue, or live weather could materially change guidance"
         in normalized_prompt
     )
-    assert "generic advice is not a reason to omit it" in normalized_prompt
+    assert "choose `continue` only for the same event" in normalized_prompt
+    assert "`replace` for a new or different subject" in normalized_prompt
+    assert "Initial scope creation uses `replace`" in normalized_prompt
+    assert "CURRENT WEATHER SCOPE is the only prior-turn" in normalized_prompt
+    assert "never set `event_venue` for a trip, general weather styling" in (
+        normalized_prompt
+    )
+    assert "outdoors, indoors, beach, garden, patio, rooftop, or" in (
+        normalized_prompt
+    )
     assert (
         "Do not switch to product discovery merely because the current turn asks"
         in normalized_prompt
@@ -752,6 +778,97 @@ def test_event_context_injects_beside_styling_and_exposes_weather() -> None:
     )
 
 
+def test_semantic_activation_can_require_one_granted_weather_call() -> None:
+    middleware = _middleware()
+    middleware.activate(
+        {
+            "/shopper/event-context/SKILL.md": "# Event Context",
+            "/shopper/outfit-styling/SKILL.md": "# Outfit Styling",
+        },
+        ["outfit-styling", "event-context"],
+    )
+    middleware.require_tool_for_turn("get_weather_forecast_tool")
+
+    prepared = middleware._prepare_model_request(
+        _model_request(_activated_messages())
+    )
+
+    assert prepared.tool_choice == "get_weather_forecast_tool"
+    with pytest.raises(
+        ShopperSkillActivationError,
+        match="did not call required tool get_weather_forecast_tool",
+    ):
+        middleware.wrap_model_call(
+            _model_request(_activated_messages()),
+            lambda _: ModelResponse(
+                result=[AIMessage(content="answered without weather")]
+            ),
+        )
+
+    with pytest.raises(
+        ShopperSkillActivationError,
+        match="did not call required tool get_weather_forecast_tool",
+    ):
+        middleware.wrap_model_call(
+            _model_request(_activated_messages()),
+            lambda _: ModelResponse(
+                result=[
+                    AIMessage(
+                        content="",
+                        tool_calls=[
+                            {
+                                "id": "wrong-call",
+                                "name": "search_catalog_tool",
+                                "args": {},
+                            }
+                        ],
+                    )
+                ]
+            ),
+        )
+
+    required_response = middleware.wrap_model_call(
+        _model_request(_activated_messages()),
+        lambda _: ModelResponse(
+            result=[
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "weather-call",
+                            "name": "get_weather_forecast_tool",
+                            "args": {},
+                        }
+                    ],
+                )
+            ]
+        ),
+    )
+    assert required_response.result[0].tool_calls[0]["name"] == (
+        "get_weather_forecast_tool"
+    )
+
+    weather_result = ToolMessage(
+        content="weather evidence",
+        name="get_weather_forecast_tool",
+        tool_call_id="get_weather_forecast_tool-call",
+    )
+    middleware.wrap_tool_call(
+        _tool_request(
+            "get_weather_forecast_tool",
+            _activated_messages(),
+            {},
+        ),
+        lambda _: weather_result,
+    )
+    after_weather = _capture_request(
+        middleware,
+        _model_request(_activated_messages()),
+    )
+
+    assert after_weather.tool_choice is None
+
+
 def test_weather_result_does_not_hide_or_block_later_business_tools() -> None:
     middleware = _middleware()
     middleware.activate(
@@ -803,7 +920,7 @@ def test_weather_result_does_not_hide_or_block_later_business_tools() -> None:
     weather_request = _tool_request(
         "get_weather_forecast_tool",
         messages,
-        {"location_source": "shopper_provided_location"},
+        {},
     )
     weather_result = ToolMessage(
         content="weather evidence",
@@ -914,7 +1031,7 @@ def test_weather_dispatch_requires_event_context_beside_outfit_styling() -> None
     request = _tool_request(
         "get_weather_forecast_tool",
         messages,
-        {"location_source": "confirmed_saved_zip"},
+        {},
     )
 
     styling_only = _middleware()

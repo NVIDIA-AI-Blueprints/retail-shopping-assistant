@@ -42,6 +42,7 @@ SKILL_ACTIVATION_EVENT_CONTEXT_REQUIRES_STYLING = (
     "event_context_requires_styling"
 )
 SKILL_ACTIVATION_EVENT_CONTEXT_INVALID = "event_context_invalid"
+SKILL_ACTIVATION_WEATHER_SCOPE_INVALID = "weather_scope_invalid"
 SKILL_ACTIVATION_WEATHER_RECEIPT_INVALID = "weather_receipt_invalid"
 SKILL_ACTIVATION_REQUIRED = (
     "SKILL_ACTIVATION_REQUIRED: Shopper skills must be selected and loaded "
@@ -68,31 +69,52 @@ same response. The runtime will load the complete selected instructions before
 the next model step. Outfit styling and product discovery are alternative
 primary procedures, so never select both; budget shopping may accompany either
 only when the shopper states a budget. Event context may accompany outfit
-styling only. Select it whenever an event destination or venue is stated, or
-when the response would otherwise ask about or branch on missing destination or
-venue context. An occasion-led styling request with no established setting
-qualifies when location or venue could change the direction; generic advice is
-not a reason to omit it. Whenever event context is selected, also declare its
-one permitted `event_context_next_question` decision. Set it to
-`event_location` only when destination is still missing and material; set it to
-`event_venue` only after destination is established when venue/setting is still
-missing and material; set it to `event_date` only after destination and any
-material venue are established, live weather is enabled and material, and no
-bounded date is established or explicitly unavailable; set it to `none`
-otherwise. This field authorizes at most that one event-context follow-up; do
-not ask another. An explicitly stated outdoor patio, beach, garden, rooftop, or
-open-air setting makes live weather material when lookup is enabled: with the
-destination and that setting established but no bounded date, choose
+styling only. Select it for event or non-event styling whenever destination,
+date, venue, or live weather could materially change guidance, including a
+direct request for weather-appropriate clothing. Whenever event context is
+selected, also declare its one permitted `event_context_next_question`
+decision. Set it to `event_location` only when the relevant destination is
+still missing and material; set `event_venue` only after destination is
+established for an occasion when venue/setting is still missing and material;
+never set `event_venue` for a trip, general weather styling, or after the
+shopper establishes outdoors, indoors, beach, garden, patio, rooftop, or
+open-air as the setting;
+set it to `event_date` only when live weather is enabled and material and the
+effective typed weather scope has no bounded date; set it to `none` otherwise.
+This field authorizes at most that one follow-up; do not ask another. Never ask
+a venue question for non-event weather styling. An explicitly stated outdoor
+patio, beach, garden, rooftop, or open-air setting makes enabled live weather
+material; if its location is established and its date is not, choose
 `event_date`, not `none`. Never infer a beach, outdoor, indoor, or terrain
-setting from the destination. For example, after "the wedding is in Cancun,"
-choose
-`event_venue` when the setting materially changes styling; after the shopper
-then says "it's on the beach," choose `event_date` when live weather is enabled
-and material. When VALID DURABLE WEATHER RECEIPTS are supplied, optionally bind
-one `weather_receipt_id` only when the shopper is continuing the exact same
-event location and date scope, event context is selected, and the next question
-is `none`. A current location/date correction or an explicit request to refresh
-the forecast means do not bind a receipt. Event context is additive: it
+setting from the destination.
+
+CURRENT WEATHER SCOPE is the only prior-turn location/date authority. When the
+current turn establishes, corrects, or changes weather-relevant location/date
+context, provide one `weather_scope`: choose `continue` only for the same event,
+trip, or weather-planning subject and `replace` for a new or different subject.
+Initial scope creation uses `replace` and omits `subject_change_quote`.
+A replacement contains only current-turn authority, so omitted older fields are
+cleared. Replacing an existing scope requires `subject_change_quote`: copy the
+exact current-turn words that explicitly introduce the new, different, or
+separate subject. A pronoun, location, date, or occasion alone is not
+subject-change evidence. Omit that quote for continuation and initial scope
+creation. Copy a shopper location from the current turn; normalize its bounded
+date without importing an older subject's date. If `continue` supplies a
+location when the scope already has one, without also supplying a current-turn
+date, the server clears the older date and the effective scope remains
+incomplete.
+Evaluate
+`event_context_next_question` after applying this same call's `weather_scope`;
+if the update supplies the missing date, choose `none`, never `event_date`.
+Omit `weather_scope` when this turn neither establishes nor changes it. Set
+`weather_refresh=true` only when the shopper explicitly asks for a fresh
+forecast for an unchanged complete scope. Leave it false for comparisons and
+other turns; a scope update that becomes complete already requires its forecast.
+When VALID DURABLE WEATHER RECEIPTS
+are supplied, optionally bind one `weather_receipt_id` only for the unchanged
+exact location/date scope, event context is selected, the next question is
+`none`, and `weather_scope` is omitted. A correction, replacement, or explicit
+refresh means do not bind a receipt. Event context is additive: it
 contributes only event guidance,
 its one question boundary, and optional weather capability. It never removes
 tools granted by outfit styling or another selected skill. Keep the primary procedure
@@ -136,6 +158,7 @@ class ShopperSkillActivationMiddleware(AgentMiddleware):
         self._activation_validation_failures = 0
         self._clarification_response = ""
         self._runtime_tool_rejections: dict[str, str] = {}
+        self._required_tool: str | None = None
         self._previous_selected_skills = tuple(
             dict.fromkeys(
                 name
@@ -154,6 +177,28 @@ class ShopperSkillActivationMiddleware(AgentMiddleware):
             raise ValueError("Runtime tool rejection must stop further tool use.")
         with self._lock:
             self._runtime_tool_rejections.setdefault(tool_name, rejection)
+
+    def require_tool_for_turn(self, tool_name: str) -> None:
+        """Force one already-granted tool after semantic activation."""
+
+        if tool_name not in SHOPPING_TOOL_POLICIES:
+            raise ValueError(f"Unknown shopping tool: {tool_name}")
+        with self._lock:
+            if (
+                self._status != "active"
+                or tool_name in self._runtime_tool_rejections
+                or not tool_is_granted(
+                    tool_name,
+                    self._selected_skills,
+                    self._granted_tools,
+                )
+            ):
+                raise ValueError(
+                    "Required tool must be granted by the active shopper skills."
+                )
+            if self._required_tool not in {None, tool_name}:
+                raise ValueError("Only one shopping tool may be required at a time.")
+            self._required_tool = tool_name
 
     def activate(
         self,
@@ -218,7 +263,11 @@ class ShopperSkillActivationMiddleware(AgentMiddleware):
     def handle_activation_validation_error(self, error: Any) -> str:
         """Return bounded model feedback for an invalid skill selection."""
 
-        issue = _activation_validation_issue(error)
+        issue = (
+            error
+            if isinstance(error, str)
+            else _activation_validation_issue(error)
+        )
         feedback = _activation_validation_feedback(issue)
         with self._lock:
             if self._status != "pending":
@@ -245,7 +294,9 @@ class ShopperSkillActivationMiddleware(AgentMiddleware):
 
         rejection = self._tool_call_rejection(request)
         if rejection is None:
-            return handler(request)
+            result = handler(request)
+            self._complete_required_tool(request)
+            return result
         return _tool_rejection_message(request, rejection)
 
     async def awrap_tool_call(
@@ -257,7 +308,9 @@ class ShopperSkillActivationMiddleware(AgentMiddleware):
 
         rejection = self._tool_call_rejection(request)
         if rejection is None:
-            return await handler(request)
+            result = await handler(request)
+            self._complete_required_tool(request)
+            return result
         return _tool_rejection_message(request, rejection)
 
     def _prepare_model_request(self, request: ModelRequest) -> ModelRequest:
@@ -267,6 +320,7 @@ class ShopperSkillActivationMiddleware(AgentMiddleware):
             selected_skills = self._selected_skills
             granted_tools = self._granted_tools
             runtime_tool_rejections = dict(self._runtime_tool_rejections)
+            required_tool = self._required_tool
         if status == "active":
             tools = [
                 candidate
@@ -278,7 +332,7 @@ class ShopperSkillActivationMiddleware(AgentMiddleware):
                 )
                 and _tool_name(candidate) not in runtime_tool_rejections
             ]
-            tool_choice = request.tool_choice
+            tool_choice = required_tool or request.tool_choice
             if isinstance(tool_choice, str):
                 if (
                     not _tool_is_visible(
@@ -363,9 +417,16 @@ class ShopperSkillActivationMiddleware(AgentMiddleware):
             return runtime_rejection
         return None
 
+    def _complete_required_tool(self, request: ToolCallRequest) -> None:
+        tool_name = str(request.tool_call.get("name") or "")
+        with self._lock:
+            if self._required_tool == tool_name:
+                self._required_tool = None
+
     def _validate_model_response(self, response: ModelResponse) -> ModelResponse:
         with self._lock:
             status = self._status
+            required_tool = self._required_tool
         if status == "active":
             shopping_calls = [
                 tool_call
@@ -373,6 +434,13 @@ class ShopperSkillActivationMiddleware(AgentMiddleware):
                 for tool_call in _value(message, "tool_calls") or []
                 if _value(tool_call, "name") in SHOPPING_TOOL_POLICIES
             ]
+            if required_tool is not None and (
+                len(shopping_calls) != 1
+                or _value(shopping_calls[0], "name") != required_tool
+            ):
+                raise ShopperSkillActivationError(
+                    f"The model did not call required tool {required_tool}."
+                )
             if len(shopping_calls) > 1:
                 raise ShopperSkillActivationError(
                     "The model requested multiple shopping tools in one step."
@@ -499,11 +567,16 @@ def _activation_validation_issue(error: Any) -> str:
             return SKILL_ACTIVATION_EVENT_CONTEXT_INVALID
         if "weather_receipt_id" in location:
             return SKILL_ACTIVATION_WEATHER_RECEIPT_INVALID
+        if "weather_scope" in location:
+            return SKILL_ACTIVATION_WEATHER_SCOPE_INVALID
+        if "weather_refresh" in location:
+            return SKILL_ACTIVATION_WEATHER_SCOPE_INVALID
         if issue in {
             SKILL_ACTIVATION_EVENT_CONTEXT_INVALID,
             SKILL_ACTIVATION_EVENT_CONTEXT_REQUIRES_STYLING,
             SKILL_ACTIVATION_MODIFIER_REQUIRES_PRIMARY,
             SKILL_ACTIVATION_MULTIPLE_PRIMARY,
+            SKILL_ACTIVATION_WEATHER_SCOPE_INVALID,
             SKILL_ACTIVATION_WEATHER_RECEIPT_INVALID,
         }:
             return issue
@@ -511,6 +584,22 @@ def _activation_validation_issue(error: Any) -> str:
 
 
 def _activation_validation_feedback(issue: str) -> str:
+    if issue == SKILL_ACTIVATION_WEATHER_SCOPE_INVALID:
+        return (
+            "weather_scope must describe only current-turn location/date "
+            "authority. For an empty scope, choose replace and omit "
+            "subject_change_quote. Choose continue for the same styling subject or "
+            "replace for a different subject. A different subject may replace "
+            "with only the newly known fields, leaving missing context empty. "
+            "Replacing an existing scope requires the exact current-turn "
+            "subject_change_quote that explicitly introduces the new subject; "
+            "otherwise use continue. Copy shopper locations from the current "
+            "turn and never reuse an older subject's date. Recompute the "
+            "question after the corrected scope: non-occasion weather styling "
+            "and an already stated outdoor setting use none, not event_venue. "
+            "Use weather_refresh only for an explicit refresh of an unchanged "
+            "complete scope, never beside weather_scope."
+        )
     if issue == SKILL_ACTIVATION_WEATHER_RECEIPT_INVALID:
         return (
             "weather_receipt_id may select only one currently available typed "
@@ -528,7 +617,10 @@ def _activation_validation_feedback(issue: str) -> str:
             "material; choose event_date only after destination and any "
             "material venue are established, weather is enabled and material, "
             "and no bounded date is established or explicitly unavailable; "
-            "otherwise choose none. Never infer venue from destination. Omit "
+            "otherwise choose none. Never choose event_venue for non-occasion "
+            "weather styling or when outdoors, indoors, beach, garden, patio, "
+            "rooftop, or open-air is already established. Never infer venue "
+            "from destination. Omit "
             "event_context_next_question when event-context is not selected."
         )
     if issue == SKILL_ACTIVATION_EVENT_CONTEXT_REQUIRES_STYLING:

@@ -49,19 +49,17 @@ Every shopper turn uses two model phases inside the same Deep Agents run:
    that semantically covers the complete current intent. Whenever it selects
    `event-context`, the same call must bind
    `event_context_next_question`; that field is omitted otherwise. The model
-   selects the latter from current and recent shopper conversation:
+   selects the latter from semantic conversation plus the typed current scope:
    `event_location` only when destination is missing and material,
    `event_venue` only after destination is established when venue or setting is
-   missing and material, `event_date` only after destination and any material
-   venue are established when live weather is enabled and material and a
-   bounded date is neither established nor explicitly unavailable, and `none`
-   otherwise. Before constructing that typed enum, the runtime applies the
-   same closed shopper-authored weather-date authority parser used by the tool
-   gate to the current shopper turn only. When that turn contains an accepted
-   bounded date, including bare `next week`, `event_date` is omitted and cannot
-   become a contradictory follow-up. Prior raw-turn dates do not narrow
-   activation because event identity is model-owned. Weather tool eligibility
-   remains separate and may use bounded current and recent shopper authority.
+   missing and material, `event_date` when live weather is material and the
+   typed scope lacks a bounded window, and `none` otherwise. The same call may
+   submit one `weather_scope`: `continue` patches the same styling subject and
+   `replace` clears omitted fields for a different subject. Deterministic
+   compilation accepts only current-turn location/date authority; supplying a
+   location under `continue` when the scope already has one clears the retained
+   date unless the same turn supplies a replacement window. Prior raw turns and summary
+   prose never become provider arguments.
    An explicitly shopper-stated outdoor patio, beach, garden,
    rooftop, or open-air setting makes enabled live weather material; with
    destination and that setting but no bounded date, select `event_date`.
@@ -71,9 +69,11 @@ Every shopper turn uses two model phases inside the same Deep Agents run:
    accepted activation authorizes
    an event-context follow-up. The same call may optionally bind one listed
    `weather_receipt_id`, but only with `event-context`,
-   `event_context_next_question=none`, and an unchanged exact event
-   location/date scope. A current correction, uncertainty, or refresh request
-   means omit the receipt.
+   `event_context_next_question=none`, no scope update, no refresh request, and
+   exact equality to the effective location/date scope. A current correction
+   means omit the receipt. A scope transition that becomes complete requires
+   weather. For an unchanged complete scope, set `weather_refresh=true` only
+   for an explicit shopper refresh; comparisons and other turns leave it false.
 2. The runtime validates the selected names, injects the complete selected
    `SKILL.md` contents into the system context, removes the activation tool, and
    exposes only the union of those skills' `tools_granted` for the next model
@@ -287,27 +287,32 @@ forecast context to occasion-led styling.
   or elsewhere?” framing rather than a bare destination question. Once
   destination is established, activation may instead select one material
   venue/setting question; the plan-first stop rule does not apply.
-- Activation owns `event_context_next_question` plus optional
-  `weather_receipt_id`. The question is required exactly with this skill and is
+- Activation owns `event_context_next_question`, an optional current-turn
+  `weather_scope`, `weather_refresh`, and optional `weather_receipt_id`. The
+  question is required
+  exactly with this skill and is
   normally one of `event_location`, `event_venue`, `event_date`, or `none`
-  under the semantic conditions above; it is omitted without this skill. If
-  the current shopper turn contains a bounded date accepted by the shared
-  date-authority parser, the per-turn schema removes `event_date`. Prior
-  raw-turn dates remain available to the semantic procedure and weather tool
-  but cannot narrow activation. A receipt may be bound only when the question
-  is `none`, it is currently listed and valid, and the exact event
-  location/date scope is unchanged. The server does not infer a question from
-  enabled weather or missing context.
+  under the semantic conditions above; it is omitted without this skill.
+  `continue` preserves omitted authority only for the same styling subject;
+  supplying a location under `continue` when the scope already has one clears
+  the older date unless the current turn supplies one. `replace` clears omitted authority for a
+  different subject. A receipt may be bound only when the
+  question is `none`, no scope update or refresh is requested, it is currently
+  listed, and it exactly matches the effective location/date scope. The server
+  does not infer a question from enabled weather or missing context.
 - The modifier composes additively with `outfit-styling`. Its helper may hide
   and execution-block only `get_weather_forecast_tool` when the selected
   question or missing bounded authority prevents a qualified forecast, or when
   one valid receipt is bound. It
   never hides product, cart, or policy tools and never closes the overall tool
   loop. Consuming the one weather attempt closes only weather for that turn.
-- When activation selected `none`, live weather is enabled and material, and
-  valid location and bounded date authority are established, the selected
-  skill directs the same Deep Agent to make that one weather attempt before
-  answering unless activation bound a valid exact-scope receipt. A typed success
+- When a scope transition produces complete valid location and bounded date
+  authority, the selected skill and middleware require the same Deep Agent to
+  make that one weather attempt before answering. For an unchanged complete
+  scope, `weather_refresh=true` requires it only for an explicit shopper
+  refresh; comparisons and other turns leave it false and weather is blocked.
+  A valid exact-scope receipt also blocks a new call. Prose cannot bypass a
+  pending call. A typed success
   or failure completes a live attempt; no post-answer reviewer reopens the
   procedure.
 - Protected event decision rendering is selected from evidence rather than an
@@ -328,18 +333,19 @@ forecast context to occasion-led styling.
 - Does not infer that Cancun means beach or that any ZIP or place establishes
   outdoor/indoor setting, terrain, weather, wind, climate, season, dress code,
   local norms, or product performance.
-- Grants `get_weather_forecast_tool` for one model-visible attempt on an
-  eligible turn with bounded date authority; otherwise the runtime hides and
-  execution-blocks it. It uses
-  `confirmed_saved_zip`, with both location fields omitted from model
-  arguments, only when the deterministic gate accepts a current
+- Grants `get_weather_forecast_tool` for one zero-argument model-visible
+  attempt when a transition produces a complete typed scope or an explicit
+  `weather_refresh=true` targets an unchanged complete scope. Comparisons and
+  other unchanged turns hide and execution-block it. Scope compilation uses
+  `confirmed_saved_zip`, with both location text fields omitted, only when the
+  deterministic gate accepts a current
   location-neutral statement explicitly naming `my`/`the` usual/home area, a
   bare affirmative immediately after the assistant's usual/home-area question,
   or an immediate strict date-only follow-up to an accepted confirmation. Any
   explicit current place, question, negation, uncertainty, or override rejects
   saved mode. It uses
   `shopper_provided_location` only with one bounded exact named-place, address,
-  or postal-code phrase copied from shopper-authored text into `location`.
+  or postal-code phrase copied from the current shopper turn.
   For an abbreviation or ambiguous name, `location_query` is required: it must
   preserve that exact phrase as its first component and append only one or two
   comma-separated region/country qualifiers. Keep `location="NYC"` and use
@@ -354,8 +360,7 @@ forecast context to occasion-led styling.
   explicit destination prevents fallback to saved ZIP.
 - Treats modal lowercase `may be` as uncertainty while accepting calendar
   `May 5` as a valid date.
-- Treats the model limit as one attempt: a schema-invalid weather call consumes
-  it and cannot be repaired in that turn. Within a valid call,
+- Treats the model limit as one zero-argument attempt. Within a scope-valid call,
   `max_provider_attempts: 2` permits one internal retry only for timeout or
   HTTP 5xx. HTTP 400 maps to generic `weather_request_invalid`; other 4xx,
   connection, and response-validation failures are not retried.
@@ -373,7 +378,7 @@ forecast context to occasion-led styling.
   inside the next Monday-through-Sunday window from one captured UTC date.
   Bare `next week` omits `weekday` and derives the full range. Missing,
   mismatched, mixed, negated, or superseded weekday authority fails closed.
-  Without a bounded shopper-authored date signal, the runtime hides and
+  Without a complete effective location/date scope, the runtime hides and
   execution-blocks weather for that turn. A direct date question is permitted
   only when accepted activation selected `event_date`; the server does not
   collect or infer weather-only context otherwise.

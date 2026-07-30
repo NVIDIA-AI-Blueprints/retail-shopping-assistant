@@ -37,6 +37,7 @@ from shared.weather_receipts import (
 )
 from shared.weather_scope import (
     CurrentWeatherScope,
+    CurrentWeatherScopeTransition,
     WeatherScopeLocationAuthority,
     WeatherScopeWindowAuthority,
 )
@@ -130,6 +131,25 @@ def _promotion(*, expected_projection_version: int = 4) -> WeatherReceiptPromoti
     )
 
 
+def _current_scope(
+    receipt: WeatherForecastReceipt | None = None,
+) -> CurrentWeatherScope:
+    scoped_receipt = receipt or _receipt()
+    return CurrentWeatherScope(
+        revision=1,
+        location=WeatherScopeLocationAuthority(
+            value=scoped_receipt.location_scope,
+            source_turn_id=scoped_receipt.source_turn_id,
+            source_sequence=scoped_receipt.source_sequence,
+        ),
+        window=WeatherScopeWindowAuthority(
+            value=scoped_receipt.evidence.requested_window,
+            source_turn_id=scoped_receipt.source_turn_id,
+            source_sequence=scoped_receipt.source_sequence,
+        ),
+    )
+
+
 def _success_content(
     *,
     forecast_date: date = date(2026, 8, 3),
@@ -158,12 +178,7 @@ def _current_weather_result(
                     {
                         "id": tool_call_id,
                         "name": "get_weather_forecast_tool",
-                        "args": {
-                            "location_source": "shopper_provided_location",
-                            "location": "NYC",
-                            "location_query": "NYC, NY",
-                            "date": "2026-08-03",
-                        },
+                        "args": {},
                     }
                 ],
             }
@@ -367,6 +382,7 @@ def test_paired_current_success_prepares_typed_promotion() -> None:
         user_id=1,
         query="Compare them for the NYC wedding.",
         conversation_projection_version=4,
+        current_weather_scope=_current_scope(),
     )
 
     promotion = runtime_mod._current_weather_receipt_promotion(
@@ -415,12 +431,7 @@ def test_failures_unpaired_results_and_prior_turn_results_never_promote() -> Non
                 {
                     "id": "weather-prior",
                     "name": "get_weather_forecast_tool",
-                    "args": {
-                        "location_source": "shopper_provided_location",
-                        "location": "NYC",
-                        "location_query": "NYC, NY",
-                        "date": "2026-08-03",
-                    },
+                    "args": {},
                 }
             ],
         },
@@ -682,6 +693,60 @@ def test_completed_finalize_carries_promotion_but_failed_finalize_drops_it(
     )
     assert memory.calls[0]["weather_receipt_promotion"] == promotion
     assert memory.calls[1]["weather_receipt_promotion"] is None
+
+
+def test_v3_completed_finalize_carries_current_weather_scope_transition(
+    base_config,
+) -> None:
+    runtime = runtime_mod.DeepAgentsRuntime(base_config)
+
+    class Memory:
+        def __init__(self) -> None:
+            self.calls: list[dict] = []
+
+        def finalize_turn(self, *_args, **kwargs):
+            self.calls.append(kwargs)
+            return SimpleNamespace(replayed=False)
+
+    memory = Memory()
+    runtime._conversation_memory = memory
+    transition = CurrentWeatherScopeTransition(
+        expected_projection_version=4,
+        action="replace",
+        location_scope=ShopperLocationWeatherScope(location="Seattle"),
+    )
+    completed = State(
+        user_id=1,
+        query="A different wedding in Seattle.",
+        response="What date should I plan around?",
+        current_weather_scope_transition=transition,
+        agent_diagnostics={"final_termination_reason": "completed"},
+    )
+    failed = completed.model_copy(
+        update={
+            "response": "Timed out.",
+            "agent_diagnostics": {
+                "final_termination_reason": "agent_timeout"
+            },
+        }
+    )
+    turn = _turn().model_copy(update={"contract_version": 3})
+
+    assert runtime._finalize_conversation_turn(
+        completed,
+        _identity(),
+        turn,
+    )
+    assert runtime._finalize_conversation_turn(
+        failed,
+        _identity(),
+        turn,
+        status="failed",
+        termination_reason="agent_timeout",
+    )
+
+    assert memory.calls[0]["current_weather_scope_transition"] == transition
+    assert memory.calls[1]["current_weather_scope_transition"] is None
 
 
 def test_v1_turn_drops_optional_weather_promotion_before_finalize(

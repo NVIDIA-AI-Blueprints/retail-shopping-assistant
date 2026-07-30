@@ -34,6 +34,17 @@ from .weather import (
     WeatherResult,
     weather_failure,
 )
+from shared.weather_receipts import (
+    SavedAreaWeatherScope,
+    ShopperLocationWeatherScope,
+    WeatherLocationScope,
+    WeatherReceiptWindow,
+)
+from shared.weather_scope import (
+    CurrentWeatherScope,
+    CurrentWeatherScopeTransition,
+    effective_weather_scope_values,
+)
 
 
 WEATHER_FORECAST_EVIDENCE_PREFIX = "WEATHER_FORECAST_EVIDENCE:"
@@ -55,6 +66,20 @@ _MONTH_DAY_PATTERN = (
     r"Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.?\s+"
     r"[0-9]{1,2}(?:st|nd|rd|th)?(?:,?\s+[0-9]{4})?"
 )
+_MONTH_NUMBERS = {
+    "jan": 1,
+    "feb": 2,
+    "mar": 3,
+    "apr": 4,
+    "may": 5,
+    "jun": 6,
+    "jul": 7,
+    "aug": 8,
+    "sep": 9,
+    "oct": 10,
+    "nov": 11,
+    "dec": 12,
+}
 _STRONG_DATE_SIGNAL_RE = re.compile(
     rf"(?:"
     rf"\b[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}\b"
@@ -209,9 +234,27 @@ class EventWeatherRequest(BaseModel):
             "week'; otherwise omit it."
         ),
     )
-    date: str | None = None
-    start_date: str | None = None
-    end_date: str | None = None
+    date: str | None = Field(
+        default=None,
+        description=(
+            "One ISO date that exactly equals the normalized current-turn "
+            "shopper date. Never substitute a nearby or prior date."
+        ),
+    )
+    start_date: str | None = Field(
+        default=None,
+        description=(
+            "Inclusive ISO range start that exactly equals the normalized "
+            "current-turn shopper range."
+        ),
+    )
+    end_date: str | None = Field(
+        default=None,
+        description=(
+            "Inclusive ISO range end that exactly equals the normalized "
+            "current-turn shopper range."
+        ),
+    )
 
     @field_validator("location", "location_query")
     @classmethod
@@ -272,6 +315,428 @@ class EventWeatherRequest(BaseModel):
             end_date=self.end_date,
         )
         return self
+
+
+class WeatherScopeSelection(BaseModel):
+    """Semantic current-turn update compiled into the durable weather scope."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    action: Literal["continue", "replace"] = Field(
+        description=(
+            "Initial scope creation uses replace. Use continue only for the "
+            "same event, trip, or weather-planning "
+            "subject. Use replace for a new or different subject; omitted "
+            "location or date fields are then cleared. When replacing an "
+            "existing scope, subject_change_quote must cite the exact "
+            "current-turn words that explicitly introduce the new subject. "
+            "As a fail-safe, supplying a location under continue when the "
+            "scope already has one clears the older date unless this turn "
+            "supplies a new date too."
+        )
+    )
+    subject_change_quote: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=120,
+        description=(
+            "Exact current-turn shopper phrase that explicitly introduces a "
+            "new, different, or separate event, trip, or weather-planning "
+            "subject. Required for replace when a scope already exists. A "
+            "pronoun, location, date, or occasion alone is not subject-change "
+            "evidence. Omit for continue and initial scope creation."
+        ),
+    )
+    location_source: Literal[
+        "confirmed_saved_zip",
+        "shopper_provided_location",
+    ] | None = Field(
+        default=None,
+        description=(
+            "Current-turn location authority. Use shopper_provided_location "
+            "for a place the shopper states now, or confirmed_saved_zip only "
+            "when the shopper explicitly confirms the saved area now."
+        ),
+    )
+    location: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=256,
+        description=(
+            "The shortest exact current-turn shopper phrase naming the place. "
+            "Do not rewrite it or copy a place from an older subject."
+        ),
+    )
+    location_query: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=256,
+        description=(
+            "Provider-facing named place. Required when location is an "
+            "abbreviation or geographically ambiguous: preserve the exact "
+            "location as the first component and append one or two "
+            "comma-separated region/country qualifiers (for example, "
+            "location='NYC', location_query='NYC, NY'). Omit only when "
+            "location is already sufficiently qualified. Never add an "
+            "unstated ZIP or numeric component."
+        ),
+    )
+    relative_date: Literal["next_week"] | None = Field(
+        default=None,
+        description=(
+            "Use only when the shopper's current turn says 'next week'. "
+            "With no weekday it means the full Monday-Sunday window."
+        ),
+    )
+    weekday: RelativeWeekday | None = Field(
+        default=None,
+        description=(
+            "Exact weekday inside next week. Supply it only when the current "
+            "turn explicitly says '<weekday> next week'."
+        ),
+    )
+    date: str | None = Field(
+        default=None,
+        description=(
+            "One ISO date that exactly equals the normalized current-turn "
+            "shopper date. Never substitute a nearby or prior date."
+        ),
+    )
+    start_date: str | None = Field(
+        default=None,
+        description=(
+            "Inclusive ISO range start that exactly equals the normalized "
+            "current-turn shopper range."
+        ),
+    )
+    end_date: str | None = Field(
+        default=None,
+        description=(
+            "Inclusive ISO range end that exactly equals the normalized "
+            "current-turn shopper range."
+        ),
+    )
+
+    @field_validator("location", "location_query")
+    @classmethod
+    def validate_location(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        WeatherRequest(location=value)
+        return value
+
+    @field_validator("date", "start_date", "end_date")
+    @classmethod
+    def validate_iso_date(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if not _ISO_DATE_RE.fullmatch(value):
+            raise ValueError("weather dates must use YYYY-MM-DD")
+        try:
+            CalendarDate.fromisoformat(value)
+        except ValueError as exc:
+            raise ValueError("weather dates must be valid calendar dates") from exc
+        return value
+
+    @model_validator(mode="after")
+    def validate_partial_authority(self) -> "WeatherScopeSelection":
+        if self.action == "continue" and self.subject_change_quote is not None:
+            raise ValueError("continue must omit subject_change_quote")
+        if self.location_source is None:
+            if self.location is not None or self.location_query is not None:
+                raise ValueError("location_source is required with location")
+        elif self.location_source == "confirmed_saved_zip":
+            if self.location is not None or self.location_query is not None:
+                raise ValueError(
+                    "location fields must be omitted for confirmed_saved_zip"
+                )
+        elif self.location is None:
+            raise ValueError(
+                "location is required for shopper_provided_location"
+            )
+
+        has_explicit_window = any(
+            value is not None
+            for value in (self.date, self.start_date, self.end_date)
+        )
+        if self.relative_date is not None and has_explicit_window:
+            raise ValueError(
+                "relative_date is mutually exclusive with explicit dates"
+            )
+        if self.weekday is not None and self.relative_date != "next_week":
+            raise ValueError("weekday requires relative_date=next_week")
+        if has_explicit_window:
+            WeatherRequest(
+                location="scope",
+                date=self.date,
+                start_date=self.start_date,
+                end_date=self.end_date,
+            )
+        has_location = self.location_source is not None
+        has_window = self.relative_date is not None or has_explicit_window
+        if self.action == "continue" and not (has_location or has_window):
+            raise ValueError("continue requires a current-turn scope update")
+        return self
+
+
+def compile_weather_scope_transition(
+    selection: WeatherScopeSelection,
+    *,
+    current_shopper_text: str,
+    saved_zip_authorized: bool,
+    expected_projection_version: int,
+    current_date: CalendarDate | None = None,
+    replacement_evidence_required: bool = False,
+    continuation_context_available: bool = True,
+    current_location_scope: WeatherLocationScope | None = None,
+) -> CurrentWeatherScopeTransition:
+    """Validate current-turn provenance and normalize one semantic transition."""
+
+    if selection.action == "continue" and not continuation_context_available:
+        raise ValueError("initial weather scope creation must use replace")
+    if selection.action == "replace" and replacement_evidence_required:
+        replacement_quote = selection.subject_change_quote
+        if (
+            replacement_quote is None
+            or _resolve_shopper_authored_location(
+                replacement_quote,
+                (current_shopper_text,),
+            )
+            is None
+        ):
+            raise ValueError(
+                "replacement requires an exact current-turn subject-change quote"
+            )
+
+    location_scope: WeatherLocationScope | None = None
+    if selection.location_source == "confirmed_saved_zip":
+        if not saved_zip_authorized:
+            raise ValueError("saved area is not confirmed by the current turn")
+        location_scope = SavedAreaWeatherScope()
+    elif selection.location_source == "shopper_provided_location":
+        shopper_location = (
+            _resolve_shopper_authored_location(
+                selection.location or "",
+                (current_shopper_text,),
+            )
+        )
+        if (
+            shopper_location is None
+            or _adds_unstated_location_number(
+                selection.location_query,
+                shopper_location,
+            )
+            or not _location_query_qualifies_shopper_location(
+                selection.location_query,
+                shopper_location,
+            )
+        ):
+            raise ValueError(
+                "shopper location must be an exact current-turn source span"
+            )
+        location_scope = ShopperLocationWeatherScope(
+            location=shopper_location,
+            location_query=selection.location_query,
+        )
+
+    requested_window: WeatherReceiptWindow | None = None
+    if selection.relative_date == "next_week":
+        shopper_texts = (current_shopper_text,)
+        if not _shopper_stated_next_week(shopper_texts):
+            raise ValueError("next_week is not authoritative in the current turn")
+        weekday_required, authoritative_weekday = (
+            _shopper_stated_relative_weekday(shopper_texts)
+        )
+        if (
+            weekday_required
+            and (
+                authoritative_weekday is None
+                or selection.weekday != authoritative_weekday
+            )
+        ) or (not weekday_required and selection.weekday is not None):
+            raise ValueError("next_week weekday does not match the current turn")
+        request_date = current_date or datetime.now(timezone.utc).date()
+        start_date = request_date + timedelta(
+            days=7 - request_date.weekday()
+        )
+        if selection.weekday is None:
+            end_date = start_date + timedelta(days=6)
+        else:
+            start_date += timedelta(
+                days=_RELATIVE_WEEKDAY_OFFSETS[selection.weekday]
+            )
+            end_date = start_date
+        requested_window = WeatherReceiptWindow(
+            start_date=start_date,
+            end_date=end_date,
+        )
+    elif any(
+        value is not None
+        for value in (selection.date, selection.start_date, selection.end_date)
+    ):
+        authority_window = _authoritative_explicit_window(
+            current_shopper_text,
+            current_date=(
+                current_date or datetime.now(timezone.utc).date()
+            ),
+        )
+        if authority_window is None:
+            raise ValueError(
+                "explicit weather window lacks current-turn date authority"
+            )
+        request = WeatherRequest(
+            location="scope",
+            date=selection.date,
+            start_date=selection.start_date,
+            end_date=selection.end_date,
+        )
+        window = request.explicit_window()
+        if window is None:
+            raise ValueError("weather scope requires an explicit window")
+        if window != authority_window:
+            raise ValueError(
+                "explicit weather window does not match current-turn authority"
+            )
+        requested_window = WeatherReceiptWindow(
+            start_date=window[0],
+            end_date=window[1],
+        )
+
+    return CurrentWeatherScopeTransition(
+        expected_projection_version=expected_projection_version,
+        action=selection.action,
+        location_scope=location_scope,
+        requested_window=requested_window,
+        clear_window=(
+            True
+            if (
+                selection.action == "continue"
+                and location_scope is not None
+                and current_location_scope is not None
+                and requested_window is None
+            )
+            else None
+        ),
+    )
+
+
+class WeatherScopeForecastBinding:
+    """Request-local binding between the semantic scope and provider adapter."""
+
+    def __init__(
+        self,
+        current_scope: CurrentWeatherScope,
+        *,
+        saved_zipcode: str | None,
+    ) -> None:
+        self.current_scope = current_scope
+        self.saved_zipcode = saved_zipcode
+        self.transition: CurrentWeatherScopeTransition | None = None
+        self.relative_date: Literal["next_week"] | None = None
+        self.weekday: RelativeWeekday | None = None
+
+    def bind(
+        self,
+        transition: CurrentWeatherScopeTransition,
+        *,
+        relative_date: Literal["next_week"] | None,
+        weekday: RelativeWeekday | None,
+    ) -> None:
+        self.transition = transition
+        self.relative_date = relative_date
+        self.weekday = weekday
+
+    def effective_values(
+        self,
+    ) -> tuple[WeatherLocationScope | None, WeatherReceiptWindow | None]:
+        return effective_weather_scope_values(
+            self.current_scope,
+            self.transition,
+        )
+
+
+class _ScopedWeatherToolInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+def get_scoped_weather_forecast_tool(
+    client: WeatherClient,
+    binding: WeatherScopeForecastBinding,
+) -> BaseTool:
+    """Build a zero-argument forecast tool bound to one validated scope."""
+
+    attempt_lock = Lock()
+    attempted = False
+
+    def claim_attempt() -> bool:
+        nonlocal attempted
+        with attempt_lock:
+            if attempted:
+                return False
+            attempted = True
+            return True
+
+    def get_weather_forecast() -> str:
+        if not claim_attempt():
+            return _weather_failure_evidence(
+                weather_failure("weather_request_invalid")
+            )
+        location_scope, requested_window = binding.effective_values()
+        if location_scope is None or requested_window is None:
+            return _weather_failure_evidence(
+                weather_failure("weather_request_invalid")
+            )
+        if isinstance(location_scope, SavedAreaWeatherScope):
+            selected_location = binding.saved_zipcode
+            include_resolved_location = False
+        else:
+            selected_location = (
+                location_scope.location_query or location_scope.location
+            )
+            include_resolved_location = True
+        if selected_location is None:
+            return _weather_failure_evidence(
+                weather_failure("weather_request_invalid")
+            )
+        try:
+            outcome = client.get_forecast(
+                WeatherRequest(
+                    location=selected_location,
+                    start_date=requested_window.start_date,
+                    end_date=requested_window.end_date,
+                )
+            )
+            if isinstance(outcome, WeatherResult):
+                return _weather_success_evidence(
+                    outcome,
+                    include_resolved_location=include_resolved_location,
+                    relative_date=binding.relative_date,
+                    weekday=binding.weekday,
+                )
+            if isinstance(outcome, WeatherFailure):
+                return _weather_failure_evidence(outcome)
+            return _weather_failure_evidence(
+                weather_failure("weather_response_invalid")
+            )
+        except Exception:  # noqa: BLE001 - sanitize provider failures.
+            return _weather_failure_evidence(
+                weather_failure("weather_unavailable")
+            )
+
+    tool = StructuredTool.from_function(
+        func=get_weather_forecast,
+        name="get_weather_forecast_tool",
+        description=(
+            "Get one live daily forecast for the current typed styling scope. "
+            "The server has already bound the shopper-authorized location and "
+            "date window; this tool accepts no arguments. Call at most once "
+            "and only when event-context instructions require current weather."
+        ),
+        args_schema=_ScopedWeatherToolInput,
+        return_direct=False,
+    )
+    tool.__name__ = tool.name
+    return tool
 
 
 class WeatherForecastEvidence(BaseModel):
@@ -701,6 +1166,82 @@ def _strong_date_signal_decision(text: str) -> bool | None:
     ):
         return False
     return True
+
+
+def _authoritative_explicit_window(
+    text: str,
+    *,
+    current_date: CalendarDate,
+) -> tuple[CalendarDate, CalendarDate] | None:
+    """Normalize the closed current-turn explicit-date grammar exactly."""
+
+    if _strong_date_signal_decision(text) is not True:
+        return None
+    matches = tuple(_STRONG_DATE_SIGNAL_RE.finditer(text))
+    if not 1 <= len(matches) <= 2:
+        return None
+    start = _parse_explicit_date_signal(
+        matches[0].group(0),
+        current_date=current_date,
+        not_before=current_date,
+    )
+    if start is None:
+        return None
+    if len(matches) == 1:
+        return start, start
+    end = _parse_explicit_date_signal(
+        matches[1].group(0),
+        current_date=current_date,
+        not_before=start,
+    )
+    if end is None or end < start:
+        return None
+    return start, end
+
+
+def _parse_explicit_date_signal(
+    signal: str,
+    *,
+    current_date: CalendarDate,
+    not_before: CalendarDate,
+) -> CalendarDate | None:
+    """Normalize one already-bounded ISO, month/day, today, or tomorrow."""
+
+    lowered = signal.casefold()
+    if lowered == "today":
+        return current_date
+    if lowered == "tomorrow":
+        return current_date + timedelta(days=1)
+    if _ISO_DATE_RE.fullmatch(signal):
+        try:
+            return CalendarDate.fromisoformat(signal)
+        except ValueError:
+            return None
+
+    match = re.fullmatch(
+        r"(?P<month>[A-Za-z]+)\.?\s+"
+        r"(?P<day>[0-9]{1,2})(?:st|nd|rd|th)?"
+        r"(?:,?\s+(?P<year>[0-9]{4}))?",
+        signal,
+        flags=re.IGNORECASE | re.ASCII,
+    )
+    if match is None:
+        return None
+    month_token = match.group("month").casefold()
+    if month_token == "sept":
+        month_token = "sep"
+    month = _MONTH_NUMBERS.get(month_token[:3])
+    if month is None:
+        return None
+    explicit_year = match.group("year")
+    year = int(explicit_year) if explicit_year else current_date.year
+    try:
+        parsed = CalendarDate(year, month, int(match.group("day")))
+        if explicit_year is None and parsed < not_before:
+            parsed = CalendarDate(year + 1, month, int(match.group("day")))
+    except ValueError:
+        return None
+    return parsed
 
 
 def _next_week_decision(text: str) -> bool | None:

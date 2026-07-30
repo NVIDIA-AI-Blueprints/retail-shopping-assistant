@@ -16,16 +16,12 @@ continuity gap: Deep Agents can summarize a long request-local graph run, but
 that summary is not carried into the next shopper request. The agreed
 correction below addresses that general gap without adding an event-specific
 state machine. Its durable summary boundary, rolling compaction, and bounded
-cross-turn weather-receipt projection are now built. A later isolated run
-exposed one typed inconsistency: the weather gate accepted bare `next week`,
-while activation still selected `event_date` and asked for an exact day. The
-narrow correction now uses that same date-authority parser to remove
-`event_date` from the per-turn activation schema only after a bounded date is
-accepted in the current shopper turn. Prior raw-turn dates do not narrow
-activation because event identity remains model-owned, although the weather
-tool's separate eligibility boundary may still use bounded current and recent
-shopper authority. The subsequent full focused live gate passed all three
-diagnostic turns and its Judge scored 4.67/5 overall.
+cross-turn weather-receipt projection are now built. The weather continuity
+correction adds one typed current scope: activation chooses semantic
+`continue`/`replace`, deterministic compilation accepts only current-turn
+authority, and the forecast tool accepts no location/date arguments. Prior raw
+turns and the rolling summary therefore guide subject continuity without
+directly authorizing a provider request.
 
 ## Decision
 
@@ -207,7 +203,7 @@ new request ID, and a successfully finalized turn deletes its checkpoint.
 Deep Agents' internal summary therefore does not cross the durable turn
 boundary. The legacy `summarizer.py` path is not part of the serving runtime.
 
-### Current weather scope correction — storage boundary built 2026-07-30
+### Current weather scope correction — serving boundary built 2026-07-30
 
 Memory migration 10 adds one singleton `CurrentWeatherScope`, not a list of
 event anchors. It contains only a monotonic revision and optional location and
@@ -218,15 +214,79 @@ A typed finalize transition has two meanings:
 
 - `continue` patches supplied components and retains omitted components;
 - `replace` starts a new weather-planning subject and clears omitted
-  components; an empty replace clears both.
+components; an empty replace clears both.
+
+One server-owned fail-safe narrows continuation: when it supplies a location
+while the scope already has one, without a current-turn date, the compiled
+transition sets `clear_window: true`, so the older window is not retained.
 
 Changing location or date invalidates older receipts. A receipt promoted in the
 same finalize must exactly match the resulting complete scope. Venue, occasion,
 products, styling claims, and forecast evidence remain in their existing
 semantic/evidence lanes and never enter this scope. The same singleton can
-represent an event request or ordinary weather-appropriate dressing. This
-storage slice hydrates the scope; the next execution slice binds activation,
-receipt selection, and provider arguments to it.
+represent an event request or ordinary weather-appropriate dressing.
+
+Serving activation now owns one semantic scope decision. It supplies
+`continue` only for the same event, trip, or weather-planning subject and
+`replace` for a different subject; deterministic compilation admits only
+current-turn location/date authority. The resulting provider tool is
+zero-argument: it reads the effective typed scope and cannot rescan recent
+prose or accept a model-authored fallback date. Consequently “a different
+wedding in Seattle” clears an older NYC date unless the current turn also
+supplies a date, while “what should I wear in Denver next week?” uses the same
+scope without an event or venue anchor.
+
+A scope transition that produces a complete scope requires the forecast tool
+call. For an unchanged complete scope, activation sets `weather_refresh=true`
+only for an explicit shopper request for fresh evidence; comparisons and other
+turns leave it false and weather is blocked. Required tool choice is both
+requested from the model and checked on its response, so prose cannot bypass
+the pending evidence step. Diagnostics retain the submitted question while
+recording the separately accepted question boundary.
+
+Receipt binding is mutually exclusive with a scope update and requires exact
+equality to the effective location/date scope. The scope transition and any
+matching receipt promotion finalize atomically. The rolling summary and bounded
+raw turns remain semantic context, never weather-tool authority.
+
+### Serving-boundary validation — 2026-07-30
+
+Focused offline validation passes 625 tests covering weather compilation and
+adapter behavior, activation enforcement, receipt/finalize behavior, memory
+scope application, diagnostics, and the live-fixture contract. This includes
+direct adversarial checks that a supplied continuation location on a populated
+scope has no effective old window and that prose is rejected while a required
+weather call remains pending.
+
+The final Judge-free three-turn live fixture passed every diagnostic
+expectation:
+
+1. NYC on Friday next week compiled a replacement scope and made exactly one
+   qualified zero-argument weather call.
+2. A separate Seattle trip replaced the scope without inheriting the NYC date,
+   made no weather call, and asked only for the missing date.
+3. “It will be next week” continued Seattle, compiled the full
+   Monday-through-Sunday window, and made exactly one Seattle weather call.
+
+The run used 10 application-model calls and 131,106 tokens, made two Visual
+Crossing calls, and averaged 13.69 seconds across the three turns. No Judge,
+Challenger, or broad unit suite ran. Its local run and the comparison to the
+immediately prior same-scenario run are under
+`~/exec-briefs/retail-shopping-assistant/quality/weather_scope_continuity/`;
+the prior sample averaged 12.03 seconds, a 1.66-second timing advantage.
+
+A separate live comparison regression attempt is preserved locally under
+`~/exec-briefs/retail-shopping-assistant/quality/event_context_comparison/failed-live-traces/`.
+Its weather-context turn reached Visual Crossing but received a typed timeout,
+so no receipt was promoted. The following comparison correctly resolved both
+historical products and fetched both detail records, but the prior
+unchanged-scope auto-refresh consumed enough latency for the turn to reach the
+45-second execution deadline. The correction does not retry the provider or
+add an intent router: activation now declares `weather_refresh=true` only for
+an explicit shopper request on an unchanged complete scope, and the runtime
+hides and dispatch-blocks weather otherwise. Focused tests prove both the
+comparison block and explicit-refresh path. No paid live rerun or Judge run was
+made after this narrow correction.
 
 ## Durable Cross-Turn Context Plan — Agreed 2026-07-30
 
@@ -409,20 +469,14 @@ With this addition, one request proceeds as follows:
 3. One request-scoped Deep Agent selects skills and performs the turn. Its
    built-in summarization may still compact a long graph execution, but it
    remains request-local.
-4. Activation may bind exactly one listed receipt only with
-   `event-context`, `event_context_next_question=none`, and an unchanged exact
-   event scope. Unbound receipts never ground, a bound receipt blocks a new
-   weather call, and changed or uncertain scope requires fresh evidence.
-   Before the activation input schema is built, the same closed
-   shopper-authored weather-date authority parser used by the tool gate shapes
-   its next-question enum from the current shopper turn only. If that turn
-   contains an accepted bounded date, including bare `next week`, `event_date`
-   is omitted, preventing a contradictory date question. A date only in prior
-   raw turns does not narrow activation because the model owns event identity;
-   the weather tool may still use bounded current and recent shopper authority
-   under its separate eligibility gate. Skill selection, location, venue,
-   materiality, and intent remain model-owned; this is typed argument
-   consistency, not an intent router or keyword routing layer.
+4. Activation may update the singleton with current-turn authority:
+   `continue` patches the same styling subject and `replace` clears omitted
+   fields for a different one. It may instead bind exactly one listed receipt
+   only with `event-context`, `event_context_next_question=none`, no scope
+   update, and equality to the effective scope. Unbound receipts never ground
+   and a bound receipt blocks a new weather call. Skill selection, subject
+   continuity, venue, materiality, and intent remain model-owned; exact scope
+   compilation and tool binding are deterministic.
    Grounding accepts current validated tool results first, then only the bound
    receipt. The rolling summary alone cannot support an external-fact claim.
 5. Before durable finalization, the chain server may prepare a bounded summary

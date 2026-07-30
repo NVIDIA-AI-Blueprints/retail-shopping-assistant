@@ -1,14 +1,12 @@
 ---
 name: event-context
 description: >-
-  Event destination, venue, and live-forecast context for occasion-led fashion
-  styling. Use only with outfit-styling whenever an event destination or venue
-  is stated, when a forecast would materially change event guidance, or when
-  the response would otherwise ask about missing destination or venue context.
-  A wedding or travel-event styling request with no established setting
-  qualifies even when generic advice is possible. Keep it active through that
-  event thread. Explicit event location overrides saved ZIP; saved ZIP is only
-  a candidate to confirm. Do not use for location-independent styling or
+  Location, venue, and live-forecast context for weather-aware fashion styling.
+  Use only with outfit-styling when a destination, date, venue, or forecast
+  could materially change guidance. This includes occasions, trips, and direct
+  requests for weather-appropriate clothing. Keep it active through that
+  styling subject. Explicit location overrides saved ZIP; saved ZIP is only a
+  candidate to confirm. Do not use for location-independent styling or
   non-styling browsing.
 response_guidance: >-
   Explicit location overrides saved ZIP: never ask "usual area" afterward, fall
@@ -31,13 +29,26 @@ tools_granted:
   - get_weather_forecast_tool
 ---
 
-# Event Context
+# Location and Weather Context
 
 ## Context Authority
 
-- Use this helper only with `outfit-styling`.
-- Prefer explicit current-turn event context, then explicit recent context for
-  the same event. An explicit destination overrides saved ZIP; once established,
+- Use this helper only with `outfit-styling`, for event or non-event
+  weather-aware guidance.
+- `CURRENT WEATHER SCOPE` is the only prior-turn location/date authority. The
+  rolling summary and recent prose provide semantics but cannot authorize a
+  weather call.
+- Activation makes one semantic continuity decision. Use `continue` only for
+  the same event, trip, or weather-planning subject. Use `replace` for a new or
+  different subject; fields omitted from a replacement are intentionally
+  cleared. Include only location/date values supplied or confirmed in the
+  current shopper turn.
+- As a fail-safe, a `continue` update that supplies a location when the scope
+  already has one clears the older date unless the current turn supplies a new
+  date too. This prevents a repeated/corrected location or misclassified
+  subject change from sending the prior date to the provider. Omit
+  `weather_scope` when the same subject's location/date authority is unchanged.
+- An explicit current-turn destination overrides saved ZIP. Once established,
   never ask "usual area or elsewhere?"
 - Saved ZIP is only a tentative location candidate. It proves neither current
   nor event location. It is never shopping, shipping, or availability context.
@@ -55,9 +66,13 @@ tools_granted:
 - If no saved-ZIP context is supplied, there is no usual or home-area candidate.
 - Destination does not establish venue: Cancun does not mean beach, outdoors,
   indoors, or any terrain. Do not carry one event's context into a new event.
-- Current explicit event context wins over recent context for the same event,
-  which wins over a confirmed saved ZIP. An explicit destination forbids
-  fallback to saved ZIP.
+- Current explicit context becomes a validated scope update. An explicit
+  destination forbids fallback to saved ZIP.
+- Continuing the current event, trip, or weather-planning subject omits
+  `subject_change_quote`. Replacing an existing scope includes the shortest
+  exact current-turn phrase that explicitly introduces a new, different, or
+  separate subject. A pronoun, location, date, or occasion alone is not
+  replacement evidence. The server validates the quote and does not persist it.
 - A shopper-stated city, region, country, address, or postal code is valid
   forecast location authority. Keep its shortest sufficient phrase exactly in
   `location`. For an abbreviation or ambiguous place, a separate
@@ -91,6 +106,8 @@ tools_granted:
 - Ask only the accepted typed question when its missing context materially
   changes the next recommendation. Ask at most one short question, never a
   questionnaire.
+- For non-event weather styling, ask only for the missing location or bounded
+  date. Never ask for a venue.
 - When activation selected `event_location`, ask location. When it selected
   `event_venue`, ask the venue or setting. When it selected `event_date`, ask
   for the exact event date or complete range. Do not ask more than one in a
@@ -114,62 +131,28 @@ tools_granted:
 
 ## Forecast Lookup
 
-- Shopper-skill activation has already bound this turn's
-  `event_context_next_question`. Treat that accepted question boundary as
-  authoritative; do not classify it again in this skill. Product work remains
-  governed by the primary styling procedure and its granted tools. Tool
-  availability alone is not a product request: a reply that only supplies the
-  destination, venue, or date requested in the prior response preserves the
-  established candidates and runs no non-weather business tool. A same-turn
-  comparison, refinement, replacement, search, check, or change continues the
-  primary or standalone skill's normal tool procedure.
-- Activation may also bind one listed durable weather receipt when the current
-  turn continues the exact same event location and date scope, selects
-  `event_context_next_question=none`, and does not request a refresh. Once
-  bound, use that typed receipt for weather-aware styling and do not call
-  weather again. A location/date correction, uncertain event identity, or
-  explicit refresh request must omit the receipt and follow the normal lookup
-  boundary.
-- Call `get_weather_forecast_tool` at most once in a turn, before catalog search
-  when both are needed. A schema-invalid call consumes that one attempt; do not
-  repair or retry it at the model layer. The client may internally retry once
-  only after timeout or HTTP 5xx. Never call when deployment context says it is
-  disabled. Never call weather to discover or prompt for missing context. When
-  the accepted next question is `event_location` or `event_venue`, the runtime
-  hides and execution-blocks weather. Product tools granted by other selected
-  skills remain available.
-  When the shopper has not supplied an exact date, complete range, or exact "next
-  week" phrase, the runtime hides and execution-blocks weather for that turn;
-  ask a direct date question only when the accepted activation selected
-  `event_date`. Otherwise continue without collecting weather-only context.
-  Never invent `next_week` as a placeholder. A weather attempt does not close
-  the tool loop or revoke product, cart, or policy capabilities.
-- When activation selected `none`, enabled live weather is material, and the
-  shopper has supplied both valid location authority and a bounded date, call
-  `get_weather_forecast_tool` once before answering. This positive completion
-  step also applies when the current reply only fulfills previously requested
-  context. A typed success or failure completes the attempt; answer truthfully
-  from that outcome and never substitute climate assumptions.
-- Use `confirmed_saved_zip` only after explicit usual-area confirmation and omit
-  both location fields from the call and only when the narrow server gate above
-  can accept it. Otherwise use `shopper_provided_location` with the exact
-  shopper phrase in `location`. For an abbreviation or ambiguous name, require
-  `location_query`, keep that exact phrase as its first component, and append
-  only one or two comma-separated region/country qualifiers. For `NYC`, keep
-  `location="NYC"` and use `location_query="NYC, NY"`. Omit the query only
-  when `location` is already sufficiently qualified. Never add a ZIP or numeric
-  component the shopper did not state or replace the source phrase.
-- Supply an exact ISO event date or complete inclusive range. For the shopper's
-  exact phrase "<weekday> next week", use `relative_date=next_week` plus the
-  matching lowercase `weekday`; the server validates the exact phrase and
-  resolves that one day inside the next calendar Monday-through-Sunday window
-  from the current UTC date. Never omit or change a stated weekday. For bare
-  "next week", use `relative_date=next_week` without `weekday`; the server
-  resolves the full window. A missing, invented, mismatched, mixed, or
-  standalone corrected weekday fails closed. A current negation or different
-  date supersedes an earlier relative date. State the resolved exact date or
-  range so the interpretation is correctable. Never substitute today, history,
-  climate, or a statistical outlook.
+- Shopper-skill activation has already bound the one permitted question and
+  compiled any current-turn `weather_scope` update. Do not classify continuity
+  or rebuild tool arguments after activation.
+- The forecast tool accepts no arguments. The runtime derives its location and
+  exact date window solely from the effective typed scope. Never use recent
+  prose, the rolling summary, or a prior assistant answer as tool authority.
+- Call `get_weather_forecast_tool` at most once, before catalog search when both
+  are needed, and only when the effective scope contains both location and
+  date. Never call it to discover missing context.
+- A scope update that yields a complete effective scope requires one forecast
+  call before prose. For an unchanged complete scope, activation sets
+  `weather_refresh=true` only when the shopper explicitly requests a fresh
+  forecast; comparisons and other turns leave it false, and the runtime blocks
+  weather. A text-only model response cannot bypass a required call.
+- Activation may bind one listed durable receipt only for an unchanged,
+  exact-matching location/date scope, with `event_context_next_question=none`,
+  no `weather_scope` update, and no refresh request. Once bound, do not call
+  weather again.
+- A context-only reply preserves established product candidates and runs no
+  non-weather business tool. A same-turn comparison, refinement, replacement,
+  search, check, cart, or policy request follows the active primary or
+  standalone skill normally.
 - Visual Crossing resolves the shopper's phrase in the same Timeline forecast
   request. Do not synthesize a representative ZIP or use a separate geocoder.
   Treat its returned `resolvedAddress` as the location used and a reversible
@@ -235,7 +218,7 @@ tools_granted:
   condition, available low/high temperature,
   precipitation probability and types, the clickable "Weather Data Provided by
   Visual Crossing" attribution, and the warning that forecasts can change and
-  should be rechecked closer to the event. Do not rewrite, summarize, or
+  should be rechecked closer to the date. Do not rewrite, summarize, or
   selectively omit those facts; keep model-authored prose to concise styling
   judgment.
 - The protected renderer is selected structurally, never by an intent label:

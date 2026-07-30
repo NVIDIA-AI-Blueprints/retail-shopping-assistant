@@ -388,29 +388,32 @@ process runner enforces the same boundary by removing both weather variables
 from memory, guardrail, catalog, and React process environments while retaining
 them for the chain server.
 
-The request-bound shopper wrapper permits one model-visible call attempt on an
-eligible turn. Without a bounded shopper-authored date signal, the runtime
-hides and execution-blocks the tool for that turn. A schema-invalid eligible
-invocation consumes its attempt with no model repair. Within a valid call,
+The request-bound shopper wrapper permits one zero-argument model-visible call
+attempt on an eligible turn. Without a complete effective location/date scope,
+the runtime hides and execution-blocks the tool for that turn. Activation
+compiles current-turn authority first; the execution model cannot supply or
+repair provider arguments. A scope transition that produces a complete scope
+requires this call before accepting a prose response. For an unchanged
+complete scope, only an explicit `weather_refresh=true` activation does so;
+comparisons and other turns block weather. Within a
+scope-valid call,
 `max_provider_attempts: 2` allows one client-internal retry only
 after a timeout or HTTP 5xx. HTTP 400 maps to generic
 `weather_request_invalid`; other 4xx, connection, and response-validation
 failures are not retried. The mandatory activation step owns only
 `event_context_next_question` for event context. It is required exactly with
 `event-context` and omitted otherwise. The activation model chooses it from
-current and recent shopper conversation: `event_location` only
+semantic conversation plus the typed current scope: `event_location` only
 when destination is missing and material, `event_venue` only after destination
 is established when venue or setting is missing and material, `event_date`
 only after destination and any material venue are established when live weather
-is enabled and material and a bounded date is neither established nor
-explicitly unavailable, and `none` otherwise. Before building that activation
-schema, the runtime applies the same closed shopper-authored weather-date
-authority parser used by the tool gate to the current shopper turn only. Once
-that turn contains an accepted bounded date, including bare `next week`, the
-schema omits `event_date` and cannot ask a contradictory date question. Prior
-raw-turn dates cannot narrow activation because event identity remains
-model-owned. Weather tool eligibility remains a separate check that may use
-bounded current and recent shopper authority. An explicitly shopper-stated
+is enabled and material and the effective scope has no bounded date, and
+`none` otherwise. The same activation may submit one current-turn scope update:
+`continue` patches the same styling subject; `replace` clears omitted fields
+for a different subject. If a continuation supplies a location while the
+scope already has one without a current-turn date, the compiled transition
+clears the older window. Prior raw turns and summary prose may guide that semantic choice but
+never become adapter authority. An explicitly shopper-stated
 outdoor patio, beach, garden, rooftop, or open-air setting makes enabled live
 weather material; with destination and that setting but no bounded date,
 activation selects `event_date`. Skill selection, location, venue,
@@ -420,10 +423,11 @@ Only the accepted activation result authorizes that event-context follow-up;
 the server does not infer one from weather configuration or missing context.
 The same activation may bind
 one currently valid `weather_receipt_id` only with
-`event_context_next_question=none` and only for an unchanged exact event
-location/date scope. A correction, uncertainty, or explicit refresh request
-requires fresh evidence. Binding a receipt hides and execution-blocks another
-weather call for that turn.
+`event_context_next_question=none`, no scope update, no refresh request, and
+exact equality to the effective location/date scope. Binding a receipt hides
+and execution-blocks another weather call for that turn.
+`weather_refresh` defaults to false and is accepted only with event context,
+question `none`, no scope update, no receipt, and an unchanged complete scope.
 Accepted `event_location` or `event_venue` hides and execution-blocks weather.
 Never infer beach, outdoor/indoor setting, or terrain from a destination.
 Missing location or date authority may also deny weather. Those weather
@@ -434,14 +438,14 @@ skills, and they do not close the primary skill's normal tool loop.
 union; every business tool retains its ordinary independent validation,
 budget, and synthesis behavior.
 
-`confirmed_saved_zip` omits both
-`location` and `location_query` and reaches the weather client only when a
+`confirmed_saved_zip` omits both location text fields during activation and
+reaches the weather client only when a
 deterministic gate accepts a current location-neutral statement explicitly
 naming `my`/`the` usual/home area, a bare affirmative immediately after the
 assistant's usual/home-area question, or a strict date-only follow-up
 immediately after an accepted confirmation.
 `shopper_provided_location` instead copies one bounded exact named-place,
-address, or postal-code phrase from shopper-authored text into `location`.
+address, or postal-code phrase from the current shopper turn into the scope.
 For an abbreviation or geographically ambiguous name, `location_query` is
 required: it must preserve that exact phrase as its first component and append
 only one or two comma-separated region/country qualifiers. Keep
@@ -651,11 +655,15 @@ material are never promoted.
 Migration 10 adds one current weather-planning scope to that projection. Its
 location and normalized date-window components retain separate memory-stamped
 source turns. `continue` patches components; `replace` clears omitted
-components, preventing a newly introduced location from inheriting an older
-subject's date. A changed scope clears old receipts, and a same-finalize
+components. A server-compiled `clear_window: true` also clears an older window
+when `continue` supplies a location while the scope already has one without a
+current-turn date, preventing a newly introduced location from inheriting an
+older subject's date. A changed scope clears old receipts, and a same-finalize
 promotion must exactly match the resulting complete scope. This storage layer
 is not an event/anchor registry and contains no venue, occasion, product,
-styling, or forecast facts.
+styling, or forecast facts. Serving activation compiles only current-turn
+authority into it; the provider tool has no location/date arguments and reads
+the effective scope directly.
 
 Expiry filtering occurs atomically once at durable turn start. The accepted
 active set is the validity snapshot for the request; no second wall-clock

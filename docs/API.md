@@ -330,6 +330,9 @@ interface AgentDiagnostics {
     rejection_reason?: string;
     duplicate?: boolean;
     restored_fields?: string[];       // Structural fields restored by middleware
+    accepted_event_context_next_question?:
+      'event_location' | 'event_venue' | 'event_date' | 'none';
+      // Server-accepted boundary; submitted value remains in arguments
     weather?: {                       // Categorical only; raw values stay redacted
       request_shape: 'relative_exact_date' | 'relative_range' | 'exact_date' | 'date_range' | 'invalid';
       location_source: 'confirmed_saved_zip' | 'shopper_provided_location' | 'invalid';
@@ -550,35 +553,31 @@ agent tool, granted only by `event-context` beside `outfit-styling`. It exposes
 no application, chain-server, or memory-service weather endpoint and adds no
 field or event to the existing query, SSE, or UI contracts.
 
-`WEATHER_ENABLED=false` is the default. When an operator enables it, a normal
-`/query/stream` or `/query/timing` turn gets one model-visible weather-tool
-attempt on an eligible event-context turn with either an exact ISO event date,
-a complete inclusive range, or a supported shopper-authored date signal.
-Without that date authority, the runtime hides and execution-blocks the tool.
-A call additionally requires one permitted location authority. Exact
-`<weekday> next week` requires the matching lowercase `weekday`. A
-schema-invalid invocation consumes that attempt and cannot be
-repaired at the model layer. Within a valid call, `max_provider_attempts: 2`
+`WEATHER_ENABLED=false` is the default. When enabled, the model-visible weather
+tool has an empty schema and can be attempted once. Its request-bound wrapper
+derives location and exact date window only from the effective
+`CurrentWeatherScope`; the post-activation model cannot author or repair
+provider arguments. Without a complete scope, the runtime hides and
+execution-blocks the tool. Within a scope-valid call, `max_provider_attempts: 2`
 allows one client-internal retry only after a timeout or HTTP 5xx. HTTP 400
 maps to generic `weather_request_invalid`; other 4xx, connection, and
 response-validation failures are not retried:
 
 - activation owns `event_context_next_question`; it is required exactly when
   `event-context` is selected and omitted otherwise. The activation model
-  chooses it from current and recent shopper conversation:
+  chooses it from semantic conversation plus the typed current scope:
   `event_location` only when destination is missing and material,
   `event_venue` only after destination is established when venue or setting is
-  missing and material, `event_date` only after destination and any material
-  venue are established when weather is enabled and material and a bounded date
-  is neither established nor explicitly unavailable, and `none` otherwise.
-  Before constructing this field's enum, the runtime applies the same closed
-  shopper-authored weather-date authority parser used by the tool gate to the
-  current shopper turn only. Once that turn contains an accepted bounded date,
-  including bare `next week`, `event_date` is omitted, preventing a
-  contradictory date question. Prior raw-turn dates do not narrow activation
-  because event identity remains model-owned. This is narrower than weather
-  tool eligibility, which may still use bounded current and recent shopper
-  authority.
+  missing and material, `event_date` when weather is material and the
+  effective scope lacks a bounded window, and `none` otherwise.
+  The same activation may submit one `weather_scope`: `continue` patches the
+  same event/trip/weather subject and `replace` clears omitted fields for a
+  different subject. Deterministic compilation accepts only current-turn
+  location/date authority. If `continue` supplies a location when the scope
+  already has one without a current-turn window, the server clears the older
+  window.
+  Prior raw turns and summary prose can guide the semantic continuity decision
+  but cannot authorize the provider adapter.
   An explicitly shopper-stated outdoor patio, beach, garden, rooftop, or
   open-air setting makes enabled live weather material; with destination and
   that setting but no bounded date, activation selects `event_date`. Skill
@@ -589,11 +588,19 @@ response-validation failures are not retried:
   the server does not infer one from enabled weather or missing context.
   The same activation may optionally bind one ID from the currently valid
   receipt projection, but only with `event-context`,
-  `event_context_next_question=none`, and the exact same event location/date
-  scope. A current correction, uncertainty, or explicit refresh request means
-  no receipt binding. An invalid receipt ID or composition enters the existing
-  typed activation correction path. Binding a valid receipt hides and
+  `event_context_next_question=none`, no `weather_scope` update, no refresh
+  request, and exact equality to the effective location/date scope. An invalid
+  receipt ID or composition enters the existing typed activation correction
+  path. Binding a valid receipt hides and
   execution-blocks another weather call for the turn;
+  `weather_refresh` defaults to `false` and is valid only with
+  `event-context`, `event_context_next_question=none`, no scope update, no
+  receipt, and an unchanged complete scope;
+  a scope transition that produces a complete scope requires the zero-argument
+  weather call before accepting prose. For an unchanged complete scope,
+  `weather_refresh=true` does so only when the shopper explicitly requests
+  fresh evidence; comparisons and other turns leave it false and weather is
+  blocked;
   Accepted `event_location` or
   `event_venue` hides and execution-blocks weather. Missing location or date
   authority may likewise deny weather, but it does not remove any product,
@@ -602,14 +609,14 @@ response-validation failures are not retried:
   the selected skills' grants, subject to each tool's ordinary independent
   validation and loop limits. A destination never establishes beach,
   outdoor/indoor setting, or terrain;
-- `confirmed_saved_zip`, with both `location` and `location_query` omitted from
-  model arguments, only when the narrow
+- `confirmed_saved_zip`, selected during activation with both location text
+  fields omitted, only when the narrow
   deterministic gate accepts a current location-neutral statement explicitly
   naming `my`/`the` usual/home area, a bare affirmative directly after the
   assistant asks about that area, or an immediate strict date-only follow-up to
   an accepted confirmation;
 - `shopper_provided_location`, with `location` copied as a bounded exact phrase
-  from shopper-authored text. A named place, address, or postal code is
+  from the current shopper turn. A named place, address, or postal code is
   sufficient. For an abbreviation or geographically ambiguous name,
   `location_query` is required: it must preserve that exact phrase as its first
   component and append only one or two comma-separated region/country
@@ -635,8 +642,8 @@ the shopper used the exact phrase `next week`. For exact `<weekday> next week`,
 turn's captured UTC date to that one day inside the next
 Monday-through-Sunday window. Bare `next week` requires no `weekday` and
 resolves to the full range. A missing, invented, mismatched, mixed, standalone
-corrected, negated, or superseded weekday fails closed. Without a bounded
-shopper-authored date signal, the runtime hides and execution-blocks weather
+corrected, negated, or superseded weekday fails closed. Without a complete
+effective location/date scope, the runtime hides and execution-blocks weather
 for that turn. A direct date question is permitted only when the accepted
 activation selected `event_date`; the server does not derive that decision from
 weather configuration or missing date authority.
@@ -1522,9 +1529,11 @@ shopper response.
 
 `current_weather_scope_transition` is an optional contract-3 compare-and-swap
 update to one singleton location/date authority object. `continue` patches only
-the supplied location or normalized date-window component and retains the other
-component. `replace` starts a new weather-planning subject and clears every
-omitted component; an empty replace clears the scope. Memory stamps each
+the supplied location or normalized date-window component and normally retains
+the other component. When a compiled continuation supplies a location while
+the scope already has one, without a current-turn window, its server-owned
+`clear_window: true` directive clears the older window. `replace` starts a new weather-planning
+subject and clears every omitted component; an empty replace clears the scope. Memory stamps each
 supplied component with the finalized turn ID and sequence and increments the
 scope revision. A changed location/window invalidates older receipts. Venue,
 occasion, products, styling claims, forecast evidence, and a collection of

@@ -81,14 +81,17 @@ from .conversation_products import (
 )
 from .media_perception import MediaPerceptionClient
 from .skill_activation import (
+    SKILL_ACTIVATION_CLARIFICATION_REQUIRED,
     SKILL_ACTIVATION_COMPLETE,
     SKILL_ACTIVATION_EVENT_CONTEXT_INVALID,
     SKILL_ACTIVATION_EVENT_CONTEXT_REQUIRES_STYLING,
     SKILL_ACTIVATION_MODIFIER_REQUIRES_PRIMARY,
     SKILL_ACTIVATION_MULTIPLE_PRIMARY,
+    SKILL_ACTIVATION_INVALID,
     SKILL_ACTIVATION_REQUIRED,
     SKILL_ACTIVATION_TOOL_NAME,
     SKILL_ACTIVATION_WEATHER_RECEIPT_INVALID,
+    SKILL_ACTIVATION_WEATHER_SCOPE_INVALID,
     SKILL_TOOL_NOT_GRANTED,
     ShopperSkillActivationError,
     ShopperSkillActivationMiddleware,
@@ -114,13 +117,14 @@ from .weather import (
     weather_failure,
 )
 from .weather_tool import (
-    EventWeatherRequest,
+    WeatherScopeForecastBinding,
+    WeatherScopeSelection,
     WeatherForecastEvidence,
     WEATHER_FORECAST_EVIDENCE_PREFIX,
     WEATHER_FORECAST_FAILURE_PREFIX,
-    get_event_weather_forecast_tool,
+    compile_weather_scope_transition,
+    get_scoped_weather_forecast_tool,
     parse_weather_tool_evidence,
-    weather_date_context_available,
 )
 from shared.commerce_contracts import (
     AddCartItemInput,
@@ -141,13 +145,14 @@ from shared.commerce_contracts import (
     UpdateCartItemInput,
 )
 from shared.weather_receipts import (
-    SavedAreaWeatherScope,
-    ShopperLocationWeatherScope,
     WeatherForecastReceipt,
     WeatherReceiptEvidence,
     WeatherReceiptPromotion,
 )
-from shared.weather_scope import CurrentWeatherScope
+from shared.weather_scope import (
+    CurrentWeatherScope,
+    effective_weather_scope_values,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -237,6 +242,10 @@ _EVENT_CONTEXT_RECEIPT_BOUND_WEATHER_BLOCK = (
     "STOP_TOOL_USE: A valid durable forecast receipt is bound for this exact "
     "event scope. Use that receipt and do not refresh weather this turn."
 )
+_EVENT_CONTEXT_NO_REFRESH_WEATHER_BLOCK = (
+    "STOP_TOOL_USE: This turn neither updates the weather scope nor explicitly "
+    "requests fresh forecast evidence. Continue without a weather call."
+)
 _EVENT_CONTEXT_RECEIPT_BOUND_REMINDER = (
     "DURABLE_WEATHER_RECEIPT_BOUND: The exact-scope typed forecast receipt is "
     "authoritative for weather-aware styling on this turn. Do not repeat its "
@@ -251,6 +260,9 @@ _EVENT_CONTEXT_ADDITIVE_ACTIVATION_REMINDER = (
     "replacement, search, check, cart request, or policy request continues "
     "its selected skill's normal tool procedure."
 )
+_EVENT_CONTEXT_QUESTION_BOUNDARY_PREFIX = (
+    "EVENT_CONTEXT_NEXT_QUESTION_BOUNDARY:"
+)
 _WEATHER_DIAGNOSTIC_REDACTION = {"redacted": True}
 _WEATHER_PARTIAL_OUTPUT_REDACTION = "WEATHER TOOL OUTPUT REDACTED"
 _PRIOR_WEATHER_CONTEXT_REDACTION = (
@@ -258,7 +270,7 @@ _PRIOR_WEATHER_CONTEXT_REDACTION = (
     "bound durable receipt)"
 )
 _WEATHER_UNCERTAINTY_TEXT = (
-    "Forecasts can change, so recheck closer to the event."
+    "Forecasts can change, so recheck closer to the date."
 )
 _WEATHER_FACT_LANGUAGE_RE = re.compile(
     r"(?:"
@@ -1199,6 +1211,8 @@ class _ShopperSkillActivationInput(BaseModel):
 
     skill_names: list[str]
     event_context_next_question: EventContextNextQuestion | None = None
+    weather_scope: WeatherScopeSelection | None = None
+    weather_refresh: bool = False
     weather_receipt_id: str | None = None
 
     @model_validator(mode="after")
@@ -1236,9 +1250,26 @@ class _ShopperSkillActivationInput(BaseModel):
                 "event_context_next_question is required exactly when "
                 "event-context is selected",
             )
+        if self.weather_scope is not None and not event_context_selected:
+            raise PydanticCustomError(
+                SKILL_ACTIVATION_WEATHER_SCOPE_INVALID,
+                "weather_scope requires event-context",
+            )
+        if self.weather_refresh and (
+            not event_context_selected
+            or self.event_context_next_question != "none"
+            or self.weather_scope is not None
+        ):
+            raise PydanticCustomError(
+                SKILL_ACTIVATION_WEATHER_SCOPE_INVALID,
+                "weather_refresh requires event-context with no follow-up "
+                "question and no weather_scope update",
+            )
         if self.weather_receipt_id is not None and (
             not event_context_selected
             or self.event_context_next_question != "none"
+            or self.weather_scope is not None
+            or self.weather_refresh
         ):
             raise PydanticCustomError(
                 SKILL_ACTIVATION_WEATHER_RECEIPT_INVALID,
@@ -1251,45 +1282,26 @@ class _ShopperSkillActivationInput(BaseModel):
 def _skill_activation_input_model(
     skill_names: tuple[str, ...],
     weather_receipt_ids: tuple[str, ...] = (),
-    *,
-    weather_date_available: bool = False,
 ) -> type[BaseModel]:
     """Create the semantic skill-selection schema from the active registry."""
 
     skill_name_type = Literal.__getitem__(skill_names)
-    event_context_next_question_type: Any = (
-        Literal["event_location", "event_venue", "none"]
-        if weather_date_available
-        else EventContextNextQuestion
-    )
     event_context_next_question_description = (
         "Required exactly when event-context is selected; omit otherwise. "
-        "Choose event_location only when the event destination is still "
-        "missing and materially changes the next guidance. Choose event_venue "
-        "only after destination is established, when venue/setting is still "
-        "missing and material. Choose none otherwise. This is the only "
-        "event-context follow-up question the response may ask. A bounded "
-        "weather date is already established for this request, so asking for "
-        "another date is not allowed."
-        if weather_date_available
-        else (
-            "Required exactly when event-context is selected; omit otherwise. "
-            "Choose event_location only when the event destination is still "
-            "missing and materially changes the next guidance. Choose "
-            "event_venue only after destination is established, when "
-            "venue/setting is still missing and material. Choose event_date "
-            "only after destination and any material venue are established, "
-            "live weather is enabled and material, and no bounded date is "
-            "established or explicitly unavailable. Choose none otherwise. "
-            "This is the only event-context follow-up question the response "
-            "may ask. An explicitly stated outdoor patio, beach, garden, "
-            "rooftop, or open-air setting makes enabled live weather material: "
-            "with the destination and setting established but no date, choose "
-            "event_date, not none. Example: after Cancun alone choose "
-            "event_venue when setting matters; after the shopper confirms a "
-            "beach setting choose event_date when live weather is enabled and "
-            "material."
-        )
+        "Evaluate this after applying weather_scope from this same activation. "
+        "Choose event_location only when the relevant destination is still "
+        "missing and material. Choose event_venue only for an occasion after "
+        "destination is established, when venue/setting is still missing and "
+        "material. Never choose event_venue for a trip, general weather "
+        "styling, or another non-occasion request. Outdoors, indoors, beach, "
+        "garden, patio, rooftop, and open-air already establish a setting; do "
+        "not ask for a finer venue variant. Choose event_date only when "
+        "enabled live weather is "
+        "material and the resulting typed weather scope has no bounded date. "
+        "If weather_scope supplies a date in this call, choose none, never "
+        "event_date. "
+        "Choose none otherwise. This is the only context follow-up question "
+        "the response may ask."
     )
     weather_receipt_id_type: Any = (
         Literal.__getitem__(weather_receipt_ids)
@@ -1312,18 +1324,50 @@ def _skill_activation_input_model(
                     "styling or product-discovery, never both. Cart and policy "
                     "intents may select their standalone skill without a primary. "
                     "Select event-context only with outfit-styling, and select "
-                    "it whenever an event destination or venue is stated or the "
-                    "response would otherwise ask about or branch on missing "
-                    "destination or venue context. Generic occasion advice is "
-                    "not a reason to omit it."
+                    "it for event or non-event styling whenever location, "
+                    "date, venue, or enabled live weather could materially "
+                    "change guidance."
                 ),
             ),
         ),
         event_context_next_question=(
-            event_context_next_question_type | None,
+            EventContextNextQuestion | None,
             Field(
                 default=None,
                 description=event_context_next_question_description,
+            ),
+        ),
+        weather_scope=(
+            WeatherScopeSelection | None,
+            Field(
+                default=None,
+                description=(
+                    "Optional current-turn update to the single typed weather "
+                    "scope. Initial scope creation uses replace. Use continue "
+                    "only when this is the same styling "
+                    "subject and use replace for a different event, trip, or "
+                    "weather-planning subject. Include only location/date "
+                    "authority stated or confirmed in the current turn. A "
+                    "replace may contain only the newly known fields so older "
+                    "fields are cleared. Replacing an existing scope requires "
+                    "subject_change_quote with the exact current-turn phrase "
+                    "that explicitly introduces the new subject. Omit for a "
+                    "follow-up that neither "
+                    "changes nor establishes scope."
+                ),
+            ),
+        ),
+        weather_refresh=(
+            bool,
+            Field(
+                default=False,
+                description=(
+                    "Set true only when the current shopper explicitly asks "
+                    "to refresh an unchanged complete weather scope. Leave "
+                    "false for comparisons and other turns that do not need "
+                    "fresh forecast evidence. Requires event-context, "
+                    "event_context_next_question=none, and no receipt binding."
+                ),
             ),
         ),
         weather_receipt_id=(
@@ -1332,9 +1376,10 @@ def _skill_activation_input_model(
                 default=None,
                 description=(
                     "Optional currently valid durable weather receipt for the "
-                    "exact same event location and date scope. Select one only "
+                    "exact same location and date scope. Select one only "
                     "with event-context and event_context_next_question=none. "
-                    "Omit it after a current location/date correction or when "
+                    "Omit weather_scope when binding a receipt. Omit the "
+                    "receipt after a current location/date correction or when "
                     "the shopper explicitly asks for a fresh forecast."
                 ),
             ),
@@ -1781,6 +1826,12 @@ class DeepAgentsRuntime:
                 final_termination_reason="completed",
                 saved_zipcode=_saved_zipcode(state.shopper_context),
             )
+            _bind_weather_diagnostics_to_current_scope(
+                state.agent_diagnostics,
+                state,
+                result,
+                request_id=identity.request_id,
+            )
             state.weather_receipt_promotion = (
                 _current_weather_receipt_promotion(
                     state,
@@ -1935,16 +1986,11 @@ class DeepAgentsRuntime:
         if skills_backend is None:
             raise RuntimeError("Shopper skill backend is unavailable.")
         skill_registry = _shopper_skill_registry(skills_root)
-        shopper_authored_texts = _shopper_authored_texts(state)
-        weather_date_available = weather_date_context_available(
-            shopper_authored_texts
-        )
         skill_activation_input = _skill_activation_input_model(
             tuple(skill_registry),
             tuple(
                 receipt.receipt_id for receipt in state.active_weather_receipts
             ),
-            weather_date_available=_current_turn_weather_date_available(state),
         )
         retrieved: dict[str, str] = {}
         state.retrieved = retrieved
@@ -2721,18 +2767,14 @@ class DeepAgentsRuntime:
             previous_selected_skills=state.previous_selected_skill_names,
         )
 
-        weather_forecast_tool = get_event_weather_forecast_tool(
-            self._weather_client,
+        weather_scope_binding = WeatherScopeForecastBinding(
+            state.current_weather_scope,
             saved_zipcode=_saved_zipcode(state.shopper_context),
-            saved_zip_authorized=_saved_zip_authorized_for_weather(state),
-            shopper_provided_texts=shopper_authored_texts,
-            current_date=current_utc_date,
         )
-        if not weather_date_available:
-            skill_gate.deny_tool_for_turn(
-                _WEATHER_TOOL_NAME,
-                _EVENT_CONTEXT_DATE_REQUIRED_WEATHER_BLOCK,
-            )
+        weather_forecast_tool = get_scoped_weather_forecast_tool(
+            self._weather_client,
+            weather_scope_binding,
+        )
         shopping_tools = [
             search_catalog_tool,
             get_product_details_tool,
@@ -2760,6 +2802,8 @@ class DeepAgentsRuntime:
         def activate_shopper_skills_tool(
             skill_names: list[str],
             event_context_next_question: EventContextNextQuestion | None = None,
+            weather_scope: WeatherScopeSelection | None = None,
+            weather_refresh: bool = False,
             weather_receipt_id: str | None = None,
         ) -> str:
             """Select and load shopper behavior skills for this turn. This is
@@ -2771,34 +2815,44 @@ class DeepAgentsRuntime:
             also uses outfit-styling. Use product-discovery for search and browse
             without styling intent. These are alternative primary procedures,
             never a pair. Add budget-shopping only as a modifier when the shopper
-            states a budget. Add event-context only beside outfit-styling, and add
-                it whenever an event destination or venue is stated, a supported
-                forecast would materially change event guidance, or the guidance
-                would otherwise ask about or branch on missing destination or venue
-                context. Generic occasion advice is not a reason to omit it. Keep
+            states a budget. Add event-context only beside outfit-styling, and
+            add it for event or non-event styling whenever location, date,
+            venue, or enabled live weather could materially change guidance. Keep
             outfit-styling as the primary skill throughout an
             active outfit-building thread, including its single-piece follow-up
             searches.
             When event-context is selected, set exactly one
             event_context_next_question: event_location only when destination
-            is still missing and material; event_venue only after destination
-            is established when venue/setting is missing and material;
-            event_date only after destination and any material venue are
-            established, weather is enabled and material, and no bounded date
-            is established or explicitly unavailable; otherwise none.
-            This is the only event-context follow-up the response may ask.
-            An explicitly stated outdoor patio, beach, garden, rooftop, or
-            open-air setting makes enabled live weather material: with the
-            destination and setting established but no bounded date, choose
-            event_date, not none. For Cancun alone, choose event_venue when
-            setting matters; after
-            the shopper confirms a beach setting, choose event_date when live
-            weather is enabled and material. Omit it when event-context is not
-            selected. When a valid durable weather receipt is listed in the
-            current request, bind its weather_receipt_id only when this turn
-            continues the exact same event location and date scope, the next
-            question is none, and the shopper did not ask for a refresh. A
-            location/date correction means omit the receipt. Event context is
+            is missing and material; event_venue only for an occasion after
+            destination is established when setting is missing and material;
+            never event_venue for a trip, general weather styling, or after the
+            shopper establishes outdoors, indoors, beach, garden, patio,
+            rooftop, or open-air as the setting;
+            event_date only when weather is material and the effective typed
+            scope lacks a bounded date; otherwise none. Never ask venue for
+            non-event weather styling.
+            CURRENT WEATHER SCOPE is the only prior location/date authority.
+            Supply weather_scope when the current turn establishes or changes
+            it: initial scope creation uses replace; continue only for the same
+            event/trip/weather subject; replace for a new or different subject.
+            A replacement contains only
+            current-turn authority and clears omitted older fields. Replacing
+            an existing scope requires subject_change_quote containing the
+            exact current-turn words that explicitly introduce the new,
+            different, or separate subject; a pronoun, location, date, or
+            occasion alone is not evidence of replacement. Never
+            import an older subject's date. If continue supplies a location
+            when the scope already has one, without a current-turn date, the
+            server clears the older date. Choose the context question after
+            applying this same call's weather_scope: when it supplies the
+            missing date, choose none, never event_date. Omit weather_scope
+            when unchanged. Set weather_refresh=true only when the shopper
+            explicitly requests a fresh forecast for that unchanged complete
+            scope. Leave it false for comparisons and other turns; a scope
+            update that becomes complete already requires weather.
+            Bind a listed weather_receipt_id only for an unchanged exact scope,
+            with question none, no weather_scope update, and no refresh request.
+            Event context is
             additive: it never replaces the primary skill's product work or
             tool grants.
 
@@ -2811,6 +2865,8 @@ class DeepAgentsRuntime:
                         "event_context_next_question": (
                             event_context_next_question
                         ),
+                        "weather_scope": weather_scope,
+                        "weather_refresh": weather_refresh,
                         "weather_receipt_id": weather_receipt_id,
                     }
                 )
@@ -2822,7 +2878,80 @@ class DeepAgentsRuntime:
             validated_next_question = (
                 validated_activation.event_context_next_question
             )
+            validated_weather_scope = validated_activation.weather_scope
+            validated_weather_refresh = validated_activation.weather_refresh
             validated_receipt_id = validated_activation.weather_receipt_id
+            scope_transition = None
+            if validated_weather_scope is not None:
+                try:
+                    scope_transition = compile_weather_scope_transition(
+                        validated_weather_scope,
+                        current_shopper_text=state.query,
+                        saved_zip_authorized=(
+                            _saved_zip_authorized_for_weather(state)
+                        ),
+                        expected_projection_version=(
+                            state.conversation_projection_version
+                        ),
+                        current_date=current_utc_date,
+                        replacement_evidence_required=(
+                            state.current_weather_scope.location is not None
+                            or state.current_weather_scope.window is not None
+                        ),
+                        continuation_context_available=(
+                            state.current_weather_scope.location is not None
+                            or state.current_weather_scope.window is not None
+                        ),
+                        current_location_scope=(
+                            state.current_weather_scope.location.value
+                            if state.current_weather_scope.location is not None
+                            else None
+                        ),
+                    )
+                except (ValidationError, ValueError):
+                    return skill_gate.handle_activation_validation_error(
+                        SKILL_ACTIVATION_WEATHER_SCOPE_INVALID
+                    )
+            effective_location, effective_window = (
+                effective_weather_scope_values(
+                    state.current_weather_scope,
+                    scope_transition,
+                )
+            )
+            if validated_weather_refresh and (
+                effective_location is None or effective_window is None
+            ):
+                return skill_gate.handle_activation_validation_error(
+                    SKILL_ACTIVATION_WEATHER_SCOPE_INVALID
+                )
+            if (
+                validated_next_question == "event_location"
+                and effective_location is not None
+            ) or (
+                validated_next_question == "event_date"
+                and effective_window is not None
+            ):
+                validated_next_question = "none"
+            if validated_receipt_id is not None:
+                selected_receipt = next(
+                    (
+                        receipt
+                        for receipt in state.active_weather_receipts
+                        if receipt.receipt_id == validated_receipt_id
+                    ),
+                    None,
+                )
+                if (
+                    selected_receipt is None
+                    or selected_receipt.location_scope != effective_location
+                    or (
+                        selected_receipt.evidence.requested_window
+                        != effective_window
+                    )
+                ):
+                    return skill_gate.handle_activation_validation_error(
+                        SKILL_ACTIVATION_WEATHER_RECEIPT_INVALID
+                    )
             try:
                 selected_files = {
                     skill_registry[name].path: skill_registry[name].content
@@ -2837,6 +2966,13 @@ class DeepAgentsRuntime:
                 )
             if not activated:
                 return "SHOPPER_SKILL_ACTIVATION_ALREADY_COMPLETE"
+            if scope_transition is not None:
+                state.current_weather_scope_transition = scope_transition
+                weather_scope_binding.bind(
+                    scope_transition,
+                    relative_date=validated_weather_scope.relative_date,
+                    weekday=validated_weather_scope.weekday,
+                )
             if validated_next_question == "event_location":
                 skill_gate.deny_tool_for_turn(
                     _WEATHER_TOOL_NAME,
@@ -2847,11 +2983,38 @@ class DeepAgentsRuntime:
                     _WEATHER_TOOL_NAME,
                     _EVENT_CONTEXT_VENUE_REQUIRED_WEATHER_BLOCK,
                 )
+            elif effective_location is None:
+                skill_gate.deny_tool_for_turn(
+                    _WEATHER_TOOL_NAME,
+                    _EVENT_CONTEXT_LOCATION_REQUIRED_WEATHER_BLOCK,
+                )
+            elif effective_window is None:
+                skill_gate.deny_tool_for_turn(
+                    _WEATHER_TOOL_NAME,
+                    _EVENT_CONTEXT_DATE_REQUIRED_WEATHER_BLOCK,
+                )
             if validated_receipt_id is not None:
                 state.selected_weather_receipt_id = validated_receipt_id
                 skill_gate.deny_tool_for_turn(
                     _WEATHER_TOOL_NAME,
                     _EVENT_CONTEXT_RECEIPT_BOUND_WEATHER_BLOCK,
+                )
+            elif (
+                (scope_transition is not None or validated_weather_refresh)
+                and validated_next_question == "none"
+                and effective_location is not None
+                and effective_window is not None
+                and _weather_lookup_enabled(self.config.weather)
+            ):
+                skill_gate.require_tool_for_turn(_WEATHER_TOOL_NAME)
+            elif (
+                scope_transition is None
+                and not validated_weather_refresh
+                and validated_receipt_id is None
+            ):
+                skill_gate.deny_tool_for_turn(
+                    _WEATHER_TOOL_NAME,
+                    _EVENT_CONTEXT_NO_REFRESH_WEATHER_BLOCK,
                 )
             activation_result = (
                 f"{SKILL_ACTIVATION_COMPLETE} "
@@ -2860,6 +3023,8 @@ class DeepAgentsRuntime:
             if "event-context" in selected_names:
                 reminders = [
                     f"{activation_result}\n"
+                    f"{_EVENT_CONTEXT_QUESTION_BOUNDARY_PREFIX} "
+                    f"{validated_next_question}\n"
                     f"{_EVENT_CONTEXT_ADDITIVE_ACTIVATION_REMINDER}"
                 ]
                 if validated_receipt_id is not None:
@@ -3127,6 +3292,8 @@ class DeepAgentsRuntime:
             and not has_current_non_weather_business_activity
             and (
                 weather_outcome is not None
+                or event_context_next_question
+                in {"event_location", "event_venue", "event_date"}
                 or (
                     not draft_response.strip()
                     and bool(
@@ -3140,7 +3307,7 @@ class DeepAgentsRuntime:
         if (
             protected_event_response
             and event_context_next_question
-            in {"event_location", "event_venue"}
+            in {"event_location", "event_venue", "event_date"}
         ):
             return _compose_context_only_event_response(
                 state,
@@ -3574,7 +3741,7 @@ class DeepAgentsRuntime:
                 return candidate_fallback
             rewritten = _scrub_internal_shopper_language(
                 f"{candidate_fallback}\n\n{rewritten.strip()}"
-            )
+                )
         rewritten = _scrub_internal_shopper_language(rewritten)
         if isinstance(weather_outcome, WeatherForecastEvidence):
             rewritten = _strip_weather_fact_sentences(rewritten)
@@ -4137,6 +4304,7 @@ Rules:
                     state.historical_product_context
                     or "HISTORICAL PRODUCT INDEX (read-only):\n(none)"
                 ),
+                _format_current_weather_scope(state.current_weather_scope),
                 _format_active_weather_receipts(
                     state.active_weather_receipts
                 ),
@@ -4351,6 +4519,15 @@ Rules:
             )
             else None
         )
+        weather_scope_transition = (
+            state.current_weather_scope_transition
+            if (
+                turn.contract_version >= 3
+                and final_status == "completed"
+                and reason == "completed"
+            )
+            else None
+        )
         if (
             turn.contract_version < 2
             and state.weather_receipt_promotion is not None
@@ -4360,6 +4537,13 @@ Rules:
             )
         if turn.contract_version < 2:
             summary_advance = None
+        if (
+            turn.contract_version < 3
+            and state.current_weather_scope_transition is not None
+        ):
+            state.agent_diagnostics["weather_scope_status"] = (
+                "transition_dropped_contract_v2"
+            )
         start = time.monotonic()
         finalized = False
 
@@ -4384,6 +4568,7 @@ Rules:
                 output=output,
                 summary_advance=advance,
                 weather_receipt_promotion=promotion,
+                current_weather_scope_transition=weather_scope_transition,
             )
 
         try:
@@ -4593,6 +4778,17 @@ def _collect_agent_diagnostics(
                 ),
                 "status": status,
             }
+            if (
+                call["tool_name"] == SKILL_ACTIVATION_TOOL_NAME
+                and status == "completed"
+            ):
+                accepted_question = (
+                    _accepted_event_context_next_question(result_message)
+                )
+                if accepted_question is not None:
+                    entry[
+                        "accepted_event_context_next_question"
+                    ] = accepted_question
             if call["tool_name"] == _WEATHER_TOOL_NAME:
                 entry["weather"] = _weather_diagnostic_summary(
                     call["arguments"],
@@ -4889,6 +5085,67 @@ def _weather_diagnostic_summary(
     }
 
 
+def _bind_weather_diagnostics_to_current_scope(
+    diagnostics: dict[str, Any],
+    state: State,
+    result: Any,
+    *,
+    request_id: str,
+) -> None:
+    """Replace model-argument weather traces with server-bound scope shape."""
+
+    entries = [
+        entry
+        for entry in diagnostics.get("tool_calls", [])
+        if isinstance(entry, dict)
+        and entry.get("tool_name") == _WEATHER_TOOL_NAME
+    ]
+    if not entries:
+        return
+    location_scope, requested_window = effective_weather_scope_values(
+        state.current_weather_scope,
+        state.current_weather_scope_transition,
+    )
+    if location_scope is None or requested_window is None:
+        return
+    outcome = _current_weather_outcome(result, request_id=request_id)
+    if (
+        isinstance(outcome, WeatherForecastEvidence)
+        and outcome.relative_date == "next_week"
+    ):
+        request_shape = (
+            "relative_exact_date"
+            if outcome.weekday is not None
+            else "relative_range"
+        )
+    elif requested_window.start_date == requested_window.end_date:
+        request_shape = "exact_date"
+    else:
+        request_shape = "date_range"
+    location_source = str(getattr(location_scope, "kind", "invalid"))
+    if location_source == "confirmed_saved_zip":
+        provider_input = "saved_zip"
+    elif getattr(location_scope, "location_query", None):
+        provider_input = "location_query"
+    elif getattr(location_scope, "location", None):
+        provider_input = "location"
+    else:
+        provider_input = "invalid"
+    for entry in entries:
+        weather = entry.get("weather")
+        outcome_name = (
+            str(weather.get("outcome", "not_executed"))
+            if isinstance(weather, dict)
+            else "not_executed"
+        )
+        entry["weather"] = {
+            "request_shape": request_shape,
+            "location_source": location_source,
+            "provider_input": provider_input,
+            "outcome": outcome_name,
+        }
+
+
 def _normalized_tool_call(raw_call: Any) -> dict[str, Any]:
     arguments = _value(raw_call, "args")
     if isinstance(arguments, str):
@@ -4916,6 +5173,22 @@ def _diagnostic_tool_arguments(
     safe_arguments = dict(arguments)
     if tool_name == SKILL_ACTIVATION_TOOL_NAME:
         safe_arguments.pop("weather_receipt_id", None)
+        weather_scope = safe_arguments.pop("weather_scope", None)
+        if isinstance(weather_scope, dict):
+            safe_arguments["weather_scope"] = {
+                "action": weather_scope.get("action"),
+                "location_source": weather_scope.get("location_source"),
+                "location_supplied": bool(weather_scope.get("location")),
+                "date_supplied": any(
+                    weather_scope.get(field)
+                    for field in (
+                        "relative_date",
+                        "date",
+                        "start_date",
+                        "end_date",
+                    )
+                ),
+            }
     return safe_arguments
 
 
@@ -4942,6 +5215,11 @@ def _tool_rejection_reason(content: str) -> str | None:
     markers = (
         (SKILL_ACTIVATION_REQUIRED, "skill_activation_required"),
         (SKILL_TOOL_NOT_GRANTED, "skill_tool_not_granted"),
+        (SKILL_ACTIVATION_INVALID, "skill_activation_invalid"),
+        (
+            SKILL_ACTIVATION_CLARIFICATION_REQUIRED,
+            "skill_activation_clarification_required",
+        ),
         ("SHOPPER_SKILL_ACTIVATION_FAILED:", "skill_activation_failed"),
         (
             "STOP_TOOL_USE: This catalog taxonomy and constraint scope was already searched",
@@ -5458,10 +5736,29 @@ def _current_event_context_next_question(
             name == SKILL_ACTIVATION_TOOL_NAME
             and content.startswith(SKILL_ACTIVATION_COMPLETE)
         ):
+            accepted_question = _accepted_event_context_next_question(message)
+            if accepted_question is not None:
+                return accepted_question
             return activation_by_call_id.get(
                 str(_value(message, "tool_call_id") or ""),
             )
     return None
+
+
+def _accepted_event_context_next_question(
+    result_message: Any | None,
+) -> str | None:
+    """Read the server-accepted question from a completed activation receipt."""
+
+    if result_message is None:
+        return None
+    content = _content_to_text(_value(result_message, "content"))
+    match = re.search(
+        rf"(?m)^{re.escape(_EVENT_CONTEXT_QUESTION_BOUNDARY_PREFIX)} "
+        r"(event_location|event_venue|event_date|none)$",
+        content,
+    )
+    return match.group(1) if match is not None else None
 
 
 def _bound_weather_receipt(state: State) -> WeatherForecastReceipt | None:
@@ -5520,7 +5817,7 @@ def _current_weather_receipt_promotion(
     """Pair one successful current weather call/result for atomic promotion."""
 
     messages = _current_turn_messages(_result_messages(result), request_id)
-    requests_by_call_id: dict[str, EventWeatherRequest] = {}
+    weather_call_ids: set[str] = set()
     for message in messages:
         if _message_type(message) != "ai":
             continue
@@ -5529,38 +5826,34 @@ def _current_weather_receipt_promotion(
             call_id = call["tool_call_id"]
             if call["tool_name"] != _WEATHER_TOOL_NAME or not call_id:
                 continue
-            try:
-                requests_by_call_id[call_id] = (
-                    EventWeatherRequest.model_validate(call["arguments"])
-                )
-            except ValidationError:
+            if call["arguments"]:
                 continue
+            weather_call_ids.add(call_id)
+
+    location_scope, requested_window = effective_weather_scope_values(
+        state.current_weather_scope,
+        state.current_weather_scope_transition,
+    )
+    if location_scope is None or requested_window is None:
+        return None
 
     for message in messages:
         if _message_type(message) != "tool":
             continue
         call_id = str(_value(message, "tool_call_id") or "")
-        weather_request = requests_by_call_id.get(call_id)
-        if weather_request is None:
+        if call_id not in weather_call_ids:
             continue
         outcome = parse_weather_tool_evidence(
             _content_to_text(_value(message, "content"))
         )
         if not isinstance(outcome, WeatherForecastEvidence):
             continue
-        if weather_request.location_source == "confirmed_saved_zip":
-            location_scope = SavedAreaWeatherScope()
-        else:
-            if weather_request.location is None:
-                continue
-            location_scope = ShopperLocationWeatherScope(
-                location=weather_request.location,
-                location_query=weather_request.location_query,
-            )
         try:
             evidence = WeatherReceiptEvidence.model_validate(
                 outcome.model_dump(mode="python", exclude_none=True)
             )
+            if evidence.requested_window != requested_window:
+                return None
             return WeatherReceiptPromotion(
                 expected_projection_version=(
                     state.conversation_projection_version
@@ -5642,7 +5935,7 @@ def _format_weather_outcome(
                 "destination and venue."
             )
         return (
-            "I couldn't establish a valid live forecast for that event place "
+            "I couldn't establish a valid live forecast for that place "
             "and date, so I won't assume the conditions."
         )
 
@@ -5672,7 +5965,7 @@ def _format_weather_outcome(
     if len(outcome.days) == 1:
         lines.append("Live forecast:")
     else:
-        lines.append("Live forecast for the event window:")
+        lines.append("Live forecast for the requested window:")
     for day in outcome.days:
         details = [day.condition.replace("_", " ")]
         if (
@@ -5712,8 +6005,8 @@ def _conditional_weather_styling_direction() -> str:
 
     return (
         "Keep the look weather-flexible with a removable layer and, if the "
-        "event is outdoors, a footwear backup for wet or uneven ground; "
-        "recheck the forecast closer to the event."
+        "plans are outdoors, a footwear backup for wet or uneven ground; "
+        "recheck the forecast closer to the date."
     )
 
 
@@ -5822,7 +6115,7 @@ def _deterministic_weather_styling_direction(
         "snow" in conditions
     ):
         return (
-            "Styling direction: keep the established options polished and "
+            "Styling direction: keep the look polished and "
             "flexible with streamlined accessories, an optional outer layer, "
             "and a compact weather backup."
         )
@@ -5836,21 +6129,21 @@ def _deterministic_weather_styling_direction(
         )
     if precipitation_chance:
         return (
-            "Styling direction: keep the established options polished and "
+            "Styling direction: keep the look polished and "
             "flexible with streamlined accessories and a compact weather backup."
         )
     if low_temperature is not None and low_temperature <= 60:
         return (
-            "Styling direction: keep the established options polished and "
+            "Styling direction: keep the look polished and "
             "flexible with streamlined accessories and a removable layer."
         )
     if high_temperature is not None and high_temperature >= 80:
         return (
-            "Styling direction: keep the established options polished with "
+            "Styling direction: keep the look polished with "
             "streamlined accessories and make any optional layer easy to remove."
         )
     return (
-        "Styling direction: keep the established options polished and flexible "
+        "Styling direction: keep the look polished and flexible "
         "with streamlined accessories and adaptable finishing pieces."
     )
 
@@ -5981,7 +6274,7 @@ def _event_context_followup_question(
     """Render only the server-accepted event-context follow-up question."""
 
     if next_question == "event_date":
-        return "What date or date range is the event?"
+        return "What date or date range should I plan around?"
     if next_question == "event_venue":
         return "What kind of venue or setting is planned for the event?"
     if next_question != "event_location":
@@ -5991,8 +6284,8 @@ def _event_context_followup_question(
         and not _saved_area_override_present(state.query)
         and not _contains_exact_zip(state.query)
     ):
-        return "Is the event in your usual area or elsewhere?"
-    return "Where is the event taking place?"
+        return "Should I plan around your usual area or somewhere else?"
+    return "What location should I plan around?"
 
 
 def _compose_context_only_event_response(
@@ -6018,11 +6311,9 @@ def _compose_context_only_event_response(
     elif isinstance(weather_outcome, WeatherFailure):
         parts.append(_conditional_weather_styling_direction())
     elif not styling:
-        if next_question in {
-            "event_location",
-            "event_venue",
-            "event_date",
-        }:
+        if next_question == "event_date":
+            styling = _conditional_weather_styling_direction()
+        elif next_question in {"event_location", "event_venue"}:
             styling = "I’ll apply the event setting before refining the guidance."
         else:
             styling = (
@@ -7509,12 +7800,12 @@ def _event_context_question_boundary(next_question: str | None) -> str:
 
     if next_question == "event_location":
         return (
-            "At most one event-location question is permitted. Do not ask for "
-            "the event date, venue details, dress code, or preferences."
+            "At most one location question is permitted. Do not ask for the "
+            "date, venue details, dress code, or preferences."
         )
     if next_question == "event_date":
         return (
-            "At most one event date or complete date-range question is "
+            "At most one date or complete date-range question is "
             "permitted. The destination is already established: do not ask "
             "about location, usual/home area, venue, dress code, or "
             "preferences."
@@ -7749,6 +8040,37 @@ def _format_active_weather_receipts(
     )
 
 
+def _format_current_weather_scope(scope: CurrentWeatherScope) -> str:
+    """Render typed authority for semantic continue/replace selection."""
+
+    payload: dict[str, Any] = {"revision": scope.revision}
+    if scope.location is not None:
+        payload["location"] = {
+            "value": scope.location.value.model_dump(
+                mode="json",
+                exclude_none=True,
+            ),
+            "source_sequence": scope.location.source_sequence,
+        }
+    if scope.window is not None:
+        payload["window"] = {
+            "value": scope.window.value.model_dump(mode="json"),
+            "source_sequence": scope.window.source_sequence,
+        }
+    return (
+        "CURRENT WEATHER SCOPE "
+        "(typed location/date authority; not forecast evidence; choose "
+        "continue only for the same styling subject and replace for a "
+        "different subject):\n"
+        + json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
+    )
+
+
 def _shopper_authored_texts(state: State) -> tuple[str, ...]:
     """Return bounded shopper text for exact event-location provenance."""
 
@@ -7759,12 +8081,6 @@ def _shopper_authored_texts(state: State) -> tuple[str, ...]:
             if text.strip()
         )
     )
-
-
-def _current_turn_weather_date_available(state: State) -> bool:
-    """Narrow activation only from current-turn bounded date authority."""
-
-    return weather_date_context_available((state.query,))
 
 
 def _saved_zip_authorized_for_weather(state: State) -> bool:
@@ -7846,6 +8162,7 @@ def _redact_prior_weather_assistant_text(context: str) -> str:
         ),
         "Live forecast:",
         "Live forecast for the event window:",
+        "Live forecast for the requested window:",
         VISUAL_CROSSING_ATTRIBUTION_LABEL,
         VISUAL_CROSSING_ATTRIBUTION_URL,
     )

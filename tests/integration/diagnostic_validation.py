@@ -42,6 +42,12 @@ def _validate_diagnostic_expectations(
         raise AssertionError(f"{label}: agent_diagnostics.tool_calls must be a list")
 
     normalized_calls = [call for call in tool_calls if isinstance(call, dict)]
+    activation_calls = [
+        call
+        for call in normalized_calls
+        if call.get("tool_name") == "activate_shopper_skills_tool"
+        and call.get("status") == "completed"
+    ]
     called_tools = {str(call.get("tool_name") or "") for call in normalized_calls}
     completed_tools = {
         str(call.get("tool_name") or "")
@@ -60,25 +66,39 @@ def _validate_diagnostic_expectations(
 
     required_next_question = expected.get("required_event_context_next_question")
     if required_next_question is not None:
-        activation_calls = [
-            call
-            for call in normalized_calls
-            if call.get("tool_name") == "activate_shopper_skills_tool"
-            and call.get("status") == "completed"
-        ]
         if len(activation_calls) != 1:
             raise AssertionError(
                 f"{label}: expected one completed skill activation, "
                 f"found {len(activation_calls)}"
             )
-        actual_next_question = (activation_calls[0].get("arguments") or {}).get(
-            "event_context_next_question"
+        actual_next_question = activation_calls[0].get(
+            "accepted_event_context_next_question",
+            (activation_calls[0].get("arguments") or {}).get(
+                "event_context_next_question"
+            ),
         )
         if actual_next_question != required_next_question:
             raise AssertionError(
                 f"{label}: expected event-context next question "
                 f"{required_next_question!r}, found "
                 f"{actual_next_question!r}"
+            )
+
+    required_weather_scope = expected.get("required_weather_scope")
+    if required_weather_scope is not None:
+        if len(activation_calls) != 1:
+            raise AssertionError(
+                f"{label}: expected one completed skill activation, "
+                f"found {len(activation_calls)}"
+            )
+        actual_weather_scope = (activation_calls[0].get("arguments") or {}).get(
+            "weather_scope"
+        )
+        if actual_weather_scope != dict(required_weather_scope):
+            raise AssertionError(
+                f"{label}: expected weather scope "
+                f"{dict(required_weather_scope)!r}, found "
+                f"{actual_weather_scope!r}"
             )
 
     for tool_name in expected.get("required_tools", []):

@@ -58,16 +58,16 @@ grounding only after an accepted binding. Memory evaluates expiry atomically at
 durable turn start, and that accepted receipt set remains the validity snapshot
 for the request without a second mid-turn wall-clock check.
 
-Before building the activation input schema, the runtime applies the same
-closed shopper-authored weather-date authority parser used by the weather tool
-gate to the current shopper turn only. Once that turn contains an accepted
-bounded date, including bare `next week`, `event_date` is removed from the
-allowed next-question enum. Prior raw-turn dates cannot narrow activation
-because event identity remains model-owned. Weather tool eligibility is a
-separate boundary and may still use bounded current and recent shopper
-authority. This is typed argument consistency; skill selection, event
-materiality, location, venue, and shopper intent remain model-owned, with no
-intent router or keyword routing layer.
+The activation input contains the typed current weather scope. The model
+semantically chooses `continue` for the same styling subject or `replace` for a
+different one; deterministic compilation accepts only current-turn
+location/date authority. Supplying a location under `continue` when the scope
+already has one clears the older date unless that turn supplies a replacement
+window. Prior raw turns
+and summary prose can guide that
+semantic choice but cannot authorize the provider adapter. This is typed
+authority; skill selection, subject continuity, materiality, venue, and intent
+remain model-owned, with no intent router or keyword routing layer.
 
 The model-facing catalog tool accepts one flat executable search. Its fields
 are `semantic_query`, `shopper_guidance`, `requested_product_type`, `taxonomy`,
@@ -268,7 +268,7 @@ termination reason to `incomplete_agent_response`.
 | `mutating_cart` | Changes cart contents. | Slice 0 requires the cart-management grant, valid refs, and service-side success. Skill instructions require explicit shopper intent, but server-owned current-turn intent authorization is a later slice. |
 | `read_only_policy` | Reads controlled operator-managed policy content. | Never substitute model knowledge when a topic is absent. |
 | `read_only_promotions` | Reports the deployment's promotion signal without treating catalog results or price as markdown evidence. | Granted by product discovery and outfit styling; currently no active promotion is configured. |
-| `read_only_weather` | Reads bounded live forecast evidence for a qualified event location/date without changing shopper or commerce state. | Granted only by event context beside outfit styling; one model-visible attempt per eligible turn, including invalid schema; a valid call allows at most two provider attempts for timeout/5xx only; current success or one explicitly bound valid exact-scope receipt may ground weather. |
+| `read_only_weather` | Reads bounded live forecast evidence for a qualified typed location/date scope without changing shopper or commerce state. | Granted only by event context beside outfit styling; a transition that completes the scope or explicit refresh opens one zero-argument model-visible attempt, while other unchanged turns block it; a valid call allows at most two provider attempts for timeout/5xx only; current success or one explicitly bound valid exact-scope receipt may ground weather. |
 | `future_high_risk` | Checkout, payment, orders, account changes. | Not registered. Requires stronger auth, idempotency, ownership checks, and confirmation policy before use. |
 
 ## Registered Tools
@@ -311,6 +311,10 @@ Inputs:
   and `event_context_next_question=none`, and only when the shopper is
   continuing the exact same event location/date scope without requesting a
   refresh. Omit it for a correction, uncertainty, or different scope.
+- `weather_refresh`: Boolean, default `false`. Set it only when the shopper
+  explicitly asks for a fresh forecast for an unchanged complete scope.
+  Comparisons and other turns leave it false. It requires `event-context`,
+  `event_context_next_question=none`, no `weather_scope`, and no receipt.
 
 Preconditions:
 
@@ -343,12 +347,21 @@ Side effects:
   weather. Missing location or date authority may also deny weather, but does
   not revoke any business tool from the selected skills' additive grant union
   or close the primary skill's normal tool loop.
-- A valid `weather_receipt_id` binds that one receipt for grounding and hides
-  and execution-blocks a new weather call. Every unbound receipt remains
-  non-evidence.
+- A valid `weather_scope` is compiled from current-turn authority and selects
+  `continue` or `replace` for the singleton. Supplying a location under
+  `continue` when the scope already has one clears the retained date unless
+  the same turn supplies one.
+  A valid `weather_receipt_id` is
+  mutually exclusive with that update, must exactly match the effective scope,
+  binds that one receipt for grounding, and hides a new weather call. Every
+  unbound receipt remains non-evidence.
 - Supplies the accepted `event_context_next_question` as the only
   event-context question boundary to final response handling. The server does
   not infer a question from weather configuration or missing context.
+- A scope transition that produces a complete scope requires the zero-argument
+  weather call before accepting prose. For an unchanged complete scope, only
+  explicit `weather_refresh=true` requires it; comparisons and other turns
+  block weather.
 - Makes no catalog, cart, policy, availability, or other external service call.
 
 Failure behavior:
@@ -357,6 +370,8 @@ Failure behavior:
   commerce tools.
 - A model response that tries to finish without activation fails the turn with
   final termination reason `skill_activation_failed`.
+- A model response that tries to finish while the server-required weather call
+  is pending fails closed; it cannot substitute prose for the tool result.
 - Same-batch commerce calls are rejected with
   `skill_activation_required`; a successful activation from an earlier request
   does not satisfy the current turn.
@@ -1056,36 +1071,14 @@ Current limitations:
 
 ### `get_weather_forecast_tool`
 
-Purpose: Read one bounded live daily forecast for occasion-led styling after
-the event location authority and exact date/window are established.
+Purpose: Read one bounded live daily forecast for event or non-event styling
+after the typed current location/date scope is complete.
 
 Inputs:
 
-- `location_source`: exactly `confirmed_saved_zip` or
-  `shopper_provided_location`.
-- `location`: omitted for `confirmed_saved_zip`; otherwise one bounded exact
-  named-place, address, or postal-code phrase that appears in shopper-authored
-  conversation text.
-- `location_query`: omitted for `confirmed_saved_zip`. For
-  `shopper_provided_location`, it is required when `location` is an abbreviation
-  or geographically ambiguous: it must preserve the exact shopper-authored
-  location as its first component and append only one or two comma-separated
-  region/country qualifiers. Keep `location="NYC"` and use
-  `location_query="NYC, NY"`; `Springfield, TX` is a valid explicit regional
-  assumption. It must not add an unstated ZIP or numeric component. Omit it
-  only when `location` is already sufficiently qualified.
-  Semantic equivalence remains model-owned rather than being presented as
-  deterministic proof, and the provider-resolved place keeps it correctable.
-  The adapter sends this bounded named place directly to Visual Crossing
-  Timeline and does not synthesize a ZIP or call a separate geocoder.
-  Visual Crossing's `resolvedAddress` becomes the reversible
-  `resolved_location` assumption for shopper-provided mode.
-- Exactly one `date` in ISO `YYYY-MM-DD` form, one complete inclusive
-  `start_date`/`end_date` ISO range, or `relative_date=next_week`. Explicit and
-  relative date modes are mutually exclusive. The maximum range is 15 days.
-- Optional lowercase `weekday` (`monday` through `sunday`), valid only with
-  `relative_date=next_week` and required exactly when the shopper said
-  `<weekday> next week`.
+- None. The model-visible schema is empty. The request-bound adapter reads the
+  effective `CurrentWeatherScope` compiled during activation. Location/date
+  values cannot be supplied or changed in this call.
 
 Preconditions:
 
@@ -1102,7 +1095,7 @@ Preconditions:
   assistant's usual/home-area question, or an immediate strict date-only
   follow-up to an accepted confirmation.
 - `shopper_provided_location` is allowed only with the exact bounded phrase
-  supplied by the shopper. A current explicit destination overrides and
+  supplied in the current shopper turn. A current explicit destination overrides and
   forbids fallback to saved ZIP. `location` remains that provenance authority
   even when `location_query` supplies the provider-facing place assumption.
 - Any explicit current place, question, negation, uncertainty, or
@@ -1116,7 +1109,7 @@ Preconditions:
   Monday-through-Sunday window from the turn's captured UTC date. Bare `next
   week` requires no `weekday` and derives the full range. Omitted, invented,
   mismatched, mixed, negated, or superseded weekday authority fails closed.
-  Without a bounded shopper-authored date signal, the runtime hides and
+  Without a complete effective location/date scope, the runtime hides and
   execution-blocks this tool for the turn. A direct date question is permitted
   only when accepted activation selected `event_date`; the server does not
   infer it from enabled weather or missing date authority.
@@ -1124,11 +1117,11 @@ Preconditions:
   single-day phrase such as `tomorrow` against that same anchor into an exact
   ISO date. Other ambiguous or unresolved relative dates, an unconfirmed saved
   area, and location-independent requests do not authorize a call.
-- The request-bound server guard permits one model-visible attempt per eligible
-  turn. Native schema
-  validation failure claims that attempt before returning the sanitized
-  invalid-request outcome, so there is no model weather repair. Within a valid
-  call, `max_provider_attempts: 2` permits one internal retry only after timeout
+- The request-bound server guard permits one zero-argument model-visible
+  attempt when this activation's transition produces a complete scope or
+  `weather_refresh=true` explicitly requests fresh evidence for an unchanged
+  complete scope. Other unchanged turns deny the tool. Within a scope-valid call,
+  `max_provider_attempts: 2` permits one internal retry only after timeout
   or HTTP 5xx. HTTP 400 maps to generic `weather_request_invalid`; other 4xx,
   connection, and response-validation failures are not retried.
 

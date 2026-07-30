@@ -114,6 +114,23 @@ def test_standalone_validator_needs_no_judge_environment(
     )
 
 
+def test_standalone_validator_uses_server_accepted_question_boundary() -> None:
+    validator = _load_validator()
+    diagnostics = _diagnostics()
+    activation = diagnostics["tool_calls"][0]
+    activation["arguments"]["event_context_next_question"] = "event_date"
+    activation["accepted_event_context_next_question"] = "none"
+
+    validator._validate_diagnostic_expectations(
+        _expectations(),
+        diagnostics,
+        response=(
+            "Intricate Lace Gown and Wavy Hem Satin Dress are compared."
+        ),
+        label="comparison",
+    )
+
+
 @pytest.mark.parametrize(
     ("mutate", "message"),
     [
@@ -209,6 +226,45 @@ def test_standalone_validator_checks_weather_outcome_and_response() -> None:
             diagnostics,
             response="Weather Data Provided by Visual Crossing",
             label="weather",
+        )
+
+
+def test_standalone_validator_checks_redacted_weather_scope_transition() -> None:
+    validator = _load_validator()
+    expected_scope = {
+        "action": "replace",
+        "location_source": "shopper_provided_location",
+        "location_supplied": True,
+        "date_supplied": False,
+    }
+    diagnostics = {
+        "tool_calls": [
+            {
+                "tool_name": "activate_shopper_skills_tool",
+                "status": "completed",
+                "arguments": {
+                    "skill_names": ["outfit-styling", "event-context"],
+                    "event_context_next_question": "event_date",
+                    "weather_scope": dict(expected_scope),
+                },
+            }
+        ]
+    }
+
+    validator._validate_diagnostic_expectations(
+        {"required_weather_scope": expected_scope},
+        diagnostics,
+        label="scope",
+    )
+
+    diagnostics["tool_calls"][0]["arguments"]["weather_scope"]["action"] = (
+        "continue"
+    )
+    with pytest.raises(AssertionError, match="expected weather scope"):
+        validator._validate_diagnostic_expectations(
+            {"required_weather_scope": expected_scope},
+            diagnostics,
+            label="scope",
         )
 
 

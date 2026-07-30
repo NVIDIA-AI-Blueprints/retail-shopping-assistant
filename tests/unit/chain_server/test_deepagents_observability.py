@@ -144,6 +144,45 @@ def test_tool_trace_preserves_model_order_arguments_skills_and_duplicates() -> N
     assert diagnostics["partial_graph_messages"] == []
 
 
+def test_activation_trace_keeps_submitted_and_accepted_question_values() -> None:
+    messages = [
+        HumanMessage(content="REQUEST ID: request-a"),
+        AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "id": "skill-activation",
+                    "name": SKILL_ACTIVATION_TOOL_NAME,
+                    "args": {
+                        "skill_names": ["outfit-styling", "event-context"],
+                        "event_context_next_question": "event_date",
+                    },
+                }
+            ],
+        ),
+        ToolMessage(
+            content=(
+                f"{SKILL_ACTIVATION_COMPLETE} "
+                "/shopper/outfit-styling/SKILL.md, "
+                "/shopper/event-context/SKILL.md\n"
+                "EVENT_CONTEXT_NEXT_QUESTION_BOUNDARY: none"
+            ),
+            name=SKILL_ACTIVATION_TOOL_NAME,
+            tool_call_id="skill-activation",
+        ),
+    ]
+
+    diagnostics = _collect_agent_diagnostics(
+        messages,
+        request_id="request-a",
+        final_termination_reason="completed",
+    )
+
+    activation = diagnostics["tool_calls"][0]
+    assert activation["arguments"]["event_context_next_question"] == "event_date"
+    assert activation["accepted_event_context_next_question"] == "none"
+
+
 def test_weather_trace_redacts_arguments_and_partial_output() -> None:
     messages = [
         HumanMessage(

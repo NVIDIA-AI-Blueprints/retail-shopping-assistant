@@ -69,6 +69,7 @@ from shared.commerce_contracts import (
     ProductSummary,
     SearchCatalogResult,
 )
+from shared.weather_scope import CurrentWeatherScope
 
 
 class _StubRuntime:
@@ -2692,6 +2693,8 @@ class TestDeepAgentsRuntimeRefs:
     ) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
 
+        base_config.weather.enabled = True
+        monkeypatch.setenv("WEATHER_API_KEY", "unit-weather-key")
         captured: Dict[str, Any] = {}
         captured_weather: Dict[str, Any] = {}
         deepagents_mod = ModuleType("deepagents")
@@ -2735,16 +2738,25 @@ class TestDeepAgentsRuntimeRefs:
         monkeypatch.setitem(sys.modules, "langchain_core.tools", tools_mod)
         monkeypatch.setitem(sys.modules, "langchain_openai", openai_mod)
         original_weather_tool_factory = (
-            runtime_mod.get_event_weather_forecast_tool
+            runtime_mod.get_scoped_weather_forecast_tool
         )
 
-        def capture_weather_tool_factory(*args, **kwargs):
-            captured_weather.update(kwargs)
-            return original_weather_tool_factory(*args, **kwargs)
+        class RecordingWeatherClient:
+            def get_forecast(self, request):
+                captured_weather["request"] = request
+                return weather_failure("weather_unavailable")
+
+        def capture_weather_tool_factory(client, binding):
+            del client
+            captured_weather["binding"] = binding
+            return original_weather_tool_factory(
+                RecordingWeatherClient(),
+                binding,
+            )
 
         monkeypatch.setattr(
             runtime_mod,
-            "get_event_weather_forecast_tool",
+            "get_scoped_weather_forecast_tool",
             capture_weather_tool_factory,
         )
         monkeypatch.setattr(
@@ -2847,6 +2859,8 @@ class TestDeepAgentsRuntimeRefs:
         assert set(activation_schema["properties"]) == {
             "skill_names",
             "event_context_next_question",
+            "weather_scope",
+            "weather_refresh",
             "weather_receipt_id",
         }
         assert set(activation_schema["required"]) == {"skill_names"}
@@ -2868,9 +2882,57 @@ class TestDeepAgentsRuntimeRefs:
             "none",
         ]
         assert next_question_options[1]["type"] == "null"
-        assert "only event-context follow-up" in activation_schema[
+        assert "only context follow-up" in activation_schema[
             "properties"
         ]["event_context_next_question"]["description"]
+        assert "after applying weather_scope from this same activation" in (
+            activation_schema["properties"]["event_context_next_question"][
+                "description"
+            ]
+        )
+        assert "Never choose event_venue for a trip, general weather" in (
+            activation_schema["properties"]["event_context_next_question"][
+                "description"
+            ]
+        )
+        assert "do not ask for a finer venue variant" in (
+            activation_schema["properties"]["event_context_next_question"][
+                "description"
+            ]
+        )
+        weather_scope_ref = activation_schema["properties"]["weather_scope"][
+            "anyOf"
+        ][0]["$ref"]
+        weather_scope_schema = activation_schema["$defs"][
+            weather_scope_ref.rsplit("/", 1)[-1]
+        ]["properties"]
+        assert "location='NYC', location_query='NYC, NY'" in (
+            weather_scope_schema["location_query"]["description"]
+        )
+        assert "A pronoun, location, date, or occasion alone" in (
+            weather_scope_schema["subject_change_quote"]["description"]
+        )
+        assert "Initial scope creation uses replace" in weather_scope_schema[
+            "action"
+        ]["description"]
+        assert "Never add an unstated ZIP or numeric component" in (
+            weather_scope_schema["location_query"]["description"]
+        )
+        assert "full Monday-Sunday window" in weather_scope_schema[
+            "relative_date"
+        ]["description"]
+        assert "only when the current turn explicitly says" in (
+            weather_scope_schema["weekday"]["description"]
+        )
+        assert "exactly equals the normalized current-turn" in (
+            weather_scope_schema["date"]["description"]
+        )
+        assert "explicitly asks to refresh" in activation_schema[
+            "properties"
+        ]["weather_refresh"]["description"]
+        assert "comparisons and other turns" in activation_schema[
+            "properties"
+        ]["weather_refresh"]["description"]
         assert activation_schema["properties"]["weather_receipt_id"]["type"] == (
             "null"
         )
@@ -2943,18 +3005,8 @@ class TestDeepAgentsRuntimeRefs:
         assert tools_by_name["get_weather_forecast_tool"].return_direct is False
         assert set(
             tools_by_name["get_weather_forecast_tool"].args_schema.model_fields
-        ) == {
-            "location_source",
-            "location",
-            "location_query",
-            "relative_date",
-            "weekday",
-            "date",
-            "start_date",
-            "end_date",
-        }
-        assert captured_weather["shopper_provided_texts"] == ("hello",)
-        assert captured_weather["current_date"] == date(2026, 7, 28)
+        ) == set()
+        assert captured_weather["binding"].current_scope == CurrentWeatherScope()
         assert "Current server date is 2026-07-28 UTC" in captured[
             "system_prompt"
         ]
@@ -2969,9 +3021,9 @@ class TestDeepAgentsRuntimeRefs:
             tool_loop_control,
             runtime_mod.ToolLoopControlMiddleware,
         )
-        assert skill_gate._runtime_tool_rejections[
-            "get_weather_forecast_tool"
-        ] == runtime_mod._EVENT_CONTEXT_DATE_REQUIRED_WEATHER_BLOCK
+        assert "get_weather_forecast_tool" not in (
+            skill_gate._runtime_tool_rejections
+        )
         assert skill_gate._skill_tool_grants["outfit-styling"] == {
             "search_catalog_tool",
             "get_product_details_tool",
@@ -3277,6 +3329,280 @@ class TestDeepAgentsRuntimeRefs:
         runtime._create_agent(
             State(
                 user_id=111,
+                query="It will be next week.",
+                conversation_projection_version=2,
+                current_weather_scope=CurrentWeatherScope.model_validate(
+                    {
+                        "revision": 1,
+                        "location": {
+                            "value": {
+                                "kind": "shopper_provided_location",
+                                "location": "Seattle",
+                            },
+                            "source_turn_id": "turn-seattle",
+                            "source_sequence": 2,
+                        },
+                    }
+                ),
+            ),
+            identity,
+        )
+        continued_scope_tools = {
+            fn.__name__: fn for fn in captured["tools"]
+        }
+        _, continued_scope_gate = captured["middleware"]
+        accepted_continuation = continued_scope_tools[
+            "activate_shopper_skills_tool"
+        ](
+            skill_names=["outfit-styling", "event-context"],
+            event_context_next_question="event_date",
+            weather_scope={
+                "action": "continue",
+                "relative_date": "next_week",
+            },
+        )
+
+        assert accepted_continuation.startswith(
+            runtime_mod.SKILL_ACTIVATION_COMPLETE
+        )
+        assert (
+            "EVENT_CONTEXT_NEXT_QUESTION_BOUNDARY: none"
+            in accepted_continuation
+        )
+        assert (
+            continued_scope_gate._required_tool
+            == "get_weather_forecast_tool"
+        )
+
+        runtime._create_agent(
+            State(
+                user_id=111,
+                query="Help with a different wedding in Seattle.",
+                conversation_projection_version=3,
+                current_weather_scope=CurrentWeatherScope.model_validate(
+                    {
+                        "revision": 1,
+                        "location": {
+                            "value": {
+                                "kind": "shopper_provided_location",
+                                "location": "NYC",
+                                "location_query": "NYC, NY",
+                            },
+                            "source_turn_id": "turn-nyc",
+                            "source_sequence": 1,
+                        },
+                        "window": {
+                            "value": {
+                                "start_date": "2026-08-07",
+                                "end_date": "2026-08-07",
+                            },
+                            "source_turn_id": "turn-nyc",
+                            "source_sequence": 1,
+                        },
+                    }
+                ),
+            ),
+            identity,
+        )
+        changed_location_tools = {
+            fn.__name__: fn for fn in captured["tools"]
+        }
+        _, changed_location_gate = captured["middleware"]
+        changed_location_activation = changed_location_tools[
+            "activate_shopper_skills_tool"
+        ](
+            skill_names=["outfit-styling", "event-context"],
+            event_context_next_question="event_date",
+            weather_scope={
+                "action": "continue",
+                "location_source": "shopper_provided_location",
+                "location": "Seattle",
+            },
+        )
+        assert changed_location_activation.startswith(
+            runtime_mod.SKILL_ACTIVATION_COMPLETE
+        )
+        assert (
+            "EVENT_CONTEXT_NEXT_QUESTION_BOUNDARY: event_date"
+            in changed_location_activation
+        )
+        assert (
+            captured_weather["binding"].transition.clear_window is True
+        )
+        assert changed_location_gate._required_tool is None
+        assert changed_location_gate._runtime_tool_rejections[
+            "get_weather_forecast_tool"
+        ] == runtime_mod._EVENT_CONTEXT_DATE_REQUIRED_WEATHER_BLOCK
+
+        runtime._create_agent(
+            State(
+                user_id=111,
+                query="Help me plan for the same trip.",
+                current_weather_scope=CurrentWeatherScope.model_validate(
+                    {
+                        "revision": 1,
+                        "location": {
+                            "value": {
+                                "kind": "shopper_provided_location",
+                                "location": "Seattle",
+                            },
+                            "source_turn_id": "turn-seattle",
+                            "source_sequence": 2,
+                        },
+                    }
+                ),
+            ),
+            identity,
+        )
+        established_location_tools = {
+            fn.__name__: fn for fn in captured["tools"]
+        }
+        accepted_location_question = established_location_tools[
+            "activate_shopper_skills_tool"
+        ](
+            skill_names=["outfit-styling", "event-context"],
+            event_context_next_question="event_location",
+        )
+        assert accepted_location_question.startswith(
+            runtime_mod.SKILL_ACTIVATION_COMPLETE
+        )
+        assert (
+            "EVENT_CONTEXT_NEXT_QUESTION_BOUNDARY: none"
+            in accepted_location_question
+        )
+
+        runtime._create_agent(
+            State(
+                user_id=111,
+                query="Refresh the forecast for that trip.",
+                current_weather_scope=CurrentWeatherScope.model_validate(
+                    {
+                        "revision": 1,
+                        "location": {
+                            "value": {
+                                "kind": "shopper_provided_location",
+                                "location": "Seattle",
+                            },
+                            "source_turn_id": "turn-seattle",
+                            "source_sequence": 2,
+                        },
+                    }
+                ),
+            ),
+            identity,
+        )
+        incomplete_refresh_tools = {
+            fn.__name__: fn for fn in captured["tools"]
+        }
+        _, incomplete_refresh_gate = captured["middleware"]
+        incomplete_refresh = incomplete_refresh_tools[
+            "activate_shopper_skills_tool"
+        ](
+            skill_names=["outfit-styling", "event-context"],
+            event_context_next_question="none",
+            weather_refresh=True,
+        )
+        assert incomplete_refresh.startswith(
+            runtime_mod.SKILL_ACTIVATION_INVALID
+        )
+        assert incomplete_refresh_gate._status == "pending"
+
+        runtime._create_agent(
+            State(
+                user_id=111,
+                query="Refresh the forecast for that trip.",
+                current_weather_scope=CurrentWeatherScope.model_validate(
+                    {
+                        "revision": 1,
+                        "location": {
+                            "value": {
+                                "kind": "shopper_provided_location",
+                                "location": "Seattle",
+                            },
+                            "source_turn_id": "turn-seattle",
+                            "source_sequence": 2,
+                        },
+                        "window": {
+                            "value": {
+                                "start_date": "2026-08-03",
+                                "end_date": "2026-08-09",
+                            },
+                            "source_turn_id": "turn-seattle",
+                            "source_sequence": 3,
+                        },
+                    }
+                ),
+            ),
+            identity,
+        )
+        refresh_scope_tools = {
+            fn.__name__: fn for fn in captured["tools"]
+        }
+        _, refresh_scope_gate = captured["middleware"]
+        refresh_activation = refresh_scope_tools[
+            "activate_shopper_skills_tool"
+        ](
+            skill_names=["outfit-styling", "event-context"],
+            event_context_next_question="none",
+            weather_refresh=True,
+        )
+        assert refresh_activation.startswith(
+            runtime_mod.SKILL_ACTIVATION_COMPLETE
+        )
+        assert (
+            refresh_scope_gate._required_tool
+            == "get_weather_forecast_tool"
+        )
+
+        runtime._create_agent(
+            State(
+                user_id=111,
+                query="Compare the dresses for that event.",
+                current_weather_scope=CurrentWeatherScope.model_validate(
+                    {
+                        "revision": 1,
+                        "location": {
+                            "value": {
+                                "kind": "shopper_provided_location",
+                                "location": "Seattle",
+                            },
+                            "source_turn_id": "turn-seattle",
+                            "source_sequence": 2,
+                        },
+                        "window": {
+                            "value": {
+                                "start_date": "2026-08-03",
+                                "end_date": "2026-08-09",
+                            },
+                            "source_turn_id": "turn-seattle",
+                            "source_sequence": 3,
+                        },
+                    }
+                ),
+            ),
+            identity,
+        )
+        unchanged_scope_tools = {
+            fn.__name__: fn for fn in captured["tools"]
+        }
+        _, unchanged_scope_gate = captured["middleware"]
+        comparison_activation = unchanged_scope_tools[
+            "activate_shopper_skills_tool"
+        ](
+            skill_names=["outfit-styling", "event-context"],
+            event_context_next_question="none",
+        )
+        assert comparison_activation.startswith(
+            runtime_mod.SKILL_ACTIVATION_COMPLETE
+        )
+        assert unchanged_scope_gate._required_tool is None
+        assert unchanged_scope_gate._runtime_tool_rejections[
+            "get_weather_forecast_tool"
+        ] == runtime_mod._EVENT_CONTEXT_NO_REFRESH_WEATHER_BLOCK
+
+        runtime._create_agent(
+            State(
+                user_id=111,
                 query="NYC, on an outdoor patio Friday next week.",
                 historical_product_context=prior_context,
             ),
@@ -3291,6 +3617,14 @@ class TestDeepAgentsRuntimeRefs:
         ](
             skill_names=["outfit-styling", "event-context"],
             event_context_next_question="none",
+            weather_scope={
+                "action": "replace",
+                "location_source": "shopper_provided_location",
+                "location": "NYC",
+                "location_query": "NYC, NY",
+                "relative_date": "next_week",
+                "weekday": "friday",
+            },
         )
 
         assert dated_context_activation.startswith(
@@ -3303,15 +3637,15 @@ class TestDeepAgentsRuntimeRefs:
             dated_context_gate._runtime_tool_rejections
         )
         assert dated_context_loop._synthesis_required is False
-        dated_context_tools["get_weather_forecast_tool"].invoke(
-            {
-                "location_source": "shopper_provided_location",
-                "location": "NYC",
-                "location_query": "NYC, NY",
-                "relative_date": "next_week",
-                "weekday": "friday",
-            }
+        weather_result = dated_context_tools[
+            "get_weather_forecast_tool"
+        ].invoke(
+            {}
         )
+        assert weather_result.startswith(WEATHER_FORECAST_FAILURE_PREFIX)
+        assert captured_weather["request"].location == "NYC, NY"
+        assert captured_weather["request"].start_date == date(2026, 8, 7)
+        assert captured_weather["request"].end_date == date(2026, 8, 7)
         assert product_read_tools.isdisjoint(
             dated_context_gate._runtime_tool_rejections
         )
@@ -4659,6 +4993,56 @@ class TestDeepAgentsRuntimeRefs:
         assert "PRIOR CART: one saved item." in user_prompt
 
     @pytest.mark.asyncio
+    async def test_missing_event_date_uses_server_owned_context_response(
+        self,
+        base_config,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+
+        class UnexpectedEditor:
+            async def ainvoke(self, messages):
+                del messages
+                pytest.fail("missing-context response must not call the editor")
+
+        monkeypatch.setattr(
+            runtime,
+            "_create_chat_model",
+            lambda: UnexpectedEditor(),
+        )
+        state = State(
+            user_id=111,
+            query="For a separate trip to Seattle, what should I wear?",
+            agent_diagnostics={
+                "skill_files_read": [
+                    "/shopper/outfit-styling/SKILL.md",
+                    "/shopper/event-context/SKILL.md",
+                ],
+                "final_termination_reason": "completed",
+            },
+        )
+        result = {
+            "messages": [
+                {"role": "user", "content": "REQUEST ID: current-request"},
+                *_event_context_activation_messages("event_date"),
+            ]
+        }
+
+        response = await runtime._rewrite_response_for_grounding(
+            state,
+            result,
+            "Seattle is likely to be damp and chilly.",
+            request_id="current-request",
+        )
+
+        assert "weather-flexible" in response
+        assert "if the plans are outdoors" in response
+        assert "What date or date range should I plan around?" in response
+        assert "Seattle is likely" not in response
+
+    @pytest.mark.asyncio
     async def test_search_only_editor_failure_uses_safe_catalog_fallback(
         self,
         base_config,
@@ -5242,7 +5626,7 @@ class TestDeepAgentsRuntimeRefs:
         assert "cool-toned" in response
         assert "streamlined silhouette" in response
         assert (
-            "Forecasts can change, so recheck closer to the event."
+            "Forecasts can change, so recheck closer to the date."
             in response
         )
         assert response.count("Live forecast:") == 1
@@ -5434,7 +5818,7 @@ class TestDeepAgentsRuntimeRefs:
             'Interpreting "next week" as Aug 3, 2026 through Aug 9, 2026.'
             in response
         )
-        assert response.count("Live forecast for the event window:") == 1
+        assert response.count("Live forecast for the requested window:") == 1
         editor_system_prompt = captured["messages"][0]["content"]
         assert "Return only one JSON object" in editor_system_prompt
         assert "A destination alone is not a venue" in editor_system_prompt
@@ -5553,8 +5937,10 @@ class TestDeepAgentsRuntimeRefs:
 
         assert response == (
             "Previously shown options still in play: Elegant Embroidered Lace "
-            "Dress.\n\nI’ll apply the event setting before refining the "
-            "guidance.\n\nWhat date or date range is the event?"
+            "Dress.\n\nKeep the look weather-flexible with a removable layer "
+            "and, if the plans are outdoors, a footwear backup for wet or "
+            "uneven ground; recheck the forecast closer to the date.\n\n"
+            "What date or date range should I plan around?"
         )
 
     @pytest.mark.asyncio
@@ -5637,8 +6023,8 @@ class TestDeepAgentsRuntimeRefs:
                 (
                     "Previously shown options still in play: Elegant "
                     "Embroidered Lace Dress.\n\nI’ll apply the event setting "
-                    "before refining the guidance.\n\nIs the event in your "
-                    "usual area or elsewhere?"
+                    "before refining the guidance.\n\nShould I plan around "
+                    "your usual area or somewhere else?"
                 ),
             ),
             (
@@ -5647,8 +6033,8 @@ class TestDeepAgentsRuntimeRefs:
                 (
                     "Previously shown options still in play: Elegant "
                     "Embroidered Lace Dress.\n\nI’ll apply the event setting "
-                    "before refining the guidance.\n\nWhere is the event "
-                    "taking place?"
+                    "before refining the guidance.\n\nWhat location should I "
+                    "plan around?"
                 ),
             ),
             (
@@ -5661,8 +6047,8 @@ class TestDeepAgentsRuntimeRefs:
                 (
                     "Previously shown options still in play: Elegant "
                     "Embroidered Lace Dress.\n\nI’ll apply the event setting "
-                    "before refining the guidance.\n\nWhere is the event "
-                    "taking place?"
+                    "before refining the guidance.\n\nWhat location should I "
+                    "plan around?"
                 ),
             ),
             (
@@ -5730,7 +6116,7 @@ class TestDeepAgentsRuntimeRefs:
         assert response == expected
 
     @pytest.mark.asyncio
-    async def test_missing_venue_draft_uses_ordinary_event_editor(
+    async def test_missing_venue_draft_uses_server_owned_question(
         self,
         base_config,
         monkeypatch: pytest.MonkeyPatch,
@@ -5792,11 +6178,7 @@ class TestDeepAgentsRuntimeRefs:
         assert response.endswith(
             "What kind of venue or setting is planned for the event?"
         )
-        editor_system_prompt = captured["messages"][0]["content"]
-        assert "final event-context response editor" in editor_system_prompt
-        assert "Return only one JSON object" not in editor_system_prompt
-        editor_prompt = captured["messages"][1]["content"]
-        assert "Infer a beach and recommend sandals." in editor_prompt
+        assert captured == {}
 
     @pytest.mark.asyncio
     async def test_empty_context_only_turn_with_no_question_stays_neutral(
@@ -5879,6 +6261,7 @@ class TestDeepAgentsRuntimeRefs:
             outcome
         )
 
+        assert "keep the look polished" in response
         assert "compact weather backup" in response
         assert "rain backup" not in response
 
@@ -6083,7 +6466,7 @@ class TestDeepAgentsRuntimeRefs:
         )
         assert "through" not in response
         assert "Live forecast:" in response
-        assert "Live forecast for the event window:" not in response
+        assert "Live forecast for the requested window:" not in response
         assert "FORECAST_RELATIVE_WEEKDAY: friday" in safe_evidence
 
     def test_provider_location_is_markdown_escaped(self) -> None:
@@ -6144,6 +6527,22 @@ class TestDeepAgentsRuntimeRefs:
         assert "another layer" not in response
         assert "United States" not in response
         assert '"}' not in response
+
+    def test_invalid_activation_attempt_is_not_completed_diagnostics(self) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        status, reason = runtime_mod._tool_call_status(
+            "activate_shopper_skills_tool",
+            {
+                "role": "tool",
+                "content": (
+                    "SHOPPER_SKILL_ACTIVATION_INVALID: choose none and retry"
+                ),
+            },
+        )
+
+        assert status == "rejected"
+        assert reason == "skill_activation_invalid"
 
     @pytest.mark.asyncio
     async def test_event_weather_conflicting_editor_facts_fail_closed(
@@ -6475,7 +6874,7 @@ class TestDeepAgentsRuntimeRefs:
                 "Jul 29, 2026 is rain, 57–66°F. "
                 "[Weather Data Provided by Visual Crossing]"
                 "(https://www.visualcrossing.com/). Forecasts can change, "
-                "so recheck closer to the event."
+                "so recheck closer to the date."
             ),
             historical_product_context=(
                 "HISTORICAL PRODUCT INDEX (read-only):\n"
@@ -6739,7 +7138,7 @@ class TestDeepAgentsRuntimeRefs:
                 "Assistant: Live forecast: Jul 29, 2026 is rain, 57–66°F. "
                 "[Weather Data Provided by Visual Crossing]"
                 "(https://www.visualcrossing.com/). Forecasts can change, "
-                "so recheck closer to the event."
+                "so recheck closer to the date."
             ),
             agent_diagnostics={
                 "skill_files_read": [
@@ -6808,7 +7207,7 @@ class TestDeepAgentsRuntimeRefs:
             "Live forecast: Jul 29, 2026 is rain, 57–66°F. "
             "[Weather Data Provided by Visual Crossing]"
             "(https://www.visualcrossing.com/). Forecasts can change, "
-            "so recheck closer to the event."
+            "so recheck closer to the date."
         )
 
         redacted = runtime_mod._redact_prior_weather_assistant_text(context)

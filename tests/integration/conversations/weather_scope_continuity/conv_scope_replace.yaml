@@ -1,0 +1,126 @@
+set_name: Typed weather-scope replacement and non-event continuation
+shopper_profile_id: shopper_jordan
+queries:
+  - >-
+    Give me weather-based styling guidance for NYC on Friday next week. I’ll
+    be outdoors, and I’m not shopping for products yet.
+  - >-
+    For a separate trip to Seattle, what should I wear? Still no product
+    search yet.
+  - "It will be next week."
+answers:
+  - >-
+    Treat this as non-product weather-aware styling. Replace the current
+    weather scope with the shopper-provided NYC authority and Friday-next-week
+    window, call weather once through the server-bound zero-argument tool, and
+    give concise outdoor guidance grounded in the returned forecast. Ask no
+    venue, ZIP, location, or date question and run no catalog tool.
+  - >-
+    Treat “separate trip” as a new weather-planning subject. Replace the scope
+    with Seattle only, clearing the older NYC date. Do not call weather because
+    the new scope is incomplete. Give one conditional styling direction and ask
+    only what date or date range to plan around; do not ask about venue or
+    products.
+  - >-
+    Continue the Seattle trip scope and add the full next-week window. Call
+    weather once through the server-bound zero-argument tool and give concise
+    non-event styling guidance from that current forecast. Do not reuse NYC,
+    ask a venue question, or search for products.
+diagnostic_expectations:
+  - required_skills: [outfit-styling, event-context]
+    required_event_context_next_question: none
+    required_weather_scope:
+      action: replace
+      location_source: shopper_provided_location
+      location_supplied: true
+      date_supplied: true
+    forbidden_skills:
+      - product-discovery
+      - budget-shopping
+      - cart-management
+      - store-policy-answers
+    required_tools: [get_weather_forecast_tool]
+    required_business_sequence: [get_weather_forecast_tool]
+    forbidden_tools:
+      - search_catalog_tool
+      - resolve_conversation_products_tool
+      - get_product_details_tool
+      - check_product_availability_tool
+      - check_active_promotions_tool
+    weather_tool_calls: 1
+    required_weather_trace:
+      request_shape: relative_exact_date
+      location_source: shopper_provided_location
+      provider_input: location_query
+      outcome: success
+    required_weather_receipt_status: promotion_prepared
+    required_response_phrases:
+      - Weather Data Provided by Visual Crossing
+    forbidden_response_phrases:
+      - usual area
+      - product options
+  - required_skills: [outfit-styling, event-context]
+    required_event_context_next_question: event_date
+    required_weather_scope:
+      action: replace
+      location_source: shopper_provided_location
+      location_supplied: true
+      date_supplied: false
+    forbidden_skills:
+      - product-discovery
+      - budget-shopping
+      - cart-management
+      - store-policy-answers
+    required_business_sequence: []
+    forbidden_tools:
+      - get_weather_forecast_tool
+      - search_catalog_tool
+      - resolve_conversation_products_tool
+      - get_product_details_tool
+      - check_product_availability_tool
+      - check_active_promotions_tool
+    weather_tool_calls: 0
+    required_response_phrases:
+      - date
+    forbidden_response_phrases:
+      - Weather Data Provided by Visual Crossing
+      - "°F"
+      - venue
+      - drizzle
+      - rain
+      - temperature
+      - damp
+      - chilly
+      - changeable
+  - required_skills: [outfit-styling, event-context]
+    required_event_context_next_question: none
+    required_weather_scope:
+      action: continue
+      location_source: null
+      location_supplied: false
+      date_supplied: true
+    forbidden_skills:
+      - product-discovery
+      - budget-shopping
+      - cart-management
+      - store-policy-answers
+    required_tools: [get_weather_forecast_tool]
+    required_business_sequence: [get_weather_forecast_tool]
+    forbidden_tools:
+      - search_catalog_tool
+      - resolve_conversation_products_tool
+      - get_product_details_tool
+      - check_product_availability_tool
+      - check_active_promotions_tool
+    weather_tool_calls: 1
+    required_weather_trace:
+      request_shape: relative_range
+      location_source: shopper_provided_location
+      provider_input: location_query
+      outcome: success
+    required_weather_receipt_status: promotion_prepared
+    required_response_phrases:
+      - Weather Data Provided by Visual Crossing
+    forbidden_response_phrases:
+      - NYC
+      - venue

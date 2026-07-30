@@ -390,8 +390,12 @@ def test_judge_payload_includes_style_metadata():
                         "product_evidence_truncated": False,
                         "catalog_scope_outcomes": [
                             {
-                                "outcome": "no_direct_catalog_match",
-                                "requested_product_type": "tailored trousers",
+                                "outcome": "zero_results",
+                                "requested_product_type": "flats",
+                                "taxonomy": {
+                                    "category": ["footwear"],
+                                    "subcategory": ["flats"],
+                                },
                             }
                         ],
                     },
@@ -421,8 +425,12 @@ def test_judge_payload_includes_style_metadata():
     assert payload["turns"][0]["product_evidence_truncated"] is False
     assert payload["turns"][0]["catalog_scope_outcomes"] == [
         {
-            "outcome": "no_direct_catalog_match",
-            "requested_product_type": "tailored trousers",
+            "outcome": "zero_results",
+            "requested_product_type": "flats",
+            "taxonomy": {
+                "category": ["footwear"],
+                "subcategory": ["flats"],
+            },
         }
     ]
 

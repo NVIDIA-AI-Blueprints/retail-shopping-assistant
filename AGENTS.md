@@ -27,8 +27,8 @@ Top-level orchestration is via `docker-compose.yaml`; optional local NIM model c
    - A successful event-context activation result appends a model-visible additive-boundary reminder, repeated in the catalog-search description and outfit-styling skill: a reply that only supplies the destination, venue, or date requested in the prior response is context fulfillment, so established candidates stay in play without repeated non-weather product work. Explicit same-turn comparison, refinement, replacement, search, check, cart, or policy work follows the normal selected skills. This is semantic procedural guidance, not deterministic intent classification or an execution gate; it does not change the selected grant union or dispatch policy.
    - Established-candidate comparison remains a model-owned procedure inside `outfit-styling`; there is no comparison skill or deterministic intent router. When compared products are not current-request evidence, the model submits all of them in the one batched historical-resolution call, then reads each uniquely resolved ref through separate scalar detail calls. The default two-read cap fits one pair. Missing or ambiguous required products clarify without a substitute search. Weather is optional additional evidence and never replaces resolution/details or establishes product performance.
    - The selected skills and their granted tools remain one Deep Agent's semantic procedure from activation through its final candidate answer. There is no post-answer semantic completion reviewer, operation plan, or correction trajectory that can delete the candidate and reopen tools. When event context has accepted `none` and valid location/date authority makes live weather material, the selected skill directly instructs that same agent to use its one weather attempt before answering. Deterministic code validates activation, grants, tool arguments, evidence, and final factual grounding; it does not decide whether the shopper intended weather or comparison work.
-   - Catalog capabilities generate `search_catalog_tool`'s flat schema with exact taxonomy values and non-taxonomy required-constraint properties. The model may call it with a direct advertised scope or, when a shopper-named type is not separately advertised, one model-selected faithful advertised parent category. In the parent path, the shopper's type stays in `requested_product_type` and the semantic query, the category is the only taxonomy filter, and returned products remain closest alternatives under their actual catalog types. Model-authored catalog absence is not exposed. If neither a direct type nor one faithful parent can be selected, the assistant asks one concise clarification directly without a tool call or absence claim. Deterministic code validates and maps search values but does not interpret shopper language. Each text search carries `requested_product_type`: the shortest product noun or true umbrella from the shopper's current turn or direct antecedent, excluding color, material, fit, occasion, weather, and style modifiers. For a genuinely open role, it is the one advertised subcategory selected for that role. It is provenance, not taxonomy or ranking text, and is `null` only for image-only search. Each call has at most one category.
-   - Every search also carries required pre-retrieval `shopper_guidance`: one concise, product-agnostic sentence authored under the active skill. A directly stated unadvertised requirement on a shopper-named scope fails closed. Only a schema-valid proposed inferred requirement on a genuinely open role may consume that distinct scope's one model-owned review. Deterministic code does not classify shopper prose or rewrite malformed arguments. A repair cannot change a shopper-named scope noun. A successful partial search may continue with another valid role and its own one-repair opportunity, but no scope receives two repairs; the configured turn cap remains three successful searches.
+   - Catalog capabilities generate `search_catalog_tool`'s flat schema with exact taxonomy values and non-taxonomy required-constraint properties. Product meaning is model-owned: the active skills and tool descriptions instruct the model to author `requested_product_type`, select faithful advertised taxonomy, use a category-only scope only when it judges that category to be a faithful parent, and clarify directly when it cannot make a faithful selection. Runtime does not parse current or recent shopper prose, suffix-match product phrases, classify shopper-named versus open roles, or validate a semantic relationship between `requested_product_type` and taxonomy. It validates structural completeness, capability-derived values and types, the one-category bound, category/subcategory coherence, supported search mode, and advertised hard constraints. A category-only search records the model-authored requested role and searched category separately; grounding presents category-scoped candidates under their actual catalog categories without asserting a parent relationship or catalog absence.
+   - Every search also carries required pre-retrieval `shopper_guidance`: one concise, product-agnostic sentence authored under the active skill. Any nonempty `unadvertised_requirements` lane fails closed without retrieval or repair. At most one structural catalog repair is available for the entire turn, not per semantic scope. It receives the current shopper message, typed search tool, compact capabilities, sanitized validator feedback, and active skill context. Independently valid `required_constraints`, `scope_complete`, and `search_mode` are preserved; `requested_product_type` and taxonomy are not locked from shopper prose. A no-tool repair produces the fixed clarification, and another validation failure after the repair closes to synthesis. Distinct valid taxonomy-plus-hard-constraint scopes may continue within the configured three-search cap.
    - Cart mutations require explicit product/cart-line refs. Grounding reads actual tool-role messages, separates current-request evidence from prior-turn evidence, and never treats an assistant draft as evidence. Successful searches preserve the taxonomy-independent semantic query as internal ranking evidence, the pre-retrieval `shopper_guidance` as product-agnostic response framing, and each confirmed filter set with the products from that search. A completed search gets one final tools-disabled model step under the active skill, followed by the grounding editor. Event-context turns without current or explicitly bound weather evidence also use that final editor when draft text exists; it receives only saved-ZIP-candidate presence, never digits, and the accepted next-question boundary, while deterministic grounded rendering restores candidates if a successful-search edit drops all of them. Current-turn non-weather business-tool evidence always uses ordinary grounding. A protected event decision renderer is selected structurally only when event context is active, there is no current non-weather business-tool activity, and a current typed weather outcome or one explicitly bound valid receipt exists. Missing location/venue or an empty draft skips its decision editor. A separate prior-candidate fallback uses deterministic event assembly only when the draft is empty. Product comparison with current resolution/detail work guarantees ordinary grounding: a bound receipt may guide styling silently, but exact forecast facts and the prior canonical block are not repeated. Other protected weather-evidence turns with a nonempty draft give a narrow tools-disabled decision editor only bounded shopper-authored event text and the server-owned deterministic weather styling direction; it must return an exact two-key JSON object with one exact shopper-authored `venue_quote` and one or two distinct allowlisted `adjustments`. Malformed output, an ungrounded or missing quote, an unknown/duplicate adjustment, or any extra key falls back. The server alone renders fixed allowlisted phrases, exact newest prior names when present, the deterministic weather direction, only the accepted typed question, and any current typed weather failure or current canonical success block. If the requested outcome depends on an unconfirmed material, fit, comfort, durability, care, weather, or other functional property, the response must disclose that gap and frame results as the closest catalog or styling direction rather than as proven suitable. If that draft or editor is unavailable, deterministic fallback uses search guidance, static skill `response_guidance`, returned names, prices, categories, and search-scoped confirmed filters, followed by the same generic unverified-property disclosure. Scoped zero-result evidence cannot establish absence outside its exact taxonomy and filters. The graph and grounding editor share one execution deadline; a grounding timeout finalizes as failed with `grounding_timeout`, uses the deterministic catalog renderer for search-only evidence, deterministic event assembly for the protected event path, and a fixed retry/cart-check response for other non-search turns. Outside that protected path, editor errors and empty or whitespace-only output use the same fail-closed response rule with `grounding_error`; invalid protected decisions fall back deterministically.
    - Any current non-weather business-tool activity also prevents successful-weather postprocessing from appending unrelated names from the historical index. On grounding timeout, error, or empty output, a current result named `get_product_details_tool` and beginning with the canonical successful-detail marker can enter a deterministic verified-detail fallback containing only its names, prices, categories, and listed fields, plus the typed weather outcome when present; it does not manufacture a comparison judgment. The fixed retry/cart-check fallback remains for non-search turns without current detail evidence. A weather-only turn with no business activity remains on the protected event path.
    - Optional output guardrails run, then the memory service finalizes the durable turn as completed, blocked, or failed before products, images, content, and metrics are emitted over SSE. An exact retry of a finalized request replays its stored response without model/tool work. Internal diagnostics include bounded current-turn product evidence from successful catalog search and detail results plus bounded `catalog_scope_outcomes` for zero-result scopes; each search scope remains attached to its own products. Weather tool arguments/output are always redacted from diagnostics and failed-turn partial graph capture. The weather trace retains only categorical date shape, location-source kind, provider-input kind, typed outcome, and receipt lifecycle state such as `promotion_prepared` or `bound`; it never includes a receipt ID, receipt scope/evidence, location, ZIP, date, resolved place, URL, body, or exception. The saved profile ZIP is recursively scrubbed from diagnostic string keys and values. Public query responses contain an empty diagnostics object by default. `EXPOSE_AGENT_DIAGNOSTICS=true` exposes the detailed trace only for a trusted operator or evaluation deployment. Final-text extraction skips tool, tool-calling, and internal activation messages; if no shopper-facing answer exists, the runtime returns a safe fallback with `incomplete_agent_response`. On graph failure, bounded current-turn messages are captured before checkpoint cleanup.
@@ -398,45 +398,35 @@ Key env vars:
   search. The model-visible fields are `semantic_query`, `shopper_guidance`,
   `requested_product_type`, `taxonomy`, `required_constraints`,
   `scope_complete`, and optional `search_mode`. There is no model-authored
-  taxonomy relationship or catalog-absence field. A shopper-named type that is
-  not separately advertised may use one model-selected faithful advertised
-  parent category; structured evidence forces the response to disclose the
-  broader search and retain every result's actual catalog category. If neither
-  a direct type nor one faithful parent can be selected, the assistant asks one
-  concise clarification directly without calling the tool. Deterministic code validates and maps
-  search values; it does not maintain keyword aliases or infer structured
-  fields from shopper prose. Each call uses at most one category. A genuinely
-  open role selects exactly one advertised subcategory and names it in
-  `requested_product_type`. Alternatives, confirmations, comparisons, and
-  follow-ups count as named types. For all text searches,
-  `requested_product_type` is the shortest product noun or true umbrella from
-  the shopper's current turn or direct antecedent, excluding color, material,
-  fit, occasion, weather, and style modifiers. It is provenance rather than
-  taxonomy or ranking text and is `null` only for image-only search. A
-  singleton exact taxonomy value must be coherent with that provenance; the
-  semantic query is independent soft ranking direction.
-- An unresolved shopper-named type receives one concise clarification response
-  rather than a tool call or a parent, sibling, or adjacent search. An
-  unsupported modifier does not erase an advertised type. A directly stated must-have
-  missing from the generated constraint schema belongs in
-  `unadvertised_requirements`; subjective style remains semantic direction. A
-  product type never belongs in the requirement lane.
-- After one invalid search schema in a distinct scope, the model receives one
-  bounded repair step. It may submit one corrected search or return no tool call
-  to signal that clarification is needed. A no-tool repair is only a control
-  signal: the server marks the branch, discards the model prose, and emits the
-  fixed clarification
-  `Could you clarify the product type or requirement you want me to use?`.
-  If another requested search scope already succeeded, its deterministic
-  grounded products are returned before that clarification. Other successful
-  shopping-tool evidence is composed with the fixed clarification through the
-  existing grounding editor.
-  Only a schema-valid proposed inferred requirement on a genuinely open role
-  consumes that scope's model-owned review. Explicit
-  objective must-haves remain and fail closed. Deterministic code does not parse
-  shopper prose. The repair cannot replace a shopper-stated product-scope noun.
-  A successful partial search may continue to another valid role and its own
-  one-repair opportunity, but no scope receives two repairs.
+  taxonomy relationship or catalog-absence field. The active skills instruct
+  the model to preserve the shopper's shortest product noun or umbrella in
+  `requested_product_type`, choose faithful advertised taxonomy, use a
+  category-only scope only when it judges that category to be a faithful
+  parent, and clarify directly when no faithful selection exists. Those are
+  semantic model responsibilities. Runtime does not parse shopper prose,
+  suffix-match product phrases, classify shopper-named versus open roles, or
+  validate `requested_product_type` against taxonomy. It validates structural
+  completeness, exact capability-derived taxonomy and constraint values,
+  category/subcategory coherence, the one-category bound, supported search
+  mode, and text-versus-image shape. The semantic query remains independent
+  soft ranking direction. A category-only search records the requested role
+  and searched category separately; grounding keeps every result's actual
+  category without certifying a parent relationship or catalog absence.
+- Any nonempty `unadvertised_requirements` lane fails closed before retrieval
+  and does not enter repair. Subjective style remains semantic direction, and
+  product types never belong in the requirement lane.
+- The first schema or capability validation failure in a turn may receive one
+  bounded structural repair step. The isolated repair receives the current
+  shopper message, typed search tool, compact capabilities, sanitized validator
+  feedback, and active skill context. It may submit one corrected search or
+  return no tool call; the latter is a control signal whose prose is replaced
+  with `Could you clarify the product type or requirement you want me to use?`.
+  Independently valid `required_constraints`, `scope_complete`, and
+  `search_mode` are preserved. Runtime does not key repair to a semantic scope,
+  lock `requested_product_type` or taxonomy from shopper prose, or run an
+  explicit-versus-inferred requirement review. A later validation failure
+  closes to synthesis. Distinct valid scopes may continue within the
+  three-search cap, but the turn receives no second repair.
 - Duplicate search identity is normalized taxonomy plus hard constraints;
   changing only semantic wording cannot repeat a retrieval.
 - Grounding accepts product evidence only from tool-role messages. Current-turn

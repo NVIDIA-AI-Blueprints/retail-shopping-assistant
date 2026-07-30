@@ -10,7 +10,9 @@ filter validation, execution, and product lookup are deterministic. No LLM runs
 inside the catalog service for interpretation, query expansion, or reranking.
 Its only model inference is configured text/image embedding generation. The
 shopper-facing LLM uses the catalog's advertised capabilities to express
-intent; deterministic code decides whether that intent can be enforced.
+intent and owns the semantic relationship between shopper language and the
+submitted product scope. Deterministic code validates only the submitted
+structure and whether its advertised filters can be enforced.
 
 ## At a Glance
 
@@ -21,7 +23,7 @@ intent; deterministic code decides whether that intent can be enforced.
 | Advertise | The same snapshot | `GET /capabilities`: fields, values, ranges, coverage, and taxonomy scopes | Catalog service |
 | Discover | First successful capability response, cached for the chain-server process lifetime | Full validation contract plus a compact prompt projection | Chain server |
 | Interpret | Shopper language + advertised contract | One required `semantic_query` + product noun/umbrella `requested_product_type` provenance + required `taxonomy` envelope + required `required_constraints` | Shopper LLM |
-| Enforce | Structured intent + the same capabilities | Taxonomy roles mapped to advertised fields plus validated hard filters, or a refusal | Deterministic chain code |
+| Enforce | Structured intent + the same capabilities | Structurally valid taxonomy roles mapped to advertised fields plus validated hard filters, or a structural refusal | Deterministic chain code |
 | Retrieve | Singleton agent text query/image + validated filters | Product refs; optional deterministic details lookup | Catalog service |
 
 The agent depends on advertised capabilities, but capabilities are not trusted
@@ -38,7 +40,8 @@ separately advertised may use one model-selected faithful advertised parent
 category while retaining the type as semantic direction. If neither a direct
 type nor one faithful parent can be selected, the assistant asks one concise
 clarification directly without calling the tool. The generated schema deliberately omits cross-field
-validators, and the handler applies the existing strict semantic search model.
+validators, and the handler applies capability-derived structural validation
+only. It does not parse shopper prose or verify semantic product relationships.
 For every text search,
 `requested_product_type` is the shortest product noun or true umbrella from the
 shopper's current turn or direct antecedent, excluding color, material, fit,
@@ -55,14 +58,14 @@ detail roles. Generated values are never baked into application code.
 
 Each search accepts at most one category. When a broad request names no concrete
 type, the model selects exactly one advertised subcategory as the focused
-starting role and names it in `requested_product_type`. That open-role path is
-forbidden when the shopper named the role's product type, including an
-alternative, confirmation, comparison, or follow-up. A shopper-named type that
-is not separately advertised may use one model-selected faithful advertised
-parent category; results remain closest alternatives under their actual
-catalog types. When neither a direct type nor one faithful parent can be
-selected, the assistant asks one concise clarification directly without a tool
-call rather than substituting or asserting catalog absence. An
+starting role and names it in `requested_product_type`. The model owns whether
+that is an open role, an alternative set, or a faithful broader category; the
+runtime does not infer those meanings from the shopper's words. A shopper-named
+type that is not separately advertised may use one model-selected faithful
+advertised parent category; results remain closest alternatives under their
+actual catalog types. When the model cannot select a faithful scope, the
+assistant asks one concise clarification directly without a tool call rather
+than substituting or asserting catalog absence. An
 unsupported modifier does not erase an advertised type, while
 subjective style remains semantic direction. Product types never belong in
 `unadvertised_requirements`.
@@ -316,7 +319,8 @@ When a shopper-named type is not separately advertised, one model-selected
 faithful advertised parent category may be searched with an explicit
 closest-alternative response caveat. When neither a direct type nor one faithful
 parent can be selected, the assistant asks one concise clarification directly
-and makes no catalog call.
+and makes no catalog call. These product relationships are model-owned semantic
+judgments, not runtime classifications.
 Each call accepts at most one category. Executable text search requires at least
 one advertised category or subcategory; `requested_product_type` is `null` and
 both taxonomy arrays are empty for image-only search. Generic taxonomy roles map
@@ -332,9 +336,10 @@ submits multiple advertised subcategories from one category through the typed
 taxonomy field, they remain one catalog execution: the plan uses a
 selection-wide candidate window, then rank-preserving result selection keeps one
 returned candidate per selected subcategory when available and trims to the
-configured result count. Repair remains keyed to the full normalized,
-model-authored `requested_product_type`; an untrustworthy repair returns no tool
-call and the server asks a fixed clarification.
+configured result count. The runtime does not derive a repair key from
+`requested_product_type`; one structural repair is available for the whole turn.
+A repair that returns no tool call causes the server to ask a fixed
+clarification.
 
 The runtime executes a normalized taxonomy-plus-hard-constraint scope at most
 once per turn, regardless of semantic paraphrasing. Genuinely different hard-
@@ -344,7 +349,7 @@ independent of taxonomy and is sent to the catalog as a singleton `text` list;
 must-haves stop the search rather than being silently weakened; an unsupported
 modifier does not erase an advertised type, and subjective style stays semantic.
 
-One invalid search may consume that distinct scope's single bounded repair.
+One invalid search may consume the turn's single bounded structural repair.
 The isolated repair receives the capability-derived typed search tool, compact
 server-generated Catalog capabilities, the current shopper message, bounded
 sanitized validator feedback, and the active shopper-skill instructions.
@@ -355,20 +360,19 @@ type or requirement you want me to use?`. Grounded products from any successful
 requested scope are preserved before that clarification.
 Successful evidence from another shopping tool is combined with the fixed
 clarification through the existing grounding editor.
-Runtime protects shopper-grounded requested scope across native and strict
-validation paths. Repair middleware may restore only structural
-`scope_complete`; it never rewrites taxonomy, constraints, requested type, or
-search mode. When strict handler validation has
-already accepted advertised constraints, its feedback may include that finite
-object and the next call is rejected if it drifts rather than being overwritten.
+Repair middleware may restore independently capability-valid
+`required_constraints`, `scope_complete`, and `search_mode`. It never restores
+model-owned taxonomy, requested type, semantic query, or shopper guidance. When
+handler validation has already accepted advertised constraints, its feedback
+may include that finite object and the next call is rejected if it weakens those
+constraints.
 Malformed or nonempty free-form `unadvertised_requirements` arguments on a
-native schema-invalid call fail closed. Constraint review is model-owned only
-for a schema-valid, genuinely open role: explicit
-objective must-haves remain and fail closed, while only inferred or subjective
-requirements may be removed; deterministic code does not parse shopper prose.
-A successful partial search may continue to another valid role with its own
-repair opportunity, but no scope receives two repairs. The configured turn cap
-remains three successful searches. Each successful search-tool result records
+native schema-invalid call fail closed without repair. A schema-valid nonempty
+`unadvertised_requirements` list also fails closed before retrieval; the runtime
+does not review shopper prose to decide whether the model inferred or copied the
+requirement. A repaired search may be followed by another valid role, but any
+later invalid search receives no second repair. The configured turn cap remains
+three successful searches. Each successful search-tool result records
 the model-authored semantic query as internal `SEARCH_DIRECTION_EVIDENCE` and
 the pre-retrieval `shopper_guidance` authored under the active skill. For a
 completed successful search-only turn, the active skill gets one tools-disabled
@@ -379,6 +383,8 @@ continuation for partial successful evidence, and groups each pre-retrieval
 guidance sentence and confirmed-filter set with products from its originating
 search. Zero-result output retains
 its exact advertised taxonomy and filters and supports no broader absence claim.
+The search tool emits no semantic “no direct catalog match” outcome: a valid
+executed search yields product evidence or the scoped `zero_results` outcome.
 
 The chain's operator diagnostics carry bounded per-product search/detail
 evidence, its truncation flag, and bounded `catalog_scope_outcomes` for

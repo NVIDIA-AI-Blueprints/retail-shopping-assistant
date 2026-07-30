@@ -194,8 +194,8 @@ flag, and `agent_diagnostics.catalog_scope_outcomes`. Product evidence comes
 from successful current-turn catalog search and detail results, is limited to
 24 records and 32,000 serialized characters, and keeps each search's taxonomy
 and confirmed filters attached to its own products. Catalog scope outcomes are
-limited to the allowlisted `no_direct_catalog_match` and `zero_results` values;
-each may include `requested_product_type`, `taxonomy`, and `confirmed_filters`.
+limited to the allowlisted `zero_results` value and may include
+`requested_product_type`, `taxonomy`, and `confirmed_filters`.
 Semantic queries, raw tool messages, model reasoning, and every other diagnostic
 field are discarded by the evaluator.
 

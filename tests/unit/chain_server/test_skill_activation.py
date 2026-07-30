@@ -50,6 +50,8 @@ from shared.commerce_contracts import (
     CatalogTaxonomyCapabilities,
     CatalogTaxonomyCategory,
     CatalogTaxonomySubcategory,
+    Money,
+    ProductSummary,
     SearchCatalogResult,
 )
 
@@ -1130,33 +1132,6 @@ def test_browse_only_product_discovery_rejects_cart_mutation() -> None:
     assert str(result.content).startswith(SKILL_TOOL_NOT_GRANTED)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="Constraint provenance remains an unresolved semantic-assurance boundary.",
-)
-def test_invented_catalog_constraint_is_rejected_before_execution() -> None:
-    """An advertised filter is not authorized merely because it is valid."""
-
-    middleware = _middleware()
-    middleware.activate(
-        {"/shopper/outfit-styling/SKILL.md": "# Outfit Styling"},
-        ["outfit-styling"],
-    )
-    request = _tool_request(
-        "search_catalog_tool",
-        _activated_messages(query="Heels or flats for this look?"),
-        {"required_constraints": {"color": ["black"]}},
-    )
-    handled: list[ToolCallRequest] = []
-
-    result = middleware.wrap_tool_call(request, handled.append)
-
-    assert handled == []
-    assert isinstance(result, ToolMessage)
-    assert str(result.content).startswith("CATALOG_CALL_NOT_AUTHORIZED:")
-
-
 def test_cart_management_exposes_cart_mutation_but_not_catalog_search() -> None:
     middleware = _middleware()
     middleware.activate(
@@ -1665,6 +1640,170 @@ async def test_compiled_agent_allows_one_invalid_taxonomy_repair_then_synthesize
     assert result["messages"][-1].additional_kwargs[
         SERVER_CATALOG_CLARIFICATION
     ] is True
+
+
+@pytest.mark.asyncio
+async def test_compiled_agent_executes_model_owned_footwear_alternatives(
+    base_config: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A valid heels/flats scope survives activation, execution, and synthesis."""
+
+    from chain_server.src import deepagents_runtime as runtime_mod
+
+    model_name = "compiled-footwear-alternatives-test"
+    base_config.llm_name = model_name
+    final_text = (
+        "Heels make the look dressier; flats keep it polished and easier "
+        "for a longer evening."
+    )
+    model = _RecordingToolModel(
+        model_name=model_name,
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "id": "activate-styling",
+                        "name": SKILL_ACTIVATION_TOOL_NAME,
+                        "args": {"skill_names": ["outfit-styling"]},
+                    }
+                ],
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "id": "search-footwear",
+                        "name": "search_catalog_tool",
+                        "args": {
+                            "semantic_query": "heels or flats for this look",
+                            "shopper_guidance": (
+                                "Compare polished footwear directions for "
+                                "the established look."
+                            ),
+                            "requested_product_type": "shoes",
+                            "taxonomy": {
+                                "category": ["footwear"],
+                                "subcategory": ["heels", "flats"],
+                            },
+                            "required_constraints": {},
+                            "scope_complete": True,
+                            "search_mode": "text",
+                        },
+                    }
+                ],
+            ),
+            AIMessage(content=final_text),
+        ],
+    )
+    runtime = DeepAgentsRuntime(base_config)
+    monkeypatch.setattr(runtime, "_create_chat_model", lambda: model)
+    executed_plans = []
+
+    def execute_catalog_search(plan, *_args, **_kwargs):
+        executed_plans.append(plan)
+        return CatalogSearchExecution(
+            result=SearchCatalogResult(
+                ok=True,
+                products=[
+                    ProductSummary(
+                        product_id="heel-1",
+                        display_name="Evening Heel",
+                        category="heels",
+                        price=Money(amount=89.99),
+                    ),
+                    ProductSummary(
+                        product_id="flat-1",
+                        display_name="Evening Flat",
+                        category="flats",
+                        price=Money(amount=69.99),
+                    ),
+                ],
+            )
+        )
+
+    monkeypatch.setattr(
+        runtime_mod,
+        "execute_catalog_search",
+        execute_catalog_search,
+    )
+    identity = RequestIdentity(
+        session_id="session-footwear",
+        conversation_id="conversation-footwear",
+        cart_id="cart-footwear",
+        context_user_id=1,
+        cart_user_id=1,
+        request_id="request-footwear",
+    )
+    capabilities = CatalogCapabilities(
+        catalog_id="test-catalog",
+        retrieval_modes=["text"],
+        filters={
+            "category": CatalogFilterCapability(
+                type="enum",
+                operators=["in"],
+                source_fields=["category"],
+                values=["footwear"],
+            ),
+            "subcategory": CatalogFilterCapability(
+                type="enum",
+                operators=["in"],
+                source_fields=["subcategory"],
+                values=["heels", "flats"],
+            ),
+        },
+        taxonomy=CatalogTaxonomyCapabilities(
+            category_field="category",
+            subcategory_field="subcategory",
+            categories={
+                "footwear": CatalogTaxonomyCategory(
+                    product_count=2,
+                    subcategories={
+                        "heels": CatalogTaxonomySubcategory(product_count=1),
+                        "flats": CatalogTaxonomySubcategory(product_count=1),
+                    },
+                )
+            },
+        ),
+    )
+    agent = runtime._create_agent(
+        State(user_id=1, query="Heels or flats for this look?"),
+        identity,
+        capabilities,
+    )
+
+    result = await agent.ainvoke(
+        {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": (
+                        "REQUEST ID: request-footwear\n"
+                        "USER QUERY: Heels or flats for this look?"
+                    ),
+                }
+            ]
+        },
+        config={"configurable": {"thread_id": identity.conversation_id}},
+    )
+
+    assert len(executed_plans) == 1
+    assert executed_plans[0].hard_filters["category"] == ["footwear"]
+    assert set(executed_plans[0].hard_filters["subcategory"]) == {
+        "heels",
+        "flats",
+    }
+    tool_evidence = next(
+        message.content
+        for message in result["messages"]
+        if isinstance(message, ToolMessage)
+        and message.name == "search_catalog_tool"
+    )
+    assert "PRODUCT_REF: heel-1" in tool_evidence
+    assert "PRODUCT_REF: flat-1" in tool_evidence
+    assert result["messages"][-1].content == final_text
+    assert model.calls[2]["tools"] == []
 
 
 @pytest.mark.asyncio

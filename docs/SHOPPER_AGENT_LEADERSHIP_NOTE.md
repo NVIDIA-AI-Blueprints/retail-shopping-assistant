@@ -9,8 +9,10 @@ The shopper agent now has clean boundaries:
 - **skills** provide versioned behavior for an intent;
 - **typed tools** are the only path to catalog, cart, availability, or policy
   actions; and
-- deterministic validation rejects unsupported taxonomy, hard filters, and
-  product evidence, while selected skills now grant only their declared tools.
+- the **model owns semantic mapping** from shopper language, while deterministic
+  validation enforces only typed structure, advertised capability values, hard
+  filters, limits, and product evidence. Selected skills grant only their
+  declared tools.
 
 This gives us a scalable way to add skills and tools without rebuilding the
 agent. Slice 0 establishes the tool-binding foundation. The next investment is
@@ -61,9 +63,11 @@ flowchart LR
 6. **Validate before execution.** Runtime middleware checks the request against
    the selected-skill grant and immutable tool policy, then applies advertised
    catalog capabilities, refs, service state, turn limits, and duplicate scopes.
-   A catalog scope gets at most one isolated repair;
-   independently valid finite fields are preserved, while semantic corrections
-   remain the model's responsibility.
+   The turn gets one isolated structural catalog repair total. The model may
+   correct semantic fields; runtime does not derive a semantic scope lock or
+   compare those corrections with shopper prose. Independently valid finite
+   structural fields may be preserved, and the repaired call is validated
+   afresh.
 7. **Call the owning service.** Catalog tools call the catalog retriever, which
    applies hard filters and ranks Milvus candidates. Cart tools call the memory
    service. A typed reference batch resolves deterministically against that
@@ -124,22 +128,25 @@ Assume the previous turn returned a group of tops confirmed by the catalog's
 5. The model calls `search_catalog_tool` once with:
 
    - requested type: `bottoms`;
-   - taxonomy relation: member of the requested umbrella;
    - taxonomy: `apparel/skirts`;
    - semantic direction: skirts that balance the beige top; and
    - hard constraints: none, unless the shopper also asked for beige or a
      same-color look.
 
-6. Deterministic validation confirms that every selected taxonomy value is an
-   advertised child of the requested role. The catalog then ranks only products
-   inside that hard skirt scope.
+6. Deterministic validation confirms that the submitted taxonomy values and
+   category/subcategory relationship exist in the advertised capability
+   contract. It does not decide whether `skirts` semantically satisfies
+   `bottoms`; that mapping remains the model's responsibility. The catalog then
+   ranks only products inside that hard skirt scope.
 7. The response presents grounded skirt candidates and explains their role in
    the beige-top outfit. It does not claim that the skirts themselves are beige
    and does not introduce dresses as substitutes.
 
 This is the intended division of labor: the skill supplies styling procedure,
 the model maps intent to the published contract, validation enforces the
-contract, and the catalog supplies product truth.
+contract, and the catalog supplies product truth. A category-only search records
+the requested role and searched category separately as neutral evidence; only
+`zero_results` may report that an exact submitted scope returned no products.
 
 ## What Comes Next
 

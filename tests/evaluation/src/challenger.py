@@ -278,8 +278,7 @@ def _extract_catalog_scope_outcomes(
         if (
             not isinstance(outcome, Mapping)
             or not set(outcome).issubset(allowed_fields)
-            or outcome.get("outcome")
-            not in {"no_direct_catalog_match", "zero_results"}
+            or outcome.get("outcome") != "zero_results"
             or not _bounded_product_evidence_value(outcome)
         ):
             return []

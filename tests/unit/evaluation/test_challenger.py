@@ -79,8 +79,9 @@ def test_judge_flag_overrides_disabled_config(
 
 def test_extract_catalog_scope_outcomes_fails_closed() -> None:
     valid = {
-        "outcome": "no_direct_catalog_match",
-        "requested_product_type": "tailored trousers",
+        "outcome": "zero_results",
+        "requested_product_type": "flats",
+        "taxonomy": {"category": ["footwear"], "subcategory": ["flats"]},
     }
 
     assert _extract_catalog_scope_outcomes(

@@ -1,11 +1,24 @@
 # Project Status
 
-Updated: 2026-07-29
+Updated: 2026-07-30
 
 ## Current Milestone
 
 The current working tree extends the shopper-serving Deep Agent architecture:
 
+- a 2026-07-30 planned addendum in
+  `docs/SHOPPER_DEEP_AGENT_ARCHITECTURE_2026-07-29.md` records the agreed
+  durable cross-turn context correction. It keeps the request-scoped Deep
+  Agent, current profile/cart/product-ledger authorities, and fresh skill
+  activation. The memory-owned plan adds one rolling semantic summary with a
+  through-sequence watermark, a strictly non-overlapping bounded raw-turn tail,
+  and a small bounded projection of valid typed receipts rather than historical
+  tool transcripts. Summary prose remains semantic continuity only; exact
+  product, cart, and weather claims still require their authoritative state or
+  scoped typed evidence. This is explicitly planned and not yet implemented.
+  It replaces the paused event-action correction direction; no event state
+  machine, comparison skill, intent router, conversation-long graph checkpoint,
+  or unbounded tool history is planned;
 - the dated
   `docs/SHOPPER_DEEP_AGENT_ARCHITECTURE_2026-07-29.md` snapshot records the
   source-audited `f6fe646` serving path and a smaller validation policy. One

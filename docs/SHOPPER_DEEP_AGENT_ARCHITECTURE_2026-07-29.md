@@ -1,13 +1,23 @@
 # Shopper Deep Agent Architecture — 2026-07-29
 
-This is a dated snapshot of the shopper-serving architecture at commit
-`f6fe646`. It records the narrow architecture correction and the minimum proof
-needed before broader regression testing. The maintained detailed reference is
+This document contains two dated views:
+
+1. the shopper-serving architecture as built at commit `f6fe646`; and
+2. the durable cross-turn context plan agreed on 2026-07-30 after analyzing the
+   failed comparison turn.
+
+The planned sections are explicitly marked and are not an implementation
+claim. The maintained detailed reference is
 [Shopper Agent Architecture](SHOPPER_AGENT_ARCHITECTURE.md).
 
 Status: the source audit is complete, but the fresh three-turn live gate failed
-on its final comparison turn. This document records the architecture and that
-failure; it is not a feature-readiness claim.
+on its final comparison turn. The failure exposed a general cross-turn
+continuity gap: Deep Agents can summarize a long request-local graph run, but
+that summary is not carried into the next shopper request. The agreed plan
+below addresses that general gap without adding an event-specific state
+machine. No durable summary or cross-turn weather receipt described below is
+built yet, so this remains a design record rather than a feature-readiness
+claim.
 
 ## Decision
 
@@ -118,6 +128,260 @@ The two application-supplied Deep Agent middleware components are:
 Shopper skills are injected by the activation middleware. General-purpose
 subagents are disabled. The legacy `planner.py` and `graph.py` paths are not
 part of the serving request flow.
+
+## Persistence and Lifetime Boundaries — As Built
+
+The word "context" currently refers to several different lifetimes. The
+distinction is architectural: durable conversation memory is not the same
+thing as a Deep Agents graph checkpoint or its automatic summarization.
+
+| Lifetime and owner | Persisted contents | Use on a later turn |
+| --- | --- | --- |
+| Memory-service installation | Five immutable representative-shopper records | Resolves the profile selected for a conversation |
+| Conversation | Ordered shopper/assistant turns, the nullable profile binding enforced through those turns, structured event envelopes, the bounded product-reference projection, and its last finalized turn | Reconstructs recent dialogue and resolves historically presented products |
+| Cart owner | Current cart rows with stable cart-line IDs and the cart-mutation idempotency ledger | Supplies the authoritative current cart; the bundled UI creates a new cart identity with a new conversation |
+| Finalized request | Request and attempt identity, request/finalize digests, sequence, status, termination reason, catalog revision, assistant text, product/image response artifacts, diagnostics, and selected skill names | Exactly replays the same finalized request and exposes the immediately previous skill names as a non-authorizing hint |
+| Chain-server process and request | Full Deep Agents messages, tool calls and results, model reasoning, current-turn evidence maps, and the LangGraph checkpoint | Not durable conversation state; the checkpoint is request-scoped and deleted after successful finalization |
+
+The product ledger is already the correct durable grounding mechanism for
+historical product references. Finalized presented-product events rebuild a
+bounded, same-conversation product-reference index. One unique exact match can
+be restored after a chain-server restart or on another worker. Missing,
+ambiguous, or stale-catalog references still require clarification or a fresh
+search.
+
+### Current next-turn hydration contract
+
+At turn start, the memory boundary currently supplies:
+
+- bounded, context-eligible raw shopper/assistant turns;
+- the selected representative-shopper context, or no context for Guest;
+- the current authoritative cart;
+- the historical product-reference index; and
+- the immediately previous selected skill names as a continuity hint.
+
+The raw turns are bounded first by the memory service's turn limit and again by
+the chain server's character limit. Blocked and abandoned turns are durable for
+audit or replay semantics but are excluded from the model context.
+
+The serving path does **not** currently persist or rehydrate:
+
+- a conversation-level semantic summary;
+- the complete prior tool transcript or model reasoning;
+- normalized event location, venue, or date state;
+- prior weather tool evidence or a record that a forecast was already fetched;
+- active anchors or effective preferences, although reserved projection lanes
+  exist; or
+- raw uploaded media.
+
+Deep Agents 0.6.12 includes automatic summarization middleware. In this
+application it can compact one long graph execution, but the graph thread is
+keyed by both `conversation_id` and `request_id`. A new shopper turn receives a
+new request ID, and a successfully finalized turn deletes its checkpoint.
+Deep Agents' internal summary therefore does not cross the durable turn
+boundary. The legacy `summarizer.py` path is not part of the serving runtime.
+
+## Durable Cross-Turn Context Plan — Agreed 2026-07-30
+
+The failed third turn should be corrected at the general continuity boundary,
+not with a new weather or comparison workflow. The serving Deep Agent remains
+request-scoped. The memory service gains a durable rolling conversation summary
+and a bounded projection of selectively reusable typed evidence.
+
+The planned next-turn context is:
+
+```text
+rolling semantic summary
+    + non-overlapping bounded raw-turn tail
+    + selected shopper profile
+    + authoritative current cart
+    + bounded historical product-reference index
+    + immediately previous selected-skill hint
+    + small bounded set of valid typed receipts
+```
+
+This does not turn the summary into a planner, router, grant, or evidence
+source. It gives the Deep Agent semantic continuity. Authoritative state and
+typed evidence remain separately grounded.
+
+The planned persistence additions are deliberately small:
+
+| Lifetime and owner | Planned addition | Explicitly not added |
+| --- | --- | --- |
+| Conversation projection | Rolling summary text, its through-sequence watermark, and a bounded set of active typed receipts | Full tool history, model reasoning, or a conversation-long graph checkpoint |
+| Finalized request | Source identity for any receipt promoted by that request and an atomic summary/projection update under the existing attempt fence | A second copy of the rolling summary or raw provider output |
+| Request-local Deep Agent | No new durable state; it is hydrated from memory at the start of each request | Cross-request authorization or ownership of profile, cart, catalog, or receipt truth |
+
+### Rolling summary contract
+
+The memory-owned conversation projection should add:
+
+- `summary_text`: one bounded semantic summary;
+- `summary_through_sequence`: the last context-eligible turn represented by
+  that summary; and
+- a projection version used for compare-and-swap finalization.
+
+The existing projection version may satisfy the third requirement; a second
+independent version is not required unless implementation proves it necessary.
+
+The non-overlap invariant is:
+
+```text
+summary_text                 covers eligible turns ≤ summary_through_sequence
+bounded raw-turn tail        contains eligible turns > summary_through_sequence
+```
+
+No eligible turn is intentionally supplied in both forms, and no turn is
+dropped merely because summarization failed. The compactor receives only the
+prior summary and the oldest raw turns being folded into it. It does not
+receive or reproduce the complete tool transcript.
+
+Compaction should occur only when the raw tail reaches its configured bound,
+not after every shopper message. A successful compaction advances the sequence
+watermark atomically with durable turn finalization. If compaction fails, the
+old summary and watermark remain authoritative and the unsummarized turns
+remain raw; the runtime must not advance the watermark or silently discard
+them.
+
+The rolling summary may preserve semantic facts such as:
+
+- the shopper is assembling a semi-formal wedding outfit;
+- the event is in New York on an outdoor patio next week; and
+- the shopper is now comparing two previously shown dresses.
+
+It cannot prove a price, product property, forecast value, availability result,
+cart mutation, or policy fact. It also cannot authorize a tool or replace the
+fresh skill-selection step.
+
+### Selective typed receipts, not historical tool transcripts
+
+Persisting every catalog, cart, and weather output would reproduce the
+unbounded-context problem and retain stale facts. The plan promotes only
+compact, server-validated results that are useful across turns.
+
+| Tool-result class | Cross-turn treatment |
+| --- | --- |
+| Catalog search | Do not persist the search transcript. Continue to project deduplicated presented products into the existing bounded product ledger. |
+| Product details | Resolve through the ledger and fetch current details when needed. A catalog-revision-bound detail receipt may be added only if later measurements justify it. |
+| Cart reads and mutations | Use the authoritative current cart. Keep mutation records for idempotency, not as model-visible historical evidence. |
+| Weather forecast | Add one compact typed receipt for a successful normalized forecast scope. |
+| Availability and promotions | Recheck because these facts are volatile; do not carry their old result as current evidence. |
+| Tool failures | Keep the sanitized failure on its request for replay and diagnostics, but do not promote it as reusable factual evidence. |
+
+A proposed `weather_forecast.v1` receipt contains only:
+
+- a stable receipt type and identifier;
+- source turn and tool identity;
+- provider and fetch time;
+- provider-resolved location;
+- exact requested start and end dates;
+- normalized daily conditions already accepted by
+  `WeatherForecastEvidence`;
+- required provider attribution; and
+- a configured validity boundary.
+
+The receipt never contains the API key, prepared URL, raw provider body, raw
+exception, or an unvalidated model-authored forecast.
+
+A weather receipt is reusable only when its schema validates, its exact
+location/date scope still applies, and its configured freshness boundary has
+not expired. A changed location or date is a different scope. Newer success for
+the same normalized scope supersedes the older receipt. The projection retains
+only a small configured number of unexpired scopes and never injects expired
+or superseded receipts into the model context.
+
+The bounded active-receipt projection, rather than an append-only copy of every
+tool response, is the model-facing source. A separate short audit retention
+policy may exist if operationally required, but it is not part of the agent's
+context and is not required by this feature.
+
+### Grounding relationship
+
+The three context forms have deliberately different authority:
+
+| Context form | Purpose | Authority |
+| --- | --- | --- |
+| Rolling summary | Older conversational meaning and goals | Semantic continuity only |
+| Raw-turn tail | Recent exact shopper and assistant wording | Reference resolution input, not proof of external facts |
+| Profile, cart, product ledger, and valid receipts | Current state and validated external evidence | Deterministic grounding within each artifact's declared scope |
+
+For example, the summary can establish that the shopper is comparing the lacy
+gown and satin dress for the same wedding. The product ledger resolves those
+names to catalog identities, current detail calls establish their verified
+attributes, and a still-valid weather receipt establishes the previously
+observed forecast. Assistant prose saying that rain was expected is not a
+substitute for the receipt.
+
+### Planned request lifecycle
+
+With this addition, one request proceeds as follows:
+
+1. Memory durably starts the request and returns the summary plus its sequence
+   watermark, only the later bounded raw turns, profile context, cart,
+   product-reference projection, prior-skill hint, and valid receipt
+   projection.
+2. The chain server renders those sections separately in one bounded
+   current-turn context. It does not merge summary prose into authoritative
+   evidence.
+3. One request-scoped Deep Agent selects skills and performs the turn. Its
+   built-in summarization may still compact a long graph execution, but it
+   remains request-local.
+4. Grounding accepts current validated tool results and applicable prior typed
+   receipts. The rolling summary alone cannot support an external-fact claim.
+5. Before durable finalization, the chain server may prepare a bounded summary
+   compaction and any validated receipt promotion produced by this request.
+6. Memory atomically finalizes the turn, exact-replay output, product events,
+   projection version, accepted summary advancement, and bounded receipt
+   updates under the existing attempt fence.
+7. Successful finalization deletes the request checkpoint. An exact retry
+   replays the finalized output without repeating compaction, tool work, or
+   receipt promotion.
+
+This keeps `request_id` as the idempotent execution identity and
+`conversation_id` as the durable continuity identity. It does not require a
+shared conversation-long LangGraph checkpoint.
+
+### Architectural consequence for event guidance
+
+No new event-specific action enum, event-state machine, comparison skill,
+intent router, or completion reviewer is part of this plan. Event and product
+continuity live in the generic summary and existing product ledger. Exact
+forecast reuse lives in a scoped weather receipt. The event-context and
+outfit-styling skills continue to own semantic judgment inside the one Deep
+Agent.
+
+The existing `event_context_next_question` field remains part of the
+`f6fe646` as-built snapshot until an implementation slice deliberately changes
+it. This plan does not extend that field into broader per-turn state.
+
+### Clean implementation slices
+
+Each slice stops after its focused proof and ships code and documentation at
+the same breadth:
+
+1. **Durable summary boundary:** add the projection fields and memory wire
+   contract, including versioned updates and the non-overlap retrieval
+   invariant. Prove no missing or duplicated sequences, exact retry, and
+   failed-compaction preservation without calling a hosted model.
+2. **Rolling compaction and hydration:** add the bounded summarizer call and
+   render summary and raw tail as separate prompt sections. Prove that
+   compaction sees only the prior summary plus the turns being folded, and that
+   a failed call never advances the watermark.
+3. **Weather receipt projection:** promote only validated
+   `WeatherForecastEvidence`, enforce exact scope, freshness, supersession, and
+   cap behavior, and expose only applicable receipts to grounding. Keep the
+   product ledger and current cart unchanged.
+4. **Focused conversation proof:** run the one three-turn live fixture without
+   Judge and require search, then weather, then historical resolution plus two
+   detail reads with no weather refresh on the comparison turn. Inspect
+   transcript, quality, call count, and timing before any broad suite.
+5. **Final regression gate:** only after the focused feature passes, run the
+   broader offline suite and any explicitly approved live evaluation cohort.
+
+The implementation should not resume the paused per-turn event-action
+correction. That direction treated request-local context loss at the event
+skill boundary instead of correcting the generic cross-turn continuity
+boundary.
 
 ## Deliberately Not Present
 

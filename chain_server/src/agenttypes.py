@@ -94,7 +94,18 @@ class State(BaseModel):
         default=None,
         description="Server-resolved current-turn shopper guidance",
     )
-    context: str = Field(default="", description="Previous conversation context")
+    conversation_summary: str = Field(
+        default="",
+        description="Durable semantic continuity summary; never exact evidence",
+    )
+    context: str = Field(
+        default="",
+        description="Exact bounded raw conversation turns",
+    )
+    historical_product_context: str = Field(
+        default="",
+        description="Authoritative bounded historical product-reference projection",
+    )
     cart: Cart = Field(default_factory=Cart, description="User's shopping cart")
     response: str = Field(default="", description="Generated response from agents")
     image: str = Field(default="", description="Base64 encoded image data")

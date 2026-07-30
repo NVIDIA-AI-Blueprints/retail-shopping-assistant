@@ -29,7 +29,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from chain_server.src.weather import WeatherConfig
+from chain_server.src.config import ConversationSummaryConfig  # noqa: E402
+from chain_server.src.weather import WeatherConfig  # noqa: E402
 
 
 # Several service modules read API keys at import time. Set harmless defaults
@@ -67,6 +68,7 @@ def base_config() -> SimpleNamespace:
         ],
         agent_choices=["cart", "retriever", "chatter"],
         memory_length=16384,
+        conversation_summary=ConversationSummaryConfig(),
         top_k_retrieve=4,
         deepagents_recursion_limit=24,
         deepagents_execution_timeout_seconds=45.0,
@@ -115,6 +117,7 @@ def valid_config_dict() -> Dict[str, Any]:
         "categories": ["bag", "shoes"],
         "agent_choices": ["cart", "retriever", "chatter"],
         "memory_length": 16384,
+        "conversation_summary": ConversationSummaryConfig().model_dump(),
         "top_k_retrieve": 4,
         "deepagents_recursion_limit": 24,
         "deepagents_execution_timeout_seconds": 45.0,

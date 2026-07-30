@@ -4,20 +4,20 @@ This document contains two dated views:
 
 1. the shopper-serving architecture as built at commit `f6fe646`; and
 2. the durable cross-turn context plan agreed on 2026-07-30 after analyzing the
-   failed comparison turn.
+   failed comparison turn, with implementation status recorded by slice.
 
-The planned sections are explicitly marked and are not an implementation
-claim. The maintained detailed reference is
+The addendum distinguishes built slices from the remaining plan. The maintained
+detailed reference is
 [Shopper Agent Architecture](SHOPPER_AGENT_ARCHITECTURE.md).
 
 Status: the source audit is complete, but the fresh three-turn live gate failed
 on its final comparison turn. The failure exposed a general cross-turn
 continuity gap: Deep Agents can summarize a long request-local graph run, but
-that summary is not carried into the next shopper request. The agreed plan
-below addresses that general gap without adding an event-specific state
-machine. No durable summary or cross-turn weather receipt described below is
-built yet, so this remains a design record rather than a feature-readiness
-claim.
+that summary is not carried into the next shopper request. The agreed
+correction below addresses that general gap without adding an event-specific
+state machine. Its durable summary boundary and rolling-compaction slices are
+now built; the bounded cross-turn weather receipt and its focused live proof
+remain incomplete, so this is not yet a feature-readiness claim.
 
 ## Decision
 
@@ -154,8 +154,7 @@ search.
 
 At turn start, the memory boundary currently supplies:
 
-- a versioned rolling-summary storage pair, currently empty because compaction
-  is not connected;
+- a versioned rolling semantic summary;
 - bounded, context-eligible raw shopper/assistant turns;
 - the selected representative-shopper context, or no context for Guest;
 - the current authoritative cart;
@@ -185,10 +184,13 @@ boundary. The legacy `summarizer.py` path is not part of the serving runtime.
 
 ## Durable Cross-Turn Context Plan — Agreed 2026-07-30
 
-Implementation status on 2026-07-30: Slice 1 is built. Migration 8, the memory
-wire contract, finalize-time compare-and-swap, and strictly post-watermark raw
-reads establish the durable summary boundary. The runtime intentionally neither
-generates nor renders summary text yet. Slices 2–5 remain planned.
+Implementation status on 2026-07-30: Slices 1 and 2 are built. Migration 8, the
+memory wire contract, finalize-time compare-and-swap, and strictly
+post-watermark raw reads establish the durable summary boundary. Memory returns
+a newest raw prompt tail plus a separate oldest exact compaction prefix. The
+runtime renders summary, raw discussion, and historical products separately
+and may compact only that oldest prefix after a successful response. Slices
+3–5 remain planned.
 
 The failed third turn should be corrected at the general continuity boundary,
 not with a new weather or comparison workflow. The serving Deep Agent remains
@@ -370,10 +372,14 @@ the same breadth:
    non-overlap retrieval invariant. Focused offline tests prove accepted
    advancement, exact retry, conflict rollback, migration preservation, and
    strictly later context-eligible raw reads without calling a hosted model.
-2. **Rolling compaction and hydration:** add the bounded summarizer call and
-   render summary and raw tail as separate prompt sections. Prove that
-   compaction sees only the prior summary plus the turns being folded, and that
-   a failed call never advances the watermark.
+2. **Rolling compaction and hydration — built:** memory returns a bounded oldest
+   exact prefix independently of the newest prompt tail. A tools-disabled
+   direct model call runs only after a successful response when configured
+   thresholds are met, sees only the prior summary plus that prefix, and
+   returns one closed JSON field. Summary, exact raw discussion, and the
+   product ledger render separately. Timeout, error, malformed/oversized input
+   or output, cancellation, and a summary-only finalization conflict never
+   change the response or silently advance the watermark.
 3. **Weather receipt projection:** promote only validated
    `WeatherForecastEvidence`, enforce exact scope, freshness, supersession, and
    cap behavior, and expose only applicable receipts to grounding. Keep the

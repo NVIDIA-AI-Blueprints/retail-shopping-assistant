@@ -1244,6 +1244,20 @@ be distinguished safely.
       "status": "completed"
     }
   ],
+  "unsummarized_turn_count": 1,
+  "summary_compaction_source": {
+    "expected_projection_version": 3,
+    "after_sequence": 2,
+    "through_sequence": 3,
+    "turns": [
+      {
+        "sequence": 3,
+        "shopper_text": "Show me a beige top",
+        "assistant_text": "Here are the grounded beige options.",
+        "status": "completed"
+      }
+    ]
+  },
   "previous_selected_skill_names": ["outfit-styling"],
   "projection": {
     "version": 3,
@@ -1303,8 +1317,25 @@ prevent model and shopping-tool work.
 versioned pair: both are empty/zero before the first accepted compaction and
 both are set afterward. `recent_turns` contains only context-eligible completed
 or failed turns with assistant text whose sequence is strictly greater than the
-watermark. The fields are a durable storage boundary in this slice; the chain
-server does not yet populate or render the summary.
+watermark and strictly before the turn being started/replayed.
+`unsummarized_turn_count` counts that complete eligible interval.
+`summary_compaction_source` is a separate memory-owned oldest exact prefix of up
+to four turns; it may overlap `recent_turns` because the two lanes have
+different consumers. It carries the projection version and exact before/after
+boundary. The runtime never derives a compaction watermark from the newest raw
+tail.
+
+The chain server renders `summary_text`, `recent_turns`, and
+`product_reference_index` as separate prompt/state sections. The summary is
+semantic continuity only, while recent turns retain exact conversational
+wording and the product index remains the deterministic historical-product
+authority. Default configuration considers compaction at six unsummarized
+turns, retains at least two raw turns, and folds the complete offered oldest
+prefix. The tools-disabled compactor runs only after a successful guarded
+response, so a new summary affects the next request, not the response that
+created it. It receives only the prior summary and offered turns. Timeout,
+model error, invalid or oversized input/output, blocked/failed turn, or
+cancellation produces no summary advance.
 
 At memory-service startup and atomically before each new turn start, turns left
 in `started` longer than `MEMORY_TURN_ABANDON_SECONDS` are changed to
@@ -1378,14 +1409,17 @@ optional accepted summary advance updates the summary projection.
 
 `summary_advance` is optional. When supplied, memory accepts it only when
 `expected_projection_version` matches the start snapshot, the watermark moves
-strictly forward to a prior context-eligible turn, and it remains before the
-turn being finalized. The assistant output, events, replay digest, product
+to the exact memory-owned compaction boundary, and that boundary remains before
+the turn being finalized. The assistant output, events, replay digest, product
 index rebuild, summary text, watermark, projection version, and last-turn
 pointer commit atomically. A stale version returns
 `projection_version_conflict`; an invalid boundary returns
 `summary_boundary_conflict`. Either conflict leaves the whole turn started and
 the projection unchanged. Exact replay includes the same summary advance in
-the finalize digest and does not apply it twice.
+the finalize digest and does not apply it twice. If the chain server receives
+one of those summary-only conflicts, it makes one deterministic finalize
+attempt without `summary_advance`; it does not rerun the compactor or change the
+shopper response.
 
 ### Memory Retriever POST `/conversations/{conversation_id}/products/resolve`
 

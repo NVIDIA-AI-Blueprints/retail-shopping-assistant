@@ -9,7 +9,7 @@ from pathlib import Path
 import yaml
 import logging
 from typing import List, Optional, Dict, Any
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, model_validator, validator
 
 from .weather import WeatherConfig
 from shared.model_config import resolve_model_config, validate_model_config
@@ -66,6 +66,55 @@ class MediaInputConfig(BaseModel):
         validate_assignment = True
 
 
+class ConversationSummaryConfig(BaseModel):
+    """Bounded rolling-summary compaction policy."""
+
+    enabled: bool = True
+    trigger_raw_turns: int = 6
+    retain_raw_turns: int = 2
+    max_output_chars: int = 4096
+    timeout_seconds: float = 5.0
+
+    @validator("trigger_raw_turns", "max_output_chars")
+    def validate_positive_limits(cls, value):
+        if value <= 0:
+            raise ValueError("conversation summary limits must be positive")
+        return value
+
+    @validator("retain_raw_turns")
+    def validate_retained_turns(cls, value):
+        if value < 2:
+            raise ValueError(
+                "conversation summary must retain at least two raw turns"
+            )
+        return value
+
+    @validator("timeout_seconds")
+    def validate_timeout(cls, value):
+        if not math.isfinite(value) or value <= 0:
+            raise ValueError(
+                "conversation summary timeout must be finite and positive"
+            )
+        return value
+
+    @model_validator(mode="after")
+    def validate_trigger_and_output(self):
+        if self.retain_raw_turns >= self.trigger_raw_turns:
+            raise ValueError(
+                "conversation summary retain_raw_turns must be smaller than "
+                "trigger_raw_turns"
+            )
+        if self.max_output_chars > 16_384:
+            raise ValueError(
+                "conversation summary max_output_chars cannot exceed 16384"
+            )
+        return self
+
+    class Config:
+        extra = "forbid"
+        validate_assignment = True
+
+
 class ChainServerConfig(BaseModel):
     """Configuration class for the chain server application."""
     
@@ -101,6 +150,10 @@ class ChainServerConfig(BaseModel):
     
     # Performance Configuration
     memory_length: int = Field(..., description="Maximum memory length for context")
+    conversation_summary: ConversationSummaryConfig = Field(
+        default_factory=ConversationSummaryConfig,
+        description="Durable rolling-summary compaction policy",
+    )
     top_k_retrieve: int = Field(..., description="Number of top results to retrieve")
     deepagents_recursion_limit: int = Field(
         default=24,
@@ -231,6 +284,14 @@ class ChainServerConfig(BaseModel):
         if not v:
             raise ValueError("List cannot be empty")
         return v
+
+    @model_validator(mode="after")
+    def validate_summary_context_budget(self):
+        if self.conversation_summary.max_output_chars > self.memory_length:
+            raise ValueError(
+                "conversation summary max_output_chars cannot exceed memory_length"
+            )
+        return self
     
     class Config:
         """Pydantic configuration."""

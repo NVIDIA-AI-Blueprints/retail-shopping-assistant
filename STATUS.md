@@ -10,20 +10,25 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   `docs/SHOPPER_DEEP_AGENT_ARCHITECTURE_2026-07-29.md` records the agreed
   durable cross-turn context correction. It keeps the request-scoped Deep
   Agent, current profile/cart/product-ledger authorities, and fresh skill
-  activation. Slice 1 is implemented: migration 8 adds one rolling-summary text
-  and through-sequence watermark to the conversation projection; turn start
-  returns only context-eligible raw turns strictly after that watermark; and an
-  optional finalize-time compare-and-swap advances the pair atomically with
-  output, events, the product index, replay identity, projection version, and
-  last-turn pointer. Exact retry does not reapply it, while a stale version or
-  invalid boundary rolls back the whole finalization. The runtime deliberately
-  does not yet populate or render the summary. Rolling compaction/hydration and
-  the bounded valid-receipt projection remain later slices. Summary prose will
-  remain semantic continuity only; exact product, cart, and weather claims
-  still require their authoritative state or scoped typed evidence. This
-  direction replaces the paused event-action correction; no event state
-  machine, comparison skill, intent router, conversation-long graph checkpoint,
-  or unbounded tool history is planned;
+  activation. Slices 1 and 2 are implemented. Migration 8 owns one
+  rolling-summary text and through-sequence watermark; turn start returns the
+  newest context-eligible raw tail plus a separate memory-owned oldest
+  compaction prefix. After a successful guarded response, a tools-disabled
+  direct model call may compact that full prefix under its own timeout and a
+  closed one-key JSON result. Summary, exact raw discussion, and the historical
+  product index are distinct state/prompt lanes. Summary prose is semantic
+  continuity only and cannot establish exact shopper wording, product/cart/tool
+  evidence, location/date authority, policy, availability, or current weather.
+  The current query, profile/ZIP, cart, product ledger, tool transcripts, media,
+  diagnostics, and request IDs never enter the compactor. Invalid, timed-out,
+  oversized, or failed compaction preserves the old watermark and raw turns.
+  Accepted advancement commits atomically with finalization and affects only
+  the next request; a summary-only conflict gets one deterministic finalize
+  retry without the optional update and no model rerun. The bounded valid
+  weather-receipt projection remains Slice 3. This direction replaces the
+  paused event-action correction; no event state machine, comparison skill,
+  intent router, conversation-long graph checkpoint, or unbounded tool history
+  is planned;
 - the dated
   `docs/SHOPPER_DEEP_AGENT_ARCHITECTURE_2026-07-29.md` snapshot records the
   source-audited `f6fe646` serving path and a smaller validation policy. One
@@ -218,9 +223,11 @@ The current working tree extends the shopper-serving Deep Agent architecture:
 - startup migration 8 adds the durable rolling-summary text and
   through-sequence watermark with empty/zero defaults for existing projections.
   Turn start returns only completed/failed raw turns with assistant text after
-  that watermark. An optional summary advance uses the projection version as a
-  compare-and-swap and commits atomically with finalization; the serving runtime
-  does not generate or render it yet;
+  that watermark. It separately returns a newest prompt tail, unsummarized
+  count, and oldest exact prefix of up to four turns. The runtime renders the
+  existing summary separately, compacts only the memory-owned prefix after a
+  successful response when configured thresholds are met, and uses the
+  projection version for an atomic finalize-time compare-and-swap;
 - a single memory-service SQLite replica now starts each turn durably before
   guardrail/model/tool work, returns bounded model-context-eligible raw turns
   plus the authoritative cart, and finalizes every completed, blocked, or
@@ -553,6 +560,22 @@ The newest focused gate is recorded first. Older implementation gates remain
 below as comparison points; generated quality and timing
 artifacts stay in the required local archive rather than versioned source.
 
+- Durable cross-turn context Slice 2 gate (2026-07-30): the focused
+  summary/memory/config contract passed 221 tests in 6.00 seconds, and the
+  focused serving-runtime context/weather/comparison selection passed 92 tests
+  with 145 deselected in 3.83 seconds. Each command reported only the existing
+  Starlette/httpx deprecation warning. No hosted model, weather request, Judge,
+  Challenger, broad integration cohort, or repository-wide unit suite ran.
+  The tests prove oldest-prefix selection independent of the newest raw tail,
+  closed compactor input/output, strict authority-lane separation,
+  next-request-only hydration, fail-open timeout/error behavior, exact-boundary
+  compare-and-swap, one finalization retry without the optional summary on a
+  summary-only conflict, cancellation finalization without an advance, and no
+  compaction for failed turns. The focused local
+  quality/timing comparison is
+  `~/exec-briefs/retail-shopping-assistant/quality/shopping/targeted/durable_context/slice2_compaction_hydration/comparison.md`.
+  The focused paid weather conversation remains deferred to Slice 3 because
+  Slice 2 intentionally does not yet persist reusable forecast evidence.
 - Styling-weather evidence-driven comparison Slice 2 gate (2026-07-29): the new
   three-turn fixture under
   `tests/integration/conversations/event_context_comparison/` passed its focused

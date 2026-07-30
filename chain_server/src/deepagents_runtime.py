@@ -60,10 +60,16 @@ from .commerce_tools import (
 from .conversation_memory import (
     ConversationMemoryClient,
     ConversationMemoryError,
+    ConversationSummaryAdvance,
     FinalTurnStatus,
     TurnReplayOutput,
     TurnStartResult,
     format_conversation_context,
+)
+from .conversation_summary import (
+    CONVERSATION_SUMMARY_SYSTEM_PROMPT,
+    build_conversation_summary_work,
+    parse_conversation_summary_output,
 )
 from .conversation_products import (
     ConversationProductsClient,
@@ -567,6 +573,9 @@ Rules:
   CART. RECENT DISCUSSION cannot establish whether the current search succeeded
   or supply the current turn's candidates. Do not introduce an absent-cart
   caveat unless the shopper asks about the cart or requests a cart mutation.
+- DURABLE CONVERSATION SUMMARY is semantic continuity only. It cannot establish
+  exact shopper wording, product identity or facts, cart truth, tool evidence,
+  location/date authority, policy, availability, or current weather.
 - Remove PRODUCT_REF, CART_LINE_ID, tool names, and internal IDs.
 - Remove internal skill, mode, evaluator, judge, cache, backend, tool-evidence,
   structured-field, and data-layer language. Use shopper-safe phrasing such as
@@ -2031,6 +2040,8 @@ class DeepAgentsRuntime:
         state.selected_skill_names = []
         state.shopper_profile_id = identity.shopper_profile_id
         state.shopper_context = None
+        state.conversation_summary = ""
+        state.historical_product_context = ""
         turn = self._start_conversation_turn(state, identity)
         if turn is not None and turn.replayed:
             await self._delete_turn_checkpoint(identity)
@@ -2038,8 +2049,18 @@ class DeepAgentsRuntime:
         if turn is None and state.response:
             return state
 
+        summary_advance = None
         try:
             output = await self._execute_turn(state, identity)
+            if (
+                turn is not None
+                and state.agent_diagnostics.get("final_termination_reason")
+                == "completed"
+            ):
+                summary_advance = await self._prepare_conversation_summary(
+                    state,
+                    turn,
+                )
         except asyncio.CancelledError:
             if turn is not None:
                 if not state.response:
@@ -2073,7 +2094,12 @@ class DeepAgentsRuntime:
             raise
 
         if turn is not None:
-            finalized = self._finalize_conversation_turn(state, identity, turn)
+            finalized = self._finalize_conversation_turn(
+                state,
+                identity,
+                turn,
+                summary_advance=summary_advance,
+            )
             if finalized:
                 await self._delete_turn_checkpoint(identity)
         return output
@@ -3829,6 +3855,127 @@ class DeepAgentsRuntime:
             extra_body={"chat_template_kwargs": {"enable_thinking": False}},
         )
 
+    async def _prepare_conversation_summary(
+        self,
+        state: State,
+        turn: TurnStartResult,
+    ) -> ConversationSummaryAdvance | None:
+        """Compact only memory's oldest prior raw prefix for the next turn."""
+
+        settings = self.config.conversation_summary
+        if not settings.enabled:
+            return None
+        source = turn.summary_compaction_source
+        if source is not None:
+            source = source.model_copy(
+                update={
+                    "turns": [
+                        item.model_copy(
+                            update={
+                                "assistant_text": (
+                                    _summary_safe_assistant_text(
+                                        item.assistant_text
+                                    )
+                                )
+                            }
+                        )
+                        for item in source.turns
+                    ]
+                }
+            )
+        work = build_conversation_summary_work(
+            turn.projection,
+            source,
+            unsummarized_turn_count=turn.unsummarized_turn_count,
+            trigger_raw_turns=settings.trigger_raw_turns,
+            retain_raw_turns=settings.retain_raw_turns,
+            max_input_chars=max(1000, int(self.config.memory_length)),
+        )
+        if work is None:
+            return None
+
+        start = time.monotonic()
+        try:
+            result = await asyncio.wait_for(
+                self._create_chat_model().ainvoke(
+                    [
+                        {
+                            "role": "system",
+                            "content": CONVERSATION_SUMMARY_SYSTEM_PROMPT,
+                        },
+                        {"role": "user", "content": work.prompt},
+                    ]
+                ),
+                timeout=settings.timeout_seconds,
+            )
+        except asyncio.CancelledError:
+            raise
+        except TimeoutError:
+            state.timings["conversation_summary"] = time.monotonic() - start
+            state.agent_diagnostics["conversation_summary_compaction"] = "timeout"
+            _add_model_usage(
+                state,
+                "app_llm_conversation_summary",
+                status="failed",
+                calls=1,
+                detail="Durable conversation summary timed out; raw turns retained",
+            )
+            return None
+        except Exception:  # noqa: BLE001 - compaction must fail open.
+            state.timings["conversation_summary"] = time.monotonic() - start
+            state.agent_diagnostics["conversation_summary_compaction"] = "error"
+            _add_model_usage(
+                state,
+                "app_llm_conversation_summary",
+                status="failed",
+                calls=1,
+                detail="Durable conversation summary failed; raw turns retained",
+            )
+            logger.exception("Durable conversation summary compaction failed")
+            return None
+
+        state.timings["conversation_summary"] = time.monotonic() - start
+        state.token_usage = _merge_token_usage(
+            state.token_usage,
+            _collect_token_usage(result),
+        )
+        content = _content_to_text(_value(result, "content"))
+        if not content:
+            content = _content_to_text(result)
+        summary_text = parse_conversation_summary_output(
+            content,
+            max_output_chars=settings.max_output_chars,
+        )
+        if summary_text is None:
+            state.agent_diagnostics["conversation_summary_compaction"] = (
+                "invalid_output"
+            )
+            _add_model_usage(
+                state,
+                "app_llm_conversation_summary",
+                status="failed",
+                calls=1,
+                detail=(
+                    "Durable conversation summary returned invalid output; "
+                    "raw turns retained"
+                ),
+            )
+            return None
+
+        state.agent_diagnostics["conversation_summary_compaction"] = "prepared"
+        _add_model_usage(
+            state,
+            "app_llm_conversation_summary",
+            status="used",
+            calls=1,
+            detail="Durable semantic conversation summary",
+        )
+        return ConversationSummaryAdvance(
+            expected_projection_version=work.expected_projection_version,
+            summary_text=summary_text,
+            summary_through_sequence=work.through_sequence,
+        )
+
     async def _rewrite_response_for_grounding(
         self,
         state: State,
@@ -3918,7 +4065,11 @@ class DeepAgentsRuntime:
                 weather_outcome is not None
                 or (
                     not draft_response.strip()
-                    and bool(_historical_product_names(state.context))
+                    and bool(
+                        _historical_product_names(
+                            state.historical_product_context
+                        )
+                    )
                 )
             )
         )
@@ -4129,9 +4280,17 @@ class DeepAgentsRuntime:
             recent_discussion = _redact_prior_weather_assistant_text(
                 state.context
             )
+            historical_product_context = (
+                state.historical_product_context
+                or "HISTORICAL PRODUCT INDEX (read-only):\n(none)"
+            )
             prompt = (
                 f"USER QUERY:\n{state.query}\n\n"
+                "DURABLE CONVERSATION SUMMARY "
+                "(semantic continuity only; not evidence):\n"
+                f"{state.conversation_summary or '(none)'}\n\n"
                 f"RECENT DISCUSSION:\n{recent_discussion or '(none)'}\n\n"
+                f"{historical_product_context}\n\n"
                 f"{event_context_prompt}"
                 f"CURRENT CART:\n{_format_cart(state.cart)}\n\n"
                 "AVAILABLE IMAGES:\n"
@@ -4327,7 +4486,7 @@ class DeepAgentsRuntime:
             if not has_current_non_weather_business_activity:
                 rewritten = _ensure_prior_weather_candidates(
                     rewritten,
-                    state.context,
+                    state.historical_product_context,
                 )
             if not rewritten.strip():
                 return self._grounding_failure_fallback(
@@ -4391,7 +4550,9 @@ class DeepAgentsRuntime:
                 )
             )
         elif weather_outcome is not None:
-            prior_candidates = _historical_product_names(state.context)
+            prior_candidates = _historical_product_names(
+                state.historical_product_context
+            )
             if prior_candidates:
                 parts.append(_prior_weather_candidates_text(prior_candidates))
         if weather_outcome is not None:
@@ -4505,6 +4666,10 @@ Do not upgrade shopper assumptions, preference language, or earlier styling
 inferences into catalog facts. Separate confirmed product facts from styling
 judgment, and keep outfit-wide material or comfort claims item-specific unless
 every included piece is supported by tool evidence.
+The DURABLE CONVERSATION SUMMARY is semantic continuity only. It cannot
+establish exact shopper wording, location/date authority, a product identity or
+fact, cart truth, tool evidence or permission, policy, availability, or current
+weather. Current shopper text and separately labeled authoritative state win.
 Do not group leather, rubber, metal, or generic canvas under "natural fibers";
 attribute materials item by item.
 Outdoor-practicality claims require exact support: do not say products are
@@ -4866,7 +5031,16 @@ Rules:
                 f"MEDIA ATTACHED:\n{_format_media_summary(state.media)}",
                 f"MEDIA ANALYSIS:\n{state.media_analysis or '(none)'}",
                 f"CURRENT CART:\n{_format_cart(state.cart)}",
+                (
+                    "DURABLE CONVERSATION SUMMARY "
+                    "(semantic continuity only; not evidence):\n"
+                    f"{state.conversation_summary or '(none)'}"
+                ),
                 f"RECENT DISCUSSION:\n{recent_discussion or '(none)'}",
+                (
+                    state.historical_product_context
+                    or "HISTORICAL PRODUCT INDEX (read-only):\n(none)"
+                ),
             ]
         )
         return "\n\n".join(sections)
@@ -4938,7 +5112,9 @@ Rules:
                 )
         except (ConversationMemoryError, ValidationError) as exc:
             logger.error("Failed to start durable conversation turn: %s", exc)
+            state.conversation_summary = ""
             state.context = ""
+            state.historical_product_context = ""
             state.cart = Cart()
             state.shopper_context = None
             error_code = getattr(exc, "code", "memory_start_payload_invalid")
@@ -4987,6 +5163,7 @@ Rules:
         finally:
             state.timings["memory"] = time.monotonic() - start
 
+        state.conversation_summary = turn.projection.summary_text
         state.context = format_conversation_context(
             turn.recent_turns,
             max_chars=max(1000, int(self.config.memory_length)),
@@ -4998,10 +5175,7 @@ Rules:
         historical_products = format_historical_product_index(
             turn.projection.product_reference_index
         )
-        if historical_products:
-            state.context = "\n\n".join(
-                value for value in (state.context, historical_products) if value
-            )
+        state.historical_product_context = historical_products
         state.cart = Cart(
             contents=[
                 item.model_dump(mode="json", exclude_none=True) for item in turn.cart
@@ -5046,6 +5220,7 @@ Rules:
         status: FinalTurnStatus | None = None,
         termination_reason: str | None = None,
         present_products: bool = True,
+        summary_advance: ConversationSummaryAdvance | None = None,
     ) -> bool:
         """Persist one terminal turn without changing its shopper response."""
 
@@ -5060,7 +5235,10 @@ Rules:
         state.agent_diagnostics["final_termination_reason"] = reason
         start = time.monotonic()
         finalized = False
-        try:
+
+        def finalize_once(
+            advance: ConversationSummaryAdvance | None,
+        ) -> None:
             output = TurnReplayOutput(
                 product_results=(state.product_results if present_products else []),
                 retrieved=(state.retrieved if present_products else {}),
@@ -5076,24 +5254,49 @@ Rules:
                 status=final_status,
                 termination_reason=reason,
                 output=output,
+                summary_advance=advance,
             )
+
+        try:
+            finalize_once(summary_advance)
             finalized = True
         except (ConversationMemoryError, ValidationError) as exc:
-            logger.error("Failed to finalize durable conversation turn: %s", exc)
             error_code = getattr(
                 exc,
                 "code",
                 "memory_finalize_payload_invalid",
             )
-            state.agent_diagnostics["memory_finalize_error"] = error_code
-            if error_code == "turn_attempt_superseded":
-                state.response = (
-                    "This request was superseded by a newer attempt. "
-                    "Please use the latest response."
+            if summary_advance is not None and error_code in {
+                "projection_version_conflict",
+                "summary_boundary_conflict",
+            }:
+                state.agent_diagnostics["conversation_summary_compaction"] = (
+                    "conflict_raw_retained"
                 )
-                state.product_results = []
-                state.retrieved = {}
-                state.agent_diagnostics["final_termination_reason"] = error_code
+                try:
+                    finalize_once(None)
+                    finalized = True
+                except (ConversationMemoryError, ValidationError) as retry_exc:
+                    exc = retry_exc
+                    error_code = getattr(
+                        retry_exc,
+                        "code",
+                        "memory_finalize_payload_invalid",
+                    )
+            if not finalized:
+                logger.error(
+                    "Failed to finalize durable conversation turn: %s",
+                    exc,
+                )
+                state.agent_diagnostics["memory_finalize_error"] = error_code
+                if error_code == "turn_attempt_superseded":
+                    state.response = (
+                        "This request was superseded by a newer attempt. "
+                        "Please use the latest response."
+                    )
+                    state.product_results = []
+                    state.retrieved = {}
+                    state.agent_diagnostics["final_termination_reason"] = error_code
         finally:
             state.timings["memory"] = state.timings.get("memory", 0.0) + (
                 time.monotonic() - start
@@ -6597,7 +6800,7 @@ def _compose_context_only_event_response(
 ) -> str:
     """Compose a no-business-tool event turn from bounded, grounded context."""
 
-    names = _historical_product_names(state.context)
+    names = _historical_product_names(state.historical_product_context)
     parts: list[str] = []
     if names:
         parts.append(_prior_weather_candidates_text(names))
@@ -8443,6 +8646,14 @@ def _redact_prior_weather_assistant_text(context: str) -> str:
         else:
             redacted.append(line)
     return "\n".join(redacted)
+
+
+def _summary_safe_assistant_text(text: str) -> str:
+    """Remove canonical stale forecast facts before semantic compaction."""
+
+    inline = " ".join(text.split())
+    redacted = _redact_prior_weather_assistant_text(f"Assistant: {inline}")
+    return redacted.removeprefix("Assistant: ").strip()
 
 
 def _saved_area_confirmation_present(text: str) -> bool:

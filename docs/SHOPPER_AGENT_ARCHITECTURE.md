@@ -23,7 +23,7 @@ see the [Shopper Agent Leadership Note](SHOPPER_AGENT_LEADERSHIP_NOTE.md).
 | --- | --- | --- |
 | Published catalog | Product records, taxonomy, filter values, field roles, prices, details, and retrieval results | Shopper intent, styling judgment, cart state, or inventory |
 | Deep Agents runtime | Semantic intent, skill selection, deterministic selected-skill tool grants, tool selection, styling judgment, and one server-resolved representative-shopper soft-guidance block | Product facts, policy facts, cart truth, or profile ownership |
-| Memory service | Immutable representative-shopper registry and conversation binding, typed three-field shopper snapshots, ordered durable shopper/assistant turns, exact finalized replay, a versioned rolling-summary storage boundary with strictly later bounded raw-turn reads, presented-product events and compact index, deterministic same-conversation reference resolution, authoritative cart state, and atomic mutation replay records | Catalog facts, model reasoning, learned preferences, sentiment, active anchors, summary generation, or cross-conversation memory |
+| Memory service | Immutable representative-shopper registry and conversation binding, typed three-field shopper snapshots, ordered durable shopper/assistant turns, exact finalized replay, a versioned rolling summary, separate newest raw-turn tail and oldest exact compaction prefix, presented-product events and compact index, deterministic same-conversation reference resolution, authoritative cart state, and atomic mutation replay records | Catalog facts, model reasoning, learned preferences, sentiment, active anchors, summary semantics, or cross-conversation memory |
 | Graph checkpointer | Request-scoped working graph/tool state within one chain-server process | Durable transcript storage, cross-turn shopper memory, cross-replica context, or product-ref authorization |
 | Event-weather boundary | Closed location/venue/date question ordering and weather authority validation, exact shopper location provenance, optional exact-prefix region/country qualifiers, direct Visual Crossing resolution, server-owned bare-range and exact-weekday `next week` normalization, normalized current-turn forecast evidence, sanitized typed failures, redacted raw data plus categorical tracing, deterministic location disclosure, attribution, and uncertainty | Product facts or constraints, a rewritten shopper place, an unstated ZIP, inferred beach/outdoor/indoor/terrain setting, prior-turn forecast authority, provider-plan rights, or a public weather API |
 
@@ -475,8 +475,26 @@ conversation projection. They are a versioned pair updated only through an
 optional compare-and-swap payload on turn finalization. Memory returns only
 context-eligible raw turns strictly after the watermark, so accepted summary
 coverage and the raw tail do not overlap. A stale projection version or invalid
-boundary rolls back the complete finalization. This storage slice does not yet
-generate or render the summary; that remains the rolling-compaction slice.
+boundary rolls back the complete finalization.
+
+The serving runtime now renders three separate lanes: semantic summary, exact
+newest raw discussion, and the historical product index. Memory also returns
+the total unsummarized count and a separate oldest exact prefix of up to four
+turns. Only that prefix can feed the compactor; the newest prompt tail never
+sets a watermark. With default policy, six unsummarized turns trigger one
+tools-disabled direct model call after the successful response and before
+finalization, at least two turns remain raw, output is capped at 4,096
+characters, and the call has an independent five-second timeout. Its closed
+one-key JSON result becomes visible only to the next request.
+
+The compactor input contains only the prior summary and exact offered prefix.
+It excludes the current request, representative profile/ZIP, cart, product
+ledger, media, tool messages, diagnostics, and request identity. Canonical
+prior forecast blocks are redacted. An input that cannot fit without truncating
+a durable turn fails open, as do timeout, error, malformed output, blocked or
+failed turns, and cancellation; memory retains every raw turn and the previous
+watermark. A summary-only compare-and-swap conflict gets one finalize retry
+without the update and no model rerun.
 
 The resolved agent dependency boundary remains `deepagents==0.6.12`,
 `langchain==1.3.11`, `langgraph==1.2.7`, and `langgraph-sdk==0.4.2`.

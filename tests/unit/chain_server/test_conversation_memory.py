@@ -72,6 +72,20 @@ def _start_payload() -> dict[str, Any]:
                 "status": "completed",
             }
         ],
+        "unsummarized_turn_count": 1,
+        "summary_compaction_source": {
+            "expected_projection_version": 1,
+            "after_sequence": 1,
+            "through_sequence": 2,
+            "turns": [
+                {
+                    "sequence": 2,
+                    "shopper_text": "Show me bags",
+                    "assistant_text": "Here are two bags.",
+                    "status": "completed",
+                }
+            ],
+        },
         "previous_selected_skill_names": ["outfit-styling"],
         "shopper_context": None,
         "projection": {
@@ -286,6 +300,55 @@ def test_start_rejects_an_inconsistent_summary_projection(
     payload = _start_payload()
     payload["projection"]["summary_text"] = summary_text
     payload["projection"]["summary_through_sequence"] = summary_through_sequence
+    client = ConversationMemoryClient(
+        "http://memory",
+        session=FakeSession(FakeResponse(payload)),
+    )
+
+    with pytest.raises(ConversationMemoryError) as caught:
+        client.start_turn(
+            "conversation-a",
+            request_id="request-a",
+            shopper_text="hello",
+            cart_user_id=17,
+        )
+
+    assert caught.value.code == "memory_response_invalid"
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("expected_projection_version", 0),
+        ("after_sequence", 0),
+        ("through_sequence", 3),
+    ],
+)
+def test_start_rejects_compaction_source_that_mismatches_projection(
+    field: str,
+    value: int,
+) -> None:
+    payload = _start_payload()
+    payload["summary_compaction_source"][field] = value
+    client = ConversationMemoryClient(
+        "http://memory",
+        session=FakeSession(FakeResponse(payload)),
+    )
+
+    with pytest.raises(ConversationMemoryError) as caught:
+        client.start_turn(
+            "conversation-a",
+            request_id="request-a",
+            shopper_text="hello",
+            cart_user_id=17,
+        )
+
+    assert caught.value.code == "memory_response_invalid"
+
+
+def test_start_rejects_compaction_source_that_skips_its_boundary() -> None:
+    payload = _start_payload()
+    payload["summary_compaction_source"]["turns"][0]["sequence"] = 3
     client = ConversationMemoryClient(
         "http://memory",
         session=FakeSession(FakeResponse(payload)),

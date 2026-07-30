@@ -81,6 +81,36 @@ class RecentConversationTurn(_MemoryModel):
     status: TurnStatus | None = None
 
 
+class SummaryCompactionTurn(_MemoryModel):
+    """One exact context-eligible turn in memory's oldest raw prefix."""
+
+    sequence: int = Field(..., ge=1)
+    shopper_text: str = Field(..., min_length=1, max_length=100_000)
+    assistant_text: str = Field(..., max_length=100_000)
+    status: Literal["completed", "failed"]
+
+
+class SummaryCompactionSource(_MemoryModel):
+    """Memory-owned exact oldest prefix eligible for one summary advance."""
+
+    expected_projection_version: int = Field(..., ge=0)
+    after_sequence: int = Field(..., ge=0)
+    through_sequence: int = Field(..., ge=1)
+    turns: list[SummaryCompactionTurn] = Field(..., min_length=1, max_length=100)
+
+    @model_validator(mode="after")
+    def _turns_match_boundary(self) -> "SummaryCompactionSource":
+        sequences = [turn.sequence for turn in self.turns]
+        if sequences != sorted(set(sequences)):
+            raise ValueError("summary compaction turns must be strictly ordered")
+        if (
+            sequences[0] <= self.after_sequence
+            or sequences[-1] != self.through_sequence
+        ):
+            raise ValueError("summary compaction turns must match their boundary")
+        return self
+
+
 class ConversationProjection(_MemoryModel):
     """Durable conversation-level summary and grounding projections."""
 
@@ -148,6 +178,8 @@ class TurnStartResult(_MemoryModel):
         default_factory=list,
         max_length=100,
     )
+    unsummarized_turn_count: int = Field(default=0, ge=0)
+    summary_compaction_source: SummaryCompactionSource | None = None
     previous_selected_skill_names: list[str] = Field(
         default_factory=list,
         max_length=5,
@@ -158,6 +190,35 @@ class TurnStartResult(_MemoryModel):
     assistant_text: str | None = Field(default=None, max_length=100_000)
     termination_reason: str | None = Field(default=None, max_length=1_024)
     output: TurnReplayOutput | None = None
+
+    @model_validator(mode="after")
+    def _summary_sources_are_consistent(self) -> "TurnStartResult":
+        watermark = self.projection.summary_through_sequence
+        recent_sequences = [turn.sequence for turn in self.recent_turns]
+        if recent_sequences != sorted(set(recent_sequences)) or any(
+            turn.sequence <= watermark
+            or turn.status not in {"completed", "failed"}
+            or turn.assistant_text is None
+            for turn in self.recent_turns
+        ):
+            raise ValueError(
+                "recent conversation turns must be eligible and post-summary"
+            )
+        source = self.summary_compaction_source
+        if source is not None and (
+            source.expected_projection_version != self.projection.version
+            or source.after_sequence != watermark
+            or source.through_sequence >= self.sequence
+        ):
+            raise ValueError(
+                "summary compaction source must match the turn projection"
+            )
+        source_length = len(source.turns) if source is not None else 0
+        if self.unsummarized_turn_count < source_length:
+            raise ValueError(
+                "unsummarized_turn_count cannot be smaller than compaction source"
+            )
+        return self
 
 
 class ConversationEvent(_MemoryModel):

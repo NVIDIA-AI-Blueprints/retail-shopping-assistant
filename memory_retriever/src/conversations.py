@@ -42,6 +42,7 @@ from .shopper_profiles import SHOPPER_PROFILE_ID_PATTERN
 
 DEFAULT_ABANDONED_SECONDS = 300
 DEFAULT_RECENT_TURNS_LIMIT = 8
+SUMMARY_COMPACTION_SOURCE_TURNS = 4
 MAX_RECENT_TURNS_LIMIT = 50
 MAX_CONVERSATION_SUMMARY_CHARS = 16_384
 SHOPPER_PROFILE_NOT_FOUND = "shopper_profile_not_found"
@@ -261,6 +262,7 @@ def _recent_turns(
     conversation_id: str,
     *,
     after_sequence: int,
+    before_sequence: int,
 ) -> list[dict[str, Any]]:
     """Return a bounded raw tail strictly after the durable summary boundary."""
 
@@ -269,6 +271,7 @@ def _recent_turns(
         .filter(
             ConversationTurn.conversation_id == conversation_id,
             ConversationTurn.sequence > after_sequence,
+            ConversationTurn.sequence < before_sequence,
             ConversationTurn.status.in_(("completed", "failed")),
             ConversationTurn.assistant_text.is_not(None),
         )
@@ -276,15 +279,56 @@ def _recent_turns(
         .limit(_recent_turns_limit())
         .all()
     )
-    return [
-        {
-            "sequence": row.sequence,
-            "shopper_text": row.shopper_text,
-            "assistant_text": row.assistant_text,
-            "status": row.status,
-        }
-        for row in reversed(rows)
-    ]
+    return [_context_turn_dict(row) for row in reversed(rows)]
+
+
+def _context_turn_dict(turn: ConversationTurn) -> dict[str, Any]:
+    return {
+        "sequence": turn.sequence,
+        "shopper_text": turn.shopper_text,
+        "assistant_text": turn.assistant_text,
+        "status": turn.status,
+    }
+
+
+def _summary_compaction_state(
+    db,
+    conversation_id: str,
+    *,
+    after_sequence: int,
+    before_sequence: int,
+    projection_version: int,
+) -> tuple[int, dict[str, Any] | None]:
+    """Return the count and bounded oldest prefix of unsummarized raw turns."""
+
+    eligibility = (
+        ConversationTurn.conversation_id == conversation_id,
+        ConversationTurn.sequence > after_sequence,
+        ConversationTurn.sequence < before_sequence,
+        ConversationTurn.status.in_(("completed", "failed")),
+        ConversationTurn.assistant_text.is_not(None),
+    )
+    count = (
+        db.query(func.count(ConversationTurn.turn_id))
+        .filter(*eligibility)
+        .scalar()
+        or 0
+    )
+    rows = (
+        db.query(ConversationTurn)
+        .filter(*eligibility)
+        .order_by(ConversationTurn.sequence.asc())
+        .limit(SUMMARY_COMPACTION_SOURCE_TURNS)
+        .all()
+    )
+    if not rows:
+        return int(count), None
+    return int(count), {
+        "expected_projection_version": projection_version,
+        "after_sequence": after_sequence,
+        "through_sequence": rows[-1].sequence,
+        "turns": [_context_turn_dict(row) for row in rows],
+    }
 
 
 def _turn_selected_skill_names(turn: ConversationTurn) -> list[str]:
@@ -345,6 +389,15 @@ def _start_response(
     *,
     replayed: bool,
 ) -> dict[str, Any]:
+    unsummarized_turn_count, summary_compaction_source = (
+        _summary_compaction_state(
+            db,
+            turn.conversation_id,
+            after_sequence=projection.summary_through_sequence,
+            before_sequence=turn.sequence,
+            projection_version=projection.version,
+        )
+    )
     return {
         "turn_id": turn.turn_id,
         "attempt_id": turn.attempt_id,
@@ -355,7 +408,10 @@ def _start_response(
             db,
             turn.conversation_id,
             after_sequence=projection.summary_through_sequence,
+            before_sequence=turn.sequence,
         ),
+        "unsummarized_turn_count": unsummarized_turn_count,
+        "summary_compaction_source": summary_compaction_source,
         "previous_selected_skill_names": _previous_selected_skill_names(db, turn),
         "projection": _projection_dict(projection),
         "cart": _cart_for_user(db, turn.cart_user_id),
@@ -648,25 +704,17 @@ def _validate_summary_advance(
             status_code=409,
             detail=PROJECTION_VERSION_CONFLICT,
         )
-    if (
-        advance.summary_through_sequence <= projection.summary_through_sequence
-        or advance.summary_through_sequence >= turn.sequence
-    ):
-        raise HTTPException(
-            status_code=409,
-            detail=SUMMARY_BOUNDARY_CONFLICT,
-        )
-    target = (
-        db.query(ConversationTurn.turn_id)
-        .filter(
-            ConversationTurn.conversation_id == turn.conversation_id,
-            ConversationTurn.sequence == advance.summary_through_sequence,
-            ConversationTurn.status.in_(("completed", "failed")),
-            ConversationTurn.assistant_text.is_not(None),
-        )
-        .first()
+    _count, source = _summary_compaction_state(
+        db,
+        turn.conversation_id,
+        after_sequence=projection.summary_through_sequence,
+        before_sequence=turn.sequence,
+        projection_version=projection.version,
     )
-    if target is None:
+    if (
+        source is None
+        or advance.summary_through_sequence != source["through_sequence"]
+    ):
         raise HTTPException(
             status_code=409,
             detail=SUMMARY_BOUNDARY_CONFLICT,

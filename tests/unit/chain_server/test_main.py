@@ -1359,8 +1359,13 @@ class TestDeepAgentsRuntimeScopes:
         assert memory.start_calls[0]["request_id"] == "request-a"
         assert "User: Show me a bag" in state.context
         assert state.previous_selected_skill_names == ["outfit-styling"]
-        assert "HISTORICAL PRODUCT INDEX (read-only)" in state.context
-        assert "set=set-a turn=1: 1:Blue Bag [bags] <bag-a>" in state.context
+        assert "HISTORICAL PRODUCT INDEX (read-only)" not in state.context
+        assert "HISTORICAL PRODUCT INDEX (read-only)" in (
+            state.historical_product_context
+        )
+        assert "set=set-a turn=1: 1:Blue Bag [bags] <bag-a>" in (
+            state.historical_product_context
+        )
         assert state.cart.contents[0]["cart_line_id"] == "line-a"
         assert memory.finalize_calls[0]["conversation_id"] == "conversation-a"
         assert memory.finalize_calls[0]["turn_id"] == "turn-a"
@@ -3643,7 +3648,7 @@ class TestDeepAgentsRuntimeRefs:
             State(
                 user_id=111,
                 query="NYC, on an outdoor patio.",
-                context=prior_context,
+                historical_product_context=prior_context,
             ),
             identity,
         )
@@ -3669,7 +3674,7 @@ class TestDeepAgentsRuntimeRefs:
             State(
                 user_id=111,
                 query="NYC, on an outdoor patio Friday next week.",
-                context=prior_context,
+                historical_product_context=prior_context,
             ),
             identity,
         )
@@ -3712,7 +3717,7 @@ class TestDeepAgentsRuntimeRefs:
             State(
                 user_id=111,
                 query="The wedding is Friday next week.",
-                context=prior_context,
+                historical_product_context=prior_context,
             ),
             identity,
         )
@@ -3742,7 +3747,7 @@ class TestDeepAgentsRuntimeRefs:
             State(
                 user_id=111,
                 query="The wedding is in Cancun Friday next week.",
-                context=prior_context,
+                historical_product_context=prior_context,
             ),
             identity,
         )
@@ -6450,7 +6455,9 @@ class TestDeepAgentsRuntimeRefs:
                 "[turn 1]\n"
                 "User: I’m shopping for a semi-formal wedding.\n"
                 "Assistant: Consider Elegant Embroidered Lace Dress or "
-                "Wavy Hem Satin Dress.\n\n"
+                "Wavy Hem Satin Dress."
+            ),
+            historical_product_context=(
                 "HISTORICAL PRODUCT INDEX (read-only):\n"
                 "- set=set-a turn=1: 1:Elegant Embroidered Lace Dress "
                 "[dresses] <dress-a>; 2:Wavy Hem Satin Dress "
@@ -6604,7 +6611,7 @@ class TestDeepAgentsRuntimeRefs:
         state = State(
             user_id=111,
             query="NYC, on an outdoor patio.",
-            context=(
+            historical_product_context=(
                 "HISTORICAL PRODUCT INDEX (read-only):\n"
                 "- set=set-a turn=1: 1:Elegant Embroidered Lace Dress "
                 "[dresses] <dress-a>"
@@ -6668,7 +6675,7 @@ class TestDeepAgentsRuntimeRefs:
         state = State(
             user_id=111,
             query="Compare the lacy gown and the hem satin dress.",
-            context=(
+            historical_product_context=(
                 "HISTORICAL PRODUCT INDEX (read-only):\n"
                 "- set=set-a turn=1: 1:Intricate Lace Gown "
                 "[dresses] <dress-a>; 2:Wavy Hem Satin Dress "
@@ -6776,7 +6783,7 @@ class TestDeepAgentsRuntimeRefs:
             user_id=111,
             query=query,
             shopper_context=shopper_context,
-            context=(
+            historical_product_context=(
                 "HISTORICAL PRODUCT INDEX (read-only):\n"
                 "- set=set-a turn=1: 1:Elegant Embroidered Lace Dress "
                 "[dresses] <dress-a>"
@@ -6840,7 +6847,7 @@ class TestDeepAgentsRuntimeRefs:
         state = State(
             user_id=111,
             query="The wedding is in Cancun.",
-            context=(
+            historical_product_context=(
                 "HISTORICAL PRODUCT INDEX (read-only):\n"
                 "- set=set-a turn=1: 1:Elegant Embroidered Lace Dress "
                 "[dresses] <dress-a>"
@@ -6896,7 +6903,7 @@ class TestDeepAgentsRuntimeRefs:
         state = State(
             user_id=111,
             query="The date is still TBD.",
-            context=(
+            historical_product_context=(
                 "HISTORICAL PRODUCT INDEX (read-only):\n"
                 "- set=set-a turn=1: 1:Elegant Embroidered Lace Dress "
                 "[dresses] <dress-a>"
@@ -6985,7 +6992,7 @@ class TestDeepAgentsRuntimeRefs:
         state = State(
             user_id=111,
             query="NYC, on an outdoor patio next week.",
-            context=(
+            historical_product_context=(
                 "HISTORICAL PRODUCT INDEX (read-only):\n"
                 "- set=set-a turn=1: 1:Elegant Embroidered Lace Dress "
                 "[dresses] <dress-a>; 2:Wavy Hem Satin Dress "
@@ -7071,7 +7078,7 @@ class TestDeepAgentsRuntimeRefs:
         state = State(
             user_id=111,
             query="NYC, on an outdoor patio next week.",
-            context=(
+            historical_product_context=(
                 "HISTORICAL PRODUCT INDEX (read-only):\n"
                 "- set=set-a turn=1: 1:Elegant Embroidered Lace Dress "
                 "[dresses] <dress-a>; 2:Wavy Hem Satin Dress "
@@ -7556,7 +7563,9 @@ class TestDeepAgentsRuntimeRefs:
                 "Jul 29, 2026 is rain, 57–66°F. "
                 "[Weather Data Provided by Visual Crossing]"
                 "(https://www.visualcrossing.com/). Forecasts can change, "
-                "so recheck closer to the event.\n"
+                "so recheck closer to the event."
+            ),
+            historical_product_context=(
                 "HISTORICAL PRODUCT INDEX (read-only):\n"
                 "- set=set-a turn=1: 1:Intricate Lace Gown "
                 "[dresses] <dress-1>; 2:Wavy Hem Satin Dress "
@@ -7652,7 +7661,7 @@ class TestDeepAgentsRuntimeRefs:
         state = State(
             user_id=111,
             query="Compare the lacy gown and the hem satin dress.",
-            context=(
+            historical_product_context=(
                 "HISTORICAL PRODUCT INDEX (read-only):\n"
                 "- set=set-a turn=1: 1:Intricate Lace Gown "
                 "[dresses] <dress-1>; 2:Wavy Hem Satin Dress "

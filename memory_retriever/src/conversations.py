@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from typing import Any, Literal
 from uuid import uuid4
@@ -38,6 +39,14 @@ from .product_references import (
     resolve_product_references,
 )
 from .shopper_profiles import SHOPPER_PROFILE_ID_PATTERN
+from shared.weather_receipts import (
+    MAX_ACTIVE_WEATHER_RECEIPTS,
+    WEATHER_TOOL_NAME,
+    WeatherForecastReceipt,
+    WeatherReceiptPromotion,
+    weather_receipt_id,
+    weather_scope_key,
+)
 
 
 DEFAULT_ABANDONED_SECONDS = 300
@@ -50,6 +59,8 @@ CONVERSATION_PROFILE_MISMATCH = "conversation_profile_mismatch"
 REQUEST_INPUT_CONFLICT = "request_id was already used for different turn input"
 PROJECTION_VERSION_CONFLICT = "projection_version_conflict"
 SUMMARY_BOUNDARY_CONFLICT = "summary_boundary_conflict"
+WEATHER_RECEIPT_STATUS_CONFLICT = "weather_receipt_status_conflict"
+WEATHER_RECEIPT_STALE = "weather_receipt_stale"
 
 
 class TurnStartRequest(BaseModel):
@@ -160,6 +171,7 @@ class TurnFinalizeRequest(BaseModel):
     )
     output: TurnReplayOutput | None = None
     summary_advance: ConversationSummaryAdvance | None = None
+    weather_receipt_promotion: WeatherReceiptPromotion | None = None
 
     @model_validator(mode="after")
     def _event_keys_are_unique(self):
@@ -190,7 +202,71 @@ def _validate_conversation_id(conversation_id: str) -> None:
         raise HTTPException(status_code=422, detail="Invalid conversation_id")
 
 
-def _projection_dict(projection: ConversationProjection) -> dict[str, Any]:
+def _active_weather_receipts(
+    projection: ConversationProjection,
+    *,
+    current_time: float,
+) -> list[WeatherForecastReceipt]:
+    """Return only valid, fresh, uniquely scoped bounded receipts."""
+
+    try:
+        raw_receipts = json.loads(projection.active_receipts_json or "[]")
+    except (TypeError, ValueError, RecursionError):
+        raw_receipts = []
+    if not isinstance(raw_receipts, list):
+        raw_receipts = []
+
+    now = datetime.fromtimestamp(current_time, tz=timezone.utc)
+    newest_by_scope: dict[str, WeatherForecastReceipt] = {}
+    for raw_receipt in raw_receipts:
+        try:
+            receipt = WeatherForecastReceipt.model_validate_json(
+                _canonical_json(raw_receipt)
+            )
+        except (TypeError, ValueError, ValidationError):
+            continue
+        if receipt.valid_until <= now:
+            continue
+        previous = newest_by_scope.get(receipt.scope_key)
+        if previous is None or _receipt_order_key(receipt) > (
+            _receipt_order_key(previous)
+        ):
+            newest_by_scope[receipt.scope_key] = receipt
+
+    return sorted(
+        newest_by_scope.values(),
+        key=_receipt_order_key,
+        reverse=True,
+    )[:MAX_ACTIVE_WEATHER_RECEIPTS]
+
+
+def _receipt_order_key(
+    receipt: WeatherForecastReceipt,
+) -> tuple[int, datetime, str]:
+    return (
+        receipt.source_sequence,
+        receipt.evidence.fetched_at,
+        receipt.receipt_id,
+    )
+
+
+def _store_active_weather_receipts(
+    projection: ConversationProjection,
+    receipts: list[WeatherForecastReceipt],
+) -> None:
+    projection.active_receipts_json = _canonical_json(
+        [
+            receipt.model_dump(mode="json", exclude_none=True)
+            for receipt in receipts
+        ]
+    )
+
+
+def _projection_dict(
+    projection: ConversationProjection,
+    *,
+    current_time: float,
+) -> dict[str, Any]:
     summary_text = projection.summary_text or ""
     summary_through_sequence = projection.summary_through_sequence or 0
     if (not summary_text) != (summary_through_sequence == 0):
@@ -202,6 +278,13 @@ def _projection_dict(projection: ConversationProjection) -> dict[str, Any]:
         "version": projection.version,
         "summary_text": summary_text,
         "summary_through_sequence": summary_through_sequence,
+        "active_receipts": [
+            receipt.model_dump(mode="json", exclude_none=True)
+            for receipt in _active_weather_receipts(
+                projection,
+                current_time=current_time,
+            )
+        ],
         "active_anchors": json.loads(projection.active_anchors_json),
         "effective_preferences": json.loads(projection.effective_preferences_json),
         "product_reference_index": json.loads(projection.product_reference_index_json),
@@ -388,6 +471,7 @@ def _start_response(
     shopper_profile: ShopperProfile | None,
     *,
     replayed: bool,
+    current_time: float,
 ) -> dict[str, Any]:
     unsummarized_turn_count, summary_compaction_source = (
         _summary_compaction_state(
@@ -413,7 +497,10 @@ def _start_response(
         "unsummarized_turn_count": unsummarized_turn_count,
         "summary_compaction_source": summary_compaction_source,
         "previous_selected_skill_names": _previous_selected_skill_names(db, turn),
-        "projection": _projection_dict(projection),
+        "projection": _projection_dict(
+            projection,
+            current_time=current_time,
+        ),
         "cart": _cart_for_user(db, turn.cart_user_id),
         "assistant_text": turn.assistant_text,
         "termination_reason": turn.termination_reason,
@@ -584,6 +671,7 @@ def _start_turn(db, conversation_id: str, request: TurnStartRequest) -> dict[str
                 projection,
                 shopper_profile,
                 replayed=False,
+                current_time=current_time,
             )
             db.commit()
             return response
@@ -594,6 +682,7 @@ def _start_turn(db, conversation_id: str, request: TurnStartRequest) -> dict[str
             projection,
             shopper_profile,
             replayed=True,
+            current_time=current_time,
         )
         db.commit()
         return response
@@ -650,6 +739,7 @@ def _start_turn(db, conversation_id: str, request: TurnStartRequest) -> dict[str
         projection,
         shopper_profile,
         replayed=False,
+        current_time=current_time,
     )
     db.commit()
     return response
@@ -721,6 +811,95 @@ def _validate_summary_advance(
         )
 
 
+def _prepare_weather_receipt(
+    turn: ConversationTurn,
+    projection: ConversationProjection,
+    request: TurnFinalizeRequest,
+    *,
+    current_time: float,
+) -> WeatherForecastReceipt | None:
+    """Validate one promotion and stamp its conversation-owned identity."""
+
+    promotion = request.weather_receipt_promotion
+    if promotion is None:
+        return None
+    if request.status != "completed":
+        raise HTTPException(
+            status_code=409,
+            detail=WEATHER_RECEIPT_STATUS_CONFLICT,
+        )
+    if promotion.expected_projection_version != projection.version:
+        raise HTTPException(
+            status_code=409,
+            detail=PROJECTION_VERSION_CONFLICT,
+        )
+    if (
+        promotion.location_scope.kind == "confirmed_saved_zip"
+        and turn.shopper_profile_id is None
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail=WEATHER_RECEIPT_STATUS_CONFLICT,
+        )
+
+    valid_until = promotion.evidence.fetched_at + timedelta(
+        seconds=promotion.ttl_seconds
+    )
+    now = datetime.fromtimestamp(current_time, tz=timezone.utc)
+    if valid_until <= now:
+        raise HTTPException(
+            status_code=409,
+            detail=WEATHER_RECEIPT_STALE,
+        )
+
+    scope_key = weather_scope_key(
+        promotion.location_scope,
+        promotion.evidence,
+    )
+    return WeatherForecastReceipt(
+        receipt_id=weather_receipt_id(
+            source_turn_id=turn.turn_id,
+            source_tool_call_id=promotion.source_tool_call_id,
+            scope_key=scope_key,
+            fetched_at=promotion.evidence.fetched_at,
+        ),
+        scope_key=scope_key,
+        source_turn_id=turn.turn_id,
+        source_sequence=turn.sequence,
+        source_tool=WEATHER_TOOL_NAME,
+        source_tool_call_id=promotion.source_tool_call_id,
+        location_scope=promotion.location_scope,
+        evidence=promotion.evidence,
+        valid_until=valid_until,
+    )
+
+
+def _advance_active_weather_receipts(
+    projection: ConversationProjection,
+    receipt: WeatherForecastReceipt | None,
+    *,
+    current_time: float,
+) -> None:
+    """Prune, exact-scope upsert, and cap the active receipt projection."""
+
+    active = _active_weather_receipts(
+        projection,
+        current_time=current_time,
+    )
+    if receipt is not None:
+        active = [
+            existing
+            for existing in active
+            if existing.scope_key != receipt.scope_key
+        ]
+        active.append(receipt)
+    active.sort(key=_receipt_order_key, reverse=True)
+    _store_active_weather_receipts(
+        projection,
+        active[:MAX_ACTIVE_WEATHER_RECEIPTS],
+    )
+
+
 def _finalize_turn(
     db,
     conversation_id: str,
@@ -763,13 +942,19 @@ def _finalize_turn(
         )
 
     projection = _get_or_create_projection(db, conversation_id)
+    now = time.time()
     _validate_summary_advance(
         db,
         turn,
         projection,
         request.summary_advance,
     )
-    now = time.time()
+    weather_receipt = _prepare_weather_receipt(
+        turn,
+        projection,
+        request,
+        current_time=now,
+    )
     _append_events(db, turn, request.events, now)
     db.flush()
     append_presented_products_event(
@@ -785,6 +970,11 @@ def _finalize_turn(
         projection.summary_through_sequence = (
             request.summary_advance.summary_through_sequence
         )
+    _advance_active_weather_receipts(
+        projection,
+        weather_receipt,
+        current_time=now,
+    )
     projection.version += 1
     projection.last_turn_id = turn.turn_id
     turn.assistant_text = request.assistant_text

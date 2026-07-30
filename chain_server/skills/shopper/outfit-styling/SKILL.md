@@ -106,9 +106,12 @@ internal reasoning to the shopper.
   and tie the recommendation to the shopper's stated goal.
 - Event weather is optional additional evidence, never a substitute for product
   resolution or detail reads. Do not refresh weather merely because the shopper
-  asks for a comparison. If current forecast facts are materially needed, call
-  weather in addition to the complete product procedure and make no unverified
-  product-performance claim.
+  asks for a comparison. When activation lists a valid exact-scope durable
+  receipt for the unchanged event, bind it and complete the normal product
+  procedure with its styling direction silently; do not repeat forecast facts
+  or attribution. If the event scope changed, the receipt is uncertain, or the
+  shopper requests a refresh, omit it and obtain current evidence only when the
+  event-context boundary permits. Make no unverified product-performance claim.
 
 ## When To Clarify
 

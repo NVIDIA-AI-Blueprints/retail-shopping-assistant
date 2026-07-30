@@ -178,6 +178,21 @@ def _validate_diagnostic_expectations(
                 f"{expected_weather_trace!r}, found {actual_weather_trace!r}"
             )
 
+    required_weather_receipt_status = expected.get(
+        "required_weather_receipt_status"
+    )
+    if required_weather_receipt_status is not None:
+        actual_weather_receipt_status = trace.get("weather_receipt_status")
+        if (
+            not isinstance(actual_weather_receipt_status, str)
+            or actual_weather_receipt_status != required_weather_receipt_status
+        ):
+            raise AssertionError(
+                f"{label}: expected weather receipt status "
+                f"{required_weather_receipt_status!r}, found "
+                f"{actual_weather_receipt_status!r}"
+            )
+
     normalized_response = response.casefold()
     for phrase in expected.get("required_response_phrases", []):
         if str(phrase).casefold() not in normalized_response:

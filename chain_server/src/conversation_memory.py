@@ -24,6 +24,11 @@ from pydantic import (
 
 from .agenttypes import SHOPPER_PROFILE_ID_PATTERN, ShopperContext
 from shared.commerce_contracts import ProductSummary
+from shared.weather_receipts import (
+    MAX_ACTIVE_WEATHER_RECEIPTS,
+    WeatherForecastReceipt,
+    WeatherReceiptPromotion,
+)
 
 
 TurnStatus = Literal["started", "completed", "failed", "blocked", "abandoned"]
@@ -128,6 +133,10 @@ class ConversationProjection(_MemoryModel):
     product_reference_index: list[JsonValue] = Field(
         default_factory=list,
         max_length=100,
+    )
+    active_receipts: list[WeatherForecastReceipt] = Field(
+        default_factory=list,
+        max_length=MAX_ACTIVE_WEATHER_RECEIPTS,
     )
     last_turn_id: str | None = Field(default=None, min_length=1, max_length=256)
 
@@ -261,6 +270,7 @@ class TurnFinalizeRequest(_MemoryModel):
     events: list[ConversationEvent] = Field(default_factory=list, max_length=128)
     output: TurnReplayOutput | None = None
     summary_advance: ConversationSummaryAdvance | None = None
+    weather_receipt_promotion: WeatherReceiptPromotion | None = None
 
 
 class TurnFinalizeResult(_MemoryModel):
@@ -359,6 +369,7 @@ class ConversationMemoryClient:
         events: Sequence[ConversationEvent] = (),
         output: TurnReplayOutput | None = None,
         summary_advance: ConversationSummaryAdvance | None = None,
+        weather_receipt_promotion: WeatherReceiptPromotion | None = None,
     ) -> TurnFinalizeResult:
         """Finalize one turn with deterministic structured events."""
 
@@ -371,6 +382,7 @@ class ConversationMemoryClient:
             events=list(events),
             output=output,
             summary_advance=summary_advance,
+            weather_receipt_promotion=weather_receipt_promotion,
         )
         payload = self._post(
             (

@@ -55,17 +55,37 @@ Every shopper turn uses two model phases inside the same Deep Agents run:
    missing and material, `event_date` only after destination and any material
    venue are established when live weather is enabled and material and a
    bounded date is neither established nor explicitly unavailable, and `none`
-   otherwise. An explicitly shopper-stated outdoor patio, beach, garden,
+   otherwise. Before constructing that typed enum, the runtime applies the
+   same closed shopper-authored weather-date authority parser used by the tool
+   gate to the current shopper turn only. When that turn contains an accepted
+   bounded date, including bare `next week`, `event_date` is omitted and cannot
+   become a contradictory follow-up. Prior raw-turn dates do not narrow
+   activation because event identity is model-owned. Weather tool eligibility
+   remains separate and may use bounded current and recent shopper authority.
+   An explicitly shopper-stated outdoor patio, beach, garden,
    rooftop, or open-air setting makes enabled live weather material; with
-   destination and that setting but no bounded date, select `event_date`. This
-   remains model-owned semantic guidance, not deterministic keyword or alias
-   parsing. Only the value from a successfully accepted activation authorizes
-   an event-context follow-up.
+   destination and that setting but no bounded date, select `event_date`.
+   Skill selection, location, venue, materiality, and intent remain model-owned
+   semantic guidance. The dynamic enum is typed argument consistency, not an
+   intent router or keyword routing layer. Only the value from a successfully
+   accepted activation authorizes
+   an event-context follow-up. The same call may optionally bind one listed
+   `weather_receipt_id`, but only with `event-context`,
+   `event_context_next_question=none`, and an unchanged exact event
+   location/date scope. A current correction, uncertainty, or refresh request
+   means omit the receipt.
 2. The runtime validates the selected names, injects the complete selected
    `SKILL.md` contents into the system context, removes the activation tool, and
    exposes only the union of those skills' `tools_granted` for the next model
    step. Every app-owned shopping dispatch independently rechecks both that
    union and the immutable policy before invoking its handler.
+
+The receipt choice is deliberately minimal before activation: the model sees
+only receipt ID/type, shopper location/date scope, and `valid_until`, never
+normalized forecast evidence. Full evidence stays server-side and becomes
+grounding input only for an explicitly bound receipt. Memory evaluates expiry
+atomically at durable turn start; that accepted set is the validity snapshot
+for the in-flight request, with no second wall-clock check mid-turn.
 
 Selection is model-owned semantic interpretation over the current conversation
 and skill descriptions, not a deterministic keyword router. Loading and prompt
@@ -87,7 +107,9 @@ read-only weather tool. Its grant combines additively with the tools granted by
 `outfit-styling` and any selected standalone skill. Event context never revokes
 or narrows product, cart, or policy tools; only its weather capability may be
 hidden or execution-blocked when the forecast prerequisites are not
-established. Product work remains owned by the selected primary skill. Within an active
+established or when one valid receipt is bound. Unbound receipts never ground,
+and a bound receipt blocks another weather call. Product work remains owned by
+the selected primary skill. Within an active
 outfit-building or style-led single-piece thread, terse item-only follow-ups
 remain `outfit-styling` tasks.
 
@@ -236,7 +258,9 @@ Raw weather arguments/output are the exception: they remain redacted, while
 the weather tool-call record retains only categorical `request_shape`,
 `location_source`, `provider_input`, and `outcome`, with no
 place, ZIP, date, resolved place, URL, body, or exception. Saved profile ZIP
-and failed-turn weather content remain scrubbed.
+and failed-turn weather content remain scrubbed. Receipt handling exposes only
+a categorical lifecycle state such as promotion prepared or bound, never the
+receipt ID, scope, or evidence.
 The Judge retains only product evidence/truncation and those catalog scope
 outcomes from diagnostics.
 
@@ -246,7 +270,7 @@ outcomes from diagnostics.
 | --- | --- | --- | --- | --- | --- |
 | `product-discovery` | `chain_server/skills/shopper/product-discovery/SKILL.md` | Registered | `primary` / `product_procedure` | Search, details, availability, promotions, same-conversation product resolution | General search, category browsing, filter-driven discovery without styling intent |
 | `outfit-styling` | `chain_server/skills/shopper/outfit-styling/SKILL.md` | Registered | `primary` / `product_procedure` | Search, details, availability, promotions, same-conversation product resolution | Build, complete, or refine a look; coordinate a requested piece with an anchor; use cart evidence only when cart management is also active |
-| `event-context` | `chain_server/skills/shopper/event-context/SKILL.md` | Registered | `modifier` | Event forecast | Use stated destination/venue context, fetch qualified current event weather, or resolve a missing context branch; use explicit setting over saved ZIP; combine only with outfit styling |
+| `event-context` | `chain_server/skills/shopper/event-context/SKILL.md` | Registered | `modifier` | Event forecast | Use stated destination/venue context, fetch qualified current event weather, bind one valid exact-scope receipt, or resolve a missing context branch; use explicit setting over saved ZIP; combine only with outfit styling |
 | `cart-management` | `chain_server/skills/shopper/cart-management/SKILL.md` | Registered | `standalone` | Cart read, total, add, remove, update, same-conversation product resolution | Explicit cart reads and mutations, alone or beside a product procedure |
 | `budget-shopping` | `chain_server/skills/shopper/budget-shopping/SKILL.md` | Registered | `modifier` | None | Stated price ceilings and budget bundles; combine with cart management for cart-total checks |
 | `store-policy-answers` | `chain_server/skills/shopper/store-policy-answers/SKILL.md` | Registered | `standalone` | Policy lookup | Returns, shipping, sizing, payment, price matching, and gift cards |
@@ -278,30 +302,39 @@ forecast context to occasion-led styling.
   or elsewhere?” framing rather than a bare destination question. Once
   destination is established, activation may instead select one material
   venue/setting question; the plan-first stop rule does not apply.
-- Activation owns only `event_context_next_question`. It is required exactly
-  with this skill and is one of `event_location`, `event_venue`, `event_date`,
-  or `none` under the semantic conditions above; it is omitted without this
-  skill. The server does not infer a question from enabled weather or missing
-  context.
+- Activation owns `event_context_next_question` plus optional
+  `weather_receipt_id`. The question is required exactly with this skill and is
+  normally one of `event_location`, `event_venue`, `event_date`, or `none`
+  under the semantic conditions above; it is omitted without this skill. If
+  the current shopper turn contains a bounded date accepted by the shared
+  date-authority parser, the per-turn schema removes `event_date`. Prior
+  raw-turn dates remain available to the semantic procedure and weather tool
+  but cannot narrow activation. A receipt may be bound only when the question
+  is `none`, it is currently listed and valid, and the exact event
+  location/date scope is unchanged. The server does not infer a question from
+  enabled weather or missing context.
 - The modifier composes additively with `outfit-styling`. Its helper may hide
   and execution-block only `get_weather_forecast_tool` when the selected
-  question or missing bounded authority prevents a qualified forecast. It
+  question or missing bounded authority prevents a qualified forecast, or when
+  one valid receipt is bound. It
   never hides product, cart, or policy tools and never closes the overall tool
   loop. Consuming the one weather attempt closes only weather for that turn.
 - When activation selected `none`, live weather is enabled and material, and
   valid location and bounded date authority are established, the selected
   skill directs the same Deep Agent to make that one weather attempt before
-  answering. A typed success or failure completes the attempt; no post-answer
-  reviewer reopens the procedure.
+  answering unless activation bound a valid exact-scope receipt. A typed success
+  or failure completes a live attempt; no post-answer reviewer reopens the
+  procedure.
 - Protected event decision rendering is selected from evidence rather than an
   activation action. It applies only when event context is active, there is no
   current non-weather business-tool activity, and a current typed weather
-  outcome (success or failure) exists. Missing-location/venue or an empty draft
+  outcome (success or failure) or explicitly bound valid receipt exists.
+  Missing-location/venue or an empty draft
   skips that editor. A separate prior-candidate fallback uses deterministic
-  event assembly only when the draft is empty; prior candidates with a nonempty
-  draft remain on ordinary grounding only when there is no current weather
-  outcome. A comparison that calls only weather remains protected. Other
-  protected weather-outcome turns give the narrow decision editor only bounded
+  event assembly only when the draft is empty. Product comparison with current
+  resolution/detail activity remains on ordinary grounding and uses a bound
+  receipt silently without repeating its exact facts. Other protected
+  weather-evidence turns give the narrow decision editor only bounded
   shopper-authored event text and the server-owned deterministic weather
   styling direction. Any current non-weather business-tool activity or evidence
   uses normal grounding, preserving comparisons, product details, cart work,
@@ -341,6 +374,13 @@ forecast context to occasion-led styling.
   `max_provider_attempts: 2` permits one internal retry only for timeout or
   HTTP 5xx. HTTP 400 maps to generic `weather_request_invalid`; other 4xx,
   connection, and response-validation failures are not retried.
+- A same-ID successful weather call/result pair may be promoted only during
+  completed atomic finalization into the bounded `weather_forecast.v1`
+  projection. Memory applies the configured TTL, replaces older success for
+  the same exact scope, and retains at most four. Failure, saved ZIP digits,
+  raw provider request/response data, the prepared provider endpoint URL, key,
+  and exception are never promoted; validated evidence retains the pinned
+  public attribution URL.
 - Requires an exact ISO event date, complete inclusive range, or the typed
   `relative_date=next_week` mode. That mode is allowed only when the shopper
   used the exact phrase `next week`. Exact `<weekday> next week` also requires
@@ -357,18 +397,22 @@ forecast context to occasion-led styling.
   into an exact ISO date. Other ambiguous or unresolved relative dates can
   authorize one date clarification only through accepted `event_date` under
   that same ordering and enabled-and-material rule.
-- Uses successful current-turn forecast evidence only. The model-visible
-  projection includes the provider-resolved place only for
+- Uses current successful forecast evidence first. Otherwise it may use only
+  one unexpired `weather_forecast.v1` receipt explicitly bound during this
+  turn for the exact same location/date scope; unbound receipts are
+  non-evidence, and changed or uncertain scope requires fresh weather. The
+  model-visible projection includes the provider-resolved place only for
   `shopper_provided_location`, and final rendering discloses it as the
   forecast-location assumption so any `location_query` qualification is
   reversible. The field is omitted for
   `confirmed_saved_zip`. Prior durable assistant forecast summaries are
   redacted from graph and grounding-editor recent discussion while remaining
   stored and exactly replayable; prior weather tool messages are excluded from
-  prior evidence. Raw arguments and output are redacted from diagnostics and
+  prior evidence. Receipts are hydrated separately from summary, raw turns, and
+  the product ledger. Raw arguments and output are redacted from diagnostics and
   failed-turn partial output; only the categorical weather summary above
   remains, and saved profile ZIP is scrubbed from diagnostic string keys and
-  values. Final rendering appends one exact canonical block
+  values. Only current successful rendering appends one exact canonical block
   containing every validated daily date, condition, available low/high
   temperature, precipitation probability/types, Visual Crossing attribution,
   and forecast uncertainty; model prose cannot shorten or selectively omit it.
@@ -380,8 +424,9 @@ forecast context to occasion-led styling.
   adjustment codes. Malformed, ungrounded, extra-key, duplicate, unknown, or
   wrong-cardinality output falls back. The server maps valid codes to fixed
   phrases and deterministically assembles exact prior names, its weather
-  direction, only the accepted question, and the typed weather failure or
-  canonical success block.
+  direction, only the accepted question, and a current typed weather failure
+  or current canonical success block. Product comparison with a bound receipt
+  strips exact forecast facts and does not repeat the prior block.
 - Treats weather as styling context, never proof of product performance or an
   unstated catalog constraint. There is no new FastAPI, SSE, or UI shape.
 - Remains disabled at the provider boundary by default. Before an operator

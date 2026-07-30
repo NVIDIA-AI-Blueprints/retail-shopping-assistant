@@ -15,6 +15,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
 import importlib
 import json
+import logging
 from pathlib import Path
 import sys
 from types import ModuleType, SimpleNamespace
@@ -471,6 +472,46 @@ class TestTimingEndpoint:
         assert body["timings"]["total"] > 0
         assert body["model_usage"] == {}
         assert body["agent_diagnostics"] == {}
+
+    def test_logs_only_request_and_response_size_metadata(
+        self,
+        main_module,
+        client: TestClient,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        shopper_query = "PRIVATE_SHOPPER_QUERY_7f14b0c3"
+        assistant_response = "PRIVATE_ASSISTANT_RESPONSE_91de52a8"
+        main_module._test_runtime.response_text = assistant_response
+        caplog.set_level(logging.INFO, logger=main_module.__name__)
+
+        response = client.post(
+            "/query/timing",
+            json={
+                "user_id": 1,
+                "query": shopper_query,
+                "media": [
+                    {
+                        "type": "image",
+                        "mime_type": "image/png",
+                        "data": "data:image/png;base64,QUFB",
+                    }
+                ],
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json()["response"] == assistant_response
+        rendered_logs = "\n".join(
+            record.getMessage()
+            for record in caplog.records
+            if record.name == main_module.__name__
+        )
+        assert shopper_query not in rendered_logs
+        assert assistant_response not in rendered_logs
+        assert f"query_chars={len(shopper_query)}" in rendered_logs
+        assert "media_count=1" in rendered_logs
+        assert f"response_chars={len(assistant_response)}" in rendered_logs
+        assert "image_count=0" in rendered_logs
 
     def test_returns_agent_diagnostics_additively(
         self, main_module, client: TestClient
@@ -936,8 +977,10 @@ class TestSystemPrompt:
         ) in normalized
         assert "Never infer weather from a ZIP or place name" in normalized
         assert (
-            "Weather facts require successful current-turn forecast evidence"
+            "Weather facts require either successful current-turn forecast "
+            "evidence or the one valid durable receipt"
         ) in normalized
+        assert "An unbound receipt is not evidence" in normalized
         assert "Current server date is" in normalized
         assert 'exact phrase "<weekday> next week"' in normalized
         assert "matching lowercase weekday" in normalized
@@ -3247,6 +3290,7 @@ class TestDeepAgentsRuntimeRefs:
         assert set(activation_schema["properties"]) == {
             "skill_names",
             "event_context_next_question",
+            "weather_receipt_id",
         }
         assert set(activation_schema["required"]) == {"skill_names"}
         assert activation_schema["properties"]["skill_names"]["items"]["enum"] == [
@@ -3270,6 +3314,9 @@ class TestDeepAgentsRuntimeRefs:
         assert "only event-context follow-up" in activation_schema[
             "properties"
         ]["event_context_next_question"]["description"]
+        assert activation_schema["properties"]["weather_receipt_id"]["type"] == (
+            "null"
+        )
         search_schema = tools_by_name["search_catalog_tool"].args_schema
         assert search_schema is not runtime_mod.SearchCatalogToolArguments
         assert set(search_schema.model_fields) == {

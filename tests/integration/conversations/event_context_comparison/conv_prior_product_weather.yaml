@@ -1,7 +1,7 @@
 set_name: Event-context prior-product comparison
 shopper_profile_id: shopper_jordan
 queries:
-  - "I’m shopping for a semi-formal wedding"
+  - "Show me dress options for a semi-formal wedding"
   - "NYC, on an outdoor patio next week."
   - "Ok can you compare the lacy gown and the hem satin dress"
 answers:
@@ -32,12 +32,15 @@ answers:
     event thread, not as another search. Resolve the Intricate Lace Gown and
     Wavy Hem Satin Dress from the durable prior-product index in one batched
     call, then read current catalog details for both before comparing them.
-    Do not refresh weather merely because the shopper asks for a product
-    comparison; the established event goal may guide styling judgment without
-    reusing prior forecast facts. Compare only confirmed prices, categories,
-    and product-detail facts, distinguish styling judgment from catalog facts,
-    disclose material gaps, and make a concise choice for the stated occasion.
-    Run no catalog search and ask no repeated location, venue, or date question.
+    Bind and reuse the valid typed forecast receipt for the same established
+    event scope without another weather or provider call. Use that receipt only
+    as scoped grounding for weather-aware styling judgment; silently avoid
+    restating forecast conditions, temperatures, precipitation, provider
+    location, attribution, or uncertainty text. Compare only confirmed prices,
+    categories, and product-detail facts, distinguish styling judgment from
+    catalog facts, disclose material gaps, and make a concise choice for the
+    stated occasion. Run no catalog search and ask no repeated location, venue,
+    or date question.
 diagnostic_expectations:
   - required_skills: [outfit-styling, event-context]
     required_event_context_next_question: event_location
@@ -88,6 +91,7 @@ diagnostic_expectations:
       location_source: shopper_provided_location
       provider_input: location_query
       outcome: success
+    required_weather_receipt_status: promotion_prepared
     required_response_phrases:
       - Intricate Lace Gown
       - Wavy Hem Satin Dress
@@ -120,6 +124,7 @@ diagnostic_expectations:
       search_catalog_tool: 0
       get_weather_forecast_tool: 0
     weather_tool_calls: 0
+    required_weather_receipt_status: bound
     required_product_detail_names:
       - Intricate Lace Gown
       - Wavy Hem Satin Dress
@@ -130,3 +135,8 @@ diagnostic_expectations:
       - Previously shown options still in play
       - I couldn't resolve that event location
       - I couldn't establish a valid live forecast
+      - Weather Data Provided by Visual Crossing
+      - Forecast location used
+      - Live forecast
+      - "°F"
+      - precipitation chance

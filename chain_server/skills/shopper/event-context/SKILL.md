@@ -123,6 +123,13 @@ tools_granted:
   established candidates and runs no non-weather business tool. A same-turn
   comparison, refinement, replacement, search, check, or change continues the
   primary or standalone skill's normal tool procedure.
+- Activation may also bind one listed durable weather receipt when the current
+  turn continues the exact same event location and date scope, selects
+  `event_context_next_question=none`, and does not request a refresh. Once
+  bound, use that typed receipt for weather-aware styling and do not call
+  weather again. A location/date correction, uncertain event identity, or
+  explicit refresh request must omit the receipt and follow the normal lookup
+  boundary.
 - Call `get_weather_forecast_tool` at most once in a turn, before catalog search
   when both are needed. A schema-invalid call consumes that one attempt; do not
   repair or retry it at the model layer. The client may internally retry once
@@ -214,12 +221,15 @@ tools_granted:
   constraint unless the shopper directly makes it one.
 - Place, ZIP, setting, and date alone do not establish climate, season, heat,
   rain, wind, breeze, or salt-air conditions. Only successful current-turn
-  forecast evidence establishes the bounded daily values it contains.
+  forecast evidence or the one exact-scope durable receipt explicitly bound
+  during activation establishes the bounded values it contains. Every unbound
+  receipt is non-authoritative.
 - Prior durable assistant forecast summaries are replaced with a refresh
   placeholder in both graph and grounding-editor recent discussion. Prior
   weather tool messages are excluded from prior-turn evidence; fetch current
   evidence before making a new weather claim.
-- The server appends one exact canonical forecast block once. It includes the
+- For a new current-turn forecast, the server appends one exact canonical
+  forecast block once. It includes the
   resolved exact date for "<weekday> next week" or the
   Monday-through-Sunday range for bare "next week", every validated day's date,
   condition, available low/high temperature,
@@ -230,7 +240,8 @@ tools_granted:
   judgment.
 - The protected renderer is selected structurally, never by an intent label:
   event context is active, no current non-weather business-tool activity
-  exists, and a current typed weather outcome (success or failure) exists. A
+  exists, and a current typed weather outcome or explicitly bound receipt
+  exists. A
   separate empty-draft fallback may deterministically retain prior candidates,
   but prior candidates plus a nonempty draft select ordinary grounding only
   when there is no current weather outcome. A comparison that calls only weather
@@ -252,10 +263,13 @@ tools_granted:
   canonical success block. The editor never authors shopper-facing prose,
   ranks candidates, or claims product performance.
 - When current product, cart, or policy work is present, ordinary grounding
-  preserves that evidence. Grounding-editor sentences containing weather-domain fact language or
-  fact-shaped dates/values are removed while ordinary grounded styling
-  language about color, layering, or silhouette remains. If none remains,
-  deterministic catalog evidence plus the canonical weather block is used.
+  preserves that evidence. A bound receipt contributes only the deterministic
+  styling direction on that turn; it does not repeat its forecast block or
+  attribution. Grounding-editor sentences containing weather-domain fact
+  language or fact-shaped dates/values are removed while ordinary grounded
+  styling language about color, layering, or silhouette remains. For a new
+  current-turn forecast, a fail-closed response may still include the canonical
+  block.
 - Do not infer venue, dress code, local norms, or terrain from geography.
 - Setting may guide formality and flat-footwear styling. Never call a product or
   direction breezy, breathable, lightweight, practical, secure, stable,

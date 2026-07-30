@@ -101,6 +101,13 @@ material; venue or setting only after destination is established and that
 setting is missing and material; date only after destination and any material
 setting are established, live weather is enabled and material, and the date is
 neither known nor explicitly unavailable; otherwise no event-context question.
+When your current message supplies a supported bounded date, including bare
+`next week`, the accepted date authority also removes the date-question choice
+from activation, so the assistant cannot ask for an exact date that the weather
+contract does not require. A date from an earlier event does not suppress that
+safe question when you introduce a new event. Earlier bounded context may still
+support weather-tool eligibility after the assistant semantically determines
+that it belongs to the same event.
 An explicitly stated outdoor patio, beach, garden, rooftop, or open-air setting
 makes enabled live weather relevant. For example, “Cancun” may lead to one
 setting question; after you answer “on the beach,” the assistant asks for the
@@ -169,8 +176,13 @@ includes every validated day's date, condition, available low/high temperature,
 precipitation probability/types,
 [Weather Data Provided by Visual Crossing](https://www.visualcrossing.com/),
 and the warning that forecasts can change. The block appears exactly once and
-cannot be shortened by model-written prose. Only evidence fetched in the
-current turn supports those weather facts. When you give a place, the response
+cannot be shortened by model-written prose. Current weather evidence has
+precedence. A successful forecast may also be retained briefly as a typed
+exact-event receipt. On a later comparison for that unchanged location and
+date, the assistant can explicitly reuse that receipt without another provider
+call; it uses the weather direction silently rather than repeating exact
+forecast facts or the canonical block. A changed or uncertain location/date,
+or a request to refresh, requires fresh evidence. When you give a place, the response
 also states the place the provider resolved so the geographic assumption is
 visible and reversible; that resolved place is omitted when the confirmed saved
 ZIP is used.
@@ -178,32 +190,38 @@ Raw weather tool inputs/output are redacted from diagnostics and failed-turn
 partial output. Diagnostics retain only categorical call shape and outcome,
 specifically `request_shape`, `location_source`, `provider_input`, and
 `outcome`; they never retain your place, ZIP, date, resolved place, URL,
-provider body, or exception. Saved profile ZIP is also scrubbed from diagnostic
+provider body, or exception. Receipt handling adds only a categorical lifecycle
+status; it does not expose a receipt ID, scope, or forecast evidence. Saved
+profile ZIP is also scrubbed from diagnostic
 string keys and values. The final assistant summary remains part of the durable
 conversation and may be exactly replayed, but prior forecast summaries are
 redacted from later graph and grounding-editor discussion, and prior weather
-tool output is not reused as evidence.
+tool output is not reused directly as evidence. Only the one still-valid typed
+receipt explicitly selected for the same event can be reused; unselected
+receipts have no authority.
 When product, cart, policy, availability, promotion, or historical-product
 work occurs in the current turn, its evidence follows the normal grounding
 path. Weather-domain fact language or fact-shaped dates/values written by the
 editor is removed while ordinary grounded styling language remains; the server
-adds the canonical weather block separately.
+adds the canonical weather block separately only for current successful
+weather.
 The protected event decision renderer is selected structurally only when event
 context is active, the current turn has no non-weather business-tool activity,
-and a current typed weather outcome (success or failure) exists. Missing
+and a current typed weather outcome (success or failure) or explicitly selected
+valid receipt exists. Missing
 location/setting or an empty draft skips that decision step. A separate
-prior-candidate fallback deterministically keeps the options only when the draft
-is empty; a nonempty no-tool comparison or refinement stays on ordinary
-grounding only when there is no current weather outcome. A comparison that calls
-only weather remains protected, while current non-weather business activity
-guarantees ordinary grounding. Other protected weather-outcome turns give the
+prior-candidate fallback deterministically keeps the options only when the
+draft is empty. A comparison with current product resolution/details remains
+on ordinary grounding and may use a selected receipt silently, while current
+non-weather business activity guarantees ordinary grounding. Other protected
+weather-evidence turns give the
 narrow decision step only bounded shopper-authored event text and a
 server-generated weather styling direction. It returns structured choices, not
 shopper-facing prose: an exact setting quote from your words and one or two
 allowlisted adjustments. Invalid or invented output is ignored. The server
 renders fixed phrases, the exact prior names, its weather direction, only the
-one selected follow-up, and any safe weather failure or canonical forecast
-block.
+one selected follow-up, and any current safe weather failure or current
+canonical forecast block.
 
 A forecast may guide general styling, but it does not prove that a product is
 warm, waterproof, breathable, comfortable, safe, surface-suitable, or otherwise

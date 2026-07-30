@@ -555,6 +555,7 @@ class TestRepoPromptContracts:
             "max_provider_attempts": 2,
             "max_forecast_horizon_days": 15,
             "max_range_days": 15,
+            "receipt_ttl_seconds": 3600,
         }
 
     def test_budget_only_browse_routes_to_chatter_for_clarification(

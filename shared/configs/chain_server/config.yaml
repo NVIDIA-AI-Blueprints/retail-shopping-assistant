@@ -112,6 +112,7 @@ weather:
   max_provider_attempts: 2
   max_forecast_horizon_days: 15
   max_range_days: 15
+  receipt_ttl_seconds: 3600
 multimodal: True
 media_input:
   enabled: true

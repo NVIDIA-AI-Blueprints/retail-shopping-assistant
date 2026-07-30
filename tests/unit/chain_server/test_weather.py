@@ -162,6 +162,7 @@ class TestWeatherConfig:
         assert config.max_provider_attempts == 2
         assert config.max_forecast_horizon_days == 15
         assert config.max_range_days == 15
+        assert config.receipt_ttl_seconds == 3_600
         assert config.model_dump().get("api_key") is None
 
     @pytest.mark.parametrize(
@@ -193,6 +194,10 @@ class TestWeatherConfig:
             ("max_range_days", True),
             ("max_range_days", "15"),
             ("max_range_days", 16),
+            ("receipt_ttl_seconds", 0),
+            ("receipt_ttl_seconds", 21_601),
+            ("receipt_ttl_seconds", True),
+            ("receipt_ttl_seconds", "3600"),
         ],
     )
     def test_invalid_config_fails_closed(self, field: str, value: Any) -> None:

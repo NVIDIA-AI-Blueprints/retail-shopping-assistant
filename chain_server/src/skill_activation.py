@@ -42,6 +42,7 @@ SKILL_ACTIVATION_EVENT_CONTEXT_REQUIRES_STYLING = (
     "event_context_requires_styling"
 )
 SKILL_ACTIVATION_EVENT_CONTEXT_INVALID = "event_context_invalid"
+SKILL_ACTIVATION_WEATHER_RECEIPT_INVALID = "weather_receipt_invalid"
 SKILL_ACTIVATION_REQUIRED = (
     "SKILL_ACTIVATION_REQUIRED: Shopper skills must be selected and loaded "
     "before any shopping tool can run. Retry after activation completes."
@@ -87,7 +88,12 @@ setting from the destination. For example, after "the wedding is in Cancun,"
 choose
 `event_venue` when the setting materially changes styling; after the shopper
 then says "it's on the beach," choose `event_date` when live weather is enabled
-and material. Event context is additive: it contributes only event guidance,
+and material. When VALID DURABLE WEATHER RECEIPTS are supplied, optionally bind
+one `weather_receipt_id` only when the shopper is continuing the exact same
+event location and date scope, event context is selected, and the next question
+is `none`. A current location/date correction or an explicit request to refresh
+the forecast means do not bind a receipt. Event context is additive: it
+contributes only event guidance,
 its one question boundary, and optional weather capability. It never removes
 tools granted by outfit styling or another selected skill. Keep the primary procedure
 aligned with the active conversation task:
@@ -491,17 +497,28 @@ def _activation_validation_issue(error: Any) -> str:
         location = tuple(_value(detail, "loc") or ())
         if "event_context_next_question" in location:
             return SKILL_ACTIVATION_EVENT_CONTEXT_INVALID
+        if "weather_receipt_id" in location:
+            return SKILL_ACTIVATION_WEATHER_RECEIPT_INVALID
         if issue in {
             SKILL_ACTIVATION_EVENT_CONTEXT_INVALID,
             SKILL_ACTIVATION_EVENT_CONTEXT_REQUIRES_STYLING,
             SKILL_ACTIVATION_MODIFIER_REQUIRES_PRIMARY,
             SKILL_ACTIVATION_MULTIPLE_PRIMARY,
+            SKILL_ACTIVATION_WEATHER_RECEIPT_INVALID,
         }:
             return issue
     return "invalid_selection"
 
 
 def _activation_validation_feedback(issue: str) -> str:
+    if issue == SKILL_ACTIVATION_WEATHER_RECEIPT_INVALID:
+        return (
+            "weather_receipt_id may select only one currently available typed "
+            "receipt for the exact same event location and date scope. It "
+            "requires event-context with event_context_next_question=none. "
+            "Omit it after a location/date change or when a fresh forecast was "
+            "requested."
+        )
     if issue == SKILL_ACTIVATION_EVENT_CONTEXT_INVALID:
         return (
             "event-context requires one event_context_next_question. Choose "

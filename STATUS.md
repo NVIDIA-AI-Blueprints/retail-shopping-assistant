@@ -10,7 +10,7 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   `docs/SHOPPER_DEEP_AGENT_ARCHITECTURE_2026-07-29.md` records the agreed
   durable cross-turn context correction. It keeps the request-scoped Deep
   Agent, current profile/cart/product-ledger authorities, and fresh skill
-  activation. Slices 1 and 2 are implemented. Migration 8 owns one
+  activation. Slices 1 through 3 are implemented. Migration 8 owns one
   rolling-summary text and through-sequence watermark; turn start returns the
   newest context-eligible raw tail plus a separate memory-owned oldest
   compaction prefix. After a successful guarded response, a tools-disabled
@@ -24,8 +24,30 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   oversized, or failed compaction preserves the old watermark and raw turns.
   Accepted advancement commits atomically with finalization and affects only
   the next request; a summary-only conflict gets one deterministic finalize
-  retry without the optional update and no model rerun. The bounded valid
-  weather-receipt projection remains Slice 3. This direction replaces the
+  retry without the optional update and no model rerun. Migration 9 adds a
+  versioned, bounded projection of `weather_forecast.v1` receipts in a fourth
+  prompt/state lane. Only a paired successful current-turn weather call/result
+  can be promoted atomically on successful finalization. Receipts expire after
+  the configured TTL, newer success supersedes the same exact location/date
+  scope, and at most four remain active. They never store a saved ZIP, API key,
+  prepared request URL, raw provider body, exception, or failed outcome. The
+  receipt retains the pinned public attribution URL. Activation may bind one
+  valid receipt only with `event-context` and
+  `event_context_next_question=none`; unbound receipts never ground, a bound
+  receipt blocks another weather call, and changed or uncertain event scope
+  requires fresh evidence. The same closed shopper-authored weather-date
+  authority parser used by the tool gate now shapes the typed activation
+  schema from the current shopper turn only: when that turn contains an
+  accepted bounded date, including bare `next week`, `event_date` is removed
+  from the enum so activation cannot ask a contradictory date question. Prior
+  raw-turn dates remain available to the semantic agent and weather adapter but
+  cannot narrow the enum because event identity remains model-owned; this
+  prevents Wedding A's date from suppressing the safe question for a newly
+  introduced Wedding B. Weather tool eligibility remains a separate boundary
+  that may use bounded current and recent shopper authority. Skill selection,
+  location, venue, materiality, and intent remain model-owned; this is typed
+  argument consistency, not an intent router or keyword routing layer. This
+  direction replaces the
   paused event-action correction; no event state machine, comparison skill,
   intent router, conversation-long graph checkpoint, or unbounded tool history
   is planned;
@@ -55,6 +77,10 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   `~/exec-briefs/retail-shopping-assistant/quality/shopping/targeted/event_context/post_answer_completion_slice3/runs/f6fe646_live_failed_2026_07_29/`
   and
   `~/exec-briefs/retail-shopping-assistant/quality/shopping/targeted/event_context/post_answer_completion_slice3/comparisons/single_authority_current_wip__to__f6fe646_live_failed_2026_07_29.md`;
+- chain-server request logging for `/query/stream` and `/query/timing` now
+  records only request/response character lengths and media/image counts. It
+  never logs raw shopper text, response content, ZIP/location/date values,
+  receipt evidence, or weather-provider material;
 - local app-code mode now keeps React browser API requests under a scoped
   `/local-api` prefix on port `3000` and forwards them through the development
   proxy to the chain server without Create React App's package-proxy Host
@@ -104,7 +130,10 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   After destination and any material venue are established, activation may
   select `event_date` only when weather is enabled and material and the date is
   neither established nor explicitly unavailable; only that accepted value
-  permits the date question. The model may resolve an
+  permits the date question. When the current shopper turn contains a bounded
+  date accepted by the shared authority parser, the activation enum omits that
+  value. A date only in a prior raw turn does not narrow the enum. The model may
+  resolve an
   unambiguous single-day
   phrase such as `tomorrow` against the same prompt-visible UTC anchor and send
   the exact ISO date; a genuinely ambiguous or unresolved relative date gets
@@ -121,12 +150,21 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   destination is established when venue or setting is missing and material,
   `event_date` only after destination and any material venue are established
   when live weather is enabled and material and a bounded date is neither
-  established nor explicitly unavailable, and `none` otherwise. An explicitly
+  established nor explicitly unavailable, and `none` otherwise. Before this
+  schema is built, the same closed date-authority parser used by the weather
+  gate examines only the current shopper turn and removes `event_date` when
+  that turn contains an accepted bounded date, including bare `next week`.
+  Prior raw-turn dates remain semantic context and adapter authority but cannot
+  narrow the enum across potentially different events. Weather tool eligibility
+  remains separate and may use bounded current and recent shopper authority.
+  An explicitly
   shopper-stated outdoor patio, beach, garden, rooftop, or open-air setting
   makes enabled live weather
   material; destination plus that setting but no bounded date selects
-  `event_date`. This remains model-owned semantic guidance, not deterministic
-  keyword or alias parsing. The server trusts only the accepted activation
+  `event_date`. Skill selection, location, venue, materiality, and intent
+  remain model-owned semantic guidance; the dynamic enum is typed argument
+  consistency, not an intent router or keyword routing layer. The server trusts
+  only the accepted activation
   result and does not infer a question from enabled weather or missing context.
   Accepted `event_location` or `event_venue` hides and execution-blocks
   weather. Event context is additive and may gate only weather; every
@@ -153,26 +191,37 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   only when activation selected `event_date`. Current-turn non-weather
   business-tool evidence always uses ordinary grounding. The protected decision
   renderer is selected structurally only when event context is active, there is
-  no current non-weather business-tool activity, and a current typed weather
-  outcome (success or failure) exists. A separate empty-draft fallback may
-  deterministically retain prior candidates; prior candidates with a nonempty
-  draft stay on ordinary grounding only when there is no current weather
-  outcome. A comparison that calls only weather remains protected; current
+  no current non-weather business-tool activity, and current typed weather or
+  one explicitly bound exact-scope receipt supplies evidence. A separate
+  empty-draft fallback may deterministically retain prior candidates. Current
   non-weather business activity guarantees ordinary grounding and prevents
   successful-weather postprocessing from restoring unrelated historical names.
+  A comparison may use its explicitly bound receipt as silent styling context,
+  but it does not repeat the prior canonical forecast facts.
   The Visual Crossing adapter returns
   bounded normalized daily evidence, rejects non-live provider sources, and
   maps transport/provider failures into sanitized typed outcomes.
   `WEATHER_ENABLED=false` remains the default, the key remains an indirect
   `WEATHER_API_KEY` environment reference scoped only to the chain server, and
-  startup/health paths perform no provider request. Only successful current-turn
-  evidence supports forecast claims. Provider-resolved place is omitted in
+  startup/health paths perform no provider request. Current successful evidence
+  has precedence; otherwise only one explicitly bound, valid exact-scope
+  `weather_forecast.v1` receipt may support reuse. Provider-resolved place is omitted in
   saved-ZIP mode. For an explicit shopper location, it is exposed in bounded
   current-turn evidence and final rendering as a transparent, reversible
   provider assumption rather than proof of event location. Prior durable
   assistant forecast summaries are redacted from graph and grounding-editor
   recent discussion, and prior weather tool messages are excluded from prior
-  evidence. Diagnostics and failed-turn partial output redact weather
+  evidence. Receipts occupy a separate state/prompt lane from the rolling
+  summary, raw transcript, and product ledger. They are promoted only from a
+  same-ID successful call/result pair during successful atomic finalization;
+  failures and raw provider material are not eligible. Memory prunes expired
+  receipts, replaces the older same-scope receipt, and caps the projection at
+  four. Expiry is evaluated atomically at durable turn start; that accepted
+  receipt set is the validity snapshot for the in-flight request, with no
+  second wall-clock check mid-turn. Before activation, the model sees only
+  receipt ID/type, shopper location/date scope, and `valid_until`, never
+  normalized forecast evidence. Full evidence stays server-side and reaches
+  grounding only after explicit binding. Diagnostics and failed-turn partial output redact weather
   arguments/output. Diagnostics preserve only categorical date shape,
   location-source kind, provider-input kind, and typed outcome; they expose no
   location, ZIP, date, resolved place, URL, body, or exception.
@@ -191,7 +240,9 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   adjustment codes. Malformed, ungrounded, or invalid output falls back. The
   server maps valid codes to fixed phrases and deterministically assembles exact
   newest prior names when present, its weather direction, only the accepted
-  question, and the typed failure or canonical forecast block.
+  question, and a current typed failure or current canonical forecast block.
+  Receipt diagnostics are categorical only (`promotion_prepared` or `bound`);
+  they do not expose receipt IDs, location/date scope, or evidence.
   Weather cannot prove product performance or create an unstated catalog
   constraint.
   This adds no weather-specific FastAPI, SSE, or UI shape. Before an operator
@@ -290,15 +341,15 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   search-only turns receive one tools-disabled synthesis under that skill and
   then the grounding editor; deterministic candidate formatting remains the
   fail-closed fallback when synthesis or editing cannot produce an answer.
-  Event-context turns without a current weather outcome use a compact final
-  editor under the shared deadline when draft text exists. That editor receives
-  only saved-ZIP-candidate presence, never ZIP digits. On search-bearing
+  Event-context turns without current or explicitly bound weather evidence use
+  a compact final editor under the shared deadline when draft text exists. That
+  editor receives only saved-ZIP-candidate presence, never ZIP digits. On search-bearing
   event-context turns, the final text must retain at least one exact returned
   candidate; deterministic candidate rendering restores any missing
   candidates. Current-turn non-weather business-tool evidence always follows
-  ordinary grounding. A nonempty no-tool draft with prior candidates but no
-  current weather outcome also remains on ordinary grounding. The structurally
-  selected protected weather-outcome path uses the decision editor described
+  ordinary grounding. A comparison with resolution/detail activity and a bound
+  receipt also remains on ordinary grounding and does not repeat exact forecast
+  facts. The structurally selected protected weather-evidence path uses the decision editor described
   above only when draft text exists; an empty draft or invalid decision uses
   deterministic event assembly.
   Grounding now requires an explicit gap when the requested outcome depends on
@@ -560,6 +611,37 @@ The newest focused gate is recorded first. Older implementation gates remain
 below as comparison points; generated quality and timing
 artifacts stay in the required local archive rather than versioned source.
 
+- Durable cross-turn context Slice 3 implementation (2026-07-30): migration 9,
+  the shared `weather_forecast.v1` contract, atomic promotion/projection
+  handling, receipt-aware activation, and separate runtime hydration are in the
+  current working tree. Focused offline coverage checks four activation-schema
+  boundaries: an accepted current-turn bounded date removes `event_date`, bare
+  current-turn `next week` shapes that schema, missing date authority retains
+  `event_date`, and a prior date for Wedding A cannot narrow activation after
+  the current turn introduces Wedding B. The new cross-event focused subset
+  passed 168 tests with 1 expected xfail in 2.69 seconds. The final bounded gate
+  passed 506 tests with 1 expected xfail and 1 unrelated Starlette deprecation
+  warning in 6.33 seconds. Ruff passed all changed Python. The
+  focused fixture now begins with the
+  explicit natural request `Show me dress options for a semi-formal wedding`,
+  isolating receipt behavior from product-intent ambiguity, and its comparison
+  oracle forbids all repeated forecast facts. The second one-shot Judge-free
+  live attempt did not pass: turn 1 searched and established the product
+  ledger, but turn 2 selected `event_date` despite the accepted bare
+  `next week` authority, so it asked for an exact day, made no weather call,
+  and prepared no receipt. Turn 3 still resolved and read both products but
+  repeated the contradictory date question. That run used 13 application-model
+  calls, 177,264 tokens, one embedding, zero provider calls, and 47.61 seconds.
+  No automatic retry or patch loop followed; the shared-parser activation
+  boundary was the narrow correction. The subsequent full focused live gate
+  passed all 3 diagnostic turns, and its Judge scores were 5/5, 4/5, and 5/5
+  (4.67/5 overall). It averaged 24.50 seconds per turn and used 14
+  application-model calls, 195,821 tokens, one embedding, and one Visual
+  Crossing call. Turn 3 bound the receipt, ran one resolver plus two detail
+  reads, made zero weather and catalog-search calls, and repeated no forecast
+  facts. No broad live cohort or repository-wide unit suite ran. The canonical
+  quality/timing comparison is
+  `~/exec-briefs/retail-shopping-assistant/quality/shopping/targeted/durable_context/slice3_weather_receipts/comparisons/pre_receipt_f6fe646__to__current_wip.md`.
 - Durable cross-turn context Slice 2 gate (2026-07-30): the focused
   summary/memory/config contract passed 221 tests in 6.00 seconds, and the
   focused serving-runtime context/weather/comparison selection passed 92 tests
@@ -574,8 +656,9 @@ artifacts stay in the required local archive rather than versioned source.
   compaction for failed turns. The focused local
   quality/timing comparison is
   `~/exec-briefs/retail-shopping-assistant/quality/shopping/targeted/durable_context/slice2_compaction_hydration/comparison.md`.
-  The focused paid weather conversation remains deferred to Slice 3 because
-  Slice 2 intentionally does not yet persist reusable forecast evidence.
+  At that historical Slice 2 gate, the focused paid weather conversation was
+  deferred because Slice 2 intentionally did not persist reusable forecast
+  evidence.
 - Styling-weather evidence-driven comparison Slice 2 gate (2026-07-29): the new
   three-turn fixture under
   `tests/integration/conversations/event_context_comparison/` passed its focused

@@ -64,6 +64,7 @@ def _diagnostics() -> dict:
                 "evidence_type": "product_detail",
             },
         ],
+        "weather_receipt_status": "bound",
     }
 
 
@@ -81,6 +82,7 @@ def _expectations() -> dict:
             "Intricate Lace Gown",
             "Wavy Hem Satin Dress",
         ],
+        "required_weather_receipt_status": "bound",
         "required_response_phrases": [
             "Intricate Lace Gown",
             "Wavy Hem Satin Dress",
@@ -129,6 +131,10 @@ def test_standalone_validator_needs_no_judge_environment(
             ),
             "expected event-context next question",
         ),
+        (
+            lambda trace: trace.update(weather_receipt_status="not_applicable"),
+            "expected weather receipt status",
+        ),
     ],
 )
 def test_standalone_validator_rejects_wrong_or_incomplete_sequence(
@@ -158,10 +164,12 @@ def test_standalone_validator_checks_weather_outcome_and_response() -> None:
             "provider_input": "location_query",
             "outcome": "success",
         },
+        "required_weather_receipt_status": "promotion_prepared",
         "required_response_phrases": ["Weather Data Provided by Visual Crossing"],
         "forbidden_response_phrases": ["valid live forecast"],
     }
     diagnostics = {
+        "weather_receipt_status": "promotion_prepared",
         "tool_calls": [
             {
                 "tool_name": "get_weather_forecast_tool",
@@ -201,6 +209,31 @@ def test_standalone_validator_checks_weather_outcome_and_response() -> None:
             diagnostics,
             response="Weather Data Provided by Visual Crossing",
             label="weather",
+        )
+
+
+def test_standalone_validator_rejects_missing_or_structured_receipt_status() -> None:
+    validator = _load_validator()
+    expectations = {"required_weather_receipt_status": "bound"}
+
+    with pytest.raises(AssertionError, match="expected weather receipt status"):
+        validator._validate_diagnostic_expectations(
+            expectations,
+            {"tool_calls": []},
+            label="receipt",
+        )
+
+    with pytest.raises(AssertionError, match="expected weather receipt status"):
+        validator._validate_diagnostic_expectations(
+            expectations,
+            {
+                "tool_calls": [],
+                "weather_receipt_status": {
+                    "status": "bound",
+                    "location": "must not be exposed",
+                },
+            },
+            label="receipt",
         )
 
 

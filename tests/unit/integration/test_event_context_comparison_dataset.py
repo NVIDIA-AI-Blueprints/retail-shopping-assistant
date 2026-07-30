@@ -32,6 +32,9 @@ def test_event_context_comparison_dataset_is_one_three_turn_gate() -> None:
         == len(conversation["diagnostic_expectations"])
         == 3
     )
+    assert conversation["queries"][0] == (
+        "Show me dress options for a semi-formal wedding"
+    )
 
     comparison = conversation["diagnostic_expectations"][2]
     assert [
@@ -50,6 +53,10 @@ def test_event_context_comparison_dataset_is_one_three_turn_gate() -> None:
         item["required_event_context_next_question"]
         for item in conversation["diagnostic_expectations"]
     ] == ["event_location", "none", "none"]
+    assert [
+        item.get("required_weather_receipt_status")
+        for item in conversation["diagnostic_expectations"]
+    ] == [None, "promotion_prepared", "bound"]
     assert conversation["diagnostic_expectations"][1][
         "required_weather_trace"
     ] == {
@@ -81,3 +88,14 @@ def test_event_context_comparison_dataset_is_one_three_turn_gate() -> None:
     assert "Previously shown options still in play" in (
         comparison["forbidden_response_phrases"]
     )
+    assert "Weather Data Provided by Visual Crossing" in (
+        comparison["forbidden_response_phrases"]
+    )
+    assert {
+        "Forecast location used",
+        "Live forecast",
+        "°F",
+        "precipitation chance",
+    }.issubset(comparison["forbidden_response_phrases"])
+    assert "valid typed forecast receipt" in conversation["answers"][2]
+    assert "without another weather or provider call" in conversation["answers"][2]

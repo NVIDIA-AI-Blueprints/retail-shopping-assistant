@@ -26,6 +26,10 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+from shared.weather_receipts import (
+    DEFAULT_WEATHER_RECEIPT_TTL_SECONDS,
+    MAX_WEATHER_RECEIPT_TTL_SECONDS,
+)
 
 
 VISUAL_CROSSING_BASE_URL = (
@@ -123,6 +127,7 @@ class WeatherConfig(BaseModel):
     max_provider_attempts: StrictInt = 2
     max_forecast_horizon_days: StrictInt = MAX_WEATHER_DAYS
     max_range_days: StrictInt = MAX_WEATHER_DAYS
+    receipt_ttl_seconds: StrictInt = DEFAULT_WEATHER_RECEIPT_TTL_SECONDS
 
     @field_validator("base_url")
     @classmethod
@@ -158,6 +163,18 @@ class WeatherConfig(BaseModel):
     def validate_day_bound(cls, value: int) -> int:
         if isinstance(value, bool) or not 1 <= value <= MAX_WEATHER_DAYS:
             raise ValueError("weather day bounds must be between 1 and 15")
+        return value
+
+    @field_validator("receipt_ttl_seconds")
+    @classmethod
+    def validate_receipt_ttl(cls, value: int) -> int:
+        if (
+            isinstance(value, bool)
+            or not 1 <= value <= MAX_WEATHER_RECEIPT_TTL_SECONDS
+        ):
+            raise ValueError(
+                "weather receipt_ttl_seconds must be between 1 and 21600"
+            )
         return value
 
 

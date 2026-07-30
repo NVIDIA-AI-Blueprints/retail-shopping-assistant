@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+import json
 from typing import Any, cast
 
 import pytest
@@ -28,6 +29,7 @@ from chain_server.src.catalog_execution import CatalogSearchExecution
 from chain_server.src.deepagents_runtime import (
     DeepAgentsRuntime,
     RequestIdentity,
+    _current_turn_weather_date_available,
     _skill_activation_input_model,
 )
 from chain_server.src.skill_activation import (
@@ -41,6 +43,7 @@ from chain_server.src.skill_activation import (
     selected_skill_names_for_turn,
 )
 from chain_server.src.tool_loop_control import SERVER_CATALOG_CLARIFICATION
+from chain_server.src.weather_tool import weather_date_context_available
 from shared.commerce_contracts import (
     CatalogCapabilities,
     CatalogFilterCapability,
@@ -312,6 +315,82 @@ def test_activation_schema_binds_only_event_context_question() -> None:
         "cart-management",
     ]
     assert selected.event_context_next_question == "event_date"
+
+
+def test_bounded_weather_date_removes_event_date_from_activation_schema() -> None:
+    activation_input = _skill_activation_input_model(
+        ("event-context", "outfit-styling"),
+        weather_date_available=True,
+    )
+
+    accepted = activation_input(
+        skill_names=["outfit-styling", "event-context"],
+        event_context_next_question="none",
+    )
+
+    assert accepted.event_context_next_question == "none"
+    with pytest.raises(ValueError):
+        activation_input(
+            skill_names=["outfit-styling", "event-context"],
+            event_context_next_question="event_date",
+        )
+    question_schema = activation_input.model_json_schema()["properties"][
+        "event_context_next_question"
+    ]
+    assert "event_date" not in json.dumps(question_schema)
+
+
+def test_bare_next_week_shapes_activation_as_a_bounded_date() -> None:
+    date_available = weather_date_context_available(
+        ("NYC, on an outdoor patio next week.",)
+    )
+    activation_input = _skill_activation_input_model(
+        ("event-context", "outfit-styling"),
+        weather_date_available=date_available,
+    )
+
+    assert date_available is True
+    with pytest.raises(ValueError):
+        activation_input(
+            skill_names=["outfit-styling", "event-context"],
+            event_context_next_question="event_date",
+        )
+
+
+def test_prior_event_date_cannot_narrow_a_new_event_activation() -> None:
+    state = State(
+        user_id=1,
+        query="Now help with a different wedding in Cancun on the beach.",
+        context=(
+            "User: The first wedding is August 3 in NYC.\n"
+            "Assistant: I can plan around that date."
+        ),
+    )
+
+    assert _current_turn_weather_date_available(state) is False
+    activation_input = _skill_activation_input_model(
+        ("event-context", "outfit-styling"),
+        weather_date_available=_current_turn_weather_date_available(state),
+    )
+    accepted = activation_input(
+        skill_names=["outfit-styling", "event-context"],
+        event_context_next_question="event_date",
+    )
+    assert accepted.event_context_next_question == "event_date"
+
+
+def test_missing_weather_date_keeps_event_date_in_activation_schema() -> None:
+    activation_input = _skill_activation_input_model(
+        ("event-context", "outfit-styling"),
+        weather_date_available=False,
+    )
+
+    accepted = activation_input(
+        skill_names=["outfit-styling", "event-context"],
+        event_context_next_question="event_date",
+    )
+
+    assert accepted.event_context_next_question == "event_date"
 
 
 def test_dynamic_event_question_gets_typed_activation_feedback() -> None:

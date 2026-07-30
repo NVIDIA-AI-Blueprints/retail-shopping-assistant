@@ -11,6 +11,11 @@ from operator import ior
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing import Annotated, Dict, List, Any
 
+from shared.weather_receipts import (
+    WeatherForecastReceipt,
+    WeatherReceiptPromotion,
+)
+
 
 SHOPPER_PROFILE_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
 
@@ -105,6 +110,23 @@ class State(BaseModel):
     historical_product_context: str = Field(
         default="",
         description="Authoritative bounded historical product-reference projection",
+    )
+    conversation_projection_version: int = Field(
+        default=0,
+        ge=0,
+        description="Version used for optional atomic projection updates",
+    )
+    active_weather_receipts: List[WeatherForecastReceipt] = Field(
+        default_factory=list,
+        description="Fresh typed weather receipts available for semantic binding",
+    )
+    selected_weather_receipt_id: str | None = Field(
+        default=None,
+        description="Current-turn receipt explicitly bound during skill activation",
+    )
+    weather_receipt_promotion: WeatherReceiptPromotion | None = Field(
+        default=None,
+        description="Validated current-turn forecast prepared for durable promotion",
     )
     cart: Cart = Field(default_factory=Cart, description="User's shopping cart")
     response: str = Field(default="", description="Generated response from agents")

@@ -102,6 +102,7 @@ def _start_payload() -> dict[str, Any]:
                     "products": [{"ref": "bag-1", "name": "Cobalt Bag"}],
                 }
             ],
+            "active_receipts": [],
             "last_turn_id": "turn-1",
         },
         "cart": [

@@ -235,6 +235,10 @@ def test_event_context_is_a_narrow_weather_styling_modifier() -> None:
         normalized
     )
     assert "a weather attempt does not close the tool loop" in normalized
+    assert "activation may also bind one listed durable weather receipt" in (
+        normalized
+    )
+    assert "do not call weather again" in normalized
     assert "call `get_weather_forecast_tool` once before answering" in normalized
     assert "a typed success or failure completes the attempt" in normalized
     assert "no current non-weather business-tool activity exists" in normalized
@@ -274,6 +278,8 @@ def test_event_context_is_a_narrow_weather_styling_modifier() -> None:
     assert "make no weather claim" in normalized
     assert "live forecast is not available yet" in normalized
     assert "only successful current-turn forecast evidence" in normalized
+    assert "every unbound receipt is non-authoritative" in normalized
+    assert "does not repeat its forecast block or attribution" in normalized
     assert "weather data provided by visual crossing" in normalized
     assert "forecasts can change" in normalized
     assert "never proves that a catalog item is" in normalized

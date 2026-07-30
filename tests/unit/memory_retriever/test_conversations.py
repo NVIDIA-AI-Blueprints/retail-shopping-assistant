@@ -8,7 +8,9 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import Iterator
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -18,6 +20,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from memory_retriever.src import main as memory_main
+from memory_retriever.src import conversations as conversation_store
 from memory_retriever.src import product_references
 
 
@@ -83,6 +86,7 @@ def _finalize_turn(
     events: list[dict] | None = None,
     output: dict | None = None,
     summary_advance: dict | None = None,
+    weather_receipt_promotion: dict | None = None,
 ):
     payload = {
         "request_id": request_id,
@@ -95,10 +99,73 @@ def _finalize_turn(
     }
     if summary_advance is not None:
         payload["summary_advance"] = summary_advance
+    if weather_receipt_promotion is not None:
+        payload["weather_receipt_promotion"] = weather_receipt_promotion
     return client.post(
         f"/conversations/{conversation_id}/turns/{turn_id}/finalize",
         json=payload,
     )
+
+
+def _weather_receipt_promotion(
+    *,
+    expected_projection_version: int,
+    fetched_at: datetime,
+    location: str = "NYC",
+    location_query: str | None = "NYC, NY",
+    resolved_location: str | None = "New York, NY, United States",
+    forecast_date: date = date(2026, 8, 3),
+    ttl_seconds: int = 3_600,
+    saved_area: bool = False,
+    source_tool_call_id: str = "weather-call-1",
+) -> dict:
+    location_scope = (
+        {"kind": "confirmed_saved_zip"}
+        if saved_area
+        else {
+            "kind": "shopper_provided_location",
+            "location": location,
+            **(
+                {"location_query": location_query}
+                if location_query is not None
+                else {}
+            ),
+        }
+    )
+    return {
+        "expected_projection_version": expected_projection_version,
+        "source_tool_call_id": source_tool_call_id,
+        "location_scope": location_scope,
+        "evidence": {
+            "ok": True,
+            "provider": "visual_crossing",
+            "fetched_at": fetched_at.isoformat(),
+            "requested_window": {
+                "start_date": forecast_date.isoformat(),
+                "end_date": forecast_date.isoformat(),
+            },
+            **(
+                {"resolved_location": resolved_location}
+                if resolved_location is not None
+                else {}
+            ),
+            "days": [
+                {
+                    "date": forecast_date.isoformat(),
+                    "condition": "rain",
+                    "precipitation_probability_pct": 70.0,
+                    "precipitation_types": ["rain"],
+                    "temperature_low_f": 65.0,
+                    "temperature_high_f": 78.0,
+                }
+            ],
+            "attribution": {
+                "label": "Weather Data Provided by Visual Crossing",
+                "url": "https://www.visualcrossing.com/",
+            },
+        },
+        "ttl_seconds": ttl_seconds,
+    }
 
 
 def _present_products(
@@ -174,6 +241,7 @@ def test_start_returns_recent_turns_projection_and_authoritative_cart(
             "version": 0,
             "summary_text": "",
             "summary_through_sequence": 0,
+            "active_receipts": [],
             "active_anchors": [],
             "effective_preferences": [],
             "product_reference_index": [],
@@ -410,6 +478,361 @@ def test_invalid_summary_advance_rolls_back_the_complete_finalize(
         events=[event],
     )
     assert completed_without_advance.status_code == 200
+
+
+def test_weather_receipt_promotion_is_atomic_replayable_and_hydrated(
+    conversation_db: TestClient,
+) -> None:
+    started = _start_turn(
+        conversation_db,
+        "conversation-weather-receipt",
+        request_id="request-1",
+        shopper_text="The NYC patio wedding is next week.",
+    ).json()
+    fetched_at = datetime.now(timezone.utc)
+    promotion = _weather_receipt_promotion(
+        expected_projection_version=started["projection"]["version"],
+        fetched_at=fetched_at,
+    )
+    event = {
+        "event_key": "weather-advice-prepared",
+        "event_type": "preference_added",
+        "source_kind": "runtime",
+        "payload": {"kind": "event_styling"},
+    }
+
+    finalized = _finalize_turn(
+        conversation_db,
+        "conversation-weather-receipt",
+        started["turn_id"],
+        request_id="request-1",
+        attempt_id=started["attempt_id"],
+        assistant_text="I used the current NYC forecast.",
+        events=[event],
+        weather_receipt_promotion=promotion,
+    )
+    replay = _finalize_turn(
+        conversation_db,
+        "conversation-weather-receipt",
+        started["turn_id"],
+        request_id="request-1",
+        attempt_id=started["attempt_id"],
+        assistant_text="I used the current NYC forecast.",
+        events=[event],
+        weather_receipt_promotion=promotion,
+    )
+    changed_replay = _finalize_turn(
+        conversation_db,
+        "conversation-weather-receipt",
+        started["turn_id"],
+        request_id="request-1",
+        attempt_id=started["attempt_id"],
+        assistant_text="I used the current NYC forecast.",
+        events=[event],
+        weather_receipt_promotion={
+            **promotion,
+            "ttl_seconds": 1_800,
+        },
+    )
+    next_turn = _start_turn(
+        conversation_db,
+        "conversation-weather-receipt",
+        request_id="request-2",
+        shopper_text="Compare the dresses for that event.",
+    )
+
+    assert finalized.status_code == 200
+    assert replay.json() == {**finalized.json(), "replayed": True}
+    assert changed_replay.status_code == 409
+    assert next_turn.status_code == 200
+    receipts = next_turn.json()["projection"]["active_receipts"]
+    assert len(receipts) == 1
+    receipt = receipts[0]
+    assert receipt["receipt_type"] == "weather_forecast.v1"
+    assert receipt["source_turn_id"] == started["turn_id"]
+    assert receipt["source_sequence"] == started["sequence"]
+    assert receipt["source_tool"] == "get_weather_forecast_tool"
+    assert receipt["source_tool_call_id"] == "weather-call-1"
+    assert receipt["location_scope"] == {
+        "kind": "shopper_provided_location",
+        "location": "NYC",
+        "location_query": "NYC, NY",
+    }
+    assert receipt["evidence"]["requested_window"] == {
+        "start_date": "2026-08-03",
+        "end_date": "2026-08-03",
+    }
+    with memory_main.SessionLocal() as db:
+        projection = db.query(memory_main.ConversationProjection).one()
+        assert len(json.loads(projection.active_receipts_json)) == 1
+        assert db.query(memory_main.ConversationEvent).count() == 1
+
+
+def test_weather_receipt_conflicts_roll_back_the_complete_finalize(
+    conversation_db: TestClient,
+) -> None:
+    started = _start_turn(
+        conversation_db,
+        "conversation-weather-conflict",
+        request_id="request-1",
+    ).json()
+    event = {
+        "event_key": "detail-1",
+        "event_type": "product_detail_confirmed",
+        "source_kind": "catalog",
+        "source_ref": "dress-1",
+        "payload": {"material": "satin"},
+    }
+    wrong_version = _finalize_turn(
+        conversation_db,
+        "conversation-weather-conflict",
+        started["turn_id"],
+        request_id="request-1",
+        attempt_id=started["attempt_id"],
+        events=[event],
+        weather_receipt_promotion=_weather_receipt_promotion(
+            expected_projection_version=999,
+            fetched_at=datetime.now(timezone.utc),
+        ),
+    )
+
+    assert wrong_version.status_code == 409
+    assert wrong_version.json()["detail"] == "projection_version_conflict"
+    with memory_main.SessionLocal() as db:
+        turn = db.query(memory_main.ConversationTurn).one()
+        projection = db.query(memory_main.ConversationProjection).one()
+        assert turn.status == "started"
+        assert turn.finalize_digest is None
+        assert turn.output_json is None
+        assert db.query(memory_main.ConversationEvent).count() == 0
+        assert projection.version == 0
+        assert projection.active_receipts_json == "[]"
+
+    failed_promotion = _finalize_turn(
+        conversation_db,
+        "conversation-weather-conflict",
+        started["turn_id"],
+        request_id="request-1",
+        attempt_id=started["attempt_id"],
+        status="failed",
+        weather_receipt_promotion=_weather_receipt_promotion(
+            expected_projection_version=0,
+            fetched_at=datetime.now(timezone.utc),
+        ),
+    )
+    assert failed_promotion.status_code == 409
+    assert failed_promotion.json()["detail"] == (
+        "weather_receipt_status_conflict"
+    )
+
+    assert (
+        _finalize_turn(
+            conversation_db,
+            "conversation-weather-conflict",
+            started["turn_id"],
+            request_id="request-1",
+            attempt_id=started["attempt_id"],
+            events=[event],
+        ).status_code
+        == 200
+    )
+
+
+def test_saved_area_receipt_requires_bound_profile_and_never_stores_zip(
+    conversation_db: TestClient,
+) -> None:
+    guest = _start_turn(
+        conversation_db,
+        "guest-weather-receipt",
+        request_id="guest-request",
+    ).json()
+    guest_rejected = _finalize_turn(
+        conversation_db,
+        "guest-weather-receipt",
+        guest["turn_id"],
+        request_id="guest-request",
+        attempt_id=guest["attempt_id"],
+        weather_receipt_promotion=_weather_receipt_promotion(
+            expected_projection_version=0,
+            fetched_at=datetime.now(timezone.utc),
+            saved_area=True,
+            resolved_location=None,
+        ),
+    )
+    assert guest_rejected.status_code == 409
+    assert guest_rejected.json()["detail"] == "weather_receipt_status_conflict"
+
+    selected = _start_turn(
+        conversation_db,
+        "selected-weather-receipt",
+        request_id="selected-request",
+        shopper_profile_id="shopper_jordan",
+    ).json()
+    finalized = _finalize_turn(
+        conversation_db,
+        "selected-weather-receipt",
+        selected["turn_id"],
+        request_id="selected-request",
+        attempt_id=selected["attempt_id"],
+        weather_receipt_promotion=_weather_receipt_promotion(
+            expected_projection_version=0,
+            fetched_at=datetime.now(timezone.utc),
+            saved_area=True,
+            resolved_location=None,
+        ),
+    )
+    next_turn = _start_turn(
+        conversation_db,
+        "selected-weather-receipt",
+        request_id="selected-request-2",
+        shopper_profile_id="shopper_jordan",
+    )
+
+    assert finalized.status_code == 200
+    receipt = next_turn.json()["projection"]["active_receipts"][0]
+    assert receipt["location_scope"] == {"kind": "confirmed_saved_zip"}
+    assert "resolved_location" not in receipt["evidence"]
+    with memory_main.SessionLocal() as db:
+        stored = db.query(memory_main.ConversationProjection).filter_by(
+            conversation_id="selected-weather-receipt"
+        ).one()
+        assert "10001" not in stored.active_receipts_json
+
+
+def test_weather_receipts_supersede_exact_scope_and_cap_distinct_scopes(
+    conversation_db: TestClient,
+) -> None:
+    conversation_id = "conversation-weather-cap"
+    base_fetched_at = datetime.now(timezone.utc)
+
+    for index in range(5):
+        started = _start_turn(
+            conversation_db,
+            conversation_id,
+            request_id=f"request-{index + 1}",
+        ).json()
+        finalized = _finalize_turn(
+            conversation_db,
+            conversation_id,
+            started["turn_id"],
+            request_id=f"request-{index + 1}",
+            attempt_id=started["attempt_id"],
+            weather_receipt_promotion=_weather_receipt_promotion(
+                expected_projection_version=started["projection"]["version"],
+                fetched_at=base_fetched_at + timedelta(seconds=index),
+                location=f"City {index + 1}",
+                location_query=None,
+                resolved_location=f"Resolved City {index + 1}",
+                source_tool_call_id=f"weather-call-{index + 1}",
+            ),
+        )
+        assert finalized.status_code == 200
+
+    sixth = _start_turn(
+        conversation_db,
+        conversation_id,
+        request_id="request-6",
+    ).json()
+    capped = sixth["projection"]["active_receipts"]
+    assert len(capped) == 4
+    assert [receipt["source_sequence"] for receipt in capped] == [5, 4, 3, 2]
+    assert all(
+        receipt["location_scope"]["location"] != "City 1"
+        for receipt in capped
+    )
+
+    replaced = _finalize_turn(
+        conversation_db,
+        conversation_id,
+        sixth["turn_id"],
+        request_id="request-6",
+        attempt_id=sixth["attempt_id"],
+        weather_receipt_promotion=_weather_receipt_promotion(
+            expected_projection_version=sixth["projection"]["version"],
+            fetched_at=base_fetched_at + timedelta(seconds=10),
+            location="City 2",
+            location_query=None,
+            resolved_location="New Provider Resolution for City 2",
+            source_tool_call_id="weather-call-6",
+        ),
+    )
+    seventh = _start_turn(
+        conversation_db,
+        conversation_id,
+        request_id="request-7",
+    )
+
+    assert replaced.status_code == 200
+    receipts = seventh.json()["projection"]["active_receipts"]
+    assert len(receipts) == 4
+    city_two = [
+        receipt
+        for receipt in receipts
+        if receipt["location_scope"]["location"] == "City 2"
+    ]
+    assert len(city_two) == 1
+    assert city_two[0]["source_sequence"] == 6
+    assert city_two[0]["evidence"]["resolved_location"] == (
+        "New Provider Resolution for City 2"
+    )
+
+
+def test_expired_weather_receipts_are_filtered_then_pruned_on_finalize(
+    conversation_db: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base_time = 1_800_000_000.0
+    clock = {"now": base_time}
+    monkeypatch.setattr(
+        conversation_store,
+        "time",
+        SimpleNamespace(time=lambda: clock["now"]),
+    )
+    fetched_at = datetime.fromtimestamp(base_time, tz=timezone.utc)
+    first = _start_turn(
+        conversation_db,
+        "conversation-weather-expiry",
+        request_id="request-1",
+    ).json()
+    assert (
+        _finalize_turn(
+            conversation_db,
+            "conversation-weather-expiry",
+            first["turn_id"],
+            request_id="request-1",
+            attempt_id=first["attempt_id"],
+            weather_receipt_promotion=_weather_receipt_promotion(
+                expected_projection_version=0,
+                fetched_at=fetched_at,
+                ttl_seconds=1,
+            ),
+        ).status_code
+        == 200
+    )
+    with memory_main.SessionLocal() as db:
+        projection = db.query(memory_main.ConversationProjection).one()
+        assert len(json.loads(projection.active_receipts_json)) == 1
+
+    clock["now"] = base_time + 2
+    second = _start_turn(
+        conversation_db,
+        "conversation-weather-expiry",
+        request_id="request-2",
+    ).json()
+    assert second["projection"]["active_receipts"] == []
+    assert (
+        _finalize_turn(
+            conversation_db,
+            "conversation-weather-expiry",
+            second["turn_id"],
+            request_id="request-2",
+            attempt_id=second["attempt_id"],
+        ).status_code
+        == 200
+    )
+    with memory_main.SessionLocal() as db:
+        projection = db.query(memory_main.ConversationProjection).one()
+        assert projection.active_receipts_json == "[]"
 
 
 def test_summary_raw_tail_contains_only_later_context_eligible_turns(
@@ -1932,6 +2355,7 @@ def test_versioned_migrations_upgrade_legacy_schema_once_without_data_loss(
         projection_row = connection.execute(
             text(
                 "SELECT version, summary_text, summary_through_sequence, "
+                "active_receipts_json, "
                 "active_anchors_json, effective_preferences_json, "
                 "product_reference_index_json, last_turn_id "
                 "FROM conversation_projection "
@@ -1939,7 +2363,7 @@ def test_versioned_migrations_upgrade_legacy_schema_once_without_data_loss(
             )
         ).one()
 
-    assert versions == [1, 2, 3, 4, 5, 6, 7, 8]
+    assert versions == [1, 2, 3, 4, 5, 6, 7, 8, 9]
     assert row[0] == "Legacy Bag"
     assert len(row[1]) == 32
     assert row[2:] == (None, None)
@@ -1960,6 +2384,7 @@ def test_versioned_migrations_upgrade_legacy_schema_once_without_data_loss(
         3,
         "",
         0,
+        "[]",
         '["anchor"]',
         '[{"field":"color","value":"blue"}]',
         '[{"turn_seq":1}]',
@@ -2027,9 +2452,9 @@ def test_file_database_reopens_with_sqlite_safety_settings(
             == "Remembered."
         )
         assert (
-            connection.execute(
-                text("SELECT COUNT(*) FROM schema_migrations")
-            ).scalar_one()
-            == 8
-        )
+        connection.execute(
+            text("SELECT COUNT(*) FROM schema_migrations")
+        ).scalar_one()
+        == 9
+    )
     reopened_engine.dispose()

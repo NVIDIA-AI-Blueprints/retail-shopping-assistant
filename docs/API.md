@@ -206,8 +206,10 @@ and cart state cannot bleed across sessions.
 
 Durable ordered shopper/assistant turns live in the single-replica
 memory-service SQLite database. At turn start the runtime consumes a bounded set
-of model-context-eligible recent turns and a compact product-reference
-projection in place of the legacy rolling context blob. Blocked turns remain
+of model-context-eligible recent turns, a compact product-reference projection,
+and a bounded active `weather_forecast.v1` receipt projection in place of the
+legacy rolling context blob. Summary, raw transcript, product references, and
+typed receipts are distinct state/prompt lanes. Blocked turns remain
 durable and exactly replayable but are excluded from both the service projection
 and chain prompt formatter. Products enter durable reference evidence
 only when they appear in the finalized ordered `product_results` sent as product
@@ -223,6 +225,15 @@ after successful durable finalization and preserved if finalization fails. The
 durable resolver is same-conversation only and does not implement fuzzy or
 embedding matching, preferences, sentiment, active anchors, cross-conversation
 lookup, or stale-catalog-revision handling.
+
+Weather receipts are a deliberately smaller exception to prior-tool
+non-authority. Only one same-ID successful current-turn weather call/result pair
+may be proposed, and memory promotes it atomically only on completed
+finalization. It prunes expired entries, replaces an older entry for the same
+exact location/date scope, and returns at most four. Failed outcomes, saved ZIP
+digits, raw provider request/response data, prepared provider endpoint URLs,
+keys, and exceptions are never stored in the receipt projection. The pinned
+public attribution URL remains part of normalized evidence.
 
 Arbitrary caller-supplied persona data is not part of `QueryRequest`.
 The only profile input is the optional ID of one fixed server-published
@@ -359,6 +370,7 @@ interface AgentDiagnostics {
   partial_graph_capture_error?: string;
   diagnostic_collection_error?: string;
   memory_finalize_error?: string;
+  weather_receipt_status?: 'promotion_prepared' | 'bound' | 'promotion_dropped';
 }
 ```
 
@@ -366,14 +378,18 @@ Weather is a deliberate exception to the otherwise detailed operator trace.
 Raw `get_weather_forecast_tool` arguments are replaced with
 `{"redacted": true}` and raw output is omitted. Its tool-call record retains
 only categorical `request_shape`, `location_source`, `provider_input`, and
-`outcome`; it never includes a location, ZIP, date, resolved place, URL, body,
-or exception. Failed-turn
+`outcome`. Receipt handling adds at most categorical
+`weather_receipt_status`, such as `promotion_prepared` or `bound`; it never
+includes a receipt ID, scope, evidence, location, ZIP, date, resolved place,
+URL, body, or exception. Failed-turn
 `partial_graph_messages` likewise replace weather calls and output with
 redacted placeholders. Saved profile ZIP is recursively scrubbed from
 diagnostic string keys and values. The final shopper-facing forecast summary
 can still be stored as ordinary durable assistant text and exactly replayed,
 but a recognized prior forecast summary is replaced with a redaction marker in
-the next graph and grounding-editor recent discussion.
+the next graph and grounding-editor recent discussion. Typed active receipts
+are hydrated separately and remain unavailable to grounding unless the current
+turn explicitly binds one through activation.
 
 `final_termination_reason: "memory_start_failed"` means the required durable
 start failed before guardrail/model/tool work. A generic finalize transport or
@@ -554,12 +570,29 @@ response-validation failures are not retried:
   missing and material, `event_date` only after destination and any material
   venue are established when weather is enabled and material and a bounded date
   is neither established nor explicitly unavailable, and `none` otherwise.
+  Before constructing this field's enum, the runtime applies the same closed
+  shopper-authored weather-date authority parser used by the tool gate to the
+  current shopper turn only. Once that turn contains an accepted bounded date,
+  including bare `next week`, `event_date` is omitted, preventing a
+  contradictory date question. Prior raw-turn dates do not narrow activation
+  because event identity remains model-owned. This is narrower than weather
+  tool eligibility, which may still use bounded current and recent shopper
+  authority.
   An explicitly shopper-stated outdoor patio, beach, garden, rooftop, or
   open-air setting makes enabled live weather material; with destination and
-  that setting but no bounded date, activation selects `event_date`. This is
-  model-owned semantic guidance, not deterministic keyword or alias parsing.
+  that setting but no bounded date, activation selects `event_date`. Skill
+  selection, location, venue, materiality, and intent remain model-owned
+  semantic guidance. The dynamic enum is typed argument consistency, not an
+  intent router or keyword routing layer.
   Only the accepted activation result authorizes that event-context follow-up;
   the server does not infer one from enabled weather or missing context.
+  The same activation may optionally bind one ID from the currently valid
+  receipt projection, but only with `event-context`,
+  `event_context_next_question=none`, and the exact same event location/date
+  scope. A current correction, uncertainty, or explicit refresh request means
+  no receipt binding. An invalid receipt ID or composition enters the existing
+  typed activation correction path. Binding a valid receipt hides and
+  execution-blocks another weather call for the turn;
   Accepted `event_location` or
   `event_venue` hides and execution-blocks weather. Missing location or date
   authority may likewise deny weather, but it does not remove any product,
@@ -613,32 +646,39 @@ authorize a date clarification only through accepted `event_date` under that
 same ordering and enabled-and-material rule.
 Location-independent requests authorize neither a lookup nor a forecast-input
 question.
-Only successful current-turn tool evidence supports forecast claims. Prior
-durable assistant forecast summaries are redacted from both the graph and
-grounding-editor recent discussion, while remaining stored and exactly
-replayable; prior weather tool messages are excluded from prior evidence. The
-complete grounding-editor prompt also replaces the selected profile's saved
+Current successful weather evidence has precedence. Otherwise, only one
+unexpired `weather_forecast.v1` receipt explicitly bound during this turn can
+support its exact location/date scope; every unbound receipt is non-evidence.
+A changed or uncertain event scope requires a fresh forecast rather than a
+best-effort receipt match. Prior durable assistant forecast summaries are
+redacted from both the graph and grounding-editor recent discussion, while
+remaining stored and exactly replayable; prior weather tool messages are
+excluded from prior evidence. Receipts occupy a separate structured
+state/prompt lane, not the rolling summary, raw transcript, or product ledger.
+The complete grounding-editor prompt also replaces the selected profile's saved
 ZIP before the editor call. The
 provider-resolved place is included only for
 `shopper_provided_location`, where deterministic response rendering discloses
 it as the forecast-location assumption, making any `location_query`
 normalization reversible. It is omitted in
 `confirmed_saved_zip` mode so saved ZIP resolution is never exposed.
-Rendering then appends exactly one canonical forecast block containing the
+Current successful rendering then appends exactly one canonical forecast block containing the
 resolved exact date for `<weekday> next week` or the
 Monday-through-Sunday range for bare `next week`, every validated day's date,
 condition, available low/high temperature, precipitation probability/types,
 the Visual Crossing attribution, and forecast-uncertainty language. The model
-cannot shorten or selectively omit that evidence.
+cannot shorten or selectively omit that evidence. Reused receipt evidence does
+not reproduce that block or exact forecast facts on a product-comparison turn;
+it guides the styling comparison silently.
 Response handling selects the protected event decision renderer structurally,
 not from an activation mode: `event-context` must be active, the current turn
 must have no non-weather business-tool activity, and a current typed weather
-outcome (success or failure) must exist. Missing-location/venue or an empty
-draft skips its decision editor. A separate prior-candidate fallback uses
-deterministic event assembly only when the draft is empty; prior candidates with
-a nonempty draft stay on ordinary grounding only when there is no current
-weather outcome. A comparison that calls only weather remains protected. Other
-protected weather-outcome turns with a nonempty draft give the narrow decision
+outcome (success or failure) or explicitly bound valid receipt must exist.
+Missing-location/venue or an empty draft skips its decision editor. A separate
+prior-candidate fallback uses deterministic event assembly only when the draft
+is empty. Current product-resolution/detail activity guarantees ordinary
+grounding even when a receipt is bound. Other protected weather-evidence turns
+with a nonempty draft give the narrow decision
 editor only bounded shopper-authored event text and the server-owned
 deterministic weather styling direction. If any current non-weather business
 tool was attempted, its evidence uses the normal grounding path instead of the
@@ -650,8 +690,8 @@ exact two-key JSON object containing a shopper-grounded `venue_quote` and one
 or two distinct allowlisted adjustment codes. Malformed JSON, extra keys, a
 missing/non-shopper quote, or invalid/duplicate codes falls back. The server
 maps valid codes to fixed phrases and deterministically assembles exact newest
-prior names, its weather direction, only the accepted question, and the typed
-weather failure or canonical success block. It never asks for state, region,
+prior names, its weather direction, only the accepted question, and a current
+typed weather failure or current canonical success block. It never asks for state, region,
 country, or finer location solely because the lookup failed. Forecasts
 may guide general styling judgment, but cannot establish product warmth,
 waterproofing, breathability, comfort, safety, terrain performance, or an
@@ -712,10 +752,14 @@ skills. Its `skill_names` field is always required;
 `event_context_next_question` is required exactly when `event-context` is
 selected and omitted otherwise. It is one of `event_location`, `event_venue`,
 `event_date`, or `none` and authorizes the response's only event-context
-follow-up under the semantic conditions above. The runtime accepts it only from
-the successfully completed activation. Event context adds its weather grant to
-the primary skill's product grants; it does not select a product-work mode or
-revoke normal business tools.
+follow-up under the semantic conditions above. When the current shopper turn
+contains a bounded date accepted by the shared weather-date authority parser,
+the per-turn schema narrows that enum by removing `event_date`. Prior raw-turn
+dates can still contribute to separately validated weather eligibility, but
+cannot deterministically narrow activation. The runtime accepts a value only
+from the successfully completed activation. Event context adds its weather
+grant to the primary skill's product grants; it does not select a product-work
+mode or revoke normal business tools.
 The runtime injects the
 selected skills' complete instructions before exposing the applicable subset of
 the twelve shopping tools. It is included in `token_usage.model_calls` and
@@ -1263,6 +1307,7 @@ be distinguished safely.
     "version": 3,
     "summary_text": "The shopper is assembling a semi-formal wedding outfit.",
     "summary_through_sequence": 2,
+    "active_receipts": [],
     "active_anchors": [],
     "effective_preferences": [],
     "product_reference_index": [
@@ -1336,6 +1381,25 @@ response, so a new summary affects the next request, not the response that
 created it. It receives only the prior summary and offered turns. Timeout,
 model error, invalid or oversized input/output, blocked/failed turn, or
 cancellation produces no summary advance.
+
+`projection.active_receipts` is an independently typed, newest-first list of at
+most four valid `weather_forecast.v1` receipts. Each receipt contains its
+memory-stamped ID, exact location-authority object, exact requested window,
+normalized validated days, attribution, source turn/tool identity, and
+`valid_until`. Saved-area scope is represented only as
+`{"kind":"confirmed_saved_zip"}`; the ZIP itself is not stored. The default
+TTL is 3,600 seconds, bounded by configuration to 21,600 seconds. Turn start
+filters expired, invalid, duplicate-scope, and over-cap entries before returning
+the projection. That atomic turn-start result is the validity snapshot for the
+in-flight request; the chain server does not perform another wall-clock expiry
+check mid-turn.
+
+This internal memory response contains the normalized evidence, but the
+pre-activation model projection does not. Before activation the model receives
+only receipt ID/type, shopper location/date scope, and `valid_until`. Full
+normalized evidence remains server-side and can enter grounding only if the
+current activation explicitly binds that receipt. Unbound receipt evidence is
+never placed in the model or grounding context.
 
 At memory-service startup and atomically before each new turn start, turns left
 in `started` longer than `MEMORY_TURN_ABANDON_SECONDS` are changed to
@@ -1420,6 +1484,17 @@ the finalize digest and does not apply it twice. If the chain server receives
 one of those summary-only conflicts, it makes one deterministic finalize
 attempt without `summary_advance`; it does not rerun the compactor or change the
 shopper response.
+
+`weather_receipt_promotion` is also optional and internal to the chain/memory
+boundary. It carries the start projection version, the successful weather
+tool-call ID, the exact location-authority object, validated normalized
+evidence, and a bounded TTL. Memory accepts it only on a completed turn, only
+when the projection version still matches, and only when saved-area scope
+belongs to a profile-bound conversation. The output/replay digest, product
+events, summary advance, receipt upsert/pruning, projection version, and
+last-turn pointer commit in the same transaction. A failure or non-completed
+turn cannot promote a receipt. Exact finalize replay does not apply promotion
+twice.
 
 ### Memory Retriever POST `/conversations/{conversation_id}/products/resolve`
 

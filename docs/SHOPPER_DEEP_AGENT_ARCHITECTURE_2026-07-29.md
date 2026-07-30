@@ -10,14 +10,22 @@ The addendum distinguishes built slices from the remaining plan. The maintained
 detailed reference is
 [Shopper Agent Architecture](SHOPPER_AGENT_ARCHITECTURE.md).
 
-Status: the source audit is complete, but the fresh three-turn live gate failed
-on its final comparison turn. The failure exposed a general cross-turn
+Status: the source audit is complete. The first fresh three-turn live gate on
+2026-07-29 failed on its final comparison turn and exposed a general cross-turn
 continuity gap: Deep Agents can summarize a long request-local graph run, but
 that summary is not carried into the next shopper request. The agreed
 correction below addresses that general gap without adding an event-specific
-state machine. Its durable summary boundary and rolling-compaction slices are
-now built; the bounded cross-turn weather receipt and its focused live proof
-remain incomplete, so this is not yet a feature-readiness claim.
+state machine. Its durable summary boundary, rolling compaction, and bounded
+cross-turn weather-receipt projection are now built. A later isolated run
+exposed one typed inconsistency: the weather gate accepted bare `next week`,
+while activation still selected `event_date` and asked for an exact day. The
+narrow correction now uses that same date-authority parser to remove
+`event_date` from the per-turn activation schema only after a bounded date is
+accepted in the current shopper turn. Prior raw-turn dates do not narrow
+activation because event identity remains model-owned, although the weather
+tool's separate eligibility boundary may still use bounded current and recent
+shopper authority. The subsequent full focused live gate passed all three
+diagnostic turns and its Judge scored 4.67/5 overall.
 
 ## Decision
 
@@ -86,7 +94,12 @@ This is a single semantic procedure/tool authority, not a single model call.
    once under the shared execution deadline.
 5. The first model step can call only `activate_shopper_skills_tool`. The model
    selects the smallest applicable skill set and, for `event-context`, the next
-   relevant event question.
+   relevant event question. The same closed date-authority parser used by the
+   tool gate removes `event_date` from this turn's activation enum only when the
+   current shopper turn contains an accepted bounded date. Prior raw-turn dates
+   remain available to the semantic agent and weather tool but cannot narrow
+   activation. The model may also bind one listed valid weather receipt only
+   for the unchanged exact event scope and only when that question is `none`.
 6. Deterministic activation code accepts only a valid skill composition. It
    then injects the complete selected `SKILL.md` files and exposes only the
    union of their declared tool grants.
@@ -98,15 +111,17 @@ This is a single semantic procedure/tool authority, not a single model call.
    count/deduplication, detail-read limits, graph recursion, and the shared
    deadline. None decides what the shopper meant.
 9. After the graph answers, deterministic code collects current tool evidence
-   and chooses the safe grounding path. A separate tools-disabled model editor
-   may rewrite the answer within that evidence boundary.
+   plus only the one explicitly bound valid receipt and chooses the safe
+   grounding path. A separate tools-disabled model editor may rewrite the
+   answer within that evidence boundary.
 10. Scoped postconditions cover empty output, protected-event JSON,
     candidate retention, weather-language stripping, and redaction.
     Deterministic fallback handles editor timeout or error and failures of
     those checks. General rewritten prose is not comprehensively fact-validated.
     Weather attribution and optional output guardrails are then applied.
 11. Memory durably finalizes the turn before products, content, and metrics are
-    emitted to the UI.
+    emitted to the UI. A paired successful weather call/result may be promoted
+    in that same atomic transaction.
 
 ## Ownership
 
@@ -138,7 +153,7 @@ thing as a Deep Agents graph checkpoint or its automatic summarization.
 | Lifetime and owner | Persisted contents | Use on a later turn |
 | --- | --- | --- |
 | Memory-service installation | Five immutable representative-shopper records | Resolves the profile selected for a conversation |
-| Conversation | Ordered shopper/assistant turns, the nullable profile binding enforced through those turns, structured event envelopes, the bounded product-reference projection, and its last finalized turn | Reconstructs recent dialogue and resolves historically presented products |
+| Conversation | Ordered shopper/assistant turns, the nullable profile binding enforced through those turns, structured event envelopes, the rolling-summary projection, the bounded product-reference projection, at most four valid typed weather receipts, and its last finalized turn | Reconstructs recent dialogue, resolves historically presented products, and keeps short-lived exact-scope forecast evidence server-side for explicit binding |
 | Cart owner | Current cart rows with stable cart-line IDs and the cart-mutation idempotency ledger | Supplies the authoritative current cart; the bundled UI creates a new cart identity with a new conversation |
 | Finalized request | Request and attempt identity, request/finalize digests, sequence, status, termination reason, catalog revision, assistant text, product/image response artifacts, diagnostics, and selected skill names | Exactly replays the same finalized request and exposes the immediately previous skill names as a non-authorizing hint |
 | Chain-server process and request | Full Deep Agents messages, tool calls and results, model reasoning, current-turn evidence maps, and the LangGraph checkpoint | Not durable conversation state; the checkpoint is request-scoped and deleted after successful finalization |
@@ -159,21 +174,18 @@ At turn start, the memory boundary currently supplies:
 - the selected representative-shopper context, or no context for Guest;
 - the current authoritative cart;
 - the historical product-reference index; and
-- the immediately previous selected skill names as a continuity hint.
+- the immediately previous selected skill names as a continuity hint; and
+- a bounded list of validated, unexpired `weather_forecast.v1` receipts.
 
 The raw turns are bounded first by the memory service's turn limit and again by
 the chain server's character limit. Blocked and abandoned turns are durable for
 audit or replay semantics but are excluded from the model context.
 
-The serving path does **not** currently populate or rehydrate:
-
-- a conversation-level semantic summary;
-- the complete prior tool transcript or model reasoning;
-- normalized event location, venue, or date state;
-- prior weather tool evidence or a record that a forecast was already fetched;
-- active anchors or effective preferences, although reserved projection lanes
-  exist; or
-- raw uploaded media.
+The serving path does **not** populate or rehydrate the complete prior tool
+transcript or model reasoning, a normalized event state machine, active anchors
+or effective preferences, or raw uploaded media. A receipt is the sole bounded
+prior-weather evidence form; assistant forecast prose and prior weather tool
+messages remain non-evidence.
 
 Deep Agents 0.6.12 includes automatic summarization middleware. In this
 application it can compact one long graph execution, but the graph thread is
@@ -184,20 +196,22 @@ boundary. The legacy `summarizer.py` path is not part of the serving runtime.
 
 ## Durable Cross-Turn Context Plan — Agreed 2026-07-30
 
-Implementation status on 2026-07-30: Slices 1 and 2 are built. Migration 8, the
+Implementation status on 2026-07-30: Slices 1 through 3 are built. Migration 8, the
 memory wire contract, finalize-time compare-and-swap, and strictly
 post-watermark raw reads establish the durable summary boundary. Memory returns
 a newest raw prompt tail plus a separate oldest exact compaction prefix. The
 runtime renders summary, raw discussion, and historical products separately
-and may compact only that oldest prefix after a successful response. Slices
-3–5 remain planned.
+and may compact only that oldest prefix after a successful response. Migration
+9 and the shared receipt contract add the fourth typed-evidence lane. The
+focused live proof and bounded regression gate are complete; the full judged
+shopping evaluation follows the Slice 3 commit.
 
 The failed third turn should be corrected at the general continuity boundary,
 not with a new weather or comparison workflow. The serving Deep Agent remains
 request-scoped. The memory service gains a durable rolling conversation summary
 and a bounded projection of selectively reusable typed evidence.
 
-The planned next-turn context is:
+The current next-turn context is:
 
 ```text
 rolling semantic summary
@@ -213,9 +227,9 @@ This does not turn the summary into a planner, router, grant, or evidence
 source. It gives the Deep Agent semantic continuity. Authoritative state and
 typed evidence remain separately grounded.
 
-The planned persistence additions are deliberately small:
+The persistence additions are deliberately small:
 
-| Lifetime and owner | Planned addition | Explicitly not added |
+| Lifetime and owner | Built addition | Explicitly not added |
 | --- | --- | --- |
 | Conversation projection | Rolling summary text, its through-sequence watermark, and a bounded set of active typed receipts | Full tool history, model reasoning, or a conversation-long graph checkpoint |
 | Finalized request | Source identity for any receipt promoted by that request and an atomic summary/projection update under the existing attempt fence | A second copy of the rolling summary or raw provider output |
@@ -276,7 +290,7 @@ compact, server-validated results that are useful across turns.
 | Availability and promotions | Recheck because these facts are volatile; do not carry their old result as current evidence. |
 | Tool failures | Keep the sanitized failure on its request for replay and diagnostics, but do not promote it as reusable factual evidence. |
 
-A proposed `weather_forecast.v1` receipt contains only:
+A `weather_forecast.v1` receipt contains only:
 
 - a stable receipt type and identifier;
 - source turn and tool identity;
@@ -288,39 +302,60 @@ A proposed `weather_forecast.v1` receipt contains only:
 - required provider attribution; and
 - a configured validity boundary.
 
+Saved-area scope stores only the `confirmed_saved_zip` kind; the
+profile-bound conversation supplies its identity without persisting ZIP digits
+in the receipt. Explicit-location scope stores the exact shopper location plus
+its optional qualifier. Exact requested start/end dates complete the scope
+identity.
+
 The receipt never contains the API key, prepared URL, raw provider body, raw
 exception, or an unvalidated model-authored forecast.
 
 A weather receipt is reusable only when its schema validates, its exact
 location/date scope still applies, and its configured freshness boundary has
-not expired. A changed location or date is a different scope. Newer success for
-the same normalized scope supersedes the older receipt. The projection retains
-only a small configured number of unexpired scopes and never injects expired
-or superseded receipts into the model context.
+not expired. The default TTL is 3,600 seconds, the configured hard maximum is
+21,600 seconds, and the active projection cap is four. A changed location or
+date is a different scope. Newer success for the same normalized scope
+supersedes the older receipt. Memory never returns expired or superseded
+receipts.
+
+Promotion requires one successful current-turn AI weather call paired with the
+same tool-call ID's validated success result. It commits only with completed
+turn finalization. A failed, blocked, timed-out, cancelled, or malformed turn
+cannot promote a receipt.
 
 The bounded active-receipt projection, rather than an append-only copy of every
-tool response, is the model-facing source. A separate short audit retention
-policy may exist if operationally required, but it is not part of the agent's
-context and is not required by this feature.
+tool response, is the server-side source. Its minimal receipt index is rendered
+separately from the rolling summary, raw transcript, and product ledger for
+activation selection.
+
+Freshness and expiry are evaluated atomically at durable turn start. That
+accepted receipt set is the validity snapshot for the full in-flight request;
+there is deliberately no second wall-clock expiry check mid-turn. The
+pre-activation model receives only receipt ID/type, shopper location/date scope,
+and `valid_until`. It never receives normalized forecast evidence. Full evidence
+stays server-side and becomes grounding input only after explicit binding.
 
 ### Grounding relationship
 
-The three context forms have deliberately different authority:
+The context forms have deliberately different authority:
 
 | Context form | Purpose | Authority |
 | --- | --- | --- |
 | Rolling summary | Older conversational meaning and goals | Semantic continuity only |
 | Raw-turn tail | Recent exact shopper and assistant wording | Reference resolution input, not proof of external facts |
-| Profile, cart, product ledger, and valid receipts | Current state and validated external evidence | Deterministic grounding within each artifact's declared scope |
+| Profile, cart, and product ledger | Current state and validated external evidence | Deterministic grounding within each artifact's declared scope |
+| Active weather receipts | Server-side evidence plus a minimal ID/type/scope/expiry index shown for activation selection | No evidence is model-visible and no grounding authority exists until one valid exact-scope receipt is explicitly bound |
 
 For example, the summary can establish that the shopper is comparing the lacy
 gown and satin dress for the same wedding. The product ledger resolves those
 names to catalog identities, current detail calls establish their verified
-attributes, and a still-valid weather receipt establishes the previously
-observed forecast. Assistant prose saying that rain was expected is not a
-substitute for the receipt.
+attributes, and one explicitly bound still-valid weather receipt establishes
+the previously observed exact-scope forecast. An unbound receipt or assistant
+prose saying that rain was expected is not a substitute. Current successful
+weather takes precedence over the receipt.
 
-### Planned request lifecycle
+### Current request lifecycle
 
 With this addition, one request proceeds as follows:
 
@@ -334,8 +369,22 @@ With this addition, one request proceeds as follows:
 3. One request-scoped Deep Agent selects skills and performs the turn. Its
    built-in summarization may still compact a long graph execution, but it
    remains request-local.
-4. Grounding accepts current validated tool results and applicable prior typed
-   receipts. The rolling summary alone cannot support an external-fact claim.
+4. Activation may bind exactly one listed receipt only with
+   `event-context`, `event_context_next_question=none`, and an unchanged exact
+   event scope. Unbound receipts never ground, a bound receipt blocks a new
+   weather call, and changed or uncertain scope requires fresh evidence.
+   Before the activation input schema is built, the same closed
+   shopper-authored weather-date authority parser used by the tool gate shapes
+   its next-question enum from the current shopper turn only. If that turn
+   contains an accepted bounded date, including bare `next week`, `event_date`
+   is omitted, preventing a contradictory date question. A date only in prior
+   raw turns does not narrow activation because the model owns event identity;
+   the weather tool may still use bounded current and recent shopper authority
+   under its separate eligibility gate. Skill selection, location, venue,
+   materiality, and intent remain model-owned; this is typed argument
+   consistency, not an intent router or keyword routing layer.
+   Grounding accepts current validated tool results first, then only the bound
+   receipt. The rolling summary alone cannot support an external-fact claim.
 5. Before durable finalization, the chain server may prepare a bounded summary
    compaction and any validated receipt promotion produced by this request.
 6. Memory atomically finalizes the turn, exact-replay output, product events,
@@ -344,6 +393,11 @@ With this addition, one request proceeds as follows:
 7. Successful finalization deletes the request checkpoint. An exact retry
    replays the finalized output without repeating compaction, tool work, or
    receipt promotion.
+
+When current product resolution/details are also present, a bound receipt
+guides comparison styling silently. Exact forecast facts and the prior
+canonical forecast block are not repeated. Only a current successful weather
+result produces a canonical block.
 
 This keeps `request_id` as the idempotent execution identity and
 `conversation_id` as the durable continuity identity. It does not require a
@@ -358,9 +412,15 @@ forecast reuse lives in a scoped weather receipt. The event-context and
 outfit-styling skills continue to own semantic judgment inside the one Deep
 Agent.
 
-The existing `event_context_next_question` field remains part of the
-`f6fe646` as-built snapshot until an implementation slice deliberately changes
-it. This plan does not extend that field into broader per-turn state.
+The existing `event_context_next_question` field remains the narrow typed
+follow-up boundary; it is not broader per-turn state. Slice 3 now narrows its
+per-turn enum when the already-shared date-authority parser accepts a bounded
+date in the current shopper turn. It deliberately ignores prior raw-turn dates
+for enum narrowing, preventing Wedding A's date from suppressing a safe
+question for a newly introduced Wedding B. Those dates remain available to the
+semantic agent and the weather tool's separate current-and-recent authority
+gate. The correction does not add a workflow state machine or move semantic
+event judgment out of the one Deep Agent.
 
 ### Clean implementation slices
 
@@ -380,13 +440,16 @@ the same breadth:
    product ledger render separately. Timeout, error, malformed/oversized input
    or output, cancellation, and a summary-only finalization conflict never
    change the response or silently advance the watermark.
-3. **Weather receipt projection:** promote only validated
-   `WeatherForecastEvidence`, enforce exact scope, freshness, supersession, and
-   cap behavior, and expose only applicable receipts to grounding. Keep the
-   product ledger and current cart unchanged.
+3. **Weather receipt projection — built:** migration 9 and the shared
+   `weather_forecast.v1` contract promote only paired validated success,
+   enforce exact scope, TTL, same-scope supersession, and the four-receipt cap,
+   and hydrate a separate activation/grounding lane. Activation explicitly
+   binds one exact-scope receipt; unbound receipts remain non-evidence. The
+   product ledger and current cart are unchanged.
 4. **Focused conversation proof:** run the one three-turn live fixture without
    Judge and require search, then weather, then historical resolution plus two
-   detail reads with no weather refresh on the comparison turn. Inspect
+   detail reads, explicit receipt binding, no weather refresh, and no repeated
+   canonical forecast facts on the comparison turn. Inspect
    transcript, quality, call count, and timing before any broad suite.
 5. **Final regression gate:** only after the focused feature passes, run the
    broader offline suite and any explicitly approved live evaluation cohort.
@@ -422,14 +485,27 @@ tests.
 
 | Turn | Shopper action | Activation result | Exact business-tool path | Must not happen |
 | --- | --- | --- | --- | --- |
-| 1 | States a semi-formal wedding shopping occasion | `outfit-styling` + `event-context`; ask `event_location` | One catalog search | Weather, product details, or ZIP disclosure |
-| 2 | Supplies `NYC`, outdoor patio, and next week | Same skills; ask `none` | One weather call | A repeated catalog search or repeated event question |
-| 3 | Compares the lacy gown with the hem satin dress | Same skills; ask `none` | One batched historical resolution, then two detail reads | A new search or weather refresh |
+| 1 | Explicitly asks `Show me dress options for a semi-formal wedding` | `outfit-styling` + `event-context`; ask `event_location` | One catalog search | Weather, product details, or ZIP disclosure |
+| 2 | Supplies `NYC`, outdoor patio, and next week | Same skills; ask `none` | One weather call; receipt status `promotion_prepared` | A repeated catalog search or repeated event question |
+| 3 | Compares the lacy gown with the hem satin dress | Same skills; ask `none`; bind the turn-2 exact-scope receipt | One batched historical resolution, then two detail reads; receipt status `bound` | A new search, weather refresh, or any repeated forecast condition, temperature, precipitation, resolved place, attribution, or uncertainty fact |
 
 The deterministic fixture validator checks exact skill selection, event-question
 choice, tool order and counts, required evidence, the categorical redacted
-weather trace, stable product names, and forbidden response fragments. Those
+weather trace, categorical receipt lifecycle status, stable product names, and
+forbidden response fragments. Receipt IDs, location/date scope, and receipt
+evidence are not diagnostic oracles. Those
 assertions are test oracles only; they do not participate in serving decisions.
+The explicit natural dress request isolates receipt continuity from ambiguity
+about whether the first turn asked to shop.
+
+The focused offline boundary includes four activation-schema cases: an
+accepted current-turn bounded date removes `event_date`, bare current-turn
+`next week` shapes the schema, missing date authority keeps `event_date`, and a
+prior date for Wedding A cannot narrow activation after the current turn
+introduces Wedding B. The cross-event focused subset passed 168 tests with 1
+expected xfail in 2.69 seconds. The final bounded offline gate passed 506 tests
+with 1 expected xfail and 1 unrelated Starlette deprecation warning in 6.33
+seconds. Ruff passed all changed Python.
 
 ### What a passing run proves
 
@@ -438,6 +514,8 @@ assertions are test oracles only; they do not participate in serving decisions.
 - context fulfillment does not cause product rediscovery;
 - natural prior-product references resolve through durable memory;
 - both products are refreshed from current catalog details before comparison;
+- the comparison binds the valid exact-scope receipt, uses it silently for
+  styling, and makes no second provider call;
 - the observed weather-call diagnostic contains redacted arguments and only
   the expected categorical trace;
 - the measured call count and timing for this exact path.
@@ -452,7 +530,7 @@ assertions are test oracles only; they do not participate in serving decisions.
 
 ## Why This Small Live Test Is Still Expensive
 
-The last passing working-tree run used 14 application-model calls and 192,753
+The final Slice 3 focused run used 14 application-model calls and 195,821
 tokens across only three turns:
 
 | Turn | Deep Agent sequence | Final editor | Model calls |
@@ -535,6 +613,10 @@ gate first and does not run the broad suite.
   [`memory_retriever/src/`](../memory_retriever/src/)
 - Named-place weather adapter:
   [`weather.py`](../chain_server/src/weather.py)
+- Typed weather receipt contract:
+  [`weather_receipts.py`](../shared/weather_receipts.py)
+- Atomic receipt projection:
+  [`conversations.py`](../memory_retriever/src/conversations.py)
 - Three-turn fixture:
   [`conv_prior_product_weather.yaml`](../tests/integration/conversations/event_context_comparison/conv_prior_product_weather.yaml)
 - Judge-free diagnostic oracle:
@@ -572,3 +654,30 @@ Canonical local evidence:
   `~/exec-briefs/retail-shopping-assistant/quality/shopping/targeted/event_context/post_answer_completion_slice3/runs/f6fe646_live_failed_2026_07_29/summary.md`
 - comparison with the prior passing working-tree run:
   `~/exec-briefs/retail-shopping-assistant/quality/shopping/targeted/event_context/post_answer_completion_slice3/comparisons/single_authority_current_wip__to__f6fe646_live_failed_2026_07_29.md`
+
+On 2026-07-30, the first Slice 3 isolation run retained the former ambiguous
+occasion wording. It made no turn-1 search, while turn 2 successfully prepared
+the weather receipt and turn 3 bound it; historical resolution then correctly
+failed closed because no product ledger existed. The fixture was narrowed to
+the explicit natural dress request rather than changing receipt architecture.
+
+The second one-shot Judge-free run proved turn-1 search and product-ledger
+creation, but it also **failed** before receipt promotion. On turn 2 the
+shopper supplied `NYC, on an outdoor patio next week`; the weather authority
+parser accepted that bounded range, yet activation selected `event_date`,
+asked for an exact day, made no weather call, and prepared no receipt. Turn 3
+correctly resolved and read both products but repeated the same contradictory
+date question. The run used 13 application-model calls, 177,264 tokens, one
+text embedding, zero weather-provider calls, and 47.61 seconds. No Judge,
+automatic rerun, full live evaluation, or broad unit suite followed. The
+shared-parser activation-schema correction above was then implemented and
+qualified with the fresh focused gate below.
+
+That fresh full focused gate then passed all 3 diagnostic turns. Judge scored
+the turns 5/5, 4/5, and 5/5, for 4.67/5 overall. The run averaged 24.50 seconds
+per turn and used 14 application-model calls, 195,821 tokens, one text
+embedding, and one Visual Crossing request. Turn 3 explicitly bound the
+turn-2 receipt, ran the historical resolver followed by exactly two detail
+reads, made zero weather and catalog-search calls, and repeated no forecast
+facts. The canonical quality-and-timing comparison is
+`~/exec-briefs/retail-shopping-assistant/quality/shopping/targeted/durable_context/slice3_weather_receipts/comparisons/pre_receipt_f6fe646__to__current_wip.md`.

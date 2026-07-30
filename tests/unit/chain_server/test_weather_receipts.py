@@ -35,6 +35,11 @@ from shared.weather_receipts import (
     weather_receipt_id,
     weather_scope_key,
 )
+from shared.weather_scope import (
+    CurrentWeatherScope,
+    WeatherScopeLocationAuthority,
+    WeatherScopeWindowAuthority,
+)
 
 
 FETCHED_AT = datetime(2026, 7, 30, 12, 0, tzinfo=timezone.utc)
@@ -788,9 +793,23 @@ def test_hydration_keeps_receipts_out_of_summary_raw_and_product_lanes(
             }
         ],
         active_receipts=[receipt],
+        current_weather_scope=CurrentWeatherScope(
+            revision=1,
+            location=WeatherScopeLocationAuthority(
+                value=receipt.location_scope,
+                source_turn_id=receipt.source_turn_id,
+                source_sequence=receipt.source_sequence,
+            ),
+            window=WeatherScopeWindowAuthority(
+                value=receipt.evidence.requested_window,
+                source_turn_id=receipt.source_turn_id,
+                source_sequence=receipt.source_sequence,
+            ),
+        ),
     )
     turn = _turn(projection=projection).model_copy(
         update={
+            "contract_version": 3,
             "recent_turns": [
                 RecentConversationTurn(
                     sequence=2,
@@ -813,6 +832,7 @@ def test_hydration_keeps_receipts_out_of_summary_raw_and_product_lanes(
     assert runtime._start_conversation_turn(state, _identity()) is turn
     assert state.conversation_projection_version == 4
     assert state.active_weather_receipts == [receipt]
+    assert state.current_weather_scope == projection.current_weather_scope
     assert receipt.receipt_id not in state.conversation_summary
     assert receipt.receipt_id not in state.context
     assert receipt.receipt_id not in state.historical_product_context

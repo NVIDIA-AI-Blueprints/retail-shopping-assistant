@@ -1265,15 +1265,18 @@ excludes abandoned turns before creating model context. Raw media is not stored;
 the request digest includes ordered media content hashes so exact retries can
 be distinguished safely.
 
-The serving chain requests `?response_contract=2`. Without that opt-in, memory
+The serving chain requests `?response_contract=3` as its maximum supported
+version. Memory returns the highest version it supports up to that maximum.
+Contract 2 adds summary/receipt lanes and contract 3 adds the current
+weather-planning scope. Without an opt-in, memory
 returns the exact pre-summary response shape: summary, compaction, receipt, and
 contract-version fields are omitted, and the bounded raw tail is read from
 sequence zero. Older chain instances can therefore continue after memory is
 deployed first or after chain rollback, even when a summary watermark has
 advanced. Older memory ignores the unknown query parameter; the current chain
-treats a missing `contract_version` as version 1 and suppresses optional
-summary/receipt projection writes. Response negotiation is not part of the
-turn request digest.
+treats a missing `contract_version` as version 1; a version-2 response omits
+version-3 scope writes. Response negotiation is not part of the turn request
+digest.
 
 ```json
 {
@@ -1289,7 +1292,7 @@ turn request digest.
 ```json
 {
   "turn_id": "8e40575d5e5a4dbca34e1d08a2cb1692",
-  "contract_version": 2,
+  "contract_version": 3,
   "attempt_id": "bd77b851b3494e37a764e3dfa7500208",
   "sequence": 4,
   "replayed": false,
@@ -1326,6 +1329,9 @@ turn request digest.
     "version": 3,
     "summary_text": "The shopper is assembling a semi-formal wedding outfit.",
     "summary_through_sequence": 2,
+    "current_weather_scope": {
+      "revision": 0
+    },
     "active_receipts": [],
     "active_anchors": [],
     "effective_preferences": [],
@@ -1406,9 +1412,10 @@ prior summary and selected oldest turns. Timeout, model error, invalid
 input/output, blocked/failed turn, or cancellation produces no summary advance.
 
 Fresh and upgraded SQLite schemas give the additive `summary_text`,
-`summary_through_sequence`, and `active_receipts_json` columns equivalent
-database defaults. A rollback memory binary that does not name those columns
-can therefore continue creating projections.
+`summary_through_sequence`, `active_receipts_json`, and
+`current_weather_scope_json` columns equivalent database defaults. A rollback
+memory binary that does not name those columns can therefore continue creating
+projections.
 
 `projection.active_receipts` is an independently typed, newest-first list of at
 most four valid `weather_forecast.v1` receipts. Each receipt contains its
@@ -1513,12 +1520,24 @@ one of those summary-only conflicts, it makes one deterministic finalize
 attempt without `summary_advance`; it does not rerun the compactor or change the
 shopper response.
 
+`current_weather_scope_transition` is an optional contract-3 compare-and-swap
+update to one singleton location/date authority object. `continue` patches only
+the supplied location or normalized date-window component and retains the other
+component. `replace` starts a new weather-planning subject and clears every
+omitted component; an empty replace clears the scope. Memory stamps each
+supplied component with the finalized turn ID and sequence and increments the
+scope revision. A changed location/window invalidates older receipts. Venue,
+occasion, products, styling claims, forecast evidence, and a collection of
+event anchors are not part of this scope.
+
 `weather_receipt_promotion` is also optional and internal to the chain/memory
 boundary. It carries the start projection version, the successful weather
 tool-call ID, the exact location-authority object, validated normalized
 evidence, and a bounded TTL. Memory accepts it only on a completed turn, only
 when the projection version still matches, and only when saved-area scope
-belongs to a profile-bound conversation. The output/replay digest, product
+belongs to a profile-bound conversation. Under contract 3 it must also exactly
+match the complete current scope resulting from any same-finalize transition.
+The output/replay digest, product
 events, summary advance, receipt upsert/pruning, projection version, and
 last-turn pointer commit in the same transaction. A failure or non-completed
 turn cannot promote a receipt. Exact finalize replay does not apply promotion

@@ -108,13 +108,15 @@ The application follows a microservices architecture:
 - **Memory Retriever**: Ordered durable turns with start/finalize and exact
   replay, a versioned rolling summary, separate newest raw-turn tail and
   oldest compaction prefix, a bounded versioned projection of short-lived typed
-  weather receipts, typed prior-skill continuity, presented-product events and
-  a compact reference index, stable cart-line IDs, atomically idempotent
+  weather receipts, one versioned current weather-planning scope with
+  per-component source turns, typed prior-skill continuity, presented-product
+  events and a compact reference index, stable cart-line IDs, atomically idempotent
   add/remove/quantity mutations, an immutable five-row representative shopper
   registry, atomic conversation/profile binding, and request-scoped database
-  sessions. Additive summary/receipt lanes are response-contract negotiated,
-  and their SQLite columns have database defaults for rollback-safe fresh
-  schemas; standard Compose exposes its host port on loopback only
+  sessions. Additive summary, receipt, and current-weather-scope lanes negotiate
+  the highest response contract both services support, and their SQLite columns
+  have database defaults for rollback-safe fresh schemas; standard Compose
+  exposes its host port on loopback only
 - **Guardrails**: Content safety and moderation
 - **UI**: React-based frontend interface with Guest/representative-shopper
   dropdown selection required before a new chat session starts

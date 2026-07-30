@@ -19,10 +19,10 @@ Top-level orchestration is via `docker-compose.yaml`; optional local NIM model c
 1. UI posts to `/api/query/stream` (nginx proxy on port `3000`).
 2. Nginx routes `/api/*` to `chain-server:8009`.
 3. Chain server request flow:
-   - `DeepAgentsRuntime` first starts a durable turn in the memory service. Turn start returns a versioned rolling summary, a bounded newest model-context raw tail strictly after its watermark, a separate memory-owned oldest compaction prefix, a bounded set of valid typed weather receipts, the prior turn's selected skill names, the authoritative cart, and an optional server-resolved representative-shopper snapshot. Summary, exact raw discussion, the historical product index, and active receipts are separate state/prompt lanes. Summary prose is semantic continuity only and cannot establish exact shopper wording, product/cart/tool evidence, location/date authority, policy, availability, current weather, skill selection, or tool grants. Only an explicitly bound valid receipt can establish its declared exact forecast scope.
+   - `DeepAgentsRuntime` first starts a durable turn in the memory service. Turn start returns a versioned rolling summary, a bounded newest model-context raw tail strictly after its watermark, a separate memory-owned oldest compaction prefix, one typed current weather-planning scope, a bounded set of valid typed weather receipts, the prior turn's selected skill names, the authoritative cart, and an optional server-resolved representative-shopper snapshot. Summary, exact raw discussion, the historical product index, the current weather scope, and active receipts are separate state/prompt lanes. Summary prose is semantic continuity only and cannot establish exact shopper wording, product/cart/tool evidence, location/date authority, policy, availability, current weather, skill selection, or tool grants. Only the typed singleton can carry current cross-turn location/date authority, and only an explicitly bound valid receipt can establish forecast evidence for that exact scope. The storage slice hydrates the singleton but does not yet bind activation or tool arguments to it.
    - After a successfully guarded response, configured thresholds may run one tools-disabled summary call over the prior summary and the largest fitting contiguous part of memory's oldest prefix while retaining the configured newest raw suffix. A single oversized oldest turn uses a marked deterministic head-and-tail projection only for compactor input; durable and replay text remain exact. The compactor receives no current query, profile/ZIP, cart, product ledger, receipt projection, media, tool transcript, diagnostics, or request identity. Its closed output is applied only at atomic finalization and becomes visible on the next request. Failure, timeout, invalid input/output, and cancellation never advance the watermark; a summary-only CAS conflict gets one finalize retry without the update and no model rerun. Blocked and abandoned turns remain durable and exactly replayable but are excluded from both raw context lanes; only completed or failed turns with assistant text are eligible.
    - Graph working state uses a request-scoped pair of `conversation_id` and `request_id`. A selected profile ID is bound immutably to that conversation and renders one compact current-turn context block containing only type, behavior, and saved ZIP. Profile precedence and non-authority rules are also present only for selected-profile turns; Guest receives neither the block nor profile-specific prompt rules. The block is soft guidance: current explicit instructions and recent explicit preferences take precedence, and it cannot establish budget, product constraints or facts, cart intent, skill selection, or tool grants. Unknown caller fields remain backward-compatibly ignored, and caller-supplied persona objects are never injected.
-   - Turn-start response contract 2 is opt-in. Unversioned callers receive the exact legacy top-level/projection shape and a bounded raw tail from sequence zero, even after a summary watermark advances. The current chain treats a missing marker as contract 1 and suppresses optional summary/receipt projection writes for that turn. Fresh and upgraded SQLite schemas both give the three additive non-null summary/receipt columns database defaults, so rolling memory rollback can still create projections.
+   - Turn-start `response_contract` is the caller's maximum supported version. Memory returns the highest version it supports up to that maximum. Unversioned callers receive the exact legacy top-level/projection shape and a bounded raw tail from sequence zero, even after a summary watermark advances. Contract 2 adds summary/receipt lanes; contract 3 adds the current weather scope. Fresh and upgraded SQLite schemas give all additive non-null projection columns database defaults, so rolling memory rollback can still create projections.
    - Receipt freshness is evaluated atomically once at durable turn start. The accepted receipt set is the validity snapshot for that in-flight request; the runtime performs no second wall-clock expiry check mid-turn. Before activation, the model sees only receipt ID/type, shopper location/date scope, and `valid_until`, never normalized forecast evidence. Full evidence stays server-side and becomes grounding input only after activation explicitly binds that receipt.
    - Optional input guardrails run before model/tool work; attached media is analyzed through the configured perception client.
    - Deep Agents graph execution has a configurable 45-second default deadline. A timeout captures bounded partial graph messages, clears unsent products, finalizes the durable turn as failed, and deletes the request checkpoint only after that finalization succeeds.
@@ -66,6 +66,8 @@ Top-level orchestration is via `docker-compose.yaml`; optional local NIM model c
   `chain_server/src/weather_tool.py`
 - Shared typed weather-receipt contract, exact-scope identity, TTL, and cap:
   `shared/weather_receipts.py`
+- Shared singleton current-weather-scope and transition contract:
+  `shared/weather_scope.py`
 - Shared request/state models: `chain_server/src/agenttypes.py`
 - `graph.py`, `planner.py`, `retriever.py`, `cart.py`, `chatter.py`, and `summarizer.py` are legacy compatibility paths, not the serving runtime.
 
@@ -288,6 +290,12 @@ Key env vars:
   3,600 seconds and may not exceed 21,600 seconds. This lane stores no saved
   ZIP, provider request/response body, prepared provider endpoint URL, key,
   exception, or failure; it retains only the pinned public attribution URL.
+- Startup migration 10 adds one versioned current weather-planning scope.
+  `continue` patches supplied location/date components, while `replace` clears
+  omitted components. Memory stamps each component's source turn, invalidates
+  receipts when authority changes, and admits scope-matched promotion only.
+  This singleton contains no venue, occasion, product, styling, or forecast
+  facts and is not an active-anchor registry.
 - The same SQLite database owns five immutable representative shoppers loaded
   from `shared/configs/memory_retriever/shopper_profiles.json`. The bundled UI
   sends only the selected ID. Turn start resolves it transactionally, binds it
@@ -323,15 +331,17 @@ Key env vars:
   envelopes. The conversation projection owns the rolling summary pair; start
   returns only completed/failed raw turns with assistant text whose sequence is
   strictly later than its watermark. Summary, newest raw discussion, the
-  historical product index, and active typed weather receipts remain distinct.
+  historical product index, current weather scope, and active typed weather
+  receipts remain distinct.
   The compactor folds only a validated contiguous boundary in memory's oldest
   exact prefix after a successful response, redacts prior canonical forecast
   blocks, and never receives the receipt projection or complete graph/tool
   transcript. Durable raw turns do not store the rendered shopper-context
   block, raw media, or model reasoning.
-  Presented-product events, deterministic historical resolution, and bounded
-  exact-scope weather receipts are implemented; active anchors and effective
-  preferences remain reserved and unused.
+  Presented-product events, deterministic historical resolution, the singleton
+  current weather scope, and bounded exact-scope weather receipts are
+  implemented; active anchors and effective preferences remain reserved and
+  unused.
 - The memory API has no service authentication. Standard Compose limits its
   host mapping to `127.0.0.1:8011`; keep it on an internal network in other
   deployments. Detailed agent diagnostics remain internal and public query

@@ -18,6 +18,7 @@ from chain_server.src.conversation_memory import (
     build_request_digest,
     format_conversation_context,
 )
+from shared.weather_scope import CurrentWeatherScopeTransition
 
 _MISSING = object()
 
@@ -200,7 +201,7 @@ def test_start_turn_posts_one_request_without_raw_media() -> None:
     assert result.cart[0].cart_line_id == "line-1"
     assert session.calls[0]["url"] == (
         "http://memory:8011/conversations/conversation%2Fa/turn/start"
-        "?response_contract=2"
+        "?response_contract=3"
     )
     request_payload = session.calls[0]["json"]
     assert request_payload == {
@@ -240,7 +241,42 @@ def test_start_turn_accepts_legacy_v1_response_from_old_memory() -> None:
     assert result.contract_version == 1
     assert result.projection.summary_text == ""
     assert result.projection.active_receipts == []
-    assert session.calls[0]["url"].endswith("?response_contract=2")
+    assert session.calls[0]["url"].endswith("?response_contract=3")
+
+
+def test_start_turn_accepts_negotiated_v3_weather_scope() -> None:
+    payload = _start_payload()
+    payload["contract_version"] = 3
+    payload["projection"]["current_weather_scope"] = {
+        "revision": 2,
+        "location": {
+            "value": {
+                "kind": "shopper_provided_location",
+                "location": "Seattle",
+                "location_query": "Seattle, WA",
+            },
+            "source_turn_id": "turn-1",
+            "source_sequence": 1,
+        },
+    }
+    client = ConversationMemoryClient(
+        "http://memory",
+        session=FakeSession(FakeResponse(payload)),
+    )
+
+    result = client.start_turn(
+        "conversation-a",
+        request_id="request-a",
+        shopper_text="Continue.",
+        cart_user_id=17,
+    )
+
+    assert result.contract_version == 3
+    assert result.projection.current_weather_scope.revision == 2
+    assert (
+        result.projection.current_weather_scope.location.value.location
+        == "Seattle"
+    )
 
 
 @pytest.mark.parametrize(
@@ -512,6 +548,15 @@ def test_finalize_turn_posts_the_typed_event_contract() -> None:
             summary_text="The shopper is comparing wedding outfits.",
             summary_through_sequence=1,
         ),
+        current_weather_scope_transition=CurrentWeatherScopeTransition(
+            expected_projection_version=1,
+            action="replace",
+            location_scope={
+                "kind": "shopper_provided_location",
+                "location": "Seattle",
+                "location_query": "Seattle, WA",
+            },
+        ),
     )
 
     assert result.status == "completed"
@@ -536,6 +581,15 @@ def test_finalize_turn_posts_the_typed_event_contract() -> None:
         "expected_projection_version": 1,
         "summary_text": "The shopper is comparing wedding outfits.",
         "summary_through_sequence": 1,
+    }
+    assert call["json"]["current_weather_scope_transition"] == {
+        "expected_projection_version": 1,
+        "action": "replace",
+        "location_scope": {
+            "kind": "shopper_provided_location",
+            "location": "Seattle",
+            "location_query": "Seattle, WA",
+        },
     }
 
 

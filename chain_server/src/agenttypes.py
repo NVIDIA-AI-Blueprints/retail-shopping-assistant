@@ -15,6 +15,10 @@ from shared.weather_receipts import (
     WeatherForecastReceipt,
     WeatherReceiptPromotion,
 )
+from shared.weather_scope import (
+    CurrentWeatherScope,
+    CurrentWeatherScopeTransition,
+)
 
 
 SHOPPER_PROFILE_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
@@ -127,6 +131,14 @@ class State(BaseModel):
     weather_receipt_promotion: WeatherReceiptPromotion | None = Field(
         default=None,
         description="Validated current-turn forecast prepared for durable promotion",
+    )
+    current_weather_scope: CurrentWeatherScope = Field(
+        default_factory=CurrentWeatherScope,
+        description="Memory-owned current location/date authority for weather",
+    )
+    current_weather_scope_transition: CurrentWeatherScopeTransition | None = Field(
+        default=None,
+        description="Validated current-turn scope transition for finalization",
     )
     cart: Cart = Field(default_factory=Cart, description="User's shopping cart")
     response: str = Field(default="", description="Generated response from agents")

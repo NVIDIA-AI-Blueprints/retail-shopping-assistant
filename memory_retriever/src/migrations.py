@@ -246,6 +246,22 @@ def _conversation_active_receipts_projection(connection: Connection) -> None:
         )
 
 
+def _conversation_current_weather_scope_projection(
+    connection: Connection,
+) -> None:
+    """Add the singleton weather-planning scope with a rollback-safe default."""
+
+    columns = _table_columns(connection, "conversation_projection")
+    if "current_weather_scope_json" not in columns:
+        connection.execute(
+            text(
+                "ALTER TABLE conversation_projection "
+                "ADD COLUMN current_weather_scope_json TEXT NOT NULL "
+                "DEFAULT '{\"revision\"\\:0}'"
+            )
+        )
+
+
 _MIGRATIONS = (
     (1, _legacy_schema),
     (2, _conversation_schema),
@@ -256,6 +272,7 @@ _MIGRATIONS = (
     (7, _remove_obsolete_conversation_turn_columns),
     (8, _conversation_summary_projection),
     (9, _conversation_active_receipts_projection),
+    (10, _conversation_current_weather_scope_projection),
 )
 
 

@@ -13,7 +13,7 @@ from hashlib import sha256
 from typing import Any, Literal
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -41,11 +41,18 @@ from .product_references import (
 from .shopper_profiles import SHOPPER_PROFILE_ID_PATTERN
 from shared.weather_receipts import (
     MAX_ACTIVE_WEATHER_RECEIPTS,
+    SavedAreaWeatherScope,
     WEATHER_TOOL_NAME,
     WeatherForecastReceipt,
     WeatherReceiptPromotion,
     weather_receipt_id,
     weather_scope_key,
+)
+from shared.weather_scope import (
+    CurrentWeatherScope,
+    CurrentWeatherScopeTransition,
+    WeatherScopeLocationAuthority,
+    WeatherScopeWindowAuthority,
 )
 
 
@@ -61,7 +68,7 @@ PROJECTION_VERSION_CONFLICT = "projection_version_conflict"
 SUMMARY_BOUNDARY_CONFLICT = "summary_boundary_conflict"
 WEATHER_RECEIPT_STATUS_CONFLICT = "weather_receipt_status_conflict"
 WEATHER_RECEIPT_STALE = "weather_receipt_stale"
-MEMORY_RESPONSE_CONTRACT_V2 = 2
+MEMORY_RESPONSE_CONTRACT_MAX = 3
 
 
 class TurnStartRequest(BaseModel):
@@ -173,6 +180,7 @@ class TurnFinalizeRequest(BaseModel):
     output: TurnReplayOutput | None = None
     summary_advance: ConversationSummaryAdvance | None = None
     weather_receipt_promotion: WeatherReceiptPromotion | None = None
+    current_weather_scope_transition: CurrentWeatherScopeTransition | None = None
 
     @model_validator(mode="after")
     def _event_keys_are_unique(self):
@@ -263,11 +271,52 @@ def _store_active_weather_receipts(
     )
 
 
+def _current_weather_scope(
+    projection: ConversationProjection,
+) -> CurrentWeatherScope:
+    try:
+        raw_scope = json.loads(
+            projection.current_weather_scope_json or '{"revision":0}'
+        )
+        return CurrentWeatherScope.model_validate(raw_scope)
+    except (TypeError, ValueError, ValidationError) as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="current_weather_scope_projection_invalid",
+        ) from exc
+
+
+def _weather_scope_authority_identity(
+    scope: CurrentWeatherScope,
+) -> dict[str, Any]:
+    identity: dict[str, Any] = {}
+    if scope.location is not None:
+        identity["location_scope"] = scope.location.value.model_dump(
+            mode="json",
+            exclude_none=True,
+        )
+    if scope.window is not None:
+        identity["requested_window"] = scope.window.value.model_dump(mode="json")
+    return identity
+
+
+def _receipt_matches_weather_scope(
+    receipt: WeatherForecastReceipt,
+    scope: CurrentWeatherScope,
+) -> bool:
+    return (
+        scope.location is not None
+        and scope.window is not None
+        and receipt.location_scope == scope.location.value
+        and receipt.evidence.requested_window == scope.window.value
+    )
+
+
 def _projection_dict(
     projection: ConversationProjection,
     *,
     current_time: float,
-    include_v2_fields: bool = True,
+    response_contract: int = MEMORY_RESPONSE_CONTRACT_MAX,
 ) -> dict[str, Any]:
     summary_text = projection.summary_text or ""
     summary_through_sequence = projection.summary_through_sequence or 0
@@ -283,19 +332,33 @@ def _projection_dict(
         "product_reference_index": json.loads(projection.product_reference_index_json),
         "last_turn_id": projection.last_turn_id,
     }
-    if include_v2_fields:
+    if response_contract >= 2:
+        active_receipts = _active_weather_receipts(
+            projection,
+            current_time=current_time,
+        )
+        if response_contract >= 3:
+            current_scope = _current_weather_scope(projection)
+            active_receipts = [
+                receipt
+                for receipt in active_receipts
+                if _receipt_matches_weather_scope(receipt, current_scope)
+            ]
         result.update(
             {
                 "summary_text": summary_text,
                 "summary_through_sequence": summary_through_sequence,
                 "active_receipts": [
                     receipt.model_dump(mode="json", exclude_none=True)
-                    for receipt in _active_weather_receipts(
-                        projection,
-                        current_time=current_time,
-                    )
+                    for receipt in active_receipts
                 ],
             }
+        )
+    if response_contract >= 3:
+        scope = _current_weather_scope(projection)
+        result["current_weather_scope"] = scope.model_dump(
+            mode="json",
+            exclude_none=True,
         )
     return result
 
@@ -480,9 +543,9 @@ def _start_response(
     *,
     replayed: bool,
     current_time: float,
-    response_contract: Literal[1, 2],
+    response_contract: int,
 ) -> dict[str, Any]:
-    v2_response = response_contract == MEMORY_RESPONSE_CONTRACT_V2
+    v2_response = response_contract >= 2
     result = {
         "turn_id": turn.turn_id,
         "attempt_id": turn.attempt_id,
@@ -501,7 +564,7 @@ def _start_response(
         "projection": _projection_dict(
             projection,
             current_time=current_time,
-            include_v2_fields=v2_response,
+            response_contract=response_contract,
         ),
         "cart": _cart_for_user(db, turn.cart_user_id),
         "assistant_text": turn.assistant_text,
@@ -521,7 +584,7 @@ def _start_response(
         )
         result.update(
             {
-                "contract_version": MEMORY_RESPONSE_CONTRACT_V2,
+                "contract_version": response_contract,
                 "unsummarized_turn_count": unsummarized_turn_count,
                 "summary_compaction_source": summary_compaction_source,
             }
@@ -842,6 +905,90 @@ def _validate_summary_advance(
         )
 
 
+def _validate_current_weather_scope_transition(
+    turn: ConversationTurn,
+    projection: ConversationProjection,
+    request: TurnFinalizeRequest,
+) -> None:
+    transition = request.current_weather_scope_transition
+    if transition is None:
+        return
+    if request.status != "completed":
+        raise HTTPException(
+            status_code=409,
+            detail="current_weather_scope_status_conflict",
+        )
+    if transition.expected_projection_version != projection.version:
+        raise HTTPException(
+            status_code=409,
+            detail=PROJECTION_VERSION_CONFLICT,
+        )
+    if (
+        isinstance(transition.location_scope, SavedAreaWeatherScope)
+        and turn.shopper_profile_id is None
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="current_weather_scope_saved_area_unavailable",
+        )
+
+
+def _next_current_weather_scope(
+    turn: ConversationTurn,
+    current_scope: CurrentWeatherScope,
+    transition: CurrentWeatherScopeTransition | None,
+) -> CurrentWeatherScope:
+    if transition is None:
+        return current_scope
+    retained_location = (
+        current_scope.location if transition.action == "continue" else None
+    )
+    retained_window = (
+        current_scope.window if transition.action == "continue" else None
+    )
+    next_location = (
+        WeatherScopeLocationAuthority(
+            value=transition.location_scope,
+            source_turn_id=turn.turn_id,
+            source_sequence=turn.sequence,
+        )
+        if transition.location_scope is not None
+        else retained_location
+    )
+    next_window = (
+        WeatherScopeWindowAuthority(
+            value=transition.requested_window,
+            source_turn_id=turn.turn_id,
+            source_sequence=turn.sequence,
+        )
+        if transition.requested_window is not None
+        else retained_window
+    )
+    next_scope = CurrentWeatherScope(
+        revision=current_scope.revision + 1,
+        location=next_location,
+        window=next_window,
+    )
+    return next_scope
+
+
+def _advance_current_weather_scope(
+    projection: ConversationProjection,
+    current_scope: CurrentWeatherScope,
+    next_scope: CurrentWeatherScope,
+) -> None:
+    if next_scope == current_scope:
+        return
+
+    current_identity = _weather_scope_authority_identity(current_scope)
+    next_identity = _weather_scope_authority_identity(next_scope)
+    projection.current_weather_scope_json = _canonical_json(
+        next_scope.model_dump(mode="json", exclude_none=True)
+    )
+    if next_identity != current_identity:
+        _store_active_weather_receipts(projection, [])
+
+
 def _prepare_weather_receipt(
     turn: ConversationTurn,
     projection: ConversationProjection,
@@ -980,12 +1127,31 @@ def _finalize_turn(
         projection,
         request.summary_advance,
     )
+    _validate_current_weather_scope_transition(turn, projection, request)
+    current_weather_scope = _current_weather_scope(projection)
+    next_weather_scope = _next_current_weather_scope(
+        turn,
+        current_weather_scope,
+        request.current_weather_scope_transition,
+    )
     weather_receipt = _prepare_weather_receipt(
         turn,
         projection,
         request,
         current_time=now,
     )
+    if (
+        weather_receipt is not None
+        and next_weather_scope.revision > 0
+        and not _receipt_matches_weather_scope(
+            weather_receipt,
+            next_weather_scope,
+        )
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="weather_receipt_scope_conflict",
+        )
     _append_events(db, turn, request.events, now)
     db.flush()
     append_presented_products_event(
@@ -1001,6 +1167,11 @@ def _finalize_turn(
         projection.summary_through_sequence = (
             request.summary_advance.summary_through_sequence
         )
+    _advance_current_weather_scope(
+        projection,
+        current_weather_scope,
+        next_weather_scope,
+    )
     _advance_active_weather_receipts(
         projection,
         weather_receipt,
@@ -1100,16 +1271,20 @@ def create_conversation_router(get_db) -> APIRouter:
     def start_conversation_turn(
         conversation_id: str,
         request: TurnStartRequest,
-        response_contract: Literal["1", "2"] = "1",
+        response_contract: int = Query(default=1, ge=1),
         db=Depends(get_db),
     ):
         _validate_conversation_id(conversation_id)
+        negotiated_contract = min(
+            response_contract,
+            MEMORY_RESPONSE_CONTRACT_MAX,
+        )
         try:
             return _start_turn(
                 db,
                 conversation_id,
                 request,
-                response_contract=int(response_contract),
+                response_contract=negotiated_contract,
             )
         except Exception:
             db.rollback()

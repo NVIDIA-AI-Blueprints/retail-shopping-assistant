@@ -29,6 +29,10 @@ from shared.weather_receipts import (
     WeatherForecastReceipt,
     WeatherReceiptPromotion,
 )
+from shared.weather_scope import (
+    CurrentWeatherScope,
+    CurrentWeatherScopeTransition,
+)
 
 
 TurnStatus = Literal["started", "completed", "failed", "blocked", "abandoned"]
@@ -49,7 +53,7 @@ EventType = Literal[
 _DEFAULT_TIMEOUT_SECONDS = 10.0
 _DEFAULT_CONTEXT_MAX_CHARS = 16_384
 _MAX_CONVERSATION_SUMMARY_CHARS = 16_384
-_MEMORY_RESPONSE_CONTRACT = 2
+_MEMORY_RESPONSE_CONTRACT = 3
 _TRUNCATION_MARKER = "…"
 
 
@@ -139,6 +143,9 @@ class ConversationProjection(_MemoryModel):
         default_factory=list,
         max_length=MAX_ACTIVE_WEATHER_RECEIPTS,
     )
+    current_weather_scope: CurrentWeatherScope = Field(
+        default_factory=CurrentWeatherScope
+    )
     last_turn_id: str | None = Field(default=None, min_length=1, max_length=256)
 
     @field_validator("summary_text")
@@ -180,7 +187,7 @@ class TurnStartResult(_MemoryModel):
     """Combined conversation context and cart for one turn."""
 
     turn_id: str = Field(..., min_length=1, max_length=256)
-    contract_version: Literal[1, 2] = 1
+    contract_version: Literal[1, 2, 3] = 1
     attempt_id: str = Field(..., min_length=1, max_length=128)
     sequence: int = Field(..., ge=1)
     replayed: bool = False
@@ -208,6 +215,8 @@ class TurnStartResult(_MemoryModel):
         if not isinstance(value, Mapping):
             return value
         version = value.get("contract_version", 1)
+        if not isinstance(version, int):
+            return value
         projection = value.get("projection")
         projection_keys = (
             set(projection) if isinstance(projection, Mapping) else set()
@@ -218,11 +227,17 @@ class TurnStartResult(_MemoryModel):
             "summary_through_sequence",
             "active_receipts",
         }
-        if version != 2 and (
+        if version < 2 and (
             v2_top_level.intersection(value)
             or v2_projection.intersection(projection_keys)
         ):
             raise ValueError("memory contract v1 response contains v2-only lanes")
+        if version < 3 and "current_weather_scope" in projection_keys:
+            raise ValueError(
+                "memory response contains a weather scope before contract v3"
+            )
+        if version >= 3 and "current_weather_scope" not in projection_keys:
+            raise ValueError("memory contract v3 response omitted weather scope")
         return value
 
     @model_validator(mode="after")
@@ -296,6 +311,7 @@ class TurnFinalizeRequest(_MemoryModel):
     output: TurnReplayOutput | None = None
     summary_advance: ConversationSummaryAdvance | None = None
     weather_receipt_promotion: WeatherReceiptPromotion | None = None
+    current_weather_scope_transition: CurrentWeatherScopeTransition | None = None
 
 
 class TurnFinalizeResult(_MemoryModel):
@@ -398,6 +414,9 @@ class ConversationMemoryClient:
         output: TurnReplayOutput | None = None,
         summary_advance: ConversationSummaryAdvance | None = None,
         weather_receipt_promotion: WeatherReceiptPromotion | None = None,
+        current_weather_scope_transition: (
+            CurrentWeatherScopeTransition | None
+        ) = None,
     ) -> TurnFinalizeResult:
         """Finalize one turn with deterministic structured events."""
 
@@ -411,6 +430,7 @@ class ConversationMemoryClient:
             output=output,
             summary_advance=summary_advance,
             weather_receipt_promotion=weather_receipt_promotion,
+            current_weather_scope_transition=current_weather_scope_transition,
         )
         payload = self._post(
             (

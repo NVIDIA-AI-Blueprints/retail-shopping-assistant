@@ -23,7 +23,7 @@ see the [Shopper Agent Leadership Note](SHOPPER_AGENT_LEADERSHIP_NOTE.md).
 | --- | --- | --- |
 | Published catalog | Product records, taxonomy, filter values, field roles, prices, details, and retrieval results | Shopper intent, styling judgment, cart state, or inventory |
 | Deep Agents runtime | Semantic intent, skill selection, deterministic selected-skill tool grants, tool selection, styling judgment, and one server-resolved representative-shopper soft-guidance block | Product facts, policy facts, cart truth, or profile ownership |
-| Memory service | Immutable representative-shopper registry and conversation binding, typed three-field shopper snapshots, ordered durable shopper/assistant turns, exact finalized replay, a versioned rolling summary, separate newest raw-turn tail and oldest exact compaction prefix, a capped projection of short-lived typed weather receipts, presented-product events and compact index, deterministic same-conversation reference resolution, authoritative cart state, and atomic mutation replay records | Catalog facts, model reasoning, learned preferences, sentiment, active anchors, summary semantics, raw provider data, or cross-conversation memory |
+| Memory service | Immutable representative-shopper registry and conversation binding, typed three-field shopper snapshots, ordered durable shopper/assistant turns, exact finalized replay, a versioned rolling summary, separate newest raw-turn tail and oldest exact compaction prefix, one current weather-planning scope, a capped projection of short-lived typed weather receipts, presented-product events and compact index, deterministic same-conversation reference resolution, authoritative cart state, and atomic mutation replay records | Catalog facts, model reasoning, learned preferences, sentiment, active-anchor collections, venue/occasion state, summary semantics, raw provider data, or cross-conversation memory |
 | Graph checkpointer | Request-scoped working graph/tool state within one chain-server process | Durable transcript storage, cross-turn shopper memory, cross-replica context, or product-ref authorization |
 | Event-weather boundary | Closed location/venue/date question ordering and weather authority validation, exact shopper location provenance, optional exact-prefix region/country qualifiers, direct Visual Crossing resolution, server-owned bare-range and exact-weekday `next week` normalization, normalized current-turn forecast evidence, explicit exact-scope receipt binding, sanitized typed failures, redacted raw data plus categorical tracing, deterministic location disclosure, attribution, and uncertainty | Product facts or constraints, a rewritten shopper place, an unstated ZIP, inferred beach/outdoor/indoor/terrain setting, unbound prior forecast authority, provider-plan rights, or a public weather API |
 
@@ -451,12 +451,13 @@ context-eligible raw turns strictly after the watermark, so accepted summary
 coverage and the raw tail do not overlap. A stale projection version or invalid
 boundary rolls back the complete finalization.
 
-Those additive lanes are available only through opt-in turn-start response
-contract 2. An unversioned caller receives the exact earlier response shape and
-a bounded raw tail from sequence zero. The current chain treats a missing
-contract marker as version 1 and suppresses optional summary and receipt writes
-for that turn. Equivalent database defaults on fresh and upgraded SQLite
-schemas preserve old memory inserts during rollback.
+Those additive lanes are negotiated through turn-start response contracts.
+The request is a maximum supported version, and memory returns the highest
+version it supports up to that maximum. Contract 2 adds summary/receipt lanes;
+contract 3 adds the current weather scope. An unversioned caller receives the
+exact earlier response shape and a bounded raw tail from sequence zero.
+Equivalent database defaults on fresh and upgraded SQLite schemas preserve old
+memory inserts during rollback.
 
 The serving runtime now renders four separate lanes: semantic summary, exact
 newest raw discussion, the historical product index, and active typed weather
@@ -492,6 +493,16 @@ fence. Turn start exposes only validated, unexpired active receipts. The chain
 server does not blend them into the compactor or transcript formatter; it
 renders a separate minimal receipt index for activation. Full evidence remains
 server-side until one receipt is bound for grounding.
+
+Migration 10 adds a separate singleton current weather-planning scope. It has a
+monotonic revision plus optional location and normalized date-window
+components, each stamped by memory with its source turn. `continue` patches
+supplied components; `replace` clears omitted components. A changed scope
+invalidates prior receipts, and same-finalize promotion must match the resulting
+complete scope. Venue, occasion, products, styling facts, forecast evidence,
+and multiple event anchors are deliberately excluded. The storage slice
+hydrates this scope but the following execution slice owns activation and tool
+binding.
 
 The resolved agent dependency boundary remains `deepagents==0.6.12`,
 `langchain==1.3.11`, `langgraph==1.2.7`, and `langgraph-sdk==0.4.2`.

@@ -570,8 +570,9 @@ private Compose network. The service has no authentication, so non-Compose
 deployments must preserve an equivalent internal-only boundary. The chain
 server starts a durable row before guardrail/model/tool work,
 receives the rolling summary, bounded model-context-eligible
-shopper/assistant turns, a separate product ledger, at most four valid typed
-weather receipts, and the authoritative cart, then finalizes the row as
+shopper/assistant turns, a separate product ledger, one current weather-planning
+scope, at most four valid typed weather receipts, and the authoritative cart,
+then finalizes the row as
 `completed`, `blocked`, or `failed`. An exact retry of
 a finalized request replays the stored response and output without another
 model turn. Blocked turns remain stored for exact replay and audit but are
@@ -579,14 +580,16 @@ excluded from both the next-turn service projection and the chain prompt
 formatter.
 
 Turn start negotiates additive memory response fields with
-`response_contract=2`. New memory defaults an unversioned caller to the exact
+`response_contract=3`, interpreted as the caller's maximum supported version.
+Memory returns the highest version it supports up to that maximum. New memory
+defaults an unversioned caller to the exact
 legacy response shape and computes that caller's bounded raw tail from sequence
 zero rather than from the invisible summary watermark. New chain accepts a
-missing contract marker as version 1 and suppresses optional summary/receipt
-projection writes for that turn. This permits either service to deploy first
+missing contract marker as version 1; version 2 omits version-3 scope writes.
+This permits either service to deploy first
 and keeps an older chain usable after rollback. Fresh projection DDL also uses
-database defaults for every additive non-null summary/receipt column, matching
-the defaults added to upgraded databases by migrations 8 and 9.
+database defaults for every additive non-null summary/receipt/scope column,
+matching the defaults added to upgraded databases by migrations 8 through 10.
 
 `DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS` is one model-stage deadline shared by the
 active graph and grounding editor. The editor receives only the remaining time.
@@ -644,6 +647,15 @@ summary advancement, events, and product projection. Memory filters invalid or
 expired receipts at turn start, supersedes the older receipt for the same exact
 location/date scope, and enforces the four-item cap. Failure and raw provider
 material are never promoted.
+
+Migration 10 adds one current weather-planning scope to that projection. Its
+location and normalized date-window components retain separate memory-stamped
+source turns. `continue` patches components; `replace` clears omitted
+components, preventing a newly introduced location from inheriting an older
+subject's date. A changed scope clears old receipts, and a same-finalize
+promotion must exactly match the resulting complete scope. This storage layer
+is not an event/anchor registry and contains no venue, occasion, product,
+styling, or forecast facts.
 
 Expiry filtering occurs atomically once at durable turn start. The accepted
 active set is the validity snapshot for the request; no second wall-clock

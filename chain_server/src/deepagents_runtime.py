@@ -147,6 +147,7 @@ from shared.weather_receipts import (
     WeatherReceiptEvidence,
     WeatherReceiptPromotion,
 )
+from shared.weather_scope import CurrentWeatherScope
 
 
 logger = logging.getLogger(__name__)
@@ -1639,6 +1640,8 @@ class DeepAgentsRuntime:
         state.active_weather_receipts = []
         state.selected_weather_receipt_id = None
         state.weather_receipt_promotion = None
+        state.current_weather_scope = CurrentWeatherScope()
+        state.current_weather_scope_transition = None
         turn = self._start_conversation_turn(state, identity)
         if turn is not None and turn.replayed:
             await self._delete_turn_checkpoint(identity)
@@ -4215,6 +4218,8 @@ Rules:
             state.active_weather_receipts = []
             state.selected_weather_receipt_id = None
             state.weather_receipt_promotion = None
+            state.current_weather_scope = CurrentWeatherScope()
+            state.current_weather_scope_transition = None
             state.cart = Cart()
             state.shopper_context = None
             error_code = getattr(exc, "code", "memory_start_payload_invalid")
@@ -4278,6 +4283,7 @@ Rules:
         state.historical_product_context = historical_products
         state.conversation_projection_version = turn.projection.version
         state.active_weather_receipts = list(turn.projection.active_receipts)
+        state.current_weather_scope = turn.projection.current_weather_scope
         state.cart = Cart(
             contents=[
                 item.model_dump(mode="json", exclude_none=True) for item in turn.cart

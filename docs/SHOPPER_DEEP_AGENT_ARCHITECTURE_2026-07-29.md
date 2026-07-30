@@ -153,7 +153,7 @@ thing as a Deep Agents graph checkpoint or its automatic summarization.
 | Lifetime and owner | Persisted contents | Use on a later turn |
 | --- | --- | --- |
 | Memory-service installation | Five immutable representative-shopper records | Resolves the profile selected for a conversation |
-| Conversation | Ordered shopper/assistant turns, the nullable profile binding enforced through those turns, structured event envelopes, the rolling-summary projection, the bounded product-reference projection, at most four valid typed weather receipts, and its last finalized turn | Reconstructs recent dialogue, resolves historically presented products, and keeps short-lived exact-scope forecast evidence server-side for explicit binding |
+| Conversation | Ordered shopper/assistant turns, the nullable profile binding enforced through those turns, structured event envelopes, the rolling-summary projection, the bounded product-reference projection, one typed current weather-planning scope, at most four valid typed weather receipts, and its last finalized turn | Reconstructs recent dialogue, resolves historically presented products, carries current location/date authority without an event registry, and keeps short-lived exact-scope forecast evidence server-side for explicit binding |
 | Cart owner | Current cart rows with stable cart-line IDs and the cart-mutation idempotency ledger | Supplies the authoritative current cart; the bundled UI creates a new cart identity with a new conversation |
 | Finalized request | Request and attempt identity, request/finalize digests, sequence, status, termination reason, catalog revision, assistant text, product/image response artifacts, diagnostics, and selected skill names | Exactly replays the same finalized request and exposes the immediately previous skill names as a non-authorizing hint |
 | Chain-server process and request | Full Deep Agents messages, tool calls and results, model reasoning, current-turn evidence maps, and the LangGraph checkpoint | Not durable conversation state; the checkpoint is request-scoped and deleted after successful finalization |
@@ -175,22 +175,24 @@ At turn start, the memory boundary currently supplies:
 - the current authoritative cart;
 - the historical product-reference index; and
 - the immediately previous selected skill names as a continuity hint; and
+- one typed current weather-planning scope; and
 - a bounded list of validated, unexpired `weather_forecast.v1` receipts.
 
 The raw turns are bounded first by the memory service's turn limit and again by
 the chain server's character limit. Blocked and abandoned turns are durable for
 audit or replay semantics but are excluded from the model context.
 
-The additive summary and receipt lanes use an opt-in turn-start response
-contract. The current chain requests contract 2. An unversioned caller receives
-the exact earlier response shape and a bounded raw tail read from sequence zero,
-so an older chain remains usable after memory deploys first or after chain
-rollback even if a summary watermark has advanced. Conversely, the current
-chain treats a missing contract marker from older memory as contract 1 and does
-not submit optional summary or receipt writes for that turn. Fresh and upgraded
-SQLite schemas give the additive non-null projection columns equivalent
-database defaults, allowing the memory binary to roll back without making old
-projection inserts fail.
+The additive summary, receipt, and current-weather-scope lanes use negotiated
+turn-start response contracts. The current chain requests contract 3 as its
+maximum, and memory returns the highest version it supports. An unversioned
+caller receives the exact earlier response shape and a bounded raw tail read
+from sequence zero, so an older chain remains usable after memory deploys first
+or after chain rollback even if a summary watermark has advanced. Conversely,
+the current chain treats a missing contract marker from older memory as
+contract 1; contract 2 omits current-scope writes. Fresh and upgraded SQLite
+schemas give the additive non-null projection columns equivalent database
+defaults, allowing the memory binary to roll back without making old projection
+inserts fail.
 
 The serving path does **not** populate or rehydrate the complete prior tool
 transcript or model reasoning, a normalized event state machine, active anchors
@@ -204,6 +206,27 @@ keyed by both `conversation_id` and `request_id`. A new shopper turn receives a
 new request ID, and a successfully finalized turn deletes its checkpoint.
 Deep Agents' internal summary therefore does not cross the durable turn
 boundary. The legacy `summarizer.py` path is not part of the serving runtime.
+
+### Current weather scope correction — storage boundary built 2026-07-30
+
+Memory migration 10 adds one singleton `CurrentWeatherScope`, not a list of
+event anchors. It contains only a monotonic revision and optional location and
+normalized date-window components. Memory, not the model, stamps each supplied
+component with its source turn ID and sequence.
+
+A typed finalize transition has two meanings:
+
+- `continue` patches supplied components and retains omitted components;
+- `replace` starts a new weather-planning subject and clears omitted
+  components; an empty replace clears both.
+
+Changing location or date invalidates older receipts. A receipt promoted in the
+same finalize must exactly match the resulting complete scope. Venue, occasion,
+products, styling claims, and forecast evidence remain in their existing
+semantic/evidence lanes and never enter this scope. The same singleton can
+represent an event request or ordinary weather-appropriate dressing. This
+storage slice hydrates the scope; the next execution slice binds activation,
+receipt selection, and provider arguments to it.
 
 ## Durable Cross-Turn Context Plan — Agreed 2026-07-30
 

@@ -4335,9 +4335,22 @@ Rules:
         state.agent_diagnostics["final_termination_reason"] = reason
         receipt_promotion = (
             state.weather_receipt_promotion
-            if final_status == "completed" and reason == "completed"
+            if (
+                turn.contract_version >= 2
+                and final_status == "completed"
+                and reason == "completed"
+            )
             else None
         )
+        if (
+            turn.contract_version < 2
+            and state.weather_receipt_promotion is not None
+        ):
+            state.agent_diagnostics["weather_receipt_status"] = (
+                "promotion_dropped_contract_v1"
+            )
+        if turn.contract_version < 2:
+            summary_advance = None
         start = time.monotonic()
         finalized = False
 

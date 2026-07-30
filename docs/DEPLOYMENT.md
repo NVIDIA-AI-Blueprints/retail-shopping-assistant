@@ -578,6 +578,16 @@ model turn. Blocked turns remain stored for exact replay and audit but are
 excluded from both the next-turn service projection and the chain prompt
 formatter.
 
+Turn start negotiates additive memory response fields with
+`response_contract=2`. New memory defaults an unversioned caller to the exact
+legacy response shape and computes that caller's bounded raw tail from sequence
+zero rather than from the invisible summary watermark. New chain accepts a
+missing contract marker as version 1 and suppresses optional summary/receipt
+projection writes for that turn. This permits either service to deploy first
+and keeps an older chain usable after rollback. Fresh projection DDL also uses
+database defaults for every additive non-null summary/receipt column, matching
+the defaults added to upgraded databases by migrations 8 and 9.
+
 `DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS` is one model-stage deadline shared by the
 active graph and grounding editor. The editor receives only the remaining time.
 A graph timeout records `agent_timeout`, captures bounded partial graph messages,

@@ -61,6 +61,7 @@ PROJECTION_VERSION_CONFLICT = "projection_version_conflict"
 SUMMARY_BOUNDARY_CONFLICT = "summary_boundary_conflict"
 WEATHER_RECEIPT_STATUS_CONFLICT = "weather_receipt_status_conflict"
 WEATHER_RECEIPT_STALE = "weather_receipt_stale"
+MEMORY_RESPONSE_CONTRACT_V2 = 2
 
 
 class TurnStartRequest(BaseModel):
@@ -266,6 +267,7 @@ def _projection_dict(
     projection: ConversationProjection,
     *,
     current_time: float,
+    include_v2_fields: bool = True,
 ) -> dict[str, Any]:
     summary_text = projection.summary_text or ""
     summary_through_sequence = projection.summary_through_sequence or 0
@@ -274,22 +276,28 @@ def _projection_dict(
             status_code=500,
             detail="conversation_summary_projection_invalid",
         )
-    return {
+    result = {
         "version": projection.version,
-        "summary_text": summary_text,
-        "summary_through_sequence": summary_through_sequence,
-        "active_receipts": [
-            receipt.model_dump(mode="json", exclude_none=True)
-            for receipt in _active_weather_receipts(
-                projection,
-                current_time=current_time,
-            )
-        ],
         "active_anchors": json.loads(projection.active_anchors_json),
         "effective_preferences": json.loads(projection.effective_preferences_json),
         "product_reference_index": json.loads(projection.product_reference_index_json),
         "last_turn_id": projection.last_turn_id,
     }
+    if include_v2_fields:
+        result.update(
+            {
+                "summary_text": summary_text,
+                "summary_through_sequence": summary_through_sequence,
+                "active_receipts": [
+                    receipt.model_dump(mode="json", exclude_none=True)
+                    for receipt in _active_weather_receipts(
+                        projection,
+                        current_time=current_time,
+                    )
+                ],
+            }
+        )
+    return result
 
 
 def _get_or_create_projection(
@@ -472,17 +480,10 @@ def _start_response(
     *,
     replayed: bool,
     current_time: float,
+    response_contract: Literal[1, 2],
 ) -> dict[str, Any]:
-    unsummarized_turn_count, summary_compaction_source = (
-        _summary_compaction_state(
-            db,
-            turn.conversation_id,
-            after_sequence=projection.summary_through_sequence,
-            before_sequence=turn.sequence,
-            projection_version=projection.version,
-        )
-    )
-    return {
+    v2_response = response_contract == MEMORY_RESPONSE_CONTRACT_V2
+    result = {
         "turn_id": turn.turn_id,
         "attempt_id": turn.attempt_id,
         "sequence": turn.sequence,
@@ -491,15 +492,16 @@ def _start_response(
         "recent_turns": _recent_turns(
             db,
             turn.conversation_id,
-            after_sequence=projection.summary_through_sequence,
+            after_sequence=(
+                projection.summary_through_sequence if v2_response else 0
+            ),
             before_sequence=turn.sequence,
         ),
-        "unsummarized_turn_count": unsummarized_turn_count,
-        "summary_compaction_source": summary_compaction_source,
         "previous_selected_skill_names": _previous_selected_skill_names(db, turn),
         "projection": _projection_dict(
             projection,
             current_time=current_time,
+            include_v2_fields=v2_response,
         ),
         "cart": _cart_for_user(db, turn.cart_user_id),
         "assistant_text": turn.assistant_text,
@@ -507,6 +509,24 @@ def _start_response(
         "output": json.loads(turn.output_json) if turn.output_json else None,
         "shopper_context": _shopper_context(shopper_profile),
     }
+    if v2_response:
+        unsummarized_turn_count, summary_compaction_source = (
+            _summary_compaction_state(
+                db,
+                turn.conversation_id,
+                after_sequence=projection.summary_through_sequence,
+                before_sequence=turn.sequence,
+                projection_version=projection.version,
+            )
+        )
+        result.update(
+            {
+                "contract_version": MEMORY_RESPONSE_CONTRACT_V2,
+                "unsummarized_turn_count": unsummarized_turn_count,
+                "summary_compaction_source": summary_compaction_source,
+            }
+        )
+    return result
 
 
 def _finalize_response(
@@ -602,7 +622,13 @@ def _require_conversation_profile(
         )
 
 
-def _start_turn(db, conversation_id: str, request: TurnStartRequest) -> dict[str, Any]:
+def _start_turn(
+    db,
+    conversation_id: str,
+    request: TurnStartRequest,
+    *,
+    response_contract: Literal[1, 2],
+) -> dict[str, Any]:
     db.execute(text("BEGIN IMMEDIATE"))
     current_time = time.time()
     _mark_stale_started_turns(
@@ -672,6 +698,7 @@ def _start_turn(db, conversation_id: str, request: TurnStartRequest) -> dict[str
                 shopper_profile,
                 replayed=False,
                 current_time=current_time,
+                response_contract=response_contract,
             )
             db.commit()
             return response
@@ -683,6 +710,7 @@ def _start_turn(db, conversation_id: str, request: TurnStartRequest) -> dict[str
             shopper_profile,
             replayed=True,
             current_time=current_time,
+            response_contract=response_contract,
         )
         db.commit()
         return response
@@ -740,6 +768,7 @@ def _start_turn(db, conversation_id: str, request: TurnStartRequest) -> dict[str
         shopper_profile,
         replayed=False,
         current_time=current_time,
+        response_contract=response_contract,
     )
     db.commit()
     return response
@@ -1069,11 +1098,17 @@ def create_conversation_router(get_db) -> APIRouter:
     def start_conversation_turn(
         conversation_id: str,
         request: TurnStartRequest,
+        response_contract: Literal["1", "2"] = "1",
         db=Depends(get_db),
     ):
         _validate_conversation_id(conversation_id)
         try:
-            return _start_turn(db, conversation_id, request)
+            return _start_turn(
+                db,
+                conversation_id,
+                request,
+                response_contract=int(response_contract),
+            )
         except Exception:
             db.rollback()
             raise

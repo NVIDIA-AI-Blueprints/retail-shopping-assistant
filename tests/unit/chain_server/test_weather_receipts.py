@@ -192,6 +192,7 @@ def _turn(
 ) -> TurnStartResult:
     return TurnStartResult(
         turn_id="turn-current",
+        contract_version=2,
         attempt_id="attempt-current",
         sequence=3,
         shopper_context=None,
@@ -676,6 +677,44 @@ def test_completed_finalize_carries_promotion_but_failed_finalize_drops_it(
     )
     assert memory.calls[0]["weather_receipt_promotion"] == promotion
     assert memory.calls[1]["weather_receipt_promotion"] is None
+
+
+def test_v1_turn_drops_optional_weather_promotion_before_finalize(
+    base_config,
+) -> None:
+    runtime = runtime_mod.DeepAgentsRuntime(base_config)
+
+    class Memory:
+        def __init__(self) -> None:
+            self.calls: list[dict] = []
+
+        def finalize_turn(self, *_args, **kwargs):
+            self.calls.append(kwargs)
+            return SimpleNamespace(replayed=False)
+
+    memory = Memory()
+    runtime._conversation_memory = memory
+    state = State(
+        user_id=1,
+        query="Continue.",
+        response="Completed response.",
+        weather_receipt_promotion=_promotion(),
+        agent_diagnostics={
+            "final_termination_reason": "completed",
+            "weather_receipt_status": "promotion_prepared",
+        },
+    )
+    turn = _turn().model_copy(update={"contract_version": 1})
+
+    assert runtime._finalize_conversation_turn(
+        state,
+        _identity(),
+        turn,
+    )
+    assert memory.calls[0]["weather_receipt_promotion"] is None
+    assert state.agent_diagnostics["weather_receipt_status"] == (
+        "promotion_dropped_contract_v1"
+    )
 
 
 def test_projection_conflict_retries_finalize_without_optional_promotion(

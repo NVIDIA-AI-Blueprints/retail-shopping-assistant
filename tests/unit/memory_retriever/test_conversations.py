@@ -58,6 +58,7 @@ def _start_turn(
     request_digest: str | None = None,
     shopper_profile_id: str | None = None,
     include_null_profile: bool = False,
+    response_contract: int | None = 2,
 ):
     payload = {
         "request_id": request_id,
@@ -68,10 +69,101 @@ def _start_turn(
     }
     if shopper_profile_id is not None or include_null_profile:
         payload["shopper_profile_id"] = shopper_profile_id
-    return client.post(
-        f"/conversations/{conversation_id}/turn/start",
-        json=payload,
+    path = f"/conversations/{conversation_id}/turn/start"
+    if response_contract is not None:
+        path += f"?response_contract={response_contract}"
+    return client.post(path, json=payload)
+
+
+def test_unversioned_start_returns_exact_v1_shape(
+    conversation_db: TestClient,
+) -> None:
+    response = _start_turn(
+        conversation_db,
+        "conversation-v1-shape",
+        request_id="request-v1",
+        response_contract=None,
     )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert set(payload) == {
+        "turn_id",
+        "attempt_id",
+        "sequence",
+        "replayed",
+        "status",
+        "recent_turns",
+        "previous_selected_skill_names",
+        "shopper_context",
+        "projection",
+        "cart",
+        "assistant_text",
+        "termination_reason",
+        "output",
+    }
+    assert set(payload["projection"]) == {
+        "version",
+        "active_anchors",
+        "effective_preferences",
+        "product_reference_index",
+        "last_turn_id",
+    }
+
+
+def test_v1_start_reads_raw_tail_before_v2_summary_watermark(
+    conversation_db: TestClient,
+) -> None:
+    first = _start_turn(
+        conversation_db,
+        "conversation-v1-rollback",
+        request_id="request-1",
+    ).json()
+    assert (
+        _finalize_turn(
+            conversation_db,
+            "conversation-v1-rollback",
+            first["turn_id"],
+            request_id="request-1",
+            attempt_id=first["attempt_id"],
+            assistant_text="First assistant turn.",
+        ).status_code
+        == 200
+    )
+    second = _start_turn(
+        conversation_db,
+        "conversation-v1-rollback",
+        request_id="request-2",
+    ).json()
+    assert (
+        _finalize_turn(
+            conversation_db,
+            "conversation-v1-rollback",
+            second["turn_id"],
+            request_id="request-2",
+            attempt_id=second["attempt_id"],
+            assistant_text="Second assistant turn.",
+            summary_advance={
+                "expected_projection_version": second["projection"]["version"],
+                "summary_text": "The first turn is summarized.",
+                "summary_through_sequence": 1,
+            },
+        ).status_code
+        == 200
+    )
+
+    rollback_start = _start_turn(
+        conversation_db,
+        "conversation-v1-rollback",
+        request_id="request-3",
+        response_contract=None,
+    )
+
+    assert rollback_start.status_code == 200
+    payload = rollback_start.json()
+    assert [turn["sequence"] for turn in payload["recent_turns"]] == [1, 2]
+    assert "summary_text" not in payload["projection"]
+    assert "summary_compaction_source" not in payload
 
 
 def _finalize_turn(
@@ -229,6 +321,7 @@ def test_start_returns_recent_turns_projection_and_authoritative_cart(
     assert first.status_code == 200
     assert first.json() == {
         "turn_id": first.json()["turn_id"],
+        "contract_version": 2,
         "attempt_id": first.json()["attempt_id"],
         "sequence": 1,
         "replayed": False,
@@ -2458,3 +2551,46 @@ def test_file_database_reopens_with_sqlite_safety_settings(
         == 9
     )
     reopened_engine.dispose()
+
+
+def test_fresh_projection_schema_supports_staging_shaped_insert() -> None:
+    fresh_engine = memory_main.build_engine(
+        "sqlite:///:memory:",
+        poolclass=StaticPool,
+    )
+    memory_main.run_schema_migrations(fresh_engine)
+
+    with fresh_engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO conversation_projection ("
+                "conversation_id, version, active_anchors_json, "
+                "effective_preferences_json, product_reference_index_json, "
+                "last_turn_id"
+                ") VALUES ("
+                "'rollback-conversation', 0, '[]', '[]', '[]', NULL)"
+            )
+        )
+        values = connection.execute(
+            text(
+                "SELECT summary_text, summary_through_sequence, "
+                "active_receipts_json FROM conversation_projection "
+                "WHERE conversation_id = 'rollback-conversation'"
+            )
+        ).one()
+        defaults = {
+            row["name"]: row["dflt_value"]
+            for row in connection.execute(
+                text("PRAGMA table_info('conversation_projection')")
+            ).mappings()
+            if row["name"]
+            in {
+                "summary_text",
+                "summary_through_sequence",
+                "active_receipts_json",
+            }
+        }
+
+    assert values == ("", 0, "[]")
+    assert all(default is not None for default in defaults.values())
+    fresh_engine.dispose()

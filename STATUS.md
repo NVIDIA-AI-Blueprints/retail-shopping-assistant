@@ -6,6 +6,15 @@ Updated: 2026-07-30
 
 The current working tree extends the shopper-serving Deep Agent architecture:
 
+- memory turn start now negotiates additive response lanes. The current chain
+  requests response contract 2; an unversioned caller receives the exact
+  staging-era response shape and a bounded raw tail from sequence zero, so an
+  older chain neither rejects unfamiliar summary/receipt fields after memory
+  commits a turn nor loses pre-watermark dialogue after rollback. Missing
+  contract markers degrade the current chain to version 1 and suppress
+  optional summary/receipt writes. Fresh projection DDL gives the three
+  additive non-null columns real database defaults matching migrations 8 and
+  9, allowing a staging-shaped projection insert after memory rollback;
 - a 2026-07-30 planned addendum in
   `docs/SHOPPER_DEEP_AGENT_ARCHITECTURE_2026-07-29.md` records the agreed
   durable cross-turn context correction. It keeps the request-scoped Deep

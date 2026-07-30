@@ -207,9 +207,24 @@ class ConversationProjection(Base):
 
     conversation_id = Column(String, primary_key=True)
     version = Column(Integer, nullable=False, default=0)
-    summary_text = Column(Text, nullable=False, default="")
-    summary_through_sequence = Column(Integer, nullable=False, default=0)
-    active_receipts_json = Column(Text, nullable=False, default="[]")
+    summary_text = Column(
+        Text,
+        nullable=False,
+        default="",
+        server_default=text("''"),
+    )
+    summary_through_sequence = Column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default=text("0"),
+    )
+    active_receipts_json = Column(
+        Text,
+        nullable=False,
+        default="[]",
+        server_default=text("'[]'"),
+    )
     active_anchors_json = Column(Text, nullable=False, default="[]")
     effective_preferences_json = Column(Text, nullable=False, default="[]")
     product_reference_index_json = Column(Text, nullable=False, default="[]")

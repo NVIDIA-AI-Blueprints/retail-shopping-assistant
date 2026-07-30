@@ -49,6 +49,7 @@ EventType = Literal[
 _DEFAULT_TIMEOUT_SECONDS = 10.0
 _DEFAULT_CONTEXT_MAX_CHARS = 16_384
 _MAX_CONVERSATION_SUMMARY_CHARS = 16_384
+_MEMORY_RESPONSE_CONTRACT = 2
 _TRUNCATION_MARKER = "…"
 
 
@@ -179,6 +180,7 @@ class TurnStartResult(_MemoryModel):
     """Combined conversation context and cart for one turn."""
 
     turn_id: str = Field(..., min_length=1, max_length=256)
+    contract_version: Literal[1, 2] = 1
     attempt_id: str = Field(..., min_length=1, max_length=128)
     sequence: int = Field(..., ge=1)
     replayed: bool = False
@@ -199,6 +201,29 @@ class TurnStartResult(_MemoryModel):
     assistant_text: str | None = Field(default=None, max_length=100_000)
     termination_reason: str | None = Field(default=None, max_length=1_024)
     output: TurnReplayOutput | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _contract_lanes_match_version(cls, value: Any) -> Any:
+        if not isinstance(value, Mapping):
+            return value
+        version = value.get("contract_version", 1)
+        projection = value.get("projection")
+        projection_keys = (
+            set(projection) if isinstance(projection, Mapping) else set()
+        )
+        v2_top_level = {"unsummarized_turn_count", "summary_compaction_source"}
+        v2_projection = {
+            "summary_text",
+            "summary_through_sequence",
+            "active_receipts",
+        }
+        if version != 2 and (
+            v2_top_level.intersection(value)
+            or v2_projection.intersection(projection_keys)
+        ):
+            raise ValueError("memory contract v1 response contains v2-only lanes")
+        return value
 
     @model_validator(mode="after")
     def _summary_sources_are_consistent(self) -> "TurnStartResult":
@@ -345,7 +370,10 @@ class ConversationMemoryClient:
             catalog_revision=catalog_revision,
         )
         payload = self._post(
-            f"/conversations/{_path_segment(conversation_id)}/turn/start",
+            (
+                f"/conversations/{_path_segment(conversation_id)}/turn/start"
+                f"?response_contract={_MEMORY_RESPONSE_CONTRACT}"
+            ),
             request.model_dump(mode="json"),
         )
         result = self._validate_response(payload, TurnStartResult)

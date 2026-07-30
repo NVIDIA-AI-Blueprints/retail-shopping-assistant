@@ -1265,6 +1265,16 @@ excludes abandoned turns before creating model context. Raw media is not stored;
 the request digest includes ordered media content hashes so exact retries can
 be distinguished safely.
 
+The serving chain requests `?response_contract=2`. Without that opt-in, memory
+returns the exact pre-summary response shape: summary, compaction, receipt, and
+contract-version fields are omitted, and the bounded raw tail is read from
+sequence zero. Older chain instances can therefore continue after memory is
+deployed first or after chain rollback, even when a summary watermark has
+advanced. Older memory ignores the unknown query parameter; the current chain
+treats a missing `contract_version` as version 1 and suppresses optional
+summary/receipt projection writes. Response negotiation is not part of the
+turn request digest.
+
 ```json
 {
   "request_id": "request_abc",
@@ -1279,6 +1289,7 @@ be distinguished safely.
 ```json
 {
   "turn_id": "8e40575d5e5a4dbca34e1d08a2cb1692",
+  "contract_version": 2,
   "attempt_id": "bd77b851b3494e37a764e3dfa7500208",
   "sequence": 4,
   "replayed": false,
@@ -1389,6 +1400,11 @@ response, so a new summary affects the next request, not the response that
 created it. It receives only the prior summary and offered turns. Timeout,
 model error, invalid or oversized input/output, blocked/failed turn, or
 cancellation produces no summary advance.
+
+Fresh and upgraded SQLite schemas give the additive `summary_text`,
+`summary_through_sequence`, and `active_receipts_json` columns equivalent
+database defaults. A rollback memory binary that does not name those columns
+can therefore continue creating projections.
 
 `projection.active_receipts` is an independently typed, newest-first list of at
 most four valid `weather_forecast.v1` receipts. Each receipt contains its

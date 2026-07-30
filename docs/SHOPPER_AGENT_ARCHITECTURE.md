@@ -451,6 +451,13 @@ context-eligible raw turns strictly after the watermark, so accepted summary
 coverage and the raw tail do not overlap. A stale projection version or invalid
 boundary rolls back the complete finalization.
 
+Those additive lanes are available only through opt-in turn-start response
+contract 2. An unversioned caller receives the exact earlier response shape and
+a bounded raw tail from sequence zero. The current chain treats a missing
+contract marker as version 1 and suppresses optional summary and receipt writes
+for that turn. Equivalent database defaults on fresh and upgraded SQLite
+schemas preserve old memory inserts during rollback.
+
 The serving runtime now renders four separate lanes: semantic summary, exact
 newest raw discussion, the historical product index, and active typed weather
 receipts. Memory also returns

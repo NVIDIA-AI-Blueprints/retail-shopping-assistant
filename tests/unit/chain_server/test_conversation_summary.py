@@ -160,6 +160,7 @@ def test_closed_output_accepts_only_one_trimmed_bounded_summary() -> None:
 def _turn_start_result() -> TurnStartResult:
     return TurnStartResult(
         turn_id="turn-7",
+        contract_version=2,
         attempt_id="attempt-7",
         sequence=7,
         recent_turns=[

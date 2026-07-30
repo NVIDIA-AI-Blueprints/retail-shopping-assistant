@@ -60,6 +60,7 @@ class FakeSession:
 def _start_payload() -> dict[str, Any]:
     return {
         "turn_id": "turn-2",
+        "contract_version": 2,
         "attempt_id": "attempt-2",
         "sequence": 3,
         "replayed": False,
@@ -199,6 +200,7 @@ def test_start_turn_posts_one_request_without_raw_media() -> None:
     assert result.cart[0].cart_line_id == "line-1"
     assert session.calls[0]["url"] == (
         "http://memory:8011/conversations/conversation%2Fa/turn/start"
+        "?response_contract=2"
     )
     request_payload = session.calls[0]["json"]
     assert request_payload == {
@@ -215,6 +217,30 @@ def test_start_turn_posts_one_request_without_raw_media() -> None:
     }
     assert raw_media not in str(request_payload)
     assert session.calls[0]["timeout"] == 4
+
+
+def test_start_turn_accepts_legacy_v1_response_from_old_memory() -> None:
+    payload = _start_payload()
+    payload.pop("contract_version")
+    payload.pop("unsummarized_turn_count")
+    payload.pop("summary_compaction_source")
+    payload["projection"].pop("summary_text")
+    payload["projection"].pop("summary_through_sequence")
+    payload["projection"].pop("active_receipts")
+    session = FakeSession(FakeResponse(payload))
+    client = ConversationMemoryClient("http://memory", session=session)
+
+    result = client.start_turn(
+        "conversation-a",
+        request_id="request-a",
+        shopper_text="Continue.",
+        cart_user_id=17,
+    )
+
+    assert result.contract_version == 1
+    assert result.projection.summary_text == ""
+    assert result.projection.active_receipts == []
+    assert session.calls[0]["url"].endswith("?response_contract=2")
 
 
 @pytest.mark.parametrize(

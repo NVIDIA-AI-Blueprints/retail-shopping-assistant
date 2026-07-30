@@ -181,6 +181,17 @@ The raw turns are bounded first by the memory service's turn limit and again by
 the chain server's character limit. Blocked and abandoned turns are durable for
 audit or replay semantics but are excluded from the model context.
 
+The additive summary and receipt lanes use an opt-in turn-start response
+contract. The current chain requests contract 2. An unversioned caller receives
+the exact earlier response shape and a bounded raw tail read from sequence zero,
+so an older chain remains usable after memory deploys first or after chain
+rollback even if a summary watermark has advanced. Conversely, the current
+chain treats a missing contract marker from older memory as contract 1 and does
+not submit optional summary or receipt writes for that turn. Fresh and upgraded
+SQLite schemas give the additive non-null projection columns equivalent
+database defaults, allowing the memory binary to roll back without making old
+projection inserts fail.
+
 The serving path does **not** populate or rehydrate the complete prior tool
 transcript or model reasoning, a normalized event state machine, active anchors
 or effective preferences, or raw uploaded media. A receipt is the sole bounded

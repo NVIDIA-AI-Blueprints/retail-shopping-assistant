@@ -48,7 +48,9 @@ The Retail Shopping Assistant is an AI-powered blueprint that provides a compreh
   rotating attempt tokens reject late finalizers after interrupted-turn
   recovery. A bounded tools-disabled compactor folds only memory's oldest exact
   raw-turn prefix into the versioned rolling summary after a successful
-  response, so the result affects only the next request
+  response, so the result affects only the next request. Turn start uses an
+  opt-in response contract so older chain instances receive their exact legacy
+  shape and full bounded raw tail during rolling deployment or rollback
 - 💭 **Durable Product Continuity**: Finalized product-card output becomes
   ordered `candidate_set_presented` evidence in SQLite; a typed resolver can
   recover one exact earlier product or require clarification without another
@@ -110,7 +112,9 @@ The application follows a microservices architecture:
   a compact reference index, stable cart-line IDs, atomically idempotent
   add/remove/quantity mutations, an immutable five-row representative shopper
   registry, atomic conversation/profile binding, and request-scoped database
-  sessions; standard Compose exposes its host port on loopback only
+  sessions. Additive summary/receipt lanes are response-contract negotiated,
+  and their SQLite columns have database defaults for rollback-safe fresh
+  schemas; standard Compose exposes its host port on loopback only
 - **Guardrails**: Content safety and moderation
 - **UI**: React-based frontend interface with Guest/representative-shopper
   dropdown selection required before a new chat session starts

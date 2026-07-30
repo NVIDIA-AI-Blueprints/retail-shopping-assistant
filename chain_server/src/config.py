@@ -16,6 +16,8 @@ from shared.model_config import resolve_model_config, validate_model_config
 
 logger = logging.getLogger(__name__)
 
+_MIN_CONVERSATION_SUMMARY_SOURCE_HEADROOM = 512
+
 
 def load_config_data(base_config_path: str) -> Dict[str, Any]:
     """Load a service config YAML file."""
@@ -287,9 +289,16 @@ class ChainServerConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_summary_context_budget(self):
-        if self.conversation_summary.max_output_chars > self.memory_length:
+        summary_budget = self.conversation_summary.max_output_chars
+        input_budget = max(1000, self.memory_length)
+        if (
+            summary_budget + _MIN_CONVERSATION_SUMMARY_SOURCE_HEADROOM
+            > input_budget
+        ):
             raise ValueError(
-                "conversation summary max_output_chars cannot exceed memory_length"
+                "conversation summary output must leave at least "
+                f"{_MIN_CONVERSATION_SUMMARY_SOURCE_HEADROOM} characters "
+                "for compaction source input"
             )
         return self
     

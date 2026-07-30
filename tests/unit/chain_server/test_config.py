@@ -178,7 +178,7 @@ class TestChainServerConfigValidation:
                 }
             )
 
-    def test_conversation_summary_output_must_fit_memory_context(
+    def test_conversation_summary_output_must_leave_source_headroom(
         self,
         valid_config_dict: dict,
     ) -> None:
@@ -189,7 +189,7 @@ class TestChainServerConfigValidation:
                     "memory_length": 1000,
                     "conversation_summary": {
                         **valid_config_dict["conversation_summary"],
-                        "max_output_chars": 1001,
+                        "max_output_chars": 489,
                     },
                 }
             )

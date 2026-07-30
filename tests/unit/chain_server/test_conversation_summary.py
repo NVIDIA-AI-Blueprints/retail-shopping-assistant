@@ -53,6 +53,28 @@ def _projection() -> ConversationProjection:
     )
 
 
+def _exact_prefix_length(prefix_length: int) -> int:
+    source = _source()
+    return len(
+        json.dumps(
+            {
+                "previous_summary": _projection().summary_text,
+                "turns": [
+                    {
+                        "sequence": turn.sequence,
+                        "shopper_text": turn.shopper_text,
+                        "assistant_text": turn.assistant_text,
+                        "status": turn.status,
+                    }
+                    for turn in source.turns[:prefix_length]
+                ],
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+    )
+
+
 def test_work_uses_the_complete_memory_owned_oldest_prefix() -> None:
     work = build_conversation_summary_work(
         _projection(),
@@ -80,7 +102,6 @@ def test_work_uses_the_complete_memory_owned_oldest_prefix() -> None:
     [
         (5, 6, 2),
         (6, 7, 2),
-        (6, 6, 3),
     ],
 )
 def test_work_waits_until_trigger_and_raw_suffix_can_be_retained(
@@ -101,18 +122,79 @@ def test_work_waits_until_trigger_and_raw_suffix_can_be_retained(
     )
 
 
-def test_work_fails_open_instead_of_truncating_an_oversized_source() -> None:
-    assert (
-        build_conversation_summary_work(
-            _projection(),
-            _source(),
-            unsummarized_turn_count=6,
-            trigger_raw_turns=6,
-            retain_raw_turns=2,
-            max_input_chars=100,
-        )
-        is None
+def test_work_uses_the_largest_exact_prefix_that_fits() -> None:
+    two_turn_budget = _exact_prefix_length(2)
+
+    work = build_conversation_summary_work(
+        _projection(),
+        _source(),
+        unsummarized_turn_count=6,
+        trigger_raw_turns=6,
+        retain_raw_turns=2,
+        max_input_chars=two_turn_budget,
     )
+
+    assert work is not None
+    assert work.through_sequence == 4
+    assert work.input_projection == "exact"
+    assert [turn["sequence"] for turn in json.loads(work.prompt)["turns"]] == [3, 4]
+    assert len(work.prompt) == two_turn_budget
+    assert _exact_prefix_length(3) > two_turn_budget
+
+
+def test_work_never_compacts_the_retained_newest_suffix() -> None:
+    work = build_conversation_summary_work(
+        _projection(),
+        _source(),
+        unsummarized_turn_count=6,
+        trigger_raw_turns=6,
+        retain_raw_turns=3,
+        max_input_chars=16_384,
+    )
+
+    assert work is not None
+    assert work.through_sequence == 5
+    assert [turn["sequence"] for turn in json.loads(work.prompt)["turns"]] == [
+        3,
+        4,
+        5,
+    ]
+
+
+def test_one_oversized_oldest_turn_uses_a_bounded_head_tail_projection() -> None:
+    source = _source()
+    source.turns[0].shopper_text = (
+        "shopper opening|" + ("x" * 90_000) + "|latest shopper correction"
+    )
+    source.turns[0].assistant_text = (
+        "assistant opening|" + ("y" * 90_000) + "|latest assistant response"
+    )
+    original_source = source.model_dump(mode="json")
+
+    work = build_conversation_summary_work(
+        _projection(),
+        source,
+        unsummarized_turn_count=6,
+        trigger_raw_turns=6,
+        retain_raw_turns=2,
+        max_input_chars=1_000,
+    )
+
+    assert work is not None
+    assert work.through_sequence == 3
+    assert work.input_projection == "bounded_head_tail"
+    assert len(work.prompt) <= 1_000
+    payload = json.loads(work.prompt)
+    assert payload["input_projection"] == "bounded_head_tail"
+    assert [turn["sequence"] for turn in payload["turns"]] == [3]
+    projected = payload["turns"][0]
+    assert projected["shopper_text"].startswith("shopper opening|")
+    assert projected["shopper_text"].endswith("|latest shopper correction")
+    assert projected["assistant_text"].startswith("assistant opening|")
+    assert projected["assistant_text"].endswith("|latest assistant response")
+    assert "…[middle omitted]…" in projected["shopper_text"]
+    assert "…[middle omitted]…" in projected["assistant_text"]
+    assert source.model_dump(mode="json") == original_source
 
 
 @pytest.mark.parametrize(
@@ -241,6 +323,9 @@ async def test_runtime_compactor_uses_only_summary_and_oldest_source(
     assert state.response == "Shopper-facing answer stays unchanged."
     assert state.agent_diagnostics["final_termination_reason"] == "completed"
     assert state.agent_diagnostics["conversation_summary_compaction"] == "prepared"
+    assert state.agent_diagnostics["conversation_summary_input_projection"] == (
+        "exact"
+    )
     assert state.model_usage["app_llm_conversation_summary"]["status"] == "used"
     assert state.token_usage == {
         "input_tokens": 20,

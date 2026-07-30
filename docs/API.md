@@ -1387,19 +1387,23 @@ watermark and strictly before the turn being started/replayed.
 to four turns; it may overlap `recent_turns` because the two lanes have
 different consumers. It carries the projection version and exact before/after
 boundary. The runtime never derives a compaction watermark from the newest raw
-tail.
+tail. Finalization may advance to any exact turn boundary within that freshly
+re-read offered prefix; a boundary outside it is rejected atomically.
 
 The chain server renders `summary_text`, `recent_turns`, and
 `product_reference_index` as separate prompt/state sections. The summary is
 semantic continuity only, while recent turns retain exact conversational
 wording and the product index remains the deterministic historical-product
 authority. Default configuration considers compaction at six unsummarized
-turns, retains at least two raw turns, and folds the complete offered oldest
-prefix. The tools-disabled compactor runs only after a successful guarded
-response, so a new summary affects the next request, not the response that
-created it. It receives only the prior summary and offered turns. Timeout,
-model error, invalid or oversized input/output, blocked/failed turn, or
-cancellation produces no summary advance.
+turns, retains at least two raw turns, and folds the largest fitting contiguous
+oldest prefix. A single oldest turn that exceeds the input budget is represented
+to the compactor by explicitly marked deterministic head-and-tail excerpts; its
+durable transcript and exact replay are unchanged. Configuration reserves
+source-input headroom beyond the maximum summary output. The tools-disabled
+compactor runs only after a successful guarded response, so a new summary
+affects the next request, not the response that created it. It receives only the
+prior summary and selected oldest turns. Timeout, model error, invalid
+input/output, blocked/failed turn, or cancellation produces no summary advance.
 
 Fresh and upgraded SQLite schemas give the additive `summary_text`,
 `summary_through_sequence`, and `active_receipts_json` columns equivalent

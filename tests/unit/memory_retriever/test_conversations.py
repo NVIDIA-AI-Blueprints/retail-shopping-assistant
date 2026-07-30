@@ -976,6 +976,23 @@ def test_summary_raw_tail_contains_only_later_context_eligible_turns(
         "conversation-summary-tail",
         request_id="request-4",
     ).json()
+    skipped_eligible_boundary = _finalize_turn(
+        conversation_db,
+        "conversation-summary-tail",
+        fourth["turn_id"],
+        request_id="request-4",
+        attempt_id=fourth["attempt_id"],
+        summary_advance={
+            "expected_projection_version": fourth["projection"]["version"],
+            "summary_text": "Invalid summary boundary.",
+            "summary_through_sequence": 2,
+        },
+    )
+    assert skipped_eligible_boundary.status_code == 409
+    assert (
+        skipped_eligible_boundary.json()["detail"]
+        == "summary_boundary_conflict"
+    )
     finalized = _finalize_turn(
         conversation_db,
         "conversation-summary-tail",
@@ -1000,7 +1017,7 @@ def test_summary_raw_tail_contains_only_later_context_eligible_turns(
     ] == [(4, "completed")]
 
 
-def test_summary_compaction_source_is_oldest_bounded_and_reoffered_on_failure(
+def test_summary_compaction_accepts_any_offered_oldest_prefix_boundary(
     conversation_db: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1043,47 +1060,28 @@ def test_summary_compaction_source_is_oldest_bounded_and_reoffered_on_failure(
         attempt_id=seventh["attempt_id"],
         summary_advance={
             "expected_projection_version": seventh["projection"]["version"],
-            "summary_text": "An incomplete oldest-prefix summary.",
+            "summary_text": "The first two turns are summarized.",
             "summary_through_sequence": 2,
         },
     )
-    assert partial_advance.status_code == 409
-    assert partial_advance.json()["detail"] == "summary_boundary_conflict"
+    assert partial_advance.status_code == 200
 
-    finalized_without_advance = _finalize_turn(
-        conversation_db,
-        "conversation-summary-source",
-        seventh["turn_id"],
-        request_id="request-7",
-        attempt_id=seventh["attempt_id"],
-    )
-    assert finalized_without_advance.status_code == 200
-
-    replay = _start_turn(
-        conversation_db,
-        "conversation-summary-source",
-        request_id="request-7",
-    ).json()
-    assert replay["replayed"] is True
-    assert [turn["sequence"] for turn in replay["recent_turns"]] == [3, 4, 5, 6]
-    assert replay["summary_compaction_source"]["through_sequence"] == 4
-
-    eighth = _start_turn(
+    next_turn = _start_turn(
         conversation_db,
         "conversation-summary-source",
         request_id="request-8",
     ).json()
-    assert eighth["projection"]["summary_text"] == ""
-    assert eighth["projection"]["summary_through_sequence"] == 0
-    assert [turn["sequence"] for turn in eighth["recent_turns"]] == [4, 5, 6, 7]
+    assert next_turn["projection"]["summary_through_sequence"] == 2
+    assert next_turn["projection"]["summary_text"] == (
+        "The first two turns are summarized."
+    )
+    assert all(
+        turn["sequence"] > 2 for turn in next_turn["recent_turns"]
+    )
     assert [
         turn["sequence"]
-        for turn in eighth["summary_compaction_source"]["turns"]
-    ] == [1, 2, 3, 4]
-    assert (
-        eighth["summary_compaction_source"]["expected_projection_version"]
-        == eighth["projection"]["version"]
-    )
+        for turn in next_turn["summary_compaction_source"]["turns"]
+    ] == [3, 4, 5, 6]
 
 
 def test_selected_profile_is_bound_and_returns_authoritative_context(

@@ -212,7 +212,8 @@ memory wire contract, finalize-time compare-and-swap, and strictly
 post-watermark raw reads establish the durable summary boundary. Memory returns
 a newest raw prompt tail plus a separate oldest exact compaction prefix. The
 runtime renders summary, raw discussion, and historical products separately
-and may compact only that oldest prefix after a successful response. Migration
+and may compact only a validated contiguous boundary in that oldest prefix
+after a successful response. Migration
 9 and the shared receipt contract add the fourth typed-evidence lane. The
 focused live proof and bounded regression gate are complete; the full judged
 shopping evaluation follows the Slice 3 commit.
@@ -266,7 +267,11 @@ bounded raw-turn tail        contains eligible turns > summary_through_sequence
 
 No eligible turn is intentionally supplied in both forms, and no turn is
 dropped merely because summarization failed. The compactor receives only the
-prior summary and the oldest raw turns being folded into it. It does not
+prior summary and the largest fitting contiguous prefix of the oldest raw turns
+that can be folded while retaining the configured newest suffix. If the first
+turn alone exceeds the input budget, that call receives explicit deterministic
+head-and-tail excerpts of the turn, marked as a bounded input projection. The
+durable transcript and exact replay are not altered. The compactor does not
 receive or reproduce the complete tool transcript.
 
 Compaction should occur only when the raw tail reaches its configured bound,
@@ -274,7 +279,8 @@ not after every shopper message. A successful compaction advances the sequence
 watermark atomically with durable turn finalization. If compaction fails, the
 old summary and watermark remain authoritative and the unsummarized turns
 remain raw; the runtime must not advance the watermark or silently discard
-them.
+them. Memory accepts the selected watermark only when it equals a turn boundary
+in the freshly re-read offered oldest prefix.
 
 The rolling summary may preserve semantic facts such as:
 
@@ -446,10 +452,12 @@ the same breadth:
 2. **Rolling compaction and hydration — built:** memory returns a bounded oldest
    exact prefix independently of the newest prompt tail. A tools-disabled
    direct model call runs only after a successful response when configured
-   thresholds are met, sees only the prior summary plus that prefix, and
-   returns one closed JSON field. Summary, exact raw discussion, and the
-   product ledger render separately. Timeout, error, malformed/oversized input
-   or output, cancellation, and a summary-only finalization conflict never
+   thresholds are met, sees only the prior summary plus the largest fitting
+   contiguous portion of that prefix, and returns one closed JSON field. A
+   single oversized oldest turn uses marked head-and-tail excerpts only for
+   compactor input; its durable text remains exact. Summary, exact raw
+   discussion, and the product ledger render separately. Timeout, error,
+   malformed output, cancellation, and a summary-only finalization conflict never
    change the response or silently advance the watermark.
 3. **Weather receipt projection — built:** migration 9 and the shared
    `weather_forecast.v1` contract promote only paired validated success,

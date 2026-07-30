@@ -830,10 +830,12 @@ def _validate_summary_advance(
         before_sequence=turn.sequence,
         projection_version=projection.version,
     )
-    if (
-        source is None
-        or advance.summary_through_sequence != source["through_sequence"]
-    ):
+    offered_boundaries = (
+        {item["sequence"] for item in source["turns"]}
+        if source is not None
+        else set()
+    )
+    if advance.summary_through_sequence not in offered_boundaries:
         raise HTTPException(
             status_code=409,
             detail=SUMMARY_BOUNDARY_CONFLICT,

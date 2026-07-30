@@ -2942,6 +2942,9 @@ class DeepAgentsRuntime:
         )
         if work is None:
             return None
+        state.agent_diagnostics["conversation_summary_input_projection"] = (
+            work.input_projection
+        )
 
         start = time.monotonic()
         try:

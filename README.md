@@ -579,11 +579,15 @@ Blocked and abandoned turns remain durable and exactly replayable but are
 excluded from both raw lanes; only completed or failed turns with assistant
 text are eligible. After a successfully guarded response, default configuration
 triggers one tools-disabled compactor call at six unsummarized turns, keeps at
-least two raw, and folds the memory-owned oldest prefix of up to four turns.
+least two raw, and folds the largest fitting contiguous part of memory's oldest
+prefix. If its first turn alone exceeds the input budget, only the compactor
+receives marked head-and-tail excerpts of that one turn; durable and replay
+text remain exact.
 The compactor receives no current query, profile/ZIP, cart, product ledger,
 media, tool transcript, diagnostics, or request identity. Invalid, timed-out,
-oversized, or failed compaction leaves the old summary/watermark and all raw
-turns intact. An accepted summary update commits atomically with turn
+or failed compaction leaves the old summary/watermark and all raw turns intact.
+Configuration reserves input headroom beyond the maximum summary output. An
+accepted summary update commits atomically with turn
 finalization and is visible only to the next request; a summary-only conflict
 gets one finalization retry without the optional update and never reruns the
 model. Only the latest abandoned turn can reopen; reopening retains its request

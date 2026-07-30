@@ -465,19 +465,24 @@ the total unsummarized count and a separate oldest exact prefix of up to four
 turns. Only that prefix can feed the compactor; the newest prompt tail never
 sets a watermark. With default policy, six unsummarized turns trigger one
 tools-disabled direct model call after the successful response and before
-finalization, at least two turns remain raw, output is capped at 4,096
-characters, and the call has an independent five-second timeout. Its closed
-one-key JSON result becomes visible only to the next request.
+finalization. The largest fitting contiguous oldest prefix is selected while at
+least two newest turns remain raw. If the first turn alone exceeds the input
+budget, that call receives a marked deterministic head-and-tail projection of
+the turn; memory retains the exact text. Output is capped at 4,096 characters,
+configuration reserves source-input headroom, and the call has an independent
+five-second timeout. Its closed one-key JSON result becomes visible only to the
+next request.
 
-The compactor input contains only the prior summary and exact offered prefix.
+The compactor input contains only the prior summary and selected offered prefix.
 It excludes the current request, representative profile/ZIP, cart, product
 ledger, receipt projection, media, tool messages, diagnostics, and request
 identity. Canonical
-prior forecast blocks are redacted. An input that cannot fit without truncating
-a durable turn fails open, as do timeout, error, malformed output, blocked or
-failed turns, and cancellation; memory retains every raw turn and the previous
-watermark. A summary-only compare-and-swap conflict gets one finalize retry
-without the update and no model rerun.
+prior forecast blocks are redacted. Memory accepts a compaction boundary only
+when it matches a turn in the freshly re-read offered oldest prefix. Timeout,
+error, malformed output, blocked or failed turns, and cancellation fail open;
+memory retains every raw turn and the previous watermark. A summary-only
+compare-and-swap conflict gets one finalize retry without the update and no
+model rerun.
 
 Migration 9 adds `active_receipts_json` to that same versioned conversation
 projection. Receipt promotion, expiry pruning, same-scope supersession, the

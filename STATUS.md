@@ -23,14 +23,18 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   rolling-summary text and through-sequence watermark; turn start returns the
   newest context-eligible raw tail plus a separate memory-owned oldest
   compaction prefix. After a successful guarded response, a tools-disabled
-  direct model call may compact that full prefix under its own timeout and a
-  closed one-key JSON result. Summary, exact raw discussion, and the historical
-  product index are distinct state/prompt lanes. Summary prose is semantic
-  continuity only and cannot establish exact shopper wording, product/cart/tool
-  evidence, location/date authority, policy, availability, or current weather.
-  The current query, profile/ZIP, cart, product ledger, tool transcripts, media,
-  diagnostics, and request IDs never enter the compactor. Invalid, timed-out,
-  oversized, or failed compaction preserves the old watermark and raw turns.
+  direct model call compacts the largest fitting contiguous oldest prefix while
+  retaining the configured newest suffix. A single oversized oldest turn uses a
+  marked bounded head-and-tail projection only in that call; the durable row and
+  replay remain exact. Memory accepts any boundary in the freshly re-read
+  offered prefix, while rejecting skipped or future boundaries. Summary, exact
+  raw discussion, and the historical product index are distinct state/prompt
+  lanes. Summary prose is semantic continuity only and cannot establish exact
+  shopper wording, product/cart/tool evidence, location/date authority, policy,
+  availability, or current weather. The current query, profile/ZIP, cart,
+  product ledger, tool transcripts, media, diagnostics, and request IDs never
+  enter the compactor. Invalid, timed-out, or failed compaction preserves the
+  old watermark and raw turns.
   Accepted advancement commits atomically with finalization and affects only
   the next request; a summary-only conflict gets one deterministic finalize
   retry without the optional update and no model rerun. Migration 9 adds a
@@ -285,9 +289,10 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   Turn start returns only completed/failed raw turns with assistant text after
   that watermark. It separately returns a newest prompt tail, unsummarized
   count, and oldest exact prefix of up to four turns. The runtime renders the
-  existing summary separately, compacts only the memory-owned prefix after a
-  successful response when configured thresholds are met, and uses the
-  projection version for an atomic finalize-time compare-and-swap;
+  existing summary separately, compacts only the largest fitting contiguous
+  part of the memory-owned prefix after a successful response when configured
+  thresholds are met, and uses the projection version for an atomic
+  finalize-time compare-and-swap;
 - a single memory-service SQLite replica now starts each turn durably before
   guardrail/model/tool work, returns bounded model-context-eligible raw turns
   plus the authoritative cart, and finalizes every completed, blocked, or

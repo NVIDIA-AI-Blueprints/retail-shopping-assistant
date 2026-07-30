@@ -45,7 +45,10 @@ The Retail Shopping Assistant is an AI-powered blueprint that provides a compreh
 - 🧠 **Durable Turn Transcript**: A single memory-service SQLite replica
   starts every turn before agent work, finalizes its terminal outcome, and
   exactly replays finalized requests from ordered shopper/assistant records;
-  rotating attempt tokens reject late finalizers after interrupted-turn recovery
+  rotating attempt tokens reject late finalizers after interrupted-turn
+  recovery. The conversation projection now owns a versioned rolling-summary
+  text and through-sequence boundary; the serving runtime does not populate or
+  render that summary until the compaction slice
 - 💭 **Durable Product Continuity**: Finalized product-card output becomes
   ordered `candidate_set_presented` evidence in SQLite; a typed resolver can
   recover one exact earlier product or require clarification without another
@@ -98,11 +101,12 @@ The application follows a microservices architecture:
   filtering, normalized COSINE relevance scores, and deterministic result
   ranking
 - **Memory Retriever**: Ordered durable turns with start/finalize and exact
-  replay, bounded recent-turn reads, typed prior-skill continuity, presented-
-  product events and a compact reference index, stable cart-line IDs, atomically
-  idempotent add/remove/quantity mutations, an immutable five-row representative
-  shopper registry, atomic conversation/profile binding, and request-scoped
-  database sessions; standard Compose exposes its host port on loopback only
+  replay, a versioned rolling-summary boundary with strictly later bounded raw
+  reads, typed prior-skill continuity, presented-product events and a compact
+  reference index, stable cart-line IDs, atomically idempotent
+  add/remove/quantity mutations, an immutable five-row representative shopper
+  registry, atomic conversation/profile binding, and request-scoped database
+  sessions; standard Compose exposes its host port on loopback only
 - **Guardrails**: Content safety and moderation
 - **UI**: React-based frontend interface with Guest/representative-shopper
   dropdown selection required before a new chat session starts
@@ -557,22 +561,25 @@ shopper-facing answer, the runtime returns a safe retry response and records the
 termination reason as `incomplete_agent_response` rather than exposing internal
 content.
 
-At turn start, the memory service returns a bounded set of prior raw
-shopper/assistant turns eligible for model context, the authoritative cart, and
-a service-issued attempt token. Blocked turns remain durable and exactly
-replayable but are excluded by both the service projection and chain prompt
-formatter; abandoned turns are also excluded by the formatter. Only the latest
-abandoned turn can reopen; reopening retains its request identity but rotates
-the attempt token, so a late finalize cannot overwrite the retry. Those recent
-turns replace the legacy rolling context blob, while the
-memory service also returns a compact index of products actually presented as
-ordered cards on earlier turns. When a needed product is not established in the
-current request, the selected discovery, styling, or cart skill may make one
-typed batch resolution call. An exact single match becomes request-local
-evidence for details, availability, or cart add; zero or multiple matches require
-clarification and never authorize a guess. Resolution is limited to the current
-conversation and does not add fuzzy matching, embeddings, cross-conversation
-memory, preference/sentiment memory, or catalog-revision revalidation.
+At turn start, the memory service returns the durable summary projection and a
+bounded set of prior raw shopper/assistant turns whose sequence is strictly
+later than its through-sequence watermark, plus the authoritative cart and a
+service-issued attempt token. The summary fields are currently storage-only:
+the serving runtime neither populates nor renders them until rolling compaction
+is connected. Blocked and abandoned turns remain durable and exactly replayable
+but are excluded from the raw context projection; only completed or failed
+turns with assistant text are eligible. Only the latest abandoned turn can
+reopen; reopening retains its request identity but rotates the attempt token,
+so a late finalize cannot overwrite the retry. Those recent turns replace the
+legacy rolling context blob, while the memory service also returns a compact
+index of products actually presented as ordered cards on earlier turns. When a
+needed product is not established in the current request, the selected
+discovery, styling, or cart skill may make one typed batch resolution call. An
+exact single match becomes request-local evidence for details, availability, or
+cart add; zero or multiple matches require clarification and never authorize a
+guess. Resolution is limited to the current conversation and does not add fuzzy
+matching, embeddings, cross-conversation memory, preference/sentiment memory,
+or catalog-revision revalidation.
 
 LangGraph `MemorySaver` now holds only one request's working graph state under a
 collision-safe pair of conversation ID and request ID. It is deleted only after

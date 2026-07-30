@@ -12,7 +12,15 @@ from typing import Any, Literal, TypeVar
 from urllib.parse import quote
 
 import requests
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    JsonValue,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from .agenttypes import SHOPPER_PROFILE_ID_PATTERN, ShopperContext
 from shared.commerce_contracts import ProductSummary
@@ -35,6 +43,7 @@ EventType = Literal[
 
 _DEFAULT_TIMEOUT_SECONDS = 10.0
 _DEFAULT_CONTEXT_MAX_CHARS = 16_384
+_MAX_CONVERSATION_SUMMARY_CHARS = 16_384
 _TRUNCATION_MARKER = "…"
 
 
@@ -73,9 +82,14 @@ class RecentConversationTurn(_MemoryModel):
 
 
 class ConversationProjection(_MemoryModel):
-    """Reserved projection lanes returned but not consumed in Slice 4."""
+    """Durable conversation-level summary and grounding projections."""
 
     version: int = Field(default=0, ge=0)
+    summary_text: str = Field(
+        default="",
+        max_length=_MAX_CONVERSATION_SUMMARY_CHARS,
+    )
+    summary_through_sequence: int = Field(default=0, ge=0)
     active_anchors: list[JsonValue] = Field(default_factory=list, max_length=50)
     effective_preferences: list[JsonValue] = Field(
         default_factory=list,
@@ -86,6 +100,21 @@ class ConversationProjection(_MemoryModel):
         max_length=100,
     )
     last_turn_id: str | None = Field(default=None, min_length=1, max_length=256)
+
+    @field_validator("summary_text")
+    @classmethod
+    def _require_trimmed_summary(cls, value: str) -> str:
+        if value and value != value.strip():
+            raise ValueError("summary_text must not contain outer whitespace")
+        return value
+
+    @model_validator(mode="after")
+    def _summary_pair_is_consistent(self) -> "ConversationProjection":
+        if bool(self.summary_text) != (self.summary_through_sequence > 0):
+            raise ValueError(
+                "summary_text and summary_through_sequence must be set together"
+            )
+        return self
 
 
 class ConversationCartItem(_MemoryModel):
@@ -141,6 +170,25 @@ class ConversationEvent(_MemoryModel):
     payload: dict[str, JsonValue] = Field(default_factory=dict)
 
 
+class ConversationSummaryAdvance(_MemoryModel):
+    """One complete compare-and-swap update to the rolling summary boundary."""
+
+    expected_projection_version: int = Field(..., ge=0)
+    summary_text: str = Field(
+        ...,
+        min_length=1,
+        max_length=_MAX_CONVERSATION_SUMMARY_CHARS,
+    )
+    summary_through_sequence: int = Field(..., ge=1)
+
+    @field_validator("summary_text")
+    @classmethod
+    def _require_trimmed_summary(cls, value: str) -> str:
+        if value != value.strip():
+            raise ValueError("summary_text must not contain outer whitespace")
+        return value
+
+
 class TurnFinalizeRequest(_MemoryModel):
     """Idempotent input for one durable turn finalization."""
 
@@ -151,6 +199,7 @@ class TurnFinalizeRequest(_MemoryModel):
     termination_reason: str | None = Field(default=None, max_length=1_024)
     events: list[ConversationEvent] = Field(default_factory=list, max_length=128)
     output: TurnReplayOutput | None = None
+    summary_advance: ConversationSummaryAdvance | None = None
 
 
 class TurnFinalizeResult(_MemoryModel):
@@ -248,6 +297,7 @@ class ConversationMemoryClient:
         termination_reason: str | None,
         events: Sequence[ConversationEvent] = (),
         output: TurnReplayOutput | None = None,
+        summary_advance: ConversationSummaryAdvance | None = None,
     ) -> TurnFinalizeResult:
         """Finalize one turn with deterministic structured events."""
 
@@ -259,6 +309,7 @@ class ConversationMemoryClient:
             termination_reason=termination_reason,
             events=list(events),
             output=output,
+            summary_advance=summary_advance,
         )
         payload = self._post(
             (
@@ -446,6 +497,16 @@ def _http_error(status_code: int, detail: str = "") -> ConversationMemoryError:
                 detail,
                 "The conversation turn was superseded by a newer turn or attempt.",
                 status_code=status_code,
+            )
+        if detail in {
+            "projection_version_conflict",
+            "summary_boundary_conflict",
+        }:
+            return ConversationMemoryError(
+                detail,
+                "Conversation summary state changed before finalization.",
+                status_code=status_code,
+                retryable=True,
             )
         return ConversationMemoryError(
             "memory_turn_conflict",

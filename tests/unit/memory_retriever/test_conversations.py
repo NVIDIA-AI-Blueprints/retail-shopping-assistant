@@ -82,18 +82,22 @@ def _finalize_turn(
     status: str = "completed",
     events: list[dict] | None = None,
     output: dict | None = None,
+    summary_advance: dict | None = None,
 ):
+    payload = {
+        "request_id": request_id,
+        "attempt_id": attempt_id,
+        "assistant_text": assistant_text,
+        "status": status,
+        "termination_reason": status,
+        "events": events or [],
+        "output": output,
+    }
+    if summary_advance is not None:
+        payload["summary_advance"] = summary_advance
     return client.post(
         f"/conversations/{conversation_id}/turns/{turn_id}/finalize",
-        json={
-            "request_id": request_id,
-            "attempt_id": attempt_id,
-            "assistant_text": assistant_text,
-            "status": status,
-            "termination_reason": status,
-            "events": events or [],
-            "output": output,
-        },
+        json=payload,
     )
 
 
@@ -166,6 +170,8 @@ def test_start_returns_recent_turns_projection_and_authoritative_cart(
         "previous_selected_skill_names": [],
         "projection": {
             "version": 0,
+            "summary_text": "",
+            "summary_through_sequence": 0,
             "active_anchors": [],
             "effective_preferences": [],
             "product_reference_index": [],
@@ -212,6 +218,268 @@ def test_start_returns_recent_turns_projection_and_authoritative_cart(
         }
     ]
     assert second.json()["previous_selected_skill_names"] == ["outfit-styling"]
+
+
+def test_summary_advance_is_atomic_replayable_and_excludes_covered_turns(
+    conversation_db: TestClient,
+) -> None:
+    first = _start_turn(
+        conversation_db,
+        "conversation-summary",
+        request_id="request-1",
+        shopper_text="I need a wedding outfit.",
+    ).json()
+    assert (
+        _finalize_turn(
+            conversation_db,
+            "conversation-summary",
+            first["turn_id"],
+            request_id="request-1",
+            attempt_id=first["attempt_id"],
+            assistant_text="Here are two dress directions.",
+        ).status_code
+        == 200
+    )
+    second = _start_turn(
+        conversation_db,
+        "conversation-summary",
+        request_id="request-2",
+        shopper_text="The wedding is in New York.",
+    ).json()
+    summary_advance = {
+        "expected_projection_version": second["projection"]["version"],
+        "summary_text": "The shopper is assembling a wedding outfit.",
+        "summary_through_sequence": 1,
+    }
+    output = {
+        "product_results": [
+            {
+                "product_id": "dress-1",
+                "display_name": "Satin Dress",
+                "category": "dresses",
+            }
+        ],
+        "retrieved": {},
+        "agent_diagnostics": {},
+    }
+
+    finalized = _finalize_turn(
+        conversation_db,
+        "conversation-summary",
+        second["turn_id"],
+        request_id="request-2",
+        attempt_id=second["attempt_id"],
+        assistant_text="I will plan around New York.",
+        output=output,
+        summary_advance=summary_advance,
+    )
+    replay = _finalize_turn(
+        conversation_db,
+        "conversation-summary",
+        second["turn_id"],
+        request_id="request-2",
+        attempt_id=second["attempt_id"],
+        assistant_text="I will plan around New York.",
+        output=output,
+        summary_advance=summary_advance,
+    )
+    changed_replay = _finalize_turn(
+        conversation_db,
+        "conversation-summary",
+        second["turn_id"],
+        request_id="request-2",
+        attempt_id=second["attempt_id"],
+        assistant_text="I will plan around New York.",
+        output=output,
+        summary_advance={
+            **summary_advance,
+            "summary_text": "A different summary.",
+        },
+    )
+    third = _start_turn(
+        conversation_db,
+        "conversation-summary",
+        request_id="request-3",
+        shopper_text="Compare those dresses.",
+    )
+
+    assert finalized.status_code == 200
+    assert replay.json() == {**finalized.json(), "replayed": True}
+    assert changed_replay.status_code == 409
+    assert third.status_code == 200
+    assert third.json()["projection"]["summary_text"] == (
+        "The shopper is assembling a wedding outfit."
+    )
+    assert third.json()["projection"]["summary_through_sequence"] == 1
+    assert [turn["sequence"] for turn in third.json()["recent_turns"]] == [2]
+    assert (
+        third.json()["projection"]["product_reference_index"][0]["products"][0]["ref"]
+        == "dress-1"
+    )
+    with memory_main.SessionLocal() as db:
+        projection = db.query(memory_main.ConversationProjection).one()
+        assert projection.version == 2
+        assert projection.last_turn_id == second["turn_id"]
+
+
+def test_invalid_summary_advance_rolls_back_the_complete_finalize(
+    conversation_db: TestClient,
+) -> None:
+    first = _start_turn(
+        conversation_db,
+        "conversation-summary-conflict",
+        request_id="request-1",
+    ).json()
+    assert (
+        _finalize_turn(
+            conversation_db,
+            "conversation-summary-conflict",
+            first["turn_id"],
+            request_id="request-1",
+            attempt_id=first["attempt_id"],
+        ).status_code
+        == 200
+    )
+    second = _start_turn(
+        conversation_db,
+        "conversation-summary-conflict",
+        request_id="request-2",
+    ).json()
+    event = {
+        "event_key": "detail-1",
+        "event_type": "product_detail_confirmed",
+        "source_kind": "catalog",
+        "source_ref": "dress-1",
+        "payload": {"material": "satin"},
+    }
+
+    wrong_version = _finalize_turn(
+        conversation_db,
+        "conversation-summary-conflict",
+        second["turn_id"],
+        request_id="request-2",
+        attempt_id=second["attempt_id"],
+        events=[event],
+        summary_advance={
+            "expected_projection_version": 999,
+            "summary_text": "Summary.",
+            "summary_through_sequence": 1,
+        },
+    )
+    future_boundary = _finalize_turn(
+        conversation_db,
+        "conversation-summary-conflict",
+        second["turn_id"],
+        request_id="request-2",
+        attempt_id=second["attempt_id"],
+        events=[event],
+        summary_advance={
+            "expected_projection_version": second["projection"]["version"],
+            "summary_text": "Summary.",
+            "summary_through_sequence": second["sequence"],
+        },
+    )
+
+    assert wrong_version.status_code == 409
+    assert wrong_version.json()["detail"] == "projection_version_conflict"
+    assert future_boundary.status_code == 409
+    assert future_boundary.json()["detail"] == "summary_boundary_conflict"
+    with memory_main.SessionLocal() as db:
+        turn = (
+            db.query(memory_main.ConversationTurn)
+            .filter_by(turn_id=second["turn_id"])
+            .one()
+        )
+        projection = db.query(memory_main.ConversationProjection).one()
+        assert turn.status == "started"
+        assert turn.finalize_digest is None
+        assert turn.output_json is None
+        assert db.query(memory_main.ConversationEvent).count() == 0
+        assert projection.version == 1
+        assert projection.summary_text == ""
+        assert projection.summary_through_sequence == 0
+
+    completed_without_advance = _finalize_turn(
+        conversation_db,
+        "conversation-summary-conflict",
+        second["turn_id"],
+        request_id="request-2",
+        attempt_id=second["attempt_id"],
+        events=[event],
+    )
+    assert completed_without_advance.status_code == 200
+
+
+def test_summary_raw_tail_contains_only_later_context_eligible_turns(
+    conversation_db: TestClient,
+) -> None:
+    first = _start_turn(
+        conversation_db,
+        "conversation-summary-tail",
+        request_id="request-1",
+    ).json()
+    _finalize_turn(
+        conversation_db,
+        "conversation-summary-tail",
+        first["turn_id"],
+        request_id="request-1",
+        attempt_id=first["attempt_id"],
+    )
+    blocked = _start_turn(
+        conversation_db,
+        "conversation-summary-tail",
+        request_id="request-2",
+    ).json()
+    _finalize_turn(
+        conversation_db,
+        "conversation-summary-tail",
+        blocked["turn_id"],
+        request_id="request-2",
+        attempt_id=blocked["attempt_id"],
+        assistant_text="Blocked response.",
+        status="blocked",
+    )
+    failed = _start_turn(
+        conversation_db,
+        "conversation-summary-tail",
+        request_id="request-3",
+    ).json()
+    _finalize_turn(
+        conversation_db,
+        "conversation-summary-tail",
+        failed["turn_id"],
+        request_id="request-3",
+        attempt_id=failed["attempt_id"],
+        assistant_text="Safe failed response.",
+        status="failed",
+    )
+    fourth = _start_turn(
+        conversation_db,
+        "conversation-summary-tail",
+        request_id="request-4",
+    ).json()
+    finalized = _finalize_turn(
+        conversation_db,
+        "conversation-summary-tail",
+        fourth["turn_id"],
+        request_id="request-4",
+        attempt_id=fourth["attempt_id"],
+        summary_advance={
+            "expected_projection_version": fourth["projection"]["version"],
+            "summary_text": "The first turn is summarized.",
+            "summary_through_sequence": 1,
+        },
+    )
+    next_turn = _start_turn(
+        conversation_db,
+        "conversation-summary-tail",
+        request_id="request-5",
+    )
+
+    assert finalized.status_code == 200
+    assert [
+        (turn["sequence"], turn["status"]) for turn in next_turn.json()["recent_turns"]
+    ] == [(3, "failed"), (4, "completed")]
 
 
 def test_selected_profile_is_bound_and_returns_authoritative_context(
@@ -1271,7 +1539,7 @@ def test_start_abandons_stale_other_request_and_advances_sequence(
 
     assert replacement.status_code == 200
     assert replacement.json()["sequence"] == 2
-    assert replacement.json()["recent_turns"][0]["status"] == "abandoned"
+    assert replacement.json()["recent_turns"] == []
     assert superseded_retry.status_code == 409
     assert superseded_retry.json()["detail"] == "turn_superseded"
     with memory_main.SessionLocal() as db:
@@ -1466,6 +1734,36 @@ def test_versioned_migrations_upgrade_legacy_schema_once_without_data_loss(
                 "'legacy-digest', 7, 'Remember this', 'completed', '{}', 1.0)"
             )
         )
+        connection.execute(
+            text(
+                "CREATE TABLE conversation_projection ("
+                "conversation_id TEXT PRIMARY KEY, version INTEGER NOT NULL, "
+                "active_anchors_json TEXT NOT NULL, "
+                "effective_preferences_json TEXT NOT NULL, "
+                "product_reference_index_json TEXT NOT NULL, "
+                "last_turn_id TEXT)"
+            )
+        )
+        connection.execute(
+            text(
+                "INSERT INTO conversation_projection ("
+                "conversation_id, version, active_anchors_json, "
+                "effective_preferences_json, product_reference_index_json, "
+                "last_turn_id"
+                ") VALUES ("
+                ":conversation_id, :version, :active_anchors, "
+                ":effective_preferences, :product_reference_index, "
+                ":last_turn_id)"
+            ),
+            {
+                "conversation_id": "legacy-conversation",
+                "version": 3,
+                "active_anchors": '["anchor"]',
+                "effective_preferences": ('[{"field":"color","value":"blue"}]'),
+                "product_reference_index": '[{"turn_seq":1}]',
+                "last_turn_id": "legacy-turn",
+            },
+        )
     monkeypatch.setattr(memory_main, "engine", legacy_engine)
     monkeypatch.setattr(
         memory_main,
@@ -1543,8 +1841,17 @@ def test_versioned_migrations_upgrade_legacy_schema_once_without_data_loss(
                 text("SELECT name FROM sqlite_master WHERE type = 'table'")
             ).scalars()
         )
+        projection_row = connection.execute(
+            text(
+                "SELECT version, summary_text, summary_through_sequence, "
+                "active_anchors_json, effective_preferences_json, "
+                "product_reference_index_json, last_turn_id "
+                "FROM conversation_projection "
+                "WHERE conversation_id = 'legacy-conversation'"
+            )
+        ).one()
 
-    assert versions == [1, 2, 3, 4, 5, 6, 7]
+    assert versions == [1, 2, 3, 4, 5, 6, 7, 8]
     assert row[0] == "Legacy Bag"
     assert len(row[1]) == 32
     assert row[2:] == (None, None)
@@ -1561,6 +1868,15 @@ def test_versioned_migrations_upgrade_legacy_schema_once_without_data_loss(
     assert profile_foreign_key["to"] == "shopper_profile_id"
     assert profile_foreign_key["on_delete"] == "RESTRICT"
     assert profile_foreign_key["on_update"] == "RESTRICT"
+    assert projection_row == (
+        3,
+        "",
+        0,
+        '["anchor"]',
+        '[{"field":"color","value":"blue"}]',
+        '[{"turn_seq":1}]',
+        "legacy-turn",
+    )
     assert {
         "conversation_turns",
         "conversation_events",
@@ -1626,6 +1942,6 @@ def test_file_database_reopens_with_sqlite_safety_settings(
             connection.execute(
                 text("SELECT COUNT(*) FROM schema_migrations")
             ).scalar_one()
-            == 7
+            == 8
         )
     reopened_engine.dispose()

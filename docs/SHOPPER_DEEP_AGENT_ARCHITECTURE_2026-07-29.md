@@ -154,6 +154,8 @@ search.
 
 At turn start, the memory boundary currently supplies:
 
+- a versioned rolling-summary storage pair, currently empty because compaction
+  is not connected;
 - bounded, context-eligible raw shopper/assistant turns;
 - the selected representative-shopper context, or no context for Guest;
 - the current authoritative cart;
@@ -164,7 +166,7 @@ The raw turns are bounded first by the memory service's turn limit and again by
 the chain server's character limit. Blocked and abandoned turns are durable for
 audit or replay semantics but are excluded from the model context.
 
-The serving path does **not** currently persist or rehydrate:
+The serving path does **not** currently populate or rehydrate:
 
 - a conversation-level semantic summary;
 - the complete prior tool transcript or model reasoning;
@@ -182,6 +184,11 @@ Deep Agents' internal summary therefore does not cross the durable turn
 boundary. The legacy `summarizer.py` path is not part of the serving runtime.
 
 ## Durable Cross-Turn Context Plan — Agreed 2026-07-30
+
+Implementation status on 2026-07-30: Slice 1 is built. Migration 8, the memory
+wire contract, finalize-time compare-and-swap, and strictly post-watermark raw
+reads establish the durable summary boundary. The runtime intentionally neither
+generates nor renders summary text yet. Slices 2–5 remain planned.
 
 The failed third turn should be corrected at the general continuity boundary,
 not with a new weather or comparison workflow. The serving Deep Agent remains
@@ -214,15 +221,14 @@ The planned persistence additions are deliberately small:
 
 ### Rolling summary contract
 
-The memory-owned conversation projection should add:
+The memory-owned conversation projection now stores:
 
 - `summary_text`: one bounded semantic summary;
 - `summary_through_sequence`: the last context-eligible turn represented by
   that summary; and
-- a projection version used for compare-and-swap finalization.
+- the existing projection version used for compare-and-swap finalization.
 
-The existing projection version may satisfy the third requirement; a second
-independent version is not required unless implementation proves it necessary.
+No second independent version was necessary.
 
 The non-overlap invariant is:
 
@@ -359,10 +365,11 @@ it. This plan does not extend that field into broader per-turn state.
 Each slice stops after its focused proof and ships code and documentation at
 the same breadth:
 
-1. **Durable summary boundary:** add the projection fields and memory wire
-   contract, including versioned updates and the non-overlap retrieval
-   invariant. Prove no missing or duplicated sequences, exact retry, and
-   failed-compaction preservation without calling a hosted model.
+1. **Durable summary boundary — built:** migration 8 adds the projection fields
+   and memory wire contract, including versioned atomic updates and the
+   non-overlap retrieval invariant. Focused offline tests prove accepted
+   advancement, exact retry, conflict rollback, migration preservation, and
+   strictly later context-eligible raw reads without calling a hosted model.
 2. **Rolling compaction and hydration:** add the bounded summarizer call and
    render summary and raw tail as separate prompt sections. Prove that
    compaction sees only the prior summary plus the turns being folded, and that

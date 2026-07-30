@@ -1247,6 +1247,8 @@ be distinguished safely.
   "previous_selected_skill_names": ["outfit-styling"],
   "projection": {
     "version": 3,
+    "summary_text": "The shopper is assembling a semi-formal wedding outfit.",
+    "summary_through_sequence": 2,
     "active_anchors": [],
     "effective_preferences": [],
     "product_reference_index": [
@@ -1297,6 +1299,13 @@ while the conversation has an active turn returns HTTP 409. An unknown
 `shopper_profile_id` returns HTTP 404. These failures insert no new turn and
 prevent model and shopping-tool work.
 
+`projection.summary_text` and `projection.summary_through_sequence` form one
+versioned pair: both are empty/zero before the first accepted compaction and
+both are set afterward. `recent_turns` contains only context-eligible completed
+or failed turns with assistant text whose sequence is strictly greater than the
+watermark. The fields are a durable storage boundary in this slice; the chain
+server does not yet populate or render the summary.
+
 At memory-service startup and atomically before each new turn start, turns left
 in `started` longer than `MEMORY_TURN_ABANDON_SECONDS` are changed to
 `abandoned`. An exact retry may reopen an abandoned turn only while it is the
@@ -1324,6 +1333,11 @@ using it are rejected with HTTP 422.
   "status": "completed",
   "termination_reason": "completed",
   "events": [],
+  "summary_advance": {
+    "expected_projection_version": 3,
+    "summary_text": "The shopper is assembling a semi-formal wedding outfit.",
+    "summary_through_sequence": 2
+  },
   "output": {
     "product_results": [],
     "retrieved": {},
@@ -1358,8 +1372,20 @@ deletes the request-scoped checkpoint identified by that collision-safe
 conversation/request pair. Different final data, a
 request-ID mismatch, duplicate event keys, or an invalid status transition also
 returns a conflict and rolls back the transaction. Event envelopes are stored
-in logical order. Active anchors, preferences, and selections remain reserved;
-only presented-product candidate sets currently update a projection.
+in logical order. Active anchors, preferences, and selections remain reserved.
+Presented-product candidate sets rebuild the product projection, and an
+optional accepted summary advance updates the summary projection.
+
+`summary_advance` is optional. When supplied, memory accepts it only when
+`expected_projection_version` matches the start snapshot, the watermark moves
+strictly forward to a prior context-eligible turn, and it remains before the
+turn being finalized. The assistant output, events, replay digest, product
+index rebuild, summary text, watermark, projection version, and last-turn
+pointer commit atomically. A stale version returns
+`projection_version_conflict`; an invalid boundary returns
+`summary_boundary_conflict`. Either conflict leaves the whole turn started and
+the projection unchanged. Exact replay includes the same summary advance in
+the finalize digest and does not apply it twice.
 
 ### Memory Retriever POST `/conversations/{conversation_id}/products/resolve`
 

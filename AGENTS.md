@@ -19,7 +19,7 @@ Top-level orchestration is via `docker-compose.yaml`; optional local NIM model c
 1. UI posts to `/api/query/stream` (nginx proxy on port `3000`).
 2. Nginx routes `/api/*` to `chain-server:8009`.
 3. Chain server request flow:
-   - `DeepAgentsRuntime` first starts a durable turn in the memory service, which returns bounded model-context-eligible raw turns, the prior turn's selected skill names, the authoritative cart, and an optional server-resolved representative-shopper snapshot. Blocked turns remain durable and exactly replayable but are excluded from both the service projection and chain prompt formatter. Graph working state uses a request-scoped pair of `conversation_id` and `request_id`. A selected profile ID is bound immutably to that conversation and renders one compact current-turn context block containing only type, behavior, and saved ZIP. Profile precedence and non-authority rules are also present only for selected-profile turns; Guest receives neither the block nor profile-specific prompt rules. The block is soft guidance: current explicit instructions and recent explicit preferences take precedence, and it cannot establish budget, product constraints or facts, cart intent, skill selection, or tool grants. Unknown caller fields remain backward-compatibly ignored, and caller-supplied persona objects are never injected.
+   - `DeepAgentsRuntime` first starts a durable turn in the memory service, which returns a versioned rolling-summary storage boundary, bounded model-context-eligible raw turns strictly after its through-sequence watermark, the prior turn's selected skill names, the authoritative cart, and an optional server-resolved representative-shopper snapshot. The serving runtime does not yet populate or render the summary. Blocked and abandoned turns remain durable and exactly replayable but are excluded from the raw context projection; only completed or failed turns with assistant text are eligible. Graph working state uses a request-scoped pair of `conversation_id` and `request_id`. A selected profile ID is bound immutably to that conversation and renders one compact current-turn context block containing only type, behavior, and saved ZIP. Profile precedence and non-authority rules are also present only for selected-profile turns; Guest receives neither the block nor profile-specific prompt rules. The block is soft guidance: current explicit instructions and recent explicit preferences take precedence, and it cannot establish budget, product constraints or facts, cart intent, skill selection, or tool grants. Unknown caller fields remain backward-compatibly ignored, and caller-supplied persona objects are never injected.
    - Optional input guardrails run before model/tool work; attached media is analyzed through the configured perception client.
    - Deep Agents graph execution has a configurable 45-second default deadline. A timeout captures bounded partial graph messages, clears unsent products, finalizes the durable turn as failed, and deletes the request checkpoint only after that finalization succeeds.
    - Every turn begins with a required model step that semantically selects the smallest applicable set from six registered shopper skills. The latest durable selected names are supplied as a read-only continuity hint; they never authorize tools or replace the fresh selection. Product work uses exactly one primary procedure: product discovery or outfit styling. Budget shopping is a modifier only when the shopper states a budget. Event context is an additive modifier used only beside outfit styling; it alone grants the read-only weather tool and never suppresses non-weather tools from the selected grant union. Select it whenever an event destination or venue is stated, a supported forecast would materially change event guidance, or the response would otherwise ask about or branch on missing destination or venue context. Whenever event context is selected, that same activation call must bind `event_context_next_question`; it is omitted otherwise. The model chooses it from the current and recent shopper conversation: `event_location` only when destination is missing and material, `event_venue` only after destination is established when venue or setting is missing and material, `event_date` only after destination and any material venue are established when live weather is enabled and material and a bounded date is neither established nor explicitly unavailable, and `none` otherwise. An explicitly shopper-stated outdoor patio, beach, garden, rooftop, or open-air setting makes enabled live weather material, so destination plus that setting but no bounded date selects `event_date`. This remains model-owned semantic judgment, not deterministic keyword or alias parsing. The accepted activation value authorizes the response's only event-context follow-up; the server does not infer a question from weather configuration or missing context. Event-context gating may narrow only weather availability; product, cart, and policy work continue under the normal selected skills and tool grants. Cart and policy requests may use their standalone skills. An invalid composition or next-question value receives its typed reason and one correction attempt; a second invalid selection ends with a deterministic clarification and runs no shopping tool. Multiple activation calls in one response execute none and clarify immediately. The runtime injects the complete selected files and exposes only the union of their declared `tools_granted`; dispatch independently rechecks the selected skills, grant union, and immutable tool policy. Pre-activation, same-batch, and ungranted shopping calls are execution-blocked.
@@ -256,6 +256,12 @@ Key env vars:
   left by an earlier local schema. Authoritative turn, event, projection, cart,
   and profile data are preserved, and the one-started-turn partial unique index
   is restored; do not delete the database to resolve that upgrade.
+- Startup migration 8 adds the rolling-summary text and through-sequence
+  watermark to each conversation projection. An optional finalize-time
+  compare-and-swap update advances both atomically with output, events, the
+  product index, and replay identity. Raw context reads contain only eligible
+  turns after the watermark. The serving runtime does not populate or render
+  these fields until the compaction slice.
 - The same SQLite database owns five immutable representative shoppers loaded
   from `shared/configs/memory_retriever/shopper_profiles.json`. The bundled UI
   sends only the selected ID. Turn start resolves it transactionally, binds it
@@ -288,10 +294,13 @@ Key env vars:
   stale-turn abandonment setting for this live execution deadline.
 - Durable raw turns contain shopper/assistant text, the nullable representative
   profile binding, selected skill names, bounded replay, and ordered event
-  envelopes. They do not store the rendered shopper-context block, raw media,
-  model reasoning, or the complete graph/tool transcript. Presented-product
-  events and deterministic historical resolution are implemented; active
-  anchors and effective preferences remain reserved and unused.
+  envelopes. The conversation projection also owns a storage-only rolling
+  summary pair; start returns only completed/failed raw turns with assistant
+  text whose sequence is strictly later than its watermark. They do not store
+  the rendered shopper-context block, raw media, model reasoning, or the
+  complete graph/tool transcript. Presented-product events and deterministic
+  historical resolution are implemented; active anchors and effective
+  preferences remain reserved and unused.
 - The memory API has no service authentication. Standard Compose limits its
   host mapping to `127.0.0.1:8011`; keep it on an internal network in other
   deployments. Detailed agent diagnostics remain internal and public query

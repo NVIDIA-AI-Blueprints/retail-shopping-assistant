@@ -12,6 +12,7 @@ from chain_server.src.conversation_memory import (
     ConversationEvent,
     ConversationMemoryClient,
     ConversationMemoryError,
+    ConversationSummaryAdvance,
     RecentConversationTurn,
     TurnReplayOutput,
     build_request_digest,
@@ -60,12 +61,12 @@ def _start_payload() -> dict[str, Any]:
     return {
         "turn_id": "turn-2",
         "attempt_id": "attempt-2",
-        "sequence": 2,
+        "sequence": 3,
         "replayed": False,
         "status": "started",
         "recent_turns": [
             {
-                "sequence": 1,
+                "sequence": 2,
                 "shopper_text": "Show me bags",
                 "assistant_text": "Here are two bags.",
                 "status": "completed",
@@ -75,6 +76,8 @@ def _start_payload() -> dict[str, Any]:
         "shopper_context": None,
         "projection": {
             "version": 1,
+            "summary_text": "The shopper is assembling a wedding outfit.",
+            "summary_through_sequence": 1,
             "active_anchors": [],
             "effective_preferences": [{"field": "color", "value": "blue"}],
             "product_reference_index": [
@@ -268,6 +271,37 @@ def test_guest_start_rejects_an_unrequested_shopper_context() -> None:
     assert caught.value.code == "shopper_context_invalid"
 
 
+@pytest.mark.parametrize(
+    ("summary_text", "summary_through_sequence"),
+    [
+        ("Summary without a boundary.", 0),
+        ("", 1),
+        (" Summary with outer whitespace.", 1),
+    ],
+)
+def test_start_rejects_an_inconsistent_summary_projection(
+    summary_text: str,
+    summary_through_sequence: int,
+) -> None:
+    payload = _start_payload()
+    payload["projection"]["summary_text"] = summary_text
+    payload["projection"]["summary_through_sequence"] = summary_through_sequence
+    client = ConversationMemoryClient(
+        "http://memory",
+        session=FakeSession(FakeResponse(payload)),
+    )
+
+    with pytest.raises(ConversationMemoryError) as caught:
+        client.start_turn(
+            "conversation-a",
+            request_id="request-a",
+            shopper_text="hello",
+            cart_user_id=17,
+        )
+
+    assert caught.value.code == "memory_response_invalid"
+
+
 def test_start_result_restores_finalized_replay_output() -> None:
     payload = _start_payload()
     payload.update(
@@ -383,6 +417,11 @@ def test_finalize_turn_posts_the_typed_event_contract() -> None:
         termination_reason="completed",
         events=[event],
         output=output,
+        summary_advance=ConversationSummaryAdvance(
+            expected_projection_version=1,
+            summary_text="The shopper is comparing wedding outfits.",
+            summary_through_sequence=1,
+        ),
     )
 
     assert result.status == "completed"
@@ -403,6 +442,37 @@ def test_finalize_turn_posts_the_typed_event_contract() -> None:
     assert call["json"]["attempt_id"] == "attempt-2"
     assert call["json"]["output"]["retrieved"] == {"Cobalt Bag": "/images/bag-1.png"}
     assert call["json"]["output"]["selected_skill_names"] == ["outfit-styling"]
+    assert call["json"]["summary_advance"] == {
+        "expected_projection_version": 1,
+        "summary_text": "The shopper is comparing wedding outfits.",
+        "summary_through_sequence": 1,
+    }
+
+
+def test_finalize_turn_omits_summary_advance_by_default() -> None:
+    response = {
+        "turn_id": "turn-2",
+        "attempt_id": "attempt-2",
+        "sequence": 2,
+        "replayed": False,
+        "status": "completed",
+        "assistant_text": "Here it is.",
+        "termination_reason": "completed",
+    }
+    session = FakeSession(FakeResponse(response))
+    client = ConversationMemoryClient("http://memory", session=session)
+
+    client.finalize_turn(
+        "conversation-a",
+        "turn-2",
+        request_id="request-2",
+        attempt_id="attempt-2",
+        assistant_text="Here it is.",
+        status="completed",
+        termination_reason="completed",
+    )
+
+    assert "summary_advance" not in session.calls[0]["json"]
 
 
 def test_context_formatter_preserves_separate_speaker_lines() -> None:
@@ -574,6 +644,30 @@ def test_superseded_turn_conflicts_are_distinct(detail: str) -> None:
 
     assert caught.value.code == detail
     assert caught.value.retryable is False
+
+
+@pytest.mark.parametrize(
+    "detail",
+    ["projection_version_conflict", "summary_boundary_conflict"],
+)
+def test_summary_projection_conflicts_are_distinct_and_retryable(
+    detail: str,
+) -> None:
+    client = ConversationMemoryClient(
+        "http://memory",
+        session=FakeSession(FakeResponse({"detail": detail}, status_code=409)),
+    )
+
+    with pytest.raises(ConversationMemoryError) as caught:
+        client.start_turn(
+            "conversation-a",
+            request_id="request-a",
+            shopper_text="hello",
+            cart_user_id=17,
+        )
+
+    assert caught.value.code == detail
+    assert caught.value.retryable is True
 
 
 def test_transport_and_invalid_response_failures_are_distinct() -> None:

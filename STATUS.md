@@ -10,13 +10,18 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   `docs/SHOPPER_DEEP_AGENT_ARCHITECTURE_2026-07-29.md` records the agreed
   durable cross-turn context correction. It keeps the request-scoped Deep
   Agent, current profile/cart/product-ledger authorities, and fresh skill
-  activation. The memory-owned plan adds one rolling semantic summary with a
-  through-sequence watermark, a strictly non-overlapping bounded raw-turn tail,
-  and a small bounded projection of valid typed receipts rather than historical
-  tool transcripts. Summary prose remains semantic continuity only; exact
-  product, cart, and weather claims still require their authoritative state or
-  scoped typed evidence. This is explicitly planned and not yet implemented.
-  It replaces the paused event-action correction direction; no event state
+  activation. Slice 1 is implemented: migration 8 adds one rolling-summary text
+  and through-sequence watermark to the conversation projection; turn start
+  returns only context-eligible raw turns strictly after that watermark; and an
+  optional finalize-time compare-and-swap advances the pair atomically with
+  output, events, the product index, replay identity, projection version, and
+  last-turn pointer. Exact retry does not reapply it, while a stale version or
+  invalid boundary rolls back the whole finalization. The runtime deliberately
+  does not yet populate or render the summary. Rolling compaction/hydration and
+  the bounded valid-receipt projection remain later slices. Summary prose will
+  remain semantic continuity only; exact product, cart, and weather claims
+  still require their authoritative state or scoped typed evidence. This
+  direction replaces the paused event-action correction; no event state
   machine, comparison skill, intent router, conversation-long graph checkpoint,
   or unbounded tool history is planned;
 - the dated
@@ -210,6 +215,12 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   turns, events, projections, carts, and profiles while allowing current
   durable-turn inserts to proceed and restores the unique one-started-turn
   index;
+- startup migration 8 adds the durable rolling-summary text and
+  through-sequence watermark with empty/zero defaults for existing projections.
+  Turn start returns only completed/failed raw turns with assistant text after
+  that watermark. An optional summary advance uses the projection version as a
+  compare-and-swap and commits atomically with finalization; the serving runtime
+  does not generate or render it yet;
 - a single memory-service SQLite replica now starts each turn durably before
   guardrail/model/tool work, returns bounded model-context-eligible raw turns
   plus the authoritative cart, and finalizes every completed, blocked, or

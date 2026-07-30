@@ -211,7 +211,10 @@ def test_event_context_is_a_narrow_weather_styling_modifier() -> None:
     assert frontmatter["role"] == "modifier"
     assert frontmatter["tools_granted"] == ["get_weather_forecast_tool"]
     assert "only with `outfit-styling`" in body
-    assert "an explicit destination overrides saved zip" in normalized
+    assert (
+        "an explicit current-turn destination overrides saved zip"
+        in normalized
+    )
     assert "cancun does not mean beach" in normalized
     assert "ask at most one short question, never a questionnaire" in normalized
     assert "`event_location` only when destination is missing" in normalized
@@ -231,16 +234,20 @@ def test_event_context_is_a_narrow_weather_styling_modifier() -> None:
     assert "invent hypothetical exceptions" in normalized
     assert "context fulfillment, not a new catalog request" in normalized
     assert "preserve prior candidates and do not search again" in normalized
-    assert "product tools granted by other selected skills remain available" in (
-        normalized
-    )
-    assert "a weather attempt does not close the tool loop" in normalized
-    assert "activation may also bind one listed durable weather receipt" in (
-        normalized
-    )
+    assert "runs no non-weather business tool" in normalized
+    assert "a same-turn comparison, refinement, replacement" in normalized
+    assert "follows the active primary or standalone skill normally" in normalized
+    assert "the forecast tool accepts no arguments" in normalized
+    assert "solely from the effective typed scope" in normalized
+    assert "requires one forecast call before prose" in normalized
+    assert "`weather_refresh=true` only when the shopper explicitly" in normalized
+    assert "comparisons and other turns leave it false" in normalized
+    assert "the runtime blocks weather" in normalized
+    assert "a text-only model response cannot bypass a required call" in normalized
+    assert "activation may bind one listed durable receipt" in normalized
     assert "do not call weather again" in normalized
-    assert "call `get_weather_forecast_tool` once before answering" in normalized
-    assert "a typed success or failure completes the attempt" in normalized
+    assert "call `get_weather_forecast_tool` at most once" in normalized
+    assert "before catalog search when both are needed" in normalized
     assert "no current non-weather business-tool activity exists" in normalized
     assert "a current typed weather outcome" in normalized
     assert "separate empty-draft fallback" in normalized
@@ -262,17 +269,19 @@ def test_event_context_is_a_narrow_weather_styling_modifier() -> None:
     assert "`springfield, tx`" in normalized
     assert "never derive a representative zip" in normalized
     assert "add an unstated numeric component" in normalized
-    assert "call `get_weather_forecast_tool` at most once in a turn" in normalized
     assert (
-        "use `confirmed_saved_zip` only after explicit usual-area confirmation"
+        "the server releases saved zip to weather only through a narrow "
+        "confirmation gate"
     ) in normalized
     assert (
-        "use `shopper_provided_location` with the exact shopper phrase in "
-        "`location`"
+        "a current exact zip, question, negation, uncertainty, or other "
+        "location-override cue rejects saved mode"
     ) in normalized
-    assert "supply an exact iso event date or complete inclusive range" in normalized
-    assert "use `relative_date=next_week`" in normalized
-    assert "next calendar monday-through-sunday window" in normalized
+    assert 'resolved exact date for "<weekday> next week"' in normalized
+    assert (
+        'monday-through-sunday range for bare "next week"'
+        in normalized
+    )
     assert "visual crossing resolves the shopper's phrase" in normalized
     assert "not as proof of shopper intent" in normalized
     assert "make no weather claim" in normalized
@@ -304,9 +313,12 @@ def test_event_context_is_a_narrow_weather_styling_modifier() -> None:
     assert "change warning" in response_guidance
     assert "weather cannot prove product performance" in response_guidance
     assert "create an unstated constraint" in response_guidance
-    assert "generic advice is possible" in frontmatter["description"]
+    description = frontmatter["description"].lower()
+    assert "occasions, trips, and direct requests" in description
+    assert "weather-appropriate clothing" in description
+    assert "keep it active through that styling subject" in description
     assert "do not use for location-independent styling" in (
-        frontmatter["description"].lower()
+        description
     )
     assert "do not echo its digits" in normalized
     assert "get_weather_forecast_tool" in body

@@ -48,26 +48,38 @@ Every shopper turn uses two model phases inside the same Deep Agents run:
    parallel tool calls. The model selects the smallest registered skill set
    that semantically covers the complete current intent. Whenever it selects
    `event-context`, the same call must bind
-   `event_context_next_question`; that field is omitted otherwise. The model
-   selects the latter from semantic conversation plus the typed current scope:
+   `event_context_next_question`; that field is omitted otherwise. Before nested
+   validation, the runtime discards every event-context question, scope,
+   refresh, and receipt field from an activation that did not select
+   `event-context`. Ungranted weather controls therefore cannot mutate scope,
+   expose weather, reject an otherwise valid shopping activation, or consume
+   its correction. The model selects the accepted question from semantic
+   conversation plus the typed current scope:
    `event_location` only when destination is missing and material,
    `event_venue` only after destination is established when venue or setting is
    missing and material, `event_date` when live weather is material and the
-   typed scope lacks a bounded window, and `none` otherwise. The same call may
-   submit one `weather_scope`: `continue` patches the same styling subject and
-   `replace` clears omitted fields for a different subject. Deterministic
-   compilation accepts only current-turn location/date authority; supplying a
-   location under `continue` when the scope already has one clears the retained
-   date unless the same turn supplies a replacement window. Prior raw turns and summary
-   prose never become provider arguments.
+   typed scope lacks a bounded window, and `none` otherwise. For an existing
+   scope, a separate request-local tools-disabled resolver first compares the
+   current query with the exact shopper turns named by the scope's location,
+   date, and pending-question source sequences and must emit one forced typed
+   control call. It is neither a business tool nor a subagent. The activation
+   call may then submit one atomic
+   `weather_scope` that copies the revision and selects `retain`, `set`, or
+   `clear` independently for location and date. Deterministic compilation
+   accepts `set` only from current-turn authority. Invalid, unavailable,
+   timed-out, or unclear resolver output fails closed. Prior raw turns and
+   summary prose never become provider arguments.
    An explicitly shopper-stated outdoor patio, beach, garden,
    rooftop, or open-air setting makes enabled live weather material; with
    destination and that setting but no bounded date, select `event_date`.
    Skill selection, location, venue, materiality, and intent remain model-owned
    semantic guidance. The dynamic enum is typed argument consistency, not an
    intent router or keyword routing layer. Only the value from a successfully
-   accepted activation authorizes
-   an event-context follow-up. The same call may optionally bind one listed
+   accepted activation authorizes an event-context follow-up. When
+   `event-context` is absent, a pre-validation capability boundary removes all
+   question, scope, refresh, and receipt controls before nested weather
+   validation; they cannot mutate scope, grant weather, or reject the valid
+   primary activation. The same call may optionally bind one listed
    `weather_receipt_id`, but only with `event-context`,
    `event_context_next_question=none`, no scope update, no refresh request, and
    exact equality to the effective location/date scope. A current correction
@@ -99,11 +111,13 @@ activate more than one skill, but `product-discovery` and `outfit-styling` are
 alternative primary procedures and must not be selected together.
 `budget-shopping` may accompany the applicable primary procedure only when the
 shopper states a budget. `event-context` may accompany only `outfit-styling`,
-and is selected whenever event destination or venue context is stated or the
-response would otherwise ask about or branch on missing destination or venue
-context, or when a supported forecast would materially change event guidance.
-Generic occasion advice is not a reason to omit it. It alone grants the
-read-only weather tool. Its grant combines additively with the tools granted by
+and is selected only when physical context is part of the current styling
+subject: supplied or changed destination/date/venue/weather context, a direct
+weather-aware request, an answer to its source-bound pending question, or an
+explicit continuation of that established event, trip, or weather-planning
+subject. Hypothetical relevance does not activate it for otherwise
+location-independent styling. It alone grants the read-only weather tool. Its
+grant combines additively with the tools granted by
 `outfit-styling` and any selected standalone skill. Event context never revokes
 or narrows product, cart, or policy tools; only its weather capability may be
 hidden or execution-blocked when the forecast prerequisites are not
@@ -293,10 +307,20 @@ forecast context to occasion-led styling.
   exactly with this skill and is
   normally one of `event_location`, `event_venue`, `event_date`, or `none`
   under the semantic conditions above; it is omitted without this skill.
-  `continue` preserves omitted authority only for the same styling subject;
-  supplying a location under `continue` when the scope already has one clears
-  the older date unless the current turn supplies one. `replace` clears omitted authority for a
-  different subject. A receipt may be bound only when the
+  The scope copies the current revision and resolves both components explicitly
+  with `retain`, `set`, or `clear`. A selected missing location/date question is
+  persisted as the typed pending binding and stamped at finalization with its
+  originating turn ID and sequence. Intervening product work neither answers
+  nor repeats that already-asked question. Only an `answers_pending` relation
+  that echoes the exact opaque pending source-turn handle may authorize
+  retaining the counterpart, and activation must set its named component.
+  That relation means the reply answers only the pending question; a reply
+  that also changes or withdraws the opposite component is `same_subject`.
+  Runtime and memory carry and verify the exact handle through a server-only
+  completion control; the handle is not part of model-authored `weather_scope`.
+  Unavailable or unclear semantic
+  resolution clears every retain and blocks weather. A receipt may be bound
+  only when the
   question is `none`, no scope update or refresh is requested, it is currently
   listed, and it exactly matches the effective location/date scope. The server
   does not infer a question from enabled weather or missing context.
@@ -334,7 +358,7 @@ forecast context to occasion-led styling.
   outdoor/indoor setting, terrain, weather, wind, climate, season, dress code,
   local norms, or product performance.
 - Grants `get_weather_forecast_tool` for one zero-argument model-visible
-  attempt when a transition produces a complete typed scope or an explicit
+  attempt when an atomic resolution produces a complete typed scope or an explicit
   `weather_refresh=true` targets an unchanged complete scope. Comparisons and
   other unchanged turns hide and execution-block it. Scope compilation uses
   `confirmed_saved_zip`, with both location text fields omitted, only when the
@@ -371,6 +395,10 @@ forecast context to occasion-led styling.
   raw provider request/response data, the prepared provider endpoint URL, key,
   and exception are never promoted; validated evidence retains the pinned
   public attribution URL.
+- A typed optional receipt-promotion conflict is retried once without promotion
+  and without rerunning the model. A scope revision, resolution, or status
+  conflict instead terminalizes the durable turn as failed without the disputed
+  scope update.
 - Requires an exact ISO event date, complete inclusive range, or the typed
   `relative_date=next_week` mode. That mode is allowed only when the shopper
   used the exact phrase `next week`. Exact `<weekday> next week` also requires
@@ -384,7 +412,8 @@ forecast context to occasion-led styling.
   collect or infer weather-only context otherwise.
   The model resolves
   an unambiguous single-day phrase such as `tomorrow` against that same anchor
-  into an exact ISO date. Other ambiguous or unresolved relative dates can
+  into an exact ISO date. Server UTC rather than caller/shopper local time is an
+  explicit current limitation. Other ambiguous or unresolved relative dates can
   authorize one date clarification only through accepted `event_date` under
   that same ordering and enabled-and-material rule.
 - Uses current successful forecast evidence first. Otherwise it may use only

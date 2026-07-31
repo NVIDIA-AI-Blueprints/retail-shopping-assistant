@@ -86,18 +86,29 @@ def _validate_diagnostic_expectations(
 
     required_weather_scope = expected.get("required_weather_scope")
     if required_weather_scope is not None:
+        expected_weather_scope = dict(required_weather_scope)
+        if (
+            "action" in expected_weather_scope
+            or "location_action" not in expected_weather_scope
+            or "window_action" not in expected_weather_scope
+        ):
+            raise AssertionError(
+                f"{label}: required_weather_scope must assert atomic "
+                "location_action and window_action"
+            )
         if len(activation_calls) != 1:
             raise AssertionError(
                 f"{label}: expected one completed skill activation, "
                 f"found {len(activation_calls)}"
             )
-        actual_weather_scope = (activation_calls[0].get("arguments") or {}).get(
-            "weather_scope"
+        actual_weather_scope = activation_calls[0].get(
+            "accepted_weather_scope",
+            (activation_calls[0].get("arguments") or {}).get("weather_scope"),
         )
-        if actual_weather_scope != dict(required_weather_scope):
+        if actual_weather_scope != expected_weather_scope:
             raise AssertionError(
                 f"{label}: expected weather scope "
-                f"{dict(required_weather_scope)!r}, found "
+                f"{expected_weather_scope!r}, found "
                 f"{actual_weather_scope!r}"
             )
 
@@ -192,7 +203,16 @@ def _validate_diagnostic_expectations(
             )
         actual_weather_trace = actual_weather_traces[0]
         expected_weather_trace = dict(required_weather_trace)
-        if actual_weather_trace != expected_weather_trace:
+        exact_keys = actual_weather_trace.keys() == expected_weather_trace.keys()
+        exact_values = exact_keys and all(
+            (
+                actual_weather_trace[key] in expected_value
+                if isinstance(expected_value, list)
+                else actual_weather_trace[key] == expected_value
+            )
+            for key, expected_value in expected_weather_trace.items()
+        )
+        if not exact_values:
             raise AssertionError(
                 f"{label}: expected exact weather trace "
                 f"{expected_weather_trace!r}, found {actual_weather_trace!r}"

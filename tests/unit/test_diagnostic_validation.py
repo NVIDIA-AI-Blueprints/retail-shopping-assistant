@@ -209,6 +209,27 @@ def test_standalone_validator_checks_weather_outcome_and_response() -> None:
         label="weather",
     )
 
+    expectations["required_weather_trace"]["provider_input"] = [
+        "location",
+        "location_query",
+    ]
+    diagnostics["tool_calls"][0]["weather"]["provider_input"] = "location"
+    validator._validate_diagnostic_expectations(
+        expectations,
+        diagnostics,
+        response="Weather Data Provided by Visual Crossing",
+        label="weather",
+    )
+    diagnostics["tool_calls"][0]["weather"]["provider_input"] = "saved_zip"
+    with pytest.raises(AssertionError, match="expected exact weather trace"):
+        validator._validate_diagnostic_expectations(
+            expectations,
+            diagnostics,
+            response="Weather Data Provided by Visual Crossing",
+            label="weather",
+        )
+
+    diagnostics["tool_calls"][0]["weather"]["provider_input"] = "location"
     diagnostics["tool_calls"][0]["weather"]["outcome"] = "provider_unavailable"
     with pytest.raises(AssertionError, match="expected exact weather trace"):
         validator._validate_diagnostic_expectations(
@@ -229,13 +250,15 @@ def test_standalone_validator_checks_weather_outcome_and_response() -> None:
         )
 
 
-def test_standalone_validator_checks_redacted_weather_scope_transition() -> None:
+def test_standalone_validator_checks_redacted_weather_scope_resolution() -> None:
     validator = _load_validator()
     expected_scope = {
-        "action": "replace",
-        "location_source": "shopper_provided_location",
-        "location_supplied": True,
-        "date_supplied": False,
+        "scope_revision": 1,
+        "location_action": "clear",
+        "window_action": "set",
+        "location_source": None,
+        "location_supplied": False,
+        "date_supplied": True,
     }
     diagnostics = {
         "tool_calls": [
@@ -244,7 +267,7 @@ def test_standalone_validator_checks_redacted_weather_scope_transition() -> None
                 "status": "completed",
                 "arguments": {
                     "skill_names": ["outfit-styling", "event-context"],
-                    "event_context_next_question": "event_date",
+                    "event_context_next_question": "event_location",
                     "weather_scope": dict(expected_scope),
                 },
             }
@@ -257,12 +280,24 @@ def test_standalone_validator_checks_redacted_weather_scope_transition() -> None
         label="scope",
     )
 
-    diagnostics["tool_calls"][0]["arguments"]["weather_scope"]["action"] = (
-        "continue"
+    diagnostics["tool_calls"][0]["arguments"]["weather_scope"][
+        "location_action"
+    ] = (
+        "retain"
     )
     with pytest.raises(AssertionError, match="expected weather scope"):
         validator._validate_diagnostic_expectations(
             {"required_weather_scope": expected_scope},
+            diagnostics,
+            label="scope",
+        )
+
+    with pytest.raises(
+        AssertionError,
+        match="must assert atomic location_action and window_action",
+    ):
+        validator._validate_diagnostic_expectations(
+            {"required_weather_scope": {"action": "replace"}},
             diagnostics,
             label="scope",
         )

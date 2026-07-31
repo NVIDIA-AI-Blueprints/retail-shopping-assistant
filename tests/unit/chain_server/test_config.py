@@ -538,7 +538,7 @@ class TestLoadConfig:
 
 
 class TestRepoPromptContracts:
-    def test_weather_config_is_dormant_and_indirect(self) -> None:
+    def test_weather_config_declares_server_owned_scope_resolver(self) -> None:
         config = load_config_data(
             str(REPO_ROOT / "shared/configs/chain_server/config.yaml")
         )
@@ -556,6 +556,7 @@ class TestRepoPromptContracts:
             "max_forecast_horizon_days": 15,
             "max_range_days": 15,
             "receipt_ttl_seconds": 3600,
+            "scope_resolver_timeout_seconds": 8.0,
         }
 
     def test_budget_only_browse_routes_to_chatter_for_clarification(

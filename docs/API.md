@@ -563,6 +563,15 @@ allows one client-internal retry only after a timeout or HTTP 5xx. HTTP 400
 maps to generic `weather_request_invalid`; other 4xx, connection, and
 response-validation failures are not retried:
 
+- before normal activation, an existing scope is presented to one request-local
+  tools-disabled semantic resolver together with the exact shopper turns named
+  by its component source sequences and the current query. The resolver must
+  emit exactly one forced `WeatherScopeResolverDecision` control call. It is
+  neither a registered business tool nor a subagent. Missing source turns,
+  timeout, malformed output, structural invalidity, or an unclear relation
+  fails closed. Its output owns only the semantic relation and, for
+  `answers_pending`, the exact opaque pending handle; it never extracts or
+  normalizes location/date scope fields;
 - activation owns `event_context_next_question`; it is required exactly when
   `event-context` is selected and omitted otherwise. The activation model
   chooses it from semantic conversation plus the typed current scope:
@@ -570,12 +579,27 @@ response-validation failures are not retried:
   `event_venue` only after destination is established when venue or setting is
   missing and material, `event_date` when weather is material and the
   effective scope lacks a bounded window, and `none` otherwise.
-  The same activation may submit one `weather_scope`: `continue` patches the
-  same event/trip/weather subject and `replace` clears omitted fields for a
-  different subject. Deterministic compilation accepts only current-turn
-  location/date authority. If `continue` supplies a location when the scope
-  already has one without a current-turn window, the server clears the older
-  window.
+  If `event-context` is not selected, a capability boundary removes the
+  question, scope, refresh, and receipt fields before nested weather
+  validation; those ungranted values cannot mutate scope, grant weather, or
+  reject the primary activation.
+  The same activation is the sole producer of one atomic `weather_scope`
+  selection. It
+  copies the current scope revision and selects `retain`, `set`, or `clear`
+  independently for location and date. Deterministic compilation accepts only
+  current-turn location/date authority for `set`. An accepted missing-location
+  or missing-date question is persisted as the singleton's typed
+  `pending_question` together with its originating turn ID and sequence, even
+  when the location/date authority values are unchanged. A resolver-approved
+  `same_subject` decision may authorize ordinary same-subject retains, while
+  `new_subject` clears them. Completing a pending component by retaining its
+  stored counterpart requires `answers_pending`, the exact opaque pending
+  source-turn handle, and activation setting the component that binding names.
+  `answers_pending` means the reply answers only that question; a turn that also
+  changes or withdraws the opposite component uses `same_subject`. The handle
+  is not part of
+  `weather_scope`. When semantic resolution is unavailable or unclear, every cross-turn
+  `retain` is cleared and weather is blocked.
   Prior raw turns and summary prose can guide the semantic continuity decision
   but cannot authorize the provider adapter.
   An explicitly shopper-stated outdoor patio, beach, garden, rooftop, or
@@ -596,7 +620,7 @@ response-validation failures are not retried:
   `weather_refresh` defaults to `false` and is valid only with
   `event-context`, `event_context_next_question=none`, no scope update, no
   receipt, and an unchanged complete scope;
-  a scope transition that produces a complete scope requires the zero-argument
+  a scope resolution that produces a complete scope requires the zero-argument
   weather call before accepting prose. For an unchanged complete scope,
   `weather_refresh=true` does so only when the shopper explicitly requests
   fresh evidence; comparisons and other turns leave it false and weather is
@@ -649,7 +673,8 @@ activation selected `event_date`; the server does not derive that decision from
 weather configuration or missing date authority.
 An unambiguous
 single-day phrase such as `tomorrow` is resolved against that same UTC anchor
-into an exact ISO date. Other ambiguous or unresolved relative dates can
+into an exact ISO date. Server UTC rather than caller/shopper local time is an
+explicit current limitation. Other ambiguous or unresolved relative dates can
 authorize a date clarification only through accepted `event_date` under that
 same ordering and enabled-and-material rule.
 Location-independent requests authorize neither a lookup nor a forecast-input
@@ -1272,18 +1297,32 @@ excludes abandoned turns before creating model context. Raw media is not stored;
 the request digest includes ordered media content hashes so exact retries can
 be distinguished safely.
 
-The serving chain requests `?response_contract=3` as its maximum supported
+The serving chain requests `?response_contract=4` as its maximum supported
 version. Memory returns the highest version it supports up to that maximum.
 Contract 2 adds summary/receipt lanes and contract 3 adds the current
-weather-planning scope. Without an opt-in, memory
+weather-planning scope with its legacy transition. Contract 4 adds the atomic
+two-component resolution, typed pending location/date binding, and
+finalize-write capability used by the current chain. Without an opt-in, memory
 returns the exact pre-summary response shape: summary, compaction, receipt, and
 contract-version fields are omitted, and the bounded raw tail is read from
 sequence zero. Older chain instances can therefore continue after memory is
 deployed first or after chain rollback, even when a summary watermark has
 advanced. Older memory ignores the unknown query parameter; the current chain
-treats a missing `contract_version` as version 1; a version-2 response omits
-version-3 scope writes. Response negotiation is not part of the turn request
+treats a missing `contract_version` as version 1. Contract 3 remains supported:
+memory removes the v4-only `pending_question`,
+`pending_source_turn_id`, and `pending_source_sequence` from its response, and
+a current chain negotiating only v3 fails closed for atomic writes. Deploy
+memory first, then chain. Response negotiation is not part of the turn request
 digest.
+
+Migration 11 stores the v4 binding in defaulted
+`current_weather_pending_json` rather than in the rollback-readable
+`current_weather_scope_json`. It extracts a complete binding written by the
+pre-split v4 work and drops incomplete unsourceable pending fields. Memory
+merges that pending payload into a contract-4 response only
+when its stored `scope_revision` equals the current core revision; if a
+rollback-era memory binary mutates the core scope, the stale pending payload is
+inert.
 
 ```json
 {
@@ -1299,7 +1338,7 @@ digest.
 ```json
 {
   "turn_id": "8e40575d5e5a4dbca34e1d08a2cb1692",
-  "contract_version": 3,
+  "contract_version": 4,
   "attempt_id": "bd77b851b3494e37a764e3dfa7500208",
   "sequence": 4,
   "replayed": false,
@@ -1337,7 +1376,15 @@ digest.
     "summary_text": "The shopper is assembling a semi-formal wedding outfit.",
     "summary_through_sequence": 2,
     "current_weather_scope": {
-      "revision": 0
+      "revision": 2,
+      "window": {
+        "value": {"start_date": "2026-08-12", "end_date": "2026-08-12"},
+        "source_turn_id": "conference-turn-id",
+        "source_sequence": 4
+      },
+      "pending_question": "event_location",
+      "pending_source_turn_id": "conference-turn-id",
+      "pending_source_sequence": 4
     },
     "active_receipts": [],
     "active_anchors": [],
@@ -1420,9 +1467,10 @@ input/output, blocked/failed turn, or cancellation produces no summary advance.
 
 Fresh and upgraded SQLite schemas give the additive `summary_text`,
 `summary_through_sequence`, `active_receipts_json`, and
-`current_weather_scope_json` columns equivalent database defaults. A rollback
-memory binary that does not name those columns can therefore continue creating
-projections.
+`current_weather_scope_json` and `current_weather_pending_json` columns
+equivalent database defaults. A rollback memory binary that does not name those
+columns can therefore continue creating projections. The core scope JSON
+contains no v4 pending keys and remains strict pre-v4-readable.
 
 `projection.active_receipts` is an independently typed, newest-first list of at
 most four valid `weather_forecast.v1` receipts. Each receipt contains its
@@ -1527,17 +1575,43 @@ one of those summary-only conflicts, it makes one deterministic finalize
 attempt without `summary_advance`; it does not rerun the compactor or change the
 shopper response.
 
-`current_weather_scope_transition` is an optional contract-3 compare-and-swap
-update to one singleton location/date authority object. `continue` patches only
-the supplied location or normalized date-window component and normally retains
-the other component. When a compiled continuation supplies a location while
-the scope already has one, without a current-turn window, its server-owned
-`clear_window: true` directive clears the older window. `replace` starts a new weather-planning
-subject and clears every omitted component; an empty replace clears the scope. Memory stamps each
-supplied component with the finalized turn ID and sequence and increments the
-scope revision. A changed location/window invalidates older receipts. Venue,
-occasion, products, styling claims, forecast evidence, and a collection of
-event anchors are not part of this scope.
+`current_weather_scope_transition` remains the optional contract-3
+compare-and-swap shape for rolling compatibility. Contract 4 uses
+`current_weather_scope_resolution` instead. It copies both the expected
+projection version and expected scope revision, and chooses `retain`, `set`, or
+`clear` independently for location and normalized date window. Payload values
+are required exactly for `set`; retaining a missing component is rejected.
+It also persists at most one pending `event_location` or `event_date` binding,
+which is valid only while that component is absent. Memory stamps both that
+pending binding and each newly set component with the finalized turn ID and
+sequence, preserves retained component provenance, and increments the scope
+revision. A server-authored `preserve_pending_source_turn_id` may retain the
+prior pending source only when it exactly matches the current pending binding
+and question. Without that exact authority—including when a new subject asks
+the same question type—memory stamps the pending binding with the current
+finalized turn. A separate server-authored
+`complete_pending_source_turn_id` consumes an exact live pending binding.
+Memory independently verifies its handle, question, source sequence, named
+component `set`, and canonical opposite-component action in the same
+compare-and-swap transaction. An existing opposite component must be retained,
+a current-turn opposite `set` remains set, and a missing opposite component
+must remain clear while becoming the newly stamped pending question. A generic
+`set` plus retained counterpart without this exact completion handle is
+rejected.
+The pending question is therefore durable even when neither authority value
+changes. It is stored separately with the resulting scope revision and is
+rehydrated only while that revision still matches the core scope. A
+changed location/window invalidates older receipts. Venue, occasion, products,
+styling claims, forecast evidence, and a collection of event anchors are not
+part of this scope.
+
+Receipt-promotion conflicts (`weather_receipt_stale`,
+`weather_receipt_status_conflict`, and `weather_receipt_scope_conflict`) remain
+distinct through the chain HTTP client. They trigger one finalize retry without
+the optional promotion and no model rerun. Current-scope revision, resolution,
+and status conflicts are authority failures, not optional failures: the runtime
+replaces the draft with its safe failure response and finalizes the durable turn
+as failed without the scope update or promotion.
 
 `weather_receipt_promotion` is also optional and internal to the chain/memory
 boundary. It carries the start projection version, the successful weather

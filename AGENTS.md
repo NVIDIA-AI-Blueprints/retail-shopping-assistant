@@ -19,14 +19,14 @@ Top-level orchestration is via `docker-compose.yaml`; optional local NIM model c
 1. UI posts to `/api/query/stream` (nginx proxy on port `3000`).
 2. Nginx routes `/api/*` to `chain-server:8009`.
 3. Chain server request flow:
-   - `DeepAgentsRuntime` first starts a durable turn in the memory service. Turn start returns a versioned rolling summary, a bounded newest model-context raw tail strictly after its watermark, a separate memory-owned oldest compaction prefix, one typed current weather-planning scope, a bounded set of valid typed weather receipts, the prior turn's selected skill names, the authoritative cart, and an optional server-resolved representative-shopper snapshot. Summary, exact raw discussion, the historical product index, the current weather scope, and active receipts are separate state/prompt lanes. Summary prose is semantic continuity only and cannot establish exact shopper wording, product/cart/tool evidence, location/date authority, policy, availability, current weather, skill selection, or tool grants. Only the typed singleton can carry current cross-turn location/date authority, and only an explicitly bound valid receipt can establish forecast evidence for that exact scope. Activation semantically chooses `continue` or `replace`, deterministic compilation accepts only current-turn location/date authority, and the zero-argument forecast tool reads the effective singleton directly.
+   - `DeepAgentsRuntime` first starts a durable turn in the memory service. Turn start returns a versioned rolling summary, a bounded newest model-context raw tail strictly after its watermark, a separate memory-owned oldest compaction prefix, one typed current weather-planning scope, a bounded set of valid typed weather receipts, the prior turn's selected skill names, the authoritative cart, and an optional server-resolved representative-shopper snapshot. Summary, exact raw discussion, the historical product index, the current weather scope, and active receipts are separate state/prompt lanes. Summary prose is semantic continuity only and cannot establish exact shopper wording, product/cart/tool evidence, location/date authority, policy, availability, current weather, skill selection, or tool grants. Only the typed singleton can carry current cross-turn location/date authority, and only an explicitly bound valid receipt can establish forecast evidence for that exact scope. Existing scope components carry their exact shopper-turn source sequences. Before normal skill activation, a request-local, tools-disabled semantic resolver compares those source-bound turns with the current query through one forced typed control call. It is neither a business tool nor a subagent and returns only the semantic relation. Normal activation is the sole producer of the current turn's atomic `retain`/`set`/`clear` scope selection; invalid, unavailable, or unclear resolver output fails closed. The zero-argument forecast tool reads only the accepted effective singleton.
    - After a successfully guarded response, configured thresholds may run one tools-disabled summary call over the prior summary and the largest fitting contiguous part of memory's oldest prefix while retaining the configured newest raw suffix. A single oversized oldest turn uses a marked deterministic head-and-tail projection only for compactor input; durable and replay text remain exact. The compactor receives no current query, profile/ZIP, cart, product ledger, receipt projection, media, tool transcript, diagnostics, or request identity. Its closed output is applied only at atomic finalization and becomes visible on the next request. Failure, timeout, invalid input/output, and cancellation never advance the watermark; a summary-only CAS conflict gets one finalize retry without the update and no model rerun. Blocked and abandoned turns remain durable and exactly replayable but are excluded from both raw context lanes; only completed or failed turns with assistant text are eligible.
    - Graph working state uses a request-scoped pair of `conversation_id` and `request_id`. A selected profile ID is bound immutably to that conversation and renders one compact current-turn context block containing only type, behavior, and saved ZIP. Profile precedence and non-authority rules are also present only for selected-profile turns; Guest receives neither the block nor profile-specific prompt rules. The block is soft guidance: current explicit instructions and recent explicit preferences take precedence, and it cannot establish budget, product constraints or facts, cart intent, skill selection, or tool grants. Unknown caller fields remain backward-compatibly ignored, and caller-supplied persona objects are never injected.
-   - Turn-start `response_contract` is the caller's maximum supported version. Memory returns the highest version it supports up to that maximum. Unversioned callers receive the exact legacy top-level/projection shape and a bounded raw tail from sequence zero, even after a summary watermark advances. Contract 2 adds summary/receipt lanes; contract 3 adds the current weather scope. Fresh and upgraded SQLite schemas give all additive non-null projection columns database defaults, so rolling memory rollback can still create projections.
+   - Turn-start `response_contract` is the caller's maximum supported version. Memory returns the highest version it supports up to that maximum. Unversioned callers receive the exact legacy top-level/projection shape and a bounded raw tail from sequence zero, even after a summary watermark advances. Contract 2 adds summary/receipt lanes; contract 3 adds the legacy current-weather-scope read/write shape; contract 4 adds atomic two-component scope resolution, durable pending `event_location`/`event_date` binding, and the finalize-write capability marker used by the current chain. Contract 3 remains supported: memory strips the v4-only pending question and both of its source fields for a v3 caller. Migration 11 stores that binding in defaulted `current_weather_pending_json`, extracts a complete pre-split WIP binding, drops incomplete unsourceable WIP pending fields, and keeps `current_weather_scope_json` strict pre-v4-readable. The pending lane is merged only when its stored scope revision matches the core revision, so a rollback-era core mutation makes stale pending state inert. Deploy memory first, then chain; a new chain that negotiates only v3 fails closed rather than issuing an atomic scope write. Fresh and upgraded SQLite schemas give all additive non-null projection columns database defaults, so rolling memory rollback can still create projections.
    - Receipt freshness is evaluated atomically once at durable turn start. The accepted receipt set is the validity snapshot for that in-flight request; the runtime performs no second wall-clock expiry check mid-turn. Before activation, the model sees only receipt ID/type, shopper location/date scope, and `valid_until`, never normalized forecast evidence. Full evidence stays server-side and becomes grounding input only after activation explicitly binds that receipt.
    - Optional input guardrails run before model/tool work; attached media is analyzed through the configured perception client.
    - Deep Agents graph execution has a configurable 45-second default deadline. A timeout captures bounded partial graph messages, clears unsent products, finalizes the durable turn as failed, and deletes the request checkpoint only after that finalization succeeds.
-   - Every turn begins with a required model step that semantically selects the smallest applicable set from six registered shopper skills. The latest durable selected names are a read-only continuity hint; they never authorize tools or replace fresh selection. Product work uses exactly one primary procedure: product discovery or outfit styling. Budget shopping is a modifier only when the shopper states a budget. Event context is an additive modifier used only beside outfit styling for event or non-event weather-aware guidance; it alone grants the read-only weather tool and never suppresses non-weather tools from the grant union. The same activation owns one typed follow-up question and may submit one `weather_scope`: `continue` patches the same event/trip/weather subject and `replace` clears omitted authority for a different subject. Deterministic compilation admits only current-turn location/date authority; as a fail-safe, a continuation that supplies a location when the scope already has one clears the older date unless the current turn also supplies a new window. A scope update that produces a complete scope requires the zero-argument weather call. For an unchanged complete scope, activation sets `weather_refresh=true` only for an explicit shopper refresh request; comparisons and other turns do not auto-refresh. Activation may instead bind one valid receipt only with `event_context_next_question=none`, no scope update, no refresh request, and exact equality to the effective scope. Subject continuity, skill selection, venue, materiality, and intent remain semantic model judgment—not a deterministic router. An invalid composition, question, scope, or receipt binding receives one correction attempt; a repeat ends with a deterministic clarification and no shopping tool. Multiple activation calls in one response execute none. The runtime injects complete selected files and exposes only their declared grant union; dispatch independently rechecks that union and immutable tool policy.
+   - Every turn begins with a required model step that semantically selects the smallest applicable set from six registered shopper skills. The latest durable selected names are a read-only continuity hint; they never authorize tools or replace fresh selection. Product work uses exactly one primary procedure: product discovery or outfit styling. Budget shopping is a modifier only when the shopper states a budget. Event context is an additive modifier used only beside outfit styling when physical location/date/venue/weather context is actually part of the current styling subject; hypothetical relevance is insufficient. It alone grants the read-only weather tool and never suppresses non-weather tools from the grant union. Before nested validation, activations without `event-context` discard all event-context question, scope, refresh, and receipt fields, so ungranted weather controls cannot mutate state, grant weather, or reject an otherwise valid shopping activation. When a prior weather scope exists, the isolated resolver supplies only a source-bound semantic relation before this normal activation; it does not extract location or date. Activation remains the sole producer of one current-turn atomic `weather_scope`, copying the scope revision and choosing `retain`, `set`, or `clear` for each component, and owns the one shopper-facing follow-up. The server validates every `set` against current-turn authority and applies the relation: `new_subject` clears every proposed retain, while `same_subject` may retain. `answers_pending` is a pending-only reply: it requires the resolver's exact opaque pending source-turn handle and activation setting the named component. Runtime carries that handle only as a server-authored completion control; shared/memory atomically recheck the live binding and canonical shape, retaining an existing counterpart, keeping a current-turn replacement, or rotating an absent counterpart into a newly source-bound pending question. A reply that also changes or withdraws the counterpart uses `same_subject`; the handle never enters `weather_scope`. A missing location or date question is persisted as a typed pending binding stamped with its originating turn ID and sequence even when no location/date authority value changes. If the resolver is unavailable or unclear, every proposed retain is cleared and weather stays blocked; current-turn `set` values may replace scope components but cannot import an older subject. An intervening product request does not answer or repeat that pending question. Thus a new subject may preserve its current-turn date while asking for location, and only an exact-handle `answers_pending` result can safely retain that date for a location-only reply. A complete accepted scope requires the zero-argument weather call. For an unchanged complete scope, activation sets `weather_refresh=true` only for an explicit shopper refresh request; comparisons and other turns do not auto-refresh. Activation may instead bind one valid receipt only with `event_context_next_question=none`, no scope update, no refresh request, and exact equality to the effective scope. Subject continuity, skill selection, venue, materiality, and intent remain semantic model judgment—not a deterministic router. An invalid selected composition, question, scope, or receipt binding receives one correction attempt; a repeat ends with a deterministic clarification and no shopping tool. Multiple activation calls in one response execute none. The runtime injects complete selected files and exposes only their declared grant union; dispatch independently rechecks that union and immutable tool policy.
    - A successful event-context activation result appends a model-visible additive-boundary reminder, repeated in the catalog-search description and outfit-styling skill: a reply that only supplies the destination, venue, or date requested in the prior response is context fulfillment, so established candidates stay in play without repeated non-weather product work. Explicit same-turn comparison, refinement, replacement, search, check, cart, or policy work follows the normal selected skills. This is semantic procedural guidance, not deterministic intent classification or an execution gate; it does not change the selected grant union or dispatch policy.
    - Established-candidate comparison remains a model-owned procedure inside `outfit-styling`; there is no comparison skill or deterministic intent router. When compared products are not current-request evidence, the model submits all of them in the one batched historical-resolution call, then reads each uniquely resolved ref through separate scalar detail calls. The default two-read cap fits one pair. Missing or ambiguous required products clarify without a substitute search. Weather is optional additional evidence and never replaces resolution/details or establishes product performance.
    - The selected skills and their granted tools remain one Deep Agent's semantic procedure from activation through its final candidate answer. There is no post-answer semantic completion reviewer, operation plan, or correction trajectory that can delete the candidate and reopen tools. When event context has accepted `none`, a scope transition produces complete location/date authority, or the shopper explicitly requests a refresh of an unchanged complete scope, the selected skill directly instructs that same agent to use its one weather attempt before answering. An unchanged comparison blocks weather unless it binds an exact-scope receipt for silent grounding. Deterministic code validates activation, grants, tool arguments, evidence, and final factual grounding; it does not decide whether the shopper intended weather or comparison work.
@@ -64,6 +64,8 @@ Top-level orchestration is via `docker-compose.yaml`; optional local NIM model c
   `chain_server/src/weather.py`
 - Direct and request-bound weather tool wrappers:
   `chain_server/src/weather_tool.py`
+- Source-sequence-bound weather-subject resolver and forced typed control:
+  `chain_server/src/weather_scope_resolver.py`
 - Shared typed weather-receipt contract, exact-scope identity, TTL, and cap:
   `shared/weather_receipts.py`
 - Shared singleton current-weather-scope and transition contract:
@@ -187,6 +189,16 @@ Current test assets:
   shop-now fixture uses Jordan's minimal occasion request and requires exactly
   one catalog-search attempt, followed by a named-place `next week` turn that
   requires one weather call and no repeated catalog search.
+- The source-bound cross-subject regression lives under
+  `tests/integration/conversations/weather_scope_continuity/`. Its three turns
+  establish one complete subject, introduce a different dated subject without
+  importing the old location, and complete that subject through its bound
+  location question.
+- The activation-capability regression lives under
+  `tests/integration/conversations/weather_activation_boundary/`. Its three
+  turns create a source-bound pending weather question, run intervening product
+  work with weather controls inert and without repeating the question, and then
+  complete the pending scope.
 - The focused receipt fixture starts with the explicit natural product request
   `Show me dress options for a semi-formal wedding`, so product discovery is
   unambiguous and the later turns isolate receipt promotion/binding. Its
@@ -291,11 +303,32 @@ Key env vars:
   ZIP, provider request/response body, prepared provider endpoint URL, key,
   exception, or failure; it retains only the pinned public attribution URL.
 - Startup migration 10 adds one versioned current weather-planning scope.
-  `continue` patches supplied location/date components, while `replace` clears
-  omitted components. Memory stamps each component's source turn, invalidates
-  receipts when authority changes, and admits scope-matched promotion only.
-  This singleton contains no venue, occasion, product, styling, or forecast
-  facts and is not an active-anchor registry.
+  Contract 3 retains the legacy `continue`/`replace` transition for rolling
+  compatibility. Contract 4 atomically resolves both location and date through
+  explicit `retain`/`set`/`clear` actions, checks the expected scope revision,
+  and persists one optional pending `event_location` or `event_date` question.
+  Memory stamps each newly set component's source turn and stamps a pending
+  binding to the current finalized turn unless the server supplies the exact
+  existing pending-source handle for an unchanged unanswered question.
+  Completing a pending component requires the server-only exact handle;
+  shared/memory recheck the live binding and canonical completion shape.
+  Memory invalidates receipts when authority
+  changes and admits scope-matched promotion only. This
+  singleton contains no venue, occasion, product, styling, or forecast facts
+  and is not an active-anchor registry.
+- Startup migration 11 stores the v4 pending question and its source fields in
+  defaulted `current_weather_pending_json`, extracts a complete pre-split WIP
+  binding, drops incomplete unsourceable pending fields, and leaves
+  `current_weather_scope_json` strict pre-v4-readable. Memory reattaches the
+  pending binding only when its stored
+  scope revision equals the core revision; a rollback-era core scope mutation
+  therefore makes stale pending state inert.
+- Preserve memory's optional receipt conflict codes across the HTTP client
+  boundary. The runtime retries finalization once without the optional
+  promotion, without rerunning the model. A current-scope revision, resolution,
+  or status conflict is different: the runtime discards the shopper draft and
+  product artifacts and terminalizes the durable turn as failed without the
+  disputed scope write.
 - The same SQLite database owns five immutable representative shoppers loaded
   from `shared/configs/memory_retriever/shopper_profiles.json`. The bundled UI
   sends only the selected ID. Turn start resolves it transactionally, binds it
@@ -505,11 +538,21 @@ Key env vars:
   `event_venue` only after destination is established when venue or setting is
   missing and material, `event_date` only after destination and any material
   venue are established when weather is enabled and material and the typed
-  scope has no bounded date, and `none` otherwise. The same activation chooses
-  semantic `continue` or `replace`; only the current turn can supply compiled
-  authority. Prior turns guide that choice but cannot become adapter inputs.
-  A continuation that supplies a location when the scope already has one
-  clears the retained date unless it also supplies a current-turn window.
+  scope has no bounded date, and `none` otherwise. When a prior scope exists,
+  an isolated tools-disabled resolver compares its exact source-sequence-bound
+  shopper turns with the current query and emits one forced typed control call.
+  It is not a registered business tool or a subagent. Activation then consumes
+  or proposes one atomic resolution that copies the scope revision and chooses
+  `retain`, `set`, or `clear` for both components; only the current turn can
+  supply `set` authority. Invalid, timed-out, unavailable, or unclear resolver
+  output fails closed. An approved `same_subject` relation authorizes
+  activation's explicit retains, while `new_subject` clears them. An
+  `answers_pending` result is accepted only for the exact typed binding: the
+  resolver echoes its opaque source-turn handle and activation sets the named
+  component. The accepted
+  location/date question is stored as a pending binding even when no authority
+  value changes. An unavailable or unclear resolver clears every proposed
+  retain and blocks weather.
   An explicitly shopper-stated outdoor patio, beach, garden, rooftop, or
   open-air setting makes enabled live weather material; with destination and
   that setting but no bounded date, select `event_date`. Skill selection,
@@ -519,7 +562,7 @@ Key env vars:
   Only the value from a successfully
   completed activation is trusted; the server does not infer a question from
   weather configuration or a missing date. The same activation may update the
-  typed singleton with `continue` or `replace`, or bind one currently valid
+  typed singleton with an atomic resolution, or bind one currently valid
   `weather_receipt_id` only with `event_context_next_question=none`, no scope
   update, no refresh request, and exact equality to the effective scope.
   Unbound receipts never ground, and binding one blocks another weather call.
@@ -568,7 +611,9 @@ Key env vars:
   Omitted, mismatched, mixed, negated, or superseded weekday authority fails
   closed. The model may normalize an unambiguous
   single-day phrase such as `tomorrow` to an exact ISO date against that same
-  prompt-visible UTC anchor. For a genuinely ambiguous or unresolved relative
+  prompt-visible UTC anchor. This UTC anchor is an explicit current limitation:
+  caller- or shopper-local timezone anchoring is not yet implemented. For a
+  genuinely ambiguous or unresolved relative
   date, the activation model may choose `event_date` only when weather is
   enabled and material and the date is neither established nor explicitly
   unavailable.

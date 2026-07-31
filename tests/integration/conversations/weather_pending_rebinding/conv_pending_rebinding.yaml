@@ -1,0 +1,93 @@
+set_name: A new subject replaces an identical pending-question binding
+shopper_profile_id: shopper_jordan
+queries:
+  - >-
+    Give me weather-aware styling for an outdoor wedding on Friday next week,
+    but I have not decided where it will be. I am not shopping for products.
+  - >-
+    I also have an outdoor conference on Sunday next week. Give me
+    weather-aware styling, but I still need to tell you the city.
+  - "Seattle."
+answers:
+  - >-
+    Establish only Friday next week for the wedding, leave location empty, ask
+    only for the wedding location, and make no weather or catalog call.
+  - >-
+    Treat the conference as a new weather-planning subject even though it also
+    lacks location. Replace Friday with Sunday next week, keep location empty,
+    bind a new conference-location question, and make no weather or catalog
+    call.
+  - >-
+    Treat Seattle as the exact answer to the conference-location question, not
+    the wedding question. Set Seattle, retain only the conference date, call
+    weather once, and give concise outdoor conference guidance grounded in the
+    forecast.
+diagnostic_expectations:
+  - required_skills: [outfit-styling, event-context]
+    required_event_context_next_question: event_location
+    required_weather_scope:
+      scope_revision: 0
+      location_action: clear
+      window_action: set
+      location_source: null
+      location_supplied: false
+      date_supplied: true
+    forbidden_tools:
+      - get_weather_forecast_tool
+      - search_catalog_tool
+      - resolve_conversation_products_tool
+      - get_product_details_tool
+    weather_tool_calls: 0
+    required_response_phrases: ["?"]
+    forbidden_response_phrases:
+      - Weather Data Provided by Visual Crossing
+      - "°F"
+  - required_skills: [outfit-styling, event-context]
+    required_event_context_next_question: event_location
+    required_weather_scope:
+      scope_revision: 1
+      location_action: clear
+      window_action: set
+      location_source: null
+      location_supplied: false
+      date_supplied: true
+    forbidden_tools:
+      - get_weather_forecast_tool
+      - search_catalog_tool
+      - resolve_conversation_products_tool
+      - get_product_details_tool
+    weather_tool_calls: 0
+    required_response_phrases: ["?"]
+    forbidden_response_phrases:
+      - wedding
+      - Friday
+      - Weather Data Provided by Visual Crossing
+      - "°F"
+  - required_skills: [outfit-styling, event-context]
+    required_event_context_next_question: none
+    required_weather_scope:
+      scope_revision: 2
+      location_action: set
+      window_action: retain
+      location_source: shopper_provided_location
+      location_supplied: true
+      date_supplied: false
+    required_tools: [get_weather_forecast_tool]
+    required_business_sequence: [get_weather_forecast_tool]
+    forbidden_tools:
+      - search_catalog_tool
+      - resolve_conversation_products_tool
+      - get_product_details_tool
+    weather_tool_calls: 1
+    required_weather_trace:
+      request_shape: exact_date
+      location_source: shopper_provided_location
+      provider_input: location_query
+      outcome: success
+    required_weather_receipt_status: promotion_prepared
+    required_response_phrases:
+      - Seattle
+      - Weather Data Provided by Visual Crossing
+    forbidden_response_phrases:
+      - wedding
+      - Friday

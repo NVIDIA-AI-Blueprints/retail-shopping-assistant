@@ -392,7 +392,7 @@ The request-bound shopper wrapper permits one zero-argument model-visible call
 attempt on an eligible turn. Without a complete effective location/date scope,
 the runtime hides and execution-blocks the tool for that turn. Activation
 compiles current-turn authority first; the execution model cannot supply or
-repair provider arguments. A scope transition that produces a complete scope
+repair provider arguments. A scope resolution that produces a complete scope
 requires this call before accepting a prose response. For an unchanged
 complete scope, only an explicit `weather_refresh=true` activation does so;
 comparisons and other turns block weather. Within a
@@ -402,18 +402,42 @@ after a timeout or HTTP 5xx. HTTP 400 maps to generic
 `weather_request_invalid`; other 4xx, connection, and response-validation
 failures are not retried. The mandatory activation step owns only
 `event_context_next_question` for event context. It is required exactly with
-`event-context` and omitted otherwise. The activation model chooses it from
+`event-context` and omitted otherwise. Before nested validation, an activation
+without `event-context` has every event-context question, scope, refresh, and
+receipt field discarded. Those ungranted controls therefore cannot mutate
+weather state, expose weather, or consume an activation correction. The
+activation model chooses the accepted question from
 semantic conversation plus the typed current scope: `event_location` only
 when destination is missing and material, `event_venue` only after destination
 is established when venue or setting is missing and material, `event_date`
 only after destination and any material venue are established when live weather
 is enabled and material and the effective scope has no bounded date, and
-`none` otherwise. The same activation may submit one current-turn scope update:
-`continue` patches the same styling subject; `replace` clears omitted fields
-for a different subject. If a continuation supplies a location while the
-scope already has one without a current-turn date, the compiled transition
-clears the older window. Prior raw turns and summary prose may guide that semantic choice but
-never become adapter authority. An explicitly shopper-stated
+`none` otherwise. For an existing scope, a request-local tools-disabled
+semantic resolver first compares the current query with the exact shopper turns
+named by its component source sequences through one forced typed control call.
+It is neither a business tool nor a subagent, and any missing, invalid,
+timed-out, or unclear result fails closed. The resolver returns only the
+semantic relation and does not duplicate scope extraction. Activation alone
+may then submit one atomic scope selection: it copies the revision and chooses
+`retain`, `set`, or `clear` independently for location and date. Only
+current-turn authority can supply `set`. A missing location/date question is durably bound to the
+scope and stamped at finalization with its originating turn ID and sequence.
+It persists even when the location/date authority values do not otherwise
+change. Intervening product work neither answers nor repeats it. A
+resolver-approved `same_subject` relation may authorize ordinary same-subject
+retains, while `new_subject` clears them. Completing a pending component while
+retaining its stored counterpart requires `answers_pending`, the exact opaque
+pending source-turn handle at the resolver boundary, and activation setting the
+component it names. That relation is pending-answer-only; a reply that also
+changes or withdraws the opposite component uses `same_subject`. Runtime sends
+the handle to memory only through the server-authored completion control.
+Memory rechecks the exact live binding and canonical shape atomically, retaining
+an existing counterpart, keeping a current-turn replacement, or rotating an
+absent counterpart into a newly source-bound pending question. Preserving an otherwise unanswered pending binding during
+a same-subject update requires the same exact server-owned source handle;
+otherwise memory stamps the current finalized turn. An unavailable or unclear resolver clears every
+proposed retain and blocks weather. Prior raw turns and summary prose never
+become adapter authority. An explicitly shopper-stated
 outdoor patio, beach, garden, rooftop, or open-air setting makes enabled live
 weather material; with destination and that setting but no bounded date,
 activation selects `event_date`. Skill selection, location, venue,
@@ -475,7 +499,8 @@ the full range. Missing, mismatched, mixed, negated, or superseded weekday
 authority fails closed. Missing date authority never permits a placeholder
 weather call. An unambiguous single-day phrase
 such as `tomorrow` is resolved by the model against that same anchor into an
-exact ISO date. For other ambiguous or unresolved relative dates, only an
+exact ISO date. Server UTC rather than caller/shopper local time is an explicit
+current limitation. For other ambiguous or unresolved relative dates, only an
 accepted `event_date` decision may authorize a clarification; the server does
 not infer it from enabled weather or a missing date.
 
@@ -584,16 +609,21 @@ excluded from both the next-turn service projection and the chain prompt
 formatter.
 
 Turn start negotiates additive memory response fields with
-`response_contract=3`, interpreted as the caller's maximum supported version.
+`response_contract=4`, interpreted as the caller's maximum supported version.
 Memory returns the highest version it supports up to that maximum. New memory
 defaults an unversioned caller to the exact
 legacy response shape and computes that caller's bounded raw tail from sequence
 zero rather than from the invisible summary watermark. New chain accepts a
-missing contract marker as version 1; version 2 omits version-3 scope writes.
-This permits either service to deploy first
-and keeps an older chain usable after rollback. Fresh projection DDL also uses
+missing contract marker as version 1. Contract 3 remains supported with its
+legacy transition and without the v4-only pending question or its source
+fields; contract 4 advertises atomic scope-finalize write capability. Deploy
+memory first and chain second.
+A new chain negotiating only v3 fails closed for an atomic scope update, while
+an older chain remains usable after rollback. Fresh projection DDL also uses
 database defaults for every additive non-null summary/receipt/scope column,
-matching the defaults added to upgraded databases by migrations 8 through 10.
+matching the defaults added to upgraded databases by migrations 8 through 11.
+Migration 11 keeps the core scope lane strict pre-v4-readable as described
+below.
 
 `DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS` is one model-stage deadline shared by the
 active graph and grounding editor. The editor receives only the remaining time.
@@ -654,16 +684,30 @@ material are never promoted.
 
 Migration 10 adds one current weather-planning scope to that projection. Its
 location and normalized date-window components retain separate memory-stamped
-source turns. `continue` patches components; `replace` clears omitted
-components. A server-compiled `clear_window: true` also clears an older window
-when `continue` supplies a location while the scope already has one without a
-current-turn date, preventing a newly introduced location from inheriting an
-older subject's date. A changed scope clears old receipts, and a same-finalize
-promotion must exactly match the resulting complete scope. This storage layer
-is not an event/anchor registry and contains no venue, occasion, product,
-styling, or forecast facts. Serving activation compiles only current-turn
-authority into it; the provider tool has no location/date arguments and reads
-the effective scope directly.
+source turns. Contract 3 keeps the legacy `continue`/`replace` transition.
+Contract 4 resolves both components atomically with explicit
+`retain`/`set`/`clear` actions, an expected scope revision, and one optional
+pending `event_location` or `event_date` binding. A changed scope clears old
+receipts, and a same-finalize promotion must exactly match the resulting
+complete scope. This storage layer is not an event/anchor registry and contains
+no venue, occasion, product, styling, or forecast facts. Serving compilation
+admits only current-turn `set` authority; the provider tool has no
+location/date arguments and reads the effective scope directly.
+
+Migration 11 moves the v4 pending question and its source fields into defaulted
+`current_weather_pending_json`. It extracts a complete binding written by the
+pre-split v4 work, drops incomplete unsourceable pending fields, and removes
+those keys from
+`current_weather_scope_json`, keeping that core lane parseable by strict
+pre-v4 models during rollback. The pending payload records its scope revision
+and is merged only when that revision matches the core scope. A rollback-era
+core mutation therefore leaves stale pending state inert.
+
+Memory receipt-promotion conflicts retain their exact error codes through the
+chain HTTP client and trigger one finalize retry without the optional
+promotion. Scope revision, resolution, and status conflicts are authority
+conflicts: the runtime discards the draft/product output and terminalizes the
+turn as failed without applying the disputed scope update.
 
 Expiry filtering occurs atomically once at durable turn start. The accepted
 active set is the validity snapshot for the request; no second wall-clock

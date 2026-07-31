@@ -14,6 +14,7 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
@@ -22,9 +23,23 @@ from sqlalchemy.pool import StaticPool
 from memory_retriever.src import main as memory_main
 from memory_retriever.src import conversations as conversation_store
 from memory_retriever.src import product_references
+from shared.weather_scope import (
+    WeatherScopeLocationAuthority,
+    WeatherScopeWindowAuthority,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+class _StrictPreV4CurrentWeatherScope(BaseModel):
+    """The exact strict field boundary used by the rollback memory binary."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    revision: int = Field(default=0, ge=0)
+    location: WeatherScopeLocationAuthority | None = None
+    window: WeatherScopeWindowAuthority | None = None
 
 
 @pytest.fixture
@@ -122,7 +137,7 @@ def test_turn_start_negotiates_v2_and_future_requests_to_server_max(
     )
     future = _start_turn(
         conversation_db,
-        "conversation-contract-v3",
+        "conversation-contract-v4",
         request_id="request-v3",
         response_contract=999,
     )
@@ -131,7 +146,7 @@ def test_turn_start_negotiates_v2_and_future_requests_to_server_max(
     assert v2.json()["contract_version"] == 2
     assert "current_weather_scope" not in v2.json()["projection"]
     assert future.status_code == 200
-    assert future.json()["contract_version"] == 3
+    assert future.json()["contract_version"] == 4
     assert future.json()["projection"]["current_weather_scope"] == {
         "revision": 0
     }
@@ -206,6 +221,7 @@ def _finalize_turn(
     summary_advance: dict | None = None,
     weather_receipt_promotion: dict | None = None,
     current_weather_scope_transition: dict | None = None,
+    current_weather_scope_resolution: dict | None = None,
 ):
     payload = {
         "request_id": request_id,
@@ -223,6 +239,10 @@ def _finalize_turn(
     if current_weather_scope_transition is not None:
         payload["current_weather_scope_transition"] = (
             current_weather_scope_transition
+        )
+    if current_weather_scope_resolution is not None:
+        payload["current_weather_scope_resolution"] = (
+            current_weather_scope_resolution
         )
     return client.post(
         f"/conversations/{conversation_id}/turns/{turn_id}/finalize",
@@ -319,6 +339,53 @@ def _weather_scope_transition(
             "end_date": forecast_date.isoformat(),
         }
     return transition
+
+
+def _weather_scope_resolution(
+    *,
+    expected_projection_version: int,
+    expected_scope_revision: int,
+    location_action: str,
+    window_action: str,
+    location: str | None = None,
+    location_query: str | None = None,
+    forecast_date: date | None = None,
+    saved_area: bool = False,
+    pending_question: str | None = None,
+    preserve_pending_source_turn_id: str | None = None,
+    complete_pending_source_turn_id: str | None = None,
+) -> dict:
+    resolution: dict = {
+        "expected_projection_version": expected_projection_version,
+        "expected_scope_revision": expected_scope_revision,
+        "location_action": location_action,
+        "window_action": window_action,
+    }
+    if saved_area:
+        resolution["location_scope"] = {"kind": "confirmed_saved_zip"}
+    elif location is not None:
+        resolution["location_scope"] = {
+            "kind": "shopper_provided_location",
+            "location": location,
+        }
+        if location_query is not None:
+            resolution["location_scope"]["location_query"] = location_query
+    if forecast_date is not None:
+        resolution["requested_window"] = {
+            "start_date": forecast_date.isoformat(),
+            "end_date": forecast_date.isoformat(),
+        }
+    if pending_question is not None:
+        resolution["pending_question"] = pending_question
+    if preserve_pending_source_turn_id is not None:
+        resolution["preserve_pending_source_turn_id"] = (
+            preserve_pending_source_turn_id
+        )
+    if complete_pending_source_turn_id is not None:
+        resolution["complete_pending_source_turn_id"] = (
+            complete_pending_source_turn_id
+        )
+    return resolution
 
 
 def _present_products(
@@ -749,6 +816,591 @@ def test_current_weather_scope_continue_replace_and_clear_are_atomic(
         response_contract=3,
     ).json()["projection"]["current_weather_scope"]
     assert cleared == {"revision": 4}
+
+
+def test_v4_weather_scope_resolution_preserves_retained_authority_provenance(
+    conversation_db: TestClient,
+) -> None:
+    first = _start_turn(
+        conversation_db,
+        "conversation-weather-resolution",
+        request_id="request-1",
+        response_contract=4,
+    ).json()
+    assert (
+        _finalize_turn(
+            conversation_db,
+            "conversation-weather-resolution",
+            first["turn_id"],
+            request_id="request-1",
+            attempt_id=first["attempt_id"],
+            current_weather_scope_resolution=_weather_scope_resolution(
+                expected_projection_version=first["projection"]["version"],
+                expected_scope_revision=0,
+                location_action="set",
+                window_action="set",
+                location="NYC",
+                location_query="NYC, NY",
+                forecast_date=date(2026, 8, 3),
+            ),
+        ).status_code
+        == 200
+    )
+
+    second = _start_turn(
+        conversation_db,
+        "conversation-weather-resolution",
+        request_id="request-2",
+        response_contract=4,
+    ).json()
+    assert second["contract_version"] == 4
+    assert (
+        _finalize_turn(
+            conversation_db,
+            "conversation-weather-resolution",
+            second["turn_id"],
+            request_id="request-2",
+            attempt_id=second["attempt_id"],
+            current_weather_scope_resolution=_weather_scope_resolution(
+                expected_projection_version=second["projection"]["version"],
+                expected_scope_revision=1,
+                location_action="retain",
+                window_action="set",
+                forecast_date=date(2026, 8, 4),
+            ),
+        ).status_code
+        == 200
+    )
+
+    resolved = _start_turn(
+        conversation_db,
+        "conversation-weather-resolution",
+        request_id="request-3",
+        response_contract=4,
+    ).json()["projection"]["current_weather_scope"]
+    assert resolved["revision"] == 2
+    assert resolved["location"]["value"]["location"] == "NYC"
+    assert resolved["location"]["source_turn_id"] == first["turn_id"]
+    assert resolved["location"]["source_sequence"] == first["sequence"]
+    assert resolved["window"]["value"]["start_date"] == "2026-08-04"
+    assert resolved["window"]["source_turn_id"] == second["turn_id"]
+    assert resolved["window"]["source_sequence"] == second["sequence"]
+
+
+def test_v4_weather_scope_resolution_never_inherits_a_cleared_component(
+    conversation_db: TestClient,
+) -> None:
+    first = _start_turn(
+        conversation_db,
+        "conversation-weather-resolution-clear",
+        request_id="request-1",
+        response_contract=4,
+    ).json()
+    assert (
+        _finalize_turn(
+            conversation_db,
+            "conversation-weather-resolution-clear",
+            first["turn_id"],
+            request_id="request-1",
+            attempt_id=first["attempt_id"],
+            current_weather_scope_resolution=_weather_scope_resolution(
+                expected_projection_version=first["projection"]["version"],
+                expected_scope_revision=0,
+                location_action="set",
+                window_action="set",
+                location="NYC",
+                location_query="NYC, NY",
+                forecast_date=date(2026, 8, 3),
+            ),
+        ).status_code
+        == 200
+    )
+    second = _start_turn(
+        conversation_db,
+        "conversation-weather-resolution-clear",
+        request_id="request-2",
+        response_contract=4,
+    ).json()
+    assert (
+        _finalize_turn(
+            conversation_db,
+            "conversation-weather-resolution-clear",
+            second["turn_id"],
+            request_id="request-2",
+            attempt_id=second["attempt_id"],
+            current_weather_scope_resolution=_weather_scope_resolution(
+                expected_projection_version=second["projection"]["version"],
+                expected_scope_revision=1,
+                location_action="clear",
+                window_action="set",
+                forecast_date=date(2026, 8, 15),
+                pending_question="event_location",
+            ),
+        ).status_code
+        == 200
+    )
+
+    resolved = _start_turn(
+        conversation_db,
+        "conversation-weather-resolution-clear",
+        request_id="request-3",
+        response_contract=4,
+    ).json()["projection"]["current_weather_scope"]
+    assert resolved["revision"] == 2
+    assert "location" not in resolved
+    assert resolved["window"]["value"]["start_date"] == "2026-08-15"
+    assert resolved["pending_question"] == "event_location"
+    assert resolved["pending_source_turn_id"] == second["turn_id"]
+    assert resolved["pending_source_sequence"] == 2
+
+
+def test_v4_pending_source_is_replaced_unless_exactly_preserved(
+    conversation_db: TestClient,
+) -> None:
+    first = _start_turn(
+        conversation_db,
+        "conversation-weather-pending-source",
+        request_id="request-1",
+        response_contract=4,
+    ).json()
+    assert (
+        _finalize_turn(
+            conversation_db,
+            "conversation-weather-pending-source",
+            first["turn_id"],
+            request_id="request-1",
+            attempt_id=first["attempt_id"],
+            current_weather_scope_resolution=_weather_scope_resolution(
+                expected_projection_version=first["projection"]["version"],
+                expected_scope_revision=0,
+                location_action="clear",
+                window_action="set",
+                forecast_date=date(2026, 8, 15),
+                pending_question="event_location",
+            ),
+        ).status_code
+        == 200
+    )
+
+    second = _start_turn(
+        conversation_db,
+        "conversation-weather-pending-source",
+        request_id="request-2",
+        response_contract=4,
+    ).json()
+    assert (
+        _finalize_turn(
+            conversation_db,
+            "conversation-weather-pending-source",
+            second["turn_id"],
+            request_id="request-2",
+            attempt_id=second["attempt_id"],
+            current_weather_scope_resolution=_weather_scope_resolution(
+                expected_projection_version=second["projection"]["version"],
+                expected_scope_revision=1,
+                location_action="clear",
+                window_action="set",
+                forecast_date=date(2026, 8, 22),
+                pending_question="event_location",
+            ),
+        ).status_code
+        == 200
+    )
+
+    third = _start_turn(
+        conversation_db,
+        "conversation-weather-pending-source",
+        request_id="request-3",
+        response_contract=4,
+    ).json()
+    replaced = third["projection"]["current_weather_scope"]
+    assert replaced["pending_source_turn_id"] == second["turn_id"]
+    assert replaced["pending_source_sequence"] == second["sequence"]
+    wrong_preserve = _finalize_turn(
+        conversation_db,
+        "conversation-weather-pending-source",
+        third["turn_id"],
+        request_id="request-3",
+        attempt_id=third["attempt_id"],
+        current_weather_scope_resolution=_weather_scope_resolution(
+            expected_projection_version=third["projection"]["version"],
+            expected_scope_revision=2,
+            location_action="clear",
+            window_action="set",
+            forecast_date=date(2026, 8, 23),
+            pending_question="event_location",
+            preserve_pending_source_turn_id="wrong-turn",
+        ),
+    )
+    assert wrong_preserve.status_code == 409
+    assert (
+        wrong_preserve.json()["detail"]
+        == "current_weather_scope_resolution_conflict"
+    )
+    assert (
+        _finalize_turn(
+            conversation_db,
+            "conversation-weather-pending-source",
+            third["turn_id"],
+            request_id="request-3",
+            attempt_id=third["attempt_id"],
+            current_weather_scope_resolution=_weather_scope_resolution(
+                expected_projection_version=third["projection"]["version"],
+                expected_scope_revision=2,
+                location_action="clear",
+                window_action="set",
+                forecast_date=date(2026, 8, 23),
+                pending_question="event_location",
+                preserve_pending_source_turn_id=second["turn_id"],
+            ),
+        ).status_code
+        == 200
+    )
+
+    preserved = _start_turn(
+        conversation_db,
+        "conversation-weather-pending-source",
+        request_id="request-4",
+        response_contract=4,
+    ).json()["projection"]["current_weather_scope"]
+    assert preserved["pending_source_turn_id"] == second["turn_id"]
+    assert preserved["pending_source_sequence"] == second["sequence"]
+    assert preserved["window"]["value"]["start_date"] == "2026-08-23"
+
+
+def test_v4_exact_pending_completion_is_atomic_and_rotates_next_binding(
+    conversation_db: TestClient,
+) -> None:
+    first = _start_turn(
+        conversation_db,
+        "conversation-weather-pending-completion",
+        request_id="request-1",
+        response_contract=4,
+    ).json()
+    assert (
+        _finalize_turn(
+            conversation_db,
+            "conversation-weather-pending-completion",
+            first["turn_id"],
+            request_id="request-1",
+            attempt_id=first["attempt_id"],
+            current_weather_scope_resolution=_weather_scope_resolution(
+                expected_projection_version=first["projection"]["version"],
+                expected_scope_revision=0,
+                location_action="clear",
+                window_action="clear",
+                pending_question="event_location",
+            ),
+        ).status_code
+        == 200
+    )
+
+    second = _start_turn(
+        conversation_db,
+        "conversation-weather-pending-completion",
+        request_id="request-2",
+        response_contract=4,
+    ).json()
+    assert (
+        _finalize_turn(
+            conversation_db,
+            "conversation-weather-pending-completion",
+            second["turn_id"],
+            request_id="request-2",
+            attempt_id=second["attempt_id"],
+            current_weather_scope_resolution=_weather_scope_resolution(
+                expected_projection_version=second["projection"]["version"],
+                expected_scope_revision=1,
+                location_action="set",
+                window_action="clear",
+                location="Seattle",
+                pending_question="event_date",
+                complete_pending_source_turn_id=first["turn_id"],
+            ),
+        ).status_code
+        == 200
+    )
+
+    third = _start_turn(
+        conversation_db,
+        "conversation-weather-pending-completion",
+        request_id="request-3",
+        response_contract=4,
+    ).json()
+    date_pending = third["projection"]["current_weather_scope"]
+    assert date_pending["pending_question"] == "event_date"
+    assert date_pending["pending_source_turn_id"] == second["turn_id"]
+    assert date_pending["pending_source_sequence"] == second["sequence"]
+    assert date_pending["location"]["value"]["location"] == "Seattle"
+
+    missing_completion = _finalize_turn(
+        conversation_db,
+        "conversation-weather-pending-completion",
+        third["turn_id"],
+        request_id="request-3",
+        attempt_id=third["attempt_id"],
+        current_weather_scope_resolution=_weather_scope_resolution(
+            expected_projection_version=third["projection"]["version"],
+            expected_scope_revision=2,
+            location_action="retain",
+            window_action="set",
+            forecast_date=date(2026, 8, 15),
+        ),
+    )
+    assert missing_completion.status_code == 409
+    assert (
+        missing_completion.json()["detail"]
+        == "current_weather_scope_resolution_conflict"
+    )
+    stale_completion = _finalize_turn(
+        conversation_db,
+        "conversation-weather-pending-completion",
+        third["turn_id"],
+        request_id="request-3",
+        attempt_id=third["attempt_id"],
+        current_weather_scope_resolution=_weather_scope_resolution(
+            expected_projection_version=third["projection"]["version"],
+            expected_scope_revision=2,
+            location_action="retain",
+            window_action="set",
+            forecast_date=date(2026, 8, 15),
+            complete_pending_source_turn_id=first["turn_id"],
+        ),
+    )
+    assert stale_completion.status_code == 409
+    assert (
+        stale_completion.json()["detail"]
+        == "current_weather_scope_resolution_conflict"
+    )
+    assert (
+        _finalize_turn(
+            conversation_db,
+            "conversation-weather-pending-completion",
+            third["turn_id"],
+            request_id="request-3",
+            attempt_id=third["attempt_id"],
+            current_weather_scope_resolution=_weather_scope_resolution(
+                expected_projection_version=third["projection"]["version"],
+                expected_scope_revision=2,
+                location_action="retain",
+                window_action="set",
+                forecast_date=date(2026, 8, 15),
+                complete_pending_source_turn_id=second["turn_id"],
+            ),
+        ).status_code
+        == 200
+    )
+
+    completed = _start_turn(
+        conversation_db,
+        "conversation-weather-pending-completion",
+        request_id="request-4",
+        response_contract=4,
+    ).json()["projection"]["current_weather_scope"]
+    assert "pending_question" not in completed
+    assert "pending_source_turn_id" not in completed
+    assert completed["location"]["source_turn_id"] == second["turn_id"]
+    assert completed["window"]["source_turn_id"] == third["turn_id"]
+    assert completed["window"]["value"]["start_date"] == "2026-08-15"
+
+
+def test_v4_pending_binding_keeps_strict_v3_scope_storage_rollback_safe(
+    conversation_db: TestClient,
+) -> None:
+    first = _start_turn(
+        conversation_db,
+        "conversation-weather-pending-rollback",
+        request_id="request-1",
+        response_contract=4,
+    ).json()
+    assert (
+        _finalize_turn(
+            conversation_db,
+            "conversation-weather-pending-rollback",
+            first["turn_id"],
+            request_id="request-1",
+            attempt_id=first["attempt_id"],
+            current_weather_scope_resolution=_weather_scope_resolution(
+                expected_projection_version=first["projection"]["version"],
+                expected_scope_revision=0,
+                location_action="clear",
+                window_action="set",
+                forecast_date=date(2026, 8, 15),
+                pending_question="event_location",
+            ),
+        ).status_code
+        == 200
+    )
+
+    with memory_main.SessionLocal() as db:
+        projection = db.query(memory_main.ConversationProjection).one()
+        core_json = projection.current_weather_scope_json
+        pending_payload = json.loads(
+            projection.current_weather_pending_json
+        )
+
+    rollback_scope = _StrictPreV4CurrentWeatherScope.model_validate_json(
+        core_json
+    )
+    assert set(json.loads(core_json)) == {"revision", "window"}
+    assert pending_payload == {
+        "pending_question": "event_location",
+        "pending_source_sequence": 1,
+        "pending_source_turn_id": first["turn_id"],
+        "scope_revision": 1,
+    }
+
+    legacy_contract = _start_turn(
+        conversation_db,
+        "conversation-weather-pending-rollback",
+        request_id="request-2",
+        response_contract=3,
+    ).json()
+    assert legacy_contract["contract_version"] == 3
+    assert set(
+        legacy_contract["projection"]["current_weather_scope"]
+    ) == {"revision", "window"}
+    assert (
+        _finalize_turn(
+            conversation_db,
+            "conversation-weather-pending-rollback",
+            legacy_contract["turn_id"],
+            request_id="request-2",
+            attempt_id=legacy_contract["attempt_id"],
+        ).status_code
+        == 200
+    )
+
+    current = _start_turn(
+        conversation_db,
+        "conversation-weather-pending-rollback",
+        request_id="request-3",
+        response_contract=4,
+    ).json()
+    assert current["projection"]["current_weather_scope"][
+        "pending_question"
+    ] == "event_location"
+    assert (
+        _finalize_turn(
+            conversation_db,
+            "conversation-weather-pending-rollback",
+            current["turn_id"],
+            request_id="request-3",
+            attempt_id=current["attempt_id"],
+        ).status_code
+        == 200
+    )
+
+    rollback_payload = rollback_scope.model_dump(mode="json")
+    rollback_payload.update(
+        {
+            "revision": rollback_scope.revision + 1,
+            "location": {
+                "value": {
+                    "kind": "shopper_provided_location",
+                    "location": "Seattle",
+                    "location_query": "Seattle, WA",
+                },
+                "source_turn_id": current["turn_id"],
+                "source_sequence": current["sequence"],
+            },
+        }
+    )
+    rollback_scope = _StrictPreV4CurrentWeatherScope.model_validate(
+        rollback_payload
+    )
+    with memory_main.SessionLocal() as db:
+        projection = db.query(memory_main.ConversationProjection).one()
+        projection.current_weather_scope_json = json.dumps(
+            rollback_scope.model_dump(mode="json", exclude_none=True),
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        db.commit()
+
+    resumed = _start_turn(
+        conversation_db,
+        "conversation-weather-pending-rollback",
+        request_id="request-4",
+        response_contract=4,
+    ).json()["projection"]["current_weather_scope"]
+    assert resumed["revision"] == 2
+    assert resumed["location"]["value"]["location"] == "Seattle"
+    assert "pending_question" not in resumed
+    assert "pending_source_turn_id" not in resumed
+    assert "pending_source_sequence" not in resumed
+
+
+def test_v4_weather_scope_resolution_rejects_stale_revision_and_dual_update(
+    conversation_db: TestClient,
+) -> None:
+    started = _start_turn(
+        conversation_db,
+        "conversation-weather-resolution-conflict",
+        request_id="request-1",
+        response_contract=4,
+    ).json()
+    resolution = _weather_scope_resolution(
+        expected_projection_version=started["projection"]["version"],
+        expected_scope_revision=9,
+        location_action="set",
+        window_action="clear",
+        location="Seattle",
+    )
+    stale = _finalize_turn(
+        conversation_db,
+        "conversation-weather-resolution-conflict",
+        started["turn_id"],
+        request_id="request-1",
+        attempt_id=started["attempt_id"],
+        current_weather_scope_resolution=resolution,
+    )
+    missing_retain = _finalize_turn(
+        conversation_db,
+        "conversation-weather-resolution-conflict",
+        started["turn_id"],
+        request_id="request-1",
+        attempt_id=started["attempt_id"],
+        current_weather_scope_resolution=_weather_scope_resolution(
+            expected_projection_version=started["projection"]["version"],
+            expected_scope_revision=0,
+            location_action="retain",
+            window_action="clear",
+        ),
+    )
+    dual = _finalize_turn(
+        conversation_db,
+        "conversation-weather-resolution-conflict",
+        started["turn_id"],
+        request_id="request-1",
+        attempt_id=started["attempt_id"],
+        current_weather_scope_transition=_weather_scope_transition(
+            expected_projection_version=started["projection"]["version"],
+            action="replace",
+            location="Seattle",
+        ),
+        current_weather_scope_resolution={
+            **resolution,
+            "expected_scope_revision": 0,
+        },
+    )
+
+    assert stale.status_code == 409
+    assert (
+        stale.json()["detail"]
+        == "current_weather_scope_revision_conflict"
+    )
+    assert missing_retain.status_code == 409
+    assert (
+        missing_retain.json()["detail"]
+        == "current_weather_scope_resolution_conflict"
+    )
+    assert dual.status_code == 422
+    with memory_main.SessionLocal() as db:
+        turn = db.query(memory_main.ConversationTurn).one()
+        projection = db.query(memory_main.ConversationProjection).one()
+        assert turn.status == "started"
+        assert projection.current_weather_scope_json == '{"revision":0}'
 
 
 def test_weather_scope_rejects_stale_failed_and_unbound_saved_area_updates(
@@ -2636,6 +3288,113 @@ def test_turn_profile_foreign_key_restricts_delete_and_primary_key_update(
         assert turn.shopper_profile_id == profile.shopper_profile_id
 
 
+@pytest.mark.parametrize(
+    ("embedded_pending", "expected_pending"),
+    (
+        pytest.param(
+            {
+                "pending_question": "event_location",
+                "pending_source_turn_id": "turn-1",
+                "pending_source_sequence": 1,
+            },
+            {
+                "pending_question": "event_location",
+                "pending_source_sequence": 1,
+                "pending_source_turn_id": "turn-1",
+                "scope_revision": 1,
+            },
+            id="complete-source-bound-binding",
+        ),
+        pytest.param(
+            {"pending_question": "event_location"},
+            {},
+            id="unsourceable-question-only-binding",
+        ),
+    ),
+)
+def test_pending_binding_migration_restores_strict_v3_scope_json(
+    embedded_pending: dict,
+    expected_pending: dict,
+) -> None:
+    upgrade_engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    embedded_scope = {
+        "revision": 1,
+        "window": {
+            "value": {
+                "start_date": "2026-08-15",
+                "end_date": "2026-08-15",
+            },
+            "source_turn_id": "turn-1",
+            "source_sequence": 1,
+        },
+        **embedded_pending,
+    }
+    with upgrade_engine.begin() as connection:
+        connection.execute(
+            text(
+                "CREATE TABLE schema_migrations ("
+                "version INTEGER PRIMARY KEY, applied_at REAL NOT NULL)"
+            )
+        )
+        for version in range(1, 11):
+            connection.execute(
+                text(
+                    "INSERT INTO schema_migrations (version, applied_at) "
+                    "VALUES (:version, 1.0)"
+                ),
+                {"version": version},
+            )
+        connection.execute(
+            text(
+                "CREATE TABLE conversation_projection ("
+                "conversation_id TEXT PRIMARY KEY, "
+                "current_weather_scope_json TEXT NOT NULL)"
+            )
+        )
+        connection.execute(
+            text(
+                "INSERT INTO conversation_projection "
+                "(conversation_id, current_weather_scope_json) "
+                "VALUES ('conversation-1', :scope_json)"
+            ),
+            {
+                "scope_json": json.dumps(
+                    embedded_scope,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+            },
+        )
+
+    memory_main.run_schema_migrations(upgrade_engine)
+
+    with upgrade_engine.connect() as connection:
+        core_json, pending_json = connection.execute(
+            text(
+                "SELECT current_weather_scope_json, "
+                "current_weather_pending_json "
+                "FROM conversation_projection "
+                "WHERE conversation_id = 'conversation-1'"
+            )
+        ).one()
+        versions = connection.execute(
+            text("SELECT version FROM schema_migrations ORDER BY version")
+        ).scalars().all()
+
+    rollback_scope = _StrictPreV4CurrentWeatherScope.model_validate_json(
+        core_json
+    )
+    assert rollback_scope.revision == 1
+    assert set(json.loads(core_json)) == {"revision", "window"}
+    assert json.loads(pending_json) == expected_pending
+    assert versions == list(range(1, 12))
+    upgrade_engine.dispose()
+
+
 def test_versioned_migrations_upgrade_legacy_schema_once_without_data_loss(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2793,6 +3552,7 @@ def test_versioned_migrations_upgrade_legacy_schema_once_without_data_loss(
             text(
                 "SELECT version, summary_text, summary_through_sequence, "
                 "active_receipts_json, current_weather_scope_json, "
+                "current_weather_pending_json, "
                 "active_anchors_json, effective_preferences_json, "
                 "product_reference_index_json, last_turn_id "
                 "FROM conversation_projection "
@@ -2800,7 +3560,7 @@ def test_versioned_migrations_upgrade_legacy_schema_once_without_data_loss(
             )
         ).one()
 
-    assert versions == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    assert versions == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
     assert row[0] == "Legacy Bag"
     assert len(row[1]) == 32
     assert row[2:] == (None, None)
@@ -2823,6 +3583,7 @@ def test_versioned_migrations_upgrade_legacy_schema_once_without_data_loss(
         0,
         "[]",
         '{"revision":0}',
+        "{}",
         '["anchor"]',
         '[{"field":"color","value":"blue"}]',
         '[{"turn_seq":1}]',
@@ -2893,7 +3654,7 @@ def test_file_database_reopens_with_sqlite_safety_settings(
         connection.execute(
             text("SELECT COUNT(*) FROM schema_migrations")
         ).scalar_one()
-        == 10
+        == 11
     )
     reopened_engine.dispose()
 
@@ -2919,7 +3680,8 @@ def test_fresh_projection_schema_supports_staging_shaped_insert() -> None:
         values = connection.execute(
             text(
                 "SELECT summary_text, summary_through_sequence, "
-                "active_receipts_json, current_weather_scope_json "
+                "active_receipts_json, current_weather_scope_json, "
+                "current_weather_pending_json "
                 "FROM conversation_projection "
                 "WHERE conversation_id = 'rollback-conversation'"
             )
@@ -2935,9 +3697,10 @@ def test_fresh_projection_schema_supports_staging_shaped_insert() -> None:
                 "summary_through_sequence",
                 "active_receipts_json",
                 "current_weather_scope_json",
+                "current_weather_pending_json",
             }
         }
 
-    assert values == ("", 0, "[]", '{"revision":0}')
+    assert values == ("", 0, "[]", '{"revision":0}', "{}")
     assert all(default is not None for default in defaults.values())
     fresh_engine.dispose()

@@ -15,6 +15,7 @@ from langchain_core.messages import AIMessage
 
 from chain_server.src.agenttypes import State
 from chain_server.src.conversation_memory import (
+    ConversationMemoryClient,
     ConversationMemoryError,
     ConversationProjection,
     RecentConversationTurn,
@@ -37,6 +38,7 @@ from shared.weather_receipts import (
 )
 from shared.weather_scope import (
     CurrentWeatherScope,
+    CurrentWeatherScopeResolution,
     CurrentWeatherScopeTransition,
     WeatherScopeLocationAuthority,
     WeatherScopeWindowAuthority,
@@ -46,6 +48,25 @@ from shared.weather_scope import (
 FETCHED_AT = datetime(2026, 7, 30, 12, 0, tzinfo=timezone.utc)
 RECEIPT_TTL_SECONDS = 3_600
 REQUEST_ID = "request-current"
+
+
+class _HttpResponse:
+    def __init__(self, payload: dict, status_code: int = 200) -> None:
+        self.payload = payload
+        self.status_code = status_code
+
+    def json(self) -> dict:
+        return self.payload
+
+
+class _ScriptedSession:
+    def __init__(self, *responses: _HttpResponse) -> None:
+        self.responses = list(responses)
+        self.calls: list[dict] = []
+
+    def post(self, url: str, *, json: dict, timeout: float) -> _HttpResponse:
+        self.calls.append({"url": url, "json": json, "timeout": timeout})
+        return self.responses.pop(0)
 
 
 def _evidence(
@@ -128,6 +149,23 @@ def _promotion(*, expected_projection_version: int = 4) -> WeatherReceiptPromoti
         ),
         evidence=_evidence(),
         ttl_seconds=RECEIPT_TTL_SECONDS,
+    )
+
+
+def _scope_resolution() -> CurrentWeatherScopeResolution:
+    return CurrentWeatherScopeResolution(
+        expected_projection_version=4,
+        expected_scope_revision=0,
+        location_action="set",
+        window_action="set",
+        location_scope=ShopperLocationWeatherScope(
+            location="NYC",
+            location_query="NYC, NY",
+        ),
+        requested_window=WeatherReceiptWindow(
+            start_date=date(2026, 8, 3),
+            end_date=date(2026, 8, 3),
+        ),
     )
 
 
@@ -349,17 +387,22 @@ def test_receipt_identity_is_redacted_from_normal_and_failed_turn_diagnostics() 
     assert '"weather_receipt_status": "bound"' in serialized
 
 
-@pytest.mark.parametrize(
-    ("skill_names", "next_question"),
-    [
-        (["outfit-styling"], None),
-        (["outfit-styling", "event-context"], "event_date"),
-    ],
-)
-def test_receipt_binding_requires_event_context_with_no_question(
-    skill_names: list[str],
-    next_question: str | None,
-) -> None:
+def test_unselected_receipt_binding_is_inert() -> None:
+    receipt = _receipt()
+    activation = runtime_mod._skill_activation_input_model(
+        ("event-context", "outfit-styling"),
+        (receipt.receipt_id,),
+    )
+
+    accepted = activation(
+        skill_names=["outfit-styling"],
+        weather_receipt_id=receipt.receipt_id,
+    )
+
+    assert accepted.weather_receipt_id is None
+
+
+def test_selected_receipt_binding_requires_no_question() -> None:
     receipt = _receipt()
     activation = runtime_mod._skill_activation_input_model(
         ("event-context", "outfit-styling"),
@@ -371,8 +414,8 @@ def test_receipt_binding_requires_event_context_with_no_question(
         match="weather receipt binding requires event-context with no",
     ):
         activation(
-            skill_names=skill_names,
-            event_context_next_question=next_question,
+            skill_names=["outfit-styling", "event-context"],
+            event_context_next_question="event_date",
             weather_receipt_id=receipt.receipt_id,
         )
 
@@ -832,6 +875,141 @@ def test_projection_conflict_retries_finalize_without_optional_promotion(
         "promotion_dropped"
     )
     assert "memory_finalize_error" not in state.agent_diagnostics
+
+
+@pytest.mark.parametrize(
+    "detail",
+    [
+        "weather_receipt_stale",
+        "weather_receipt_status_conflict",
+        "weather_receipt_scope_conflict",
+    ],
+)
+def test_http_receipt_conflict_retries_without_promotion_but_keeps_scope(
+    base_config,
+    detail: str,
+) -> None:
+    runtime = runtime_mod.DeepAgentsRuntime(base_config)
+    session = _ScriptedSession(
+        _HttpResponse({"detail": detail}, status_code=409),
+        _HttpResponse(
+            {
+                "turn_id": "turn-current",
+                "attempt_id": "attempt-current",
+                "sequence": 3,
+                "replayed": False,
+                "status": "completed",
+                "assistant_text": "Completed response.",
+                "termination_reason": "completed",
+            }
+        ),
+    )
+    runtime._conversation_memory = ConversationMemoryClient(
+        "http://memory",
+        session=session,
+    )
+    state = State(
+        user_id=1,
+        query="Continue.",
+        response="Completed response.",
+        weather_receipt_promotion=_promotion(),
+        current_weather_scope_resolution=_scope_resolution(),
+        agent_diagnostics={
+            "final_termination_reason": "completed",
+            "weather_receipt_status": "promotion_prepared",
+        },
+    )
+
+    assert runtime._finalize_conversation_turn(
+        state,
+        _identity(),
+        _turn().model_copy(update={"contract_version": 4}),
+    )
+
+    assert len(session.calls) == 2
+    first = session.calls[0]["json"]
+    second = session.calls[1]["json"]
+    assert "weather_receipt_promotion" in first
+    assert "weather_receipt_promotion" not in second
+    assert "current_weather_scope_resolution" in first
+    assert (
+        second["current_weather_scope_resolution"]
+        == first["current_weather_scope_resolution"]
+    )
+    assert state.agent_diagnostics["weather_receipt_status"] == (
+        "promotion_dropped"
+    )
+
+
+@pytest.mark.parametrize(
+    "detail",
+    [
+        "projection_version_conflict",
+        "current_weather_scope_revision_conflict",
+        "current_weather_scope_resolution_conflict",
+        "current_weather_scope_status_conflict",
+        "current_weather_scope_saved_area_unavailable",
+    ],
+)
+def test_http_scope_conflict_terminalizes_failed_without_scope_or_products(
+    base_config,
+    detail: str,
+) -> None:
+    runtime = runtime_mod.DeepAgentsRuntime(base_config)
+    session = _ScriptedSession(
+        _HttpResponse({"detail": detail}, status_code=409),
+        _HttpResponse(
+            {
+                "turn_id": "turn-current",
+                "attempt_id": "attempt-current",
+                "sequence": 3,
+                "replayed": False,
+                "status": "failed",
+                "assistant_text": runtime_mod._GROUNDING_FAILURE_RESPONSE,
+                "termination_reason": detail,
+            }
+        ),
+    )
+    runtime._conversation_memory = ConversationMemoryClient(
+        "http://memory",
+        session=session,
+    )
+    state = State(
+        user_id=1,
+        query="Continue.",
+        response="Unpersisted weather response.",
+        product_results=[
+            {
+                "product_id": "stale-product",
+                "display_name": "Stale product",
+            }
+        ],
+        retrieved={"Stale product": "/images/stale.png"},
+        current_weather_scope_resolution=_scope_resolution(),
+        agent_diagnostics={"final_termination_reason": "completed"},
+    )
+
+    assert runtime._finalize_conversation_turn(
+        state,
+        _identity(),
+        _turn().model_copy(update={"contract_version": 4}),
+    )
+
+    assert len(session.calls) == 2
+    first = session.calls[0]["json"]
+    failed = session.calls[1]["json"]
+    assert first["status"] == "completed"
+    assert "current_weather_scope_resolution" in first
+    assert failed["status"] == "failed"
+    assert failed["termination_reason"] == detail
+    assert "current_weather_scope_resolution" not in failed
+    assert "weather_receipt_promotion" not in failed
+    assert failed["output"]["product_results"] == []
+    assert failed["output"]["retrieved"] == {}
+    assert state.response == runtime_mod._GROUNDING_FAILURE_RESPONSE
+    assert state.product_results == []
+    assert state.retrieved == {}
+    assert state.agent_diagnostics["memory_finalize_error"] == detail
 
 
 def test_hydration_keeps_receipts_out_of_summary_raw_and_product_lanes(

@@ -262,6 +262,104 @@ def _conversation_current_weather_scope_projection(
         )
 
 
+def _conversation_current_weather_pending_projection(
+    connection: Connection,
+) -> None:
+    """Move v4 pending bindings out of the rollback-readable v3 scope lane."""
+
+    columns = _table_columns(connection, "conversation_projection")
+    if "current_weather_pending_json" not in columns:
+        connection.execute(
+            text(
+                "ALTER TABLE conversation_projection "
+                "ADD COLUMN current_weather_pending_json TEXT NOT NULL "
+                "DEFAULT '{}'"
+            )
+        )
+
+    pending_keys = (
+        "pending_question",
+        "pending_source_turn_id",
+        "pending_source_sequence",
+    )
+    rows = connection.execute(
+        text(
+            "SELECT conversation_id, current_weather_scope_json, "
+            "current_weather_pending_json FROM conversation_projection"
+        )
+    ).mappings()
+    for row in rows:
+        scope_payload = json.loads(
+            row["current_weather_scope_json"] or '{"revision":0}'
+        )
+        if not isinstance(scope_payload, dict):
+            raise ValueError("current weather scope projection must be an object")
+        present_pending_keys = [
+            key for key in pending_keys if key in scope_payload
+        ]
+        if not present_pending_keys:
+            continue
+        existing_pending = json.loads(
+            row["current_weather_pending_json"] or "{}"
+        )
+        if not isinstance(existing_pending, dict):
+            raise ValueError(
+                "current weather pending projection must be an object"
+            )
+        if existing_pending:
+            raise ValueError("pending weather scope projection is not empty")
+
+        if len(present_pending_keys) != len(pending_keys):
+            for key in present_pending_keys:
+                scope_payload.pop(key)
+            connection.execute(
+                text(
+                    "UPDATE conversation_projection "
+                    "SET current_weather_scope_json = :scope_json, "
+                    "current_weather_pending_json = '{}' "
+                    "WHERE conversation_id = :conversation_id"
+                ),
+                {
+                    "conversation_id": row["conversation_id"],
+                    "scope_json": json.dumps(
+                        scope_payload,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                },
+            )
+            continue
+
+        pending_payload = {
+            "scope_revision": scope_payload["revision"],
+            **{
+                key: scope_payload.pop(key)
+                for key in pending_keys
+            },
+        }
+        connection.execute(
+            text(
+                "UPDATE conversation_projection "
+                "SET current_weather_scope_json = :scope_json, "
+                "current_weather_pending_json = :pending_json "
+                "WHERE conversation_id = :conversation_id"
+            ),
+            {
+                "conversation_id": row["conversation_id"],
+                "scope_json": json.dumps(
+                    scope_payload,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+                "pending_json": json.dumps(
+                    pending_payload,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+            },
+        )
+
+
 _MIGRATIONS = (
     (1, _legacy_schema),
     (2, _conversation_schema),
@@ -273,6 +371,7 @@ _MIGRATIONS = (
     (8, _conversation_summary_projection),
     (9, _conversation_active_receipts_projection),
     (10, _conversation_current_weather_scope_projection),
+    (11, _conversation_current_weather_pending_projection),
 )
 
 

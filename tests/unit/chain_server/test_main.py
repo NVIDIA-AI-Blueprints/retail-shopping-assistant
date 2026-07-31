@@ -53,6 +53,7 @@ from chain_server.src.weather_tool import (
     WEATHER_FORECAST_FAILURE_PREFIX,
     WeatherForecastEvidence,
 )
+from chain_server.src.weather_scope_resolver import WeatherScopeResolverDecision
 from shared.commerce_contracts import Cart as CommerceCart
 from shared.commerce_contracts import (
     CartLine,
@@ -69,7 +70,11 @@ from shared.commerce_contracts import (
     ProductSummary,
     SearchCatalogResult,
 )
-from shared.weather_scope import CurrentWeatherScope
+from shared.weather_scope import (
+    CurrentWeatherScope,
+    CurrentWeatherScopeResolution,
+    apply_current_weather_scope_resolution,
+)
 
 
 class _StubRuntime:
@@ -2906,15 +2911,31 @@ class TestDeepAgentsRuntimeRefs:
         weather_scope_schema = activation_schema["$defs"][
             weather_scope_ref.rsplit("/", 1)[-1]
         ]["properties"]
+        assert set(weather_scope_schema) == {
+            "scope_revision",
+            "location_action",
+            "window_action",
+            "location_source",
+            "location",
+            "location_query",
+            "relative_date",
+            "weekday",
+            "date",
+            "start_date",
+            "end_date",
+        }
+        assert "Exact revision from CURRENT WEATHER SCOPE" in (
+            weather_scope_schema["scope_revision"]["description"]
+        )
+        assert "Never rely on an omitted field to inherit location" in (
+            weather_scope_schema["location_action"]["description"]
+        )
+        assert "Never rely on an omitted field to inherit a date" in (
+            weather_scope_schema["window_action"]["description"]
+        )
         assert "location='NYC', location_query='NYC, NY'" in (
             weather_scope_schema["location_query"]["description"]
         )
-        assert "A pronoun, location, date, or occasion alone" in (
-            weather_scope_schema["subject_change_quote"]["description"]
-        )
-        assert "Initial scope creation uses replace" in weather_scope_schema[
-            "action"
-        ]["description"]
         assert "Never add an unstated ZIP or numeric component" in (
             weather_scope_schema["location_query"]["description"]
         )
@@ -3051,6 +3072,10 @@ class TestDeepAgentsRuntimeRefs:
             "/shopper/outfit-styling/SKILL.md, "
             "/shopper/event-context/SKILL.md\n"
         )
+        initial_pending_resolution = captured_weather["binding"].resolution
+        assert initial_pending_resolution.location_action == "clear"
+        assert initial_pending_resolution.window_action == "clear"
+        assert initial_pending_resolution.pending_question == "event_location"
         assert (
             "EVENT_CONTEXT_ADDITIVE_BOUNDARY: Tool availability is not a "
             "product request."
@@ -3334,6 +3359,9 @@ class TestDeepAgentsRuntimeRefs:
                 current_weather_scope=CurrentWeatherScope.model_validate(
                     {
                         "revision": 1,
+                        "pending_question": "event_date",
+                        "pending_source_turn_id": "turn-seattle",
+                        "pending_source_sequence": 2,
                         "location": {
                             "value": {
                                 "kind": "shopper_provided_location",
@@ -3343,6 +3371,14 @@ class TestDeepAgentsRuntimeRefs:
                             "source_sequence": 2,
                         },
                     }
+                ),
+                weather_scope_resolver_decision=(
+                    WeatherScopeResolverDecision.model_validate(
+                        {
+                            "decision": "answers_pending",
+                            "pending_source_turn_id": "turn-seattle",
+                        }
+                    )
                 ),
             ),
             identity,
@@ -3357,7 +3393,9 @@ class TestDeepAgentsRuntimeRefs:
             skill_names=["outfit-styling", "event-context"],
             event_context_next_question="event_date",
             weather_scope={
-                "action": "continue",
+                "scope_revision": 1,
+                "location_action": "retain",
+                "window_action": "set",
                 "relative_date": "next_week",
             },
         )
@@ -3371,6 +3409,166 @@ class TestDeepAgentsRuntimeRefs:
         )
         assert (
             continued_scope_gate._required_tool
+            == "get_weather_forecast_tool"
+        )
+
+        runtime._create_agent(
+            State(
+                user_id=111,
+                query="The same wedding is August 15.",
+                conversation_projection_version=3,
+                current_weather_scope=CurrentWeatherScope.model_validate(
+                    {
+                        "revision": 1,
+                        "location": {
+                            "value": {
+                                "kind": "shopper_provided_location",
+                                "location": "NYC",
+                                "location_query": "NYC, NY",
+                            },
+                            "source_turn_id": "turn-nyc",
+                            "source_sequence": 1,
+                        },
+                    }
+                ),
+                weather_scope_resolver_decision=(
+                    WeatherScopeResolverDecision.model_validate(
+                        {"decision": "same_subject"}
+                    )
+                ),
+            ),
+            identity,
+        )
+        resolver_retained_tools = {
+            fn.__name__: fn for fn in captured["tools"]
+        }
+        _, resolver_retained_gate = captured["middleware"]
+        resolver_retained_activation = resolver_retained_tools[
+            "activate_shopper_skills_tool"
+        ](
+            skill_names=["outfit-styling", "event-context"],
+            event_context_next_question="none",
+            weather_scope={
+                "scope_revision": 1,
+                "location_action": "retain",
+                "window_action": "set",
+                "date": "2026-08-15",
+            },
+        )
+        assert resolver_retained_activation.startswith(
+            runtime_mod.SKILL_ACTIVATION_COMPLETE
+        )
+        resolver_retained_scope = captured_weather["binding"].resolution
+        assert resolver_retained_scope.location_action == "retain"
+        assert resolver_retained_scope.window_action == "set"
+        assert (
+            resolver_retained_gate._required_tool
+            == "get_weather_forecast_tool"
+        )
+
+        venue_scope = CurrentWeatherScope.model_validate(
+            {
+                "revision": 1,
+                "location": {
+                    "value": {
+                        "kind": "shopper_provided_location",
+                        "location": "Seattle",
+                    },
+                    "source_turn_id": "turn-seattle",
+                    "source_sequence": 1,
+                },
+            }
+        )
+        runtime._create_agent(
+            State(
+                user_id=111,
+                query="It will be on an outdoor patio.",
+                conversation_projection_version=4,
+                current_weather_scope=venue_scope,
+                weather_scope_resolver_decision=(
+                    WeatherScopeResolverDecision.model_validate(
+                        {"decision": "unchanged"}
+                    )
+                ),
+            ),
+            identity,
+        )
+        venue_tools = {fn.__name__: fn for fn in captured["tools"]}
+        venue_activation = venue_tools["activate_shopper_skills_tool"](
+            skill_names=["outfit-styling", "event-context"],
+            event_context_next_question="event_date",
+        )
+        assert venue_activation.startswith(
+            runtime_mod.SKILL_ACTIVATION_COMPLETE
+        )
+        assert (
+            "EVENT_CONTEXT_NEXT_QUESTION_BOUNDARY: event_date"
+            in venue_activation
+        )
+        venue_pending_resolution = captured_weather["binding"].resolution
+        assert venue_pending_resolution.location_action == "retain"
+        assert venue_pending_resolution.window_action == "clear"
+        assert venue_pending_resolution.pending_question == "event_date"
+        persisted_venue_scope = apply_current_weather_scope_resolution(
+            venue_scope,
+            venue_pending_resolution,
+            source_turn_id="turn-venue",
+            source_sequence=2,
+        )
+        assert persisted_venue_scope.pending_question == "event_date"
+        assert persisted_venue_scope.pending_source_turn_id == "turn-venue"
+        assert persisted_venue_scope.pending_source_sequence == 2
+
+        runtime._create_agent(
+            State(
+                user_id=111,
+                query="August 15.",
+                conversation_projection_version=5,
+                current_weather_scope=persisted_venue_scope,
+                weather_scope_resolver_decision=(
+                    WeatherScopeResolverDecision.model_validate(
+                        {
+                            "decision": "answers_pending",
+                            "pending_source_turn_id": "turn-venue",
+                        }
+                    )
+                ),
+            ),
+            identity,
+        )
+        pending_date_tools = {
+            fn.__name__: fn for fn in captured["tools"]
+        }
+        _, pending_date_gate = captured["middleware"]
+        pending_date_activation = pending_date_tools[
+            "activate_shopper_skills_tool"
+        ](
+            skill_names=["outfit-styling", "event-context"],
+            event_context_next_question="event_date",
+            weather_scope={
+                "scope_revision": 2,
+                "location_action": "clear",
+                "window_action": "set",
+                "date": "2026-08-15",
+            },
+        )
+        assert pending_date_activation.startswith(
+            runtime_mod.SKILL_ACTIVATION_COMPLETE
+        )
+        assert (
+            "EVENT_CONTEXT_NEXT_QUESTION_BOUNDARY: none"
+            in pending_date_activation
+        )
+        pending_date_resolution = captured_weather["binding"].resolution
+        assert pending_date_resolution.location_action == "retain"
+        assert pending_date_resolution.window_action == "set"
+        assert pending_date_resolution.pending_question is None
+        assert (
+            pending_date_resolution.complete_pending_source_turn_id
+            == "turn-venue"
+        )
+        assert (
+            pending_date_gate._required_tool
             == "get_weather_forecast_tool"
         )
 
@@ -3401,6 +3599,11 @@ class TestDeepAgentsRuntimeRefs:
                         },
                     }
                 ),
+                weather_scope_resolver_decision=(
+                    WeatherScopeResolverDecision.model_validate(
+                        {"decision": "new_subject"}
+                    )
+                ),
             ),
             identity,
         )
@@ -3414,7 +3617,9 @@ class TestDeepAgentsRuntimeRefs:
             skill_names=["outfit-styling", "event-context"],
             event_context_next_question="event_date",
             weather_scope={
-                "action": "continue",
+                "scope_revision": 1,
+                "location_action": "set",
+                "window_action": "clear",
                 "location_source": "shopper_provided_location",
                 "location": "Seattle",
             },
@@ -3427,12 +3632,533 @@ class TestDeepAgentsRuntimeRefs:
             in changed_location_activation
         )
         assert (
-            captured_weather["binding"].transition.clear_window is True
+            captured_weather["binding"].resolution.location_action == "set"
+        )
+        assert (
+            captured_weather["binding"].resolution.window_action == "clear"
         )
         assert changed_location_gate._required_tool is None
         assert changed_location_gate._runtime_tool_rejections[
             "get_weather_forecast_tool"
         ] == runtime_mod._EVENT_CONTEXT_DATE_REQUIRED_WEATHER_BLOCK
+
+        runtime._create_agent(
+            State(
+                user_id=111,
+                query="I also have a conference on August 15.",
+                conversation_projection_version=4,
+                current_weather_scope=CurrentWeatherScope.model_validate(
+                    {
+                        "revision": 1,
+                        "location": {
+                            "value": {
+                                "kind": "shopper_provided_location",
+                                "location": "NYC",
+                                "location_query": "NYC, NY",
+                            },
+                            "source_turn_id": "turn-nyc",
+                            "source_sequence": 1,
+                        },
+                        "window": {
+                            "value": {
+                                "start_date": "2026-08-07",
+                                "end_date": "2026-08-07",
+                            },
+                            "source_turn_id": "turn-nyc",
+                            "source_sequence": 1,
+                        },
+                    }
+                ),
+                weather_scope_resolver_decision=(
+                    WeatherScopeResolverDecision.model_validate(
+                        {"decision": "new_subject"}
+                    )
+                ),
+            ),
+            identity,
+        )
+        new_subject_tools = {
+            fn.__name__: fn for fn in captured["tools"]
+        }
+        _, new_subject_gate = captured["middleware"]
+        new_subject_activation = new_subject_tools[
+            "activate_shopper_skills_tool"
+        ](
+            skill_names=["outfit-styling", "event-context"],
+            event_context_next_question="none",
+            weather_scope={
+                "scope_revision": 1,
+                "location_action": "retain",
+                "window_action": "set",
+                "date": "2026-08-15",
+            },
+            weather_refresh=True,
+        )
+        assert new_subject_activation.startswith(
+            runtime_mod.SKILL_ACTIVATION_COMPLETE
+        )
+        new_subject_resolution = captured_weather["binding"].resolution
+        assert new_subject_resolution.location_action == "clear"
+        assert new_subject_resolution.window_action == "set"
+        assert (
+            "EVENT_CONTEXT_NEXT_QUESTION_BOUNDARY: event_location"
+            in new_subject_activation
+        )
+        assert new_subject_gate._required_tool is None
+
+        runtime._create_agent(
+            State(
+                user_id=111,
+                query="I also have a conference on August 15.",
+                conversation_projection_version=4,
+                current_weather_scope=CurrentWeatherScope.model_validate(
+                    {
+                        "revision": 1,
+                        "location": {
+                            "value": {
+                                "kind": "shopper_provided_location",
+                                "location": "NYC",
+                                "location_query": "NYC, NY",
+                            },
+                            "source_turn_id": "turn-nyc",
+                            "source_sequence": 1,
+                        },
+                    }
+                ),
+                weather_scope_resolver_decision=(
+                    WeatherScopeResolverDecision.model_validate(
+                        {
+                            "decision": "unclear",
+                        }
+                    )
+                ),
+            ),
+            identity,
+        )
+        conference_tools = {
+            fn.__name__: fn for fn in captured["tools"]
+        }
+        _, conference_gate = captured["middleware"]
+        conference_activation = conference_tools[
+            "activate_shopper_skills_tool"
+        ](
+            skill_names=["outfit-styling", "event-context"],
+            event_context_next_question="none",
+            weather_scope={
+                "scope_revision": 1,
+                "location_action": "retain",
+                "window_action": "set",
+                "date": "2026-08-15",
+            },
+        )
+        assert conference_activation.startswith(
+            runtime_mod.SKILL_ACTIVATION_COMPLETE
+        )
+        assert (
+            "EVENT_CONTEXT_NEXT_QUESTION_BOUNDARY: event_location"
+            in conference_activation
+        )
+        assert (
+            '"authority":"semantic_resolver"'
+            in conference_activation
+        )
+        assert '"decision":"unclear"' in conference_activation
+        assert '"location_action":"clear"' in conference_activation
+        assert captured_weather["binding"].resolution.location_action == "clear"
+        assert captured_weather["binding"].resolution.window_action == "set"
+        assert conference_gate._required_tool is None
+        assert conference_gate._runtime_tool_rejections[
+            "get_weather_forecast_tool"
+        ] == runtime_mod._EVENT_CONTEXT_SCOPE_UNCLEAR_WEATHER_BLOCK
+
+        runtime._create_agent(
+            State(
+                user_id=111,
+                query="The separate wedding is in Cancun.",
+                conversation_projection_version=5,
+                current_weather_scope=CurrentWeatherScope.model_validate(
+                    {
+                        "revision": 2,
+                        "pending_question": "event_location",
+                        "pending_source_turn_id": "turn-conference",
+                        "pending_source_sequence": 2,
+                        "window": {
+                            "value": {
+                                "start_date": "2026-08-15",
+                                "end_date": "2026-08-15",
+                            },
+                            "source_turn_id": "turn-conference",
+                            "source_sequence": 2,
+                        },
+                    }
+                ),
+                weather_scope_resolver_decision=(
+                    WeatherScopeResolverDecision.model_validate(
+                        {"decision": "unclear"}
+                    )
+                ),
+            ),
+            identity,
+        )
+        cancun_tools = {fn.__name__: fn for fn in captured["tools"]}
+        _, cancun_gate = captured["middleware"]
+        cancun_activation = cancun_tools[
+            "activate_shopper_skills_tool"
+        ](
+            skill_names=["outfit-styling", "event-context"],
+            event_context_next_question="none",
+            weather_scope={
+                "scope_revision": 2,
+                "location_action": "set",
+                "window_action": "retain",
+                "location_source": "shopper_provided_location",
+                "location": "Cancun",
+            },
+        )
+        assert cancun_activation.startswith(
+            runtime_mod.SKILL_ACTIVATION_COMPLETE
+        )
+        cancun_resolution = captured_weather["binding"].resolution
+        assert cancun_resolution.location_action == "set"
+        assert cancun_resolution.window_action == "clear"
+        assert cancun_gate._required_tool is None
+        assert cancun_gate._runtime_tool_rejections[
+            "get_weather_forecast_tool"
+        ] == runtime_mod._EVENT_CONTEXT_SCOPE_UNCLEAR_WEATHER_BLOCK
+
+        runtime._create_agent(
+            State(
+                user_id=111,
+                query="Seattle.",
+                conversation_projection_version=5,
+                current_weather_scope=CurrentWeatherScope.model_validate(
+                    {
+                        "revision": 2,
+                        "pending_question": "event_location",
+                        "pending_source_turn_id": "turn-conference",
+                        "pending_source_sequence": 2,
+                        "window": {
+                            "value": {
+                                "start_date": "2026-08-15",
+                                "end_date": "2026-08-15",
+                            },
+                            "source_turn_id": "turn-conference",
+                            "source_sequence": 2,
+                        },
+                    }
+                ),
+                weather_scope_resolver_decision=(
+                    WeatherScopeResolverDecision.model_validate(
+                        {
+                            "decision": "answers_pending",
+                            "pending_source_turn_id": "turn-conference",
+                        }
+                    )
+                ),
+            ),
+            identity,
+        )
+        pending_location_tools = {
+            fn.__name__: fn for fn in captured["tools"]
+        }
+        _, pending_location_gate = captured["middleware"]
+        pending_location_activation = pending_location_tools[
+            "activate_shopper_skills_tool"
+        ](
+            skill_names=["outfit-styling", "event-context"],
+            event_context_next_question="event_date",
+            weather_scope={
+                "scope_revision": 2,
+                "location_action": "set",
+                "window_action": "clear",
+                "location_source": "shopper_provided_location",
+                "location": "Seattle",
+            },
+        )
+        assert pending_location_activation.startswith(
+            runtime_mod.SKILL_ACTIVATION_COMPLETE
+        )
+        assert (
+            "EVENT_CONTEXT_NEXT_QUESTION_BOUNDARY: none"
+            in pending_location_activation
+        )
+        pending_resolution = captured_weather["binding"].resolution
+        assert pending_resolution.location_action == "set"
+        assert pending_resolution.window_action == "retain"
+        assert pending_resolution.pending_question is None
+        assert (
+            pending_resolution.complete_pending_source_turn_id
+            == "turn-conference"
+        )
+        assert (
+            pending_location_gate._required_tool
+            == "get_weather_forecast_tool"
+        )
+
+        pending_location_scope = CurrentWeatherScope.model_validate(
+            {
+                "revision": 2,
+                "pending_question": "event_location",
+                "pending_source_turn_id": "turn-conference",
+                "pending_source_sequence": 2,
+                "window": {
+                    "value": {
+                        "start_date": "2026-08-15",
+                        "end_date": "2026-08-15",
+                    },
+                    "source_turn_id": "turn-conference",
+                    "source_sequence": 2,
+                },
+            }
+        )
+        missing_counterpart_scope = CurrentWeatherScope.model_validate(
+            {
+                "revision": 2,
+                "pending_question": "event_location",
+                "pending_source_turn_id": "turn-conference",
+                "pending_source_sequence": 2,
+            }
+        )
+        runtime._create_agent(
+            State(
+                user_id=111,
+                query="Seattle.",
+                conversation_projection_version=5,
+                current_weather_scope=missing_counterpart_scope,
+                weather_scope_resolver_decision=(
+                    WeatherScopeResolverDecision.model_validate(
+                        {
+                            "decision": "answers_pending",
+                            "pending_source_turn_id": "turn-conference",
+                        }
+                    )
+                ),
+            ),
+            identity,
+        )
+        missing_counterpart_tools = {
+            fn.__name__: fn for fn in captured["tools"]
+        }
+        _, missing_counterpart_gate = captured["middleware"]
+        missing_counterpart_activation = missing_counterpart_tools[
+            "activate_shopper_skills_tool"
+        ](
+            skill_names=["outfit-styling", "event-context"],
+            event_context_next_question="none",
+            weather_scope={
+                "scope_revision": 2,
+                "location_action": "set",
+                "window_action": "clear",
+                "location_source": "shopper_provided_location",
+                "location": "Seattle",
+            },
+        )
+        assert missing_counterpart_activation.startswith(
+            runtime_mod.SKILL_ACTIVATION_COMPLETE
+        )
+        missing_counterpart_resolution = captured_weather["binding"].resolution
+        assert missing_counterpart_resolution.location_action == "set"
+        assert missing_counterpart_resolution.window_action == "clear"
+        assert missing_counterpart_resolution.pending_question == "event_date"
+        assert (
+            missing_counterpart_resolution.complete_pending_source_turn_id
+            == "turn-conference"
+        )
+        assert (
+            "EVENT_CONTEXT_NEXT_QUESTION_BOUNDARY: event_date"
+            in missing_counterpart_activation
+        )
+        assert missing_counterpart_gate._required_tool is None
+        assert missing_counterpart_gate._runtime_tool_rejections[
+            "get_weather_forecast_tool"
+        ] == runtime_mod._EVENT_CONTEXT_DATE_REQUIRED_WEATHER_BLOCK
+
+        runtime._create_agent(
+            State(
+                user_id=111,
+                query="Seattle, but the date is undecided now.",
+                conversation_projection_version=5,
+                current_weather_scope=pending_location_scope,
+                weather_scope_resolver_decision=(
+                    WeatherScopeResolverDecision.model_validate(
+                        {"decision": "same_subject"}
+                    )
+                ),
+            ),
+            identity,
+        )
+        explicit_clear_tools = {
+            fn.__name__: fn for fn in captured["tools"]
+        }
+        _, explicit_clear_gate = captured["middleware"]
+        explicit_clear_activation = explicit_clear_tools[
+            "activate_shopper_skills_tool"
+        ](
+            skill_names=["outfit-styling", "event-context"],
+            event_context_next_question="event_date",
+            weather_scope={
+                "scope_revision": 2,
+                "location_action": "set",
+                "window_action": "clear",
+                "location_source": "shopper_provided_location",
+                "location": "Seattle",
+            },
+        )
+        assert explicit_clear_activation.startswith(
+            runtime_mod.SKILL_ACTIVATION_COMPLETE
+        )
+        explicit_clear_resolution = captured_weather["binding"].resolution
+        assert explicit_clear_resolution.location_action == "set"
+        assert explicit_clear_resolution.window_action == "clear"
+        assert explicit_clear_resolution.pending_question == "event_date"
+        assert explicit_clear_resolution.complete_pending_source_turn_id is None
+        assert explicit_clear_gate._required_tool is None
+
+        runtime._create_agent(
+            State(
+                user_id=111,
+                query="Seattle.",
+                conversation_projection_version=5,
+                current_weather_scope=pending_location_scope,
+                weather_scope_resolver_decision=(
+                    WeatherScopeResolverDecision.model_validate(
+                        {"decision": "same_subject"}
+                    )
+                ),
+            ),
+            identity,
+        )
+        unbound_pending_tools = {
+            fn.__name__: fn for fn in captured["tools"]
+        }
+        _, unbound_pending_gate = captured["middleware"]
+        unbound_pending_activation = unbound_pending_tools[
+            "activate_shopper_skills_tool"
+        ](
+            skill_names=["outfit-styling", "event-context"],
+            event_context_next_question="none",
+            weather_scope={
+                "scope_revision": 2,
+                "location_action": "set",
+                "window_action": "retain",
+                "location_source": "shopper_provided_location",
+                "location": "Seattle",
+            },
+        )
+        assert unbound_pending_activation.startswith(
+            runtime_mod.SKILL_ACTIVATION_COMPLETE
+        )
+        unbound_pending_resolution = captured_weather["binding"].resolution
+        assert unbound_pending_resolution.location_action == "set"
+        assert unbound_pending_resolution.window_action == "clear"
+        assert unbound_pending_resolution.pending_question == "event_date"
+        assert (
+            unbound_pending_resolution.preserve_pending_source_turn_id
+            is None
+        )
+        assert (
+            "EVENT_CONTEXT_NEXT_QUESTION_BOUNDARY: event_date"
+            in unbound_pending_activation
+        )
+        assert unbound_pending_gate._required_tool is None
+        assert unbound_pending_gate._runtime_tool_rejections[
+            "get_weather_forecast_tool"
+        ] == runtime_mod._EVENT_CONTEXT_SCOPE_UNCLEAR_WEATHER_BLOCK
+
+        runtime._create_agent(
+            State(
+                user_id=111,
+                query="Seattle on August 15.",
+                conversation_projection_version=5,
+                current_weather_scope=pending_location_scope,
+                weather_scope_resolver_decision=(
+                    WeatherScopeResolverDecision.model_validate(
+                        {"decision": "same_subject"}
+                    )
+                ),
+            ),
+            identity,
+        )
+        current_turn_scope_tools = {
+            fn.__name__: fn for fn in captured["tools"]
+        }
+        _, current_turn_scope_gate = captured["middleware"]
+        current_turn_scope_activation = current_turn_scope_tools[
+            "activate_shopper_skills_tool"
+        ](
+            skill_names=["outfit-styling", "event-context"],
+            event_context_next_question="none",
+            weather_scope={
+                "scope_revision": 2,
+                "location_action": "set",
+                "window_action": "set",
+                "location_source": "shopper_provided_location",
+                "location": "Seattle",
+                "date": "2026-08-15",
+            },
+        )
+        assert current_turn_scope_activation.startswith(
+            runtime_mod.SKILL_ACTIVATION_COMPLETE
+        )
+        current_turn_scope_resolution = captured_weather["binding"].resolution
+        assert current_turn_scope_resolution.location_action == "set"
+        assert current_turn_scope_resolution.window_action == "set"
+        assert current_turn_scope_resolution.pending_question is None
+        assert (
+            current_turn_scope_gate._required_tool
+            == "get_weather_forecast_tool"
+        )
+
+        runtime._create_agent(
+            State(
+                user_id=111,
+                query="The same conference is August 16.",
+                conversation_projection_version=5,
+                current_weather_scope=pending_location_scope,
+                weather_scope_resolver_decision=(
+                    WeatherScopeResolverDecision.model_validate(
+                        {"decision": "same_subject"}
+                    )
+                ),
+            ),
+            identity,
+        )
+        pending_preserve_tools = {
+            fn.__name__: fn for fn in captured["tools"]
+        }
+        pending_preserve_activation = pending_preserve_tools[
+            "activate_shopper_skills_tool"
+        ](
+            skill_names=["outfit-styling", "event-context"],
+            event_context_next_question="none",
+            weather_scope={
+                "scope_revision": 2,
+                "location_action": "clear",
+                "window_action": "set",
+                "date": "2026-08-16",
+            },
+        )
+        assert pending_preserve_activation.startswith(
+            runtime_mod.SKILL_ACTIVATION_COMPLETE
+        )
+        assert (
+            "EVENT_CONTEXT_NEXT_QUESTION_BOUNDARY: none"
+            in pending_preserve_activation
+        )
+        pending_preserve_resolution = captured_weather["binding"].resolution
+        assert pending_preserve_resolution.pending_question == "event_location"
+        assert (
+            pending_preserve_resolution.preserve_pending_source_turn_id
+            == "turn-conference"
+        )
+        persisted_pending = apply_current_weather_scope_resolution(
+            pending_location_scope,
+            pending_preserve_resolution,
+            source_turn_id="turn-date-correction",
+            source_sequence=3,
+        )
+        assert persisted_pending.pending_source_turn_id == "turn-conference"
+        assert persisted_pending.pending_source_sequence == 2
 
         runtime._create_agent(
             State(
@@ -3450,6 +4176,11 @@ class TestDeepAgentsRuntimeRefs:
                             "source_sequence": 2,
                         },
                     }
+                ),
+                weather_scope_resolver_decision=(
+                    WeatherScopeResolverDecision.model_validate(
+                        {"decision": "unchanged"}
+                    )
                 ),
             ),
             identity,
@@ -3487,6 +4218,11 @@ class TestDeepAgentsRuntimeRefs:
                             "source_sequence": 2,
                         },
                     }
+                ),
+                weather_scope_resolver_decision=(
+                    WeatherScopeResolverDecision.model_validate(
+                        {"decision": "unchanged"}
+                    )
                 ),
             ),
             identity,
@@ -3531,6 +4267,11 @@ class TestDeepAgentsRuntimeRefs:
                             "source_sequence": 3,
                         },
                     }
+                ),
+                weather_scope_resolver_decision=(
+                    WeatherScopeResolverDecision.model_validate(
+                        {"decision": "unchanged"}
+                    )
                 ),
             ),
             identity,
@@ -3579,6 +4320,11 @@ class TestDeepAgentsRuntimeRefs:
                         },
                     }
                 ),
+                weather_scope_resolver_decision=(
+                    WeatherScopeResolverDecision.model_validate(
+                        {"decision": "unchanged"}
+                    )
+                ),
             ),
             identity,
         )
@@ -3618,7 +4364,9 @@ class TestDeepAgentsRuntimeRefs:
             skill_names=["outfit-styling", "event-context"],
             event_context_next_question="none",
             weather_scope={
-                "action": "replace",
+                "scope_revision": 0,
+                "location_action": "set",
+                "window_action": "set",
                 "location_source": "shopper_provided_location",
                 "location": "NYC",
                 "location_query": "NYC, NY",
@@ -5551,6 +6299,93 @@ class TestDeepAgentsRuntimeRefs:
             "It is in New York.",
         )
 
+    def test_weather_styling_text_is_bound_to_effective_scope_sources(
+        self,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        state = State(
+            user_id=111,
+            query="Seattle.",
+            recent_conversation_turns=[
+                {
+                    "sequence": 1,
+                    "shopper_text": (
+                        "My outdoor NYC wedding is on August 8."
+                    ),
+                    "assistant_text": "Prior wedding guidance.",
+                },
+                {
+                    "sequence": 2,
+                    "shopper_text": (
+                        "I also have an outdoor conference on August 12."
+                    ),
+                    "assistant_text": "What location should I plan around?",
+                },
+            ],
+            current_weather_scope=CurrentWeatherScope.model_validate(
+                {
+                    "revision": 2,
+                    "pending_question": "event_location",
+                    "pending_source_turn_id": "conference-turn",
+                    "pending_source_sequence": 2,
+                    "window": {
+                        "value": {
+                            "start_date": "2026-08-12",
+                            "end_date": "2026-08-12",
+                        },
+                        "source_turn_id": "conference-turn",
+                        "source_sequence": 2,
+                    },
+                }
+            ),
+            current_weather_scope_resolution=(
+                CurrentWeatherScopeResolution.model_validate(
+                    {
+                        "expected_projection_version": 2,
+                        "expected_scope_revision": 2,
+                        "location_action": "set",
+                        "window_action": "retain",
+                        "location_scope": {
+                            "kind": "shopper_provided_location",
+                            "location": "Seattle",
+                        },
+                    }
+                )
+            ),
+        )
+
+        assert runtime_mod._active_weather_scope_shopper_texts(state) == (
+            "Seattle.",
+            "I also have an outdoor conference on August 12.",
+        )
+
+    def test_weather_styling_text_fails_closed_when_scope_source_is_absent(
+        self,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        state = State(
+            user_id=111,
+            query="Tell me more.",
+            recent_conversation_turns=[],
+            current_weather_scope=CurrentWeatherScope.model_validate(
+                {
+                    "revision": 1,
+                    "location": {
+                        "value": {
+                            "kind": "shopper_provided_location",
+                            "location": "Seattle",
+                        },
+                        "source_turn_id": "missing-turn",
+                        "source_sequence": 9,
+                    },
+                }
+            ),
+        )
+
+        assert runtime_mod._active_weather_scope_shopper_texts(state) == ()
+
     @pytest.mark.asyncio
     async def test_event_weather_success_is_grounded_attributed_and_uncertain(
         self,
@@ -5831,6 +6666,134 @@ class TestDeepAgentsRuntimeRefs:
         assert "Unsafe weather draft" not in editor_prompt
         assert "CURRENT CART" not in editor_prompt
         assert "TOOL EVIDENCE" not in editor_prompt
+
+    @pytest.mark.asyncio
+    async def test_context_only_weather_render_excludes_prior_event_subject(
+        self,
+        base_config,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+        from langchain_core.messages import AIMessage
+
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+        captured: dict[str, object] = {}
+
+        class StaleVenueEditor:
+            async def ainvoke(self, messages):
+                captured["messages"] = messages
+                return AIMessage(
+                    content=json.dumps(
+                        {
+                            "venue_quote": "outdoor NYC wedding",
+                            "adjustments": ["streamlined_accessories"],
+                        }
+                    )
+                )
+
+        monkeypatch.setattr(
+            runtime,
+            "_create_chat_model",
+            lambda: StaleVenueEditor(),
+        )
+        state = State(
+            user_id=111,
+            query="Seattle.",
+            recent_conversation_turns=[
+                {
+                    "sequence": 1,
+                    "shopper_text": (
+                        "My outdoor NYC wedding is on August 8."
+                    ),
+                    "assistant_text": "Prior wedding guidance.",
+                },
+                {
+                    "sequence": 2,
+                    "shopper_text": (
+                        "I also have an outdoor conference on August 12."
+                    ),
+                    "assistant_text": "What location should I plan around?",
+                },
+            ],
+            current_weather_scope=CurrentWeatherScope.model_validate(
+                {
+                    "revision": 2,
+                    "pending_question": "event_location",
+                    "pending_source_turn_id": "conference-turn",
+                    "pending_source_sequence": 2,
+                    "window": {
+                        "value": {
+                            "start_date": "2026-08-12",
+                            "end_date": "2026-08-12",
+                        },
+                        "source_turn_id": "conference-turn",
+                        "source_sequence": 2,
+                    },
+                }
+            ),
+            current_weather_scope_resolution=(
+                CurrentWeatherScopeResolution.model_validate(
+                    {
+                        "expected_projection_version": 2,
+                        "expected_scope_revision": 2,
+                        "location_action": "set",
+                        "window_action": "retain",
+                        "location_scope": {
+                            "kind": "shopper_provided_location",
+                            "location": "Seattle",
+                        },
+                    }
+                )
+            ),
+            agent_diagnostics={
+                "skill_files_read": [
+                    "/shopper/outfit-styling/SKILL.md",
+                    "/shopper/event-context/SKILL.md",
+                ]
+            },
+        )
+        result = {
+            "messages": [
+                {"role": "user", "content": "REQUEST ID: weather-request"},
+                *_event_context_activation_messages(),
+                {
+                    "role": "assistant",
+                    "tool_calls": [
+                        {
+                            "id": "weather-call",
+                            "name": "get_weather_forecast_tool",
+                            "args": {},
+                        }
+                    ],
+                    "content": "",
+                },
+                {
+                    "role": "tool",
+                    "name": "get_weather_forecast_tool",
+                    "tool_call_id": "weather-call",
+                    "content": _weather_evidence_content(
+                        forecast_date=date(2026, 8, 12),
+                        resolved_location="Seattle, WA, United States",
+                    ),
+                },
+            ]
+        }
+
+        response = await runtime._rewrite_response_for_grounding(
+            state,
+            result,
+            "Unsafe weather draft.",
+            request_id="weather-request",
+        )
+
+        editor_prompt = captured["messages"][1]["content"]
+        assert "Seattle." in editor_prompt
+        assert "outdoor conference on August 12" in editor_prompt
+        assert "NYC" not in editor_prompt
+        assert "wedding" not in editor_prompt
+        assert "Seattle, WA, United States" in response
+        assert "NYC" not in response
+        assert "wedding" not in response
 
     def test_context_only_event_styling_renders_only_validated_decision(
         self,

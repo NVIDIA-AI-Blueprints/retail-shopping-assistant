@@ -165,7 +165,12 @@ def test_activation_trace_keeps_submitted_and_accepted_question_values() -> None
                 f"{SKILL_ACTIVATION_COMPLETE} "
                 "/shopper/outfit-styling/SKILL.md, "
                 "/shopper/event-context/SKILL.md\n"
-                "EVENT_CONTEXT_NEXT_QUESTION_BOUNDARY: none"
+                "EVENT_CONTEXT_NEXT_QUESTION_BOUNDARY: none\n"
+                'WEATHER_SCOPE_ACCEPTED: {"authority":"semantic_resolver",'
+                '"decision":"new_subject","weather_scope":{"date_supplied":'
+                'true,"location_action":"clear","location_source":null,'
+                '"location_supplied":false,"scope_revision":1,'
+                '"window_action":"set"}}'
             ),
             name=SKILL_ACTIVATION_TOOL_NAME,
             tool_call_id="skill-activation",
@@ -181,6 +186,16 @@ def test_activation_trace_keeps_submitted_and_accepted_question_values() -> None
     activation = diagnostics["tool_calls"][0]
     assert activation["arguments"]["event_context_next_question"] == "event_date"
     assert activation["accepted_event_context_next_question"] == "none"
+    assert activation["weather_scope_authority"] == "semantic_resolver"
+    assert activation["weather_scope_resolver_decision"] == "new_subject"
+    assert activation["accepted_weather_scope"] == {
+        "date_supplied": True,
+        "location_action": "clear",
+        "location_source": None,
+        "location_supplied": False,
+        "scope_revision": 1,
+        "window_action": "set",
+    }
 
 
 def test_weather_trace_redacts_arguments_and_partial_output() -> None:

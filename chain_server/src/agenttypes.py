@@ -17,8 +17,10 @@ from shared.weather_receipts import (
 )
 from shared.weather_scope import (
     CurrentWeatherScope,
+    CurrentWeatherScopeResolution,
     CurrentWeatherScopeTransition,
 )
+from .weather_scope_resolver import WeatherScopeResolverDecision
 
 
 SHOPPER_PROFILE_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
@@ -111,6 +113,13 @@ class State(BaseModel):
         default="",
         description="Exact bounded raw conversation turns",
     )
+    recent_conversation_turns: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description=(
+            "Request-local structured bounded turns used to resolve typed "
+            "weather-scope source-sequence semantics"
+        ),
+    )
     historical_product_context: str = Field(
         default="",
         description="Authoritative bounded historical product-reference projection",
@@ -119,6 +128,11 @@ class State(BaseModel):
         default=0,
         ge=0,
         description="Version used for optional atomic projection updates",
+    )
+    conversation_memory_contract_version: int = Field(
+        default=4,
+        ge=1,
+        description="Negotiated durable-memory response contract for this turn",
     )
     active_weather_receipts: List[WeatherForecastReceipt] = Field(
         default_factory=list,
@@ -138,7 +152,18 @@ class State(BaseModel):
     )
     current_weather_scope_transition: CurrentWeatherScopeTransition | None = Field(
         default=None,
-        description="Validated current-turn scope transition for finalization",
+        description="Legacy v3 weather-scope transition; never authored by v4 runtime",
+    )
+    current_weather_scope_resolution: CurrentWeatherScopeResolution | None = Field(
+        default=None,
+        description="Validated atomic v4 weather-scope resolution for finalization",
+    )
+    weather_scope_resolver_decision: WeatherScopeResolverDecision | None = Field(
+        default=None,
+        description=(
+            "Request-local business-tool-disabled semantic decision for an existing "
+            "weather scope; never persisted as conversation authority"
+        ),
     )
     cart: Cart = Field(default_factory=Cart, description="User's shopping cart")
     response: str = Field(default="", description="Generated response from agents")

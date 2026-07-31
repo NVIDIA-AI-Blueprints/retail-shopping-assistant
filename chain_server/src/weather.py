@@ -124,6 +124,7 @@ class WeatherConfig(BaseModel):
     base_url: str = VISUAL_CROSSING_BASE_URL
     api_key_env: str = "WEATHER_API_KEY"
     timeout_seconds: StrictFloat = 3.0
+    scope_resolver_timeout_seconds: StrictFloat = 8.0
     max_provider_attempts: StrictInt = 2
     max_forecast_horizon_days: StrictInt = MAX_WEATHER_DAYS
     max_range_days: StrictInt = MAX_WEATHER_DAYS
@@ -144,11 +145,11 @@ class WeatherConfig(BaseModel):
             raise ValueError("api_key_env must be an environment variable name")
         return value
 
-    @field_validator("timeout_seconds")
+    @field_validator("timeout_seconds", "scope_resolver_timeout_seconds")
     @classmethod
     def validate_timeout(cls, value: float) -> float:
         if not math.isfinite(value) or value <= 0:
-            raise ValueError("timeout_seconds must be finite and positive")
+            raise ValueError("weather timeouts must be finite and positive")
         return value
 
     @field_validator("max_provider_attempts")

@@ -95,19 +95,25 @@ profile ID and has no saved-location fallback.
 
 Location and venue are styling context, not weather or product facts. For
 example, “wedding in Cancun” does not imply a beach, outdoor or indoor setting,
-or terrain. The assistant chooses at most one relevant follow-up from the
-current and recent conversation, in order: destination if it is missing and
-material; venue or setting only after destination is established and that
-setting is missing and material; date only after destination and any material
-setting are established, live weather is enabled and material, and the date is
-neither known nor explicitly unavailable; otherwise no event-context question.
+or terrain. The weather helper is selected only when that physical context is
+actually part of the current styling subject, not merely because location could
+hypothetically improve any outfit. The assistant chooses at most one relevant
+follow-up from the current and recent conversation, in order: destination if it
+is missing and material; venue or setting only after destination is established
+and that setting is missing and material; date only after destination and any
+material setting are established, live weather is enabled and material, and
+the date is neither known nor explicitly unavailable; otherwise no
+event-context question.
 When your current message supplies a supported bounded date, including bare
 `next week`, the accepted date authority also removes the date-question choice
 from activation, so the assistant cannot ask for an exact date that the weather
 contract does not require. A date from an earlier event does not suppress that
 safe question when you introduce a new event. Earlier bounded context may still
 support weather-tool eligibility after the assistant semantically determines
-that it belongs to the same event.
+that it belongs to the same event. Once a missing location or date question has
+been asked, its originating turn is stored with that pending question. If you
+continue shopping without answering it, the assistant does not repeat it; a
+later direct answer can still complete the same weather-planning subject.
 An explicitly stated outdoor patio, beach, garden, rooftop, or open-air setting
 makes enabled live weather relevant. For example, “Cancun” may lead to one
 setting question; after you answer “on the beach,” the assistant asks for the

@@ -291,14 +291,11 @@ def test_activation_schema_binds_only_event_context_question() -> None:
             skill_names=["outfit-styling", "event-context"],
         )
 
-    with pytest.raises(
-        ValueError,
-        match="event_context_next_question is required exactly",
-    ):
-        activation_input(
-            skill_names=["outfit-styling"],
-            event_context_next_question="none",
-        )
+    without_event_context = activation_input(
+        skill_names=["outfit-styling"],
+        event_context_next_question="none",
+    )
+    assert without_event_context.event_context_next_question is None
 
     selected = activation_input(
         skill_names=[
@@ -316,7 +313,7 @@ def test_activation_schema_binds_only_event_context_question() -> None:
     assert selected.event_context_next_question == "event_date"
 
 
-def test_activation_schema_accepts_one_semantic_weather_scope_transition() -> None:
+def test_activation_schema_accepts_one_atomic_weather_scope_resolution() -> None:
     activation_input = _skill_activation_input_model(
         ("event-context", "outfit-styling"),
     )
@@ -325,27 +322,48 @@ def test_activation_schema_accepts_one_semantic_weather_scope_transition() -> No
         skill_names=["outfit-styling", "event-context"],
         event_context_next_question="event_date",
         weather_scope={
-            "action": "replace",
+            "scope_revision": 0,
+            "location_action": "set",
+            "window_action": "clear",
             "location_source": "shopper_provided_location",
             "location": "Seattle",
         },
     )
 
-    assert accepted.weather_scope.action == "replace"
+    assert accepted.weather_scope.scope_revision == 0
+    assert accepted.weather_scope.location_action == "set"
+    assert accepted.weather_scope.window_action == "clear"
     assert accepted.weather_scope.location == "Seattle"
     assert accepted.weather_scope.date is None
 
 
-def test_weather_scope_requires_event_context() -> None:
+def test_weather_controls_are_inert_without_event_context() -> None:
     activation_input = _skill_activation_input_model(
         ("event-context", "outfit-styling"),
     )
 
-    with pytest.raises(ValueError, match="weather_scope requires event-context"):
-        activation_input(
-            skill_names=["outfit-styling"],
-            weather_scope={"action": "replace"},
-        )
+    accepted = activation_input(
+        skill_names=["outfit-styling"],
+        event_context_next_question="none",
+        weather_scope={
+            "scope_revision": 0,
+            "location_action": "clear",
+            "window_action": "clear",
+        },
+        weather_refresh=True,
+        weather_receipt_id="ungranted",
+    )
+
+    assert accepted.event_context_next_question is None
+    assert accepted.weather_scope is None
+    assert accepted.weather_refresh is False
+    assert accepted.weather_receipt_id is None
+
+    malformed_but_ungranted = activation_input(
+        skill_names=["outfit-styling"],
+        weather_scope={"not": "a weather scope"},
+    )
+    assert malformed_but_ungranted.weather_scope is None
 
 
 def test_weather_scope_and_durable_receipt_are_mutually_exclusive() -> None:
@@ -359,7 +377,9 @@ def test_weather_scope_and_durable_receipt_are_mutually_exclusive() -> None:
             skill_names=["outfit-styling", "event-context"],
             event_context_next_question="none",
             weather_scope={
-                "action": "continue",
+                "scope_revision": 1,
+                "location_action": "retain",
+                "window_action": "set",
                 "date": "2026-08-03",
             },
             weather_receipt_id="weather-receipt",
@@ -372,14 +392,11 @@ def test_weather_refresh_requires_unchanged_event_context_scope() -> None:
         ("weather-receipt",),
     )
 
-    with pytest.raises(
-        ValueError,
-        match="weather_refresh requires event-context",
-    ):
-        activation_input(
-            skill_names=["outfit-styling"],
-            weather_refresh=True,
-        )
+    without_event_context = activation_input(
+        skill_names=["outfit-styling"],
+        weather_refresh=True,
+    )
+    assert without_event_context.weather_refresh is False
 
     with pytest.raises(
         ValueError,
@@ -389,7 +406,9 @@ def test_weather_refresh_requires_unchanged_event_context_scope() -> None:
             skill_names=["outfit-styling", "event-context"],
             event_context_next_question="none",
             weather_scope={
-                "action": "continue",
+                "scope_revision": 1,
+                "location_action": "retain",
+                "window_action": "set",
                 "date": "2026-08-03",
             },
             weather_refresh=True,
@@ -665,14 +684,23 @@ def test_pending_phase_forces_only_the_activation_tool() -> None:
         normalized_prompt
     )
     assert (
-        "Select it for event or non-event styling whenever destination, date, "
-        "venue, or live weather could materially change guidance"
+        "Select it only when physical context is part of the current styling "
+        "subject"
         in normalized_prompt
     )
-    assert "choose `continue` only for the same event" in normalized_prompt
-    assert "`replace` for a new or different subject" in normalized_prompt
-    assert "Initial scope creation uses `replace`" in normalized_prompt
+    assert "must not be copied into activation" in normalized_prompt
+    assert "resolve both location and date-window components explicitly" in (
+        normalized_prompt
+    )
+    assert "`retain` only for the same event" in normalized_prompt
+    assert "`clear` for a missing component of a new subject" in normalized_prompt
     assert "CURRENT WEATHER SCOPE is the only prior-turn" in normalized_prompt
+    assert "isolated resolver supplies only semantic continuity" in (
+        normalized_prompt
+    )
+    assert "activation is the sole author of current-turn location/date" in (
+        normalized_prompt
+    )
     assert "never set `event_venue` for a trip, general weather styling" in (
         normalized_prompt
     )

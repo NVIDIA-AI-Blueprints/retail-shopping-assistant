@@ -16,7 +16,7 @@ from pathlib import Path
 import re
 from threading import Lock
 import time
-from typing import Any, AsyncIterator, Literal, Sequence
+from typing import Any, AsyncIterator, Literal, Mapping, Sequence
 import uuid
 
 from langgraph.checkpoint.memory import MemorySaver
@@ -122,9 +122,15 @@ from .weather_tool import (
     WeatherForecastEvidence,
     WEATHER_FORECAST_EVIDENCE_PREFIX,
     WEATHER_FORECAST_FAILURE_PREFIX,
-    compile_weather_scope_transition,
+    compile_weather_scope_resolution,
     get_scoped_weather_forecast_tool,
     parse_weather_tool_evidence,
+)
+from .weather_scope_resolver import (
+    WEATHER_SCOPE_RESOLVER_SYSTEM_PROMPT,
+    WeatherScopeResolverDecision,
+    build_weather_scope_resolver_prompt,
+    parse_weather_scope_resolver_tool_call,
 )
 from shared.commerce_contracts import (
     AddCartItemInput,
@@ -151,7 +157,8 @@ from shared.weather_receipts import (
 )
 from shared.weather_scope import (
     CurrentWeatherScope,
-    effective_weather_scope_values,
+    CurrentWeatherScopeResolution,
+    effective_resolved_weather_scope_values,
 )
 
 
@@ -246,6 +253,10 @@ _EVENT_CONTEXT_NO_REFRESH_WEATHER_BLOCK = (
     "STOP_TOOL_USE: This turn neither updates the weather scope nor explicitly "
     "requests fresh forecast evidence. Continue without a weather call."
 )
+_EVENT_CONTEXT_SCOPE_UNCLEAR_WEATHER_BLOCK = (
+    "STOP_TOOL_USE: The isolated weather-scope resolver could not safely bind "
+    "this turn to the current subject. Continue without weather evidence."
+)
 _EVENT_CONTEXT_RECEIPT_BOUND_REMINDER = (
     "DURABLE_WEATHER_RECEIPT_BOUND: The exact-scope typed forecast receipt is "
     "authoritative for weather-aware styling on this turn. Do not repeat its "
@@ -263,6 +274,7 @@ _EVENT_CONTEXT_ADDITIVE_ACTIVATION_REMINDER = (
 _EVENT_CONTEXT_QUESTION_BOUNDARY_PREFIX = (
     "EVENT_CONTEXT_NEXT_QUESTION_BOUNDARY:"
 )
+_WEATHER_SCOPE_ACCEPTED_PREFIX = "WEATHER_SCOPE_ACCEPTED:"
 _WEATHER_DIAGNOSTIC_REDACTION = {"redacted": True}
 _WEATHER_PARTIAL_OUTPUT_REDACTION = "WEATHER TOOL OUTPUT REDACTED"
 _PRIOR_WEATHER_CONTEXT_REDACTION = (
@@ -518,6 +530,19 @@ _GROUNDING_FAILURE_RESPONSE = (
     "I couldn't safely verify the final response. Please retry; if this involved "
     "a cart change, check your cart first."
 )
+_OPTIONAL_FINALIZE_CONFLICTS = {
+    "projection_version_conflict",
+    "summary_boundary_conflict",
+    "weather_receipt_status_conflict",
+    "weather_receipt_stale",
+    "weather_receipt_scope_conflict",
+}
+_WEATHER_SCOPE_FINALIZE_CONFLICTS = {
+    "current_weather_scope_revision_conflict",
+    "current_weather_scope_resolution_conflict",
+    "current_weather_scope_status_conflict",
+    "current_weather_scope_saved_area_unavailable",
+}
 _SHOPPER_PROFILE_NOT_FOUND_RESPONSE = (
     "That shopper profile is unavailable. Please choose another shopper and "
     "try again."
@@ -1215,6 +1240,29 @@ class _ShopperSkillActivationInput(BaseModel):
     weather_refresh: bool = False
     weather_receipt_id: str | None = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def controls_require_selected_event_context(
+        cls,
+        value: Any,
+    ) -> Any:
+        """Make ungranted weather controls inert before nested validation."""
+
+        if not isinstance(value, Mapping):
+            return value
+        skill_names = value.get("skill_names")
+        if (
+            not isinstance(skill_names, list)
+            or "event-context" in skill_names
+        ):
+            return value
+        sanitized = dict(value)
+        sanitized["event_context_next_question"] = None
+        sanitized["weather_scope"] = None
+        sanitized["weather_refresh"] = False
+        sanitized["weather_receipt_id"] = None
+        return sanitized
+
     @model_validator(mode="after")
     def primary_procedures_are_exclusive(self) -> "_ShopperSkillActivationInput":
         selected = set(self.skill_names)
@@ -1300,8 +1348,10 @@ def _skill_activation_input_model(
         "material and the resulting typed weather scope has no bounded date. "
         "If weather_scope supplies a date in this call, choose none, never "
         "event_date. "
-        "Choose none otherwise. This is the only context follow-up question "
-        "the response may ask."
+        "When the current scope already records a pending question and the "
+        "shopper continues product work without answering it, choose none and "
+        "do not repeat the question. Choose none otherwise. This is the only "
+        "context follow-up question the response may ask."
     )
     weather_receipt_id_type: Any = (
         Literal.__getitem__(weather_receipt_ids)
@@ -1323,10 +1373,15 @@ def _skill_activation_input_model(
                     "or styling, select exactly one primary procedure: outfit-"
                     "styling or product-discovery, never both. Cart and policy "
                     "intents may select their standalone skill without a primary. "
-                    "Select event-context only with outfit-styling, and select "
-                    "it for event or non-event styling whenever location, "
-                    "date, venue, or enabled live weather could materially "
-                    "change guidance."
+                    "Select event-context only with outfit-styling and only when "
+                    "physical context is part of the current styling subject: "
+                    "the shopper supplies or changes a destination, date, venue, "
+                    "or weather need; directly asks for weather-aware guidance; "
+                    "answers a pending context question; or explicitly continues "
+                    "that established event, trip, or weather-planning subject. "
+                    "Do not select it merely because location or weather could "
+                    "hypothetically improve otherwise location-independent "
+                    "styling."
                 ),
             ),
         ),
@@ -1342,18 +1397,16 @@ def _skill_activation_input_model(
             Field(
                 default=None,
                 description=(
-                    "Optional current-turn update to the single typed weather "
-                    "scope. Initial scope creation uses replace. Use continue "
-                    "only when this is the same styling "
-                    "subject and use replace for a different event, trip, or "
-                    "weather-planning subject. Include only location/date "
-                    "authority stated or confirmed in the current turn. A "
-                    "replace may contain only the newly known fields so older "
-                    "fields are cleared. Replacing an existing scope requires "
-                    "subject_change_quote with the exact current-turn phrase "
-                    "that explicitly introduces the new subject. Omit for a "
-                    "follow-up that neither "
-                    "changes nor establishes scope."
+                    "Optional atomic resolution of the single typed weather "
+                    "scope. Use only when event-context is selected; otherwise "
+                    "omit it. Copy its exact scope_revision and explicitly choose "
+                    "retain, set, or clear for both location and date. Retain "
+                    "only when the current turn semantically continues the same "
+                    "event, trip, or weather-planning subject. For a different "
+                    "subject, clear every component it does not establish now. "
+                    "Set accepts only current-turn shopper authority. No omitted "
+                    "component inherits. Omit weather_scope only when the entire "
+                    "scope is unchanged."
                 ),
             ),
         ),
@@ -1680,13 +1733,17 @@ class DeepAgentsRuntime:
         state.shopper_profile_id = identity.shopper_profile_id
         state.shopper_context = None
         state.conversation_summary = ""
+        state.recent_conversation_turns = []
         state.historical_product_context = ""
         state.conversation_projection_version = 0
+        state.conversation_memory_contract_version = 1
         state.active_weather_receipts = []
         state.selected_weather_receipt_id = None
         state.weather_receipt_promotion = None
         state.current_weather_scope = CurrentWeatherScope()
         state.current_weather_scope_transition = None
+        state.current_weather_scope_resolution = None
+        state.weather_scope_resolver_decision = None
         turn = self._start_conversation_turn(state, identity)
         if turn is not None and turn.replayed:
             await self._delete_turn_checkpoint(identity)
@@ -1795,6 +1852,16 @@ class DeepAgentsRuntime:
                 time.monotonic()
                 + self.config.deepagents_execution_timeout_seconds
             )
+            current_utc_date = CalendarDate.fromisoformat(
+                time.strftime("%Y-%m-%d", time.gmtime())
+            )
+            state.weather_scope_resolver_decision = (
+                await self._resolve_existing_weather_scope(
+                    state,
+                    current_utc_date=current_utc_date,
+                    execution_deadline=execution_deadline,
+                )
+            )
             agent = self._create_agent(
                 state,
                 identity,
@@ -1819,13 +1886,20 @@ class DeepAgentsRuntime:
                 )
             )
             draft_response = _extract_final_text(result)
-            state.token_usage = _collect_token_usage(result)
+            state.token_usage = _merge_token_usage(
+                state.token_usage,
+                _collect_token_usage(result),
+            )
             state.agent_diagnostics = _safe_collect_agent_diagnostics(
                 result_messages,
                 request_id=identity.request_id,
                 final_termination_reason="completed",
                 saved_zipcode=_saved_zipcode(state.shopper_context),
             )
+            if state.weather_scope_resolver_decision is not None:
+                state.agent_diagnostics["weather_scope_resolver"] = (
+                    state.weather_scope_resolver_decision.decision
+                )
             _bind_weather_diagnostics_to_current_scope(
                 state.agent_diagnostics,
                 state,
@@ -1895,6 +1969,10 @@ class DeepAgentsRuntime:
                 preserve_partial_messages=True,
                 saved_zipcode=_saved_zipcode(state.shopper_context),
             )
+            if state.weather_scope_resolver_decision is not None:
+                state.agent_diagnostics["weather_scope_resolver"] = (
+                    state.weather_scope_resolver_decision.decision
+                )
             if capture_error:
                 state.agent_diagnostics["partial_graph_capture_error"] = capture_error
             logger.exception("DeepAgentsRuntime failed")
@@ -1947,6 +2025,170 @@ class DeepAgentsRuntime:
 
         state.timings["deepagents"] = time.monotonic() - start
         return state
+
+    async def _resolve_existing_weather_scope(
+        self,
+        state: State,
+        *,
+        current_utc_date: CalendarDate,
+        execution_deadline: float,
+    ) -> WeatherScopeResolverDecision | None:
+        """Isolate cross-turn weather-subject semantics from skill activation."""
+
+        if (
+            state.current_weather_scope.revision == 0
+            or state.conversation_memory_contract_version < 4
+            or not _weather_lookup_enabled(self.config.weather)
+        ):
+            return None
+
+        source_sequences = {
+            authority.source_sequence
+            for authority in (
+                state.current_weather_scope.location,
+                state.current_weather_scope.window,
+            )
+            if authority is not None
+        }
+        if state.current_weather_scope.pending_source_sequence is not None:
+            source_sequences.add(
+                state.current_weather_scope.pending_source_sequence
+            )
+        scope_source_turns = [
+            turn
+            for turn in state.recent_conversation_turns
+            if turn.get("sequence") in source_sequences
+        ]
+        if {
+            turn.get("sequence") for turn in scope_source_turns
+        } != source_sequences:
+            _add_model_usage(
+                state,
+                "app_llm_weather_scope_resolver",
+                status="not_used",
+                calls=0,
+                detail=(
+                    "Weather-scope source turn is outside bounded raw context; "
+                    "weather blocked"
+                ),
+            )
+            return WeatherScopeResolverDecision(
+                decision="unclear",
+            )
+        prompt = build_weather_scope_resolver_prompt(
+            current_query=state.query,
+            current_scope_json=state.current_weather_scope.model_dump(
+                mode="json",
+                exclude_none=True,
+            ),
+            current_utc_date=current_utc_date,
+            rolling_summary=state.conversation_summary,
+            scope_source_turns=scope_source_turns,
+            recent_turns=state.recent_conversation_turns,
+        )
+        start = time.monotonic()
+        timeout_seconds = min(
+            max(0.0, execution_deadline - start),
+            self.config.weather.scope_resolver_timeout_seconds,
+        )
+        if timeout_seconds <= 0:
+            return WeatherScopeResolverDecision(
+                decision="unclear",
+            )
+
+        try:
+            resolver_model = self._create_chat_model().bind_tools(
+                [WeatherScopeResolverDecision],
+                tool_choice=WeatherScopeResolverDecision.__name__,
+                parallel_tool_calls=False,
+            )
+            result = await asyncio.wait_for(
+                resolver_model.ainvoke(
+                    [
+                        {
+                            "role": "system",
+                            "content": WEATHER_SCOPE_RESOLVER_SYSTEM_PROMPT,
+                        },
+                        {"role": "user", "content": prompt},
+                    ]
+                ),
+                timeout=timeout_seconds,
+            )
+        except asyncio.CancelledError:
+            raise
+        except TimeoutError:
+            state.timings["weather_scope_resolver"] = time.monotonic() - start
+            _add_model_usage(
+                state,
+                "app_llm_weather_scope_resolver",
+                status="failed",
+                calls=1,
+                detail="Weather-scope semantic resolver timed out; weather blocked",
+            )
+            return WeatherScopeResolverDecision(
+                decision="unclear",
+            )
+        except Exception:  # noqa: BLE001 - resolver fails closed for weather.
+            state.timings["weather_scope_resolver"] = time.monotonic() - start
+            _add_model_usage(
+                state,
+                "app_llm_weather_scope_resolver",
+                status="failed",
+                calls=1,
+                detail="Weather-scope semantic resolver failed; weather blocked",
+            )
+            logger.exception("Weather-scope semantic resolver failed")
+            return WeatherScopeResolverDecision(
+                decision="unclear",
+            )
+
+        state.timings["weather_scope_resolver"] = time.monotonic() - start
+        state.token_usage = _merge_token_usage(
+            state.token_usage,
+            _collect_token_usage(result),
+        )
+        decision = parse_weather_scope_resolver_tool_call(result)
+        if decision is None:
+            _add_model_usage(
+                state,
+                "app_llm_weather_scope_resolver",
+                status="failed",
+                calls=1,
+                detail=(
+                    "Weather-scope semantic resolver returned invalid output; "
+                    "weather blocked"
+                ),
+            )
+            return WeatherScopeResolverDecision(
+                decision="unclear",
+            )
+
+        if not _resolver_pending_answer_is_bound(
+            state.current_weather_scope,
+            decision,
+        ):
+            _add_model_usage(
+                state,
+                "app_llm_weather_scope_resolver",
+                status="failed",
+                calls=1,
+                detail=(
+                    "Weather-scope semantic resolver answered no matching "
+                    "typed pending binding; weather blocked"
+                ),
+            )
+            return WeatherScopeResolverDecision(
+                decision="unclear",
+            )
+
+        _add_model_usage(
+            state,
+            "app_llm_weather_scope_resolver",
+            status="used",
+            calls=1,
+            detail="Isolated typed weather-scope semantic control decision",
+        )
+        return decision
 
     def _create_agent(
         self,
@@ -2815,9 +3057,13 @@ class DeepAgentsRuntime:
             also uses outfit-styling. Use product-discovery for search and browse
             without styling intent. These are alternative primary procedures,
             never a pair. Add budget-shopping only as a modifier when the shopper
-            states a budget. Add event-context only beside outfit-styling, and
-            add it for event or non-event styling whenever location, date,
-            venue, or enabled live weather could materially change guidance. Keep
+            states a budget. Add event-context only beside outfit-styling and
+            only when physical context is part of the current styling subject:
+            supplied or changed destination/date/venue/weather context, a direct
+            weather-aware request, an answer to the typed pending question, or
+            an explicit continuation of that established event, trip, or
+            weather-planning subject. Do not add it for hypothetical relevance
+            to otherwise location-independent styling. Keep
             outfit-styling as the primary skill throughout an
             active outfit-building thread, including its single-piece follow-up
             searches.
@@ -2830,23 +3076,25 @@ class DeepAgentsRuntime:
             rooftop, or open-air as the setting;
             event_date only when weather is material and the effective typed
             scope lacks a bounded date; otherwise none. Never ask venue for
-            non-event weather styling.
+            non-event weather styling. When a typed pending question was already
+            asked and the shopper instead continues product work, choose none
+            rather than repeating it.
             CURRENT WEATHER SCOPE is the only prior location/date authority.
-            Supply weather_scope when the current turn establishes or changes
-            it: initial scope creation uses replace; continue only for the same
-            event/trip/weather subject; replace for a new or different subject.
-            A replacement contains only
-            current-turn authority and clears omitted older fields. Replacing
-            an existing scope requires subject_change_quote containing the
-            exact current-turn words that explicitly introduce the new,
-            different, or separate subject; a pronoun, location, date, or
-            occasion alone is not evidence of replacement. Never
-            import an older subject's date. If continue supplies a location
-            when the scope already has one, without a current-turn date, the
-            server clears the older date. Choose the context question after
+            Supply one atomic weather_scope when the current turn establishes
+            or changes it. Copy the exact scope_revision and choose retain,
+            set, or clear independently for both location and date. Retain
+            only when this turn semantically continues the same event, trip,
+            or weather-planning subject. For a different subject, clear every
+            component it does not establish now. Set accepts only current-turn
+            shopper authority, and no omitted component inherits. The isolated
+            resolver supplies only semantic continuity; this activation is the
+            sole author of current-turn location/date component facts. Choose
+            the context question after
             applying this same call's weather_scope: when it supplies the
             missing date, choose none, never event_date. Omit weather_scope
-            when unchanged. Set weather_refresh=true only when the shopper
+            when unchanged. Omit every event-context control when event-context
+            is not selected; a server resolver decision is inert on that turn.
+            Set weather_refresh=true only when the shopper
             explicitly requests a fresh forecast for that unchanged complete
             scope. Leave it false for comparisons and other turns; a scope
             update that becomes complete already requires weather.
@@ -2858,17 +3106,74 @@ class DeepAgentsRuntime:
 
             """
 
+            resolver_decision = state.weather_scope_resolver_decision
+            event_context_selected = "event-context" in set(skill_names)
+            resolver_authority_required = bool(
+                event_context_selected
+                and state.current_weather_scope.revision > 0
+            )
+            resolver_applies = bool(
+                resolver_authority_required
+                and resolver_decision is not None
+            )
+            if (
+                resolver_applies
+                and resolver_decision is not None
+                and not _resolver_pending_answer_is_bound(
+                    state.current_weather_scope,
+                    resolver_decision,
+                )
+            ):
+                resolver_decision = WeatherScopeResolverDecision(
+                    decision="unclear",
+                )
+                state.weather_scope_resolver_decision = resolver_decision
+            resolver_fails_closed = bool(
+                resolver_authority_required
+                and (
+                    resolver_decision is None
+                    or resolver_decision.decision == "unclear"
+                )
+            )
+            resolver_new_subject = bool(
+                resolver_applies
+                and resolver_decision is not None
+                and resolver_decision.decision == "new_subject"
+            )
+            resolver_unchanged = bool(
+                resolver_applies
+                and resolver_decision is not None
+                and resolver_decision.decision == "unchanged"
+            )
+            resolver_answers_pending = bool(
+                resolver_applies
+                and resolver_decision is not None
+                and resolver_decision.decision == "answers_pending"
+            )
+            resolver_blocks_weather = resolver_fails_closed
+            activation_payload = {
+                "skill_names": skill_names,
+                "event_context_next_question": event_context_next_question,
+                "weather_scope": weather_scope,
+                "weather_refresh": weather_refresh,
+                "weather_receipt_id": weather_receipt_id,
+            }
+            if (
+                resolver_fails_closed
+                or resolver_new_subject
+                or resolver_answers_pending
+            ):
+                activation_payload["weather_refresh"] = False
+                activation_payload["weather_receipt_id"] = None
+            if resolver_unchanged:
+                if activation_payload["weather_scope"] is not None:
+                    activation_payload["weather_refresh"] = False
+                    activation_payload["weather_receipt_id"] = None
+                activation_payload["weather_scope"] = None
+
             try:
                 validated_activation = skill_activation_input.model_validate(
-                    {
-                        "skill_names": skill_names,
-                        "event_context_next_question": (
-                            event_context_next_question
-                        ),
-                        "weather_scope": weather_scope,
-                        "weather_refresh": weather_refresh,
-                        "weather_receipt_id": weather_receipt_id,
-                    }
+                    activation_payload
                 )
             except ValidationError as exc:
                 return skill_gate.handle_activation_validation_error(exc)
@@ -2881,11 +3186,16 @@ class DeepAgentsRuntime:
             validated_weather_scope = validated_activation.weather_scope
             validated_weather_refresh = validated_activation.weather_refresh
             validated_receipt_id = validated_activation.weather_receipt_id
-            scope_transition = None
+            scope_resolution = None
             if validated_weather_scope is not None:
                 try:
-                    scope_transition = compile_weather_scope_transition(
+                    if state.conversation_memory_contract_version < 4:
+                        raise ValueError(
+                            "atomic weather scope requires memory contract v4"
+                        )
+                    scope_resolution = compile_weather_scope_resolution(
                         validated_weather_scope,
+                        current_scope=state.current_weather_scope,
                         current_shopper_text=state.query,
                         saved_zip_authorized=(
                             _saved_zip_authorized_for_weather(state)
@@ -2894,28 +3204,72 @@ class DeepAgentsRuntime:
                             state.conversation_projection_version
                         ),
                         current_date=current_utc_date,
-                        replacement_evidence_required=(
-                            state.current_weather_scope.location is not None
-                            or state.current_weather_scope.window is not None
-                        ),
-                        continuation_context_available=(
-                            state.current_weather_scope.location is not None
-                            or state.current_weather_scope.window is not None
-                        ),
-                        current_location_scope=(
-                            state.current_weather_scope.location.value
-                            if state.current_weather_scope.location is not None
-                            else None
-                        ),
                     )
                 except (ValidationError, ValueError):
                     return skill_gate.handle_activation_validation_error(
                         SKILL_ACTIVATION_WEATHER_SCOPE_INVALID
                     )
-            effective_location, effective_window = (
-                effective_weather_scope_values(
+            pending_completion_retains_prior_counterpart = (
+                _pending_completion_retains_prior_counterpart(
                     state.current_weather_scope,
-                    scope_transition,
+                    scope_resolution,
+                )
+            )
+            if resolver_new_subject:
+                if scope_resolution is None:
+                    if state.conversation_memory_contract_version < 4:
+                        return skill_gate.handle_activation_validation_error(
+                            SKILL_ACTIVATION_WEATHER_SCOPE_INVALID
+                        )
+                    scope_resolution = _cleared_weather_scope_resolution(
+                        state.current_weather_scope,
+                        expected_projection_version=(
+                            state.conversation_projection_version
+                        ),
+                    )
+                else:
+                    scope_resolution = _conservative_weather_scope_resolution(
+                        scope_resolution,
+                    )
+            elif resolver_fails_closed and scope_resolution is not None:
+                scope_resolution = _conservative_weather_scope_resolution(
+                    scope_resolution,
+                )
+
+            pending_answer_is_valid = bool(
+                resolver_answers_pending
+                and _resolver_pending_component_is_set(
+                    state.current_weather_scope,
+                    scope_resolution,
+                )
+            )
+            if pending_answer_is_valid and scope_resolution is not None:
+                scope_resolution = (
+                    _build_exact_pending_completion_resolution(
+                        state.current_weather_scope,
+                        scope_resolution,
+                    )
+                )
+            pending_counterpart_authority_bypassed = bool(
+                pending_completion_retains_prior_counterpart
+                and not pending_answer_is_valid
+            )
+            if (
+                (resolver_answers_pending and not pending_answer_is_valid)
+                or pending_counterpart_authority_bypassed
+            ):
+                resolver_blocks_weather = True
+                validated_weather_refresh = False
+                validated_receipt_id = None
+                if scope_resolution is not None:
+                    scope_resolution = _conservative_weather_scope_resolution(
+                        scope_resolution,
+                    )
+
+            effective_location, effective_window = (
+                effective_resolved_weather_scope_values(
+                    state.current_weather_scope,
+                    scope_resolution,
                 )
             )
             if validated_weather_refresh and (
@@ -2924,7 +3278,59 @@ class DeepAgentsRuntime:
                 return skill_gate.handle_activation_validation_error(
                     SKILL_ACTIVATION_WEATHER_SCOPE_INVALID
                 )
-            if (
+            preserve_same_subject_pending = (
+                _same_subject_preserves_pending_binding(
+                    state.current_weather_scope,
+                    resolver_decision,
+                    scope_resolution,
+                    validated_next_question,
+                )
+            )
+            preserve_failed_pending_answer = bool(
+                resolver_answers_pending
+                and not pending_answer_is_valid
+                and state.current_weather_scope.pending_question is not None
+            )
+            pure_pending_answer_missing_counterpart = bool(
+                pending_answer_is_valid
+                and (
+                    (
+                        state.current_weather_scope.pending_question
+                        == "event_location"
+                        and effective_window is None
+                    )
+                    or (
+                        state.current_weather_scope.pending_question
+                        == "event_date"
+                        and effective_location is None
+                    )
+                )
+            )
+            if pending_counterpart_authority_bypassed:
+                validated_next_question = (
+                    "event_date"
+                    if (
+                        state.current_weather_scope.pending_question
+                        == "event_location"
+                    )
+                    else "event_location"
+                )
+            elif pure_pending_answer_missing_counterpart:
+                validated_next_question = (
+                    "event_date"
+                    if (
+                        state.current_weather_scope.pending_question
+                        == "event_location"
+                    )
+                    else "event_location"
+                )
+            elif (
+                scope_resolution is not None
+                and effective_location is None
+                and not preserve_same_subject_pending
+            ):
+                validated_next_question = "event_location"
+            elif (
                 validated_next_question == "event_location"
                 and effective_location is not None
             ) or (
@@ -2932,6 +3338,59 @@ class DeepAgentsRuntime:
                 and effective_window is not None
             ):
                 validated_next_question = "none"
+            if (
+                scope_resolution is None
+                and validated_next_question
+                in {"event_location", "event_date"}
+            ):
+                if state.conversation_memory_contract_version < 4:
+                    return skill_gate.handle_activation_validation_error(
+                        SKILL_ACTIVATION_WEATHER_SCOPE_INVALID
+                    )
+                try:
+                    scope_resolution = (
+                        _pending_weather_scope_resolution(
+                            state.current_weather_scope,
+                            expected_projection_version=(
+                                state.conversation_projection_version
+                            ),
+                            pending_question=validated_next_question,
+                        )
+                    )
+                    if resolver_fails_closed:
+                        scope_resolution = (
+                            _conservative_weather_scope_resolution(
+                                scope_resolution,
+                            )
+                        )
+                except (ValidationError, ValueError):
+                    return skill_gate.handle_activation_validation_error(
+                        SKILL_ACTIVATION_WEATHER_SCOPE_INVALID
+                    )
+            if scope_resolution is not None and not pending_answer_is_valid:
+                accepted_pending_question = (
+                    validated_next_question
+                    if validated_next_question
+                    in {"event_location", "event_date"}
+                    else (
+                        state.current_weather_scope.pending_question
+                        if (
+                            preserve_same_subject_pending
+                            or preserve_failed_pending_answer
+                        )
+                        else None
+                    )
+                )
+                scope_resolution = scope_resolution.model_copy(
+                    update={
+                        "pending_question": accepted_pending_question,
+                        "preserve_pending_source_turn_id": (
+                            state.current_weather_scope.pending_source_turn_id
+                            if preserve_same_subject_pending
+                            else None
+                        ),
+                    }
+                )
             if validated_receipt_id is not None:
                 selected_receipt = next(
                     (
@@ -2966,14 +3425,27 @@ class DeepAgentsRuntime:
                 )
             if not activated:
                 return "SHOPPER_SKILL_ACTIVATION_ALREADY_COMPLETE"
-            if scope_transition is not None:
-                state.current_weather_scope_transition = scope_transition
+            if scope_resolution is not None:
+                state.current_weather_scope_resolution = scope_resolution
                 weather_scope_binding.bind(
-                    scope_transition,
-                    relative_date=validated_weather_scope.relative_date,
-                    weekday=validated_weather_scope.weekday,
+                    scope_resolution,
+                    relative_date=(
+                        validated_weather_scope.relative_date
+                        if validated_weather_scope is not None
+                        else None
+                    ),
+                    weekday=(
+                        validated_weather_scope.weekday
+                        if validated_weather_scope is not None
+                        else None
+                    ),
                 )
-            if validated_next_question == "event_location":
+            if resolver_blocks_weather:
+                skill_gate.deny_tool_for_turn(
+                    _WEATHER_TOOL_NAME,
+                    _EVENT_CONTEXT_SCOPE_UNCLEAR_WEATHER_BLOCK,
+                )
+            elif validated_next_question == "event_location":
                 skill_gate.deny_tool_for_turn(
                     _WEATHER_TOOL_NAME,
                     _EVENT_CONTEXT_LOCATION_REQUIRED_WEATHER_BLOCK,
@@ -3000,7 +3472,8 @@ class DeepAgentsRuntime:
                     _EVENT_CONTEXT_RECEIPT_BOUND_WEATHER_BLOCK,
                 )
             elif (
-                (scope_transition is not None or validated_weather_refresh)
+                (scope_resolution is not None or validated_weather_refresh)
+                and not resolver_blocks_weather
                 and validated_next_question == "none"
                 and effective_location is not None
                 and effective_window is not None
@@ -3008,7 +3481,7 @@ class DeepAgentsRuntime:
             ):
                 skill_gate.require_tool_for_turn(_WEATHER_TOOL_NAME)
             elif (
-                scope_transition is None
+                scope_resolution is None
                 and not validated_weather_refresh
                 and validated_receipt_id is None
             ):
@@ -3027,6 +3500,31 @@ class DeepAgentsRuntime:
                     f"{validated_next_question}\n"
                     f"{_EVENT_CONTEXT_ADDITIVE_ACTIVATION_REMINDER}"
                 ]
+                accepted_scope = {
+                    "authority": (
+                        "semantic_resolver"
+                        if resolver_applies
+                        else "skill_activation"
+                    ),
+                    "decision": (
+                        resolver_decision.decision
+                        if resolver_applies
+                        and resolver_decision is not None
+                        else None
+                    ),
+                    "weather_scope": _accepted_weather_scope_summary(
+                        scope_resolution,
+                        validated_weather_scope,
+                    ),
+                }
+                reminders.append(
+                    f"{_WEATHER_SCOPE_ACCEPTED_PREFIX} "
+                    + json.dumps(
+                        accepted_scope,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )
+                )
                 if validated_receipt_id is not None:
                     reminders.append(_EVENT_CONTEXT_RECEIPT_BOUND_REMINDER)
                 return "\n".join(reminders)
@@ -3506,7 +4004,8 @@ class DeepAgentsRuntime:
             editor_system_prompt = weather_editor_rule + editor_system_prompt
         if protected_event_response:
             shopper_event_text = "\n".join(
-                f"- {text}" for text in _shopper_authored_texts(state)
+                f"- {text}"
+                for text in _active_weather_scope_shopper_texts(state)
             )
             if isinstance(weather_outcome, WeatherForecastEvidence):
                 weather_direction = _deterministic_weather_styling_direction(
@@ -3701,7 +4200,7 @@ class DeepAgentsRuntime:
                 state,
                 styling=_render_context_only_event_styling_decision(
                     rewritten,
-                    shopper_texts=_shopper_authored_texts(state),
+                    shopper_texts=_active_weather_scope_shopper_texts(state),
                 ),
                 next_question=event_context_next_question,
                 weather_outcome=weather_outcome,
@@ -4305,6 +4804,9 @@ Rules:
                     or "HISTORICAL PRODUCT INDEX (read-only):\n(none)"
                 ),
                 _format_current_weather_scope(state.current_weather_scope),
+                _format_weather_scope_resolver_decision(
+                    state.weather_scope_resolver_decision
+                ),
                 _format_active_weather_receipts(
                     state.active_weather_receipts
                 ),
@@ -4381,13 +4883,17 @@ Rules:
             logger.error("Failed to start durable conversation turn: %s", exc)
             state.conversation_summary = ""
             state.context = ""
+            state.recent_conversation_turns = []
             state.historical_product_context = ""
             state.conversation_projection_version = 0
+            state.conversation_memory_contract_version = 1
             state.active_weather_receipts = []
             state.selected_weather_receipt_id = None
             state.weather_receipt_promotion = None
             state.current_weather_scope = CurrentWeatherScope()
             state.current_weather_scope_transition = None
+            state.current_weather_scope_resolution = None
+            state.weather_scope_resolver_decision = None
             state.cart = Cart()
             state.shopper_context = None
             error_code = getattr(exc, "code", "memory_start_payload_invalid")
@@ -4441,6 +4947,18 @@ Rules:
             turn.recent_turns,
             max_chars=max(1000, int(self.config.memory_length)),
         )
+        state.recent_conversation_turns = [
+            {
+                "sequence": item.sequence,
+                "shopper_text": item.shopper_text,
+                "assistant_text": _summary_safe_assistant_text(
+                    item.assistant_text or ""
+                ),
+            }
+            for item in turn.recent_turns
+            if item.status not in {"abandoned", "blocked"}
+            and item.assistant_text is not None
+        ]
         state.previous_selected_skill_names = list(
             turn.previous_selected_skill_names
         )
@@ -4450,6 +4968,7 @@ Rules:
         )
         state.historical_product_context = historical_products
         state.conversation_projection_version = turn.projection.version
+        state.conversation_memory_contract_version = turn.contract_version
         state.active_weather_receipts = list(turn.projection.active_receipts)
         state.current_weather_scope = turn.projection.current_weather_scope
         state.cart = Cart(
@@ -4528,6 +5047,15 @@ Rules:
             )
             else None
         )
+        weather_scope_resolution = (
+            state.current_weather_scope_resolution
+            if (
+                turn.contract_version >= 4
+                and final_status == "completed"
+                and reason == "completed"
+            )
+            else None
+        )
         if (
             turn.contract_version < 2
             and state.weather_receipt_promotion is not None
@@ -4543,6 +5071,13 @@ Rules:
         ):
             state.agent_diagnostics["weather_scope_status"] = (
                 "transition_dropped_contract_v2"
+            )
+        if (
+            turn.contract_version < 4
+            and state.current_weather_scope_resolution is not None
+        ):
+            state.agent_diagnostics["weather_scope_status"] = (
+                "resolution_dropped_contract_v3"
             )
         start = time.monotonic()
         finalized = False
@@ -4569,8 +5104,37 @@ Rules:
                 summary_advance=advance,
                 weather_receipt_promotion=promotion,
                 current_weather_scope_transition=weather_scope_transition,
+                current_weather_scope_resolution=weather_scope_resolution,
             )
 
+        def finalize_conflict_as_failed(conflict_code: str) -> None:
+            state.response = _GROUNDING_FAILURE_RESPONSE
+            state.product_results = []
+            state.retrieved = {}
+            state.agent_diagnostics["memory_finalize_error"] = conflict_code
+            state.agent_diagnostics["final_termination_reason"] = conflict_code
+            output = TurnReplayOutput(
+                product_results=[],
+                retrieved={},
+                agent_diagnostics=state.agent_diagnostics,
+                selected_skill_names=state.selected_skill_names,
+            )
+            self._conversation_memory.finalize_turn(
+                identity.conversation_id,
+                turn.turn_id,
+                request_id=identity.request_id,
+                attempt_id=turn.attempt_id,
+                assistant_text=state.response,
+                status="failed",
+                termination_reason=conflict_code,
+                output=output,
+                summary_advance=None,
+                weather_receipt_promotion=None,
+                current_weather_scope_transition=None,
+                current_weather_scope_resolution=None,
+            )
+
+        optional_retry_attempted = False
         try:
             finalize_once(summary_advance, receipt_promotion)
             finalized = True
@@ -4582,12 +5146,8 @@ Rules:
             )
             if (
                 summary_advance is not None or receipt_promotion is not None
-            ) and error_code in {
-                "projection_version_conflict",
-                "summary_boundary_conflict",
-                "weather_receipt_status_conflict",
-                "weather_receipt_stale",
-            }:
+            ) and error_code in _OPTIONAL_FINALIZE_CONFLICTS:
+                optional_retry_attempted = True
                 if summary_advance is not None:
                     state.agent_diagnostics[
                         "conversation_summary_compaction"
@@ -4598,6 +5158,33 @@ Rules:
                     )
                 try:
                     finalize_once(None, None)
+                    finalized = True
+                except (ConversationMemoryError, ValidationError) as retry_exc:
+                    exc = retry_exc
+                    error_code = getattr(
+                        retry_exc,
+                        "code",
+                        "memory_finalize_payload_invalid",
+                    )
+            scope_authority_conflict = error_code in (
+                _WEATHER_SCOPE_FINALIZE_CONFLICTS
+            ) or (
+                error_code == "projection_version_conflict"
+                and (
+                    weather_scope_transition is not None
+                    or weather_scope_resolution is not None
+                )
+            )
+            exhausted_optional_conflict = (
+                optional_retry_attempted
+                and error_code in _OPTIONAL_FINALIZE_CONFLICTS
+            )
+            if (
+                not finalized
+                and (scope_authority_conflict or exhausted_optional_conflict)
+            ):
+                try:
+                    finalize_conflict_as_failed(error_code)
                     finalized = True
                 except (ConversationMemoryError, ValidationError) as retry_exc:
                     exc = retry_exc
@@ -4789,6 +5376,17 @@ def _collect_agent_diagnostics(
                     entry[
                         "accepted_event_context_next_question"
                     ] = accepted_question
+                accepted_scope = _accepted_weather_scope(result_message)
+                if accepted_scope is not None:
+                    entry["weather_scope_authority"] = accepted_scope.get(
+                        "authority"
+                    )
+                    entry["weather_scope_resolver_decision"] = (
+                        accepted_scope.get("decision")
+                    )
+                    entry["accepted_weather_scope"] = accepted_scope.get(
+                        "weather_scope"
+                    )
             if call["tool_name"] == _WEATHER_TOOL_NAME:
                 entry["weather"] = _weather_diagnostic_summary(
                     call["arguments"],
@@ -5102,9 +5700,9 @@ def _bind_weather_diagnostics_to_current_scope(
     ]
     if not entries:
         return
-    location_scope, requested_window = effective_weather_scope_values(
+    location_scope, requested_window = effective_resolved_weather_scope_values(
         state.current_weather_scope,
-        state.current_weather_scope_transition,
+        state.current_weather_scope_resolution,
     )
     if location_scope is None or requested_window is None:
         return
@@ -5174,22 +5772,67 @@ def _diagnostic_tool_arguments(
     if tool_name == SKILL_ACTIVATION_TOOL_NAME:
         safe_arguments.pop("weather_receipt_id", None)
         weather_scope = safe_arguments.pop("weather_scope", None)
-        if isinstance(weather_scope, dict):
-            safe_arguments["weather_scope"] = {
-                "action": weather_scope.get("action"),
-                "location_source": weather_scope.get("location_source"),
-                "location_supplied": bool(weather_scope.get("location")),
-                "date_supplied": any(
-                    weather_scope.get(field)
-                    for field in (
-                        "relative_date",
-                        "date",
-                        "start_date",
-                        "end_date",
-                    )
-                ),
-            }
+        summarized_scope = _weather_scope_diagnostic_summary(weather_scope)
+        if summarized_scope is not None:
+            safe_arguments["weather_scope"] = summarized_scope
     return safe_arguments
+
+
+def _weather_scope_diagnostic_summary(
+    weather_scope: WeatherScopeSelection | dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Return only the closed, non-location weather-scope control shape."""
+
+    if isinstance(weather_scope, BaseModel):
+        weather_scope = weather_scope.model_dump(mode="json", exclude_none=True)
+    if not isinstance(weather_scope, dict):
+        return None
+    return {
+        "scope_revision": weather_scope.get("scope_revision"),
+        "location_action": weather_scope.get("location_action"),
+        "window_action": weather_scope.get("window_action"),
+        "location_source": weather_scope.get("location_source"),
+        "location_supplied": bool(weather_scope.get("location")),
+        "date_supplied": any(
+            weather_scope.get(field)
+            for field in (
+                "relative_date",
+                "date",
+                "start_date",
+                "end_date",
+            )
+        ),
+    }
+
+
+def _accepted_weather_scope_summary(
+    resolution: CurrentWeatherScopeResolution | None,
+    selection: WeatherScopeSelection | None,
+) -> dict[str, Any] | None:
+    """Report the server-accepted resolution after conservative retention."""
+
+    if resolution is None:
+        return _weather_scope_diagnostic_summary(selection)
+    location_scope = resolution.location_scope
+    return {
+        "scope_revision": resolution.expected_scope_revision,
+        "location_action": resolution.location_action,
+        "window_action": resolution.window_action,
+        "location_source": (
+            getattr(location_scope, "kind", None)
+            if resolution.location_action == "set"
+            else None
+        ),
+        "location_supplied": bool(
+            resolution.location_action == "set"
+            and getattr(location_scope, "kind", None)
+            == "shopper_provided_location"
+        ),
+        "date_supplied": bool(
+            resolution.window_action == "set"
+            and resolution.requested_window is not None
+        ),
+    }
 
 
 def _tool_call_status(
@@ -5761,6 +6404,51 @@ def _accepted_event_context_next_question(
     return match.group(1) if match is not None else None
 
 
+def _accepted_weather_scope(
+    result_message: Any | None,
+) -> dict[str, Any] | None:
+    """Read the server-accepted semantic scope control from activation."""
+
+    if result_message is None:
+        return None
+    content = _content_to_text(_value(result_message, "content"))
+    match = re.search(
+        rf"(?m)^{re.escape(_WEATHER_SCOPE_ACCEPTED_PREFIX)} (.+)$",
+        content,
+    )
+    if match is None:
+        return None
+    try:
+        payload = json.loads(match.group(1))
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    if payload.get("authority") not in {
+        "semantic_resolver",
+        "skill_activation",
+    }:
+        return None
+    decision = payload.get("decision")
+    if decision not in {
+        None,
+        "same_subject",
+        "new_subject",
+        "answers_pending",
+        "unchanged",
+        "unclear",
+    }:
+        return None
+    weather_scope = payload.get("weather_scope")
+    if weather_scope is not None and not isinstance(weather_scope, dict):
+        return None
+    return {
+        "authority": payload.get("authority"),
+        "decision": decision,
+        "weather_scope": weather_scope,
+    }
+
+
 def _bound_weather_receipt(state: State) -> WeatherForecastReceipt | None:
     """Return only the receipt explicitly selected during this activation."""
 
@@ -5830,9 +6518,9 @@ def _current_weather_receipt_promotion(
                 continue
             weather_call_ids.add(call_id)
 
-    location_scope, requested_window = effective_weather_scope_values(
+    location_scope, requested_window = effective_resolved_weather_scope_values(
         state.current_weather_scope,
-        state.current_weather_scope_transition,
+        state.current_weather_scope_resolution,
     )
     if location_scope is None or requested_window is None:
         return None
@@ -8041,9 +8729,14 @@ def _format_active_weather_receipts(
 
 
 def _format_current_weather_scope(scope: CurrentWeatherScope) -> str:
-    """Render typed authority for semantic continue/replace selection."""
+    """Render typed authority for one semantic atomic scope resolution."""
 
     payload: dict[str, Any] = {"revision": scope.revision}
+    if scope.pending_question is not None:
+        payload["pending_question"] = {
+            "question": scope.pending_question,
+            "source_sequence": scope.pending_source_sequence,
+        }
     if scope.location is not None:
         payload["location"] = {
             "value": scope.location.value.model_dump(
@@ -8059,9 +8752,234 @@ def _format_current_weather_scope(scope: CurrentWeatherScope) -> str:
         }
     return (
         "CURRENT WEATHER SCOPE "
-        "(typed location/date authority; not forecast evidence; choose "
-        "continue only for the same styling subject and replace for a "
-        "different subject):\n"
+        "(typed location/date authority; not forecast evidence; copy this "
+        "revision and resolve both components explicitly with retain, set, "
+        "or clear; pending-question handles are resolver-only and are not "
+        "part of shopper-skill activation):\n"
+        + json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
+    )
+
+
+def _conservative_weather_scope_resolution(
+    resolution: CurrentWeatherScopeResolution,
+) -> CurrentWeatherScopeResolution:
+    """Clear every retain when semantic scope authority is unavailable."""
+
+    location_action = (
+        "clear"
+        if resolution.location_action == "retain"
+        else resolution.location_action
+    )
+    window_action = (
+        "clear"
+        if resolution.window_action == "retain"
+        else resolution.window_action
+    )
+    return CurrentWeatherScopeResolution(
+        expected_projection_version=resolution.expected_projection_version,
+        expected_scope_revision=resolution.expected_scope_revision,
+        location_action=location_action,
+        window_action=window_action,
+        location_scope=resolution.location_scope,
+        requested_window=resolution.requested_window,
+    )
+
+
+def _cleared_weather_scope_resolution(
+    current_scope: CurrentWeatherScope,
+    *,
+    expected_projection_version: int,
+) -> CurrentWeatherScopeResolution:
+    """Clear both components when a new subject supplied no typed update."""
+
+    return CurrentWeatherScopeResolution(
+        expected_projection_version=expected_projection_version,
+        expected_scope_revision=current_scope.revision,
+        location_action="clear",
+        window_action="clear",
+    )
+
+
+def _resolver_pending_answer_is_bound(
+    current_scope: CurrentWeatherScope,
+    decision: WeatherScopeResolverDecision,
+) -> bool:
+    """Accept answers_pending only for the exact durable question handle."""
+
+    if decision.decision != "answers_pending":
+        return True
+    if (
+        current_scope.pending_question is None
+        or current_scope.pending_source_turn_id is None
+        or current_scope.pending_source_sequence is None
+        or decision.pending_source_turn_id
+        != current_scope.pending_source_turn_id
+    ):
+        return False
+    return True
+
+
+def _resolver_pending_component_is_set(
+    current_scope: CurrentWeatherScope,
+    resolution: CurrentWeatherScopeResolution | None,
+) -> bool:
+    """Require activation to supply the component named by pending authority."""
+
+    if resolution is None or current_scope.pending_question is None:
+        return False
+    if current_scope.pending_question == "event_location":
+        return resolution.location_action == "set"
+    return resolution.window_action == "set"
+
+
+def _build_exact_pending_completion_resolution(
+    current_scope: CurrentWeatherScope,
+    resolution: CurrentWeatherScopeResolution,
+) -> CurrentWeatherScopeResolution:
+    """Build one validated completion from an exact pending-answer binding."""
+
+    completion_handle = current_scope.pending_source_turn_id
+    if completion_handle is None:
+        raise ValueError("pending completion requires an exact source handle")
+    if current_scope.pending_question == "event_location":
+        if resolution.window_action == "set":
+            window_action = "set"
+            requested_window = resolution.requested_window
+            pending_question = None
+        elif current_scope.window is not None:
+            window_action = "retain"
+            requested_window = None
+            pending_question = None
+        else:
+            window_action = "clear"
+            requested_window = None
+            pending_question = "event_date"
+        return CurrentWeatherScopeResolution(
+            expected_projection_version=(
+                resolution.expected_projection_version
+            ),
+            expected_scope_revision=resolution.expected_scope_revision,
+            location_action="set",
+            window_action=window_action,
+            location_scope=resolution.location_scope,
+            requested_window=requested_window,
+            pending_question=pending_question,
+            complete_pending_source_turn_id=completion_handle,
+        )
+    if current_scope.pending_question != "event_date":
+        raise ValueError("pending completion requires a typed question")
+    if resolution.location_action == "set":
+        location_action = "set"
+        location_scope = resolution.location_scope
+        pending_question = None
+    elif current_scope.location is not None:
+        location_action = "retain"
+        location_scope = None
+        pending_question = None
+    else:
+        location_action = "clear"
+        location_scope = None
+        pending_question = "event_location"
+    return CurrentWeatherScopeResolution(
+        expected_projection_version=resolution.expected_projection_version,
+        expected_scope_revision=resolution.expected_scope_revision,
+        location_action=location_action,
+        window_action="set",
+        location_scope=location_scope,
+        requested_window=resolution.requested_window,
+        pending_question=pending_question,
+        complete_pending_source_turn_id=completion_handle,
+    )
+
+
+def _pending_completion_retains_prior_counterpart(
+    current_scope: CurrentWeatherScope,
+    resolution: CurrentWeatherScopeResolution | None,
+) -> bool:
+    """Detect completion that imports the other component from prior state."""
+
+    if resolution is None or current_scope.pending_question is None:
+        return False
+    if current_scope.pending_question == "event_location":
+        return (
+            resolution.location_action == "set"
+            and resolution.window_action == "retain"
+        )
+    return (
+        resolution.window_action == "set"
+        and resolution.location_action == "retain"
+    )
+
+
+def _same_subject_preserves_pending_binding(
+    current_scope: CurrentWeatherScope,
+    decision: WeatherScopeResolverDecision | None,
+    resolution: CurrentWeatherScopeResolution | None,
+    next_question: EventContextNextQuestion,
+) -> bool:
+    """Keep an unanswered pending handle while the same subject changes."""
+
+    if (
+        decision is None
+        or decision.decision != "same_subject"
+        or resolution is None
+        or next_question != "none"
+        or current_scope.pending_question is None
+    ):
+        return False
+    if current_scope.pending_question == "event_location":
+        return resolution.location_action != "set"
+    return resolution.window_action != "set"
+
+
+def _pending_weather_scope_resolution(
+    current_scope: CurrentWeatherScope,
+    *,
+    expected_projection_version: int,
+    pending_question: Literal["event_location", "event_date"],
+) -> CurrentWeatherScopeResolution:
+    """Persist a typed question without changing existing scope authority."""
+
+    if (
+        pending_question == "event_location"
+        and current_scope.location is not None
+    ) or (
+        pending_question == "event_date"
+        and current_scope.window is not None
+    ):
+        raise ValueError("pending weather question targets established authority")
+    return CurrentWeatherScopeResolution(
+        expected_projection_version=expected_projection_version,
+        expected_scope_revision=current_scope.revision,
+        location_action=(
+            "retain" if current_scope.location is not None else "clear"
+        ),
+        window_action=(
+            "retain" if current_scope.window is not None else "clear"
+        ),
+        pending_question=pending_question,
+    )
+
+
+def _format_weather_scope_resolver_decision(
+    decision: WeatherScopeResolverDecision | None,
+) -> str:
+    """Render request-local semantic authority without forecast evidence."""
+
+    if decision is None:
+        return "SERVER WEATHER SCOPE DECISION:\n(none required)"
+    payload = {"decision": decision.decision}
+    return (
+        "SERVER WEATHER SCOPE DECISION "
+        "(tools-disabled semantic authority for location/date continuity; "
+        "it applies only if event-context is selected and is otherwise inert; "
+        "when applicable activation must not independently merge prior scope "
+        "components; it is not forecast evidence):\n"
         + json.dumps(
             payload,
             sort_keys=True,
@@ -8079,6 +8997,74 @@ def _shopper_authored_texts(state: State) -> tuple[str, ...]:
             text.strip()
             for text in [state.query, *_recent_shopper_texts(state.context)]
             if text.strip()
+        )
+    )
+
+
+def _active_weather_scope_shopper_texts(state: State) -> tuple[str, ...]:
+    """Return only shopper text bound to the effective weather subject."""
+
+    source_sequences: set[int] = set()
+    resolution = state.current_weather_scope_resolution
+    include_current_query = (
+        state.current_weather_scope.revision == 0
+        or (
+            resolution is not None
+            and (
+                resolution.location_action == "set"
+                or resolution.window_action == "set"
+            )
+        )
+        or (
+            state.weather_scope_resolver_decision is not None
+            and state.weather_scope_resolver_decision.decision == "unchanged"
+        )
+    )
+    if resolution is None:
+        if state.current_weather_scope.location is not None:
+            source_sequences.add(
+                state.current_weather_scope.location.source_sequence
+            )
+        if state.current_weather_scope.window is not None:
+            source_sequences.add(
+                state.current_weather_scope.window.source_sequence
+            )
+    else:
+        if (
+            resolution.location_action == "retain"
+            and state.current_weather_scope.location is not None
+        ):
+            source_sequences.add(
+                state.current_weather_scope.location.source_sequence
+            )
+        if (
+            resolution.window_action == "retain"
+            and state.current_weather_scope.window is not None
+        ):
+            source_sequences.add(
+                state.current_weather_scope.window.source_sequence
+            )
+
+    source_texts = {
+        int(turn["sequence"]): str(turn["shopper_text"]).strip()
+        for turn in state.recent_conversation_turns
+        if isinstance(turn, dict)
+        and isinstance(turn.get("sequence"), int)
+        and isinstance(turn.get("shopper_text"), str)
+        and str(turn["shopper_text"]).strip()
+    }
+    return tuple(
+        dict.fromkeys(
+            text
+            for text in [
+                state.query.strip() if include_current_query else "",
+                *(
+                    source_texts[sequence]
+                    for sequence in sorted(source_sequences)
+                    if sequence in source_texts
+                ),
+            ]
+            if text
         )
     )
 

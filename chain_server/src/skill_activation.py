@@ -69,9 +69,13 @@ same response. The runtime will load the complete selected instructions before
 the next model step. Outfit styling and product discovery are alternative
 primary procedures, so never select both; budget shopping may accompany either
 only when the shopper states a budget. Event context may accompany outfit
-styling only. Select it for event or non-event styling whenever destination,
-date, venue, or live weather could materially change guidance, including a
-direct request for weather-appropriate clothing. Whenever event context is
+styling only. Select it only when physical context is part of the current
+styling subject: the shopper supplies or changes a destination, date, venue, or
+weather need; directly requests weather-aware clothing; answers a pending
+context question; or explicitly continues that established event, trip, or
+weather-planning subject. Do not select it merely because location, season, or
+weather could hypothetically improve otherwise location-independent styling.
+Whenever event context is
 selected, also declare its one permitted `event_context_next_question`
 decision. Set it to `event_location` only when the relevant destination is
 still missing and material; set `event_venue` only after destination is
@@ -82,7 +86,10 @@ open-air as the setting;
 set it to `event_date` only when live weather is enabled and material and the
 effective typed weather scope has no bounded date; set it to `none` otherwise.
 This field authorizes at most that one follow-up; do not ask another. Never ask
-a venue question for non-event weather styling. An explicitly stated outdoor
+a pending question already asked in an earlier turn again when the shopper
+continues product work without answering it; choose `none` and leave the typed
+pending binding available for a later direct answer. Never ask a venue question
+for non-event weather styling. An explicitly stated outdoor
 patio, beach, garden, rooftop, or open-air setting makes enabled live weather
 material; if its location is established and its date is not, choose
 `event_date`, not `none`. Never infer a beach, outdoor, indoor, or terrain
@@ -90,19 +97,18 @@ setting from the destination.
 
 CURRENT WEATHER SCOPE is the only prior-turn location/date authority. When the
 current turn establishes, corrects, or changes weather-relevant location/date
-context, provide one `weather_scope`: choose `continue` only for the same event,
-trip, or weather-planning subject and `replace` for a new or different subject.
-Initial scope creation uses `replace` and omits `subject_change_quote`.
-A replacement contains only current-turn authority, so omitted older fields are
-cleared. Replacing an existing scope requires `subject_change_quote`: copy the
-exact current-turn words that explicitly introduce the new, different, or
-separate subject. A pronoun, location, date, or occasion alone is not
-subject-change evidence. Omit that quote for continuation and initial scope
-creation. Copy a shopper location from the current turn; normalize its bounded
-date without importing an older subject's date. If `continue` supplies a
-location when the scope already has one, without also supplying a current-turn
-date, the server clears the older date and the effective scope remains
-incomplete.
+context, provide one atomic `weather_scope` and resolve both location and
+date-window components explicitly. Copy the exact server-issued
+`scope_revision`. Use `retain` only for the same event, trip, or
+weather-planning subject, `set` only for current-turn shopper authority, and
+`clear` for a missing component of a new subject. No omitted component
+inherits. The isolated resolver supplies only semantic continuity; this
+activation is the sole author of current-turn location/date component facts.
+Omit `weather_scope` only when the complete scope is unchanged.
+All event-context control fields are capability-scoped: omit
+`event_context_next_question`, `weather_scope`, `weather_refresh`, and
+`weather_receipt_id` when event context is not selected. A server weather-scope
+decision is inert on such a turn and must not be copied into activation.
 Evaluate
 `event_context_next_question` after applying this same call's `weather_scope`;
 if the update supplies the missing date, choose `none`, never `event_date`.
@@ -586,15 +592,12 @@ def _activation_validation_issue(error: Any) -> str:
 def _activation_validation_feedback(issue: str) -> str:
     if issue == SKILL_ACTIVATION_WEATHER_SCOPE_INVALID:
         return (
-            "weather_scope must describe only current-turn location/date "
-            "authority. For an empty scope, choose replace and omit "
-            "subject_change_quote. Choose continue for the same styling subject or "
-            "replace for a different subject. A different subject may replace "
-            "with only the newly known fields, leaving missing context empty. "
-            "Replacing an existing scope requires the exact current-turn "
-            "subject_change_quote that explicitly introduces the new subject; "
-            "otherwise use continue. Copy shopper locations from the current "
-            "turn and never reuse an older subject's date. Recompute the "
+            "weather_scope must atomically resolve both location and date "
+            "against the exact current scope revision. Choose retain, set, or "
+            "clear for each component. Retain only for the same styling "
+            "subject; for a different subject, clear every component not "
+            "established now. Set accepts only current-turn shopper authority, "
+            "and omitted components never inherit. Recompute the "
             "question after the corrected scope: non-occasion weather styling "
             "and an already stated outdoor setting use none, not event_venue. "
             "Use weather_refresh only for an explicit refresh of an unchanged "

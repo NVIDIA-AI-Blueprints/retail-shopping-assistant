@@ -50,8 +50,11 @@ from shared.weather_receipts import (
 )
 from shared.weather_scope import (
     CurrentWeatherScope,
+    CurrentWeatherScopeResolution,
     CurrentWeatherScopeTransition,
+    apply_current_weather_scope_resolution,
     apply_current_weather_scope_transition,
+    effective_resolved_weather_scope_values,
 )
 
 
@@ -67,7 +70,44 @@ PROJECTION_VERSION_CONFLICT = "projection_version_conflict"
 SUMMARY_BOUNDARY_CONFLICT = "summary_boundary_conflict"
 WEATHER_RECEIPT_STATUS_CONFLICT = "weather_receipt_status_conflict"
 WEATHER_RECEIPT_STALE = "weather_receipt_stale"
-MEMORY_RESPONSE_CONTRACT_MAX = 3
+CURRENT_WEATHER_SCOPE_REVISION_CONFLICT = (
+    "current_weather_scope_revision_conflict"
+)
+CURRENT_WEATHER_SCOPE_RESOLUTION_CONFLICT = (
+    "current_weather_scope_resolution_conflict"
+)
+MEMORY_RESPONSE_CONTRACT_MAX = 4
+_CURRENT_WEATHER_PENDING_FIELDS = (
+    "pending_question",
+    "pending_source_turn_id",
+    "pending_source_sequence",
+)
+
+
+class _CurrentWeatherPendingProjection(BaseModel):
+    """V4-only binding stored outside the rollback-readable v3 scope JSON."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    scope_revision: int = Field(..., ge=1)
+    pending_question: Literal["event_location", "event_date"]
+    pending_source_turn_id: str = Field(..., min_length=1, max_length=256)
+    pending_source_sequence: int = Field(..., ge=1)
+
+    @field_validator("pending_source_turn_id")
+    @classmethod
+    def _validate_source_turn_id(cls, value: str) -> str:
+        if (
+            value != value.strip()
+            or any(
+                ord(character) < 32 or ord(character) == 127
+                for character in value
+            )
+        ):
+            raise ValueError(
+                "weather scope source turn must be trimmed and single-line"
+            )
+        return value
 
 
 class TurnStartRequest(BaseModel):
@@ -180,6 +220,7 @@ class TurnFinalizeRequest(BaseModel):
     summary_advance: ConversationSummaryAdvance | None = None
     weather_receipt_promotion: WeatherReceiptPromotion | None = None
     current_weather_scope_transition: CurrentWeatherScopeTransition | None = None
+    current_weather_scope_resolution: CurrentWeatherScopeResolution | None = None
 
     @model_validator(mode="after")
     def _event_keys_are_unique(self):
@@ -188,6 +229,14 @@ class TurnFinalizeRequest(BaseModel):
             raise ValueError("event_key values must be unique within a turn")
         if PRESENTED_PRODUCTS_EVENT_KEY in keys:
             raise ValueError("event_key is reserved for runtime product cards")
+        if (
+            self.current_weather_scope_transition is not None
+            and self.current_weather_scope_resolution is not None
+        ):
+            raise ValueError(
+                "legacy weather transition and atomic resolution are "
+                "mutually exclusive"
+            )
         return self
 
 
@@ -277,6 +326,35 @@ def _current_weather_scope(
         raw_scope = json.loads(
             projection.current_weather_scope_json or '{"revision":0}'
         )
+        pending_payload = json.loads(
+            projection.current_weather_pending_json or "{}"
+        )
+        if not isinstance(raw_scope, dict) or any(
+            field in raw_scope for field in _CURRENT_WEATHER_PENDING_FIELDS
+        ):
+            raise ValueError(
+                "v4 pending binding must not be stored in the v3 scope lane"
+            )
+        if not isinstance(pending_payload, dict):
+            raise ValueError(
+                "current weather pending projection must be an object"
+            )
+        pending = (
+            _CurrentWeatherPendingProjection.model_validate(pending_payload)
+            if pending_payload
+            else None
+        )
+        if (
+            pending is not None
+            and isinstance(raw_scope, dict)
+            and pending.scope_revision == raw_scope.get("revision")
+        ):
+            raw_scope.update(
+                pending.model_dump(
+                    mode="json",
+                    exclude={"scope_revision"},
+                )
+            )
         return CurrentWeatherScope.model_validate(raw_scope)
     except (TypeError, ValueError, ValidationError) as exc:
         raise HTTPException(
@@ -355,10 +433,15 @@ def _projection_dict(
         )
     if response_contract >= 3:
         scope = _current_weather_scope(projection)
-        result["current_weather_scope"] = scope.model_dump(
+        scope_payload = scope.model_dump(
             mode="json",
             exclude_none=True,
         )
+        if response_contract < 4:
+            scope_payload.pop("pending_question", None)
+            scope_payload.pop("pending_source_turn_id", None)
+            scope_payload.pop("pending_source_sequence", None)
+        result["current_weather_scope"] = scope_payload
     return result
 
 
@@ -904,26 +987,85 @@ def _validate_summary_advance(
         )
 
 
-def _validate_current_weather_scope_transition(
+def _validate_current_weather_scope_update(
     turn: ConversationTurn,
     projection: ConversationProjection,
+    current_scope: CurrentWeatherScope,
     request: TurnFinalizeRequest,
 ) -> None:
     transition = request.current_weather_scope_transition
-    if transition is None:
+    resolution = request.current_weather_scope_resolution
+    update = resolution or transition
+    if update is None:
         return
     if request.status != "completed":
         raise HTTPException(
             status_code=409,
             detail="current_weather_scope_status_conflict",
         )
-    if transition.expected_projection_version != projection.version:
+    if update.expected_projection_version != projection.version:
         raise HTTPException(
             status_code=409,
             detail=PROJECTION_VERSION_CONFLICT,
         )
+    if resolution is not None:
+        if resolution.expected_scope_revision != current_scope.revision:
+            raise HTTPException(
+                status_code=409,
+                detail=CURRENT_WEATHER_SCOPE_REVISION_CONFLICT,
+            )
+        if (
+            resolution.location_action == "retain"
+            and current_scope.location is None
+        ) or (
+            resolution.window_action == "retain"
+            and current_scope.window is None
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail=CURRENT_WEATHER_SCOPE_RESOLUTION_CONFLICT,
+            )
+        if resolution.preserve_pending_source_turn_id is not None and (
+            resolution.pending_question != current_scope.pending_question
+            or resolution.preserve_pending_source_turn_id
+            != current_scope.pending_source_turn_id
+            or current_scope.pending_source_sequence is None
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail=CURRENT_WEATHER_SCOPE_RESOLUTION_CONFLICT,
+            )
+        try:
+            effective_location, effective_window = (
+                effective_resolved_weather_scope_values(
+                    current_scope,
+                    resolution,
+                )
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail=CURRENT_WEATHER_SCOPE_RESOLUTION_CONFLICT,
+            ) from exc
+        if (
+            resolution.pending_question == "event_location"
+            and effective_location is not None
+        ) or (
+            resolution.pending_question == "event_date"
+            and effective_window is not None
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail=CURRENT_WEATHER_SCOPE_RESOLUTION_CONFLICT,
+            )
+    if resolution is not None:
+        location_scope = resolution.location_scope
+    elif transition is not None:
+        location_scope = transition.location_scope
+    else:
+        location_scope = None
     if (
-        isinstance(transition.location_scope, SavedAreaWeatherScope)
+        isinstance(location_scope, SavedAreaWeatherScope)
         and turn.shopper_profile_id is None
     ):
         raise HTTPException(
@@ -936,7 +1078,15 @@ def _next_current_weather_scope(
     turn: ConversationTurn,
     current_scope: CurrentWeatherScope,
     transition: CurrentWeatherScopeTransition | None,
+    resolution: CurrentWeatherScopeResolution | None,
 ) -> CurrentWeatherScope:
+    if resolution is not None:
+        return apply_current_weather_scope_resolution(
+            current_scope,
+            resolution,
+            source_turn_id=turn.turn_id,
+            source_sequence=turn.sequence,
+        )
     return apply_current_weather_scope_transition(
         current_scope,
         transition,
@@ -956,8 +1106,23 @@ def _advance_current_weather_scope(
     current_identity = _weather_scope_authority_identity(current_scope)
     next_identity = _weather_scope_authority_identity(next_scope)
     projection.current_weather_scope_json = _canonical_json(
-        next_scope.model_dump(mode="json", exclude_none=True)
+        next_scope.model_dump(
+            mode="json",
+            exclude=set(_CURRENT_WEATHER_PENDING_FIELDS),
+            exclude_none=True,
+        )
     )
+    if next_scope.pending_question is None:
+        projection.current_weather_pending_json = "{}"
+    else:
+        projection.current_weather_pending_json = _canonical_json(
+            _CurrentWeatherPendingProjection(
+                scope_revision=next_scope.revision,
+                pending_question=next_scope.pending_question,
+                pending_source_turn_id=next_scope.pending_source_turn_id,
+                pending_source_sequence=next_scope.pending_source_sequence,
+            ).model_dump(mode="json")
+        )
     if next_identity != current_identity:
         _store_active_weather_receipts(projection, [])
 
@@ -1100,12 +1265,18 @@ def _finalize_turn(
         projection,
         request.summary_advance,
     )
-    _validate_current_weather_scope_transition(turn, projection, request)
     current_weather_scope = _current_weather_scope(projection)
+    _validate_current_weather_scope_update(
+        turn,
+        projection,
+        current_weather_scope,
+        request,
+    )
     next_weather_scope = _next_current_weather_scope(
         turn,
         current_weather_scope,
         request.current_weather_scope_transition,
+        request.current_weather_scope_resolution,
     )
     weather_receipt = _prepare_weather_receipt(
         turn,

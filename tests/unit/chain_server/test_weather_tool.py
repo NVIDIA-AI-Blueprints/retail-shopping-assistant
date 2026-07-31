@@ -28,7 +28,7 @@ from chain_server.src.weather_tool import (
     WeatherScopeForecastBinding,
     WeatherScopeSelection,
     WeatherForecastEvidence,
-    compile_weather_scope_transition,
+    compile_weather_scope_resolution,
     get_event_weather_forecast_tool,
     get_scoped_weather_forecast_tool,
     get_weather_forecast_tool,
@@ -43,8 +43,8 @@ from shared.weather_scope import (
     CurrentWeatherScope,
     WeatherScopeLocationAuthority,
     WeatherScopeWindowAuthority,
-    apply_current_weather_scope_transition,
-    effective_weather_scope_values,
+    apply_current_weather_scope_resolution,
+    effective_resolved_weather_scope_values,
 )
 
 
@@ -152,26 +152,44 @@ def _existing_nyc_scope() -> CurrentWeatherScope:
     )
 
 
-def test_new_subject_replaces_location_without_inheriting_prior_date() -> None:
-    transition = compile_weather_scope_transition(
+def _existing_nyc_location_only_scope() -> CurrentWeatherScope:
+    return CurrentWeatherScope(
+        revision=1,
+        location=WeatherScopeLocationAuthority(
+            value=ShopperLocationWeatherScope(
+                location="NYC",
+                location_query="NYC, NY",
+            ),
+            source_turn_id="turn-nyc",
+            source_sequence=1,
+        ),
+    )
+
+
+def test_new_subject_sets_location_and_explicitly_clears_prior_window() -> None:
+    current_scope = _existing_nyc_scope()
+    resolution = compile_weather_scope_resolution(
         WeatherScopeSelection(
-            action="replace",
-            subject_change_quote="different wedding",
+            scope_revision=1,
+            location_action="set",
+            window_action="clear",
             location_source="shopper_provided_location",
             location="Seattle",
         ),
+        current_scope=current_scope,
         current_shopper_text="Help with a different wedding in Seattle.",
         saved_zip_authorized=False,
         expected_projection_version=4,
         current_date=CURRENT_DATE,
-        replacement_evidence_required=True,
     )
 
-    location, window = effective_weather_scope_values(
-        _existing_nyc_scope(),
-        transition,
+    location, window = effective_resolved_weather_scope_values(
+        current_scope,
+        resolution,
     )
 
+    assert resolution.location_action == "set"
+    assert resolution.window_action == "clear"
     assert location == ShopperLocationWeatherScope(location="Seattle")
     assert window is None
 
@@ -183,41 +201,40 @@ def test_new_subject_replaces_location_without_inheriting_prior_date() -> None:
         ("NYC", "NYC, NY"),
     ],
 )
-def test_populated_continuation_location_cannot_inherit_prior_date(
+def test_atomic_location_set_can_explicitly_clear_prior_window(
     shopper_location: str,
     location_query: str | None,
 ) -> None:
     current_scope = _existing_nyc_scope()
-    transition = compile_weather_scope_transition(
+    resolution = compile_weather_scope_resolution(
         WeatherScopeSelection(
-            action="continue",
+            scope_revision=1,
+            location_action="set",
+            window_action="clear",
             location_source="shopper_provided_location",
             location=shopper_location,
             location_query=location_query,
         ),
-        current_shopper_text=(
-            f"Help with a different wedding in {shopper_location}."
-        ),
+        current_scope=current_scope,
+        current_shopper_text=f"The same wedding moved to {shopper_location}.",
         saved_zip_authorized=False,
         expected_projection_version=4,
         current_date=CURRENT_DATE,
-        current_location_scope=current_scope.location.value,
     )
 
-    effective_location, window = effective_weather_scope_values(
+    effective_location, window = effective_resolved_weather_scope_values(
         current_scope,
-        transition,
+        resolution,
     )
 
-    assert transition.clear_window is True
     assert effective_location == ShopperLocationWeatherScope(
         location=shopper_location,
         location_query=location_query,
     )
     assert window is None
-    persisted = apply_current_weather_scope_transition(
+    persisted = apply_current_weather_scope_resolution(
         current_scope,
-        transition,
+        resolution,
         source_turn_id="turn-seattle",
         source_sequence=2,
     )
@@ -227,88 +244,305 @@ def test_populated_continuation_location_cannot_inherit_prior_date(
     assert persisted.window is None
 
 
-def test_existing_scope_replacement_requires_exact_subject_change_quote() -> None:
-    with pytest.raises(
-        ValueError,
-        match="exact current-turn subject-change quote",
-    ):
-        compile_weather_scope_transition(
-            WeatherScopeSelection(
-                action="replace",
-                location_source="shopper_provided_location",
-                location="Seattle",
-            ),
-            current_shopper_text="Help with a separate trip to Seattle.",
-            saved_zip_authorized=False,
-            expected_projection_version=4,
-            current_date=CURRENT_DATE,
-            replacement_evidence_required=True,
-        )
-
-    with pytest.raises(
-        ValueError,
-        match="exact current-turn subject-change quote",
-    ):
-        compile_weather_scope_transition(
-            WeatherScopeSelection(
-                action="replace",
-                subject_change_quote="a new trip",
-                location_source="shopper_provided_location",
-                location="Seattle",
-            ),
-            current_shopper_text="Help with a separate trip to Seattle.",
-            saved_zip_authorized=False,
-            expected_projection_version=4,
-            current_date=CURRENT_DATE,
-            replacement_evidence_required=True,
-        )
-
-
-def test_continuation_rejects_subject_change_quote() -> None:
-    with pytest.raises(
-        ValueError,
-        match="continue must omit subject_change_quote",
-    ):
+def test_same_pending_question_preserves_its_durable_source_binding() -> None:
+    current_scope = CurrentWeatherScope.model_validate(
+        {
+            "revision": 2,
+            "pending_question": "event_location",
+            "pending_source_turn_id": "conference-turn",
+            "pending_source_sequence": 2,
+            "window": {
+                "value": {
+                    "start_date": "2026-08-15",
+                    "end_date": "2026-08-15",
+                },
+                "source_turn_id": "conference-turn",
+                "source_sequence": 2,
+            },
+        }
+    )
+    resolution = compile_weather_scope_resolution(
         WeatherScopeSelection(
-            action="continue",
-            subject_change_quote="same trip",
-            relative_date="next_week",
+            scope_revision=2,
+            location_action="clear",
+            window_action="set",
+            date="2026-08-16",
+        ),
+        current_scope=current_scope,
+        current_shopper_text="The same conference is August 16.",
+        saved_zip_authorized=False,
+        expected_projection_version=5,
+        current_date=CURRENT_DATE,
+    ).model_copy(
+        update={
+            "pending_question": "event_location",
+            "preserve_pending_source_turn_id": "conference-turn",
+        }
+    )
+
+    persisted = apply_current_weather_scope_resolution(
+        current_scope,
+        resolution,
+        source_turn_id="date-correction-turn",
+        source_sequence=3,
+    )
+
+    assert persisted.pending_question == "event_location"
+    assert persisted.pending_source_turn_id == "conference-turn"
+    assert persisted.pending_source_sequence == 2
+    assert persisted.window is not None
+    assert persisted.window.source_turn_id == "date-correction-turn"
+
+
+def test_same_pending_question_without_preserve_handle_stamps_new_source() -> None:
+    current_scope = CurrentWeatherScope.model_validate(
+        {
+            "revision": 2,
+            "pending_question": "event_location",
+            "pending_source_turn_id": "older-subject-turn",
+            "pending_source_sequence": 2,
+            "window": {
+                "value": {
+                    "start_date": "2026-08-15",
+                    "end_date": "2026-08-15",
+                },
+                "source_turn_id": "older-subject-turn",
+                "source_sequence": 2,
+            },
+        }
+    )
+    resolution = compile_weather_scope_resolution(
+        WeatherScopeSelection(
+            scope_revision=2,
+            location_action="clear",
+            window_action="set",
+            date="2026-08-22",
+        ),
+        current_scope=current_scope,
+        current_shopper_text="The new conference is August 22.",
+        saved_zip_authorized=False,
+        expected_projection_version=5,
+        current_date=CURRENT_DATE,
+    ).model_copy(update={"pending_question": "event_location"})
+
+    persisted = apply_current_weather_scope_resolution(
+        current_scope,
+        resolution,
+        source_turn_id="new-subject-turn",
+        source_sequence=3,
+    )
+
+    assert persisted.pending_question == "event_location"
+    assert persisted.pending_source_turn_id == "new-subject-turn"
+    assert persisted.pending_source_sequence == 3
+
+
+def test_wrong_pending_preserve_handle_fails_shared_validation() -> None:
+    current_scope = CurrentWeatherScope.model_validate(
+        {
+            "revision": 2,
+            "pending_question": "event_location",
+            "pending_source_turn_id": "bound-turn",
+            "pending_source_sequence": 2,
+            "window": {
+                "value": {
+                    "start_date": "2026-08-15",
+                    "end_date": "2026-08-15",
+                },
+                "source_turn_id": "bound-turn",
+                "source_sequence": 2,
+            },
+        }
+    )
+    resolution = compile_weather_scope_resolution(
+        WeatherScopeSelection(
+            scope_revision=2,
+            location_action="clear",
+            window_action="set",
+            date="2026-08-16",
+        ),
+        current_scope=current_scope,
+        current_shopper_text="The same conference is August 16.",
+        saved_zip_authorized=False,
+        expected_projection_version=5,
+        current_date=CURRENT_DATE,
+    ).model_copy(
+        update={
+            "pending_question": "event_location",
+            "preserve_pending_source_turn_id": "wrong-turn",
+        }
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="pending source preservation conflict",
+    ):
+        apply_current_weather_scope_resolution(
+            current_scope,
+            resolution,
+            source_turn_id="date-correction-turn",
+            source_sequence=3,
         )
 
 
-def test_initial_scope_creation_rejects_continue_action() -> None:
+def test_cross_subject_date_resolution_clears_nyc_and_cannot_call_weather() -> None:
+    current_scope = _existing_nyc_location_only_scope()
+    resolution = compile_weather_scope_resolution(
+        WeatherScopeSelection(
+            scope_revision=1,
+            location_action="clear",
+            window_action="set",
+            date="2026-08-15",
+        ),
+        current_scope=current_scope,
+        current_shopper_text="I also have a conference on August 15.",
+        saved_zip_authorized=False,
+        expected_projection_version=4,
+        current_date=CURRENT_DATE,
+    )
+    location, window = effective_resolved_weather_scope_values(
+        current_scope,
+        resolution,
+    )
+
+    assert resolution.location_action == "clear"
+    assert resolution.window_action == "set"
+    assert location is None
+    assert window == WeatherReceiptWindow(
+        start_date=date(2026, 8, 15),
+        end_date=date(2026, 8, 15),
+    )
+
+    client = RecordingClient()
+    binding = WeatherScopeForecastBinding(
+        current_scope,
+        saved_zipcode=None,
+    )
+    binding.bind(resolution, relative_date=None, weekday=None)
+    result = parse_weather_tool_evidence(
+        get_scoped_weather_forecast_tool(client, binding).invoke({})
+    )
+
+    assert result == weather_failure("weather_request_invalid")
+    assert client.requests == []
+
+
+def test_bare_pending_same_subject_date_retains_nyc_and_sets_window() -> None:
+    current_scope = _existing_nyc_location_only_scope()
+    resolution = compile_weather_scope_resolution(
+        WeatherScopeSelection(
+            scope_revision=1,
+            location_action="retain",
+            window_action="set",
+            relative_date="next_week",
+        ),
+        current_scope=current_scope,
+        current_shopper_text="It will be next week.",
+        saved_zip_authorized=False,
+        expected_projection_version=4,
+        current_date=CURRENT_DATE,
+    )
+
+    location, window = effective_resolved_weather_scope_values(
+        current_scope,
+        resolution,
+    )
+
+    assert resolution.location_action == "retain"
+    assert resolution.window_action == "set"
+    assert location == ShopperLocationWeatherScope(
+        location="NYC",
+        location_query="NYC, NY",
+    )
+    assert window == WeatherReceiptWindow(
+        start_date=date(2026, 8, 3),
+        end_date=date(2026, 8, 9),
+    )
+
+
+def test_stale_weather_scope_revision_is_rejected() -> None:
     with pytest.raises(
         ValueError,
-        match="initial weather scope creation must use replace",
+        match="weather scope revision does not match current scope",
     ):
-        compile_weather_scope_transition(
+        compile_weather_scope_resolution(
             WeatherScopeSelection(
-                action="continue",
+                scope_revision=0,
+                location_action="retain",
+                window_action="set",
                 relative_date="next_week",
             ),
+            current_scope=_existing_nyc_location_only_scope(),
+            current_shopper_text="It will be next week.",
+            saved_zip_authorized=False,
+            expected_projection_version=4,
+            current_date=CURRENT_DATE,
+        )
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {
+            "scope_revision": 1,
+            "location_action": "retain",
+            "window_action": "clear",
+            "location_source": "shopper_provided_location",
+            "location": "Seattle",
+        },
+        {
+            "scope_revision": 1,
+            "location_action": "clear",
+            "window_action": "set",
+        },
+        {
+            "scope_revision": 1,
+            "location_action": "clear",
+            "window_action": "retain",
+            "date": "2026-08-15",
+        },
+    ],
+)
+def test_scope_selection_actions_own_their_component_payloads(
+    payload: dict[str, object],
+) -> None:
+    with pytest.raises(ValueError):
+        WeatherScopeSelection.model_validate(payload)
+
+
+def test_initial_scope_cannot_retain_a_missing_component() -> None:
+    with pytest.raises(
+        ValueError,
+        match="weather scope cannot retain a missing location",
+    ):
+        compile_weather_scope_resolution(
+            WeatherScopeSelection(
+                scope_revision=0,
+                location_action="retain",
+                window_action="set",
+                relative_date="next_week",
+            ),
+            current_scope=CurrentWeatherScope(),
             current_shopper_text="It will be next week.",
             saved_zip_authorized=False,
             expected_projection_version=0,
             current_date=CURRENT_DATE,
-            continuation_context_available=False,
         )
 
 
-def test_scope_selection_schema_explains_qualification_and_continuity() -> None:
+def test_scope_selection_schema_explains_atomic_component_resolution() -> None:
     properties = WeatherScopeSelection.model_json_schema()["properties"]
 
-    assert "same event, trip, or weather-planning subject" in properties[
-        "action"
+    assert "Exact revision from CURRENT WEATHER SCOPE" in properties[
+        "scope_revision"
     ]["description"]
-    assert "omitted location or date fields are then cleared" in properties[
-        "action"
+    assert "Never rely on an omitted field to inherit location" in properties[
+        "location_action"
     ]["description"]
-    assert "supplying a location under continue" in properties["action"][
-        "description"
-    ]
-    assert "A pronoun, location, date, or occasion alone" in properties[
-        "subject_change_quote"
+    assert "Never rely on an omitted field to inherit a date" in properties[
+        "window_action"
     ]["description"]
+    assert "pending_source_turn_id" not in properties
     assert "shortest exact current-turn shopper phrase" in properties[
         "location"
     ]["description"]
@@ -327,13 +561,20 @@ def test_scope_selection_schema_explains_qualification_and_continuity() -> None:
     ("selection", "shopper_text", "expected_window"),
     [
         (
-            WeatherScopeSelection(action="replace", date="2026-08-07"),
+            WeatherScopeSelection(
+                scope_revision=0,
+                location_action="clear",
+                window_action="set",
+                date="2026-08-07",
+            ),
             "Plan for 2026-08-07.",
             (date(2026, 8, 7), date(2026, 8, 7)),
         ),
         (
             WeatherScopeSelection(
-                action="replace",
+                scope_revision=0,
+                location_action="clear",
+                window_action="set",
                 start_date="2026-08-07",
                 end_date="2026-08-09",
             ),
@@ -341,7 +582,12 @@ def test_scope_selection_schema_explains_qualification_and_continuity() -> None:
             (date(2026, 8, 7), date(2026, 8, 9)),
         ),
         (
-            WeatherScopeSelection(action="replace", date="2026-07-29"),
+            WeatherScopeSelection(
+                scope_revision=0,
+                location_action="clear",
+                window_action="set",
+                date="2026-07-29",
+            ),
             "Plan for tomorrow.",
             (date(2026, 7, 29), date(2026, 7, 29)),
         ),
@@ -352,15 +598,16 @@ def test_explicit_scope_window_must_equal_current_turn_authority(
     shopper_text: str,
     expected_window: tuple[date, date],
 ) -> None:
-    transition = compile_weather_scope_transition(
+    resolution = compile_weather_scope_resolution(
         selection,
+        current_scope=CurrentWeatherScope(),
         current_shopper_text=shopper_text,
         saved_zip_authorized=False,
         expected_projection_version=0,
         current_date=CURRENT_DATE,
     )
 
-    assert transition.requested_window == WeatherReceiptWindow(
+    assert resolution.requested_window == WeatherReceiptWindow(
         start_date=expected_window[0],
         end_date=expected_window[1],
     )
@@ -370,12 +617,19 @@ def test_explicit_scope_window_must_equal_current_turn_authority(
     ("selection", "shopper_text"),
     [
         (
-            WeatherScopeSelection(action="replace", date="2026-08-08"),
+            WeatherScopeSelection(
+                scope_revision=0,
+                location_action="clear",
+                window_action="set",
+                date="2026-08-08",
+            ),
             "Plan for 2026-08-07.",
         ),
         (
             WeatherScopeSelection(
-                action="replace",
+                scope_revision=0,
+                location_action="clear",
+                window_action="set",
                 start_date="2026-08-07",
                 end_date="2026-08-10",
             ),
@@ -391,8 +645,9 @@ def test_explicit_scope_window_rejects_model_selected_date_drift(
         ValueError,
         match="does not match current-turn authority",
     ):
-        compile_weather_scope_transition(
+        compile_weather_scope_resolution(
             selection,
+            current_scope=CurrentWeatherScope(),
             current_shopper_text=shopper_text,
             saved_zip_authorized=False,
             expected_projection_version=0,
@@ -410,13 +665,16 @@ def test_non_event_weather_request_compiles_and_calls_bound_tool() -> None:
             end_date=end_date,
         )
     )
-    transition = compile_weather_scope_transition(
+    resolution = compile_weather_scope_resolution(
         WeatherScopeSelection(
-            action="replace",
+            scope_revision=0,
+            location_action="set",
+            window_action="set",
             location_source="shopper_provided_location",
             location="Denver",
             relative_date="next_week",
         ),
+        current_scope=CurrentWeatherScope(),
         current_shopper_text="What should I wear in Denver next week?",
         saved_zip_authorized=False,
         expected_projection_version=0,
@@ -427,7 +685,7 @@ def test_non_event_weather_request_compiles_and_calls_bound_tool() -> None:
         saved_zipcode=None,
     )
     binding.bind(
-        transition,
+        resolution,
         relative_date="next_week",
         weekday=None,
     )
@@ -456,15 +714,18 @@ def test_qualified_nyc_friday_scope_reaches_zero_argument_adapter() -> None:
             end_date=friday,
         )
     )
-    transition = compile_weather_scope_transition(
+    resolution = compile_weather_scope_resolution(
         WeatherScopeSelection(
-            action="replace",
+            scope_revision=0,
+            location_action="set",
+            window_action="set",
             location_source="shopper_provided_location",
             location="NYC",
             location_query="NYC, NY",
             relative_date="next_week",
             weekday="friday",
         ),
+        current_scope=CurrentWeatherScope(),
         current_shopper_text="What should I wear in NYC Friday next week?",
         saved_zip_authorized=False,
         expected_projection_version=0,
@@ -475,7 +736,7 @@ def test_qualified_nyc_friday_scope_reaches_zero_argument_adapter() -> None:
         saved_zipcode=None,
     )
     binding.bind(
-        transition,
+        resolution,
         relative_date="next_week",
         weekday="friday",
     )
@@ -496,24 +757,28 @@ def test_qualified_nyc_friday_scope_reaches_zero_argument_adapter() -> None:
     assert evidence.weekday == "friday"
 
 
-def test_incomplete_replacement_never_calls_weather_provider() -> None:
+def test_incomplete_resolution_never_calls_weather_provider() -> None:
     client = RecordingClient()
-    transition = compile_weather_scope_transition(
+    current_scope = _existing_nyc_scope()
+    resolution = compile_weather_scope_resolution(
         WeatherScopeSelection(
-            action="replace",
+            scope_revision=1,
+            location_action="set",
+            window_action="clear",
             location_source="shopper_provided_location",
             location="Seattle",
         ),
+        current_scope=current_scope,
         current_shopper_text="A different wedding in Seattle.",
         saved_zip_authorized=False,
         expected_projection_version=4,
         current_date=CURRENT_DATE,
     )
     binding = WeatherScopeForecastBinding(
-        _existing_nyc_scope(),
+        current_scope,
         saved_zipcode=None,
     )
-    binding.bind(transition, relative_date=None, weekday=None)
+    binding.bind(resolution, relative_date=None, weekday=None)
 
     result = parse_weather_tool_evidence(
         get_scoped_weather_forecast_tool(client, binding).invoke({})

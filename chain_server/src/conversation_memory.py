@@ -31,6 +31,7 @@ from shared.weather_receipts import (
 )
 from shared.weather_scope import (
     CurrentWeatherScope,
+    CurrentWeatherScopeResolution,
     CurrentWeatherScopeTransition,
 )
 
@@ -53,7 +54,7 @@ EventType = Literal[
 _DEFAULT_TIMEOUT_SECONDS = 10.0
 _DEFAULT_CONTEXT_MAX_CHARS = 16_384
 _MAX_CONVERSATION_SUMMARY_CHARS = 16_384
-_MEMORY_RESPONSE_CONTRACT = 3
+_MEMORY_RESPONSE_CONTRACT = 4
 _TRUNCATION_MARKER = "…"
 
 
@@ -187,7 +188,7 @@ class TurnStartResult(_MemoryModel):
     """Combined conversation context and cart for one turn."""
 
     turn_id: str = Field(..., min_length=1, max_length=256)
-    contract_version: Literal[1, 2, 3] = 1
+    contract_version: Literal[1, 2, 3, 4] = 1
     attempt_id: str = Field(..., min_length=1, max_length=128)
     sequence: int = Field(..., ge=1)
     replayed: bool = False
@@ -312,6 +313,21 @@ class TurnFinalizeRequest(_MemoryModel):
     summary_advance: ConversationSummaryAdvance | None = None
     weather_receipt_promotion: WeatherReceiptPromotion | None = None
     current_weather_scope_transition: CurrentWeatherScopeTransition | None = None
+    current_weather_scope_resolution: CurrentWeatherScopeResolution | None = None
+
+    @model_validator(mode="after")
+    def _weather_scope_updates_are_mutually_exclusive(
+        self,
+    ) -> "TurnFinalizeRequest":
+        if (
+            self.current_weather_scope_transition is not None
+            and self.current_weather_scope_resolution is not None
+        ):
+            raise ValueError(
+                "legacy weather transition and atomic resolution are "
+                "mutually exclusive"
+            )
+        return self
 
 
 class TurnFinalizeResult(_MemoryModel):
@@ -417,6 +433,9 @@ class ConversationMemoryClient:
         current_weather_scope_transition: (
             CurrentWeatherScopeTransition | None
         ) = None,
+        current_weather_scope_resolution: (
+            CurrentWeatherScopeResolution | None
+        ) = None,
     ) -> TurnFinalizeResult:
         """Finalize one turn with deterministic structured events."""
 
@@ -431,6 +450,7 @@ class ConversationMemoryClient:
             summary_advance=summary_advance,
             weather_receipt_promotion=weather_receipt_promotion,
             current_weather_scope_transition=current_weather_scope_transition,
+            current_weather_scope_resolution=current_weather_scope_resolution,
         )
         payload = self._post(
             (
@@ -628,6 +648,27 @@ def _http_error(status_code: int, detail: str = "") -> ConversationMemoryError:
                 "Conversation summary state changed before finalization.",
                 status_code=status_code,
                 retryable=True,
+            )
+        if detail in {
+            "weather_receipt_stale",
+            "weather_receipt_status_conflict",
+            "weather_receipt_scope_conflict",
+        }:
+            return ConversationMemoryError(
+                detail,
+                "Optional weather receipt could not be promoted.",
+                status_code=status_code,
+            )
+        if detail in {
+            "current_weather_scope_revision_conflict",
+            "current_weather_scope_resolution_conflict",
+            "current_weather_scope_status_conflict",
+            "current_weather_scope_saved_area_unavailable",
+        }:
+            return ConversationMemoryError(
+                detail,
+                "Current weather scope could not be finalized atomically.",
+                status_code=status_code,
             )
         return ConversationMemoryError(
             "memory_turn_conflict",

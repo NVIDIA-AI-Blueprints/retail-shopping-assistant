@@ -314,12 +314,10 @@ def test_event_context_is_a_narrow_weather_styling_modifier() -> None:
     assert "weather cannot prove product performance" in response_guidance
     assert "create an unstated constraint" in response_guidance
     description = frontmatter["description"].lower()
-    assert "occasions, trips, and direct requests" in description
-    assert "weather-appropriate clothing" in description
-    assert "keep it active through that styling subject" in description
-    assert "do not use for location-independent styling" in (
-        description
-    )
+    assert "physical context is part of the current styling subject" in description
+    assert "a direct weather-aware request" in description
+    assert "an answer to its pending question" in description
+    assert "could hypothetically matter" in description
     assert "do not echo its digits" in normalized
     assert "get_weather_forecast_tool" in body
     assert "run exactly one catalog search for one useful core role" in normalized

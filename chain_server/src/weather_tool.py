@@ -42,8 +42,8 @@ from shared.weather_receipts import (
 )
 from shared.weather_scope import (
     CurrentWeatherScope,
-    CurrentWeatherScopeTransition,
-    effective_weather_scope_values,
+    CurrentWeatherScopeResolution,
+    effective_resolved_weather_scope_values,
 )
 
 
@@ -318,33 +318,33 @@ class EventWeatherRequest(BaseModel):
 
 
 class WeatherScopeSelection(BaseModel):
-    """Semantic current-turn update compiled into the durable weather scope."""
+    """One semantic, atomic resolution of the durable weather scope."""
 
     model_config = ConfigDict(extra="forbid")
 
-    action: Literal["continue", "replace"] = Field(
+    scope_revision: int = Field(
+        ...,
+        ge=0,
         description=(
-            "Initial scope creation uses replace. Use continue only for the "
-            "same event, trip, or weather-planning "
-            "subject. Use replace for a new or different subject; omitted "
-            "location or date fields are then cleared. When replacing an "
-            "existing scope, subject_change_quote must cite the exact "
-            "current-turn words that explicitly introduce the new subject. "
-            "As a fail-safe, supplying a location under continue when the "
-            "scope already has one clears the older date unless this turn "
-            "supplies a new date too."
+            "Exact revision from CURRENT WEATHER SCOPE. This server-issued "
+            "revision binds any explicit retain decision to the scope the "
+            "model actually reviewed."
         )
     )
-    subject_change_quote: str | None = Field(
-        default=None,
-        min_length=1,
-        max_length=120,
+    location_action: Literal["retain", "set", "clear"] = Field(
         description=(
-            "Exact current-turn shopper phrase that explicitly introduces a "
-            "new, different, or separate event, trip, or weather-planning "
-            "subject. Required for replace when a scope already exists. A "
-            "pronoun, location, date, or occasion alone is not subject-change "
-            "evidence. Omit for continue and initial scope creation."
+            "Resolve location atomically. Retain only for the same event, "
+            "trip, or weather-planning subject; set only from current-turn "
+            "shopper authority; clear for a new subject whose location is not "
+            "stated. Never rely on an omitted field to inherit location."
+        ),
+    )
+    window_action: Literal["retain", "set", "clear"] = Field(
+        description=(
+            "Resolve the date window atomically. Retain only for the same "
+            "event, trip, or weather-planning subject; set only from the "
+            "current turn; clear for a new subject whose date is not stated. "
+            "Never rely on an omitted field to inherit a date."
         ),
     )
     location_source: Literal[
@@ -439,20 +439,29 @@ class WeatherScopeSelection(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def validate_partial_authority(self) -> "WeatherScopeSelection":
-        if self.action == "continue" and self.subject_change_quote is not None:
-            raise ValueError("continue must omit subject_change_quote")
-        if self.location_source is None:
-            if self.location is not None or self.location_query is not None:
-                raise ValueError("location_source is required with location")
-        elif self.location_source == "confirmed_saved_zip":
-            if self.location is not None or self.location_query is not None:
+    def validate_atomic_resolution(self) -> "WeatherScopeSelection":
+        if self.location_action == "set":
+            if self.location_source is None:
+                raise ValueError("location_source is required when location_action=set")
+            if self.location_source == "confirmed_saved_zip":
+                if self.location is not None or self.location_query is not None:
+                    raise ValueError(
+                        "location fields must be omitted for confirmed_saved_zip"
+                    )
+            elif self.location is None:
                 raise ValueError(
-                    "location fields must be omitted for confirmed_saved_zip"
+                    "location is required for shopper_provided_location"
                 )
-        elif self.location is None:
+        elif any(
+            value is not None
+            for value in (
+                self.location_source,
+                self.location,
+                self.location_query,
+            )
+        ):
             raise ValueError(
-                "location is required for shopper_provided_location"
+                "location authority fields require location_action=set"
             )
 
         has_explicit_window = any(
@@ -472,48 +481,53 @@ class WeatherScopeSelection(BaseModel):
                 start_date=self.start_date,
                 end_date=self.end_date,
             )
-        has_location = self.location_source is not None
         has_window = self.relative_date is not None or has_explicit_window
-        if self.action == "continue" and not (has_location or has_window):
-            raise ValueError("continue requires a current-turn scope update")
+        if self.window_action == "set" and not has_window:
+            raise ValueError(
+                "current-turn date authority is required when window_action=set"
+            )
+        if self.window_action != "set" and (
+            has_window or self.weekday is not None
+        ):
+            raise ValueError(
+                "date authority fields require window_action=set"
+            )
+        if (
+            self.location_action == "retain"
+            and self.window_action == "retain"
+        ):
+            raise ValueError(
+                "an unchanged weather scope must omit weather_scope"
+            )
         return self
 
 
-def compile_weather_scope_transition(
+def compile_weather_scope_resolution(
     selection: WeatherScopeSelection,
     *,
+    current_scope: CurrentWeatherScope,
     current_shopper_text: str,
     saved_zip_authorized: bool,
     expected_projection_version: int,
     current_date: CalendarDate | None = None,
-    replacement_evidence_required: bool = False,
-    continuation_context_available: bool = True,
-    current_location_scope: WeatherLocationScope | None = None,
-) -> CurrentWeatherScopeTransition:
-    """Validate current-turn provenance and normalize one semantic transition."""
+) -> CurrentWeatherScopeResolution:
+    """Compile the model's semantic component decisions without implicit merge."""
 
-    if selection.action == "continue" and not continuation_context_available:
-        raise ValueError("initial weather scope creation must use replace")
-    if selection.action == "replace" and replacement_evidence_required:
-        replacement_quote = selection.subject_change_quote
-        if (
-            replacement_quote is None
-            or _resolve_shopper_authored_location(
-                replacement_quote,
-                (current_shopper_text,),
-            )
-            is None
-        ):
-            raise ValueError(
-                "replacement requires an exact current-turn subject-change quote"
-            )
+    if selection.scope_revision != current_scope.revision:
+        raise ValueError("weather scope revision does not match current scope")
 
     location_scope: WeatherLocationScope | None = None
-    if selection.location_source == "confirmed_saved_zip":
+    if (
+        selection.location_action == "set"
+        and selection.location_source == "confirmed_saved_zip"
+    ):
         if not saved_zip_authorized:
             raise ValueError("saved area is not confirmed by the current turn")
         location_scope = SavedAreaWeatherScope()
-    elif selection.location_source == "shopper_provided_location":
+    elif (
+        selection.location_action == "set"
+        and selection.location_source == "shopper_provided_location"
+    ):
         shopper_location = (
             _resolve_shopper_authored_location(
                 selection.location or "",
@@ -602,22 +616,22 @@ def compile_weather_scope_transition(
             end_date=window[1],
         )
 
-    return CurrentWeatherScopeTransition(
+    resolution = CurrentWeatherScopeResolution(
         expected_projection_version=expected_projection_version,
-        action=selection.action,
+        expected_scope_revision=selection.scope_revision,
+        location_action=selection.location_action,
+        window_action=selection.window_action,
         location_scope=location_scope,
         requested_window=requested_window,
-        clear_window=(
-            True
-            if (
-                selection.action == "continue"
-                and location_scope is not None
-                and current_location_scope is not None
-                and requested_window is None
-            )
-            else None
-        ),
     )
+    if (
+        resolution.location_action == "retain"
+        and current_scope.location is None
+    ):
+        raise ValueError("weather scope cannot retain a missing location")
+    if resolution.window_action == "retain" and current_scope.window is None:
+        raise ValueError("weather scope cannot retain a missing window")
+    return resolution
 
 
 class WeatherScopeForecastBinding:
@@ -631,27 +645,27 @@ class WeatherScopeForecastBinding:
     ) -> None:
         self.current_scope = current_scope
         self.saved_zipcode = saved_zipcode
-        self.transition: CurrentWeatherScopeTransition | None = None
+        self.resolution: CurrentWeatherScopeResolution | None = None
         self.relative_date: Literal["next_week"] | None = None
         self.weekday: RelativeWeekday | None = None
 
     def bind(
         self,
-        transition: CurrentWeatherScopeTransition,
+        resolution: CurrentWeatherScopeResolution,
         *,
         relative_date: Literal["next_week"] | None,
         weekday: RelativeWeekday | None,
     ) -> None:
-        self.transition = transition
+        self.resolution = resolution
         self.relative_date = relative_date
         self.weekday = weekday
 
     def effective_values(
         self,
     ) -> tuple[WeatherLocationScope | None, WeatherReceiptWindow | None]:
-        return effective_weather_scope_values(
+        return effective_resolved_weather_scope_values(
             self.current_scope,
-            self.transition,
+            self.resolution,
         )
 
 

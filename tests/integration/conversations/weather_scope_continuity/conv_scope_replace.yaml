@@ -1,36 +1,41 @@
-set_name: Typed weather-scope replacement and non-event continuation
+set_name: Atomic cross-subject weather scope and pending location completion
 shopper_profile_id: shopper_jordan
 queries:
   - >-
-    Give me weather-based styling guidance for NYC on Friday next week. I’ll
-    be outdoors, and I’m not shopping for products yet.
+    Give me weather-based styling guidance for my outdoor NYC wedding on
+    Friday next week. I’m not shopping for products yet.
   - >-
-    For a separate trip to Seattle, what should I wear? Still no product
-    search yet.
-  - "It will be next week."
+    I also have a conference on Sunday next week. It will be outdoors; give me
+    weather-aware styling before products.
+  - "Seattle."
 answers:
   - >-
-    Treat this as non-product weather-aware styling. Replace the current
-    weather scope with the shopper-provided NYC authority and Friday-next-week
-    window, call weather once through the server-bound zero-argument tool, and
-    give concise outdoor guidance grounded in the returned forecast. Ask no
-    venue, ZIP, location, or date question and run no catalog tool.
+    Resolve both weather-scope components atomically from revision zero: set
+    the shopper-provided NYC location and set Friday next week. Call weather
+    once through the server-bound zero-argument tool and give concise outdoor
+    guidance grounded in that forecast. Ask no venue, location, or date
+    question and run no catalog tool.
   - >-
-    Treat “separate trip” as a new weather-planning subject. Replace the scope
-    with Seattle only, clearing the older NYC date. Do not call weather because
-    the new scope is incomplete. Give one conditional styling direction and ask
-    only what date or date range to plan around; do not ask about venue or
+    Treat the conference as a different weather-planning subject. Against the
+    exact current scope revision, clear the wedding location and set only
+    Sunday next week. The resulting scope has no location, so do not call or
+    reuse weather. Give one conditional styling direction and ask only for the
+    conference location; do not mention NYC, prior forecast facts, products, or
+    venue.
+  - >-
+    Treat Seattle as fulfillment of the conference-location question. Against
+    the exact current scope revision, set Seattle and retain the already bound
+    conference date. Call weather once through the server-bound zero-argument
+    tool and give concise outdoor conference guidance from that current
+    forecast. Do not reuse or mention NYC, ask another question, or search for
     products.
-  - >-
-    Continue the Seattle trip scope and add the full next-week window. Call
-    weather once through the server-bound zero-argument tool and give concise
-    non-event styling guidance from that current forecast. Do not reuse NYC,
-    ask a venue question, or search for products.
 diagnostic_expectations:
   - required_skills: [outfit-styling, event-context]
     required_event_context_next_question: none
     required_weather_scope:
-      action: replace
+      scope_revision: 0
+      location_action: set
+      window_action: set
       location_source: shopper_provided_location
       location_supplied: true
       date_supplied: true
@@ -60,12 +65,14 @@ diagnostic_expectations:
       - usual area
       - product options
   - required_skills: [outfit-styling, event-context]
-    required_event_context_next_question: event_date
+    required_event_context_next_question: event_location
     required_weather_scope:
-      action: replace
-      location_source: shopper_provided_location
-      location_supplied: true
-      date_supplied: false
+      scope_revision: 1
+      location_action: clear
+      window_action: set
+      location_source: null
+      location_supplied: false
+      date_supplied: true
     forbidden_skills:
       - product-discovery
       - budget-shopping
@@ -81,24 +88,25 @@ diagnostic_expectations:
       - check_active_promotions_tool
     weather_tool_calls: 0
     required_response_phrases:
-      - date
+      - "?"
     forbidden_response_phrases:
+      - NYC
       - Weather Data Provided by Visual Crossing
       - "°F"
-      - venue
       - drizzle
       - rain
       - temperature
       - damp
       - chilly
-      - changeable
   - required_skills: [outfit-styling, event-context]
     required_event_context_next_question: none
     required_weather_scope:
-      action: continue
-      location_source: null
-      location_supplied: false
-      date_supplied: true
+      scope_revision: 2
+      location_action: set
+      window_action: retain
+      location_source: shopper_provided_location
+      location_supplied: true
+      date_supplied: false
     forbidden_skills:
       - product-discovery
       - budget-shopping
@@ -114,13 +122,14 @@ diagnostic_expectations:
       - check_active_promotions_tool
     weather_tool_calls: 1
     required_weather_trace:
-      request_shape: relative_range
+      request_shape: exact_date
       location_source: shopper_provided_location
       provider_input: location_query
       outcome: success
     required_weather_receipt_status: promotion_prepared
     required_response_phrases:
+      - Seattle
       - Weather Data Provided by Visual Crossing
     forbidden_response_phrases:
       - NYC
-      - venue
+      - wedding

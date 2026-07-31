@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 
 import pytest
@@ -18,7 +19,10 @@ from chain_server.src.conversation_memory import (
     build_request_digest,
     format_conversation_context,
 )
-from shared.weather_scope import CurrentWeatherScopeTransition
+from shared.weather_scope import (
+    CurrentWeatherScopeResolution,
+    CurrentWeatherScopeTransition,
+)
 
 _MISSING = object()
 
@@ -201,7 +205,7 @@ def test_start_turn_posts_one_request_without_raw_media() -> None:
     assert result.cart[0].cart_line_id == "line-1"
     assert session.calls[0]["url"] == (
         "http://memory:8011/conversations/conversation%2Fa/turn/start"
-        "?response_contract=3"
+        "?response_contract=4"
     )
     request_payload = session.calls[0]["json"]
     assert request_payload == {
@@ -241,7 +245,7 @@ def test_start_turn_accepts_legacy_v1_response_from_old_memory() -> None:
     assert result.contract_version == 1
     assert result.projection.summary_text == ""
     assert result.projection.active_receipts == []
-    assert session.calls[0]["url"].endswith("?response_contract=3")
+    assert session.calls[0]["url"].endswith("?response_contract=4")
 
 
 def test_start_turn_accepts_negotiated_v3_weather_scope() -> None:
@@ -277,6 +281,36 @@ def test_start_turn_accepts_negotiated_v3_weather_scope() -> None:
         result.projection.current_weather_scope.location.value.location
         == "Seattle"
     )
+
+
+def test_start_turn_accepts_negotiated_v4_atomic_weather_scope_contract() -> None:
+    payload = _start_payload()
+    payload["contract_version"] = 4
+    payload["projection"]["current_weather_scope"] = {
+        "revision": 1,
+        "window": {
+            "value": {
+                "start_date": "2026-08-15",
+                "end_date": "2026-08-15",
+            },
+            "source_turn_id": "turn-1",
+            "source_sequence": 1,
+        },
+    }
+    session = FakeSession(FakeResponse(payload))
+    client = ConversationMemoryClient("http://memory", session=session)
+
+    result = client.start_turn(
+        "conversation-a",
+        request_id="request-a",
+        shopper_text="Continue.",
+        cart_user_id=17,
+    )
+
+    assert result.contract_version == 4
+    assert result.projection.current_weather_scope.revision == 1
+    assert result.projection.current_weather_scope.location is None
+    assert session.calls[0]["url"].endswith("?response_contract=4")
 
 
 @pytest.mark.parametrize(
@@ -593,6 +627,231 @@ def test_finalize_turn_posts_the_typed_event_contract() -> None:
     }
 
 
+def test_finalize_turn_posts_v4_atomic_weather_scope_resolution() -> None:
+    response = {
+        "turn_id": "turn-2",
+        "attempt_id": "attempt-2",
+        "sequence": 2,
+        "replayed": False,
+        "status": "completed",
+        "assistant_text": "Here it is.",
+        "termination_reason": "completed",
+    }
+    session = FakeSession(FakeResponse(response))
+    client = ConversationMemoryClient("http://memory", session=session)
+    resolution = CurrentWeatherScopeResolution(
+        expected_projection_version=2,
+        expected_scope_revision=1,
+        location_action="retain",
+        window_action="set",
+        requested_window={
+            "start_date": date(2026, 8, 15),
+            "end_date": date(2026, 8, 15),
+        },
+    )
+
+    client.finalize_turn(
+        "conversation-a",
+        "turn-2",
+        request_id="request-2",
+        attempt_id="attempt-2",
+        assistant_text="Here it is.",
+        status="completed",
+        termination_reason="completed",
+        current_weather_scope_resolution=resolution,
+    )
+
+    assert session.calls[0]["json"]["current_weather_scope_resolution"] == {
+        "expected_projection_version": 2,
+        "expected_scope_revision": 1,
+        "location_action": "retain",
+        "window_action": "set",
+        "requested_window": {
+            "start_date": "2026-08-15",
+            "end_date": "2026-08-15",
+        },
+    }
+
+
+def test_finalize_turn_posts_explicit_pending_source_preservation() -> None:
+    response = {
+        "turn_id": "turn-3",
+        "attempt_id": "attempt-3",
+        "sequence": 3,
+        "replayed": False,
+        "status": "completed",
+        "assistant_text": "Updated.",
+        "termination_reason": "completed",
+    }
+    session = FakeSession(FakeResponse(response))
+    client = ConversationMemoryClient("http://memory", session=session)
+
+    client.finalize_turn(
+        "conversation-a",
+        "turn-3",
+        request_id="request-3",
+        attempt_id="attempt-3",
+        assistant_text="Updated.",
+        status="completed",
+        termination_reason="completed",
+        current_weather_scope_resolution=CurrentWeatherScopeResolution(
+            expected_projection_version=3,
+            expected_scope_revision=2,
+            location_action="clear",
+            window_action="set",
+            requested_window={
+                "start_date": date(2026, 8, 16),
+                "end_date": date(2026, 8, 16),
+            },
+            pending_question="event_location",
+            preserve_pending_source_turn_id="bound-question-turn",
+        ),
+    )
+
+    assert session.calls[0]["json"]["current_weather_scope_resolution"] == {
+        "expected_projection_version": 3,
+        "expected_scope_revision": 2,
+        "location_action": "clear",
+        "window_action": "set",
+        "requested_window": {
+            "start_date": "2026-08-16",
+            "end_date": "2026-08-16",
+        },
+        "pending_question": "event_location",
+        "preserve_pending_source_turn_id": "bound-question-turn",
+    }
+
+
+def test_finalize_turn_posts_exact_pending_completion() -> None:
+    response = {
+        "turn_id": "turn-3",
+        "attempt_id": "attempt-3",
+        "sequence": 3,
+        "replayed": False,
+        "status": "completed",
+        "assistant_text": "Completed.",
+        "termination_reason": "completed",
+    }
+    session = FakeSession(FakeResponse(response))
+    client = ConversationMemoryClient("http://memory", session=session)
+
+    client.finalize_turn(
+        "conversation-a",
+        "turn-3",
+        request_id="request-3",
+        attempt_id="attempt-3",
+        assistant_text="Completed.",
+        status="completed",
+        termination_reason="completed",
+        current_weather_scope_resolution=CurrentWeatherScopeResolution(
+            expected_projection_version=3,
+            expected_scope_revision=2,
+            location_action="set",
+            window_action="retain",
+            location_scope={
+                "kind": "shopper_provided_location",
+                "location": "Seattle",
+            },
+            complete_pending_source_turn_id="bound-question-turn",
+        ),
+    )
+
+    assert session.calls[0]["json"]["current_weather_scope_resolution"] == {
+        "expected_projection_version": 3,
+        "expected_scope_revision": 2,
+        "location_action": "set",
+        "window_action": "retain",
+        "location_scope": {
+            "kind": "shopper_provided_location",
+            "location": "Seattle",
+        },
+        "complete_pending_source_turn_id": "bound-question-turn",
+    }
+
+
+def test_finalize_turn_rejects_legacy_and_v4_weather_updates_together() -> None:
+    client = ConversationMemoryClient(
+        "http://memory",
+        session=FakeSession(),
+    )
+
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        client.finalize_turn(
+            "conversation-a",
+            "turn-2",
+            request_id="request-2",
+            attempt_id="attempt-2",
+            assistant_text="Here it is.",
+            status="completed",
+            termination_reason="completed",
+            current_weather_scope_transition=CurrentWeatherScopeTransition(
+                expected_projection_version=1,
+                action="replace",
+            ),
+            current_weather_scope_resolution=CurrentWeatherScopeResolution(
+                expected_projection_version=1,
+                expected_scope_revision=1,
+                location_action="clear",
+                window_action="clear",
+            ),
+        )
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {
+            "expected_projection_version": 1,
+            "expected_scope_revision": 1,
+            "location_action": "set",
+            "window_action": "clear",
+        },
+        {
+            "expected_projection_version": 1,
+            "expected_scope_revision": 1,
+            "location_action": "retain",
+            "window_action": "clear",
+            "location_scope": {
+                "kind": "shopper_provided_location",
+                "location": "Seattle",
+            },
+        },
+        {
+            "expected_projection_version": 1,
+            "expected_scope_revision": 1,
+            "location_action": "retain",
+            "window_action": "retain",
+        },
+        {
+            "expected_projection_version": 1,
+            "expected_scope_revision": 1,
+            "location_action": "clear",
+            "window_action": "clear",
+            "preserve_pending_source_turn_id": "pending-turn",
+            "pending_question": "event_location",
+            "complete_pending_source_turn_id": "pending-turn",
+        },
+        {
+            "expected_projection_version": 1,
+            "expected_scope_revision": 1,
+            "location_action": "clear",
+            "window_action": "clear",
+            "preserve_pending_source_turn_id": "pending-turn",
+        },
+        {
+            "expected_projection_version": 1,
+            "expected_scope_revision": 1,
+            "location_action": "clear",
+            "window_action": "clear",
+            "unexpected": True,
+        },
+    ],
+)
+def test_v4_weather_scope_resolution_is_closed(payload: dict[str, Any]) -> None:
+    with pytest.raises(ValueError):
+        CurrentWeatherScopeResolution.model_validate(payload)
+
+
 def test_finalize_turn_omits_summary_advance_by_default() -> None:
     response = {
         "turn_id": "turn-2",
@@ -713,6 +972,75 @@ def test_http_failures_have_stable_error_mapping(
     assert caught.value.code == expected_code
     assert caught.value.status_code == status_code
     assert caught.value.retryable is retryable
+
+
+@pytest.mark.parametrize(
+    "detail",
+    [
+        "weather_receipt_stale",
+        "weather_receipt_status_conflict",
+        "weather_receipt_scope_conflict",
+    ],
+)
+def test_finalize_preserves_weather_receipt_conflict_across_http_boundary(
+    detail: str,
+) -> None:
+    client = ConversationMemoryClient(
+        "http://memory",
+        session=FakeSession(
+            FakeResponse({"detail": detail}, status_code=409)
+        ),
+    )
+
+    with pytest.raises(ConversationMemoryError) as caught:
+        client.finalize_turn(
+            "conversation-a",
+            "turn-a",
+            request_id="request-a",
+            attempt_id="attempt-a",
+            assistant_text="Here it is.",
+            status="completed",
+            termination_reason="completed",
+        )
+
+    assert caught.value.code == detail
+    assert caught.value.status_code == 409
+    assert caught.value.retryable is False
+
+
+@pytest.mark.parametrize(
+    "detail",
+    [
+        "current_weather_scope_revision_conflict",
+        "current_weather_scope_resolution_conflict",
+        "current_weather_scope_status_conflict",
+        "current_weather_scope_saved_area_unavailable",
+    ],
+)
+def test_finalize_preserves_weather_scope_conflict_across_http_boundary(
+    detail: str,
+) -> None:
+    client = ConversationMemoryClient(
+        "http://memory",
+        session=FakeSession(
+            FakeResponse({"detail": detail}, status_code=409)
+        ),
+    )
+
+    with pytest.raises(ConversationMemoryError) as caught:
+        client.finalize_turn(
+            "conversation-a",
+            "turn-a",
+            request_id="request-a",
+            attempt_id="attempt-a",
+            assistant_text="Here it is.",
+            status="completed",
+            termination_reason="completed",
+        )
+
+    assert caught.value.code == detail
+    assert caught.value.status_code == 409
+    assert caught.value.retryable is False
 
 
 def test_active_turn_conflict_is_retryable() -> None:

@@ -1,0 +1,73 @@
+set_name: Weather controls stay inert during an intervening product turn
+shopper_profile_id: shopper_jordan
+queries:
+  - >-
+    I want weather-aware styling for a rainy day, but I have not chosen the
+    city or date yet. What should I plan around?
+  - "Do you have pink skirts?"
+  - "The rainy-day outfit is for Seattle on Friday next week."
+answers:
+  - >-
+    Use outfit styling with event context because the shopper explicitly wants
+    weather-aware guidance. Ask the one missing location question and persist
+    that typed pending question without calling weather because the location
+    and date are not established.
+  - >-
+    Treat this as an ordinary product request that does not answer the pending
+    weather question. Run the applicable catalog search, do not let any
+    weather-only control invalidate the activation, do not call weather, and
+    do not repeat the location question.
+  - >-
+    Treat Seattle and next Friday as a direct answer for the original
+    rainy-day styling subject. Resolve both scope components from current-turn
+    authority, call weather once, and give grounded weather-aware styling
+    without asking another event-context question.
+diagnostic_expectations:
+  - required_skills: [outfit-styling, event-context]
+    required_event_context_next_question: event_location
+    required_weather_scope:
+      scope_revision: 0
+      location_action: clear
+      window_action: clear
+      location_source: null
+      location_supplied: false
+      date_supplied: false
+    forbidden_tools: [get_weather_forecast_tool, search_catalog_tool]
+    weather_tool_calls: 0
+    required_response_phrases: ["?"]
+    forbidden_response_phrases:
+      - Weather Data Provided by Visual Crossing
+      - "°F"
+  - required_tools: [search_catalog_tool]
+    forbidden_skills: [event-context]
+    forbidden_tools: [get_weather_forecast_tool]
+    weather_tool_calls: 0
+    forbidden_response_phrases:
+      - What product or shopping task would you like help with
+      - destination/city
+      - usual area or elsewhere
+      - Weather Data Provided by Visual Crossing
+  - required_skills: [outfit-styling, event-context]
+    required_event_context_next_question: none
+    required_weather_scope:
+      scope_revision: 1
+      location_action: set
+      window_action: set
+      location_source: shopper_provided_location
+      location_supplied: true
+      date_supplied: true
+    required_tools: [get_weather_forecast_tool]
+    required_business_sequence: [get_weather_forecast_tool]
+    forbidden_tools: [search_catalog_tool]
+    weather_tool_calls: 1
+    required_weather_trace:
+      request_shape: relative_exact_date
+      location_source: shopper_provided_location
+      provider_input: [location, location_query]
+      outcome: success
+    required_weather_receipt_status: promotion_prepared
+    required_response_phrases:
+      - Seattle
+      - Weather Data Provided by Visual Crossing
+    forbidden_response_phrases:
+      - usual area or elsewhere

@@ -71,8 +71,10 @@ The Retail Shopping Assistant is an AI-powered blueprint that provides a compreh
   turn, and appends a canonical attributed forecast block. A successful
   normalized result may become one short-lived, exact-scope
   `weather_forecast.v1` receipt so a later comparison can reuse the event
-  direction without another provider call or a repeated forecast block.
-  Provider calls remain disabled by default
+  direction without another provider call or a repeated forecast block. An
+  atomic durable scope and typed pending-question binding prevent one subject's
+  location or date from silently completing another. Provider calls remain
+  disabled by default
 - 📚 **Enforced Shopper Skills**: Every turn first semantically selects and
   fully loads the smallest applicable skill set; each selected `SKILL.md`
   declares its role and tool grants, only their grant union becomes
@@ -109,14 +111,21 @@ The application follows a microservices architecture:
 - **Memory Retriever**: Ordered durable turns with start/finalize and exact
   replay, a versioned rolling summary, separate newest raw-turn tail and
   oldest compaction prefix, a bounded versioned projection of short-lived typed
-  weather receipts, one versioned current weather-planning scope with
-  per-component source turns, typed prior-skill continuity, presented-product
+  weather receipts, one versioned current weather-planning scope core with
+  per-component source turns plus a separately stored, revision-matched pending
+  location/date binding, typed
+  prior-skill continuity, presented-product
   events and a compact reference index, stable cart-line IDs, atomically idempotent
   add/remove/quantity mutations, an immutable five-row representative shopper
   registry, atomic conversation/profile binding, and request-scoped database
   sessions. Additive summary, receipt, and current-weather-scope lanes negotiate
-  the highest response contract both services support, and their SQLite columns
-  have database defaults for rollback-safe fresh schemas; standard Compose
+  the highest response contract both services support. Contract 4 advertises
+  atomic finalize-time scope resolution while contract 3 remains supported for
+  rolling deployment. Migration 11 extracts any complete pre-split pending
+  binding into a defaulted separate lane, drops incomplete unsourceable WIP
+  pending fields, keeps the rollback-readable scope JSON free of v4 keys, and
+  ignores pending state whose stored revision no longer matches the
+  core; standard Compose
   exposes its host port on loopback only
 - **Guardrails**: Content safety and moderation
 - **UI**: React-based frontend interface with Guest/representative-shopper
@@ -134,9 +143,14 @@ selection clears visible chat/product state and rotates the browser-scoped
 session, conversation, and cart identities. Reset keeps the explicit shopper
 mode while rotating the conversation identity.
 
-For occasion-led styling, the `event-context` modifier accompanies only
-`outfit-styling` and is the sole skill that grants
-`get_weather_forecast_tool`. An explicit event destination or venue wins over
+The `event-context` modifier accompanies only `outfit-styling` and is the sole
+skill that grants `get_weather_forecast_tool`. Semantic activation selects it
+only when physical context is part of the current styling subject: the shopper
+supplies or changes destination/date/venue/weather context, directly requests
+weather-aware guidance, answers its pending question, or explicitly continues
+that established event, trip, or weather-planning subject. Hypothetical weather
+relevance does not activate it for otherwise location-independent styling. An
+explicit event destination or venue wins over
 the selected profile's saved ZIP. When the ZIP is the only location clue and
 location would materially change the recommendation, the assistant keeps any
 starting direction conditional and asks at most one natural confirmation
@@ -202,15 +216,47 @@ evidence accounting, and factual grounding.
 Weather provider calls remain disabled by default. When an operator enables
 `WEATHER_ENABLED` and supplies `WEATHER_API_KEY` to the chain server,
 `event-context` supports event and non-event weather-aware styling beside
-`outfit-styling`. The mandatory activation step makes the semantic continuity
-decision and may submit one typed `weather_scope` update: `continue` retains
-omitted fields only for the same event, trip, or weather-planning subject;
-`replace` clears omitted fields for a new subject. Only location/date authority
-from the current shopper turn can enter that update. The durable singleton—not
-the rolling summary or recent prose—is the only cross-turn weather authority.
-As a fail-safe, supplying a location under `continue` when the scope already
-has one clears the older date unless the current turn supplies a new window
-too.
+`outfit-styling`. When a prior weather scope exists, a request-local
+tools-disabled semantic resolver compares the current query with the exact
+shopper turns named by the stored location, date, and pending-question source
+sequences. It makes one
+forced typed control call and is neither a business tool nor a subagent.
+The resolver returns only the semantic relation; it does not duplicate
+location/date extraction. Normal activation is the sole producer of one atomic
+`weather_scope` selection: it copies the scope revision and chooses `retain`,
+`set`, or `clear` independently for location and date. Only current-turn
+shopper authority can enter a `set`. The server applies the relation to that
+selection: `new_subject` clears every retain, `same_subject` may retain ordinary
+same-subject authority, and invalid, unavailable, or unclear output clears
+proposed retains and blocks weather. Completing a typed pending component is a
+narrower boundary: only exact-handle `answers_pending` may retain its stored
+counterpart. That relation means the reply answers only the pending question;
+a reply that also changes or withdraws the opposite component is
+`same_subject`, whose explicit `set` or `clear` remains authoritative.
+
+When activation asks for a missing location or date, that question is stored in
+the singleton as a typed pending binding stamped with the originating turn ID
+and sequence, even when the location/date authority values otherwise remain
+unchanged. `answers_pending` is accepted only when the relation call echoes the
+exact opaque pending handle and activation sets the named missing component.
+The opaque handle is resolver-only and is never part of the normal activation
+scope. The runtime carries it to memory only as the server-authored
+`complete_pending_source_turn_id`; memory independently verifies the exact live
+binding and canonical completion shape before committing. An existing opposite
+component is retained, a current-turn replacement remains `set`, and an absent
+opposite component becomes the newly bound pending question. If the same
+unanswered question remains pending during an ordinary
+same-subject update, the runtime may preserve its source only by supplying that
+exact server-owned handle to memory; without it memory stamps the current
+finalized turn. If semantic
+resolution is unavailable or unclear, every proposed cross-turn retain is
+cleared and weather remains blocked; current-turn values may still replace the
+scope without importing an older subject.
+The pending binding records that the question was already asked, so an
+intervening product turn is instructed not to repeat it. This preserves a new
+conference's stated date while asking its location, then safely combines the
+location-only reply with that date. The durable singleton—not the rolling
+summary or recent prose—is the only cross-turn weather authority.
 
 The forecast tool is model-visible but has an empty argument schema. After
 activation, the runtime derives the provider location and exact date window
@@ -238,6 +284,12 @@ but no bounded date, activation selects `event_date`. Skill selection,
 location, venue, materiality, and intent remain semantic model judgment. The
 dynamic enum is typed argument consistency, not an intent router or keyword
 routing layer.
+Every event-context control is capability-scoped. Before nested weather
+validation, the activation boundary deterministically removes
+`event_context_next_question`, `weather_scope`, `weather_refresh`, and
+`weather_receipt_id` when `event-context` was not selected. Those ungranted
+values cannot mutate weather state, grant the forecast tool, or reject an
+otherwise valid shopping activation.
 The server does not infer one from enabled weather or missing context. Accepted
 `event_location` or `event_venue` hides and execution-blocks weather. Event
 context is additive and may gate only weather; every non-weather tool in the
@@ -272,13 +324,14 @@ window. Missing, invented, mismatched, or mixed weekdays fail closed. A current
 negation, standalone weekday correction, or different date supersedes an
 earlier relative date. Without a complete effective location/date scope, the
 runtime hides and execution-blocks weather for that turn. Prior raw-turn dates
-can inform the model's semantic `continue`/`replace` decision but cannot flow
-directly into the adapter. The scoped tool accepts no date or location
+can inform source-bound semantic resolution but cannot flow directly into the
+adapter. The scoped tool accepts no date or location
 arguments from the post-activation model.
 The model may resolve an unambiguous
 single-day phrase such as
 `tomorrow` against that same prompt-visible UTC anchor and send the exact ISO
-date; a genuinely ambiguous or unresolved relative date gets one concise
+date. Using server UTC rather than caller/shopper local time is an explicit
+current limitation; a genuinely ambiguous or unresolved relative date gets one concise
 clarification only under that same enabled-and-material rule. Within a
 scope-valid call, the adapter may make one additional provider
 attempt only after a timeout or HTTP 5xx response. HTTP 400 remains a generic
@@ -325,6 +378,12 @@ guidance silently and strips exact forecast facts instead of repeating the
 earlier block. Receipt diagnostics are categorical only, such as promotion
 prepared or receipt bound; receipt identifiers, scopes, locations, dates, and
 evidence are not exposed.
+Optional receipt-promotion conflicts keep their typed error code across the
+HTTP client boundary, so finalization retries once without that optional
+promotion and does not rerun the model. A scope revision, resolution, or status
+conflict is authoritative instead: the draft and unsent products are discarded
+and the durable turn is terminalized as failed without applying the disputed
+scope update.
 For ordinary-grounding weather paths, grounding-editor sentences containing
 weather-domain fact language or fact-shaped dates/values are removed while
 ordinary grounded styling language remains. The structurally selected protected

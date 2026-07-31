@@ -2,12 +2,14 @@
 name: event-context
 description: >-
   Location, venue, and live-forecast context for weather-aware fashion styling.
-  Use only with outfit-styling when a destination, date, venue, or forecast
-  could materially change guidance. This includes occasions, trips, and direct
-  requests for weather-appropriate clothing. Keep it active through that
-  styling subject. Explicit location overrides saved ZIP; saved ZIP is only a
-  candidate to confirm. Do not use for location-independent styling or
-  non-styling browsing.
+  Use only with outfit-styling when physical context is part of the current
+  styling subject: supplied or changed destination/date/venue/weather context,
+  a direct weather-aware request, an answer to its pending question, or an
+  explicit continuation of that established event, trip, or weather-planning
+  subject. Do not activate it because weather could hypothetically matter to
+  otherwise location-independent styling. Explicit location overrides saved
+  ZIP; saved ZIP is only a candidate to confirm. Do not use for non-styling
+  browsing.
 response_guidance: >-
   Explicit location overrides saved ZIP: never ask "usual area" afterward, fall
   back, or echo digits. Saved ZIP is tentative; for accepted `event_location`,
@@ -38,16 +40,29 @@ tools_granted:
 - `CURRENT WEATHER SCOPE` is the only prior-turn location/date authority. The
   rolling summary and recent prose provide semantics but cannot authorize a
   weather call.
-- Activation makes one semantic continuity decision. Use `continue` only for
-  the same event, trip, or weather-planning subject. Use `replace` for a new or
-  different subject; fields omitted from a replacement are intentionally
-  cleared. Include only location/date values supplied or confirmed in the
-  current shopper turn.
-- As a fail-safe, a `continue` update that supplies a location when the scope
-  already has one clears the older date unless the current turn supplies a new
-  date too. This prevents a repeated/corrected location or misclassified
-  subject change from sending the prior date to the provider. Omit
-  `weather_scope` when the same subject's location/date authority is unchanged.
+- Activation resolves the scope atomically. It copies the exact
+  `scope_revision` and explicitly chooses `retain`, `set`, or `clear` for both
+  location and date. When a prior scope exists, a request-local tools-disabled
+  semantic resolver has already compared the current query with the exact
+  shopper turns named by its component source sequences through one forced
+  typed control call. It is neither a business tool nor a subagent, and it
+  returns only a semantic relation. This activation remains the sole producer
+  of current-turn location/date scope fields. Treat an unclear or missing
+  resolver decision as non-authorizing.
+- `set` contains only location/date authority supplied or confirmed in the
+  current shopper turn. Omitted components never inherit. Omit
+  `weather_scope` only when the entire scope is unchanged.
+- A missing `event_location` or `event_date` question is persisted as the
+  scope's typed pending binding with the originating shopper-turn sequence.
+  Only the isolated resolver's `answers_pending` decision may authorize
+  retaining its counterpart, and only when the resolver echoes the binding's
+  exact opaque source-turn handle and this activation sets the named missing
+  component. `answers_pending` means the reply answers only that question; if
+  it also changes or withdraws the opposite component, use `same_subject`.
+  Never include the handle in `weather_scope`; the server carries and memory
+  verifies it through a separate completion control. When semantic resolution is
+  unavailable or unclear, clear every proposed retain and continue without
+  weather evidence.
 - An explicit current-turn destination overrides saved ZIP. Once established,
   never ask "usual area or elsewhere?"
 - Saved ZIP is only a tentative location candidate. It proves neither current
@@ -68,11 +83,10 @@ tools_granted:
   indoors, or any terrain. Do not carry one event's context into a new event.
 - Current explicit context becomes a validated scope update. An explicit
   destination forbids fallback to saved ZIP.
-- Continuing the current event, trip, or weather-planning subject omits
-  `subject_change_quote`. Replacing an existing scope includes the shortest
-  exact current-turn phrase that explicitly introduces a new, different, or
-  separate subject. A pronoun, location, date, or occasion alone is not
-  replacement evidence. The server validates the quote and does not persist it.
+- The model owns whether the shopper continues the same subject. The server
+  owns only the closed component actions, exact revision match, and
+  current-turn provenance for every `set` value; it never interprets shopper
+  words or silently merges an omitted component.
 - A shopper-stated city, region, country, address, or postal code is valid
   forecast location authority. Keep its shortest sufficient phrase exactly in
   `location`. For an abbreviation or ambiguous place, a separate
@@ -106,6 +120,9 @@ tools_granted:
 - Ask only the accepted typed question when its missing context materially
   changes the next recommendation. Ask at most one short question, never a
   questionnaire.
+- A pending question records that it was already asked. If the shopper
+  continues product work without answering it, do not repeat it; leave the
+  pending binding available for a later direct answer.
 - For non-event weather styling, ask only for the missing location or bounded
   date. Never ask for a venue.
 - When activation selected `event_location`, ask location. When it selected

@@ -69,14 +69,17 @@ Activation alone proposes one atomic selection that copies the scope revision
 and chooses `retain`, `set`, or `clear` independently for location and date.
 Deterministic compilation accepts
 `set` only from current-turn authority. Invalid, unavailable, timed-out, or
-unclear semantic output fails closed. A missing location/date question is
+unclear semantic output fails closed for prior authority but cannot veto a
+validated current-turn `set`/`set` replacement. A missing location/date question is
 persisted as a typed pending binding. Only an exact-handle
 `answers_pending` relation may authorize retaining its counterpart, and only
 when activation sets the named missing component. It means a pending-only
 answer; a reply that also changes or withdraws the counterpart is
 `same_subject`. Runtime and memory carry and atomically verify the exact handle
 through a server-only completion control; without a usable
-resolver result, every retain is cleared and weather is blocked. Prior raw
+resolver result, every retain is cleared and prior-dependent weather is
+blocked. A validated current-turn `set`/`set` replacement remains independent
+authority and may require weather. Prior raw
 turns and summary prose cannot authorize the provider adapter.
 
 The model-facing catalog tool accepts one flat executable search. Its fields

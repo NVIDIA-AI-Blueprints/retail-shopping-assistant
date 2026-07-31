@@ -4112,6 +4112,137 @@ class TestDeepAgentsRuntimeRefs:
         runtime._create_agent(
             State(
                 user_id=111,
+                query="The separate conference is in Seattle on August 16.",
+                conversation_projection_version=5,
+                current_weather_scope=CurrentWeatherScope.model_validate(
+                    {
+                        "revision": 2,
+                        "location": {
+                            "value": {
+                                "kind": "shopper_provided_location",
+                                "location": "NYC",
+                                "location_query": "NYC, NY",
+                            },
+                            "source_turn_id": "turn-nyc",
+                            "source_sequence": 1,
+                        },
+                        "window": {
+                            "value": {
+                                "start_date": "2026-08-07",
+                                "end_date": "2026-08-07",
+                            },
+                            "source_turn_id": "turn-nyc",
+                            "source_sequence": 1,
+                        },
+                    }
+                ),
+                weather_scope_resolver_decision=(
+                    WeatherScopeResolverDecision.model_validate(
+                        {"decision": "unclear"}
+                    )
+                ),
+            ),
+            identity,
+        )
+        resolver_failed_replacement_tools = {
+            fn.__name__: fn for fn in captured["tools"]
+        }
+        _, resolver_failed_replacement_gate = captured["middleware"]
+        resolver_failed_replacement_activation = (
+            resolver_failed_replacement_tools[
+                "activate_shopper_skills_tool"
+            ](
+                skill_names=["outfit-styling", "event-context"],
+                event_context_next_question="none",
+                weather_scope={
+                    "scope_revision": 2,
+                    "location_action": "set",
+                    "window_action": "set",
+                    "location_source": "shopper_provided_location",
+                    "location": "Seattle",
+                    "date": "2026-08-16",
+                },
+                weather_refresh=True,
+            )
+        )
+        assert resolver_failed_replacement_activation.startswith(
+            runtime_mod.SKILL_ACTIVATION_COMPLETE
+        )
+        assert (
+            '"authority":"skill_activation"'
+            in resolver_failed_replacement_activation
+        )
+        assert '"decision":"unclear"' in resolver_failed_replacement_activation
+        resolver_failed_replacement = captured_weather["binding"].resolution
+        assert resolver_failed_replacement.location_action == "set"
+        assert resolver_failed_replacement.window_action == "set"
+        assert resolver_failed_replacement.pending_question is None
+        assert (
+            resolver_failed_replacement_gate._required_tool
+            == "get_weather_forecast_tool"
+        )
+        assert (
+            "get_weather_forecast_tool"
+            not in resolver_failed_replacement_gate._runtime_tool_rejections
+        )
+        resolver_failed_weather_result = resolver_failed_replacement_tools[
+            "get_weather_forecast_tool"
+        ].invoke({})
+        assert resolver_failed_weather_result.startswith(
+            WEATHER_FORECAST_FAILURE_PREFIX
+        )
+        assert captured_weather["request"].location == "Seattle"
+        assert captured_weather["request"].start_date == date(2026, 8, 16)
+        assert captured_weather["request"].end_date == date(2026, 8, 16)
+
+        runtime._create_agent(
+            State(
+                user_id=111,
+                query="Seattle on August 17 for the separate conference.",
+                conversation_projection_version=5,
+                current_weather_scope=pending_location_scope,
+                weather_scope_resolver_decision=(
+                    WeatherScopeResolverDecision.model_validate(
+                        {
+                            "decision": "answers_pending",
+                            "pending_source_turn_id": "wrong-turn",
+                        }
+                    )
+                ),
+            ),
+            identity,
+        )
+        wrong_pending_tools = {
+            fn.__name__: fn for fn in captured["tools"]
+        }
+        _, wrong_pending_gate = captured["middleware"]
+        wrong_pending_activation = wrong_pending_tools[
+            "activate_shopper_skills_tool"
+        ](
+            skill_names=["outfit-styling", "event-context"],
+            event_context_next_question="none",
+            weather_scope={
+                "scope_revision": 2,
+                "location_action": "set",
+                "window_action": "set",
+                "location_source": "shopper_provided_location",
+                "location": "Seattle",
+                "date": "2026-08-17",
+            },
+        )
+        assert wrong_pending_activation.startswith(
+            runtime_mod.SKILL_ACTIVATION_COMPLETE
+        )
+        wrong_pending_resolution = captured_weather["binding"].resolution
+        assert wrong_pending_resolution.location_action == "set"
+        assert wrong_pending_resolution.window_action == "set"
+        assert wrong_pending_resolution.pending_question is None
+        assert wrong_pending_resolution.complete_pending_source_turn_id is None
+        assert wrong_pending_gate._required_tool == "get_weather_forecast_tool"
+
+        runtime._create_agent(
+            State(
+                user_id=111,
                 query="The same conference is August 16.",
                 conversation_projection_version=5,
                 current_weather_scope=pending_location_scope,

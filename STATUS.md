@@ -39,8 +39,9 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   current finalized turn.
   Location/date questions persist with their originating turn even when no
   authority value changes. An unavailable or unclear resolver clears every
-  proposed retain and blocks weather, while current-turn `set` values may still
-  replace scope components without importing an older subject. Current-turn
+  proposed retain, rejects receipt/refresh reuse, and blocks prior-dependent
+  weather. A validated current-turn `set`/`set` replacement remains independent
+  authority and may require weather without importing an older subject. Current-turn
   `set` provenance remains deterministic, and the zero-argument provider tool
   sees only the accepted effective scope;
 - event-context controls are capability-scoped at activation. Semantic
@@ -151,7 +152,8 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   is isolated before activation; resolver-approved same-subject retention is
   accepted directly. `answers_pending` must echo the exact stored opaque handle
   and set the question's named component. An unavailable or unclear resolver
-  clears every retain and blocks weather.
+  clears every retain and blocks prior-dependent weather; a validated
+  current-turn `set`/`set` replacement does not depend on that resolver.
   Recent prose and the rolling summary cannot authorize the zero-argument
   forecast tool. This prevents Wedding A's
   date from reaching a newly introduced Wedding B while supporting non-event
@@ -262,7 +264,8 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   approved `same_subject` relation or an exact-handle `answers_pending`
   relation may authorize prior retention. A `new_subject` relation clears
   every proposed retain. Unavailable or unclear semantic resolution also
-  clears every proposed retain and blocks weather.
+  clears every proposed retain and blocks prior-dependent weather; a validated
+  current-turn `set`/`set` replacement remains independent authority.
   An explicitly
   shopper-stated outdoor patio, beach, garden, rooftop, or open-air setting
   makes enabled live weather

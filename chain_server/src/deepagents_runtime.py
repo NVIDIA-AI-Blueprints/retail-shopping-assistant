@@ -2069,7 +2069,7 @@ class DeepAgentsRuntime:
                 calls=0,
                 detail=(
                     "Weather-scope source turn is outside bounded raw context; "
-                    "weather blocked"
+                    "prior-scope retention unavailable"
                 ),
             )
             return WeatherScopeResolverDecision(
@@ -2123,7 +2123,10 @@ class DeepAgentsRuntime:
                 "app_llm_weather_scope_resolver",
                 status="failed",
                 calls=1,
-                detail="Weather-scope semantic resolver timed out; weather blocked",
+                detail=(
+                    "Weather-scope semantic resolver timed out; "
+                    "prior-scope retention unavailable"
+                ),
             )
             return WeatherScopeResolverDecision(
                 decision="unclear",
@@ -2135,7 +2138,10 @@ class DeepAgentsRuntime:
                 "app_llm_weather_scope_resolver",
                 status="failed",
                 calls=1,
-                detail="Weather-scope semantic resolver failed; weather blocked",
+                detail=(
+                    "Weather-scope semantic resolver failed; "
+                    "prior-scope retention unavailable"
+                ),
             )
             logger.exception("Weather-scope semantic resolver failed")
             return WeatherScopeResolverDecision(
@@ -2156,7 +2162,7 @@ class DeepAgentsRuntime:
                 calls=1,
                 detail=(
                     "Weather-scope semantic resolver returned invalid output; "
-                    "weather blocked"
+                    "prior-scope retention unavailable"
                 ),
             )
             return WeatherScopeResolverDecision(
@@ -2174,7 +2180,7 @@ class DeepAgentsRuntime:
                 calls=1,
                 detail=(
                     "Weather-scope semantic resolver answered no matching "
-                    "typed pending binding; weather blocked"
+                    "typed pending binding; prior-scope retention unavailable"
                 ),
             )
             return WeatherScopeResolverDecision(
@@ -3150,7 +3156,7 @@ class DeepAgentsRuntime:
                 and resolver_decision is not None
                 and resolver_decision.decision == "answers_pending"
             )
-            resolver_blocks_weather = resolver_fails_closed
+            resolver_blocks_weather = False
             activation_payload = {
                 "skill_names": skill_names,
                 "event_context_next_question": event_context_next_question,
@@ -3254,17 +3260,26 @@ class DeepAgentsRuntime:
                 pending_completion_retains_prior_counterpart
                 and not pending_answer_is_valid
             )
-            if (
+            pending_authority_failed = bool(
                 (resolver_answers_pending and not pending_answer_is_valid)
                 or pending_counterpart_authority_bypassed
-            ):
-                resolver_blocks_weather = True
+            )
+            if pending_authority_failed:
                 validated_weather_refresh = False
                 validated_receipt_id = None
                 if scope_resolution is not None:
                     scope_resolution = _conservative_weather_scope_resolution(
                         scope_resolution,
                     )
+            current_turn_scope_replacement = (
+                _is_complete_current_turn_weather_scope_replacement(
+                    scope_resolution
+                )
+            )
+            resolver_blocks_weather = bool(
+                (resolver_fails_closed or pending_authority_failed)
+                and not current_turn_scope_replacement
+            )
 
             effective_location, effective_window = (
                 effective_resolved_weather_scope_values(
@@ -3289,6 +3304,7 @@ class DeepAgentsRuntime:
             preserve_failed_pending_answer = bool(
                 resolver_answers_pending
                 and not pending_answer_is_valid
+                and not current_turn_scope_replacement
                 and state.current_weather_scope.pending_question is not None
             )
             pure_pending_answer_missing_counterpart = bool(
@@ -3502,9 +3518,13 @@ class DeepAgentsRuntime:
                 ]
                 accepted_scope = {
                     "authority": (
-                        "semantic_resolver"
-                        if resolver_applies
-                        else "skill_activation"
+                        "skill_activation"
+                        if current_turn_scope_replacement
+                        else (
+                            "semantic_resolver"
+                            if resolver_applies
+                            else "skill_activation"
+                        )
                     ),
                     "decision": (
                         resolver_decision.decision
@@ -8787,6 +8807,18 @@ def _conservative_weather_scope_resolution(
         window_action=window_action,
         location_scope=resolution.location_scope,
         requested_window=resolution.requested_window,
+    )
+
+
+def _is_complete_current_turn_weather_scope_replacement(
+    resolution: CurrentWeatherScopeResolution | None,
+) -> bool:
+    """Return whether both scope components come from the current turn."""
+
+    return bool(
+        resolution is not None
+        and resolution.location_action == "set"
+        and resolution.window_action == "set"
     )
 
 

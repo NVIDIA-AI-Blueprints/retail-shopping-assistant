@@ -233,7 +233,9 @@ location/date extraction. Normal activation is the sole producer of one atomic
 shopper authority can enter a `set`. The server applies the relation to that
 selection: `new_subject` clears every retain, `same_subject` may retain ordinary
 same-subject authority, and invalid, unavailable, or unclear output clears
-proposed retains and blocks weather. Completing a typed pending component is a
+proposed retains and blocks prior-dependent weather. A validated current-turn
+`set`/`set` replacement remains independent authority and may require a fresh
+forecast. Completing a typed pending component is a
 narrower boundary: only exact-handle `answers_pending` may retain its stored
 counterpart. That relation means the reply answers only the pending question;
 a reply that also changes or withdraws the opposite component is
@@ -255,8 +257,10 @@ same-subject update, the runtime may preserve its source only by supplying that
 exact server-owned handle to memory; without it memory stamps the current
 finalized turn. If semantic
 resolution is unavailable or unclear, every proposed cross-turn retain is
-cleared and weather remains blocked; current-turn values may still replace the
-scope without importing an older subject.
+cleared and receipt/refresh reuse is rejected. Weather remains blocked only
+when the effective scope still depends on prior authority; a complete
+current-turn `set`/`set` replacement may proceed without importing an older
+subject.
 The pending binding records that the question was already asked, so an
 intervening product turn is instructed not to repeat it. This preserves a new
 conference's stated date while asking its location, then safely combines the

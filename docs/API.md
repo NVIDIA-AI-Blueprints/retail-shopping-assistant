@@ -599,7 +599,9 @@ response-validation failures are not retried:
   changes or withdraws the opposite component uses `same_subject`. The handle
   is not part of
   `weather_scope`. When semantic resolution is unavailable or unclear, every cross-turn
-  `retain` is cleared and weather is blocked.
+  `retain` is cleared, receipt/refresh reuse is rejected, and prior-dependent
+  weather is blocked. A validated current-turn `set`/`set` replacement remains
+  independent authority and may require weather.
   Prior raw turns and summary prose can guide the semantic continuity decision
   but cannot authorize the provider adapter.
   An explicitly shopper-stated outdoor patio, beach, garden, rooftop, or

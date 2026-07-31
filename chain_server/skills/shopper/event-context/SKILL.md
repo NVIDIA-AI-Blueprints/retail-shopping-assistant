@@ -60,9 +60,11 @@ tools_granted:
   component. `answers_pending` means the reply answers only that question; if
   it also changes or withdraws the opposite component, use `same_subject`.
   Never include the handle in `weather_scope`; the server carries and memory
-  verifies it through a separate completion control. When semantic resolution is
-  unavailable or unclear, clear every proposed retain and continue without
-  weather evidence.
+  verifies it through a separate completion control. When semantic resolution
+  is unavailable or unclear, clear every proposed retain and reject
+  receipt/refresh reuse. Continue without weather only when the effective scope
+  still depends on prior authority. A validated current-turn `set`/`set`
+  replacement is independent and may use fresh weather evidence.
 - An explicit current-turn destination overrides saved ZIP. Once established,
   never ask "usual area or elsewhere?"
 - Saved ZIP is only a tentative location candidate. It proves neither current

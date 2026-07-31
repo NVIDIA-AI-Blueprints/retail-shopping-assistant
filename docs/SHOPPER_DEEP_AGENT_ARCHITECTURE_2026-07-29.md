@@ -271,7 +271,9 @@ pending binding during another same-subject update likewise requires an exact
 server-authored source handle; without it memory binds the question to the
 current finalized turn. When the
 isolated resolver is unavailable or unclear, every proposed retained
-component is cleared and weather is blocked. The binding
+component is cleared, receipt/refresh reuse is rejected, and prior-dependent
+weather is blocked. A validated current-turn `set`/`set` replacement remains
+independent authority and may require weather. The binding
 also records that the question was already asked; intervening product work is
 instructed not to repeat it. This lets “conference on Sunday next week” clear NYC while
 keeping its own date and asking location, then lets “Seattle” complete that

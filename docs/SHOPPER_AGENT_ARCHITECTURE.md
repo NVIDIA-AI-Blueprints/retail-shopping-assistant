@@ -618,7 +618,9 @@ emit one forced typed control call. It has no business-tool or subagent
 authority and emits only the semantic relation. Activation alone proposes
 explicit `retain`/`set`/`clear` actions for both location and date;
 deterministic compilation admits `set` only from current-turn authority.
-Invalid, unavailable, timed-out, or unclear semantic output fails closed. A
+Invalid, unavailable, timed-out, or unclear semantic output fails closed for
+prior authority but cannot veto a validated current-turn `set`/`set`
+replacement. A
 missing location/date question is stored as a typed pending binding stamped
 with its originating turn ID and sequence even when no authority value changes.
 A resolver-approved `same_subject` relation may authorize ordinary
@@ -635,7 +637,9 @@ otherwise unanswered pending
 binding is preserved during a same-subject update only through an exact
 server-authored source handle; without it memory stamps the current finalized
 turn. When the resolver is
-unavailable or unclear, every retain is cleared and weather is blocked. The
+unavailable or unclear, every retain is cleared, receipt/refresh reuse is
+rejected, and prior-dependent weather is blocked. A validated current-turn
+`set`/`set` replacement remains independent authority and may require weather. The
 binding also records that the question was already asked; intervening product
 work is instructed not to repeat it. The
 effective singleton is the only provider-request authority, and the

@@ -72,9 +72,10 @@ only when the shopper states a budget. Event context may accompany outfit
 styling only. Select it only when physical context is part of the current
 styling subject: the shopper supplies or changes a destination, date, venue, or
 weather need; directly requests weather-aware clothing; answers a pending
-context question; or explicitly continues that established event, trip, or
-weather-planning subject. Do not select it merely because location, season, or
-weather could hypothetically improve otherwise location-independent styling.
+context question; explicitly declines or cancels that pending question; or
+explicitly continues that established event, trip, or weather-planning subject.
+Do not select it merely because location, season, or weather could
+hypothetically improve otherwise location-independent styling.
 Whenever event context is
 selected, also declare its one permitted `event_context_next_question`
 decision. Set it to `event_location` only when the relevant destination is
@@ -84,7 +85,8 @@ never set `event_venue` for a trip, general weather styling, or after the
 shopper establishes outdoors, indoors, beach, garden, patio, rooftop, or
 open-air as the setting;
 set it to `event_date` only when live weather is enabled and material and the
-effective typed weather scope has no bounded date; set it to `none` otherwise.
+effective typed weather scope has no bounded date and the shopper has not made
+the date explicitly unavailable; set it to `none` otherwise.
 This field authorizes at most that one follow-up; do not ask another. Never ask
 a pending question already asked in an earlier turn again when the shopper
 continues product work without answering it; choose `none` and leave the typed
@@ -92,8 +94,9 @@ pending binding available for a later direct answer. Never ask a venue question
 for non-event weather styling. An explicitly stated outdoor
 patio, beach, garden, rooftop, or open-air setting makes enabled live weather
 material; if its location is established and its date is not, choose
-`event_date`, not `none`. Never infer a beach, outdoor, indoor, or terrain
-setting from the destination.
+`event_date`, not `none`, unless the shopper made the date explicitly
+unavailable. Never infer a beach, outdoor, indoor, or terrain setting from the
+destination.
 
 CURRENT WEATHER SCOPE is the only prior-turn location/date authority. When the
 current turn establishes, corrects, or changes weather-relevant location/date
@@ -101,10 +104,11 @@ context, provide one atomic `weather_scope` and resolve both location and
 date-window components explicitly. Copy the exact server-issued
 `scope_revision`. Use `retain` only for the same event, trip, or
 weather-planning subject, `set` only for current-turn shopper authority, and
-`clear` when the current turn withdraws or makes a component unknown, or for a
-missing component of a new subject. No omitted component inherits. The isolated
-resolver supplies only semantic continuity; this activation is the sole author
-of current-turn location/date component facts.
+`unavailable` only when the shopper explicitly cannot or will not provide that
+component for this subject. Use `clear` for an ordinary missing component or a
+component absent from a new subject. No omitted component inherits. The
+isolated resolver supplies only semantic continuity; this activation is the
+sole author of current-turn location/date component facts.
 Omit `weather_scope` only when the complete scope is unchanged.
 All event-context control fields are capability-scoped: omit
 `event_context_next_question`, `weather_scope`, `weather_refresh`, and
@@ -594,10 +598,12 @@ def _activation_validation_feedback(issue: str) -> str:
     if issue == SKILL_ACTIVATION_WEATHER_SCOPE_INVALID:
         return (
             "weather_scope must atomically resolve both location and date "
-            "against the exact current scope revision. Choose retain, set, or "
-            "clear for each component. Retain only for the same styling "
-            "subject; for a different subject, clear every component not "
-            "established now. Set accepts only current-turn shopper authority, "
+            "against the exact current scope revision. Choose retain, set, "
+            "clear, or unavailable for each component. Retain only for the "
+            "same styling subject; unavailable means the shopper explicitly "
+            "cannot or will not provide it for this subject; for a different "
+            "subject, clear every component not established now. Set accepts "
+            "only current-turn shopper authority, "
             "and omitted components never inherit. Recompute the "
             "question after the corrected scope: non-occasion weather styling "
             "and an already stated outdoor setting use none, not event_venue. "

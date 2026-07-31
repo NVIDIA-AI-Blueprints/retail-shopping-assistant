@@ -252,6 +252,21 @@ def test_activation_schema_rejects_two_primary_procedures() -> None:
         ),
     )
 
+    skill_names_description = activation_input.model_fields[
+        "skill_names"
+    ].description
+    assert skill_names_description is not None
+    assert "explicitly declines or cancels that pending question" in (
+        skill_names_description
+    )
+    next_question_description = activation_input.model_fields[
+        "event_context_next_question"
+    ].description
+    assert next_question_description is not None
+    assert "not made the date explicitly unavailable" in (
+        next_question_description
+    )
+
     with pytest.raises(ValueError, match="select exactly one primary procedure"):
         activation_input(
             skill_names=["outfit-styling", "product-discovery"],
@@ -688,13 +703,20 @@ def test_pending_phase_forces_only_the_activation_tool() -> None:
         "subject"
         in normalized_prompt
     )
+    assert "explicitly declines or cancels that pending question" in (
+        normalized_prompt
+    )
+    assert "not made the date explicitly unavailable" in normalized_prompt
     assert "must not be copied into activation" in normalized_prompt
     assert "resolve both location and date-window components explicitly" in (
         normalized_prompt
     )
     assert "`retain` only for the same event" in normalized_prompt
-    assert "`clear` when the current turn withdraws" in normalized_prompt
-    assert "missing component of a new subject" in normalized_prompt
+    assert "`unavailable` only when the shopper explicitly cannot" in (
+        normalized_prompt
+    )
+    assert "`clear` for an ordinary missing component" in normalized_prompt
+    assert "component absent from a new subject" in normalized_prompt
     assert "CURRENT WEATHER SCOPE is the only prior-turn" in normalized_prompt
     assert "isolated resolver supplies only semantic continuity" in (
         normalized_prompt

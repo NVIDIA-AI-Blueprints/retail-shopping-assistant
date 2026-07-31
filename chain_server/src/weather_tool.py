@@ -331,22 +331,36 @@ class WeatherScopeSelection(BaseModel):
             "model actually reviewed."
         )
     )
-    location_action: Literal["retain", "set", "clear"] = Field(
+    location_action: Literal[
+        "retain",
+        "set",
+        "clear",
+        "unavailable",
+    ] = Field(
         description=(
             "Resolve location atomically. Retain only for the same event, "
             "trip, or weather-planning subject; set only from current-turn "
-            "shopper authority; clear when the current turn withdraws or makes "
-            "the location unknown, or for a new subject whose location is not "
-            "stated. Never rely on an omitted field to inherit location."
+            "shopper authority; use unavailable only when the shopper currently "
+            "makes the location explicitly unavailable for this subject; clear "
+            "for an ordinary missing, askable location, including a new subject "
+            "whose location is not stated. Never rely on an omitted field to "
+            "inherit location."
         ),
     )
-    window_action: Literal["retain", "set", "clear"] = Field(
+    window_action: Literal[
+        "retain",
+        "set",
+        "clear",
+        "unavailable",
+    ] = Field(
         description=(
             "Resolve the date window atomically. Retain only for the same "
             "event, trip, or weather-planning subject; set only from the "
-            "current turn; clear when the current turn withdraws or makes the "
-            "date unknown, or for a new subject whose date is not stated. Never "
-            "rely on an omitted field to inherit a date."
+            "current turn; use unavailable only when the shopper currently "
+            "makes the date explicitly unavailable for this subject; clear for "
+            "an ordinary missing, askable date, including a new subject whose "
+            "date is not stated. Never rely on an omitted field to inherit a "
+            "date."
         ),
     )
     location_source: Literal[
@@ -629,9 +643,14 @@ def compile_weather_scope_resolution(
     if (
         resolution.location_action == "retain"
         and current_scope.location is None
+        and current_scope.location_unavailable is None
     ):
         raise ValueError("weather scope cannot retain a missing location")
-    if resolution.window_action == "retain" and current_scope.window is None:
+    if (
+        resolution.window_action == "retain"
+        and current_scope.window is None
+        and current_scope.window_unavailable is None
+    ):
         raise ValueError("weather scope cannot retain a missing window")
     return resolution
 

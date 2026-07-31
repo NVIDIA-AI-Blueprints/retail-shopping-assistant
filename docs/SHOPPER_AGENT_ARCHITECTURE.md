@@ -216,9 +216,11 @@ The detailed contracts and implementation live in:
    venue are established when live weather is enabled and material and the
    effective typed scope has no bounded date, and `none` otherwise. The same
    activation may compile one atomic `weather_scope` resolution, choosing
-   `retain`, `set`, or `clear` for both components. The isolated resolver uses
+   `retain`, `set`, `clear`, or `unavailable` for both components. `clear` is
+   missing but askable; `unavailable` is a source-bound current-subject state
+   selected when the shopper cannot or will not provide a component. The isolated resolver uses
    the dedicated exact source-identity-bound lane for subject semantics, while
-   current-turn provenance is required for each `set`; neither raw-turn dates
+   current-turn provenance is required for each `set` or `unavailable`; neither raw-turn dates
    nor summary prose can become tool authority. An
    explicitly shopper-stated outdoor patio, beach, garden,
    rooftop, or open-air setting makes enabled live weather material; with
@@ -471,11 +473,16 @@ retroactively.
 Equivalent database defaults on fresh and upgraded SQLite schemas preserve old
 memory inserts during rollback. Contract 3 remains supported and omits the
 v4-only pending question and both of its source fields. Deploy memory first,
-then chain; contract 4 remains the finalize-write capability marker and
-contract 5 adds no database migration. A max-v4 caller receives no v5 field,
-while a v5 chain negotiating v4 keeps the bounded raw-tail fallback.
-Migration 11 stores the pending fields in a separate defaulted lane and keeps
-the core scope JSON strict pre-v4-readable.
+then chain; roll back chain first, then memory. Contract 4 remains the atomic
+scope-finalize capability marker and contract 5 adds no database migration.
+Contract 6 adds source-bound component-unavailability fields plus exact pending
+decline and pending supersession controls. Contracts through v5 strip marker
+fields and derive their source-turn lane from that same down-projected scope. A
+chain negotiating v5 preserves a pure unsupported decline, or writes only
+independently validated current-turn `set` facts while retaining the live
+pending binding. Migration 11 stores pending fields in one separate defaulted
+lane; migration 12 stores unavailability markers in another. Both are
+revision-gated and keep the core scope JSON strict pre-v4-readable.
 
 The serving runtime keeps semantic summary, exact newest raw discussion, the
 historical product index, active typed weather receipts, current scope, and its
@@ -530,7 +537,7 @@ Response contract 5 derives at most three exact completed source turns from
 the scope pointers inside turn start, independently of the summary watermark
 and `MEMORY_RECENT_TURNS`. The chain validates exact `(turn_id, sequence)` set
 equality and keeps the lane out of compaction, general prompt context,
-current-turn `set` provenance, and forecast evidence.
+current-turn `set`/`unavailable` provenance, and forecast evidence.
 
 Migration 11 adds defaulted `current_weather_pending_json`. It extracts a
 complete pending binding embedded by the pre-split v4 work, drops incomplete
@@ -539,6 +546,14 @@ unsourceable pending fields, and leaves
 The pending payload carries the core scope revision and is rehydrated only when
 that revision still matches; a rollback-era core mutation makes the stale
 binding inert.
+
+Migration 12 adds defaulted `current_weather_unavailable_json`. It stores
+source-bound location/date-unavailability markers outside the strict core and
+pending lanes, tagged with the resulting scope revision. Memory rehydrates the
+markers only while that revision matches. A later `set`, explicit `clear`, new
+subject, or rollback-era core mutation therefore makes stale marker state
+inert. Contract 6 includes marker source turns in the bounded scope-source lane;
+contracts through v5 include neither marker fields nor marker-only turns.
 
 The resolved agent dependency boundary remains `deepagents==0.6.12`,
 `langchain==1.3.11`, `langgraph==1.2.7`, and `langgraph-sdk==0.4.2`.
@@ -601,8 +616,8 @@ procedures. `budget-shopping` modifies the applicable primary only when the
 shopper states a budget. `event-context` modifies only `outfit-styling`. It is
 selected only when physical context is part of the current styling subject:
 the shopper supplies or changes destination/date/venue/weather context,
-directly requests weather-aware guidance, answers its pending question, or
-explicitly continues that established event, trip, or weather-planning
+  directly requests weather-aware guidance, answers or explicitly declines its
+  pending question, or explicitly continues that established event, trip, or weather-planning
 subject. It is not selected because weather could hypothetically improve
 otherwise location-independent styling. On explicit
 plan-before-products turns, missing material context produces exactly two short
@@ -626,26 +641,33 @@ Event context composes additively with outfit styling for event and non-event
 weather guidance. Activation owns the typed next-question boundary and one
 optional atomic scope proposal. When a prior scope exists, an isolated
 request-local resolver compares the current query with the dedicated exact
-completed turns named by its location, date, and pending-question source
-identities. A chain-local aggregate budget covers those source turns plus
+completed turns named by its location, date, unavailability, and
+pending-question source identities. A chain-local aggregate budget covers those source turns plus
 summary/recent semantic context before the resolver call. It preserves the
 current query, typed scope, trusted date, and every source sequence exactly;
 overflow projects only semantic text, then removes oldest optional history. An
 unfit mandatory payload causes zero resolver model calls and fails closed for
-prior authority without changing contract v5 or durable text. The resolver must
-emit one forced typed control call. It has no business-tool or subagent
-authority and emits only orthogonal subject-continuity and pending-question
-controls. Activation alone proposes
-explicit `retain`/`set`/`clear` actions for both location and date. A pure
+prior authority without changing the negotiated durable response or text. The
+resolver must emit one forced typed control call. It has no business-tool or
+subagent authority. With no pending binding its schema exposes only subject
+continuity; a live binding adds the orthogonal pending-question control and
+exact opaque handle. Activation alone proposes
+explicit `retain`/`set`/`clear`/`unavailable` actions for both location and date.
+`clear` means the component is missing but askable; `unavailable` means the
+shopper cannot or will not provide it for this subject. A pure
 authority compiler receives that already validated proposal and applies the
 semantic relation only to prior-state operations: it clears unauthorized
-`retain`s and preserves every current-turn `set`. Invalid, unavailable,
+`retain`s and preserves every current-turn `set` or `unavailable`. Invalid, unavailable,
 timed-out, or unclear output therefore fails closed for prior authority without
 vetoing current facts. A
 missing location/date question is stored as a typed pending binding stamped
 with its originating turn ID and sequence even when no authority value changes.
 A resolver-approved `same_subject` relation may authorize ordinary
-same-subject retains, while `new_subject` clears them. Completing a pending
+same-subject retains, while `new_subject` clears them. If a new subject replaces
+a live pending binding, the compiler supplies its exact supersession handle
+after removing every old component retain. Memory verifies the handle and
+revision atomically and rejects any superseding resolution that retains an old
+component. Completing a pending
 component while retaining its stored counterpart requires
 `same_subject/answered`, the exact opaque pending source-turn handle at the
 resolver boundary, and activation setting the component it names. A reply that
@@ -654,22 +676,33 @@ also changes or withdraws the opposite component is
 a server-only completion control only when activation itself proposes the
 counterpart `retain`. The compiler never rewrites either action, and memory
 rechecks that exact live retain shape atomically. A current-turn counterpart
-`set` or `clear` uses the ordinary scope-revision boundary with no completion
+`set`, `clear`, or `unavailable` uses the ordinary scope-revision boundary with no completion
 handle; activation owns any new pending question. An
 otherwise unanswered pending
 binding is preserved during a same-subject update only through an exact
 server-authored source handle; without it memory stamps the current finalized
 turn. When the resolver is
 unavailable or unclear, every retain is cleared without erasing current-turn
-`set` values, receipt/refresh reuse is rejected, and prior-dependent weather is
+`set` or `unavailable` values, receipt/refresh reuse is rejected, and prior-dependent weather is
 blocked. Self-contained incomplete proposals use the ordinary missing-component
 gate; a complete current-turn `set`/`set` replacement may require weather. The
 binding also records that the question was already asked; intervening product
-work does not repeat it. `unchanged/not_addressed` suppresses an accidental
+work does not repeat it. Context-only accepted scope transitions use
+server-owned typed-unavailability acknowledgment and question rendering, so
+free-form draft prose cannot obscure the transition or restore a rejected
+follow-up. `unchanged/not_addressed` suppresses an accidental
 repeat of the exact live pending question. Exact-handle
 `unchanged/resume_requested` re-renders it without a scope resolution or source
 rotation when activation supplies no current-turn scope facts; validated
-current-turn `set` values still survive. The
+current-turn actions still survive. Exact-handle `same_subject/declined`
+instead requires the target action `unavailable`, consumes that one live
+pending question, and selects no replacement location/date question. Contract
+6 carries the opaque decline handle to memory for an atomic handle, revision,
+and target-action recheck. Either component's unavailability suppresses both
+location/date follow-ups because weather cannot become complete, but not a
+styling-only venue question. A later `set`, explicit `clear`, or new subject
+removes the marker. This is not a durable shopper preference, and no
+deterministic phrase matcher selects it. The
 effective singleton is the only provider-request authority, and the
 model-visible weather tool has no arguments.
 

@@ -1,0 +1,85 @@
+set_name: Exact durable weather question can be declined
+shopper_profile_id: shopper_jordan
+queries:
+  - >-
+    I’m planning weather-aware styling for an outdoor conference Saturday next
+    week. I’m not shopping for products yet.
+  - >-
+    I don’t know the city and would rather continue without weather. Please
+    stop asking me for it.
+  - "Show me navy sweaters."
+answers:
+  - >-
+    Establish only the conference date from the current turn. Ask one natural
+    question for the location, make no weather or catalog call, and persist
+    that exact typed pending question.
+  - >-
+    Treat this as an explicit decline of the exact pending location question.
+    Mark only that location component unavailable for this event, consume the
+    durable binding, ask no replacement weather question, make no weather or
+    catalog call, and do not turn this into a permanent preference.
+  - >-
+    Treat this as ordinary product work. Search for navy sweaters without
+    reopening or repeating the declined weather-location question and without
+    calling weather.
+diagnostic_expectations:
+  - required_skills: [outfit-styling, event-context]
+    required_event_context_next_question: event_location
+    required_weather_scope:
+      scope_revision: 0
+      location_action: clear
+      window_action: set
+      location_source: null
+      location_supplied: false
+      date_supplied: true
+    forbidden_skills:
+      - product-discovery
+      - budget-shopping
+      - cart-management
+      - store-policy-answers
+    required_business_sequence: []
+    forbidden_tools:
+      - get_weather_forecast_tool
+      - search_catalog_tool
+      - resolve_conversation_products_tool
+      - get_product_details_tool
+    weather_tool_calls: 0
+    required_response_phrases: ["?"]
+    forbidden_response_phrases:
+      - Weather Data Provided by Visual Crossing
+      - "°F"
+  - required_skills: [outfit-styling, event-context]
+    required_event_context_next_question: none
+    required_weather_scope:
+      scope_revision: 1
+      location_action: unavailable
+      window_action: retain
+      location_source: null
+      location_supplied: false
+      date_supplied: false
+    forbidden_skills:
+      - product-discovery
+      - budget-shopping
+      - cart-management
+      - store-policy-answers
+    required_business_sequence: []
+    forbidden_tools:
+      - get_weather_forecast_tool
+      - search_catalog_tool
+      - resolve_conversation_products_tool
+      - get_product_details_tool
+    weather_tool_calls: 0
+    forbidden_response_phrases:
+      - "?"
+      - Weather Data Provided by Visual Crossing
+      - "°F"
+  - forbidden_skills: [event-context]
+    required_tools: [search_catalog_tool]
+    required_business_sequence: [search_catalog_tool]
+    forbidden_tools: [get_weather_forecast_tool]
+    weather_tool_calls: 0
+    forbidden_response_phrases:
+      - "What city"
+      - "What location"
+      - "usual area or elsewhere"
+      - Weather Data Provided by Visual Crossing

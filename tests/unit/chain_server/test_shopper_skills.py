@@ -316,7 +316,7 @@ def test_event_context_is_a_narrow_weather_styling_modifier() -> None:
     description = frontmatter["description"].lower()
     assert "physical context is part of the current styling subject" in description
     assert "a direct weather-aware request" in description
-    assert "an answer to its pending question" in description
+    assert "answer to or explicit decline of its pending question" in description
     assert "could hypothetically matter" in description
     assert "do not echo its digits" in normalized
     assert "get_weather_forecast_tool" in body

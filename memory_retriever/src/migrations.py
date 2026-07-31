@@ -360,6 +360,22 @@ def _conversation_current_weather_pending_projection(
         )
 
 
+def _conversation_current_weather_unavailable_projection(
+    connection: Connection,
+) -> None:
+    """Add the rollback-isolated v6 component-unavailability lane."""
+
+    columns = _table_columns(connection, "conversation_projection")
+    if "current_weather_unavailable_json" not in columns:
+        connection.execute(
+            text(
+                "ALTER TABLE conversation_projection "
+                "ADD COLUMN current_weather_unavailable_json TEXT NOT NULL "
+                "DEFAULT '{}'"
+            )
+        )
+
+
 _MIGRATIONS = (
     (1, _legacy_schema),
     (2, _conversation_schema),
@@ -372,6 +388,7 @@ _MIGRATIONS = (
     (9, _conversation_active_receipts_projection),
     (10, _conversation_current_weather_scope_projection),
     (11, _conversation_current_weather_pending_projection),
+    (12, _conversation_current_weather_unavailable_projection),
 )
 
 

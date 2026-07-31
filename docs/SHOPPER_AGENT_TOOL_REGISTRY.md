@@ -37,7 +37,8 @@ selected only when the shopper states a budget. The `event-context`
 modifier may accompany only `outfit-styling`. It is selected only when physical
 context is part of the current styling subject: supplied or changed
 destination/date/venue/weather context, a direct weather-aware request, an
-answer to its pending question, or an explicit continuation of that established
+answer to or explicit decline/cancellation of its pending question, or an
+explicit continuation of that established
 event, trip, or weather-planning subject. Hypothetical weather relevance does
 not activate it for otherwise location-independent styling. It alone adds the
 read-only weather tool to the union. Its activation also requires
@@ -69,11 +70,15 @@ input has one aggregate chain-local budget across source, summary, and recent
 semantic text. Current query, typed scope, trusted date, and every source
 sequence remain exact; if mandatory input cannot fit, no resolver model call
 runs. The resolver must emit one forced typed control call. This internal
-schema channel is neither a business tool nor a subagent, and it emits only
-orthogonal subject-continuity and pending-question controls.
+schema channel is neither a business tool nor a subagent. With no live pending
+binding it exposes only subject continuity; a live binding adds the orthogonal
+pending-question control and exact opaque handle.
 Activation alone proposes one atomic selection that copies the scope revision
-and chooses `retain`, `set`, or `clear` independently for location and date. A
-pure authority compiler preserves every validated current-turn `set` and
+and chooses `retain`, `set`, `clear`, or `unavailable` independently for
+location and date. `clear` is missing but askable; `unavailable` is a
+source-bound current-subject statement that the shopper cannot or will not
+provide the component. A pure authority compiler preserves every validated
+current-turn `set` or `unavailable` and
 applies the resolver only to prior-state operations. Invalid, unavailable,
 timed-out, or unclear semantic output therefore fails closed for prior
 authority without erasing current facts. A missing location/date question is
@@ -83,14 +88,21 @@ activation sets the named missing component. A reply that also changes or
 withdraws the counterpart is `same_subject/not_addressed`. Exact-handle
 `unchanged/resume_requested` re-renders the stored question without a scope
 write when activation supplies no current-turn scope facts;
-`unchanged/not_addressed` keeps it silent. Runtime and memory carry and
+`unchanged/not_addressed` keeps it silent. Exact-handle
+`same_subject/declined` requires the target component to be `unavailable` and
+consumes that one pending binding without another location/date question. A
+new subject replacing a live pending binding uses its exact supersession handle
+after every old component retain is cleared. Runtime and memory carry and
 atomically verify the exact handle through a server-only completion control
 only when activation proposes the counterpart `retain`; the compiler never
-rewrites `set` or `clear`. Without a usable
+rewrites current-turn component actions. Without a usable
 resolver result, every retain is cleared and prior-dependent weather is
 blocked. Self-contained incomplete proposals use normal missing-component
 handling; a complete current-turn `set`/`set` replacement may require weather. Prior raw
 turns and summary prose cannot authorize the provider adapter.
+Context-only accepted scope transitions use server-owned typed-unavailability
+acknowledgment and question rendering, so a free-form draft cannot obscure the
+transition or restore a follow-up rejected by typed authority.
 
 The model-facing catalog tool accepts one flat executable search. Its fields
 are `semantic_query`, `shopper_guidance`, `requested_product_type`, `taxonomy`,
@@ -381,9 +393,12 @@ Side effects:
   not revoke any business tool from the selected skills' additive grant union
   or close the primary skill's normal tool loop.
 - A valid `weather_scope` copies the singleton revision and resolves both
-  components through explicit `retain`, `set`, or `clear` actions. Current-turn
-  provenance is required for every `set`, and an accepted missing location/date
-  question becomes the durable pending binding.
+  components through explicit `retain`, `set`, `clear`, or `unavailable`
+  actions. Current-turn provenance is required for every `set` and
+  `unavailable`, and an accepted missing askable location/date question becomes
+  the durable pending binding. Either unavailability marker suppresses
+  location/date follow-ups and weather, but not the styling-only venue question;
+  a later `set`, explicit `clear`, or new subject resets it.
   A valid `weather_receipt_id` is
   mutually exclusive with that update, must exactly match the effective scope,
   binds that one receipt for grounding, and hides a new weather call. Every

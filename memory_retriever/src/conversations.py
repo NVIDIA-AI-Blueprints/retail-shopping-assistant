@@ -54,9 +54,11 @@ from shared.weather_scope import (
     CurrentWeatherScopeResolution,
     CurrentWeatherScopeSourceTurn,
     CurrentWeatherScopeTransition,
+    WeatherScopeUnavailableAuthority,
     apply_current_weather_scope_resolution,
     apply_current_weather_scope_transition,
     current_weather_scope_source_references,
+    effective_resolved_weather_scope_unavailability,
     effective_resolved_weather_scope_values,
 )
 
@@ -79,11 +81,15 @@ CURRENT_WEATHER_SCOPE_REVISION_CONFLICT = (
 CURRENT_WEATHER_SCOPE_RESOLUTION_CONFLICT = (
     "current_weather_scope_resolution_conflict"
 )
-MEMORY_RESPONSE_CONTRACT_MAX = 5
+MEMORY_RESPONSE_CONTRACT_MAX = 6
 _CURRENT_WEATHER_PENDING_FIELDS = (
     "pending_question",
     "pending_source_turn_id",
     "pending_source_sequence",
+)
+_CURRENT_WEATHER_UNAVAILABLE_FIELDS = (
+    "location_unavailable",
+    "window_unavailable",
 )
 
 
@@ -111,6 +117,29 @@ class _CurrentWeatherPendingProjection(BaseModel):
                 "weather scope source turn must be trimmed and single-line"
             )
         return value
+
+
+class _CurrentWeatherUnavailableProjection(BaseModel):
+    """V6-only state stored outside the rollback-readable v3 scope JSON."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    scope_revision: int = Field(..., ge=1)
+    location_unavailable: WeatherScopeUnavailableAuthority | None = None
+    window_unavailable: WeatherScopeUnavailableAuthority | None = None
+
+    @model_validator(mode="after")
+    def _require_one_unavailable_component(
+        self,
+    ) -> "_CurrentWeatherUnavailableProjection":
+        if (
+            self.location_unavailable is None
+            and self.window_unavailable is None
+        ):
+            raise ValueError(
+                "weather scope unavailable projection requires a component"
+            )
+        return self
 
 
 class TurnStartRequest(BaseModel):
@@ -332,19 +361,37 @@ def _current_weather_scope(
         pending_payload = json.loads(
             projection.current_weather_pending_json or "{}"
         )
+        unavailable_payload = json.loads(
+            projection.current_weather_unavailable_json or "{}"
+        )
         if not isinstance(raw_scope, dict) or any(
-            field in raw_scope for field in _CURRENT_WEATHER_PENDING_FIELDS
+            field in raw_scope
+            for field in (
+                *_CURRENT_WEATHER_PENDING_FIELDS,
+                *_CURRENT_WEATHER_UNAVAILABLE_FIELDS,
+            )
         ):
             raise ValueError(
-                "v4 pending binding must not be stored in the v3 scope lane"
+                "versioned weather state must not be stored in the v3 scope lane"
             )
         if not isinstance(pending_payload, dict):
             raise ValueError(
                 "current weather pending projection must be an object"
             )
+        if not isinstance(unavailable_payload, dict):
+            raise ValueError(
+                "current weather unavailable projection must be an object"
+            )
         pending = (
             _CurrentWeatherPendingProjection.model_validate(pending_payload)
             if pending_payload
+            else None
+        )
+        unavailable = (
+            _CurrentWeatherUnavailableProjection.model_validate(
+                unavailable_payload
+            )
+            if unavailable_payload
             else None
         )
         if (
@@ -358,12 +405,47 @@ def _current_weather_scope(
                     exclude={"scope_revision"},
                 )
             )
+        if (
+            unavailable is not None
+            and unavailable.scope_revision == raw_scope.get("revision")
+        ):
+            raw_scope.update(
+                unavailable.model_dump(
+                    mode="json",
+                    exclude={"scope_revision"},
+                    exclude_none=True,
+                )
+            )
         return CurrentWeatherScope.model_validate(raw_scope)
     except (TypeError, ValueError, ValidationError) as exc:
         raise HTTPException(
             status_code=500,
             detail="current_weather_scope_projection_invalid",
         ) from exc
+
+
+def _current_weather_scope_for_contract(
+    projection: ConversationProjection,
+    *,
+    response_contract: int,
+) -> CurrentWeatherScope:
+    """Down-project versioned state before response and source derivation."""
+
+    scope = _current_weather_scope(projection)
+    excluded_fields: set[str] = set()
+    if response_contract < 4:
+        excluded_fields.update(_CURRENT_WEATHER_PENDING_FIELDS)
+    if response_contract < 6:
+        excluded_fields.update(_CURRENT_WEATHER_UNAVAILABLE_FIELDS)
+    if not excluded_fields:
+        return scope
+    return CurrentWeatherScope.model_validate(
+        scope.model_dump(
+            mode="json",
+            exclude=excluded_fields,
+            exclude_none=True,
+        )
+    )
 
 
 def _weather_scope_authority_identity(
@@ -435,15 +517,14 @@ def _projection_dict(
             }
         )
     if response_contract >= 3:
-        scope = _current_weather_scope(projection)
+        scope = _current_weather_scope_for_contract(
+            projection,
+            response_contract=response_contract,
+        )
         scope_payload = scope.model_dump(
             mode="json",
             exclude_none=True,
         )
-        if response_contract < 4:
-            scope_payload.pop("pending_question", None)
-            scope_payload.pop("pending_source_turn_id", None)
-            scope_payload.pop("pending_source_sequence", None)
         result["current_weather_scope"] = scope_payload
     return result
 
@@ -727,11 +808,15 @@ def _start_response(
             }
         )
     if response_contract >= 5:
+        projected_scope = _current_weather_scope_for_contract(
+            projection,
+            response_contract=response_contract,
+        )
         result["current_weather_scope_source_turns"] = (
             _current_weather_scope_source_turns(
                 db,
                 turn.conversation_id,
-                _current_weather_scope(projection),
+                projected_scope,
             )
         )
     return result
@@ -1080,9 +1165,11 @@ def _validate_current_weather_scope_update(
         if (
             resolution.location_action == "retain"
             and current_scope.location is None
+            and current_scope.location_unavailable is None
         ) or (
             resolution.window_action == "retain"
             and current_scope.window is None
+            and current_scope.window_unavailable is None
         ):
             raise HTTPException(
                 status_code=409,
@@ -1105,12 +1192,25 @@ def _validate_current_weather_scope_update(
                     resolution,
                 )
             )
+            (
+                effective_location_unavailable,
+                effective_window_unavailable,
+            ) = effective_resolved_weather_scope_unavailability(
+                current_scope,
+                resolution,
+            )
         except ValueError as exc:
             raise HTTPException(
                 status_code=409,
                 detail=CURRENT_WEATHER_SCOPE_RESOLUTION_CONFLICT,
             ) from exc
         if (
+            resolution.pending_question is not None
+            and (
+                effective_location_unavailable
+                or effective_window_unavailable
+            )
+        ) or (
             resolution.pending_question == "event_location"
             and effective_location is not None
         ) or (
@@ -1171,7 +1271,10 @@ def _advance_current_weather_scope(
     projection.current_weather_scope_json = _canonical_json(
         next_scope.model_dump(
             mode="json",
-            exclude=set(_CURRENT_WEATHER_PENDING_FIELDS),
+            exclude={
+                *_CURRENT_WEATHER_PENDING_FIELDS,
+                *_CURRENT_WEATHER_UNAVAILABLE_FIELDS,
+            },
             exclude_none=True,
         )
     )
@@ -1185,6 +1288,19 @@ def _advance_current_weather_scope(
                 pending_source_turn_id=next_scope.pending_source_turn_id,
                 pending_source_sequence=next_scope.pending_source_sequence,
             ).model_dump(mode="json")
+        )
+    if (
+        next_scope.location_unavailable is None
+        and next_scope.window_unavailable is None
+    ):
+        projection.current_weather_unavailable_json = "{}"
+    else:
+        projection.current_weather_unavailable_json = _canonical_json(
+            _CurrentWeatherUnavailableProjection(
+                scope_revision=next_scope.revision,
+                location_unavailable=next_scope.location_unavailable,
+                window_unavailable=next_scope.window_unavailable,
+            ).model_dump(mode="json", exclude_none=True)
         )
     if next_identity != current_identity:
         _store_active_weather_receipts(projection, [])

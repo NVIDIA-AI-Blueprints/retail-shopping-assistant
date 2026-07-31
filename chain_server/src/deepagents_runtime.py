@@ -127,11 +127,12 @@ from .weather_tool import (
     parse_weather_tool_evidence,
 )
 from .weather_scope_resolver import (
-    WEATHER_SCOPE_RESOLVER_SYSTEM_PROMPT,
     WeatherScopeResolverDecision,
     build_weather_scope_resolver_prompt,
     is_canonical_weather_scope_resolver_outcome,
     parse_weather_scope_resolver_tool_call,
+    weather_scope_resolver_control_model,
+    weather_scope_resolver_system_prompt,
 )
 from .weather_scope_authority import (
     EventContextNextQuestion,
@@ -157,6 +158,8 @@ from shared.commerce_contracts import (
     UpdateCartItemInput,
 )
 from shared.weather_receipts import (
+    SavedAreaWeatherScope,
+    ShopperLocationWeatherScope,
     WeatherForecastReceipt,
     WeatherReceiptEvidence,
     WeatherReceiptPromotion,
@@ -257,6 +260,10 @@ _EVENT_CONTEXT_NO_REFRESH_WEATHER_BLOCK = (
 _EVENT_CONTEXT_SCOPE_UNCLEAR_WEATHER_BLOCK = (
     "STOP_TOOL_USE: The isolated weather-scope resolver could not safely bind "
     "this turn to the current subject. Continue without weather evidence."
+)
+_EVENT_CONTEXT_PENDING_DECLINED_WEATHER_BLOCK = (
+    "STOP_TOOL_USE: The shopper declined the exact pending weather-context "
+    "question for this turn. Continue without a weather call."
 )
 _EVENT_CONTEXT_RECEIPT_BOUND_REMINDER = (
     "DURABLE_WEATHER_RECEIPT_BOUND: The exact-scope typed forecast receipt is "
@@ -1346,7 +1353,8 @@ def _skill_activation_input_model(
         "garden, patio, rooftop, and open-air already establish a setting; do "
         "not ask for a finer venue variant. Choose event_date only when "
         "enabled live weather is "
-        "material and the resulting typed weather scope has no bounded date. "
+        "material, the resulting typed weather scope has no bounded date, and "
+        "the shopper has not made the date explicitly unavailable. "
         "If weather_scope supplies a date in this call, choose none, never "
         "event_date. "
         "When the current scope already records a pending question and the "
@@ -1378,8 +1386,9 @@ def _skill_activation_input_model(
                     "physical context is part of the current styling subject: "
                     "the shopper supplies or changes a destination, date, venue, "
                     "or weather need; directly asks for weather-aware guidance; "
-                    "answers a pending context question; or explicitly continues "
-                    "that established event, trip, or weather-planning subject. "
+                    "answers a pending context question; explicitly declines or "
+                    "cancels that pending question; or explicitly continues that "
+                    "established event, trip, or weather-planning subject. "
                     "Do not select it merely because location or weather could "
                     "hypothetically improve otherwise location-independent "
                     "styling."
@@ -1401,12 +1410,15 @@ def _skill_activation_input_model(
                     "Optional atomic resolution of the single typed weather "
                     "scope. Use only when event-context is selected; otherwise "
                     "omit it. Copy its exact scope_revision and explicitly choose "
-                    "retain, set, or clear for both location and date. Retain "
+                    "retain, set, clear, or unavailable for both location and "
+                    "date. Retain "
                     "only when the current turn semantically continues the same "
                     "event, trip, or weather-planning subject. For a different "
                     "subject, clear every component it does not establish now. "
-                    "Also clear a component the current turn withdraws or makes "
-                    "unknown. Set accepts only current-turn shopper authority. "
+                    "Unavailable means the shopper explicitly cannot or will "
+                    "not provide that component for this subject; clear remains "
+                    "ordinary missing and askable. Set accepts only current-turn "
+                    "shopper authority. "
                     "No omitted component inherits. Omit weather_scope only when "
                     "the entire scope is unchanged."
                 ),
@@ -2136,9 +2148,15 @@ class DeepAgentsRuntime:
             )
 
         try:
+            has_pending_binding = (
+                state.current_weather_scope.pending_question is not None
+            )
+            resolver_control_model = weather_scope_resolver_control_model(
+                has_pending_binding=has_pending_binding
+            )
             resolver_model = self._create_chat_model().bind_tools(
-                [WeatherScopeResolverDecision],
-                tool_choice=WeatherScopeResolverDecision.__name__,
+                [resolver_control_model],
+                tool_choice=resolver_control_model.__name__,
                 parallel_tool_calls=False,
             )
             result = await asyncio.wait_for(
@@ -2146,7 +2164,9 @@ class DeepAgentsRuntime:
                     [
                         {
                             "role": "system",
-                            "content": WEATHER_SCOPE_RESOLVER_SYSTEM_PROMPT,
+                            "content": weather_scope_resolver_system_prompt(
+                                has_pending_binding=has_pending_binding
+                            ),
                         },
                         {"role": "user", "content": resolver_work.prompt},
                     ]
@@ -2194,7 +2214,10 @@ class DeepAgentsRuntime:
             state.token_usage,
             _collect_token_usage(result),
         )
-        decision = parse_weather_scope_resolver_tool_call(result)
+        decision = parse_weather_scope_resolver_tool_call(
+            result,
+            control_model=resolver_control_model,
+        )
         if decision is None:
             _add_model_usage(
                 state,
@@ -2211,9 +2234,12 @@ class DeepAgentsRuntime:
                 pending_disposition="not_addressed",
             )
 
-        if not resolver_pending_binding_is_valid(
-            state.current_weather_scope,
-            decision,
+        if (
+            state.current_weather_scope.pending_question is not None
+            and not resolver_pending_binding_is_valid(
+                state.current_weather_scope,
+                decision,
+            )
         ):
             _add_model_usage(
                 state,
@@ -2221,7 +2247,7 @@ class DeepAgentsRuntime:
                 status="failed",
                 calls=1,
                 detail=(
-                    "Weather-scope semantic resolver answered no matching "
+                    "Weather-scope semantic resolver supplied no matching "
                     "typed pending binding; prior-scope retention unavailable"
                 ),
             )
@@ -3113,9 +3139,10 @@ class DeepAgentsRuntime:
             only when physical context is part of the current styling subject:
             supplied or changed destination/date/venue/weather context, a direct
             weather-aware request, an answer to the typed pending question, or
-            an explicit continuation of that established event, trip, or
-            weather-planning subject. Do not add it for hypothetical relevance
-            to otherwise location-independent styling. Keep
+            an explicit decline or cancellation of that pending question, or an
+            explicit continuation of that established event, trip, or weather-
+            planning subject. Do not add it for hypothetical relevance to
+            otherwise location-independent styling. Keep
             outfit-styling as the primary skill throughout an
             active outfit-building thread, including its single-piece follow-up
             searches.
@@ -3127,21 +3154,29 @@ class DeepAgentsRuntime:
             shopper establishes outdoors, indoors, beach, garden, patio,
             rooftop, or open-air as the setting;
             event_date only when weather is material and the effective typed
-            scope lacks a bounded date; otherwise none. Never ask venue for
-            non-event weather styling. When a typed pending question was already
+            scope lacks a bounded date and the shopper has not made the date
+            explicitly unavailable; otherwise none. Never ask venue for non-
+            event weather styling. When a typed pending question was already
             asked and the shopper instead continues product work, choose none
             rather than repeating it. When SERVER WEATHER SCOPE DECISION sets
             pending_disposition to resume_requested, choose the exact pending
             question shown in CURRENT WEATHER SCOPE and omit weather_scope;
             the server will re-render it without changing its durable binding.
+            When that decision sets pending_disposition to declined, choose
+            event_context_next_question=none and omit refresh and receipt reuse;
+            the server will consume only that exact pending binding and continue
+            without weather. This is not a permanent preference against weather.
             CURRENT WEATHER SCOPE is the only prior location/date authority.
             Supply one atomic weather_scope when the current turn establishes
             or changes it. Copy the exact scope_revision and choose retain,
-            set, or clear independently for both location and date. Retain
-            only when this turn semantically continues the same event, trip,
-            or weather-planning subject. For a different subject, clear every
-            component it does not establish now. Set accepts only current-turn
-            shopper authority, and no omitted component inherits. The isolated
+            set, clear, or unavailable independently for both location and
+            date. Retain only when this turn semantically continues the same
+            event, trip, or weather-planning subject. Unavailable means the
+            shopper explicitly cannot or will not provide that component for
+            this subject; clear remains ordinary missing and askable. For a
+            different subject, clear every component it does not establish now.
+            Set accepts only current-turn shopper authority, and no omitted
+            component inherits. The isolated
             resolver supplies only subject continuity and pending-question
             disposition; this activation is the sole author of current-turn
             location/date component facts. Choose
@@ -3228,6 +3263,9 @@ class DeepAgentsRuntime:
                     weather_receipt_id=(
                         validated_activation.weather_receipt_id
                     ),
+                    scope_v6_supported=(
+                        state.conversation_memory_contract_version >= 6
+                    ),
                 )
             except (ValidationError, ValueError):
                 return skill_gate.handle_activation_validation_error(
@@ -3241,6 +3279,10 @@ class DeepAgentsRuntime:
             validated_weather_refresh = authority.weather_refresh
             validated_receipt_id = authority.weather_receipt_id
             resolver_blocks_weather = authority.blocks_weather
+            resolver_declined_pending = bool(
+                resolver_decision is not None
+                and resolver_decision.pending_disposition == "declined"
+            )
             current_turn_scope_replacement = (
                 authority.current_turn_replacement
             )
@@ -3298,7 +3340,11 @@ class DeepAgentsRuntime:
             if resolver_blocks_weather:
                 skill_gate.deny_tool_for_turn(
                     _WEATHER_TOOL_NAME,
-                    _EVENT_CONTEXT_SCOPE_UNCLEAR_WEATHER_BLOCK,
+                    (
+                        _EVENT_CONTEXT_PENDING_DECLINED_WEATHER_BLOCK
+                        if resolver_declined_pending
+                        else _EVENT_CONTEXT_SCOPE_UNCLEAR_WEATHER_BLOCK
+                    ),
                 )
             elif validated_next_question == "event_location":
                 skill_gate.deny_tool_for_turn(
@@ -3646,6 +3692,7 @@ class DeepAgentsRuntime:
             and not has_current_non_weather_business_activity
             and (
                 weather_outcome is not None
+                or state.current_weather_scope_resolution is not None
                 or event_context_next_question
                 in {"event_location", "event_venue", "event_date"}
                 or (
@@ -3658,6 +3705,9 @@ class DeepAgentsRuntime:
                 )
             )
         )
+        scope_transition_acknowledgment = (
+            _context_only_scope_transition_acknowledgment(state)
+        )
         if (
             protected_event_response
             and event_context_next_question
@@ -3665,10 +3715,21 @@ class DeepAgentsRuntime:
         ):
             return _compose_context_only_event_response(
                 state,
-                styling="",
+                styling=scope_transition_acknowledgment,
                 next_question=event_context_next_question,
                 weather_outcome=weather_outcome,
                 include_weather_facts=not reused_weather_receipt,
+            )
+        if (
+            protected_event_response
+            and weather_outcome is None
+            and scope_transition_acknowledgment
+        ):
+            return _compose_context_only_event_response(
+                state,
+                styling=scope_transition_acknowledgment,
+                next_question=event_context_next_question,
+                weather_outcome=None,
             )
         if protected_event_response and not draft_response.strip():
             return _compose_context_only_event_response(
@@ -6893,6 +6954,45 @@ def _compose_context_only_event_response(
     )
 
 
+def _context_only_scope_transition_acknowledgment(state: State) -> str:
+    """Render source-safe acknowledgment from typed unavailable transitions."""
+
+    resolution = state.current_weather_scope_resolution
+    if resolution is None:
+        return ""
+    location_unavailable = resolution.location_action == "unavailable"
+    window_unavailable = resolution.window_action == "unavailable"
+    if location_unavailable and window_unavailable:
+        return (
+            "Understood—I’ll continue without location- or date-specific "
+            "weather guidance for this plan."
+        )
+    if location_unavailable:
+        return (
+            "Understood—I’ll continue without location-based weather guidance "
+            "for this plan."
+        )
+    if not window_unavailable:
+        return ""
+
+    location_label = ""
+    if isinstance(resolution.location_scope, ShopperLocationWeatherScope):
+        location_label = _escape_markdown_inline(
+            resolution.location_scope.location
+        )
+    elif isinstance(resolution.location_scope, SavedAreaWeatherScope):
+        location_label = "your usual area"
+    if location_label:
+        return (
+            f"Understood—I’ll plan around {location_label} without "
+            "date-specific weather guidance for this plan."
+        )
+    return (
+        "Understood—I’ll continue without date-specific weather guidance for "
+        "this plan."
+    )
+
+
 def _has_successful_non_search_tool_evidence(
     result: Any,
     *,
@@ -8617,16 +8717,25 @@ def _format_current_weather_scope(scope: CurrentWeatherScope) -> str:
             ),
             "source_sequence": scope.location.source_sequence,
         }
+    elif scope.location_unavailable is not None:
+        payload["location_unavailable"] = {
+            "source_sequence": scope.location_unavailable.source_sequence,
+        }
     if scope.window is not None:
         payload["window"] = {
             "value": scope.window.value.model_dump(mode="json"),
             "source_sequence": scope.window.source_sequence,
         }
+    elif scope.window_unavailable is not None:
+        payload["window_unavailable"] = {
+            "source_sequence": scope.window_unavailable.source_sequence,
+        }
     return (
         "CURRENT WEATHER SCOPE "
         "(typed location/date authority; not forecast evidence; copy this "
         "revision and resolve both components explicitly with retain, set, "
-        "or clear; pending-question handles are resolver-only and are not "
+        "clear, or unavailable; unavailable is scope-local and source-bound; "
+        "pending-question handles are resolver-only and are not "
         "part of shopper-skill activation):\n"
         + json.dumps(
             payload,

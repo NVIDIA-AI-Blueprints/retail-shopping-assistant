@@ -60,20 +60,22 @@ Every shopper turn uses two model phases inside the same Deep Agents run:
    missing and material, `event_date` when live weather is material and the
    typed scope lacks a bounded window, and `none` otherwise. For an existing
    scope, a separate request-local tools-disabled resolver first compares the
-   current query with the dedicated contract-v5 lane of exact completed turns
-   named by the scope's location, date, and pending-question source identities
-   and must emit one forced typed
-   control call. One chain-local aggregate budget bounds source, summary, and
+   current query with the dedicated v5+ lane of exact completed turns. That lane
+   follows the negotiated scope's location, date, and pending-question sources,
+   plus component-unavailability sources under contract 6. The resolver must
+   emit one forced typed control call. One chain-local aggregate budget bounds source, summary, and
    recent semantic text while preserving the exact current query, typed scope,
    trusted date, and every source sequence; an unfit mandatory payload makes no
    model call and fails closed. The resolver is neither a business tool nor a
-   subagent and returns only
-   orthogonal subject-continuity and pending-question controls. The activation
+   subagent. Its forced schema exposes only subject continuity when no pending
+   binding exists; a live binding adds the orthogonal pending-question control
+   and exact opaque handle. The activation
    call may then submit one atomic
-   `weather_scope` that copies the revision and selects `retain`, `set`, or
-   `clear` independently for location and date. A pure authority compiler
-   preserves every validated current-turn `set` and applies the resolver only
-   to prior-state operations. Invalid, unavailable, timed-out, or unclear
+   `weather_scope` that copies the revision and selects `retain`, `set`, `clear`,
+   or `unavailable` independently for location and date. A pure authority
+   compiler preserves every validated current-turn `set` or `unavailable` and
+   applies the resolver only to prior-state operations. Invalid, unavailable,
+   timed-out, or unclear
    resolver output therefore fails closed for prior authority without erasing
    current facts. Prior raw turns and
    summary prose never become provider arguments.
@@ -121,10 +123,10 @@ alternative primary procedures and must not be selected together.
 shopper states a budget. `event-context` may accompany only `outfit-styling`,
 and is selected only when physical context is part of the current styling
 subject: supplied or changed destination/date/venue/weather context, a direct
-weather-aware request, an answer to its source-bound pending question, or an
-explicit continuation of that established event, trip, or weather-planning
-subject. Hypothetical relevance does not activate it for otherwise
-location-independent styling. It alone grants the read-only weather tool. Its
+weather-aware request, an answer to or explicit decline of its source-bound
+pending question, or an explicit continuation of that established event, trip,
+or weather-planning subject. Hypothetical relevance does not activate it for
+otherwise location-independent styling. It alone grants the read-only weather tool. Its
 grant combines additively with the tools granted by
 `outfit-styling` and any selected standalone skill. Event context never revokes
 or narrows product, cart, or policy tools; only its weather capability may be
@@ -316,7 +318,10 @@ forecast context to occasion-led styling.
   normally one of `event_location`, `event_venue`, `event_date`, or `none`
   under the semantic conditions above; it is omitted without this skill.
   The scope copies the current revision and resolves both components explicitly
-  with `retain`, `set`, or `clear`. A selected missing location/date question is
+  with `retain`, `set`, `clear`, or `unavailable`. `clear` is ordinary askable
+  absence; `unavailable` is a source-bound current-subject state selected when
+  the shopper cannot or will not provide a component. A selected missing
+  location/date question is
   persisted as the typed pending binding and stamped at finalization with its
   originating turn ID and sequence. `unchanged/not_addressed` suppresses an
   accidental repeat during intervening product work. Exact-handle
@@ -327,10 +332,17 @@ forecast context to occasion-led styling.
   component. `answered` means the reply answers only the pending question; a
   reply that also changes or withdraws the opposite component is
   `same_subject/not_addressed`.
+  Exact-handle `same_subject/declined` requires the pending component action to
+  be `unavailable` and consumes that one question without creating another
+  location/date question. A new subject replacing a live pending binding uses
+  its exact supersession handle and may retain neither old component. Either
+  marker suppresses location/date follow-ups but not an independently material
+  styling-only venue question; a later `set`, explicit `clear`, or new subject
+  resets it.
   Runtime and memory carry and verify the exact handle through a server-only
   completion control only when activation itself proposes the counterpart
   `retain`; the handle is not part of model-authored `weather_scope`. The
-  compiler never rewrites an activation-proposed `set` or `clear`.
+  compiler never rewrites an activation-proposed current-turn action.
   Unavailable or unclear semantic
   resolution clears every retain and blocks weather. A receipt may be bound
   only when the

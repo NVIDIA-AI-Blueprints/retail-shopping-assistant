@@ -21,8 +21,11 @@ from chain_server.src.deepagents_runtime import (
 from chain_server.src.weather_scope_resolver import (
     WEATHER_SCOPE_RESOLVER_SYSTEM_PROMPT,
     WeatherScopeResolverDecision,
+    WeatherScopeSubjectDecision,
     build_weather_scope_resolver_prompt,
     parse_weather_scope_resolver_tool_call,
+    weather_scope_resolver_control_model,
+    weather_scope_resolver_system_prompt,
 )
 from shared.weather_scope import CurrentWeatherScope
 
@@ -49,6 +52,7 @@ def _resolver_call(
     [
         ("same_subject", "not_addressed"),
         ("same_subject", "answered"),
+        ("same_subject", "declined"),
         ("new_subject", "not_addressed"),
         ("unchanged", "not_addressed"),
         ("unchanged", "resume_requested"),
@@ -89,6 +93,55 @@ def test_not_addressed_outcome_is_relation_only(
     assert parsed.pending_source_turn_id is None
 
 
+def test_no_pending_binding_advertises_subject_only_control() -> None:
+    control_model = weather_scope_resolver_control_model(
+        has_pending_binding=False
+    )
+
+    assert control_model is WeatherScopeSubjectDecision
+    parsed = parse_weather_scope_resolver_tool_call(
+        _resolver_call(
+            {
+                "subject_relation": "same_subject",
+            },
+            name="WeatherScopeSubjectDecision",
+        ),
+        control_model=control_model,
+    )
+    assert parsed == WeatherScopeResolverDecision(
+        subject_relation="same_subject",
+        pending_disposition="not_addressed",
+    )
+    assert (
+        parse_weather_scope_resolver_tool_call(
+            _resolver_call(
+                {
+                    "subject_relation": "same_subject",
+                    "pending_disposition": "answered",
+                    "pending_source_turn_id": "stale-question",
+                },
+                name="WeatherScopeSubjectDecision",
+            ),
+            control_model=control_model,
+        )
+        is None
+    )
+    subject_prompt = weather_scope_resolver_system_prompt(
+        has_pending_binding=False
+    )
+    assert "only subject_relation" in subject_prompt
+    assert "Separately choose exactly one pending_disposition" not in (
+        subject_prompt
+    )
+
+
+def test_pending_binding_advertises_full_control() -> None:
+    assert (
+        weather_scope_resolver_control_model(has_pending_binding=True)
+        is WeatherScopeResolverDecision
+    )
+
+
 def test_resolver_rejects_scope_extraction_fields() -> None:
     parsed = parse_weather_scope_resolver_tool_call(
         _resolver_call(
@@ -108,12 +161,15 @@ def test_resolver_rejects_scope_extraction_fields() -> None:
     assert parsed is None
 
 
-def test_pending_answer_requires_top_level_exact_handle_shape() -> None:
+@pytest.mark.parametrize("pending_disposition", ["answered", "declined"])
+def test_same_subject_pending_control_requires_top_level_exact_handle_shape(
+    pending_disposition: str,
+) -> None:
     parsed = parse_weather_scope_resolver_tool_call(
         _resolver_call(
             {
                 "subject_relation": "same_subject",
-                "pending_disposition": "answered",
+                "pending_disposition": pending_disposition,
                 "pending_source_turn_id": "pending-turn",
             }
         )
@@ -121,7 +177,7 @@ def test_pending_answer_requires_top_level_exact_handle_shape() -> None:
 
     assert parsed is not None
     assert parsed.subject_relation == "same_subject"
-    assert parsed.pending_disposition == "answered"
+    assert parsed.pending_disposition == pending_disposition
     assert parsed.pending_source_turn_id == "pending-turn"
 
 
@@ -151,14 +207,15 @@ def test_not_addressed_outcome_must_omit_pending_handle(
     assert parsed is None
 
 
-@pytest.mark.parametrize("pending_disposition", ["answered", "resume_requested"])
+@pytest.mark.parametrize(
+    "pending_disposition",
+    ["answered", "declined", "resume_requested"],
+)
 def test_pending_control_must_include_pending_handle(
     pending_disposition: str,
 ) -> None:
     subject_relation = (
-        "same_subject"
-        if pending_disposition == "answered"
-        else "unchanged"
+        "unchanged" if pending_disposition == "resume_requested" else "same_subject"
     )
 
     assert parse_weather_scope_resolver_tool_call(
@@ -176,9 +233,12 @@ def test_pending_control_must_include_pending_handle(
     [
         ("same_subject", "resume_requested"),
         ("new_subject", "answered"),
+        ("new_subject", "declined"),
         ("new_subject", "resume_requested"),
         ("unchanged", "answered"),
+        ("unchanged", "declined"),
         ("unclear", "answered"),
+        ("unclear", "declined"),
         ("unclear", "resume_requested"),
     ],
 )
@@ -452,11 +512,13 @@ def test_prompt_keeps_semantics_with_the_model_and_facts_outside_it() -> None:
     assert "do not extract, normalize, copy, or author location" in normalized
     assert "top-level pending_source_turn_id" in normalized
     assert "shopper answers only the supplied pending question" in normalized
+    assert "explicitly declines or cancels the supplied pending question" in normalized
+    assert "not a permanent preference against weather" in normalized
     assert "explicitly asks what information is still needed" in normalized
     assert "should be asked again without changing its scope" in normalized
     assert "changes or withdraws the stored opposite component" in normalized
     assert "use same_subject/not_addressed" in normalized
-    assert "exactly one required weatherscoperesolverdecision" in normalized
+    assert "exactly one required resolver control call" in normalized
 
 
 class _ResolverModel:
@@ -510,8 +572,8 @@ async def test_runtime_resolver_isolates_a_new_subject_before_activation(
         _resolver_call(
             {
                 "subject_relation": "new_subject",
-                "pending_disposition": "not_addressed",
-            }
+            },
+            name="WeatherScopeSubjectDecision",
         )
     )
     runtime = DeepAgentsRuntime(base_config)
@@ -545,7 +607,7 @@ async def test_runtime_resolver_isolates_a_new_subject_before_activation(
     assert decision.pending_disposition == "not_addressed"
     assert decision.pending_source_turn_id is None
     assert len(model.calls) == 1
-    assert model.bindings[0]["tool_choice"] == "WeatherScopeResolverDecision"
+    assert model.bindings[0]["tool_choice"] == "WeatherScopeSubjectDecision"
     assert model.bindings[0]["parallel_tool_calls"] is False
     assert state.model_usage["app_llm_weather_scope_resolver"]["status"] == "used"
 
@@ -561,8 +623,8 @@ async def test_v5_resolver_uses_exact_scope_sources_outside_recent_context(
         _resolver_call(
             {
                 "subject_relation": "same_subject",
-                "pending_disposition": "not_addressed",
-            }
+            },
+            name="WeatherScopeSubjectDecision",
         )
     )
     runtime = DeepAgentsRuntime(base_config)
@@ -871,10 +933,12 @@ async def test_runtime_resolver_rejects_answers_pending_with_wrong_handle(
     )
 
 
+@pytest.mark.parametrize("pending_disposition", ["answered", "declined"])
 @pytest.mark.asyncio
 async def test_runtime_resolver_accepts_exact_pending_handle(
     base_config,
     monkeypatch: pytest.MonkeyPatch,
+    pending_disposition: str,
 ) -> None:
     monkeypatch.setenv("WEATHER_API_KEY", "test-weather-key")
     base_config.weather.enabled = True
@@ -882,7 +946,7 @@ async def test_runtime_resolver_accepts_exact_pending_handle(
         _resolver_call(
             {
                 "subject_relation": "same_subject",
-                "pending_disposition": "answered",
+                "pending_disposition": pending_disposition,
                 "pending_source_turn_id": "wedding-turn",
             }
         )
@@ -929,7 +993,7 @@ async def test_runtime_resolver_accepts_exact_pending_handle(
 
     assert decision is not None
     assert decision.subject_relation == "same_subject"
-    assert decision.pending_disposition == "answered"
+    assert decision.pending_disposition == pending_disposition
     assert decision.pending_source_turn_id == "wedding-turn"
     assert state.model_usage["app_llm_weather_scope_resolver"]["status"] == (
         "used"

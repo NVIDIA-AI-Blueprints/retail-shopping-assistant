@@ -14,15 +14,16 @@ answers:
   - >-
     Treat Seattle as current location authority and the explicit date
     withdrawal as current date authority. Preserve location=set and
-    window=clear even if pending resolution incorrectly classifies this as a
-    location-only answer. Ask only for the new date. Do not call or reuse
-    weather, search the catalog, or mention the old forecast date.
+    window=unavailable even if pending resolution classifies this as more than a
+    location-only answer. The date is explicitly unavailable for this event, so
+    ask no new weather-context question. Do not call or reuse weather, search
+    the catalog, or mention the old forecast date.
   - >-
-    Treat Saturday next week as the answer to the outstanding date question.
-    Retain Seattle, set this new date rather than the withdrawn Sunday, call
-    weather exactly once, and give concise outdoor conference guidance grounded
-    in that forecast. Ask no further context question and do not search for
-    products.
+    Treat Saturday next week as fresh current-turn date authority; there is no
+    outstanding date question after the prior explicit withdrawal. Retain
+    Seattle, set this new date rather than the withdrawn Sunday, call weather
+    exactly once, and give concise outdoor conference guidance grounded in that
+    forecast. Ask no context question and do not search for products.
 diagnostic_expectations:
   - required_skills: [outfit-styling, event-context]
     required_event_context_next_question: event_location
@@ -52,11 +53,11 @@ diagnostic_expectations:
       - Weather Data Provided by Visual Crossing
       - "°F"
   - required_skills: [outfit-styling, event-context]
-    required_event_context_next_question: event_date
+    required_event_context_next_question: none
     required_weather_scope:
       scope_revision: 1
       location_action: set
-      window_action: clear
+      window_action: unavailable
       location_source: shopper_provided_location
       location_supplied: true
       date_supplied: false
@@ -74,8 +75,8 @@ diagnostic_expectations:
       - check_product_availability_tool
       - check_active_promotions_tool
     weather_tool_calls: 0
-    required_response_phrases: ["?"]
     forbidden_response_phrases:
+      - "?"
       - Weather Data Provided by Visual Crossing
       - "°F"
       - Sunday next week
@@ -107,7 +108,7 @@ diagnostic_expectations:
     required_weather_trace:
       request_shape: relative_exact_date
       location_source: shopper_provided_location
-      provider_input: location_query
+      provider_input: [location, location_query]
       outcome: success
     required_weather_receipt_status: promotion_prepared
     required_response_phrases:

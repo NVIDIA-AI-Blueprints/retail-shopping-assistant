@@ -338,6 +338,326 @@ def test_resume_requested_reasks_pending_question_without_a_scope_write() -> Non
 
 
 @pytest.mark.parametrize(
+    ("pending_scope", "expected_actions"),
+    [
+        (_pending_location_scope(), ("unavailable", "retain")),
+        (_pending_date_scope(), ("retain", "unavailable")),
+    ],
+)
+def test_declined_pending_consumes_exact_binding_with_minimal_scope_write(
+    pending_scope: CurrentWeatherScope,
+    expected_actions: tuple[str, str],
+) -> None:
+    outcome = compile_weather_scope_authority(
+        current_scope=pending_scope,
+        proposed_resolution=None,
+        resolver_decision=_resolver_decision("same_subject", "declined"),
+        resolver_required=True,
+        atomic_scope_supported=True,
+        expected_projection_version=5,
+        next_question="event_location",
+        weather_refresh=True,
+        weather_receipt_id="old-receipt",
+    )
+
+    assert outcome.next_question == "none"
+    assert outcome.resolution is not None
+    assert (
+        outcome.resolution.location_action,
+        outcome.resolution.window_action,
+    ) == expected_actions
+    assert outcome.resolution.pending_question is None
+    assert outcome.resolution.decline_pending_source_turn_id == "turn-conference"
+    assert outcome.resolution.preserve_pending_source_turn_id is None
+    assert outcome.resolution.complete_pending_source_turn_id is None
+    assert outcome.weather_refresh is False
+    assert outcome.weather_receipt_id is None
+    assert outcome.blocks_weather is True
+
+    persisted = apply_current_weather_scope_resolution(
+        pending_scope,
+        outcome.resolution,
+        source_turn_id="decline-turn",
+        source_sequence=3,
+    )
+    assert persisted.pending_question is None
+    assert persisted.pending_source_turn_id is None
+    assert persisted.pending_source_sequence is None
+
+
+@pytest.mark.parametrize(
+    ("pending_scope", "proposed_actions"),
+    [
+        (_pending_location_scope(), ("unavailable", "clear")),
+        (_pending_date_scope(), ("clear", "unavailable")),
+        (_pending_location_scope(), ("unavailable", "set")),
+    ],
+)
+def test_declined_pending_preserves_current_turn_component_actions(
+    pending_scope: CurrentWeatherScope,
+    proposed_actions: tuple[str, str],
+) -> None:
+    outcome = compile_weather_scope_authority(
+        current_scope=pending_scope,
+        proposed_resolution=_resolution(*proposed_actions),
+        resolver_decision=_resolver_decision("same_subject", "declined"),
+        resolver_required=True,
+        atomic_scope_supported=True,
+        expected_projection_version=5,
+        next_question="event_date",
+        weather_refresh=True,
+        weather_receipt_id="old-receipt",
+    )
+
+    assert outcome.resolution is not None
+    assert (
+        outcome.resolution.location_action,
+        outcome.resolution.window_action,
+    ) == proposed_actions
+    assert outcome.resolution.decline_pending_source_turn_id == "turn-conference"
+    assert outcome.next_question == "none"
+    assert outcome.blocks_weather is True
+
+
+@pytest.mark.parametrize(
+    ("pending_scope", "proposed_actions"),
+    [
+        (_pending_location_scope(), ("clear", "retain")),
+        (_pending_date_scope(), ("retain", "clear")),
+    ],
+)
+def test_declined_pending_requires_unavailable_target_action(
+    pending_scope: CurrentWeatherScope,
+    proposed_actions: tuple[str, str],
+) -> None:
+    with pytest.raises(ValueError, match="target component to be unavailable"):
+        compile_weather_scope_authority(
+            current_scope=pending_scope,
+            proposed_resolution=_resolution(*proposed_actions),
+            resolver_decision=_resolver_decision("same_subject", "declined"),
+            resolver_required=True,
+            atomic_scope_supported=True,
+            expected_projection_version=5,
+            next_question="none",
+            weather_refresh=False,
+            weather_receipt_id=None,
+        )
+
+
+def test_typed_unavailability_suppresses_question_and_persists_source() -> None:
+    current_scope = _pending_location_scope()
+    outcome = compile_weather_scope_authority(
+        current_scope=current_scope,
+        proposed_resolution=_resolution("set", "unavailable"),
+        resolver_decision=_resolver_decision("same_subject"),
+        resolver_required=True,
+        atomic_scope_supported=True,
+        expected_projection_version=5,
+        next_question="event_date",
+        weather_refresh=False,
+        weather_receipt_id=None,
+    )
+
+    assert outcome.resolution is not None
+    assert outcome.resolution.location_action == "set"
+    assert outcome.resolution.window_action == "unavailable"
+    assert outcome.next_question == "none"
+    assert outcome.resolution.pending_question is None
+    persisted = apply_current_weather_scope_resolution(
+        current_scope,
+        outcome.resolution,
+        source_turn_id="current-turn",
+        source_sequence=3,
+    )
+    assert persisted.location is not None
+    assert persisted.window is None
+    assert persisted.window_unavailable is not None
+    assert persisted.window_unavailable.source_turn_id == "current-turn"
+
+
+@pytest.mark.parametrize(
+    ("scope_payload", "proposed_actions", "next_question"),
+    [
+        (
+            {
+                "revision": 2,
+                "location_unavailable": {
+                    "source_turn_id": "location-unavailable-turn",
+                    "source_sequence": 2,
+                },
+            },
+            ("retain", "clear"),
+            "event_date",
+        ),
+        (
+            {
+                "revision": 2,
+                "window_unavailable": {
+                    "source_turn_id": "date-unavailable-turn",
+                    "source_sequence": 2,
+                },
+            },
+            ("clear", "retain"),
+            "event_location",
+        ),
+    ],
+)
+def test_any_retained_unavailability_suppresses_all_weather_questions(
+    scope_payload: dict[str, object],
+    proposed_actions: tuple[str, str],
+    next_question: str,
+) -> None:
+    current_scope = CurrentWeatherScope.model_validate(scope_payload)
+    outcome = compile_weather_scope_authority(
+        current_scope=current_scope,
+        proposed_resolution=_resolution(*proposed_actions),
+        resolver_decision=_resolver_decision("same_subject"),
+        resolver_required=True,
+        atomic_scope_supported=True,
+        expected_projection_version=5,
+        next_question=next_question,
+        weather_refresh=False,
+        weather_receipt_id=None,
+    )
+
+    assert outcome.next_question == "none"
+    assert outcome.resolution is not None
+    assert outcome.resolution.pending_question is None
+
+
+def test_unavailable_weather_component_does_not_suppress_venue_question() -> None:
+    current_scope = CurrentWeatherScope.model_validate(
+        {
+            "revision": 2,
+            "location_unavailable": {
+                "source_turn_id": "location-unavailable-turn",
+                "source_sequence": 2,
+            },
+        }
+    )
+    outcome = compile_weather_scope_authority(
+        current_scope=current_scope,
+        proposed_resolution=_resolution("retain", "clear"),
+        resolver_decision=_resolver_decision("same_subject"),
+        resolver_required=True,
+        atomic_scope_supported=True,
+        expected_projection_version=5,
+        next_question="event_venue",
+        weather_refresh=False,
+        weather_receipt_id=None,
+    )
+
+    assert outcome.next_question == "event_venue"
+    assert outcome.resolution is not None
+    assert outcome.resolution.pending_question is None
+
+
+@pytest.mark.parametrize(
+    ("pending_scope", "proposed_actions"),
+    [
+        (_pending_location_scope(), ("unavailable", "set")),
+        (_pending_date_scope(), ("set", "unavailable")),
+    ],
+)
+def test_new_subject_supersedes_exact_old_pending_binding(
+    pending_scope: CurrentWeatherScope,
+    proposed_actions: tuple[str, str],
+) -> None:
+    outcome = compile_weather_scope_authority(
+        current_scope=pending_scope,
+        proposed_resolution=_resolution(*proposed_actions),
+        resolver_decision=_resolver_decision("new_subject"),
+        resolver_required=True,
+        atomic_scope_supported=True,
+        expected_projection_version=5,
+        next_question="none",
+        weather_refresh=False,
+        weather_receipt_id=None,
+    )
+
+    assert outcome.resolution is not None
+    assert (
+        outcome.resolution.location_action,
+        outcome.resolution.window_action,
+    ) == proposed_actions
+    assert (
+        outcome.resolution.supersede_pending_source_turn_id
+        == "turn-conference"
+    )
+    assert outcome.resolution.decline_pending_source_turn_id is None
+    assert outcome.next_question == "none"
+
+
+def test_declined_pending_is_inert_without_memory_v6_capability() -> None:
+    current_scope = _pending_location_scope()
+    outcome = compile_weather_scope_authority(
+        current_scope=current_scope,
+        proposed_resolution=None,
+        resolver_decision=_resolver_decision("same_subject", "declined"),
+        resolver_required=True,
+        atomic_scope_supported=True,
+        expected_projection_version=5,
+        next_question="none",
+        weather_refresh=False,
+        weather_receipt_id=None,
+        scope_v6_supported=False,
+    )
+
+    assert outcome.resolver_decision is not None
+    assert outcome.resolver_decision.subject_relation == "unclear"
+    assert outcome.resolver_decision.pending_disposition == "not_addressed"
+    assert outcome.resolution is None
+    assert outcome.next_question == "none"
+    assert outcome.blocks_weather is True
+    assert current_scope.pending_source_turn_id == "turn-conference"
+
+
+def test_v5_decline_without_current_facts_preserves_scope_without_write() -> None:
+    outcome = compile_weather_scope_authority(
+        current_scope=_pending_location_scope(),
+        proposed_resolution=_resolution("unavailable", "retain"),
+        resolver_decision=_resolver_decision("same_subject", "declined"),
+        resolver_required=True,
+        atomic_scope_supported=True,
+        expected_projection_version=5,
+        next_question="none",
+        weather_refresh=False,
+        weather_receipt_id=None,
+        scope_v6_supported=False,
+    )
+
+    assert outcome.resolution is None
+    assert outcome.next_question == "none"
+    assert outcome.blocks_weather is True
+
+
+def test_v5_decline_keeps_independent_set_and_preserves_pending() -> None:
+    outcome = compile_weather_scope_authority(
+        current_scope=_pending_location_scope(),
+        proposed_resolution=_resolution("unavailable", "set"),
+        resolver_decision=_resolver_decision("same_subject", "declined"),
+        resolver_required=True,
+        atomic_scope_supported=True,
+        expected_projection_version=5,
+        next_question="none",
+        weather_refresh=False,
+        weather_receipt_id=None,
+        scope_v6_supported=False,
+    )
+
+    assert outcome.resolution is not None
+    assert outcome.resolution.location_action == "clear"
+    assert outcome.resolution.window_action == "set"
+    assert outcome.resolution.pending_question == "event_location"
+    assert (
+        outcome.resolution.preserve_pending_source_turn_id
+        == "turn-conference"
+    )
+    assert outcome.resolution.decline_pending_source_turn_id is None
+    assert outcome.resolution.supersede_pending_source_turn_id is None
+
+
+@pytest.mark.parametrize(
     ("pending_scope", "proposed_actions", "expected_actions"),
     [
         (_pending_location_scope(), ("set", "retain"), ("set", "retain")),
@@ -519,7 +839,10 @@ def test_wrong_pending_handle_cannot_erase_current_turn_set_or_clear(
     assert outcome.blocks_weather is False
 
 
-@pytest.mark.parametrize("pending_disposition", ["answered", "resume_requested"])
+@pytest.mark.parametrize(
+    "pending_disposition",
+    ["answered", "declined", "resume_requested"],
+)
 def test_pending_control_with_the_wrong_handle_fails_closed(
     pending_disposition: str,
 ) -> None:
@@ -528,9 +851,9 @@ def test_pending_control_with_the_wrong_handle_fails_closed(
         proposed_resolution=None,
         resolver_decision=_resolver_decision(
             (
-                "same_subject"
-                if pending_disposition == "answered"
-                else "unchanged"
+                "unchanged"
+                if pending_disposition == "resume_requested"
+                else "same_subject"
             ),
             pending_disposition,
             pending_source_turn_id="another-turn",
@@ -549,3 +872,53 @@ def test_pending_control_with_the_wrong_handle_fails_closed(
     assert outcome.next_question == "none"
     assert outcome.resolution is None
     assert outcome.blocks_weather is True
+
+
+def test_stale_pending_axis_does_not_erase_valid_subject_continuity() -> None:
+    current_scope = CurrentWeatherScope.model_validate(
+        {
+            "revision": 2,
+            "location": {
+                "value": {
+                    "kind": "shopper_provided_location",
+                    "location": "Seattle",
+                },
+                "source_turn_id": "turn-seattle",
+                "source_sequence": 2,
+            },
+            "window_unavailable": {
+                "source_turn_id": "turn-seattle",
+                "source_sequence": 2,
+            },
+        }
+    )
+    outcome = compile_weather_scope_authority(
+        current_scope=current_scope,
+        proposed_resolution=_resolution("retain", "set"),
+        resolver_decision=_resolver_decision(
+            "same_subject",
+            "answered",
+            pending_source_turn_id="stale-question",
+        ),
+        resolver_required=True,
+        atomic_scope_supported=True,
+        expected_projection_version=5,
+        next_question="none",
+        weather_refresh=False,
+        weather_receipt_id=None,
+    )
+
+    assert outcome.resolver_decision is not None
+    assert outcome.resolver_decision.subject_relation == "same_subject"
+    assert outcome.resolver_decision.pending_disposition == "not_addressed"
+    assert outcome.resolution is not None
+    assert outcome.resolution.location_action == "retain"
+    assert outcome.resolution.window_action == "set"
+    assert outcome.effective_location == ShopperLocationWeatherScope(
+        location="Seattle"
+    )
+    assert outcome.effective_window == WeatherReceiptWindow(
+        start_date=date(2026, 8, 16),
+        end_date=date(2026, 8, 16),
+    )
+    assert outcome.blocks_weather is False

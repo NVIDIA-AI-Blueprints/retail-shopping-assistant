@@ -237,6 +237,12 @@ class ConversationProjection(Base):
         default="{}",
         server_default=text("'{}'"),
     )
+    current_weather_unavailable_json = Column(
+        Text,
+        nullable=False,
+        default="{}",
+        server_default=text("'{}'"),
+    )
     active_anchors_json = Column(Text, nullable=False, default="[]")
     effective_preferences_json = Column(Text, nullable=False, default="[]")
     product_reference_index_json = Column(Text, nullable=False, default="[]")

@@ -20,8 +20,9 @@ cross-turn weather-receipt projection are now built. The weather continuity
 correction adds one typed current scope plus a source-identity-bound semantic
 resolver, durable pending-question binding, and response-contract-v5 lane
 containing the exact completed turns referenced by that scope. Both scope components are
-resolved atomically through `retain`, `set`, or `clear`; deterministic
-compilation accepts `set` only from current-turn authority, and the forecast
+resolved atomically through `retain`, `set`, `clear`, or `unavailable`;
+deterministic compilation accepts `set` or source-bound current-subject
+unavailability only from current-turn authority, and the forecast
 tool accepts no location/date arguments. Prior raw turns and the rolling
 summary therefore guide semantics without directly authorizing a provider
 request.
@@ -185,8 +186,8 @@ the chain server's character limit. Blocked and abandoned turns are durable for
 audit or replay semantics but are excluded from the model context.
 
 The additive summary, receipt, current-weather-scope, and scope-source lanes use
-negotiated turn-start response contracts. The current chain requests contract 5 as its
-maximum, and memory returns the highest version it supports. An unversioned
+negotiated turn-start response contracts. The current chain requests contract 6
+as its maximum, and memory returns the highest version it supports. An unversioned
 caller receives the exact earlier response shape and a bounded raw tail read
 from sequence zero, so an older chain remains usable after memory deploys first
 or after chain rollback even if a summary watermark has advanced. Conversely,
@@ -198,13 +199,20 @@ remains supported with the legacy scope transition and
 without the v4-only pending question or either source field. Contract 4 marks
 atomic scope-finalize write capability. Contract 5 adds only the exact
 scope-source read lane, required even when empty and absent from earlier
-contracts. It derives from existing rows and needs no migration. Deploy memory
-first, then chain; a new chain negotiating only v3
+contracts. Contract 6 adds source-bound component-unavailability fields and
+exact pending-decline and new-subject-supersession finalize controls. Migration
+12 stores the markers in a separate defaulted, revision-gated lane. Deploy
+memory first, then chain; roll back chain first, then memory. A chain
+negotiating v5 preserves a pure unsupported decline, or writes only independent
+current-turn `set` facts while preserving the live question. One negotiating
+only v3
 fails closed for an atomic update. Fresh and upgraded SQLite
 schemas give the additive non-null projection columns equivalent database
 defaults, allowing the memory binary to roll back without making old projection
-inserts fail. Migration 11 stores pending state in its own defaulted lane so the
-core scope JSON remains strict pre-v4-readable.
+inserts fail. Migrations 11 and 12 store pending and unavailability state in
+separate defaulted lanes so the core scope JSON remains strict pre-v4-readable.
+Contracts through v5 strip marker fields and derive their source-turn lane from
+that same down-projected scope.
 
 The serving path does **not** populate or rehydrate the complete prior tool
 transcript or model reasoning, a normalized event state machine, active anchors
@@ -234,11 +242,20 @@ rehydrates the pending binding only when its stored scope
 revision matches the core revision, so a rollback-era core mutation makes stale
 pending state inert.
 
+Migration 12 stores optional source-bound `location_unavailable` and
+`window_unavailable` markers in defaulted
+`current_weather_unavailable_json`. That payload also carries the resulting
+scope revision and is rehydrated only while the revision matches the core. A
+later `set`, explicit `clear`, new-subject replacement, or rollback-era core
+mutation therefore makes an older marker inert.
+
 Contract 3 retains the legacy `continue`/`replace` transition for rolling
 compatibility. Contract 4 uses one atomic finalize resolution: it copies the
 expected scope revision and explicitly chooses `retain`, `set`, or `clear` for
-both location and date. A value is present exactly for `set`; retaining a
-missing component fails validation.
+both location and date. Contract 6 adds `unavailable`: `clear` means missing but
+askable, while `unavailable` records that the shopper cannot or will not provide
+the component for this subject. A value is present exactly for `set`; retaining
+a missing component fails validation.
 
 Changing location or date invalidates older receipts. A receipt promoted in the
 same finalize must exactly match the resulting complete scope. Venue, occasion,
@@ -249,15 +266,19 @@ represent an event request or ordinary weather-appropriate dressing.
 Before normal skill activation, response contract 5 supplies the exact
 completed shopper/assistant turns named by the current scope's location, date,
 and pending-question source identities in a separate lane. A request-local
-tools-disabled resolver compares that lane with the current query. It must make exactly one
-forced typed
-`WeatherScopeResolverDecision` control call. It is not a registered business
+tools-disabled resolver compares that lane with the current query. It must make
+exactly one forced typed control call. With no live pending binding its schema
+contains only `subject_relation`; a live binding adds `pending_disposition` and
+the exact opaque handle. It is not a registered business
 tool, not a separate weather agent, and not a subagent. Rolling summary and
 other recent turns may provide semantics but cannot supply authority. The
 source lane is independent of compaction and raw-tail eviction; contract 4
 retains the bounded-tail fallback during rolling deployment. Missing source
 turns, timeout, malformed output, structural invalidity, or an unclear
 relation fails closed.
+For contract 6, that bounded lane also includes exact turns referenced by
+component-unavailability markers. Contracts through v5 receive a down-projected
+scope and no marker-only source turn.
 
 The chain constructs this call under one aggregate dynamic-input budget,
 configured by `weather.scope_resolver_max_input_chars` (16,384 by default;
@@ -271,54 +292,104 @@ prior retention fails closed while current-turn facts survive. This projection
 is request-local: contract v5, memory limits, durable text, and replay are
 unchanged.
 
-The isolated resolver owns only orthogonal `subject_relation` and
-`pending_disposition` controls; it never duplicates location/date extraction.
-The schema accepts exactly six outcomes:
+The isolated resolver never duplicates location/date extraction. With no live
+pending binding it owns only `subject_relation`. When a binding exists, the
+expanded schema accepts exactly seven outcomes:
 
 | Subject relation | Pending disposition | Meaning |
 | --- | --- | --- |
 | `same_subject` | `not_addressed` | Continue or revise the subject without consuming a pending binding. |
 | `same_subject` | `answered` | Complete the exact pending binding. |
+| `same_subject` | `declined` | Consume only the exact pending binding and continue without weather for this turn. |
 | `new_subject` | `not_addressed` | Replace prior subject authority. |
 | `unchanged` | `not_addressed` | Leave an unanswered question silent. |
 | `unchanged` | `resume_requested` | Re-render the exact unanswered question without a scope write when no current-turn scope facts are supplied. |
 | `unclear` | `not_addressed` | Fail closed for prior authority. |
 
-The handle is required exactly for `answered` and `resume_requested`. These
+The handle is required exactly for `answered`, `declined`, and
+`resume_requested`. These
 semantic choices remain model-owned; the server has no phrase matcher, intent
 router, or rules table for recognizing an answer or a resumption.
 Normal activation still owns skill selection, the
 one shopper-facing question, and the single atomic scope selection.
-Deterministic compilation admits `set` only from current-turn location/date authority. When
+Deterministic compilation admits `set` or `unavailable` only from current-turn
+location/date authority. When
 the accepted response asks for a missing location or date, memory stores that
 question as the pending binding with its originating turn ID and sequence even
 if no authority value otherwise changes. A resolver-approved `same_subject`
 relation authorizes ordinary same-subject retains, while `new_subject` clears
-them. Completing a pending component while retaining its stored counterpart
+them. When a new subject replaces a live pending binding, the compiler also
+carries its exact supersession handle and may retain no old component; memory
+rechecks both the handle and revision. Completing a pending component while
+retaining its stored counterpart
 requires `same_subject/answered`, the exact opaque pending source-turn handle,
 and activation setting the component it names. A reply that also changes or
 withdraws the opposite component is `same_subject/not_addressed`. Runtime
 forwards the handle only when activation itself proposes the counterpart
 `retain`; the compiler never rewrites either component action, and memory
 atomically verifies that exact live retain shape. A current-turn counterpart
-`set` or `clear` uses the ordinary scope-revision boundary with no completion
-handle. Preserving an otherwise unanswered
+`set`, `clear`, or `unavailable` uses the ordinary scope-revision boundary with
+no completion handle. Preserving an otherwise unanswered
 pending binding during another same-subject update likewise requires an exact
 server-authored source handle; without it memory binds the question to the
 current finalized turn. `unchanged/not_addressed` suppresses an accidental
 repeat of the exact live pending question. Exact-handle
 `unchanged/resume_requested` re-renders that question without creating a scope
 resolution or rotating its original binding when activation supplies no
-current-turn scope facts. Any validated current-turn `set` still survives. When the
+current-turn scope facts. Exact-handle `same_subject/declined` instead requires
+the target action `unavailable` and compiles one atomic resolution with no
+pending question, refresh, receipt, weather call, or replacement location/date
+question. Contract 6 memory rechecks `decline_pending_source_turn_id`, the scope
+revision, and the target action before consuming that binding. Either marker
+suppresses both location/date follow-ups because weather cannot become complete,
+but not a styling-only venue question. It is current-subject state rather than
+a shopper preference; a later `set`, explicit `clear`, or new subject removes
+it. A stale handle leaves the binding intact. Any validated current-turn action
+still survives. When the
 isolated resolver is unavailable or unclear, the pure authority compiler clears
 every proposed retained component without erasing a validated current-turn
-`set`, receipt/refresh reuse is rejected, and prior-dependent weather is
-blocked. Self-contained incomplete proposals use normal missing-component
+`set` or `unavailable`, receipt/refresh reuse is rejected, and prior-dependent
+weather is blocked. Self-contained incomplete proposals use normal missing-component
 handling; a complete `set`/`set` replacement may require weather. The binding
 also records that the question was already asked; intervening product work is
 instructed not to repeat it. This lets “conference on Sunday next week” clear NYC while
 keeping its own date and asking location, then lets “Seattle” complete that
 same scope without importing an unrelated subject.
+
+### How to explain pending weather behavior
+
+The boundary has four owners, and no owner performs another owner's job:
+
+| Owner | Decision | What it cannot do |
+| --- | --- | --- |
+| Activation model | Interprets the current shopper turn and proposes `retain`, `set`, `clear`, or `unavailable` for location and date. | It cannot mutate durable state or invent a pending-question handle. |
+| Subject resolver model | Decides whether prior authority belongs to the same subject. Only when a live pending binding exists can it also select `answered`, `declined`, `resume_requested`, or `not_addressed` and echo that exact opaque handle. | It cannot extract location/date values or call a business tool. |
+| Pure authority compiler and memory | Remove unauthorized retains, validate revision and exact handles, and atomically apply one typed resolution. | They do not classify shopper prose or decide what “I don't know yet” means. |
+| Response renderer | Renders only the accepted pending question or a typed transition acknowledgment. | It cannot restore a question whose accepted boundary is `none`. |
+
+For a declined location question, turn 1 stores the missing location as an
+exact pending binding. On turn 2, activation proposes
+`location=unavailable`; the resolver selects exact-handle
+`same_subject/declined`; compilation removes weather, refresh, receipt, and a
+replacement question; memory consumes the binding and stores a source-bound
+location-unavailable marker. The response acknowledges continuing without
+location-based weather guidance for this plan. Later product work continues
+normally and does not reopen the question.
+
+For “Seattle, but the date is undecided now,” activation proposes
+`location=set(Seattle)` and `window=unavailable`. The explicit current-turn
+actions remain authoritative, the old pending binding is not allowed to
+resurrect a retained date, and memory stores Seattle plus a source-bound
+date-unavailable marker. If a later same-subject turn supplies a date, the
+model proposes `location=retain` and `window=set`; applying that resolution
+removes the marker and the resulting complete scope authorizes exactly one
+forecast call.
+
+For “What information do you still need?”, no scope facts are proposed. The
+live pending capability lets the resolver select exact-handle
+`unchanged/resume_requested`; the server re-renders the same stored question
+without a scope write or source rotation. This is distinct from ordinary
+product work, whose `unchanged/not_addressed` leaves the question silent.
 
 The resulting provider tool is zero-argument: it reads the effective typed
 scope and cannot rescan recent prose or accept a model-authored fallback date.
@@ -617,7 +688,8 @@ With this addition, one request proceeds as follows:
 4. The isolated source-identity-bound resolver reads only the dedicated source
    lane plus semantic context. It and activation may atomically update the
    singleton with current-turn authority through explicit
-   location/date `retain`/`set`/`clear` actions and a typed pending binding.
+   location/date `retain`/`set`/`clear`/`unavailable` actions and a typed
+   pending binding.
    They may instead bind exactly one listed receipt
    only with `event-context`, `event_context_next_question=none`, no scope
    update, and equality to the effective scope. Unbound receipts never ground

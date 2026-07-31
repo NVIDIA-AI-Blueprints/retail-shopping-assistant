@@ -4,12 +4,12 @@ description: >-
   Location, venue, and live-forecast context for weather-aware fashion styling.
   Use only with outfit-styling when physical context is part of the current
   styling subject: supplied or changed destination/date/venue/weather context,
-  a direct weather-aware request, an answer to its pending question, or an
-  explicit continuation of that established event, trip, or weather-planning
-  subject. Do not activate it because weather could hypothetically matter to
-  otherwise location-independent styling. Explicit location overrides saved
-  ZIP; saved ZIP is only a candidate to confirm. Do not use for non-styling
-  browsing.
+  a direct weather-aware request, an answer to or explicit decline of its
+  pending question, or an explicit continuation of that established event,
+  trip, or weather-planning subject. Do not activate it because weather could
+  hypothetically matter to otherwise location-independent styling. Explicit
+  location overrides saved ZIP; saved ZIP is only a candidate to confirm. Do
+  not use for non-styling browsing.
 response_guidance: >-
   Explicit location overrides saved ZIP: never ask "usual area" afterward, fall
   back, or echo digits. Saved ZIP is tentative; for accepted `event_location`,
@@ -41,8 +41,9 @@ tools_granted:
   rolling summary and recent prose provide semantics but cannot authorize a
   weather call.
 - Activation resolves the scope atomically. It copies the exact
-  `scope_revision` and explicitly chooses `retain`, `set`, or `clear` for both
-  location and date. When a prior scope exists, a request-local tools-disabled
+  `scope_revision` and explicitly chooses `retain`, `set`, `clear`, or
+  `unavailable` for both location and date. When a prior scope exists, a
+  request-local tools-disabled
   semantic resolver has already compared the current query with the exact
   shopper turns named by its component source sequences through one forced
   typed control call. It is neither a business tool nor a subagent, and it
@@ -53,10 +54,19 @@ tools_granted:
 - `set` contains only location/date authority supplied or confirmed in the
   current shopper turn. Omitted components never inherit. Omit
   `weather_scope` only when the entire scope is unchanged.
-- `clear` is authoritative when the current turn withdraws or makes a
-  component unknown, as well as when a new subject does not establish it. A
-  pending-question handle can authorize only a proposed `retain`; it never
-  rewrites `set` or `clear`.
+- `unavailable` is authoritative only when the current turn says the shopper
+  cannot or will not provide that component for this subject. It is durable
+  within this scope so the question does not resurface, but it is not a shopper
+  preference: a later `set`, explicit `clear`, or new-subject replacement
+  removes it.
+  `clear` remains ordinary missing and askable, including a component absent
+  from a new subject. An answered pending handle can authorize only the exact
+  counterpart `retain`; a declined pending handle authorizes only the target
+  `unavailable` transition. Neither rewrites an unrelated current-turn action.
+- When a new subject replaces a live pending binding, no old component may use
+  `retain`. The server supplies the exact supersession handle and memory
+  atomically rechecks it with the scope revision. Establish the new subject's
+  components independently.
 - A missing `event_location` or `event_date` question is persisted as the
   scope's typed pending binding with the originating shopper-turn sequence.
   Only `same_subject/answered` may authorize retaining its counterpart, and
@@ -70,6 +80,17 @@ tools_granted:
   receipt/refresh reuse. Continue without weather only when the effective scope
   still depends on prior authority. A validated current-turn `set`/`set`
   replacement is independent and may use fresh weather evidence.
+- A shopper may explicitly decline or cancel the exact pending question and
+  continue without weather. The resolver then emits source-bound
+  `same_subject/declined`; choose `event_context_next_question=none` and do not
+  bind a receipt or request a refresh. Resolve the declined component as
+  `unavailable`; the server consumes only that exact
+  durable binding through memory's atomic decline control. This is not a
+  permanent preference against weather, and later shopper-supplied context is
+  handled normally.
+- While either component is `unavailable`, select neither `event_location` nor
+  `event_date`: weather cannot become complete. This does not suppress an
+  independently material `event_venue` styling question.
 - An explicit current-turn destination overrides saved ZIP. Once established,
   never ask "usual area or elsewhere?"
 - Saved ZIP is only a tentative location candidate. It proves neither current
@@ -133,6 +154,10 @@ tools_granted:
   `unchanged/resume_requested` with the exact handle when the shopper asks what
   information is still needed; when no current-turn scope facts are supplied,
   ask the stored pending question again without authoring a scope update.
+- If the shopper explicitly declines that exact pending question, select
+  `none`. Do not replace it with the other location/date question in the same
+  turn, and do not repeat it later unless the shopper independently reopens the
+  weather context.
 - For non-event weather styling, ask only for the missing location or bounded
   date. Never ask for a venue.
 - When activation selected `event_location`, ask location. When it selected

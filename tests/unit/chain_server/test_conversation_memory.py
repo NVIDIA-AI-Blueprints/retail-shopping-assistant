@@ -239,7 +239,7 @@ def test_start_turn_posts_one_request_without_raw_media() -> None:
     assert result.cart[0].cart_line_id == "line-1"
     assert session.calls[0]["url"] == (
         "http://memory:8011/conversations/conversation%2Fa/turn/start"
-        "?response_contract=5"
+        "?response_contract=6"
     )
     request_payload = session.calls[0]["json"]
     assert request_payload == {
@@ -279,7 +279,7 @@ def test_start_turn_accepts_legacy_v1_response_from_old_memory() -> None:
     assert result.contract_version == 1
     assert result.projection.summary_text == ""
     assert result.projection.active_receipts == []
-    assert session.calls[0]["url"].endswith("?response_contract=5")
+    assert session.calls[0]["url"].endswith("?response_contract=6")
 
 
 def test_start_turn_accepts_and_filters_legacy_v1_abandoned_turn() -> None:
@@ -407,7 +407,7 @@ def test_start_turn_accepts_negotiated_v4_atomic_weather_scope_contract() -> Non
     assert result.contract_version == 4
     assert result.projection.current_weather_scope.revision == 1
     assert result.projection.current_weather_scope.location is None
-    assert session.calls[0]["url"].endswith("?response_contract=5")
+    assert session.calls[0]["url"].endswith("?response_contract=6")
 
 
 def test_start_turn_accepts_v5_exact_weather_scope_source_lane() -> None:
@@ -430,6 +430,58 @@ def test_start_turn_accepts_v5_exact_weather_scope_source_lane() -> None:
     assert source.turn_id == "turn-1"
     assert source.sequence == 1
     assert source.shopper_text == "Seattle on August 15."
+
+
+def test_start_turn_accepts_v6_pending_decline_write_capability() -> None:
+    payload = _v5_start_payload()
+    payload["contract_version"] = 6
+    payload["projection"]["current_weather_scope"].pop("location")
+    payload["projection"]["current_weather_scope"]["location_unavailable"] = {
+        "source_turn_id": "turn-1",
+        "source_sequence": 1,
+    }
+    client = ConversationMemoryClient(
+        "http://memory",
+        session=FakeSession(FakeResponse(payload)),
+    )
+
+    result = client.start_turn(
+        "conversation-a",
+        request_id="request-a",
+        shopper_text="Continue without weather.",
+        cart_user_id=17,
+    )
+
+    assert result.contract_version == 6
+    assert len(result.current_weather_scope_source_turns) == 1
+    assert result.projection.current_weather_scope.location is None
+    assert (
+        result.projection.current_weather_scope.location_unavailable
+        is not None
+    )
+
+
+def test_start_turn_rejects_v6_unavailability_in_v5_response() -> None:
+    payload = _v5_start_payload()
+    payload["projection"]["current_weather_scope"].pop("location")
+    payload["projection"]["current_weather_scope"]["location_unavailable"] = {
+        "source_turn_id": "turn-1",
+        "source_sequence": 1,
+    }
+    client = ConversationMemoryClient(
+        "http://memory",
+        session=FakeSession(FakeResponse(payload)),
+    )
+
+    with pytest.raises(ConversationMemoryError) as caught:
+        client.start_turn(
+            "conversation-a",
+            request_id="request-a",
+            shopper_text="Continue without weather.",
+            cart_user_id=17,
+        )
+
+    assert caught.value.code == "memory_response_invalid"
 
 
 @pytest.mark.parametrize(
@@ -990,6 +1042,84 @@ def test_finalize_turn_posts_exact_pending_completion() -> None:
             "location": "Seattle",
         },
         "complete_pending_source_turn_id": "bound-question-turn",
+    }
+
+
+def test_finalize_turn_posts_exact_pending_decline() -> None:
+    response = {
+        "turn_id": "turn-3",
+        "attempt_id": "attempt-3",
+        "sequence": 3,
+        "replayed": False,
+        "status": "completed",
+        "assistant_text": "Continuing without weather.",
+        "termination_reason": "completed",
+    }
+    session = FakeSession(FakeResponse(response))
+    client = ConversationMemoryClient("http://memory", session=session)
+
+    client.finalize_turn(
+        "conversation-a",
+        "turn-3",
+        request_id="request-3",
+        attempt_id="attempt-3",
+        assistant_text="Continuing without weather.",
+        status="completed",
+        termination_reason="completed",
+        current_weather_scope_resolution=CurrentWeatherScopeResolution(
+            expected_projection_version=3,
+            expected_scope_revision=2,
+            location_action="unavailable",
+            window_action="retain",
+            decline_pending_source_turn_id="bound-question-turn",
+        ),
+    )
+
+    assert session.calls[0]["json"]["current_weather_scope_resolution"] == {
+        "expected_projection_version": 3,
+        "expected_scope_revision": 2,
+        "location_action": "unavailable",
+        "window_action": "retain",
+        "decline_pending_source_turn_id": "bound-question-turn",
+    }
+
+
+def test_finalize_turn_posts_exact_pending_supersession() -> None:
+    response = {
+        "turn_id": "turn-3",
+        "attempt_id": "attempt-3",
+        "sequence": 3,
+        "replayed": False,
+        "status": "completed",
+        "assistant_text": "Using the new event.",
+        "termination_reason": "completed",
+    }
+    session = FakeSession(FakeResponse(response))
+    client = ConversationMemoryClient("http://memory", session=session)
+
+    client.finalize_turn(
+        "conversation-a",
+        "turn-3",
+        request_id="request-3",
+        attempt_id="attempt-3",
+        assistant_text="Using the new event.",
+        status="completed",
+        termination_reason="completed",
+        current_weather_scope_resolution=CurrentWeatherScopeResolution(
+            expected_projection_version=3,
+            expected_scope_revision=2,
+            location_action="unavailable",
+            window_action="clear",
+            supersede_pending_source_turn_id="old-subject-question-turn",
+        ),
+    )
+
+    assert session.calls[0]["json"]["current_weather_scope_resolution"] == {
+        "expected_projection_version": 3,
+        "expected_scope_revision": 2,
+        "location_action": "unavailable",
+        "window_action": "clear",
+        "supersede_pending_source_turn_id": "old-subject-question-turn",
     }
 
 

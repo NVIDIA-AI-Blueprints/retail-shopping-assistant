@@ -118,26 +118,29 @@ The application follows a microservices architecture:
   replay, a versioned rolling summary, separate newest raw-turn tail and
   oldest compaction prefix, a bounded versioned projection of short-lived typed
   weather receipts, one versioned current weather-planning scope core with
-  per-component source turns plus a separately stored, revision-matched pending
-  location/date binding, a derived at-most-three exact source-turn lane for
-  weather-subject resolution, typed
-  prior-skill continuity, presented-product
+  per-component source turns plus separately stored, revision-matched pending
+  and current-subject-unavailability lanes, a derived at-most-three exact
+  source-turn lane for weather-subject resolution, typed prior-skill
+  continuity, presented-product
   events and a compact reference index, stable cart-line IDs, atomically idempotent
   add/remove/quantity mutations, an immutable five-row representative shopper
   registry, atomic conversation/profile binding, and request-scoped database
   sessions. Additive summary, receipt, and current-weather-scope lanes negotiate
-  the highest response contract both services support. Contract 5 adds the
-  isolated scope-source read lane for subject resolution and protected styling
-  provenance; contract 4 continues to advertise
+  the highest response contract both services support. Contract 6 adds
+  source-bound location/date-unavailability markers and exact pending decline
+  and supersession controls. Migration 12 stores those markers in a defaulted,
+  revision-gated lane. Contract 5 adds the isolated scope-source read lane for
+  subject resolution and protected styling provenance; contract 4 continues to advertise
   atomic finalize-time scope resolution while contract 3 remains supported for
   rolling deployment. Contract v1 remains a legacy downstream-filtered raw
-  lane; v2 and later require memory-owned context eligibility. Migration 11
-  extracts any complete pre-split pending
+  lane; v2 and later require memory-owned context eligibility. Contracts through
+  v5 omit v6 markers and derive their source-turn lane from the same
+  down-projected scope. Migration 11 extracts any complete pre-split pending
   binding into a defaulted separate lane, drops incomplete unsourceable WIP
   pending fields, keeps the rollback-readable scope JSON free of v4 keys, and
   ignores pending state whose stored revision no longer matches the
-  core; standard Compose
-  exposes its host port on loopback only
+  core. Rolling deployment is memory first, then chain; rollback reverses that
+  order. Standard Compose exposes its host port on loopback only
 - **Guardrails**: Content safety and moderation
 - **UI**: React-based frontend interface with Guest/representative-shopper
   dropdown selection required before a new chat session starts
@@ -158,8 +161,9 @@ The `event-context` modifier accompanies only `outfit-styling` and is the sole
 skill that grants `get_weather_forecast_tool`. Semantic activation selects it
 only when physical context is part of the current styling subject: the shopper
 supplies or changes destination/date/venue/weather context, directly requests
-weather-aware guidance, answers its pending question, or explicitly continues
-that established event, trip, or weather-planning subject. Hypothetical weather
+  weather-aware guidance, answers or explicitly declines its pending question,
+  or explicitly continues that established event, trip, or weather-planning
+  subject. Hypothetical weather
 relevance does not activate it for otherwise location-independent styling. An
 explicit event destination or venue wins over
 the selected profile's saved ZIP. When the ZIP is the only location clue and
@@ -229,8 +233,8 @@ Weather provider calls remain disabled by default. When an operator enables
 `event-context` supports event and non-event weather-aware styling beside
 `outfit-styling`. When a prior weather scope exists, a request-local
 tools-disabled semantic resolver compares the current query with the exact
-shopper turns named by the stored location, date, and pending-question source
-sequences. It makes one
+shopper turns named by the stored location, date, unavailability, and
+pending-question source sequences. It makes one
 forced typed control call and is neither a business tool nor a subagent.
 The chain-local prompt builder applies one aggregate
 `weather.scope_resolver_max_input_chars` budget (16,384 by default) across the
@@ -241,14 +245,23 @@ head-and-tail excerpts, then oldest optional recent turns and the optional
 summary are removed as needed. If the mandatory authority lanes still cannot
 fit, no resolver model call runs and prior retention fails closed; durable and
 replay text remain exact.
-The resolver returns only two orthogonal semantic controls—subject continuity
-and pending-question disposition—and does not duplicate location/date
-extraction. Normal activation is the sole producer of one atomic
+The resolver always returns subject continuity and does not duplicate
+location/date extraction. Its forced schema is capability-shaped: with no live
+pending binding it exposes only `subject_relation`; a live pending binding adds
+the orthogonal `pending_disposition` control and exact opaque handle.
+Structurally malformed output fails closed. If an already-typed impossible
+pending-axis decision reaches the compiler with no live binding, only that axis
+is discarded; the independently typed subject relation remains. A stale handle
+against a real pending binding fails closed. Normal
+activation is the sole producer of one atomic
 `weather_scope` selection: it copies the scope revision and chooses `retain`,
-`set`, or `clear` independently for location and date. Only current-turn
-shopper authority can enter a `set`. A pure authority compiler receives that
-validated proposal and applies the relation only to prior-state use:
-unauthorized `retain`s become `clear`, while every current-turn `set` survives.
+`set`, `clear`, or `unavailable` independently for location and date. `clear`
+means the component is missing but askable; `unavailable` means the shopper
+cannot or will not provide it for this subject. Only current-turn shopper
+authority can enter a `set` or `unavailable`. A pure authority compiler receives
+that validated proposal and applies the relation only to prior-state use:
+unauthorized `retain`s become `clear`, while every current-turn `set` or
+`unavailable` survives.
 Invalid, unavailable, or unclear output therefore blocks only
 prior-dependent weather. Self-contained incomplete proposals use the ordinary
 missing-location/date gate; a complete current-turn `set`/`set` replacement may
@@ -256,8 +269,28 @@ require a fresh forecast. Completing a typed pending component is a narrower
 boundary: only exact-handle `same_subject/answered` may retain its stored
 counterpart. That disposition means the reply answers only the pending
 question; a reply that also changes or withdraws the opposite component is
-`same_subject/not_addressed`, whose explicit `set` or `clear` remains
+`same_subject/not_addressed`, whose explicit component action remains
 authoritative.
+
+Exact-handle `same_subject/declined` is the separate terminal path when the
+shopper explicitly cancels the pending question and wants to continue without
+weather. Activation marks that exact component `unavailable`; the compiler
+selects no replacement location/date question, removes refresh/receipt reuse,
+and sends the opaque `decline_pending_source_turn_id` only when response
+contract 6 is negotiated.
+Memory rechecks that exact live binding and scope revision before consuming it.
+A stale handle fails closed without consuming the question. The source-bound
+marker prevents the declined location/date question from resurfacing for this
+subject, but it is not a conversation-wide preference: a later `set`, explicit
+`clear`, or new-subject replacement removes it. While either component is
+unavailable the assistant asks no location/date weather follow-up, though it
+may still ask a styling-only venue question.
+
+When a new subject replaces a live pending question, contract 6 carries the
+exact `supersede_pending_source_turn_id`. The compiler first removes every old
+component `retain`; memory then atomically verifies the live handle and scope
+revision before replacing the subject. No old location, date, or
+unavailability marker can leak into the new subject.
 
 When activation asks for a missing location or date, that question is stored in
 the singleton as a typed pending binding stamped with the originating turn ID
@@ -267,18 +300,27 @@ the resolver echoes the exact opaque pending handle, activation sets the named
 missing component, and activation itself proposes `retain` for the counterpart.
 The compiler attaches the server-authored `complete_pending_source_turn_id`
 without rewriting either action, and memory independently verifies the exact
-live retain shape before committing. A current-turn counterpart `set` or
-`clear` remains an ordinary current-authority update with no completion handle;
+live retain shape before committing. A current-turn counterpart `set`, `clear`,
+or `unavailable` remains an ordinary current-authority update with no completion
+handle;
 the activation-selected question governs any newly missing component. If the same
 unanswered question remains pending during an ordinary
 same-subject update, the runtime may preserve its source only by supplying that
 exact server-owned handle to memory; without it memory stamps the current
 finalized turn. If semantic
 resolution is unavailable or unclear, every proposed cross-turn retain is
-cleared without erasing a current-turn `set`, and receipt/refresh reuse is
+cleared without erasing a current-turn `set` or `unavailable`, and receipt/refresh reuse is
 rejected. Weather remains blocked only when the effective scope still depends
 on prior authority; a complete current-turn `set`/`set` replacement may proceed
 without importing an older subject.
+For a context-only scope transition, the server renders typed-unavailability
+acknowledgment and the accepted next-question boundary itself; an editor draft
+cannot obscure the state change or reintroduce a follow-up whose typed boundary
+is `none`.
+If memory negotiates only contract 5, unsupported unavailability markers are
+not sent. A pure decline with no independent current-turn facts leaves the
+existing pending binding unchanged; otherwise only independently validated
+current-turn `set` facts are written and the pending binding remains live.
 The pending binding records that the question was already asked.
 `unchanged/not_addressed` suppresses an accidental repeat during unrelated
 product work. If the shopper explicitly asks what information is still needed,
@@ -286,7 +328,7 @@ the resolver may instead return exact-handle
 `unchanged/resume_requested`; when activation supplies no current-turn scope
 facts, runtime re-renders the durable pending question without creating a scope
 resolution or rotating its source binding. Any independently validated
-current-turn `set` still survives. This
+current-turn action still survives. This
 preserves a new conference's stated date while asking its location, then safely
 combines a location-only answer with that date. The durable singleton—not the
 rolling summary or recent prose—is the only cross-turn weather authority.

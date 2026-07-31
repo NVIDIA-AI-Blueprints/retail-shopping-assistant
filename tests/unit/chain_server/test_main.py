@@ -2987,6 +2987,9 @@ class TestDeepAgentsRuntimeRefs:
         assert "only context follow-up" in activation_schema[
             "properties"
         ]["event_context_next_question"]["description"]
+        assert "not made the date explicitly unavailable" in activation_schema[
+            "properties"
+        ]["event_context_next_question"]["description"]
         assert "after applying weather_scope from this same activation" in (
             activation_schema["properties"]["event_context_next_question"][
                 "description"
@@ -3027,15 +3030,17 @@ class TestDeepAgentsRuntimeRefs:
         assert "Never rely on an omitted field to inherit location" in (
             weather_scope_schema["location_action"]["description"]
         )
-        assert "withdraws or makes the location unknown" in (
+        assert "ordinary missing, askable location" in (
             weather_scope_schema["location_action"]["description"]
         )
+        assert "unavailable" in weather_scope_schema["location_action"]["enum"]
         assert "Never rely on an omitted field to inherit a date" in (
             weather_scope_schema["window_action"]["description"]
         )
-        assert "withdraws or makes the date unknown" in (
+        assert "ordinary missing, askable date" in (
             weather_scope_schema["window_action"]["description"]
         )
+        assert "unavailable" in weather_scope_schema["window_action"]["enum"]
         assert "location='NYC', location_query='NYC, NY'" in (
             weather_scope_schema["location_query"]["description"]
         )
@@ -4101,13 +4106,13 @@ class TestDeepAgentsRuntimeRefs:
                 user_id=111,
                 query="Seattle, but the date is undecided now.",
                 conversation_projection_version=5,
+                conversation_memory_contract_version=6,
                 current_weather_scope=pending_location_scope,
                 weather_scope_resolver_decision=(
                     WeatherScopeResolverDecision.model_validate(
                         {
                             "subject_relation": "same_subject",
-                            "pending_disposition": "answered",
-                            "pending_source_turn_id": "turn-conference",
+                            "pending_disposition": "not_addressed",
                         }
                     )
                 ),
@@ -4122,11 +4127,11 @@ class TestDeepAgentsRuntimeRefs:
             "activate_shopper_skills_tool"
         ](
             skill_names=["outfit-styling", "event-context"],
-            event_context_next_question="event_date",
+            event_context_next_question="none",
             weather_scope={
                 "scope_revision": 2,
                 "location_action": "set",
-                "window_action": "clear",
+                "window_action": "unavailable",
                 "location_source": "shopper_provided_location",
                 "location": "Seattle",
             },
@@ -4136,10 +4141,85 @@ class TestDeepAgentsRuntimeRefs:
         )
         explicit_clear_resolution = captured_weather["binding"].resolution
         assert explicit_clear_resolution.location_action == "set"
-        assert explicit_clear_resolution.window_action == "clear"
-        assert explicit_clear_resolution.pending_question == "event_date"
+        assert explicit_clear_resolution.window_action == "unavailable"
+        assert explicit_clear_resolution.pending_question is None
         assert explicit_clear_resolution.complete_pending_source_turn_id is None
         assert explicit_clear_gate._required_tool is None
+
+        runtime._create_agent(
+            State(
+                user_id=111,
+                query="I don't know the city; skip weather and stop asking.",
+                conversation_projection_version=5,
+                conversation_memory_contract_version=6,
+                current_weather_scope=pending_location_scope,
+                weather_scope_resolver_decision=(
+                    WeatherScopeResolverDecision.model_validate(
+                        {
+                            "subject_relation": "same_subject",
+                            "pending_disposition": "declined",
+                            "pending_source_turn_id": "turn-conference",
+                        }
+                    )
+                ),
+            ),
+            identity,
+        )
+        declined_pending_tools = {
+            fn.__name__: fn for fn in captured["tools"]
+        }
+        _, declined_pending_gate = captured["middleware"]
+        declined_pending_activation = declined_pending_tools[
+            "activate_shopper_skills_tool"
+        ](
+            skill_names=["outfit-styling", "event-context"],
+            event_context_next_question="none",
+        )
+        assert declined_pending_activation.startswith(
+            runtime_mod.SKILL_ACTIVATION_COMPLETE
+        )
+        declined_pending_resolution = captured_weather["binding"].resolution
+        assert declined_pending_resolution.location_action == "unavailable"
+        assert declined_pending_resolution.window_action == "retain"
+        assert declined_pending_resolution.pending_question is None
+        assert (
+            declined_pending_resolution.decline_pending_source_turn_id
+            == "turn-conference"
+        )
+        assert declined_pending_gate._required_tool is None
+        assert declined_pending_gate._runtime_tool_rejections[
+            "get_weather_forecast_tool"
+        ] == runtime_mod._EVENT_CONTEXT_PENDING_DECLINED_WEATHER_BLOCK
+
+        inert_decline_state = State(
+            user_id=111,
+            query="Show me navy sweaters.",
+            conversation_projection_version=5,
+            conversation_memory_contract_version=6,
+            current_weather_scope=pending_location_scope,
+            weather_scope_resolver_decision=(
+                WeatherScopeResolverDecision.model_validate(
+                    {
+                        "subject_relation": "same_subject",
+                        "pending_disposition": "declined",
+                        "pending_source_turn_id": "turn-conference",
+                    }
+                )
+            ),
+        )
+        runtime._create_agent(inert_decline_state, identity)
+        inert_decline_tools = {fn.__name__: fn for fn in captured["tools"]}
+        inert_decline_activation = inert_decline_tools[
+            "activate_shopper_skills_tool"
+        ](
+            skill_names=["product-discovery"],
+        )
+        assert inert_decline_activation.startswith(
+            runtime_mod.SKILL_ACTIVATION_COMPLETE
+        )
+        assert inert_decline_state.current_weather_scope_resolution is None
+        assert inert_decline_state.current_weather_scope == pending_location_scope
+        assert captured_weather["binding"].resolution is None
 
         runtime._create_agent(
             State(
@@ -9067,6 +9147,151 @@ class TestDeepAgentsRuntimeRefs:
         assert "Explicit location overrides saved ZIP" in user_prompt
         assert "A saved ZIP candidate is present" in user_prompt
         assert "60601" not in user_prompt
+
+    @pytest.mark.asyncio
+    async def test_context_only_scope_transition_renders_typed_unavailability(
+        self,
+        base_config,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+        monkeypatch.setattr(
+            runtime,
+            "_create_chat_model",
+            lambda: pytest.fail("typed acknowledgment must not call an editor"),
+        )
+        state = State(
+            user_id=111,
+            query=(
+                "For my outdoor conference in Seattle, the date is "
+                "undecided now."
+            ),
+            current_weather_scope_resolution=(
+                CurrentWeatherScopeResolution.model_validate(
+                    {
+                        "expected_projection_version": 2,
+                        "expected_scope_revision": 1,
+                        "location_action": "set",
+                        "window_action": "unavailable",
+                        "location_scope": {
+                            "kind": "shopper_provided_location",
+                            "location": "Seattle",
+                        },
+                    }
+                )
+            ),
+            agent_diagnostics={
+                "skill_files_read": [
+                    "/shopper/outfit-styling/SKILL.md",
+                    "/shopper/event-context/SKILL.md",
+                ]
+            },
+        )
+        result = {
+            "messages": [
+                {"role": "user", "content": "REQUEST ID: current-request"},
+                *_event_context_activation_messages("none"),
+            ]
+        }
+
+        response = await runtime._rewrite_response_for_grounding(
+            state,
+            result,
+            "What date or date range should I plan around?",
+            request_id="current-request",
+        )
+
+        assert "plan around Seattle" in response
+        assert "without date-specific weather guidance" in response
+        assert "?" not in response
+
+    @pytest.mark.asyncio
+    async def test_context_only_unavailability_precedes_accepted_venue_question(
+        self,
+        base_config,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+        monkeypatch.setattr(
+            runtime,
+            "_create_chat_model",
+            lambda: pytest.fail("typed response must not call an editor"),
+        )
+        state = State(
+            user_id=111,
+            query="The trip is in Seattle, but I do not have dates.",
+            current_weather_scope_resolution=(
+                CurrentWeatherScopeResolution.model_validate(
+                    {
+                        "expected_projection_version": 2,
+                        "expected_scope_revision": 1,
+                        "location_action": "set",
+                        "window_action": "unavailable",
+                        "location_scope": {
+                            "kind": "shopper_provided_location",
+                            "location": "Seattle",
+                        },
+                    }
+                )
+            ),
+            agent_diagnostics={
+                "skill_files_read": [
+                    "/shopper/outfit-styling/SKILL.md",
+                    "/shopper/event-context/SKILL.md",
+                ]
+            },
+        )
+        result = {
+            "messages": [
+                {"role": "user", "content": "REQUEST ID: current-request"},
+                *_event_context_activation_messages("event_venue"),
+            ]
+        }
+
+        response = await runtime._rewrite_response_for_grounding(
+            state,
+            result,
+            "What kind of venue is planned?",
+            request_id="current-request",
+        )
+
+        assert "plan around Seattle" in response
+        assert "without date-specific weather guidance" in response
+        assert response.endswith(
+            "What kind of venue or setting is planned for the event?"
+        )
+
+    def test_context_only_location_decline_has_direct_acknowledgment(
+        self,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        state = State(
+            user_id=111,
+            query="Continue without location-based weather.",
+            current_weather_scope_resolution=(
+                CurrentWeatherScopeResolution.model_validate(
+                    {
+                        "expected_projection_version": 2,
+                        "expected_scope_revision": 1,
+                        "location_action": "unavailable",
+                        "window_action": "retain",
+                    }
+                )
+            ),
+        )
+
+        acknowledgment = (
+            runtime_mod._context_only_scope_transition_acknowledgment(state)
+        )
+
+        assert acknowledgment == (
+            "Understood—I’ll continue without location-based weather guidance "
+            "for this plan."
+        )
 
     @pytest.mark.asyncio
     async def test_search_only_missing_draft_uses_safe_catalog_fallback(

@@ -42,8 +42,10 @@ from shared.weather_receipts import (
 from shared.weather_scope import (
     CurrentWeatherScope,
     WeatherScopeLocationAuthority,
+    WeatherScopeUnavailableAuthority,
     WeatherScopeWindowAuthority,
     apply_current_weather_scope_resolution,
+    effective_resolved_weather_scope_unavailability,
     effective_resolved_weather_scope_values,
 )
 
@@ -530,6 +532,84 @@ def test_initial_scope_cannot_retain_a_missing_component() -> None:
         )
 
 
+def test_scope_selection_compiles_model_owned_unavailability_without_text_rules(
+) -> None:
+    current_scope = _existing_nyc_location_only_scope()
+    resolution = compile_weather_scope_resolution(
+        WeatherScopeSelection(
+            scope_revision=1,
+            location_action="retain",
+            window_action="unavailable",
+        ),
+        current_scope=current_scope,
+        current_shopper_text="Continue with the same trip.",
+        saved_zip_authorized=False,
+        expected_projection_version=4,
+        current_date=CURRENT_DATE,
+    )
+
+    assert resolution.location_action == "retain"
+    assert resolution.window_action == "unavailable"
+    assert resolution.requested_window is None
+    assert effective_resolved_weather_scope_values(
+        current_scope,
+        resolution,
+    ) == (
+        ShopperLocationWeatherScope(
+            location="NYC",
+            location_query="NYC, NY",
+        ),
+        None,
+    )
+    assert effective_resolved_weather_scope_unavailability(
+        current_scope,
+        resolution,
+    ) == (False, True)
+
+
+def test_scope_selection_can_retain_a_source_bound_unavailable_component() -> None:
+    current_scope = CurrentWeatherScope(
+        revision=2,
+        location=WeatherScopeLocationAuthority(
+            value=ShopperLocationWeatherScope(location="Seattle"),
+            source_turn_id="location-turn",
+            source_sequence=1,
+        ),
+        window_unavailable=WeatherScopeUnavailableAuthority(
+            source_turn_id="date-unavailable-turn",
+            source_sequence=2,
+        ),
+    )
+    resolution = compile_weather_scope_resolution(
+        WeatherScopeSelection(
+            scope_revision=2,
+            location_action="set",
+            window_action="retain",
+            location_source="shopper_provided_location",
+            location="Portland",
+        ),
+        current_scope=current_scope,
+        current_shopper_text="The same trip moved to Portland.",
+        saved_zip_authorized=False,
+        expected_projection_version=5,
+        current_date=CURRENT_DATE,
+    )
+
+    persisted = apply_current_weather_scope_resolution(
+        current_scope,
+        resolution,
+        source_turn_id="location-update-turn",
+        source_sequence=3,
+    )
+
+    assert persisted.location is not None
+    assert persisted.location.value == ShopperLocationWeatherScope(
+        location="Portland"
+    )
+    assert persisted.window is None
+    assert persisted.window_unavailable == current_scope.window_unavailable
+
+
 def test_scope_selection_schema_explains_atomic_component_resolution() -> None:
     properties = WeatherScopeSelection.model_json_schema()["properties"]
 
@@ -540,6 +620,14 @@ def test_scope_selection_schema_explains_atomic_component_resolution() -> None:
         "location_action"
     ]["description"]
     assert "Never rely on an omitted field to inherit a date" in properties[
+        "window_action"
+    ]["description"]
+    assert "unavailable" in properties["location_action"]["enum"]
+    assert "unavailable" in properties["window_action"]["enum"]
+    assert "ordinary missing, askable location" in properties[
+        "location_action"
+    ]["description"]
+    assert "ordinary missing, askable date" in properties[
         "window_action"
     ]["description"]
     assert "pending_source_turn_id" not in properties

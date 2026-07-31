@@ -34,12 +34,12 @@ def test_pending_withdrawal_dataset_freezes_the_authority_regression() -> None:
     assert withdrawal["required_weather_scope"] == {
         "scope_revision": 1,
         "location_action": "set",
-        "window_action": "clear",
+        "window_action": "unavailable",
         "location_source": "shopper_provided_location",
         "location_supplied": True,
         "date_supplied": False,
     }
-    assert withdrawal["required_event_context_next_question"] == "event_date"
+    assert withdrawal["required_event_context_next_question"] == "none"
     assert withdrawal["weather_tool_calls"] == 0
     assert conversation["queries"][2] == "Saturday next week."
     assert completion["required_weather_scope"]["location_action"] == "retain"

@@ -57,7 +57,7 @@ EventType = Literal[
 _DEFAULT_TIMEOUT_SECONDS = 10.0
 _DEFAULT_CONTEXT_MAX_CHARS = 16_384
 _MAX_CONVERSATION_SUMMARY_CHARS = 16_384
-_MEMORY_RESPONSE_CONTRACT = 5
+_MEMORY_RESPONSE_CONTRACT = 6
 _TRUNCATION_MARKER = "…"
 
 
@@ -191,7 +191,7 @@ class TurnStartResult(_MemoryModel):
     """Combined conversation context and cart for one turn."""
 
     turn_id: str = Field(..., min_length=1, max_length=256)
-    contract_version: Literal[1, 2, 3, 4, 5] = 1
+    contract_version: Literal[1, 2, 3, 4, 5, 6] = 1
     attempt_id: str = Field(..., min_length=1, max_length=128)
     sequence: int = Field(..., ge=1)
     replayed: bool = False
@@ -231,6 +231,12 @@ class TurnStartResult(_MemoryModel):
         projection_keys = (
             set(projection) if isinstance(projection, Mapping) else set()
         )
+        raw_scope = (
+            projection.get("current_weather_scope")
+            if isinstance(projection, Mapping)
+            else None
+        )
+        scope_keys = set(raw_scope) if isinstance(raw_scope, Mapping) else set()
         v2_top_level = {"unsummarized_turn_count", "summary_compaction_source"}
         v2_projection = {
             "summary_text",
@@ -248,6 +254,14 @@ class TurnStartResult(_MemoryModel):
             )
         if version >= 3 and "current_weather_scope" not in projection_keys:
             raise ValueError("memory contract v3 response omitted weather scope")
+        if version < 6 and {
+            "location_unavailable",
+            "window_unavailable",
+        }.intersection(scope_keys):
+            raise ValueError(
+                "memory response contains weather unavailability before "
+                "contract v6"
+            )
         if (
             version < 5
             and "current_weather_scope_source_turns" in value

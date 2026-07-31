@@ -20,7 +20,7 @@ from pydantic import (
 )
 
 
-WEATHER_SCOPE_RESOLVER_SYSTEM_PROMPT = """You resolve two independent questions about the shopper's current weather-planning context.
+_WEATHER_SCOPE_SUBJECT_PROMPT = """You resolve the shopper's current weather-planning subject.
 
 This is a business-tool-disabled semantic decision. Use the rolling summary and
 recent turns only to understand conversational meaning. They do not establish
@@ -46,32 +46,57 @@ Choose exactly one subject_relation:
 - new_subject: the shopper introduces a different event, trip, or ordinary
   weather-planning subject.
 - unchanged: the current subject and its location/date scope are unchanged.
-- unclear: the relationship cannot be established confidently.
+- unclear: the relationship cannot be established confidently."""
 
-Separately choose exactly one pending_disposition:
+_WEATHER_SCOPE_PENDING_PROMPT = """Separately choose exactly one pending_disposition:
 - not_addressed: the current query neither answers nor explicitly resumes the
   supplied pending question.
 - answered: the shopper answers only the supplied pending question and leaves
   the stored opposite component unchanged. Use this only with same_subject.
+- declined: the shopper explicitly declines or cancels the supplied pending
+  question and wants to continue without answering it. Use this only with
+  same_subject. This marks only that component unavailable for the current
+  subject and consumes only that exact question; it is not a permanent
+  preference against weather and does not interpret other location or date
+  facts.
 - resume_requested: the shopper explicitly asks what information is still
   needed, so the existing pending question should be asked again without
   changing its scope or source binding. Use this only with unchanged.
 
-For answered or resume_requested, exactly echo the pending question's opaque
-source_turn_id in the top-level pending_source_turn_id field. Omit that handle
-for not_addressed. If an answer also changes or withdraws the stored opposite
-component, use same_subject/not_addressed so activation can author both current
-facts without pending authority.
+For answered, declined, or resume_requested, exactly echo the pending
+question's opaque source_turn_id in the top-level pending_source_turn_id field.
+Omit that handle for not_addressed. If an answer also changes or withdraws the
+stored opposite component, use same_subject/not_addressed so activation can
+author both current facts without pending authority."""
 
-Return only these semantic axes. Do not extract, normalize, copy, or author
-location, date, scope revision, or component actions; the main shopper
+_WEATHER_SCOPE_OUTPUT_BOUNDARY = """Do not extract, normalize, copy, or author location, date, scope revision, or component actions; the main shopper
 activation supplies current-turn scope facts once and the server validates and
 compiles them. Follow-up question selection remains the main shopper skill's
 responsibility.
 
-Make exactly one required WeatherScopeResolverDecision control call. This is a
-schema-only control channel, not a business tool. Do not include prose or
-Markdown."""
+Make exactly one required resolver control call. This is a schema-only control
+channel, not a business tool. Do not include prose or Markdown."""
+
+_WEATHER_SCOPE_SUBJECT_ONLY_PROMPT = """No durable pending question is bound to this scope. The control therefore
+contains only subject_relation. Do not return pending_disposition,
+pending_source_turn_id, or any pending-question decision."""
+
+WEATHER_SCOPE_RESOLVER_SYSTEM_PROMPT = "\n\n".join(
+    (
+        _WEATHER_SCOPE_SUBJECT_PROMPT,
+        _WEATHER_SCOPE_PENDING_PROMPT,
+        "Return only these semantic axes. "
+        + _WEATHER_SCOPE_OUTPUT_BOUNDARY,
+    )
+)
+WEATHER_SCOPE_SUBJECT_RESOLVER_SYSTEM_PROMPT = "\n\n".join(
+    (
+        _WEATHER_SCOPE_SUBJECT_PROMPT,
+        _WEATHER_SCOPE_SUBJECT_ONLY_PROMPT,
+        "Return only subject_relation. "
+        + _WEATHER_SCOPE_OUTPUT_BOUNDARY,
+    )
+)
 
 _INPUT_OMISSION_MARKER = "…[middle omitted]…"
 _MIN_PROJECTED_TEXT_CHARS = 64
@@ -86,6 +111,7 @@ WeatherScopeSubjectRelation = Literal[
 WeatherScopePendingDisposition = Literal[
     "not_addressed",
     "answered",
+    "declined",
     "resume_requested",
 ]
 
@@ -93,6 +119,7 @@ _VALID_RESOLVER_OUTCOMES = frozenset(
     {
         ("same_subject", "not_addressed"),
         ("same_subject", "answered"),
+        ("same_subject", "declined"),
         ("new_subject", "not_addressed"),
         ("unchanged", "not_addressed"),
         ("unchanged", "resume_requested"),
@@ -127,7 +154,7 @@ class WeatherScopeResolverDecision(BaseModel):
         max_length=256,
         description=(
             "Opaque handle from current_scope.pending_question. Copy it "
-            "exactly for answered or resume_requested; omit it for "
+            "exactly for answered, declined, or resume_requested; omit it for "
             "not_addressed."
         ),
     )
@@ -159,14 +186,49 @@ class WeatherScopeResolverDecision(BaseModel):
             raise ValueError("invalid subject/pending resolver combination")
         pending_handle_required = self.pending_disposition in {
             "answered",
+            "declined",
             "resume_requested",
         }
         if pending_handle_required != (self.pending_source_turn_id is not None):
             raise ValueError(
                 "pending_source_turn_id is required exactly when the pending "
-                "question is answered or resumed"
+                "question is answered, declined, or resumed"
             )
         return self
+
+
+class WeatherScopeSubjectDecision(BaseModel):
+    """Subject-only capability when no durable pending binding exists."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    subject_relation: WeatherScopeSubjectRelation
+
+
+def weather_scope_resolver_control_model(
+    *,
+    has_pending_binding: bool,
+) -> type[BaseModel]:
+    """Advertise pending controls only when durable state can authorize them."""
+
+    return (
+        WeatherScopeResolverDecision
+        if has_pending_binding
+        else WeatherScopeSubjectDecision
+    )
+
+
+def weather_scope_resolver_system_prompt(
+    *,
+    has_pending_binding: bool,
+) -> str:
+    """Match semantic instructions to the resolver's advertised capability."""
+
+    return (
+        WEATHER_SCOPE_RESOLVER_SYSTEM_PROMPT
+        if has_pending_binding
+        else WEATHER_SCOPE_SUBJECT_RESOLVER_SYSTEM_PROMPT
+    )
 
 
 @dataclass(frozen=True)
@@ -381,6 +443,8 @@ def _serialize_resolver_payload(payload: Mapping[str, Any]) -> str:
 
 def parse_weather_scope_resolver_tool_call(
     message: Any,
+    *,
+    control_model: type[BaseModel] = WeatherScopeResolverDecision,
 ) -> WeatherScopeResolverDecision | None:
     """Validate exactly one forced control call and fail closed otherwise."""
 
@@ -403,14 +467,22 @@ def parse_weather_scope_resolver_tool_call(
         else getattr(call, "args", None)
     )
     if (
-        name != WeatherScopeResolverDecision.__name__
+        name != control_model.__name__
         or not isinstance(arguments, dict)
     ):
         return None
     try:
-        return WeatherScopeResolverDecision.model_validate(
+        parsed = control_model.model_validate(
             arguments,
             strict=True,
         )
     except ValidationError:
         return None
+    if isinstance(parsed, WeatherScopeResolverDecision):
+        return parsed
+    if isinstance(parsed, WeatherScopeSubjectDecision):
+        return WeatherScopeResolverDecision(
+            subject_relation=parsed.subject_relation,
+            pending_disposition="not_addressed",
+        )
+    return None

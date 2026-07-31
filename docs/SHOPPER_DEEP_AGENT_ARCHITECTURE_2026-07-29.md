@@ -344,8 +344,14 @@ revision, and the target action before consuming that binding. Either marker
 suppresses both location/date follow-ups because weather cannot become complete,
 but not a styling-only venue question. It is current-subject state rather than
 a shopper preference; a later `set`, explicit `clear`, or new subject removes
-it. A stale handle leaves the binding intact. Any validated current-turn action
-still survives. When the
+it. After both component actions are compiled, pending eligibility is derived
+from their effective state. If either component is unavailable, the compiler
+atomically retires any opposite-component pending binding without mislabeling
+that retirement as a decline or subject replacement. A later `set` or explicit
+`clear` may make the missing component askable again, but a newly selected
+question is stamped from that later turn rather than restoring the retired
+handle. A stale explicit-control handle leaves the binding intact. Any
+validated current-turn action still survives. When the
 isolated resolver is unavailable or unclear, the pure authority compiler clears
 every proposed retained component without erasing a validated current-turn
 `set` or `unavailable`, receipt/refresh reuse is rejected, and prior-dependent

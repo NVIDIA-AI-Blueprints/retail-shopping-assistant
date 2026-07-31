@@ -284,7 +284,12 @@ marker prevents the declined location/date question from resurfacing for this
 subject, but it is not a conversation-wide preference: a later `set`, explicit
 `clear`, or new-subject replacement removes it. While either component is
 unavailable the assistant asks no location/date weather follow-up, though it
-may still ask a styling-only venue question.
+may still ask a styling-only venue question. Pending eligibility is reconciled
+from the complete post-transition scope: if the component opposite an existing
+pending question becomes unavailable, that old binding is retired in the same
+atomic write. A later `set` or explicit `clear` may make the missing component
+askable again, but any resulting question receives a fresh source binding
+rather than reviving the retired handle.
 
 When a new subject replaces a live pending question, contract 6 carries the
 exact `supersede_pending_source_turn_id`. The compiler first removes every old

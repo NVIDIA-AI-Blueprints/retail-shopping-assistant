@@ -1,0 +1,146 @@
+set_name: Opposite weather component withdrawal retires pending authority
+shopper_profile_id: shopper_jordan
+queries:
+  - >-
+    I’m planning weather-aware styling for an outdoor conference Saturday next
+    week, but I haven’t chosen the city yet. I’m not shopping for products.
+  - "The date is undecided now."
+  - "Actually, it will be Friday next week."
+  - "Seattle."
+answers:
+  - >-
+    Establish only the conference date from the current turn. Do not import the
+    profile ZIP or another subject as the event location. Ask one natural
+    question for the conference location, and make no weather or catalog call.
+  - >-
+    Treat the explicit date withdrawal as current authority for the same
+    conference. Keep location missing, mark the date unavailable, atomically
+    retire the now-ineligible pending location question, and ask no replacement
+    weather-context question. Make no weather or catalog call.
+  - >-
+    Treat Friday next week as fresh current-turn date authority. Remove the
+    date-unavailable marker, keep location missing, and ask one fresh question
+    for the conference location. Do not restore the retired question source,
+    call weather, or search for products.
+  - >-
+    Treat Seattle as the exact answer to the fresh conference-location
+    question. Set Seattle, retain Friday next week, call weather exactly once,
+    and give concise outdoor conference guidance grounded in that forecast.
+    Ask no further context question and do not search for products.
+diagnostic_expectations:
+  - required_skills: [outfit-styling, event-context]
+    required_event_context_next_question: event_location
+    required_weather_scope:
+      scope_revision: 0
+      location_action: clear
+      window_action: set
+      location_source: null
+      location_supplied: false
+      date_supplied: true
+    forbidden_skills:
+      - product-discovery
+      - budget-shopping
+      - cart-management
+      - store-policy-answers
+    required_business_sequence: []
+    forbidden_tools:
+      - get_weather_forecast_tool
+      - search_catalog_tool
+      - resolve_conversation_products_tool
+      - get_product_details_tool
+      - check_product_availability_tool
+      - check_active_promotions_tool
+    weather_tool_calls: 0
+    required_response_phrases: ["?"]
+    forbidden_response_phrases:
+      - Weather Data Provided by Visual Crossing
+      - "°F"
+  - required_skills: [outfit-styling, event-context]
+    required_event_context_next_question: none
+    required_weather_scope:
+      scope_revision: 1
+      location_action: clear
+      window_action: unavailable
+      location_source: null
+      location_supplied: false
+      date_supplied: false
+    forbidden_skills:
+      - product-discovery
+      - budget-shopping
+      - cart-management
+      - store-policy-answers
+    required_business_sequence: []
+    forbidden_tools:
+      - get_weather_forecast_tool
+      - search_catalog_tool
+      - resolve_conversation_products_tool
+      - get_product_details_tool
+      - check_product_availability_tool
+      - check_active_promotions_tool
+    weather_tool_calls: 0
+    forbidden_response_phrases:
+      - "?"
+      - Weather Data Provided by Visual Crossing
+      - "°F"
+      - Saturday next week
+  - required_skills: [outfit-styling, event-context]
+    required_event_context_next_question: event_location
+    required_weather_scope:
+      scope_revision: 2
+      location_action: clear
+      window_action: set
+      location_source: null
+      location_supplied: false
+      date_supplied: true
+    forbidden_skills:
+      - product-discovery
+      - budget-shopping
+      - cart-management
+      - store-policy-answers
+    required_business_sequence: []
+    forbidden_tools:
+      - get_weather_forecast_tool
+      - search_catalog_tool
+      - resolve_conversation_products_tool
+      - get_product_details_tool
+      - check_product_availability_tool
+      - check_active_promotions_tool
+    weather_tool_calls: 0
+    required_response_phrases: ["?"]
+    forbidden_response_phrases:
+      - Weather Data Provided by Visual Crossing
+      - "°F"
+  - required_skills: [outfit-styling, event-context]
+    required_event_context_next_question: none
+    required_weather_scope:
+      scope_revision: 3
+      location_action: set
+      window_action: retain
+      location_source: shopper_provided_location
+      location_supplied: true
+      date_supplied: false
+    forbidden_skills:
+      - product-discovery
+      - budget-shopping
+      - cart-management
+      - store-policy-answers
+    required_tools: [get_weather_forecast_tool]
+    required_business_sequence: [get_weather_forecast_tool]
+    forbidden_tools:
+      - search_catalog_tool
+      - resolve_conversation_products_tool
+      - get_product_details_tool
+      - check_product_availability_tool
+      - check_active_promotions_tool
+    weather_tool_calls: 1
+    required_weather_trace:
+      request_shape: exact_date
+      location_source: shopper_provided_location
+      provider_input: location_query
+      outcome: success
+    required_weather_receipt_status: promotion_prepared
+    required_response_phrases:
+      - Seattle
+      - Weather Data Provided by Visual Crossing
+    forbidden_response_phrases:
+      - NYC

@@ -6,6 +6,29 @@ Updated: 2026-07-31
 
 The current working tree extends the shopper-serving Deep Agent architecture:
 
+- pending-question eligibility is now reconciled from the complete effective
+  weather scope after both component actions are compiled. If either component
+  is source-bound `unavailable`, every location/date follow-up and every
+  pending-preservation fallback is suppressed; an old opposite-component
+  binding therefore retires atomically without being mislabeled as a decline
+  or new-subject supersession. A later `set` or explicit `clear` removes the
+  marker and may create a fresh question stamped from that later turn, never
+  the retired handle. This changes no semantic resolver axis, skill prompt,
+  memory contract, migration, receipt, or shopper-language rule. Symmetric
+  compiler and lifecycle regressions pass inside a 76-test
+  authority/shared/dataset gate; 2 targeted serving-runtime tests and 19
+  targeted memory tests also pass, along with a 1,425-test neighboring
+  chain/shared/memory gate. A four-turn live run on a fresh SQLite
+  database passed 4/4 deterministic diagnostics: date-only pending location,
+  opposite date withdrawal with no question, fresh date with a fresh location
+  question, then exact completion and one successful forecast. GPT-5.2 Judge
+  scores are 5/3/3/4 (3.75/5) at 15.40s average. The two score-3 rationales
+  cannot observe durable source identity, and the score-4 rationale incorrectly
+  calls Aug 7 inconsistent with Friday next week from the Jul 31 UTC anchor;
+  those qualifications and the excluded hidden-diagnostics/timeout attempt are
+  preserved rather than rerun. Canonical quality and timing evidence is local
+  under
+  `~/exec-briefs/retail-shopping-assistant/quality/weather_pending_opposite_withdrawal/`;
 - an exact durable weather question can now be declined without a phrase
   matcher or intent router. The model-owned activation marks the named
   component `unavailable`; the isolated resolver emits source-bound

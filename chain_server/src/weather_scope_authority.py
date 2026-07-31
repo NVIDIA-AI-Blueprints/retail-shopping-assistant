@@ -282,6 +282,9 @@ def compile_weather_scope_authority(
         resolution,
         component="window",
     )
+    component_questions_suppressed = bool(
+        effective_location_unavailable or effective_window_unavailable
+    )
     if refresh and (
         effective_location is None or effective_window is None
     ):
@@ -314,25 +317,26 @@ def compile_weather_scope_authority(
         decision,
         resolution,
         accepted_question,
-    )
+    ) and not component_questions_suppressed
     preserve_failed_pending_answer = bool(
-        resolver_answers_pending
+        not component_questions_suppressed
+        and resolver_answers_pending
         and not pending_component_is_set
         and not current_turn_replacement
         and current_scope.pending_question is not None
     )
     preserve_rejected_pending_control = bool(
-        pending_control_rejected
+        not component_questions_suppressed
+        and pending_control_rejected
         and resolution is not None
         and not pending_component_is_set
         and current_scope.pending_question is not None
     )
     if resolver_declines_pending:
         accepted_question = "none"
-    elif (
-        effective_location_unavailable or effective_window_unavailable
-    ) and accepted_question in {"event_location", "event_date"}:
-        accepted_question = "none"
+    elif component_questions_suppressed:
+        if accepted_question in {"event_location", "event_date"}:
+            accepted_question = "none"
     elif pending_counterpart_authority_bypassed:
         accepted_question = _opposite_pending_question(current_scope)
     elif (

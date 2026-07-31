@@ -476,6 +476,219 @@ def test_typed_unavailability_suppresses_question_and_persists_source() -> None:
 
 
 @pytest.mark.parametrize(
+    ("pending_scope", "proposed_actions", "unavailable_field"),
+    [
+        pytest.param(
+            _pending_location_scope(),
+            ("clear", "unavailable"),
+            "window_unavailable",
+            id="pending-location-date-withdrawn",
+        ),
+        pytest.param(
+            _pending_date_scope(),
+            ("unavailable", "clear"),
+            "location_unavailable",
+            id="pending-date-location-withdrawn",
+        ),
+    ],
+)
+def test_opposite_component_unavailability_retires_pending_binding_atomically(
+    pending_scope: CurrentWeatherScope,
+    proposed_actions: tuple[str, str],
+    unavailable_field: str,
+) -> None:
+    outcome = compile_weather_scope_authority(
+        current_scope=pending_scope,
+        proposed_resolution=_resolution(*proposed_actions),
+        resolver_decision=_resolver_decision("same_subject"),
+        resolver_required=True,
+        atomic_scope_supported=True,
+        expected_projection_version=5,
+        next_question="none",
+        weather_refresh=False,
+        weather_receipt_id=None,
+    )
+
+    assert outcome.resolution is not None
+    assert (
+        outcome.resolution.location_action,
+        outcome.resolution.window_action,
+    ) == proposed_actions
+    assert outcome.next_question == "none"
+    assert outcome.resolution.pending_question is None
+    assert outcome.resolution.preserve_pending_source_turn_id is None
+    assert outcome.resolution.complete_pending_source_turn_id is None
+    assert outcome.resolution.decline_pending_source_turn_id is None
+    assert outcome.resolution.supersede_pending_source_turn_id is None
+
+    persisted = apply_current_weather_scope_resolution(
+        pending_scope,
+        outcome.resolution,
+        source_turn_id="withdrawal-turn",
+        source_sequence=3,
+    )
+    assert persisted.pending_question is None
+    assert persisted.pending_source_turn_id is None
+    assert persisted.pending_source_sequence is None
+    unavailable = getattr(persisted, unavailable_field)
+    assert unavailable is not None
+    assert unavailable.source_turn_id == "withdrawal-turn"
+    assert unavailable.source_sequence == 3
+
+
+@pytest.mark.parametrize(
+    (
+        "pending_scope",
+        "withdrawal_actions",
+        "later_actions",
+        "fresh_question",
+    ),
+    [
+        pytest.param(
+            _pending_location_scope(),
+            ("clear", "unavailable"),
+            ("clear", "set"),
+            "event_location",
+            id="date-set-reopens-location",
+        ),
+        pytest.param(
+            _pending_date_scope(),
+            ("unavailable", "clear"),
+            ("set", "clear"),
+            "event_date",
+            id="location-set-reopens-date",
+        ),
+    ],
+)
+def test_later_set_creates_a_fresh_binding_after_opposite_withdrawal(
+    pending_scope: CurrentWeatherScope,
+    withdrawal_actions: tuple[str, str],
+    later_actions: tuple[str, str],
+    fresh_question: str,
+) -> None:
+    retired = apply_current_weather_scope_resolution(
+        pending_scope,
+        _resolution(*withdrawal_actions),
+        source_turn_id="withdrawal-turn",
+        source_sequence=3,
+    )
+    later_resolution = _resolution(*later_actions).model_copy(
+        update={
+            "expected_projection_version": 6,
+            "expected_scope_revision": retired.revision,
+        }
+    )
+
+    outcome = compile_weather_scope_authority(
+        current_scope=retired,
+        proposed_resolution=later_resolution,
+        resolver_decision=_resolver_decision("same_subject"),
+        resolver_required=True,
+        atomic_scope_supported=True,
+        expected_projection_version=6,
+        next_question=fresh_question,
+        weather_refresh=False,
+        weather_receipt_id=None,
+    )
+
+    assert outcome.resolution is not None
+    assert outcome.next_question == fresh_question
+    assert outcome.resolution.pending_question == fresh_question
+    assert outcome.resolution.preserve_pending_source_turn_id is None
+    persisted = apply_current_weather_scope_resolution(
+        retired,
+        outcome.resolution,
+        source_turn_id="later-turn",
+        source_sequence=4,
+    )
+    assert persisted.location_unavailable is None
+    assert persisted.window_unavailable is None
+    assert persisted.pending_question == fresh_question
+    assert persisted.pending_source_turn_id == "later-turn"
+    assert persisted.pending_source_turn_id != pending_scope.pending_source_turn_id
+    assert persisted.pending_source_sequence == 4
+
+
+@pytest.mark.parametrize(
+    ("scope_payload", "later_actions", "fresh_question"),
+    [
+        pytest.param(
+            {
+                "revision": 2,
+                "location": {
+                    "value": {
+                        "kind": "shopper_provided_location",
+                        "location": "Seattle",
+                    },
+                    "source_turn_id": "location-turn",
+                    "source_sequence": 1,
+                },
+                "window_unavailable": {
+                    "source_turn_id": "date-withdrawal-turn",
+                    "source_sequence": 2,
+                },
+            },
+            ("retain", "clear"),
+            "event_date",
+            id="date-clear",
+        ),
+        pytest.param(
+            {
+                "revision": 2,
+                "window": {
+                    "value": {
+                        "start_date": "2026-08-16",
+                        "end_date": "2026-08-16",
+                    },
+                    "source_turn_id": "date-turn",
+                    "source_sequence": 1,
+                },
+                "location_unavailable": {
+                    "source_turn_id": "location-withdrawal-turn",
+                    "source_sequence": 2,
+                },
+            },
+            ("clear", "retain"),
+            "event_location",
+            id="location-clear",
+        ),
+    ],
+)
+def test_later_clear_makes_an_unavailable_component_freshly_askable(
+    scope_payload: dict[str, object],
+    later_actions: tuple[str, str],
+    fresh_question: str,
+) -> None:
+    current_scope = CurrentWeatherScope.model_validate(scope_payload)
+    outcome = compile_weather_scope_authority(
+        current_scope=current_scope,
+        proposed_resolution=_resolution(*later_actions),
+        resolver_decision=_resolver_decision("same_subject"),
+        resolver_required=True,
+        atomic_scope_supported=True,
+        expected_projection_version=5,
+        next_question=fresh_question,
+        weather_refresh=False,
+        weather_receipt_id=None,
+    )
+
+    assert outcome.resolution is not None
+    assert outcome.next_question == fresh_question
+    assert outcome.resolution.pending_question == fresh_question
+    persisted = apply_current_weather_scope_resolution(
+        current_scope,
+        outcome.resolution,
+        source_turn_id="later-clear-turn",
+        source_sequence=3,
+    )
+    assert persisted.location_unavailable is None
+    assert persisted.window_unavailable is None
+    assert persisted.pending_question == fresh_question
+    assert persisted.pending_source_turn_id == "later-clear-turn"
+    assert persisted.pending_source_sequence == 3
+
+
+@pytest.mark.parametrize(
     ("scope_payload", "proposed_actions", "next_question"),
     [
         (

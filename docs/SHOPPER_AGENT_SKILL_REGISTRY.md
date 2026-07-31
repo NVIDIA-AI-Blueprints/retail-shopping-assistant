@@ -63,7 +63,11 @@ Every shopper turn uses two model phases inside the same Deep Agents run:
    current query with the dedicated contract-v5 lane of exact completed turns
    named by the scope's location, date, and pending-question source identities
    and must emit one forced typed
-   control call. It is neither a business tool nor a subagent and returns only
+   control call. One chain-local aggregate budget bounds source, summary, and
+   recent semantic text while preserving the exact current query, typed scope,
+   trusted date, and every source sequence; an unfit mandatory payload makes no
+   model call and fails closed. The resolver is neither a business tool nor a
+   subagent and returns only
    orthogonal subject-continuity and pending-question controls. The activation
    call may then submit one atomic
    `weather_scope` that copies the revision and selects `retain`, `set`, or

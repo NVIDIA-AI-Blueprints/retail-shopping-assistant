@@ -2094,7 +2094,7 @@ class DeepAgentsRuntime:
                 subject_relation="unclear",
                 pending_disposition="not_addressed",
             )
-        prompt = build_weather_scope_resolver_prompt(
+        resolver_work = build_weather_scope_resolver_prompt(
             current_query=state.query,
             current_scope_json=state.current_weather_scope.model_dump(
                 mode="json",
@@ -2104,7 +2104,25 @@ class DeepAgentsRuntime:
             rolling_summary=state.conversation_summary,
             scope_source_turns=scope_source_turns,
             recent_turns=state.recent_conversation_turns,
+            max_input_chars=(
+                self.config.weather.scope_resolver_max_input_chars
+            ),
         )
+        if resolver_work is None:
+            _add_model_usage(
+                state,
+                "app_llm_weather_scope_resolver",
+                status="not_used",
+                calls=0,
+                detail=(
+                    "Weather-scope resolver input exceeds its aggregate "
+                    "budget; prior-scope retention unavailable"
+                ),
+            )
+            return WeatherScopeResolverDecision(
+                subject_relation="unclear",
+                pending_disposition="not_addressed",
+            )
         start = time.monotonic()
         timeout_seconds = min(
             max(0.0, execution_deadline - start),
@@ -2129,7 +2147,7 @@ class DeepAgentsRuntime:
                             "role": "system",
                             "content": WEATHER_SCOPE_RESOLVER_SYSTEM_PROMPT,
                         },
-                        {"role": "user", "content": prompt},
+                        {"role": "user", "content": resolver_work.prompt},
                     ]
                 ),
                 timeout=timeout_seconds,
@@ -2216,7 +2234,10 @@ class DeepAgentsRuntime:
             "app_llm_weather_scope_resolver",
             status="used",
             calls=1,
-            detail="Isolated typed weather-scope semantic control decision",
+            detail=(
+                "Isolated typed weather-scope semantic control decision "
+                f"({resolver_work.input_projection} input)"
+            ),
         )
         return decision
 

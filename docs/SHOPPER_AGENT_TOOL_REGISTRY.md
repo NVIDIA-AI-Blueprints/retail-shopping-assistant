@@ -65,9 +65,12 @@ scope, a separate request-local tools-disabled resolver compares the current
 query with the exact completed shopper turns named by its component source
 identities. Contract v5 supplies those turns in a dedicated lane independent of
 summary compaction and raw-tail limits. The resolver
-must emit one forced typed control call. This internal schema channel is neither
-a business tool nor a subagent, and it emits only orthogonal subject-continuity
-and pending-question controls.
+input has one aggregate chain-local budget across source, summary, and recent
+semantic text. Current query, typed scope, trusted date, and every source
+sequence remain exact; if mandatory input cannot fit, no resolver model call
+runs. The resolver must emit one forced typed control call. This internal
+schema channel is neither a business tool nor a subagent, and it emits only
+orthogonal subject-continuity and pending-question controls.
 Activation alone proposes one atomic selection that copies the scope revision
 and chooses `retain`, `set`, or `clear` independently for location and date. A
 pure authority compiler preserves every validated current-turn `set` and

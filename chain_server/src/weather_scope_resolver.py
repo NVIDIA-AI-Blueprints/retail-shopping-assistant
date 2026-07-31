@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from datetime import date
 from typing import Any, Literal, Mapping, Sequence
 
@@ -30,6 +31,9 @@ question carries both source_sequence and an opaque source_turn_id handle. The
 scope_source_turns lane contains the exact prior shopper turns at those
 sequences. Treat those turns as the semantic identity of the subject whose
 typed authority or unanswered question is currently stored.
+When input_projection is bounded_head_tail, the marker
+`…[middle omitted]…` means only the middle of semantic text was omitted by a
+deterministic request-local budget. Never infer the missing text.
 Compare the current query's event, trip, or ordinary weather-planning subject
 with that identity before selecting subject_relation. An additional event or
 trip is a new subject even when the shopper wants the same kind of styling
@@ -68,6 +72,9 @@ responsibility.
 Make exactly one required WeatherScopeResolverDecision control call. This is a
 schema-only control channel, not a business tool. Do not include prose or
 Markdown."""
+
+_INPUT_OMISSION_MARKER = "…[middle omitted]…"
+_MIN_PROJECTED_TEXT_CHARS = 64
 
 
 WeatherScopeSubjectRelation = Literal[
@@ -162,6 +169,14 @@ class WeatherScopeResolverDecision(BaseModel):
         return self
 
 
+@dataclass(frozen=True)
+class WeatherScopeResolverWork:
+    """One bounded, immutable resolver request projection."""
+
+    prompt: str
+    input_projection: Literal["exact", "bounded_head_tail"]
+
+
 def build_weather_scope_resolver_prompt(
     *,
     current_query: str,
@@ -170,24 +185,195 @@ def build_weather_scope_resolver_prompt(
     rolling_summary: str,
     scope_source_turns: Sequence[Mapping[str, Any]],
     recent_turns: Sequence[Mapping[str, Any]],
-) -> str:
-    """Build one compact resolver input with explicit context authority lanes."""
+    max_input_chars: int,
+) -> WeatherScopeResolverWork | None:
+    """Build one aggregate-bounded resolver input or fail closed.
 
-    return json.dumps(
-        {
-            "current_query": current_query,
-            "current_scope": dict(current_scope_json),
-            "current_utc_date": current_utc_date.isoformat(),
-            "scope_subject_context": {
-                "authority": "source_sequence_bound_semantic_identity_only",
-                "turns": [dict(turn) for turn in scope_source_turns],
-            },
-            "semantic_context": {
-                "authoritative": False,
-                "rolling_summary": rolling_summary,
-                "recent_turns": [dict(turn) for turn in recent_turns],
-            },
+    Current query, typed scope, and trusted date remain exact. Only semantic
+    text is projected, and every scope-source sequence remains represented.
+    """
+
+    exact_payload = _resolver_payload(
+        current_query=current_query,
+        current_scope_json=current_scope_json,
+        current_utc_date=current_utc_date,
+        rolling_summary=rolling_summary,
+        scope_source_turns=scope_source_turns,
+        recent_turns=recent_turns,
+    )
+    exact_prompt = _serialize_resolver_payload(exact_payload)
+    if len(exact_prompt) <= max_input_chars:
+        return WeatherScopeResolverWork(
+            prompt=exact_prompt,
+            input_projection="exact",
+        )
+
+    retained_recent_turns = [dict(turn) for turn in recent_turns]
+    include_summary = bool(rolling_summary)
+    minimum_prompt = _serialize_projected_resolver_payload(
+        current_query=current_query,
+        current_scope_json=current_scope_json,
+        current_utc_date=current_utc_date,
+        rolling_summary=rolling_summary,
+        scope_source_turns=scope_source_turns,
+        recent_turns=retained_recent_turns,
+        include_summary=include_summary,
+        text_limit=_MIN_PROJECTED_TEXT_CHARS,
+    )
+    while len(minimum_prompt) > max_input_chars and retained_recent_turns:
+        retained_recent_turns.pop(0)
+        minimum_prompt = _serialize_projected_resolver_payload(
+            current_query=current_query,
+            current_scope_json=current_scope_json,
+            current_utc_date=current_utc_date,
+            rolling_summary=rolling_summary,
+            scope_source_turns=scope_source_turns,
+            recent_turns=retained_recent_turns,
+            include_summary=include_summary,
+            text_limit=_MIN_PROJECTED_TEXT_CHARS,
+        )
+    if len(minimum_prompt) > max_input_chars and include_summary:
+        include_summary = False
+        minimum_prompt = _serialize_projected_resolver_payload(
+            current_query=current_query,
+            current_scope_json=current_scope_json,
+            current_utc_date=current_utc_date,
+            rolling_summary=rolling_summary,
+            scope_source_turns=scope_source_turns,
+            recent_turns=retained_recent_turns,
+            include_summary=False,
+            text_limit=_MIN_PROJECTED_TEXT_CHARS,
+        )
+    if len(minimum_prompt) > max_input_chars:
+        return None
+
+    text_lengths = [len(rolling_summary)] if include_summary else []
+    for turn in [*scope_source_turns, *retained_recent_turns]:
+        text_lengths.extend(
+            len(value)
+            for key in ("shopper_text", "assistant_text")
+            if isinstance((value := turn.get(key)), str)
+        )
+    lower = _MIN_PROJECTED_TEXT_CHARS
+    upper = max([lower, *text_lengths])
+    best_prompt = minimum_prompt
+    while lower <= upper:
+        candidate_limit = (lower + upper) // 2
+        candidate_prompt = _serialize_projected_resolver_payload(
+            current_query=current_query,
+            current_scope_json=current_scope_json,
+            current_utc_date=current_utc_date,
+            rolling_summary=rolling_summary,
+            scope_source_turns=scope_source_turns,
+            recent_turns=retained_recent_turns,
+            include_summary=include_summary,
+            text_limit=candidate_limit,
+        )
+        if len(candidate_prompt) <= max_input_chars:
+            best_prompt = candidate_prompt
+            lower = candidate_limit + 1
+        else:
+            upper = candidate_limit - 1
+    return WeatherScopeResolverWork(
+        prompt=best_prompt,
+        input_projection="bounded_head_tail",
+    )
+
+
+def _resolver_payload(
+    *,
+    current_query: str,
+    current_scope_json: Mapping[str, Any],
+    current_utc_date: date,
+    rolling_summary: str,
+    scope_source_turns: Sequence[Mapping[str, Any]],
+    recent_turns: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    return {
+        "current_query": current_query,
+        "current_scope": dict(current_scope_json),
+        "current_utc_date": current_utc_date.isoformat(),
+        "scope_subject_context": {
+            "authority": "source_sequence_bound_semantic_identity_only",
+            "turns": [dict(turn) for turn in scope_source_turns],
         },
+        "semantic_context": {
+            "authoritative": False,
+            "rolling_summary": rolling_summary,
+            "recent_turns": [dict(turn) for turn in recent_turns],
+        },
+    }
+
+
+def _serialize_projected_resolver_payload(
+    *,
+    current_query: str,
+    current_scope_json: Mapping[str, Any],
+    current_utc_date: date,
+    rolling_summary: str,
+    scope_source_turns: Sequence[Mapping[str, Any]],
+    recent_turns: Sequence[Mapping[str, Any]],
+    include_summary: bool,
+    text_limit: int,
+) -> str:
+    payload = _resolver_payload(
+        current_query=current_query,
+        current_scope_json=current_scope_json,
+        current_utc_date=current_utc_date,
+        rolling_summary=(
+            _head_tail_projection(rolling_summary, text_limit)
+            if include_summary
+            else ""
+        ),
+        scope_source_turns=[
+            _project_semantic_turn(turn, text_limit)
+            for turn in scope_source_turns
+        ],
+        recent_turns=[
+            _project_semantic_turn(turn, text_limit) for turn in recent_turns
+        ],
+    )
+    payload["input_projection"] = "bounded_head_tail"
+    return _serialize_resolver_payload(payload)
+
+
+def _project_semantic_turn(
+    turn: Mapping[str, Any],
+    text_limit: int,
+) -> dict[str, Any]:
+    return {
+        "sequence": turn.get("sequence"),
+        "shopper_text": _head_tail_projection(
+            _semantic_text(turn.get("shopper_text")),
+            text_limit,
+        ),
+        "assistant_text": _head_tail_projection(
+            _semantic_text(turn.get("assistant_text")),
+            text_limit,
+        ),
+    }
+
+
+def _semantic_text(value: Any) -> str:
+    return value if isinstance(value, str) else ""
+
+
+def _head_tail_projection(value: str, limit: int) -> str:
+    if len(value) <= limit:
+        return value
+    available = limit - len(_INPUT_OMISSION_MARKER)
+    head_chars = (available + 1) // 2
+    tail_chars = available // 2
+    return (
+        value[:head_chars]
+        + _INPUT_OMISSION_MARKER
+        + (value[-tail_chars:] if tail_chars else "")
+    )
+
+
+def _serialize_resolver_payload(payload: Mapping[str, Any]) -> str:
+    return json.dumps(
+        payload,
         ensure_ascii=False,
         separators=(",", ":"),
     )

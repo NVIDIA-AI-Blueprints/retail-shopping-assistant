@@ -366,6 +366,8 @@ weather:
   base_url: https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline
   api_key_env: WEATHER_API_KEY
   timeout_seconds: 3.0
+  scope_resolver_timeout_seconds: 8.0
+  scope_resolver_max_input_chars: 16384
   max_provider_attempts: 2
   max_forecast_horizon_days: 15
   max_range_days: 15
@@ -376,6 +378,17 @@ weather:
 `weather_forecast.v1` evidence boundary. It must be 1–21,600 seconds. The
 memory-owned projection retains at most four valid scopes regardless of this
 TTL.
+
+`scope_resolver_max_input_chars` is the chain-local aggregate dynamic
+resolver-payload budget and must be 1,024–65,536 characters. It includes
+scope-source, summary,
+and recent semantic lanes. The default is 16,384. On overflow the chain keeps
+the current query, typed scope, trusted date, and all source sequences exact;
+it projects semantic text with a marked deterministic head-and-tail excerpt,
+then drops oldest optional recent turns and the optional summary as needed. If
+the mandatory lanes do not fit, it makes zero resolver model calls and fails
+closed for prior authority. The memory contract and exact durable/replay text
+are unchanged.
 
 To enable qualified shopper turns or run an explicit direct-client test, set
 `WEATHER_ENABLED=true` and provide `WEATHER_API_KEY` through an ignored `.env`,

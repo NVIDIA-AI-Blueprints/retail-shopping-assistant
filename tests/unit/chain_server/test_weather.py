@@ -163,6 +163,7 @@ class TestWeatherConfig:
         assert config.max_forecast_horizon_days == 15
         assert config.max_range_days == 15
         assert config.receipt_ttl_seconds == 3_600
+        assert config.scope_resolver_max_input_chars == 16_384
         assert config.model_dump().get("api_key") is None
 
     @pytest.mark.parametrize(
@@ -198,11 +199,25 @@ class TestWeatherConfig:
             ("receipt_ttl_seconds", 21_601),
             ("receipt_ttl_seconds", True),
             ("receipt_ttl_seconds", "3600"),
+            ("scope_resolver_max_input_chars", 1_023),
+            ("scope_resolver_max_input_chars", 65_537),
+            ("scope_resolver_max_input_chars", True),
+            ("scope_resolver_max_input_chars", "16384"),
+            ("scope_resolver_max_input_chars", 16_384.0),
         ],
     )
     def test_invalid_config_fails_closed(self, field: str, value: Any) -> None:
         with pytest.raises(ValidationError):
             WeatherConfig(**{field: value})
+
+    @pytest.mark.parametrize("value", [1_024, 65_536])
+    def test_scope_resolver_input_budget_accepts_closed_boundaries(
+        self,
+        value: int,
+    ) -> None:
+        config = WeatherConfig(scope_resolver_max_input_chars=value)
+
+        assert config.scope_resolver_max_input_chars == value
 
     def test_disabled_and_missing_key_clients_return_typed_failures(self) -> None:
         disabled_session = FakeSession(error=AssertionError("must not call"))

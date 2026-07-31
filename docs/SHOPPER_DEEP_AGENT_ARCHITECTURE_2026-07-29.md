@@ -259,6 +259,18 @@ retains the bounded-tail fallback during rolling deployment. Missing source
 turns, timeout, malformed output, structural invalidity, or an unclear
 relation fails closed.
 
+The chain constructs this call under one aggregate dynamic-input budget,
+configured by `weather.scope_resolver_max_input_chars` (16,384 by default;
+1,024–65,536 allowed). It first preserves the exact payload shape when it fits.
+On overflow, the current query, typed scope, trusted date, and every source
+sequence remain exact while semantic text receives deterministic marked
+head-and-tail excerpts. Oldest optional recent turns are removed before the
+optional summary. If the mandatory payload still cannot fit, the chain creates
+no model, records zero resolver calls, and returns `unclear/not_addressed` so
+prior retention fails closed while current-turn facts survive. This projection
+is request-local: contract v5, memory limits, durable text, and replay are
+unchanged.
+
 The isolated resolver owns only orthogonal `subject_relation` and
 `pending_disposition` controls; it never duplicates location/date extraction.
 The schema accepts exactly six outcomes:

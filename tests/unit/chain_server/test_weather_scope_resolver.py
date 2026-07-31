@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from datetime import date
 import json
 import time
@@ -281,7 +282,7 @@ def test_parser_fails_closed_on_wrong_control_name_or_arguments() -> None:
 
 
 def test_prompt_builder_separates_non_authoritative_semantic_context() -> None:
-    prompt = build_weather_scope_resolver_prompt(
+    work = build_weather_scope_resolver_prompt(
         current_query="I also have a conference on August 15.",
         current_scope_json={
             "revision": 4,
@@ -304,9 +305,12 @@ def test_prompt_builder_separates_non_authoritative_semantic_context() -> None:
                 "assistant_text": "What date is the wedding?",
             }
         ],
+        max_input_chars=8_192,
     )
 
-    payload = json.loads(prompt)
+    assert work is not None
+    assert work.input_projection == "exact"
+    payload = json.loads(work.prompt)
     assert payload["current_query"].startswith("I also have a conference")
     assert payload["current_scope"]["revision"] == 4
     assert payload["current_utc_date"] == "2026-07-30"
@@ -332,7 +336,105 @@ def test_prompt_builder_separates_non_authoritative_semantic_context() -> None:
         ],
     }
     assert "output_schema" not in payload
-    assert "\n" not in prompt
+    assert "input_projection" not in payload
+    assert "\n" not in work.prompt
+
+
+def test_prompt_builder_bounds_all_semantic_lanes_and_keeps_authority_exact() -> None:
+    current_scope = {
+        "revision": 7,
+        "pending_question": "event_location",
+        "pending_source_turn_id": "pending-turn",
+        "pending_source_sequence": 3,
+    }
+    escaped_text = ('"\\\n\u0001é' * 20_000) + "semantic-tail"
+    source_turns = [
+        {
+            "sequence": sequence,
+            "shopper_text": f"source-{sequence}-" + escaped_text,
+            "assistant_text": escaped_text + f"-source-{sequence}",
+            "ignored": "not projected",
+        }
+        for sequence in (1, 2, 3)
+    ]
+    recent_turns = [
+        {
+            "sequence": sequence,
+            "shopper_text": escaped_text,
+            "assistant_text": escaped_text,
+        }
+        for sequence in range(4, 54)
+    ]
+    original_sources = deepcopy(source_turns)
+    original_recent = deepcopy(recent_turns)
+
+    first = build_weather_scope_resolver_prompt(
+        current_query="What do you still need for the conference?",
+        current_scope_json=current_scope,
+        current_utc_date=date(2026, 7, 31),
+        rolling_summary=escaped_text,
+        scope_source_turns=source_turns,
+        recent_turns=recent_turns,
+        max_input_chars=8_192,
+    )
+    second = build_weather_scope_resolver_prompt(
+        current_query="What do you still need for the conference?",
+        current_scope_json=current_scope,
+        current_utc_date=date(2026, 7, 31),
+        rolling_summary=escaped_text,
+        scope_source_turns=source_turns,
+        recent_turns=recent_turns,
+        max_input_chars=8_192,
+    )
+
+    assert first is not None
+    assert second == first
+    assert first.input_projection == "bounded_head_tail"
+    assert len(first.prompt) <= 8_192
+    payload = json.loads(first.prompt)
+    assert payload["current_query"] == (
+        "What do you still need for the conference?"
+    )
+    assert payload["current_scope"] == current_scope
+    assert payload["current_utc_date"] == "2026-07-31"
+    assert payload["input_projection"] == "bounded_head_tail"
+    projected_sources = payload["scope_subject_context"]["turns"]
+    assert [turn["sequence"] for turn in projected_sources] == [1, 2, 3]
+    assert all(
+        "…[middle omitted]…" in turn["shopper_text"]
+        for turn in projected_sources
+    )
+    projected_recent = payload["semantic_context"]["recent_turns"]
+    projected_sequences = [turn["sequence"] for turn in projected_recent]
+    assert len(projected_sequences) < len(recent_turns)
+    expected_sequences = list(range(4, 54))
+    assert projected_sequences == (
+        expected_sequences[-len(projected_sequences) :]
+        if projected_sequences
+        else []
+    )
+    assert source_turns == original_sources
+    assert recent_turns == original_recent
+
+
+def test_prompt_builder_fails_closed_when_exact_authority_cannot_fit() -> None:
+    work = build_weather_scope_resolver_prompt(
+        current_query="q" * 2_000,
+        current_scope_json={"revision": 1},
+        current_utc_date=date(2026, 7, 31),
+        rolling_summary="",
+        scope_source_turns=[
+            {
+                "sequence": 1,
+                "shopper_text": "Conference context",
+                "assistant_text": "What city?",
+            }
+        ],
+        recent_turns=[],
+        max_input_chars=1_024,
+    )
+
+    assert work is None
 
 
 def test_prompt_keeps_semantics_with_the_model_and_facts_outside_it() -> None:
@@ -983,3 +1085,50 @@ async def test_runtime_resolver_does_not_model_guess_without_source_turn(
     assert state.model_usage["app_llm_weather_scope_resolver"]["status"] == (
         "not_used"
     )
+
+
+@pytest.mark.asyncio
+async def test_runtime_resolver_makes_zero_model_calls_when_authority_exceeds_budget(
+    base_config,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("WEATHER_API_KEY", "test-weather-key")
+    base_config.weather.enabled = True
+    base_config.weather.scope_resolver_max_input_chars = 1_024
+    model = _ResolverModel(AIMessage(content="must not be called"))
+    runtime = DeepAgentsRuntime(base_config)
+    monkeypatch.setattr(runtime, "_create_chat_model", lambda: model)
+    state = State(
+        user_id=1,
+        query="q" * 2_000,
+        conversation_projection_version=4,
+        conversation_memory_contract_version=4,
+        current_weather_scope=_current_scope(),
+        recent_conversation_turns=[
+            {
+                "sequence": 1,
+                "shopper_text": "I need wedding styling in NYC on August 8.",
+                "assistant_text": "Here is the prior styling guidance.",
+            }
+        ],
+    )
+
+    decision = await runtime._resolve_existing_weather_scope(
+        state,
+        current_utc_date=date(2026, 7, 31),
+        execution_deadline=time.monotonic() + 10,
+    )
+
+    assert decision is not None
+    assert decision.subject_relation == "unclear"
+    assert decision.pending_disposition == "not_addressed"
+    assert model.calls == []
+    assert model.bindings == []
+    assert state.model_usage["app_llm_weather_scope_resolver"] == {
+        "status": "not_used",
+        "calls": 0,
+        "detail": (
+            "Weather-scope resolver input exceeds its aggregate budget; "
+            "prior-scope retention unavailable"
+        ),
+    }

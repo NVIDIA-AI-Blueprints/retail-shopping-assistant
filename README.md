@@ -232,6 +232,15 @@ tools-disabled semantic resolver compares the current query with the exact
 shopper turns named by the stored location, date, and pending-question source
 sequences. It makes one
 forced typed control call and is neither a business tool nor a subagent.
+The chain-local prompt builder applies one aggregate
+`weather.scope_resolver_max_input_chars` budget (16,384 by default) across the
+exact source lane plus non-authoritative summary and recent text. It keeps the
+current query, typed scope, trusted date, and every source sequence exact. If
+the full payload does not fit, semantic text uses deterministic marked
+head-and-tail excerpts, then oldest optional recent turns and the optional
+summary are removed as needed. If the mandatory authority lanes still cannot
+fit, no resolver model call runs and prior retention fails closed; durable and
+replay text remain exact.
 The resolver returns only two orthogonal semantic controls—subject continuity
 and pending-question disposition—and does not duplicate location/date
 extraction. Normal activation is the sole producer of one atomic
@@ -644,6 +653,10 @@ bounded oldest unsummarized prefix for compaction, plus the authoritative cart,
   overlap summarized or recent history but never enters general model context.
   Memory returns exact durable text; chain state replaces assistant weather
   prose with a fixed redaction before either permitted consumer sees the lane.
+  Before the source lane reaches the isolated resolver, a request-local
+  aggregate budget projects only semantic text; it never mutates the memory
+  response, stored rows, replay, source identities, current query, typed scope,
+  or trusted date.
 The summary, exact raw discussion, and historical product index remain separate
 prompt/state lanes: summary prose is
 continuity only and cannot become exact shopper wording, product/cart/tool

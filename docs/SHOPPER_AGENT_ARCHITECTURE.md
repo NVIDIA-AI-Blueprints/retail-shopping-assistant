@@ -627,7 +627,12 @@ weather guidance. Activation owns the typed next-question boundary and one
 optional atomic scope proposal. When a prior scope exists, an isolated
 request-local resolver compares the current query with the dedicated exact
 completed turns named by its location, date, and pending-question source
-identities and must
+identities. A chain-local aggregate budget covers those source turns plus
+summary/recent semantic context before the resolver call. It preserves the
+current query, typed scope, trusted date, and every source sequence exactly;
+overflow projects only semantic text, then removes oldest optional history. An
+unfit mandatory payload causes zero resolver model calls and fails closed for
+prior authority without changing contract v5 or durable text. The resolver must
 emit one forced typed control call. It has no business-tool or subagent
 authority and emits only orthogonal subject-continuity and pending-question
 controls. Activation alone proposes

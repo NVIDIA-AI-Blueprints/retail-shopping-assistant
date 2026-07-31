@@ -40,6 +40,9 @@ VISUAL_CROSSING_ATTRIBUTION_LABEL = "Weather Data Provided by Visual Crossing"
 VISUAL_CROSSING_ATTRIBUTION_URL = "https://www.visualcrossing.com/"
 MAX_PROVIDER_RESPONSE_BYTES = 256 * 1024
 MAX_WEATHER_DAYS = 15
+MIN_WEATHER_SCOPE_RESOLVER_INPUT_CHARS = 1_024
+MAX_WEATHER_SCOPE_RESOLVER_INPUT_CHARS = 65_536
+DEFAULT_WEATHER_SCOPE_RESOLVER_INPUT_CHARS = 16_384
 
 WeatherCondition = Literal[
     "clear",
@@ -125,6 +128,9 @@ class WeatherConfig(BaseModel):
     api_key_env: str = "WEATHER_API_KEY"
     timeout_seconds: StrictFloat = 3.0
     scope_resolver_timeout_seconds: StrictFloat = 8.0
+    scope_resolver_max_input_chars: StrictInt = (
+        DEFAULT_WEATHER_SCOPE_RESOLVER_INPUT_CHARS
+    )
     max_provider_attempts: StrictInt = 2
     max_forecast_horizon_days: StrictInt = MAX_WEATHER_DAYS
     max_range_days: StrictInt = MAX_WEATHER_DAYS
@@ -150,6 +156,20 @@ class WeatherConfig(BaseModel):
     def validate_timeout(cls, value: float) -> float:
         if not math.isfinite(value) or value <= 0:
             raise ValueError("weather timeouts must be finite and positive")
+        return value
+
+    @field_validator("scope_resolver_max_input_chars")
+    @classmethod
+    def validate_scope_resolver_max_input_chars(cls, value: int) -> int:
+        if not (
+            MIN_WEATHER_SCOPE_RESOLVER_INPUT_CHARS
+            <= value
+            <= MAX_WEATHER_SCOPE_RESOLVER_INPUT_CHARS
+        ):
+            raise ValueError(
+                "weather scope_resolver_max_input_chars must be between "
+                "1024 and 65536"
+            )
         return value
 
     @field_validator("max_provider_attempts")

@@ -6,6 +6,27 @@ Updated: 2026-07-31
 
 The current working tree extends the shopper-serving Deep Agent architecture:
 
+- the weather subject resolver now has one chain-local aggregate budget for
+  its dynamic semantic payload: 16,384 characters by default, configurable
+  only within 1,024–65,536. Inputs that fit retain the exact prior JSON shape.
+  On overflow, the projection keeps the current query, current typed scope,
+  trusted UTC date, and every referenced source sequence exact; it applies one
+  marked deterministic head-and-tail projection only to semantic text, then
+  removes the oldest optional recent turns and optional summary if necessary.
+  If those mandatory authority lanes still cannot fit, the runtime makes zero
+  resolver-model calls and returns `unclear/not_addressed`, so the existing
+  authority compiler rejects prior-dependent retains while preserving
+  independently validated current-turn facts. This changes no durable text,
+  memory contract, migration, replay shape, keyword routing, or business-tool
+  grant. The focused weather/config/runtime subset passes 518 tests and the
+  complete Python unit suite passes 1,636. Both three-turn live fixtures pass
+  all deterministic diagnostics: cross-subject replacement scores 4/4/4 with
+  14.02s average latency (4.68s faster than its prior WIP), and pending-question
+  resumption scores 5/4/4 with 9.69s average latency (0.65s faster). Their
+  canonical golden and prior-WIP comparisons are under
+  `~/exec-briefs/retail-shopping-assistant/quality/weather_scope_continuity/comparisons/`
+  and
+  `~/exec-briefs/retail-shopping-assistant/quality/weather_pending_resumption/comparisons/`;
 - weather-scope authority compilation now lives in one pure boundary between
   semantic subject resolution and durable scope mutation. The resolver may
   authorize use of prior scope only; it cannot erase or reinterpret a

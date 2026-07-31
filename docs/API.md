@@ -576,7 +576,14 @@ response-validation failures are not retried:
   shopper turns named by the existing scope's component source identities in a
   dedicated isolated lane used only for subject resolution and protected
   styling provenance. That lane and the current query are presented to one
-  request-local tools-disabled semantic resolver. The resolver must
+  request-local tools-disabled semantic resolver. Before that call, one
+  chain-local aggregate character budget covers source, summary, and recent
+  semantic text. The current query, typed scope, trusted date, and every source
+  sequence remain exact. Overflow receives deterministic marked head-and-tail
+  excerpts and sheds oldest optional semantic context first. If mandatory
+  authority cannot fit, no resolver model call runs and the request-local
+  result fails closed as `unclear/not_addressed`; the durable response contract
+  remains exact. The resolver must
   emit exactly one forced `WeatherScopeResolverDecision` control call. It is
   neither a registered business tool nor a subagent. Missing source turns,
   timeout, malformed output, structural invalidity, or an unclear relation

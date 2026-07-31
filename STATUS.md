@@ -97,6 +97,11 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   version 3 retains the legacy scope shape and strips all v4-only pending
   question and source-binding fields.
   Contract 4 is the current chain's atomic finalize-write capability marker.
+  A staging-era v1 response may include abandoned turns without assistant
+  text. The chain accepts that negotiated legacy lane and filters it before
+  model context, while v2+ retains strict completed/failed, post-watermark
+  eligibility. This prevents a rollback response from being rejected after old
+  memory has already committed the new active turn.
   Deploy memory first and chain second; a new chain negotiating only v3 fails
   closed for atomic scope updates. Fresh projection DDL gives all five
   additive non-null columns real database defaults matching migrations 8

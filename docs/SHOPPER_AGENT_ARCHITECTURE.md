@@ -461,7 +461,10 @@ The request is a maximum supported version, and memory returns the highest
 version it supports up to that maximum. Contract 2 adds summary/receipt lanes;
 contract 3 adds the legacy current weather scope, and contract 4 adds atomic
 two-component resolution plus its typed pending location/date binding. An unversioned caller receives the
-exact earlier response shape and a bounded raw tail from sequence zero.
+exact earlier response shape and a bounded raw tail from sequence zero. That
+legacy v1 tail may contain an abandoned turn without assistant text; the chain
+filters it before model context instead of applying the v2 eligibility contract
+retroactively.
 Equivalent database defaults on fresh and upgraded SQLite schemas preserve old
 memory inserts during rollback. Contract 3 remains supported and omits the
 v4-only pending question and both of its source fields. Deploy memory first,

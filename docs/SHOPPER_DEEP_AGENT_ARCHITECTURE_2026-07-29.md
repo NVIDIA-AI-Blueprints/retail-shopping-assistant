@@ -188,7 +188,10 @@ caller receives the exact earlier response shape and a bounded raw tail read
 from sequence zero, so an older chain remains usable after memory deploys first
 or after chain rollback even if a summary watermark has advanced. Conversely,
 the current chain treats a missing contract marker from older memory as
-contract 1. Contract 3 remains supported with the legacy scope transition and
+contract 1. That legacy contract may contain abandoned turns without assistant
+text; the chain filters them before model context and applies the strict
+memory-owned eligibility invariant only to contract 2 and later. Contract 3
+remains supported with the legacy scope transition and
 without the v4-only pending question or either source field. Contract 4 marks
 atomic scope-finalize write capability. Deploy memory first, then chain; a new chain negotiating only v3
 fails closed for an atomic update. Fresh and upgraded SQLite

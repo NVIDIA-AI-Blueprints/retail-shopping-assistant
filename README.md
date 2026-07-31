@@ -50,7 +50,10 @@ The Retail Shopping Assistant is an AI-powered blueprint that provides a compreh
   raw-turn prefix into the versioned rolling summary after a successful
   response, so the result affects only the next request. Turn start uses an
   opt-in response contract so older chain instances receive their exact legacy
-  shape and full bounded raw tail during rolling deployment or rollback
+  shape and full bounded raw tail during rolling deployment or rollback. The
+  chain accepts staging-era v1 abandoned/null-assistant rows and filters them
+  before model context, while v2+ keeps strict memory-owned eligible-tail
+  semantics
 - 💭 **Durable Product Continuity**: Finalized product-card output becomes
   ordered `candidate_set_presented` evidence in SQLite; a typed resolver can
   recover one exact earlier product or require clarification without another
@@ -121,7 +124,9 @@ The application follows a microservices architecture:
   sessions. Additive summary, receipt, and current-weather-scope lanes negotiate
   the highest response contract both services support. Contract 4 advertises
   atomic finalize-time scope resolution while contract 3 remains supported for
-  rolling deployment. Migration 11 extracts any complete pre-split pending
+  rolling deployment. Contract v1 remains a legacy downstream-filtered raw
+  lane; v2 and later require memory-owned context eligibility. Migration 11
+  extracts any complete pre-split pending
   binding into a defaulted separate lane, drops incomplete unsourceable WIP
   pending fields, keeps the rollback-readable scope JSON free of v4 keys, and
   ignores pending state whose stored revision no longer matches the

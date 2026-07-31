@@ -248,6 +248,69 @@ def test_start_turn_accepts_legacy_v1_response_from_old_memory() -> None:
     assert session.calls[0]["url"].endswith("?response_contract=4")
 
 
+def test_start_turn_accepts_and_filters_legacy_v1_abandoned_turn() -> None:
+    payload = _start_payload()
+    payload.pop("contract_version")
+    payload.pop("unsummarized_turn_count")
+    payload.pop("summary_compaction_source")
+    payload["projection"].pop("summary_text")
+    payload["projection"].pop("summary_through_sequence")
+    payload["projection"].pop("active_receipts")
+    payload["recent_turns"] = [
+        {
+            "sequence": 1,
+            "shopper_text": "Request interrupted before an answer.",
+            "assistant_text": None,
+            "status": "abandoned",
+        },
+        payload["recent_turns"][0],
+    ]
+    client = ConversationMemoryClient(
+        "http://memory",
+        session=FakeSession(FakeResponse(payload)),
+    )
+
+    result = client.start_turn(
+        "conversation-a",
+        request_id="request-a",
+        shopper_text="Continue.",
+        cart_user_id=17,
+    )
+
+    assert result.contract_version == 1
+    assert [turn.status for turn in result.recent_turns] == [
+        "abandoned",
+        "completed",
+    ]
+    rendered = format_conversation_context(result.recent_turns)
+    assert "Request interrupted before an answer." not in rendered
+    assert "Show me bags" in rendered
+
+
+def test_start_turn_rejects_abandoned_turn_in_v2_raw_context() -> None:
+    payload = _start_payload()
+    payload["recent_turns"][0].update(
+        {
+            "assistant_text": None,
+            "status": "abandoned",
+        }
+    )
+    client = ConversationMemoryClient(
+        "http://memory",
+        session=FakeSession(FakeResponse(payload)),
+    )
+
+    with pytest.raises(ConversationMemoryError) as caught:
+        client.start_turn(
+            "conversation-a",
+            request_id="request-a",
+            shopper_text="Continue.",
+            cart_user_id=17,
+        )
+
+    assert caught.value.code == "memory_response_invalid"
+
+
 def test_start_turn_accepts_negotiated_v3_weather_scope() -> None:
     payload = _start_payload()
     payload["contract_version"] = 3

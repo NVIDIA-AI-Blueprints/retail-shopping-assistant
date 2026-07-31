@@ -614,7 +614,10 @@ Memory returns the highest version it supports up to that maximum. New memory
 defaults an unversioned caller to the exact
 legacy response shape and computes that caller's bounded raw tail from sequence
 zero rather than from the invisible summary watermark. New chain accepts a
-missing contract marker as version 1. Contract 3 remains supported with its
+missing contract marker as version 1. That v1 compatibility includes accepting
+staging-era abandoned raw turns with no assistant text and filtering them
+before model context; v2+ raw turns remain strictly memory-owned eligible
+rows. Contract 3 remains supported with its
 legacy transition and without the v4-only pending question or its source
 fields; contract 4 advertises atomic scope-finalize write capability. Deploy
 memory first and chain second.

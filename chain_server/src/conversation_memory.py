@@ -245,7 +245,11 @@ class TurnStartResult(_MemoryModel):
     def _summary_sources_are_consistent(self) -> "TurnStartResult":
         watermark = self.projection.summary_through_sequence
         recent_sequences = [turn.sequence for turn in self.recent_turns]
-        if recent_sequences != sorted(set(recent_sequences)) or any(
+        if recent_sequences != sorted(set(recent_sequences)):
+            raise ValueError(
+                "recent conversation turns must be strictly ordered"
+            )
+        if self.contract_version >= 2 and any(
             turn.sequence <= watermark
             or turn.status not in {"completed", "failed"}
             or turn.assistant_text is None

@@ -1308,7 +1308,11 @@ contract-version fields are omitted, and the bounded raw tail is read from
 sequence zero. Older chain instances can therefore continue after memory is
 deployed first or after chain rollback, even when a summary watermark has
 advanced. Older memory ignores the unknown query parameter; the current chain
-treats a missing `contract_version` as version 1. Contract 3 remains supported:
+treats a missing `contract_version` as version 1. A staging-era v1 raw tail may
+include `abandoned` rows with `assistant_text: null`; the chain accepts that
+negotiated legacy shape and removes those rows before building model context.
+Contract 2 and later retain the strict memory-owned
+completed/failed-with-assistant, post-watermark invariant. Contract 3 remains supported:
 memory removes the v4-only `pending_question`,
 `pending_source_turn_id`, and `pending_source_sequence` from its response, and
 a current chain negotiating only v3 fails closed for atomic writes. Deploy

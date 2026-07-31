@@ -101,9 +101,10 @@ context, provide one atomic `weather_scope` and resolve both location and
 date-window components explicitly. Copy the exact server-issued
 `scope_revision`. Use `retain` only for the same event, trip, or
 weather-planning subject, `set` only for current-turn shopper authority, and
-`clear` for a missing component of a new subject. No omitted component
-inherits. The isolated resolver supplies only semantic continuity; this
-activation is the sole author of current-turn location/date component facts.
+`clear` when the current turn withdraws or makes a component unknown, or for a
+missing component of a new subject. No omitted component inherits. The isolated
+resolver supplies only semantic continuity; this activation is the sole author
+of current-turn location/date component facts.
 Omit `weather_scope` only when the complete scope is unchanged.
 All event-context control fields are capability-scoped: omit
 `event_context_next_question`, `weather_scope`, `weather_refresh`, and

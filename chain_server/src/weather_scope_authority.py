@@ -160,22 +160,27 @@ def compile_weather_scope_authority(
     elif resolver_fails_closed and resolution is not None:
         resolution = _without_prior_retains(resolution)
 
-    pending_answer_is_valid = bool(
-        resolver_answers_pending
-        and _pending_component_is_set(current_scope, resolution)
+    pending_component_is_set = _pending_component_is_set(
+        current_scope,
+        resolution,
     )
-    if pending_answer_is_valid and resolution is not None:
-        resolution = _build_exact_pending_completion(
+    pending_retain_is_authorized = bool(
+        resolver_answers_pending
+        and pending_component_is_set
+        and pending_completion_retains_prior_counterpart
+    )
+    if pending_retain_is_authorized and resolution is not None:
+        resolution = _attach_exact_pending_retain_completion(
             current_scope,
             resolution,
         )
 
     pending_counterpart_authority_bypassed = bool(
         pending_completion_retains_prior_counterpart
-        and not pending_answer_is_valid
+        and not pending_retain_is_authorized
     )
     pending_authority_failed = bool(
-        (resolver_answers_pending and not pending_answer_is_valid)
+        (resolver_answers_pending and not pending_component_is_set)
         or pending_counterpart_authority_bypassed
     )
     if pending_authority_failed:
@@ -231,26 +236,11 @@ def compile_weather_scope_authority(
     )
     preserve_failed_pending_answer = bool(
         resolver_answers_pending
-        and not pending_answer_is_valid
+        and not pending_component_is_set
         and not current_turn_replacement
         and current_scope.pending_question is not None
     )
-    pure_pending_answer_missing_counterpart = bool(
-        pending_answer_is_valid
-        and (
-            (
-                current_scope.pending_question == "event_location"
-                and effective_window is None
-            )
-            or (
-                current_scope.pending_question == "event_date"
-                and effective_location is None
-            )
-        )
-    )
     if pending_counterpart_authority_bypassed:
-        accepted_question = _opposite_pending_question(current_scope)
-    elif pure_pending_answer_missing_counterpart:
         accepted_question = _opposite_pending_question(current_scope)
     elif (
         resolution is not None
@@ -285,7 +275,7 @@ def compile_weather_scope_authority(
         if resolver_fails_closed:
             resolution = _without_prior_retains(resolution)
 
-    if resolution is not None and not pending_answer_is_valid:
+    if resolution is not None and not pending_retain_is_authorized:
         accepted_pending_question = (
             accepted_question
             if accepted_question in {"event_location", "event_date"}
@@ -383,59 +373,28 @@ def _pending_component_is_set(
     return resolution.window_action == "set"
 
 
-def _build_exact_pending_completion(
+def _attach_exact_pending_retain_completion(
     current_scope: CurrentWeatherScope,
     resolution: CurrentWeatherScopeResolution,
 ) -> CurrentWeatherScopeResolution:
+    """Attach the exact handle without rewriting the proposed actions."""
+
     completion_handle = current_scope.pending_source_turn_id
     if completion_handle is None:
         raise ValueError("pending completion requires an exact source handle")
-    if current_scope.pending_question == "event_location":
-        if resolution.window_action == "set":
-            window_action = "set"
-            requested_window = resolution.requested_window
-            pending_question = None
-        elif current_scope.window is not None:
-            window_action = "retain"
-            requested_window = None
-            pending_question = None
-        else:
-            window_action = "clear"
-            requested_window = None
-            pending_question = "event_date"
-        return CurrentWeatherScopeResolution(
-            expected_projection_version=resolution.expected_projection_version,
-            expected_scope_revision=resolution.expected_scope_revision,
-            location_action="set",
-            window_action=window_action,
-            location_scope=resolution.location_scope,
-            requested_window=requested_window,
-            pending_question=pending_question,
-            complete_pending_source_turn_id=completion_handle,
+    if not _pending_completion_retains_prior_counterpart(
+        current_scope,
+        resolution,
+    ):
+        raise ValueError(
+            "pending completion handle authorizes only an exact counterpart retain"
         )
-    if current_scope.pending_question != "event_date":
-        raise ValueError("pending completion requires a typed question")
-    if resolution.location_action == "set":
-        location_action = "set"
-        location_scope = resolution.location_scope
-        pending_question = None
-    elif current_scope.location is not None:
-        location_action = "retain"
-        location_scope = None
-        pending_question = None
-    else:
-        location_action = "clear"
-        location_scope = None
-        pending_question = "event_location"
-    return CurrentWeatherScopeResolution(
-        expected_projection_version=resolution.expected_projection_version,
-        expected_scope_revision=resolution.expected_scope_revision,
-        location_action=location_action,
-        window_action="set",
-        location_scope=location_scope,
-        requested_window=resolution.requested_window,
-        pending_question=pending_question,
-        complete_pending_source_turn_id=completion_handle,
+    return resolution.model_copy(
+        update={
+            "pending_question": None,
+            "preserve_pending_source_turn_id": None,
+            "complete_pending_source_turn_id": completion_handle,
+        }
     )
 
 

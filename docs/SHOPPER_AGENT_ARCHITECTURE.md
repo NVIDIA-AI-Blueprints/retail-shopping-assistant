@@ -650,10 +650,12 @@ component while retaining its stored counterpart requires
 `same_subject/answered`, the exact opaque pending source-turn handle at the
 resolver boundary, and activation setting the component it names. A reply that
 also changes or withdraws the opposite component is
-`same_subject/not_addressed`. Runtime carries the exact handle to memory through a server-only
-completion control. Memory rechecks the live binding and canonical shape
-atomically: retain an existing counterpart, keep a current-turn replacement,
-or rotate an absent counterpart into the newly bound pending question. An
+`same_subject/not_addressed`. Runtime carries the exact handle to memory through
+a server-only completion control only when activation itself proposes the
+counterpart `retain`. The compiler never rewrites either action, and memory
+rechecks that exact live retain shape atomically. A current-turn counterpart
+`set` or `clear` uses the ordinary scope-revision boundary with no completion
+handle; activation owns any new pending question. An
 otherwise unanswered pending
 binding is preserved during a same-subject update only through an exact
 server-authored source handle; without it memory stamps the current finalized

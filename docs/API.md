@@ -622,7 +622,9 @@ response-validation failures are not retried:
   activation setting the component that binding names. `answered` means the
   reply answers only that question; a turn that also changes or withdraws the
   opposite component uses `same_subject/not_addressed`. The handle is not part of
-  `weather_scope`. When semantic resolution is unavailable or unclear, every cross-turn
+  `weather_scope`. It authorizes only a counterpart `retain` already proposed
+  by activation; the compiler never rewrites a proposed `set` or `clear`, and
+  current-authority changes carry no completion handle. When semantic resolution is unavailable or unclear, every cross-turn
   `retain` is cleared without erasing current facts, receipt/refresh reuse is
   rejected, and prior-dependent weather is blocked. Self-contained incomplete
   proposals use the ordinary missing-component gate; a complete current-turn
@@ -1648,11 +1650,14 @@ finalized turn. A separate server-authored
 `complete_pending_source_turn_id` consumes an exact live pending binding.
 Memory independently verifies its handle, question, source sequence, named
 component `set`, and canonical opposite-component action in the same
-compare-and-swap transaction. An existing opposite component must be retained,
-a current-turn opposite `set` remains set, and a missing opposite component
-must remain clear while becoming the newly stamped pending question. A generic
-`set` plus retained counterpart without this exact completion handle is
-rejected.
+compare-and-swap transaction. For rolling compatibility, the memory contract
+still accepts the earlier canonical forms in which a current-turn opposite
+`set` remains set or a missing opposite component remains clear and becomes a
+newly stamped pending question. The current runtime issues the completion
+handle only for an existing opposite component proposed as `retain`; current
+`set` and `clear` actions use the ordinary scope-revision path without it. A
+generic `set` plus retained counterpart without this exact completion handle
+is rejected.
 The pending question is therefore durable even when neither authority value
 changes. It is stored separately with the resulting scope revision and is
 rehydrated only while that revision still matches the core scope. A

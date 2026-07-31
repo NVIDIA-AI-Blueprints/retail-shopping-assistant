@@ -53,6 +53,10 @@ tools_granted:
 - `set` contains only location/date authority supplied or confirmed in the
   current shopper turn. Omitted components never inherit. Omit
   `weather_scope` only when the entire scope is unchanged.
+- `clear` is authoritative when the current turn withdraws or makes a
+  component unknown, as well as when a new subject does not establish it. A
+  pending-question handle can authorize only a proposed `retain`; it never
+  rewrites `set` or `clear`.
 - A missing `event_location` or `event_date` question is persisted as the
   scope's typed pending binding with the originating shopper-turn sequence.
   Only `same_subject/answered` may authorize retaining its counterpart, and

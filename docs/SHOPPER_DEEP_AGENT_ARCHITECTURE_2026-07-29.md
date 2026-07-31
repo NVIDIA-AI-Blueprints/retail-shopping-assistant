@@ -297,11 +297,12 @@ relation authorizes ordinary same-subject retains, while `new_subject` clears
 them. Completing a pending component while retaining its stored counterpart
 requires `same_subject/answered`, the exact opaque pending source-turn handle,
 and activation setting the component it names. A reply that also changes or
-withdraws the opposite component is `same_subject/not_addressed`. Runtime forwards the handle only through
-a server-authored completion control, and memory atomically verifies the exact
-live binding and canonical shape. It retains an existing counterpart, keeps a
-current-turn replacement, or rotates an absent counterpart into the newly
-source-bound pending question. Preserving an otherwise unanswered
+withdraws the opposite component is `same_subject/not_addressed`. Runtime
+forwards the handle only when activation itself proposes the counterpart
+`retain`; the compiler never rewrites either component action, and memory
+atomically verifies that exact live retain shape. A current-turn counterpart
+`set` or `clear` uses the ordinary scope-revision boundary with no completion
+handle. Preserving an otherwise unanswered
 pending binding during another same-subject update likewise requires an exact
 server-authored source handle; without it memory binds the question to the
 current finalized turn. `unchanged/not_addressed` suppresses an accidental

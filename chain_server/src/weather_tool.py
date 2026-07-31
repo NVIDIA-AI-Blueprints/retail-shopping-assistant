@@ -335,7 +335,8 @@ class WeatherScopeSelection(BaseModel):
         description=(
             "Resolve location atomically. Retain only for the same event, "
             "trip, or weather-planning subject; set only from current-turn "
-            "shopper authority; clear for a new subject whose location is not "
+            "shopper authority; clear when the current turn withdraws or makes "
+            "the location unknown, or for a new subject whose location is not "
             "stated. Never rely on an omitted field to inherit location."
         ),
     )
@@ -343,8 +344,9 @@ class WeatherScopeSelection(BaseModel):
         description=(
             "Resolve the date window atomically. Retain only for the same "
             "event, trip, or weather-planning subject; set only from the "
-            "current turn; clear for a new subject whose date is not stated. "
-            "Never rely on an omitted field to inherit a date."
+            "current turn; clear when the current turn withdraws or makes the "
+            "date unknown, or for a new subject whose date is not stated. Never "
+            "rely on an omitted field to inherit a date."
         ),
     )
     location_source: Literal[

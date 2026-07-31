@@ -693,7 +693,8 @@ def test_pending_phase_forces_only_the_activation_tool() -> None:
         normalized_prompt
     )
     assert "`retain` only for the same event" in normalized_prompt
-    assert "`clear` for a missing component of a new subject" in normalized_prompt
+    assert "`clear` when the current turn withdraws" in normalized_prompt
+    assert "missing component of a new subject" in normalized_prompt
     assert "CURRENT WEATHER SCOPE is the only prior-turn" in normalized_prompt
     assert "isolated resolver supplies only semantic continuity" in (
         normalized_prompt

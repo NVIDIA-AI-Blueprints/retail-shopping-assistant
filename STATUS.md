@@ -6,6 +6,33 @@ Updated: 2026-07-31
 
 The current working tree extends the shopper-serving Deep Agent architecture:
 
+- pending-question completion is now a narrowly scoped retain capability rather
+  than permission to reconstruct a weather scope. The authority compiler issues
+  the exact server-owned completion handle only when activation sets the pending
+  component and itself proposes `retain` for the stored counterpart. A current
+  `set` or `clear` on that counterpart remains authoritative, receives no
+  completion handle, and proceeds through the ordinary scope-revision boundary;
+  the semantic resolver can therefore authorize prior reuse but can never
+  resurrect a component the shopper withdrew. Symmetric location/date compiler
+  regressions plus a serving-runtime regression cover explicit withdrawal,
+  ordinary replacement, canonical retain completion, invalid handles, receipt
+  invalidation, and current-turn pending rebinding.
+  The focused neighboring backend suite passes 600 tests and the complete Python
+  unit suite passes 1,646. Three focused three-turn live scenarios pass all 9
+  deterministic diagnostics; 8 of 9 GPT-5.2 Judge calls score at least 4.
+  Explicit counterpart withdrawal uses a distinct relative replacement date
+  and scores 5/4/3 at 11.16s average; the turn-3 Judge calls the returned
+  forecast unsupported even though the deterministic trace proves the required
+  successful Visual Crossing call, so that score is recorded as a qualified
+  evaluator-evidence mismatch rather than hidden by a rerun. Pending
+  resumption scores 5/4/4 at 11.66s average (quality unchanged and +1.97s versus
+  its prior WIP), and cross-subject continuity scores 4/4/4 at 13.22s average
+  (quality unchanged and -0.80s versus its prior WIP). Canonical local runs and
+  golden/prior comparisons are under
+  `~/exec-briefs/retail-shopping-assistant/quality/weather_pending_withdrawal/`,
+  `~/exec-briefs/retail-shopping-assistant/quality/weather_pending_resumption/`,
+  and
+  `~/exec-briefs/retail-shopping-assistant/quality/weather_scope_continuity/`;
 - the weather subject resolver now has one chain-local aggregate budget for
   its dynamic semantic payload: 16,384 characters by default, configurable
   only within 1,024–65,536. Inputs that fit retain the exact prior JSON shape.
@@ -85,11 +112,12 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   exact-handle `same_subject/answered` while activation sets the named missing
   component. A turn that also changes or withdraws the opposite component uses
   `same_subject/not_addressed`. Runtime issues a server-only
-  `complete_pending_source_turn_id`, and shared/memory validation atomically
-  rechecks the exact live binding plus the canonical completion shape. An
-  existing counterpart is retained, a current-turn replacement remains set,
-  and an absent counterpart rotates to a newly source-bound opposite pending
-  question.
+  `complete_pending_source_turn_id` only when activation itself proposes the
+  counterpart `retain`; the compiler never rewrites a component action, and
+  shared/memory validation atomically rechecks that exact live retain shape.
+  Current-turn counterpart `set` or `clear` actions use the ordinary
+  scope-revision boundary without a completion handle, and activation owns any
+  new pending question.
   Preserving an unanswered pending source during another same-subject update
   also requires that exact server-owned handle; otherwise memory stamps the
   current finalized turn.

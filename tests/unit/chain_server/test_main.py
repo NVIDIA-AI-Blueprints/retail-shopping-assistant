@@ -3027,7 +3027,13 @@ class TestDeepAgentsRuntimeRefs:
         assert "Never rely on an omitted field to inherit location" in (
             weather_scope_schema["location_action"]["description"]
         )
+        assert "withdraws or makes the location unknown" in (
+            weather_scope_schema["location_action"]["description"]
+        )
         assert "Never rely on an omitted field to inherit a date" in (
+            weather_scope_schema["window_action"]["description"]
+        )
+        assert "withdraws or makes the date unknown" in (
             weather_scope_schema["window_action"]["description"]
         )
         assert "location='NYC', location_query='NYC, NY'" in (
@@ -3649,10 +3655,10 @@ class TestDeepAgentsRuntimeRefs:
             "activate_shopper_skills_tool"
         ](
             skill_names=["outfit-styling", "event-context"],
-            event_context_next_question="event_date",
+            event_context_next_question="none",
             weather_scope={
                 "scope_revision": 2,
-                "location_action": "clear",
+                "location_action": "retain",
                 "window_action": "set",
                 "date": "2026-08-15",
             },
@@ -3989,7 +3995,7 @@ class TestDeepAgentsRuntimeRefs:
             weather_scope={
                 "scope_revision": 2,
                 "location_action": "set",
-                "window_action": "clear",
+                "window_action": "retain",
                 "location_source": "shopper_provided_location",
                 "location": "Seattle",
             },
@@ -4064,7 +4070,7 @@ class TestDeepAgentsRuntimeRefs:
             "activate_shopper_skills_tool"
         ](
             skill_names=["outfit-styling", "event-context"],
-            event_context_next_question="none",
+            event_context_next_question="event_date",
             weather_scope={
                 "scope_revision": 2,
                 "location_action": "set",
@@ -4080,10 +4086,7 @@ class TestDeepAgentsRuntimeRefs:
         assert missing_counterpart_resolution.location_action == "set"
         assert missing_counterpart_resolution.window_action == "clear"
         assert missing_counterpart_resolution.pending_question == "event_date"
-        assert (
-            missing_counterpart_resolution.complete_pending_source_turn_id
-            == "turn-conference"
-        )
+        assert missing_counterpart_resolution.complete_pending_source_turn_id is None
         assert (
             "EVENT_CONTEXT_NEXT_QUESTION_BOUNDARY: event_date"
             in missing_counterpart_activation
@@ -4103,7 +4106,8 @@ class TestDeepAgentsRuntimeRefs:
                     WeatherScopeResolverDecision.model_validate(
                         {
                             "subject_relation": "same_subject",
-                            "pending_disposition": "not_addressed",
+                            "pending_disposition": "answered",
+                            "pending_source_turn_id": "turn-conference",
                         }
                     )
                 ),

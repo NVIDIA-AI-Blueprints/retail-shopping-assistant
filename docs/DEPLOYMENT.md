@@ -445,11 +445,11 @@ retains, while `new_subject` clears them. Completing a pending component while
 retaining its stored counterpart requires `same_subject/answered`, the exact
 opaque pending source-turn handle at the resolver boundary, and activation
 setting the component it names. A reply that also changes or withdraws the
-opposite component uses `same_subject/not_addressed`. Runtime sends
-the handle to memory only through the server-authored completion control.
-Memory rechecks the exact live binding and canonical shape atomically, retaining
-an existing counterpart, keeping a current-turn replacement, or rotating an
-absent counterpart into a newly source-bound pending question. Preserving an otherwise unanswered pending binding during
+opposite component uses `same_subject/not_addressed`. Runtime sends the handle
+to memory only when activation itself proposes the counterpart `retain`; the
+compiler never rewrites `set` or `clear`. Memory rechecks that exact live retain
+shape atomically. Current-turn counterpart replacements or withdrawals use the
+ordinary scope-revision boundary without a completion handle. Preserving an otherwise unanswered pending binding during
 a same-subject update requires the same exact server-owned source handle;
 otherwise memory stamps the current finalized turn. A pure authority compiler
 receives the validated proposal and applies the resolver only to prior-state

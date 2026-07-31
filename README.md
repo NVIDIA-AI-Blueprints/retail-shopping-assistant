@@ -262,14 +262,14 @@ authoritative.
 When activation asks for a missing location or date, that question is stored in
 the singleton as a typed pending binding stamped with the originating turn ID
 and sequence, even when the location/date authority values otherwise remain
-unchanged. `same_subject/answered` is accepted only when the resolver echoes
-the exact opaque pending handle and activation sets the named missing component.
-The opaque handle is resolver-only and is never part of the normal activation
-scope. The runtime carries it to memory only as the server-authored
-`complete_pending_source_turn_id`; memory independently verifies the exact live
-binding and canonical completion shape before committing. An existing opposite
-component is retained, a current-turn replacement remains `set`, and an absent
-opposite component becomes the newly bound pending question. If the same
+unchanged. `same_subject/answered` may authorize a stored counterpart only when
+the resolver echoes the exact opaque pending handle, activation sets the named
+missing component, and activation itself proposes `retain` for the counterpart.
+The compiler attaches the server-authored `complete_pending_source_turn_id`
+without rewriting either action, and memory independently verifies the exact
+live retain shape before committing. A current-turn counterpart `set` or
+`clear` remains an ordinary current-authority update with no completion handle;
+the activation-selected question governs any newly missing component. If the same
 unanswered question remains pending during an ordinary
 same-subject update, the runtime may preserve its source only by supplying that
 exact server-owned handle to memory; without it memory stamps the current

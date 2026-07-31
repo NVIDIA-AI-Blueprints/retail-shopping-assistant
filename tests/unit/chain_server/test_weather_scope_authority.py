@@ -18,6 +18,7 @@ from shared.weather_receipts import (
 from shared.weather_scope import (
     CurrentWeatherScope,
     CurrentWeatherScopeResolution,
+    apply_current_weather_scope_resolution,
 )
 
 
@@ -82,6 +83,26 @@ def _pending_location_scope() -> CurrentWeatherScope:
                 "value": {
                     "start_date": "2026-08-16",
                     "end_date": "2026-08-16",
+                },
+                "source_turn_id": "turn-conference",
+                "source_sequence": 2,
+            },
+        }
+    )
+
+
+def _pending_date_scope() -> CurrentWeatherScope:
+    return CurrentWeatherScope.model_validate(
+        {
+            "revision": 2,
+            "pending_question": "event_date",
+            "pending_source_turn_id": "turn-conference",
+            "pending_source_sequence": 2,
+            "location": {
+                "value": {
+                    "kind": "shopper_provided_location",
+                    "location": "NYC",
+                    "location_query": "NYC, NY",
                 },
                 "source_turn_id": "turn-conference",
                 "source_sequence": 2,
@@ -184,6 +205,8 @@ def test_complete_current_turn_replacement_is_independent_authority(
     assert outcome.resolution.window_action == "set"
     assert outcome.current_turn_replacement is True
     assert outcome.blocks_weather is False
+    if pending_disposition == "answered":
+        assert outcome.resolution.complete_pending_source_turn_id is None
     assert outcome.effective_location == ShopperLocationWeatherScope(
         location="Seattle"
     )
@@ -191,6 +214,36 @@ def test_complete_current_turn_replacement_is_independent_authority(
         start_date=date(2026, 8, 16),
         end_date=date(2026, 8, 16),
     )
+
+
+@pytest.mark.parametrize(
+    "pending_scope",
+    [_pending_location_scope(), _pending_date_scope()],
+)
+def test_answered_pending_current_turn_replacement_has_no_completion_handle(
+    pending_scope: CurrentWeatherScope,
+) -> None:
+    outcome = compile_weather_scope_authority(
+        current_scope=pending_scope,
+        proposed_resolution=_resolution("set", "set"),
+        resolver_decision=_resolver_decision("same_subject", "answered"),
+        resolver_required=True,
+        atomic_scope_supported=True,
+        expected_projection_version=5,
+        next_question="none",
+        weather_refresh=False,
+        weather_receipt_id=None,
+    )
+
+    assert outcome.resolution is not None
+    assert (
+        outcome.resolution.location_action,
+        outcome.resolution.window_action,
+    ) == ("set", "set")
+    assert outcome.resolution.complete_pending_source_turn_id is None
+    assert outcome.resolution.pending_question is None
+    assert outcome.current_turn_replacement is True
+    assert outcome.blocks_weather is False
 
 
 @pytest.mark.parametrize(
@@ -284,10 +337,21 @@ def test_resume_requested_reasks_pending_question_without_a_scope_write() -> Non
     assert current_scope.pending_source_turn_id == "turn-conference"
 
 
-def test_answered_pending_question_completes_the_exact_binding() -> None:
+@pytest.mark.parametrize(
+    ("pending_scope", "proposed_actions", "expected_actions"),
+    [
+        (_pending_location_scope(), ("set", "retain"), ("set", "retain")),
+        (_pending_date_scope(), ("retain", "set"), ("retain", "set")),
+    ],
+)
+def test_answered_pending_retain_completes_the_exact_binding(
+    pending_scope: CurrentWeatherScope,
+    proposed_actions: tuple[str, str],
+    expected_actions: tuple[str, str],
+) -> None:
     outcome = compile_weather_scope_authority(
-        current_scope=_pending_location_scope(),
-        proposed_resolution=_resolution("set", "retain"),
+        current_scope=pending_scope,
+        proposed_resolution=_resolution(*proposed_actions),
         resolver_decision=_resolver_decision(
             "same_subject",
             "answered",
@@ -302,12 +366,157 @@ def test_answered_pending_question_completes_the_exact_binding() -> None:
 
     assert outcome.next_question == "none"
     assert outcome.resolution is not None
-    assert outcome.resolution.location_action == "set"
-    assert outcome.resolution.window_action == "retain"
+    assert (
+        outcome.resolution.location_action,
+        outcome.resolution.window_action,
+    ) == expected_actions
     assert (
         outcome.resolution.complete_pending_source_turn_id
         == "turn-conference"
     )
+
+
+@pytest.mark.parametrize(
+    (
+        "pending_scope",
+        "proposed_actions",
+        "next_question",
+        "expected_actions",
+    ),
+    [
+        (
+            _pending_location_scope(),
+            ("set", "clear"),
+            "event_date",
+            ("set", "clear"),
+        ),
+        (
+            _pending_date_scope(),
+            ("clear", "set"),
+            "event_location",
+            ("clear", "set"),
+        ),
+        (
+            _pending_location_scope(),
+            ("clear", "set"),
+            "event_location",
+            ("clear", "set"),
+        ),
+        (
+            _pending_date_scope(),
+            ("set", "clear"),
+            "event_date",
+            ("set", "clear"),
+        ),
+    ],
+)
+def test_answered_pending_never_rewrites_explicit_set_or_clear_actions(
+    pending_scope: CurrentWeatherScope,
+    proposed_actions: tuple[str, str],
+    next_question: str,
+    expected_actions: tuple[str, str],
+) -> None:
+    outcome = compile_weather_scope_authority(
+        current_scope=pending_scope,
+        proposed_resolution=_resolution(*proposed_actions),
+        resolver_decision=_resolver_decision(
+            "same_subject",
+            "answered",
+        ),
+        resolver_required=True,
+        atomic_scope_supported=True,
+        expected_projection_version=5,
+        next_question=next_question,
+        weather_refresh=True,
+        weather_receipt_id="old-scope-receipt",
+    )
+
+    assert outcome.resolution is not None
+    assert (
+        outcome.resolution.location_action,
+        outcome.resolution.window_action,
+    ) == expected_actions
+    assert outcome.resolution.complete_pending_source_turn_id is None
+    assert outcome.resolution.pending_question == next_question
+    assert outcome.next_question == next_question
+    assert outcome.weather_refresh is False
+    assert outcome.weather_receipt_id is None
+    assert outcome.blocks_weather is False
+    if next_question == "event_date":
+        assert outcome.effective_location == ShopperLocationWeatherScope(
+            location="Seattle"
+        )
+        assert outcome.effective_window is None
+    else:
+        assert outcome.effective_location is None
+        assert outcome.effective_window == WeatherReceiptWindow(
+            start_date=date(2026, 8, 16),
+            end_date=date(2026, 8, 16),
+        )
+    persisted = apply_current_weather_scope_resolution(
+        pending_scope,
+        outcome.resolution,
+        source_turn_id="current-turn",
+        source_sequence=3,
+    )
+    assert persisted.pending_question == next_question
+    assert persisted.pending_source_turn_id == "current-turn"
+    assert persisted.pending_source_sequence == 3
+    if next_question == "event_date":
+        assert persisted.location is not None
+        assert persisted.location.value == ShopperLocationWeatherScope(
+            location="Seattle"
+        )
+        assert persisted.window is None
+    else:
+        assert persisted.location is None
+        assert persisted.window is not None
+        assert persisted.window.value == WeatherReceiptWindow(
+            start_date=date(2026, 8, 16),
+            end_date=date(2026, 8, 16),
+        )
+
+
+@pytest.mark.parametrize(
+    ("pending_scope", "proposed_actions", "next_question"),
+    [
+        (_pending_location_scope(), ("set", "clear"), "event_date"),
+        (_pending_date_scope(), ("clear", "set"), "event_location"),
+    ],
+)
+def test_wrong_pending_handle_cannot_erase_current_turn_set_or_clear(
+    pending_scope: CurrentWeatherScope,
+    proposed_actions: tuple[str, str],
+    next_question: str,
+) -> None:
+    outcome = compile_weather_scope_authority(
+        current_scope=pending_scope,
+        proposed_resolution=_resolution(*proposed_actions),
+        resolver_decision=_resolver_decision(
+            "same_subject",
+            "answered",
+            pending_source_turn_id="another-turn",
+        ),
+        resolver_required=True,
+        atomic_scope_supported=True,
+        expected_projection_version=5,
+        next_question=next_question,
+        weather_refresh=True,
+        weather_receipt_id="old-scope-receipt",
+    )
+
+    assert outcome.resolver_decision is not None
+    assert outcome.resolver_decision.subject_relation == "unclear"
+    assert outcome.resolution is not None
+    assert (
+        outcome.resolution.location_action,
+        outcome.resolution.window_action,
+    ) == proposed_actions
+    assert outcome.resolution.complete_pending_source_turn_id is None
+    assert outcome.resolution.pending_question == next_question
+    assert outcome.weather_refresh is False
+    assert outcome.weather_receipt_id is None
+    assert outcome.blocks_weather is False
 
 
 @pytest.mark.parametrize("pending_disposition", ["answered", "resume_requested"])

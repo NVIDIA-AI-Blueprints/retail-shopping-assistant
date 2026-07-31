@@ -1405,9 +1405,10 @@ def _skill_activation_input_model(
                     "only when the current turn semantically continues the same "
                     "event, trip, or weather-planning subject. For a different "
                     "subject, clear every component it does not establish now. "
-                    "Set accepts only current-turn shopper authority. No omitted "
-                    "component inherits. Omit weather_scope only when the entire "
-                    "scope is unchanged."
+                    "Also clear a component the current turn withdraws or makes "
+                    "unknown. Set accepts only current-turn shopper authority. "
+                    "No omitted component inherits. Omit weather_scope only when "
+                    "the entire scope is unchanged."
                 ),
             ),
         ),

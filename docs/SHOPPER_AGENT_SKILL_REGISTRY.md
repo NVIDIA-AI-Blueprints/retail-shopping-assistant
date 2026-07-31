@@ -328,7 +328,9 @@ forecast context to occasion-led styling.
   reply that also changes or withdraws the opposite component is
   `same_subject/not_addressed`.
   Runtime and memory carry and verify the exact handle through a server-only
-  completion control; the handle is not part of model-authored `weather_scope`.
+  completion control only when activation itself proposes the counterpart
+  `retain`; the handle is not part of model-authored `weather_scope`. The
+  compiler never rewrites an activation-proposed `set` or `clear`.
   Unavailable or unclear semantic
   resolution clears every retain and blocks weather. A receipt may be bound
   only when the

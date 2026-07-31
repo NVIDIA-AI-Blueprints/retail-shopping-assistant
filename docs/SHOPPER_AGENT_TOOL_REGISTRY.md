@@ -83,8 +83,10 @@ activation sets the named missing component. A reply that also changes or
 withdraws the counterpart is `same_subject/not_addressed`. Exact-handle
 `unchanged/resume_requested` re-renders the stored question without a scope
 write when activation supplies no current-turn scope facts;
-`unchanged/not_addressed` keeps it silent. Runtime and memory carry and atomically verify the exact handle
-through a server-only completion control; without a usable
+`unchanged/not_addressed` keeps it silent. Runtime and memory carry and
+atomically verify the exact handle through a server-only completion control
+only when activation proposes the counterpart `retain`; the compiler never
+rewrites `set` or `clear`. Without a usable
 resolver result, every retain is cleared and prior-dependent weather is
 blocked. Self-contained incomplete proposals use normal missing-component
 handling; a complete current-turn `set`/`set` replacement may require weather. Prior raw

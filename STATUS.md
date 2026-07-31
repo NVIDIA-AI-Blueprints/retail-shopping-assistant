@@ -6,6 +6,21 @@ Updated: 2026-07-31
 
 The current working tree extends the shopper-serving Deep Agent architecture:
 
+- weather-scope authority compilation now lives in one pure boundary between
+  semantic subject resolution and durable scope mutation. The resolver may
+  authorize use of prior scope only; it cannot erase or reinterpret a
+  current-turn `set`. An `unchanged`, `new_subject`, unavailable, or unclear
+  result removes only unauthorized `retain` actions, while validated
+  current-turn location/date facts survive and ordinary missing-component
+  handling remains available. The exact review regression—stored NYC/August 7,
+  current Seattle/August 16, resolver `unchanged`—now compiles to Seattle and
+  August 16 and requires fresh weather. The focused 447-test weather subset and
+  complete 1,611-test Python unit suite pass. A three-turn live diagnostic
+  passed its first two turns; its third isolated resolver call timed out at
+  8.002 seconds and the compiler safely preserved Seattle, removed the old
+  date, skipped weather, and asked for the missing date. The qualified run and
+  timing comparison are archived under
+  `~/exec-briefs/retail-shopping-assistant/quality/weather_scope_continuity/`;
 - memory migration 10's scope uses response contract 4 for
   atomic finalize-time resolution. It owns the monotonic core scope and optional
   memory-stamped location/date authority. Migration 11 moves

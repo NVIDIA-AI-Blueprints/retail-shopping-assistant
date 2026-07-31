@@ -588,8 +588,9 @@ response-validation failures are not retried:
   The same activation is the sole producer of one atomic `weather_scope`
   selection. It
   copies the current scope revision and selects `retain`, `set`, or `clear`
-  independently for location and date. Deterministic compilation accepts only
-  current-turn location/date authority for `set`. An accepted missing-location
+  independently for location and date. A pure authority compiler accepts only
+  current-turn location/date authority for `set`, preserves every validated
+  `set`, and applies the resolver only to prior-state operations. An accepted missing-location
   or missing-date question is persisted as the singleton's typed
   `pending_question` together with its originating turn ID and sequence, even
   when the location/date authority values are unchanged. If activation repeats
@@ -604,9 +605,10 @@ response-validation failures are not retried:
   changes or withdraws the opposite component uses `same_subject`. The handle
   is not part of
   `weather_scope`. When semantic resolution is unavailable or unclear, every cross-turn
-  `retain` is cleared, receipt/refresh reuse is rejected, and prior-dependent
-  weather is blocked. A validated current-turn `set`/`set` replacement remains
-  independent authority and may require weather.
+  `retain` is cleared without erasing current facts, receipt/refresh reuse is
+  rejected, and prior-dependent weather is blocked. Self-contained incomplete
+  proposals use the ordinary missing-component gate; a complete current-turn
+  `set`/`set` replacement may require weather.
   Prior raw turns and summary prose can guide the semantic continuity decision
   but cannot authorize the provider adapter.
   An explicitly shopper-stated outdoor patio, beach, garden, rooftop, or

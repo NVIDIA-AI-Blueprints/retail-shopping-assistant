@@ -630,11 +630,12 @@ completed turns named by its location, date, and pending-question source
 identities and must
 emit one forced typed control call. It has no business-tool or subagent
 authority and emits only the semantic relation. Activation alone proposes
-explicit `retain`/`set`/`clear` actions for both location and date;
-deterministic compilation admits `set` only from current-turn authority.
-Invalid, unavailable, timed-out, or unclear semantic output fails closed for
-prior authority but cannot veto a validated current-turn `set`/`set`
-replacement. A
+explicit `retain`/`set`/`clear` actions for both location and date. A pure
+authority compiler receives that already validated proposal and applies the
+semantic relation only to prior-state operations: it clears unauthorized
+`retain`s and preserves every current-turn `set`. Invalid, unavailable,
+timed-out, or unclear output therefore fails closed for prior authority without
+vetoing current facts. A
 missing location/date question is stored as a typed pending binding stamped
 with its originating turn ID and sequence even when no authority value changes.
 A resolver-approved `same_subject` relation may authorize ordinary
@@ -651,9 +652,10 @@ otherwise unanswered pending
 binding is preserved during a same-subject update only through an exact
 server-authored source handle; without it memory stamps the current finalized
 turn. When the resolver is
-unavailable or unclear, every retain is cleared, receipt/refresh reuse is
-rejected, and prior-dependent weather is blocked. A validated current-turn
-`set`/`set` replacement remains independent authority and may require weather. The
+unavailable or unclear, every retain is cleared without erasing current-turn
+`set` values, receipt/refresh reuse is rejected, and prior-dependent weather is
+blocked. Self-contained incomplete proposals use the ordinary missing-component
+gate; a complete current-turn `set`/`set` replacement may require weather. The
 binding also records that the question was already asked; intervening product
 work does not repeat it. If activation proposes the exact live pending question
 while the resolver says `unchanged`, deterministic compilation accepts `none`,

@@ -437,10 +437,13 @@ Memory rechecks the exact live binding and canonical shape atomically, retaining
 an existing counterpart, keeping a current-turn replacement, or rotating an
 absent counterpart into a newly source-bound pending question. Preserving an otherwise unanswered pending binding during
 a same-subject update requires the same exact server-owned source handle;
-otherwise memory stamps the current finalized turn. An unavailable or unclear resolver clears every
-proposed retain, rejects receipt/refresh reuse, and blocks prior-dependent
-weather. A validated current-turn `set`/`set` replacement remains independent
-authority and may require weather. Prior raw turns and summary prose never
+otherwise memory stamps the current finalized turn. A pure authority compiler
+receives the validated proposal and applies the resolver only to prior-state
+operations. An unavailable or unclear resolver clears every proposed retain
+without erasing current-turn `set` values, rejects receipt/refresh reuse, and
+blocks prior-dependent weather. Self-contained incomplete proposals use normal
+missing-component handling; a complete `set`/`set` replacement may require
+weather. Prior raw turns and summary prose never
 become adapter authority. An explicitly shopper-stated
 outdoor patio, beach, garden, rooftop, or open-air setting makes enabled live
 weather material; with destination and that setting but no bounded date,

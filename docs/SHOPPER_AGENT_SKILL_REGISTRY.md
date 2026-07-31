@@ -66,10 +66,11 @@ Every shopper turn uses two model phases inside the same Deep Agents run:
    control call. It is neither a business tool nor a subagent. The activation
    call may then submit one atomic
    `weather_scope` that copies the revision and selects `retain`, `set`, or
-   `clear` independently for location and date. Deterministic compilation
-   accepts `set` only from current-turn authority. Invalid, unavailable,
-   timed-out, or unclear resolver output fails closed for prior authority but
-   cannot veto a validated current-turn `set`/`set` replacement. Prior raw turns and
+   `clear` independently for location and date. A pure authority compiler
+   preserves every validated current-turn `set` and applies the resolver only
+   to prior-state operations. Invalid, unavailable, timed-out, or unclear
+   resolver output therefore fails closed for prior authority without erasing
+   current facts. Prior raw turns and
    summary prose never become provider arguments.
    An explicitly shopper-stated outdoor patio, beach, garden,
    rooftop, or open-air setting makes enabled live weather material; with

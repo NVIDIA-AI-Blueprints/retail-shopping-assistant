@@ -236,12 +236,13 @@ The resolver returns only the semantic relation; it does not duplicate
 location/date extraction. Normal activation is the sole producer of one atomic
 `weather_scope` selection: it copies the scope revision and chooses `retain`,
 `set`, or `clear` independently for location and date. Only current-turn
-shopper authority can enter a `set`. The server applies the relation to that
-selection: `new_subject` clears every retain, `same_subject` may retain ordinary
-same-subject authority, and invalid, unavailable, or unclear output clears
-proposed retains and blocks prior-dependent weather. A validated current-turn
-`set`/`set` replacement remains independent authority and may require a fresh
-forecast. Completing a typed pending component is a
+shopper authority can enter a `set`. A pure authority compiler receives that
+validated proposal and applies the relation only to prior-state use:
+unauthorized `retain`s become `clear`, while every current-turn `set` survives.
+Invalid, unavailable, or unclear output therefore blocks only
+prior-dependent weather. Self-contained incomplete proposals use the ordinary
+missing-location/date gate; a complete current-turn `set`/`set` replacement may
+require a fresh forecast. Completing a typed pending component is a
 narrower boundary: only exact-handle `answers_pending` may retain its stored
 counterpart. That relation means the reply answers only the pending question;
 a reply that also changes or withdraws the opposite component is
@@ -263,10 +264,10 @@ same-subject update, the runtime may preserve its source only by supplying that
 exact server-owned handle to memory; without it memory stamps the current
 finalized turn. If semantic
 resolution is unavailable or unclear, every proposed cross-turn retain is
-cleared and receipt/refresh reuse is rejected. Weather remains blocked only
-when the effective scope still depends on prior authority; a complete
-current-turn `set`/`set` replacement may proceed without importing an older
-subject.
+cleared without erasing a current-turn `set`, and receipt/refresh reuse is
+rejected. Weather remains blocked only when the effective scope still depends
+on prior authority; a complete current-turn `set`/`set` replacement may proceed
+without importing an older subject.
 The pending binding records that the question was already asked. If activation
 nevertheless proposes that exact live question while the resolver says the
 subject is `unchanged`, runtime accepts `none`, creates no scope resolution,

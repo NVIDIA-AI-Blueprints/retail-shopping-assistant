@@ -3789,7 +3789,6 @@ class TestDeepAgentsRuntimeRefs:
                 "window_action": "set",
                 "date": "2026-08-15",
             },
-            weather_refresh=True,
         )
         assert new_subject_activation.startswith(
             runtime_mod.SKILL_ACTIVATION_COMPLETE
@@ -3866,7 +3865,7 @@ class TestDeepAgentsRuntimeRefs:
         assert conference_gate._required_tool is None
         assert conference_gate._runtime_tool_rejections[
             "get_weather_forecast_tool"
-        ] == runtime_mod._EVENT_CONTEXT_SCOPE_UNCLEAR_WEATHER_BLOCK
+        ] == runtime_mod._EVENT_CONTEXT_LOCATION_REQUIRED_WEATHER_BLOCK
 
         runtime._create_agent(
             State(
@@ -3921,7 +3920,7 @@ class TestDeepAgentsRuntimeRefs:
         assert cancun_gate._required_tool is None
         assert cancun_gate._runtime_tool_rejections[
             "get_weather_forecast_tool"
-        ] == runtime_mod._EVENT_CONTEXT_SCOPE_UNCLEAR_WEATHER_BLOCK
+        ] == runtime_mod._EVENT_CONTEXT_DATE_REQUIRED_WEATHER_BLOCK
 
         runtime._create_agent(
             State(
@@ -4160,7 +4159,7 @@ class TestDeepAgentsRuntimeRefs:
         assert unbound_pending_gate._required_tool is None
         assert unbound_pending_gate._runtime_tool_rejections[
             "get_weather_forecast_tool"
-        ] == runtime_mod._EVENT_CONTEXT_SCOPE_UNCLEAR_WEATHER_BLOCK
+        ] == runtime_mod._EVENT_CONTEXT_DATE_REQUIRED_WEATHER_BLOCK
 
         runtime._create_agent(
             State(
@@ -4259,7 +4258,6 @@ class TestDeepAgentsRuntimeRefs:
                     "location": "Seattle",
                     "date": "2026-08-16",
                 },
-                weather_refresh=True,
             )
         )
         assert resolver_failed_replacement_activation.startswith(
@@ -4286,6 +4284,92 @@ class TestDeepAgentsRuntimeRefs:
             "get_weather_forecast_tool"
         ].invoke({})
         assert resolver_failed_weather_result.startswith(
+            WEATHER_FORECAST_FAILURE_PREFIX
+        )
+        assert captured_weather["request"].location == "Seattle"
+        assert captured_weather["request"].start_date == date(2026, 8, 16)
+        assert captured_weather["request"].end_date == date(2026, 8, 16)
+
+        runtime._create_agent(
+            State(
+                user_id=111,
+                query=(
+                    "The separate conference is in Seattle on August 16."
+                ),
+                conversation_projection_version=5,
+                current_weather_scope=CurrentWeatherScope.model_validate(
+                    {
+                        "revision": 2,
+                        "location": {
+                            "value": {
+                                "kind": "shopper_provided_location",
+                                "location": "NYC",
+                                "location_query": "NYC, NY",
+                            },
+                            "source_turn_id": "turn-nyc",
+                            "source_sequence": 1,
+                        },
+                        "window": {
+                            "value": {
+                                "start_date": "2026-08-07",
+                                "end_date": "2026-08-07",
+                            },
+                            "source_turn_id": "turn-nyc",
+                            "source_sequence": 1,
+                        },
+                    }
+                ),
+                weather_scope_resolver_decision=(
+                    WeatherScopeResolverDecision.model_validate(
+                        {"decision": "unchanged"}
+                    )
+                ),
+            ),
+            identity,
+        )
+        unchanged_replacement_tools = {
+            fn.__name__: fn for fn in captured["tools"]
+        }
+        _, unchanged_replacement_gate = captured["middleware"]
+        unchanged_replacement_activation = unchanged_replacement_tools[
+            "activate_shopper_skills_tool"
+        ](
+            skill_names=["outfit-styling", "event-context"],
+            event_context_next_question="none",
+            weather_scope={
+                "scope_revision": 2,
+                "location_action": "set",
+                "window_action": "set",
+                "location_source": "shopper_provided_location",
+                "location": "Seattle",
+                "date": "2026-08-16",
+            },
+        )
+        assert unchanged_replacement_activation.startswith(
+            runtime_mod.SKILL_ACTIVATION_COMPLETE
+        )
+        assert '"authority":"skill_activation"' in (
+            unchanged_replacement_activation
+        )
+        assert '"decision":"unchanged"' in (
+            unchanged_replacement_activation
+        )
+        unchanged_replacement = captured_weather["binding"].resolution
+        assert unchanged_replacement.location_action == "set"
+        assert unchanged_replacement.window_action == "set"
+        assert unchanged_replacement.pending_question is None
+        assert (
+            unchanged_replacement_gate._required_tool
+            == "get_weather_forecast_tool"
+        )
+        assert (
+            "get_weather_forecast_tool"
+            not in unchanged_replacement_gate._runtime_tool_rejections
+        )
+        unchanged_weather_result = unchanged_replacement_tools[
+            "get_weather_forecast_tool"
+        ].invoke({})
+        assert unchanged_weather_result.startswith(
             WEATHER_FORECAST_FAILURE_PREFIX
         )
         assert captured_weather["request"].location == "Seattle"

@@ -19,7 +19,7 @@ from pydantic import (
 )
 
 
-WEATHER_SCOPE_RESOLVER_SYSTEM_PROMPT = """You resolve whether the shopper's current message continues the current weather-planning subject.
+WEATHER_SCOPE_RESOLVER_SYSTEM_PROMPT = """You resolve two independent questions about the shopper's current weather-planning context.
 
 This is a business-tool-disabled semantic decision. Use the rolling summary and
 recent turns only to understand conversational meaning. They do not establish
@@ -31,33 +31,38 @@ scope_source_turns lane contains the exact prior shopper turns at those
 sequences. Treat those turns as the semantic identity of the subject whose
 typed authority or unanswered question is currently stored.
 Compare the current query's event, trip, or ordinary weather-planning subject
-with that identity before choosing a decision. An additional event or trip is a
-new subject even when the shopper wants the same kind of styling help. A
-product search, comparison, or refinement inside the current styling thread
-does not by itself answer a pending context question or introduce a new
-weather-planning subject.
+with that identity before selecting subject_relation. An additional event or
+trip is a new subject even when the shopper wants the same kind of styling
+help. A product search, comparison, or refinement inside the current styling
+thread does not introduce a new weather-planning subject.
 
-Choose exactly one decision:
-- same_subject: the shopper changes, corrects, or withdraws location or date
-  for the same event, trip, or ordinary weather-planning subject. Use this
-  when a reply also changes or withdraws the stored component opposite a
-  pending question.
+Choose exactly one subject_relation:
+- same_subject: the shopper continues, changes, corrects, or supplies context
+  for the same event, trip, or ordinary weather-planning subject.
 - new_subject: the shopper introduces a different event, trip, or ordinary
   weather-planning subject.
-- answers_pending: the shopper answers only the supplied pending question and
-  leaves the stored opposite component unchanged. Exactly echo that pending
-  question's opaque source_turn_id in the top-level pending_source_turn_id
-  field. If the same reply also changes or withdraws the opposite component,
-  choose same_subject instead.
 - unchanged: the current subject and its location/date scope are unchanged.
 - unclear: the relationship cannot be established confidently.
 
-Return only that semantic relation. Do not extract, normalize, copy, or author
+Separately choose exactly one pending_disposition:
+- not_addressed: the current query neither answers nor explicitly resumes the
+  supplied pending question.
+- answered: the shopper answers only the supplied pending question and leaves
+  the stored opposite component unchanged. Use this only with same_subject.
+- resume_requested: the shopper explicitly asks what information is still
+  needed, so the existing pending question should be asked again without
+  changing its scope or source binding. Use this only with unchanged.
+
+For answered or resume_requested, exactly echo the pending question's opaque
+source_turn_id in the top-level pending_source_turn_id field. Omit that handle
+for not_addressed. If an answer also changes or withdraws the stored opposite
+component, use same_subject/not_addressed so activation can author both current
+facts without pending authority.
+
+Return only these semantic axes. Do not extract, normalize, copy, or author
 location, date, scope revision, or component actions; the main shopper
 activation supplies current-turn scope facts once and the server validates and
-compiles them. Only answers_pending may include the top-level
-pending_source_turn_id; omit it for same_subject, new_subject, unchanged, and
-unclear. Follow-up question selection remains the main shopper skill's
+compiles them. Follow-up question selection remains the main shopper skill's
 responsibility.
 
 Make exactly one required WeatherScopeResolverDecision control call. This is a
@@ -65,28 +70,58 @@ schema-only control channel, not a business tool. Do not include prose or
 Markdown."""
 
 
-WeatherScopeSemanticRelation = Literal[
+WeatherScopeSubjectRelation = Literal[
     "same_subject",
     "new_subject",
-    "answers_pending",
     "unchanged",
     "unclear",
 ]
+WeatherScopePendingDisposition = Literal[
+    "not_addressed",
+    "answered",
+    "resume_requested",
+]
+
+_VALID_RESOLVER_OUTCOMES = frozenset(
+    {
+        ("same_subject", "not_addressed"),
+        ("same_subject", "answered"),
+        ("new_subject", "not_addressed"),
+        ("unchanged", "not_addressed"),
+        ("unchanged", "resume_requested"),
+        ("unclear", "not_addressed"),
+    }
+)
+
+
+def is_canonical_weather_scope_resolver_outcome(
+    subject_relation: object,
+    pending_disposition: object,
+) -> bool:
+    """Return whether the two semantic axes form one supported outcome."""
+
+    outcome = (subject_relation, pending_disposition)
+    try:
+        return outcome in _VALID_RESOLVER_OUTCOMES
+    except TypeError:
+        return False
+
 
 class WeatherScopeResolverDecision(BaseModel):
-    """One semantic relation plus an exact pending-answer binding."""
+    """Orthogonal subject and pending-question semantic controls."""
 
     model_config = ConfigDict(extra="forbid", strict=True)
 
-    decision: WeatherScopeSemanticRelation
+    subject_relation: WeatherScopeSubjectRelation
+    pending_disposition: WeatherScopePendingDisposition
     pending_source_turn_id: str | None = Field(
         default=None,
         min_length=1,
         max_length=256,
         description=(
-            "Opaque handle from current_scope.pending_question. Include it "
-            "only for answers_pending and copy it exactly; omit it for every "
-            "other decision."
+            "Opaque handle from current_scope.pending_question. Copy it "
+            "exactly for answered or resume_requested; omit it for "
+            "not_addressed."
         ),
     )
 
@@ -112,12 +147,17 @@ class WeatherScopeResolverDecision(BaseModel):
 
     @model_validator(mode="after")
     def _validate_decision_shape(self) -> "WeatherScopeResolverDecision":
-        if (
-            self.decision == "answers_pending"
-        ) != (self.pending_source_turn_id is not None):
+        outcome = (self.subject_relation, self.pending_disposition)
+        if not is_canonical_weather_scope_resolver_outcome(*outcome):
+            raise ValueError("invalid subject/pending resolver combination")
+        pending_handle_required = self.pending_disposition in {
+            "answered",
+            "resume_requested",
+        }
+        if pending_handle_required != (self.pending_source_turn_id is not None):
             raise ValueError(
-                "pending_source_turn_id is required exactly for "
-                "answers_pending"
+                "pending_source_turn_id is required exactly when the pending "
+                "question is answered or resumed"
             )
         return self
 

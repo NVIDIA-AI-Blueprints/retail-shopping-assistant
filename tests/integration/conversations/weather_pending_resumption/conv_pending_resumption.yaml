@@ -1,0 +1,106 @@
+set_name: Durable weather-context question resumption
+shopper_profile_id: shopper_jordan
+queries:
+  - >-
+    I’m planning weather-aware styling for an outdoor conference on Sunday
+    next week, but I haven’t chosen the city yet. I’m not shopping for products.
+  - "What information do you still need for that conference?"
+  - "Seattle."
+answers:
+  - >-
+    Establish only the conference date from the current turn. Do not import the
+    profile ZIP or another subject as the event location. Ask one natural
+    question for the conference location, make no weather or catalog call, and
+    retain that typed pending question for later completion.
+  - >-
+    Resume the exact outstanding conference-location question. Ask for the
+    location again without changing the durable weather scope, rotating the
+    pending-question source, calling weather, or searching the catalog.
+  - >-
+    Treat Seattle as the exact answer to the outstanding conference-location
+    question. Set Seattle, retain the conference date, call weather exactly
+    once through the server-bound tool, and give concise outdoor styling
+    guidance grounded in that forecast. Ask no further context question and do
+    not search for products.
+diagnostic_expectations:
+  - required_skills: [outfit-styling, event-context]
+    required_event_context_next_question: event_location
+    required_weather_scope:
+      scope_revision: 0
+      location_action: clear
+      window_action: set
+      location_source: null
+      location_supplied: false
+      date_supplied: true
+    forbidden_skills:
+      - product-discovery
+      - budget-shopping
+      - cart-management
+      - store-policy-answers
+    required_business_sequence: []
+    forbidden_tools:
+      - get_weather_forecast_tool
+      - search_catalog_tool
+      - resolve_conversation_products_tool
+      - get_product_details_tool
+      - check_product_availability_tool
+      - check_active_promotions_tool
+    weather_tool_calls: 0
+    required_response_phrases: ["?"]
+    forbidden_response_phrases:
+      - Weather Data Provided by Visual Crossing
+      - "°F"
+  - required_skills: [outfit-styling, event-context]
+    required_event_context_next_question: event_location
+    forbidden_skills:
+      - product-discovery
+      - budget-shopping
+      - cart-management
+      - store-policy-answers
+    required_business_sequence: []
+    forbidden_tools:
+      - get_weather_forecast_tool
+      - search_catalog_tool
+      - resolve_conversation_products_tool
+      - get_product_details_tool
+      - check_product_availability_tool
+      - check_active_promotions_tool
+    weather_tool_calls: 0
+    required_response_phrases: ["?"]
+    forbidden_response_phrases:
+      - Weather Data Provided by Visual Crossing
+      - "°F"
+  - required_skills: [outfit-styling, event-context]
+    required_event_context_next_question: none
+    required_weather_scope:
+      scope_revision: 1
+      location_action: set
+      window_action: retain
+      location_source: shopper_provided_location
+      location_supplied: true
+      date_supplied: false
+    forbidden_skills:
+      - product-discovery
+      - budget-shopping
+      - cart-management
+      - store-policy-answers
+    required_tools: [get_weather_forecast_tool]
+    required_business_sequence: [get_weather_forecast_tool]
+    forbidden_tools:
+      - search_catalog_tool
+      - resolve_conversation_products_tool
+      - get_product_details_tool
+      - check_product_availability_tool
+      - check_active_promotions_tool
+    weather_tool_calls: 1
+    required_weather_trace:
+      request_shape: exact_date
+      location_source: shopper_provided_location
+      provider_input: location_query
+      outcome: success
+    required_weather_receipt_status: promotion_prepared
+    required_response_phrases:
+      - Seattle
+      - Weather Data Provided by Visual Crossing
+    forbidden_response_phrases:
+      - NYC

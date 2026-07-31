@@ -629,7 +629,8 @@ request-local resolver compares the current query with the dedicated exact
 completed turns named by its location, date, and pending-question source
 identities and must
 emit one forced typed control call. It has no business-tool or subagent
-authority and emits only the semantic relation. Activation alone proposes
+authority and emits only orthogonal subject-continuity and pending-question
+controls. Activation alone proposes
 explicit `retain`/`set`/`clear` actions for both location and date. A pure
 authority compiler receives that already validated proposal and applies the
 semantic relation only to prior-state operations: it clears unauthorized
@@ -640,11 +641,11 @@ missing location/date question is stored as a typed pending binding stamped
 with its originating turn ID and sequence even when no authority value changes.
 A resolver-approved `same_subject` relation may authorize ordinary
 same-subject retains, while `new_subject` clears them. Completing a pending
-component while retaining its stored counterpart requires `answers_pending`,
-the exact opaque pending source-turn handle at the resolver boundary, and
-activation setting the component it names. That relation is pending-answer-only;
-a reply that also changes or withdraws the opposite component is
-`same_subject`. Runtime carries the exact handle to memory through a server-only
+component while retaining its stored counterpart requires
+`same_subject/answered`, the exact opaque pending source-turn handle at the
+resolver boundary, and activation setting the component it names. A reply that
+also changes or withdraws the opposite component is
+`same_subject/not_addressed`. Runtime carries the exact handle to memory through a server-only
 completion control. Memory rechecks the live binding and canonical shape
 atomically: retain an existing counterpart, keep a current-turn replacement,
 or rotate an absent counterpart into the newly bound pending question. An
@@ -657,9 +658,11 @@ unavailable or unclear, every retain is cleared without erasing current-turn
 blocked. Self-contained incomplete proposals use the ordinary missing-component
 gate; a complete current-turn `set`/`set` replacement may require weather. The
 binding also records that the question was already asked; intervening product
-work does not repeat it. If activation proposes the exact live pending question
-while the resolver says `unchanged`, deterministic compilation accepts `none`,
-creates no scope resolution, and preserves the original binding. The
+work does not repeat it. `unchanged/not_addressed` suppresses an accidental
+repeat of the exact live pending question. Exact-handle
+`unchanged/resume_requested` re-renders it without a scope resolution or source
+rotation when activation supplies no current-turn scope facts; validated
+current-turn `set` values still survive. The
 effective singleton is the only provider-request authority, and the
 model-visible weather tool has no arguments.
 

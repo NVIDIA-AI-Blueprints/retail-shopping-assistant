@@ -333,6 +333,10 @@ interface AgentDiagnostics {
     accepted_event_context_next_question?:
       'event_location' | 'event_venue' | 'event_date' | 'none';
       // Server-accepted boundary; submitted value remains in arguments
+    weather_scope_subject_relation?:
+      'same_subject' | 'new_subject' | 'unchanged' | 'unclear' | null;
+    weather_scope_pending_disposition?:
+      'not_addressed' | 'answered' | 'resume_requested' | null;
     weather?: {                       // Categorical only; raw values stay redacted
       request_shape: 'relative_exact_date' | 'relative_range' | 'exact_date' | 'date_range' | 'invalid';
       location_source: 'confirmed_saved_zip' | 'shopper_provided_location' | 'invalid';
@@ -373,6 +377,10 @@ interface AgentDiagnostics {
   partial_graph_capture_error?: string;
   diagnostic_collection_error?: string;
   memory_finalize_error?: string;
+  weather_scope_resolver?: {
+    subject_relation: 'same_subject' | 'new_subject' | 'unchanged' | 'unclear';
+    pending_disposition: 'not_addressed' | 'answered' | 'resume_requested';
+  };
   weather_receipt_status?: 'promotion_prepared' | 'bound' | 'promotion_dropped';
 }
 ```
@@ -381,7 +389,8 @@ Weather is a deliberate exception to the otherwise detailed operator trace.
 Raw `get_weather_forecast_tool` arguments are replaced with
 `{"redacted": true}` and raw output is omitted. Its tool-call record retains
 only categorical `request_shape`, `location_source`, `provider_input`, and
-`outcome`. Receipt handling adds at most categorical
+`outcome`. Resolver diagnostics expose only the two semantic axes; the opaque
+pending handle is never included. Receipt handling adds at most categorical
 `weather_receipt_status`, such as `promotion_prepared` or `bound`; it never
 includes a receipt ID, scope, evidence, location, ZIP, date, resolved place,
 URL, body, or exception. Failed-turn
@@ -571,9 +580,12 @@ response-validation failures are not retried:
   emit exactly one forced `WeatherScopeResolverDecision` control call. It is
   neither a registered business tool nor a subagent. Missing source turns,
   timeout, malformed output, structural invalidity, or an unclear relation
-  fails closed. Its output owns only the semantic relation and, for
-  `answers_pending`, the exact opaque pending handle; it never extracts or
-  normalizes location/date scope fields;
+  fails closed. Its output owns only orthogonal `subject_relation` and
+  `pending_disposition` controls. Exact-handle `same_subject/answered`
+  completes a pending question, while exact-handle
+  `unchanged/resume_requested` asks it again without a scope write when no
+  current-turn scope facts are supplied. The
+  resolver never extracts or normalizes location/date scope fields;
 - activation owns `event_context_next_question`; it is required exactly when
   `event-context` is selected and omitted otherwise. The activation model
   chooses it from semantic conversation plus the typed current scope:
@@ -593,17 +605,16 @@ response-validation failures are not retried:
   `set`, and applies the resolver only to prior-state operations. An accepted missing-location
   or missing-date question is persisted as the singleton's typed
   `pending_question` together with its originating turn ID and sequence, even
-  when the location/date authority values are unchanged. If activation repeats
-  the exact live pending question while the resolver says `unchanged`,
-  deterministic compilation accepts `none`, creates no scope resolution, and
-  leaves that binding untouched. A resolver-approved
-  `same_subject` decision may authorize ordinary same-subject retains, while
-  `new_subject` clears them. Completing a pending component by retaining its
-  stored counterpart requires `answers_pending`, the exact opaque pending
-  source-turn handle, and activation setting the component that binding names.
-  `answers_pending` means the reply answers only that question; a turn that also
-  changes or withdraws the opposite component uses `same_subject`. The handle
-  is not part of
+  when the location/date authority values are unchanged. Specifically,
+  `unchanged/not_addressed` suppresses the repeated question; an exact-handle
+  `unchanged/resume_requested` re-renders it without creating a resolution or
+  rotating its source binding. A resolver-approved `same_subject` relation may
+  authorize ordinary same-subject retains, while `new_subject` clears them.
+  Completing a pending component by retaining its stored counterpart requires
+  `same_subject/answered`, the exact opaque pending source-turn handle, and
+  activation setting the component that binding names. `answered` means the
+  reply answers only that question; a turn that also changes or withdraws the
+  opposite component uses `same_subject/not_addressed`. The handle is not part of
   `weather_scope`. When semantic resolution is unavailable or unclear, every cross-turn
   `retain` is cleared without erasing current facts, receipt/refresh reuse is
   rejected, and prior-dependent weather is blocked. Self-contained incomplete

@@ -44,26 +44,47 @@ def _resolver_call(
 
 
 @pytest.mark.parametrize(
-    "decision",
-    ["same_subject", "new_subject", "answers_pending", "unchanged", "unclear"],
+    ("subject_relation", "pending_disposition"),
+    [
+        ("same_subject", "not_addressed"),
+        ("same_subject", "answered"),
+        ("new_subject", "not_addressed"),
+        ("unchanged", "not_addressed"),
+        ("unchanged", "resume_requested"),
+        ("unclear", "not_addressed"),
+    ],
 )
-def test_contract_exposes_each_semantic_decision(decision: str) -> None:
+def test_contract_exposes_each_canonical_outcome(
+    subject_relation: str,
+    pending_disposition: str,
+) -> None:
     schema = WeatherScopeResolverDecision.model_json_schema()
 
-    assert decision in schema["properties"]["decision"]["enum"]
+    assert subject_relation in schema["properties"]["subject_relation"]["enum"]
+    assert pending_disposition in schema["properties"]["pending_disposition"][
+        "enum"
+    ]
 
 
 @pytest.mark.parametrize(
-    "decision",
+    "subject_relation",
     ["same_subject", "new_subject", "unchanged", "unclear"],
 )
-def test_non_pending_decision_is_relation_only(decision: str) -> None:
+def test_not_addressed_outcome_is_relation_only(
+    subject_relation: str,
+) -> None:
     parsed = parse_weather_scope_resolver_tool_call(
-        _resolver_call({"decision": decision})
+        _resolver_call(
+            {
+                "subject_relation": subject_relation,
+                "pending_disposition": "not_addressed",
+            }
+        )
     )
 
     assert parsed is not None
-    assert parsed.decision == decision
+    assert parsed.subject_relation == subject_relation
+    assert parsed.pending_disposition == "not_addressed"
     assert parsed.pending_source_turn_id is None
 
 
@@ -71,7 +92,8 @@ def test_resolver_rejects_scope_extraction_fields() -> None:
     parsed = parse_weather_scope_resolver_tool_call(
         _resolver_call(
             {
-                "decision": "new_subject",
+                "subject_relation": "new_subject",
+                "pending_disposition": "not_addressed",
                 "resolution": {
                     "scope_revision": 4,
                     "location_action": "clear",
@@ -89,28 +111,37 @@ def test_pending_answer_requires_top_level_exact_handle_shape() -> None:
     parsed = parse_weather_scope_resolver_tool_call(
         _resolver_call(
             {
-                "decision": "answers_pending",
+                "subject_relation": "same_subject",
+                "pending_disposition": "answered",
                 "pending_source_turn_id": "pending-turn",
             }
         )
     )
 
     assert parsed is not None
-    assert parsed.decision == "answers_pending"
+    assert parsed.subject_relation == "same_subject"
+    assert parsed.pending_disposition == "answered"
     assert parsed.pending_source_turn_id == "pending-turn"
 
 
 @pytest.mark.parametrize(
-    "decision",
-    ["same_subject", "new_subject", "unchanged", "unclear"],
+    ("subject_relation", "pending_disposition"),
+    [
+        ("same_subject", "not_addressed"),
+        ("new_subject", "not_addressed"),
+        ("unchanged", "not_addressed"),
+        ("unclear", "not_addressed"),
+    ],
 )
-def test_non_pending_resolver_decision_must_omit_pending_handle(
-    decision: str,
+def test_not_addressed_outcome_must_omit_pending_handle(
+    subject_relation: str,
+    pending_disposition: str,
 ) -> None:
     parsed = parse_weather_scope_resolver_tool_call(
         _resolver_call(
             {
-                "decision": decision,
+                "subject_relation": subject_relation,
+                "pending_disposition": pending_disposition,
                 "pending_source_turn_id": "pending-turn",
             }
         )
@@ -119,13 +150,56 @@ def test_non_pending_resolver_decision_must_omit_pending_handle(
     assert parsed is None
 
 
-def test_answers_pending_must_include_pending_handle() -> None:
-    assert (
-        parse_weather_scope_resolver_tool_call(
-            _resolver_call({"decision": "answers_pending"})
-        )
-        is None
+@pytest.mark.parametrize("pending_disposition", ["answered", "resume_requested"])
+def test_pending_control_must_include_pending_handle(
+    pending_disposition: str,
+) -> None:
+    subject_relation = (
+        "same_subject"
+        if pending_disposition == "answered"
+        else "unchanged"
     )
+
+    assert parse_weather_scope_resolver_tool_call(
+        _resolver_call(
+            {
+                "subject_relation": subject_relation,
+                "pending_disposition": pending_disposition,
+            }
+        )
+    ) is None
+
+
+@pytest.mark.parametrize(
+    ("subject_relation", "pending_disposition"),
+    [
+        ("same_subject", "resume_requested"),
+        ("new_subject", "answered"),
+        ("new_subject", "resume_requested"),
+        ("unchanged", "answered"),
+        ("unclear", "answered"),
+        ("unclear", "resume_requested"),
+    ],
+)
+def test_contract_rejects_noncanonical_axis_combinations(
+    subject_relation: str,
+    pending_disposition: str,
+) -> None:
+    assert parse_weather_scope_resolver_tool_call(
+        _resolver_call(
+            {
+                "subject_relation": subject_relation,
+                "pending_disposition": pending_disposition,
+                "pending_source_turn_id": "pending-turn",
+            }
+        )
+    ) is None
+
+
+def test_contract_rejects_legacy_mixed_decision() -> None:
+    assert parse_weather_scope_resolver_tool_call(
+        _resolver_call({"decision": "unchanged"})
+    ) is None
 
 
 @pytest.mark.parametrize(
@@ -139,7 +213,8 @@ def test_pending_source_turn_handle_must_be_trimmed_and_single_line(
         parse_weather_scope_resolver_tool_call(
             _resolver_call(
                 {
-                    "decision": "answers_pending",
+                    "subject_relation": "same_subject",
+                    "pending_disposition": "answered",
                     "pending_source_turn_id": pending_source_turn_id,
                 }
             )
@@ -159,14 +234,16 @@ def test_parser_fails_closed_without_exactly_one_control_call() -> None:
                         "id": "one",
                         "name": "WeatherScopeResolverDecision",
                         "args": {
-                            "decision": "unchanged",
+                            "subject_relation": "unchanged",
+                            "pending_disposition": "not_addressed",
                         },
                     },
                     {
                         "id": "two",
                         "name": "WeatherScopeResolverDecision",
                         "args": {
-                            "decision": "unchanged",
+                            "subject_relation": "unchanged",
+                            "pending_disposition": "not_addressed",
                         },
                     },
                 ],
@@ -181,7 +258,8 @@ def test_parser_fails_closed_on_wrong_control_name_or_arguments() -> None:
         parse_weather_scope_resolver_tool_call(
             _resolver_call(
                 {
-                    "decision": "unchanged",
+                    "subject_relation": "unchanged",
+                    "pending_disposition": "not_addressed",
                 },
                 name="another_tool",
             )
@@ -192,7 +270,8 @@ def test_parser_fails_closed_on_wrong_control_name_or_arguments() -> None:
         parse_weather_scope_resolver_tool_call(
             _resolver_call(
                 {
-                    "decision": "unchanged",
+                    "subject_relation": "unchanged",
+                    "pending_disposition": "not_addressed",
                     "extra": True,
                 }
             )
@@ -265,12 +344,16 @@ def test_prompt_keeps_semantics_with_the_model_and_facts_outside_it() -> None:
     assert "do not establish location, date, forecast" in normalized
     assert "source_sequence" in normalized
     assert "semantic identity of the subject" in normalized
-    assert "return only that semantic relation" in normalized
+    assert "choose exactly one subject_relation" in normalized
+    assert "separately choose exactly one pending_disposition" in normalized
+    assert "return only these semantic axes" in normalized
     assert "do not extract, normalize, copy, or author location" in normalized
     assert "top-level pending_source_turn_id" in normalized
-    assert "answers only the supplied pending question" in normalized
-    assert "changes or withdraws the opposite component" in normalized
-    assert "choose same_subject instead" in normalized
+    assert "shopper answers only the supplied pending question" in normalized
+    assert "explicitly asks what information is still needed" in normalized
+    assert "should be asked again without changing its scope" in normalized
+    assert "changes or withdraws the stored opposite component" in normalized
+    assert "use same_subject/not_addressed" in normalized
     assert "exactly one required weatherscoperesolverdecision" in normalized
 
 
@@ -324,7 +407,8 @@ async def test_runtime_resolver_isolates_a_new_subject_before_activation(
     model = _ResolverModel(
         _resolver_call(
             {
-                "decision": "new_subject",
+                "subject_relation": "new_subject",
+                "pending_disposition": "not_addressed",
             }
         )
     )
@@ -355,7 +439,8 @@ async def test_runtime_resolver_isolates_a_new_subject_before_activation(
     )
 
     assert decision is not None
-    assert decision.decision == "new_subject"
+    assert decision.subject_relation == "new_subject"
+    assert decision.pending_disposition == "not_addressed"
     assert decision.pending_source_turn_id is None
     assert len(model.calls) == 1
     assert model.bindings[0]["tool_choice"] == "WeatherScopeResolverDecision"
@@ -373,7 +458,8 @@ async def test_v5_resolver_uses_exact_scope_sources_outside_recent_context(
     model = _ResolverModel(
         _resolver_call(
             {
-                "decision": "same_subject",
+                "subject_relation": "same_subject",
+                "pending_disposition": "not_addressed",
             }
         )
     )
@@ -412,7 +498,8 @@ async def test_v5_resolver_uses_exact_scope_sources_outside_recent_context(
     )
 
     assert decision is not None
-    assert decision.decision == "same_subject"
+    assert decision.subject_relation == "same_subject"
+    assert decision.pending_disposition == "not_addressed"
     resolver_payload = json.loads(model.calls[0][1]["content"])
     assert resolver_payload["scope_subject_context"]["turns"] == [
         {
@@ -438,7 +525,8 @@ async def test_v5_resolver_answers_pending_from_source_outside_recent_context(
     model = _ResolverModel(
         _resolver_call(
             {
-                "decision": "answers_pending",
+                "subject_relation": "same_subject",
+                "pending_disposition": "answered",
                 "pending_source_turn_id": "conference-turn",
             }
         )
@@ -494,7 +582,8 @@ async def test_v5_resolver_answers_pending_from_source_outside_recent_context(
     )
 
     assert decision is not None
-    assert decision.decision == "answers_pending"
+    assert decision.subject_relation == "same_subject"
+    assert decision.pending_disposition == "answered"
     assert decision.pending_source_turn_id == "conference-turn"
     resolver_payload = json.loads(model.calls[0][1]["content"])
     assert resolver_payload["scope_subject_context"]["turns"][0][
@@ -512,7 +601,14 @@ async def test_v5_resolver_rejects_same_sequence_with_wrong_source_turn(
 ) -> None:
     monkeypatch.setenv("WEATHER_API_KEY", "test-weather-key")
     base_config.weather.enabled = True
-    model = _ResolverModel(_resolver_call({"decision": "same_subject"}))
+    model = _ResolverModel(
+        _resolver_call(
+            {
+                "subject_relation": "same_subject",
+                "pending_disposition": "not_addressed",
+            }
+        )
+    )
     runtime = DeepAgentsRuntime(base_config)
     monkeypatch.setattr(runtime, "_create_chat_model", lambda: model)
     state = State(
@@ -538,7 +634,8 @@ async def test_v5_resolver_rejects_same_sequence_with_wrong_source_turn(
     )
 
     assert decision is not None
-    assert decision.decision == "unclear"
+    assert decision.subject_relation == "unclear"
+    assert decision.pending_disposition == "not_addressed"
     assert model.calls == []
     assert state.model_usage["app_llm_weather_scope_resolver"]["status"] == (
         "not_used"
@@ -553,7 +650,12 @@ async def test_runtime_resolver_rejects_answers_pending_without_handle(
     monkeypatch.setenv("WEATHER_API_KEY", "test-weather-key")
     base_config.weather.enabled = True
     model = _ResolverModel(
-        _resolver_call({"decision": "answers_pending"})
+        _resolver_call(
+            {
+                "subject_relation": "same_subject",
+                "pending_disposition": "answered",
+            }
+        )
     )
     runtime = DeepAgentsRuntime(base_config)
     monkeypatch.setattr(runtime, "_create_chat_model", lambda: model)
@@ -597,7 +699,8 @@ async def test_runtime_resolver_rejects_answers_pending_without_handle(
     )
 
     assert decision is not None
-    assert decision.decision == "unclear"
+    assert decision.subject_relation == "unclear"
+    assert decision.pending_disposition == "not_addressed"
     assert state.model_usage["app_llm_weather_scope_resolver"]["status"] == (
         "failed"
     )
@@ -613,7 +716,8 @@ async def test_runtime_resolver_rejects_answers_pending_with_wrong_handle(
     model = _ResolverModel(
         _resolver_call(
             {
-                "decision": "answers_pending",
+                "subject_relation": "same_subject",
+                "pending_disposition": "answered",
                 "pending_source_turn_id": "different-turn",
             }
         )
@@ -658,7 +762,8 @@ async def test_runtime_resolver_rejects_answers_pending_with_wrong_handle(
     )
 
     assert decision is not None
-    assert decision.decision == "unclear"
+    assert decision.subject_relation == "unclear"
+    assert decision.pending_disposition == "not_addressed"
     assert state.model_usage["app_llm_weather_scope_resolver"]["status"] == (
         "failed"
     )
@@ -674,7 +779,8 @@ async def test_runtime_resolver_accepts_exact_pending_handle(
     model = _ResolverModel(
         _resolver_call(
             {
-                "decision": "answers_pending",
+                "subject_relation": "same_subject",
+                "pending_disposition": "answered",
                 "pending_source_turn_id": "wedding-turn",
             }
         )
@@ -720,7 +826,8 @@ async def test_runtime_resolver_accepts_exact_pending_handle(
     )
 
     assert decision is not None
-    assert decision.decision == "answers_pending"
+    assert decision.subject_relation == "same_subject"
+    assert decision.pending_disposition == "answered"
     assert decision.pending_source_turn_id == "wedding-turn"
     assert state.model_usage["app_llm_weather_scope_resolver"]["status"] == (
         "used"
@@ -759,7 +866,12 @@ async def test_runtime_resolver_binds_an_empty_pending_scope_to_its_source_turn(
     monkeypatch.setenv("WEATHER_API_KEY", "test-weather-key")
     base_config.weather.enabled = True
     model = _ResolverModel(
-        _resolver_call({"decision": "unchanged"})
+        _resolver_call(
+            {
+                "subject_relation": "unchanged",
+                "pending_disposition": "not_addressed",
+            }
+        )
     )
     runtime = DeepAgentsRuntime(base_config)
     monkeypatch.setattr(runtime, "_create_chat_model", lambda: model)
@@ -792,7 +904,8 @@ async def test_runtime_resolver_binds_an_empty_pending_scope_to_its_source_turn(
     )
 
     assert decision is not None
-    assert decision.decision == "unchanged"
+    assert decision.subject_relation == "unchanged"
+    assert decision.pending_disposition == "not_addressed"
     resolver_payload = json.loads(model.calls[0][1]["content"])
     assert resolver_payload["scope_subject_context"]["turns"] == [
         state.recent_conversation_turns[0]
@@ -831,7 +944,8 @@ async def test_runtime_resolver_fails_closed_on_invalid_model_output(
     )
 
     assert decision is not None
-    assert decision.decision == "unclear"
+    assert decision.subject_relation == "unclear"
+    assert decision.pending_disposition == "not_addressed"
     assert state.model_usage["app_llm_weather_scope_resolver"]["status"] == (
         "failed"
     )
@@ -862,7 +976,8 @@ async def test_runtime_resolver_does_not_model_guess_without_source_turn(
     )
 
     assert decision is not None
-    assert decision.decision == "unclear"
+    assert decision.subject_relation == "unclear"
+    assert decision.pending_disposition == "not_addressed"
     assert model.calls == []
     assert model.bindings == []
     assert state.model_usage["app_llm_weather_scope_resolver"]["status"] == (

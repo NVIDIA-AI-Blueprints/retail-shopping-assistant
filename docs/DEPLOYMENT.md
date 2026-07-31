@@ -418,8 +418,9 @@ its component source identities. A request-local tools-disabled semantic
 resolver compares that lane with the current query through one forced typed
 control call.
 It is neither a business tool nor a subagent, and any missing, invalid,
-timed-out, or unclear result fails closed. The resolver returns only the
-semantic relation and does not duplicate scope extraction. Activation alone
+timed-out, or unclear result fails closed. The resolver returns only orthogonal
+subject-continuity and pending-question controls and does not duplicate scope
+extraction. Activation alone
 may then submit one atomic scope selection: it copies the revision and chooses
 `retain`, `set`, or `clear` independently for location and date. Only
 current-turn authority can supply `set`. A missing location/date question is durably bound to the
@@ -428,10 +429,10 @@ It persists even when the location/date authority values do not otherwise
 change. Intervening product work neither answers nor repeats it. A
 resolver-approved `same_subject` relation may authorize ordinary same-subject
 retains, while `new_subject` clears them. Completing a pending component while
-retaining its stored counterpart requires `answers_pending`, the exact opaque
-pending source-turn handle at the resolver boundary, and activation setting the
-component it names. That relation is pending-answer-only; a reply that also
-changes or withdraws the opposite component uses `same_subject`. Runtime sends
+retaining its stored counterpart requires `same_subject/answered`, the exact
+opaque pending source-turn handle at the resolver boundary, and activation
+setting the component it names. A reply that also changes or withdraws the
+opposite component uses `same_subject/not_addressed`. Runtime sends
 the handle to memory only through the server-authored completion control.
 Memory rechecks the exact live binding and canonical shape atomically, retaining
 an existing counterpart, keeping a current-turn replacement, or rotating an
@@ -452,9 +453,11 @@ materiality, and intent remain model-owned semantic guidance. The dynamic enum
 is typed argument consistency, not an intent router or keyword routing layer.
 Only the accepted activation result authorizes that event-context follow-up;
 the server does not infer one from weather configuration or missing context.
-If activation repeats the exact live pending question while the resolver says
-`unchanged`, the server accepts `none`, creates no scope resolution, and leaves
-the original pending source binding untouched.
+`unchanged/not_addressed` suppresses an accidental repeat of the exact live
+pending question. Exact-handle `unchanged/resume_requested` instead re-renders
+that durable question without creating a scope resolution or rotating the
+original pending source binding when activation supplies no current-turn scope
+facts; any validated current-turn `set` still survives.
 The same activation may bind
 one currently valid `weather_receipt_id` only with
 `event_context_next_question=none`, no scope update, no refresh request, and

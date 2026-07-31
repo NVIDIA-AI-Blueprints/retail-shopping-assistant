@@ -259,8 +259,23 @@ retains the bounded-tail fallback during rolling deployment. Missing source
 turns, timeout, malformed output, structural invalidity, or an unclear
 relation fails closed.
 
-The isolated resolver owns only the semantic relation; it never duplicates
-location/date extraction. Normal activation still owns skill selection, the
+The isolated resolver owns only orthogonal `subject_relation` and
+`pending_disposition` controls; it never duplicates location/date extraction.
+The schema accepts exactly six outcomes:
+
+| Subject relation | Pending disposition | Meaning |
+| --- | --- | --- |
+| `same_subject` | `not_addressed` | Continue or revise the subject without consuming a pending binding. |
+| `same_subject` | `answered` | Complete the exact pending binding. |
+| `new_subject` | `not_addressed` | Replace prior subject authority. |
+| `unchanged` | `not_addressed` | Leave an unanswered question silent. |
+| `unchanged` | `resume_requested` | Re-render the exact unanswered question without a scope write when no current-turn scope facts are supplied. |
+| `unclear` | `not_addressed` | Fail closed for prior authority. |
+
+The handle is required exactly for `answered` and `resume_requested`. These
+semantic choices remain model-owned; the server has no phrase matcher, intent
+router, or rules table for recognizing an answer or a resumption.
+Normal activation still owns skill selection, the
 one shopper-facing question, and the single atomic scope selection.
 Deterministic compilation admits `set` only from current-turn location/date authority. When
 the accepted response asks for a missing location or date, memory stores that
@@ -268,20 +283,20 @@ question as the pending binding with its originating turn ID and sequence even
 if no authority value otherwise changes. A resolver-approved `same_subject`
 relation authorizes ordinary same-subject retains, while `new_subject` clears
 them. Completing a pending component while retaining its stored counterpart
-requires `answers_pending`, the exact opaque pending source-turn handle, and
-activation setting the component it names. That relation means the reply
-answers only the pending question; a reply that also changes or withdraws the
-opposite component is `same_subject`. Runtime forwards the handle only through
+requires `same_subject/answered`, the exact opaque pending source-turn handle,
+and activation setting the component it names. A reply that also changes or
+withdraws the opposite component is `same_subject/not_addressed`. Runtime forwards the handle only through
 a server-authored completion control, and memory atomically verifies the exact
 live binding and canonical shape. It retains an existing counterpart, keeps a
 current-turn replacement, or rotates an absent counterpart into the newly
 source-bound pending question. Preserving an otherwise unanswered
 pending binding during another same-subject update likewise requires an exact
 server-authored source handle; without it memory binds the question to the
-current finalized turn. If activation repeats the exact live pending question
-while the resolver says `unchanged`, deterministic compilation accepts `none`,
-creates no scope resolution, and leaves the original pending binding
-untouched. When the
+current finalized turn. `unchanged/not_addressed` suppresses an accidental
+repeat of the exact live pending question. Exact-handle
+`unchanged/resume_requested` re-renders that question without creating a scope
+resolution or rotating its original binding when activation supplies no
+current-turn scope facts. Any validated current-turn `set` still survives. When the
 isolated resolver is unavailable or unclear, the pure authority compiler clears
 every proposed retained component without erasing a validated current-turn
 `set`, receipt/refresh reuse is rejected, and prior-dependent weather is
@@ -345,11 +360,13 @@ Friday next week and made one forecast. The cross-subject fixture proved:
 3. The location-only answer “Seattle” completed the pending location binding
    and made one Seattle/Sunday next week forecast.
 
-Across the three cross-subject turns, the resolver decisions were `null`,
-`new_subject`, and `answers_pending`, respectively. The second turn proves
-that the semantic relation clears activation's attempted NYC retention while
-preserving the conference's current-turn date. The third proves the exact
-source-bound pending-answer path; its retained, already-normalized date is
+Across the three cross-subject turns, the pre-split resolver decisions were
+`null`, `new_subject`, and `answers_pending`, respectively; the current typed
+equivalents are no result, `new_subject/not_addressed`, and
+`same_subject/answered`. The second turn proves that the semantic relation
+clears activation's attempted NYC retention while preserving the conference's
+current-turn date. The third proves the exact source-bound pending-answer path;
+its retained, already-normalized date is
 correctly recorded as an `exact_date` provider request. No Judge or Challenger ran for any focused
 fixture. Their local traces are under
 `~/exec-briefs/retail-shopping-assistant/quality/successful-live-traces/`; the

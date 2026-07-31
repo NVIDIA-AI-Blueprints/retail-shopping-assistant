@@ -46,19 +46,20 @@ tools_granted:
   semantic resolver has already compared the current query with the exact
   shopper turns named by its component source sequences through one forced
   typed control call. It is neither a business tool nor a subagent, and it
-  returns only a semantic relation. This activation remains the sole producer
-  of current-turn location/date scope fields. Treat an unclear or missing
-  resolver decision as non-authorizing.
+  returns two orthogonal semantic controls: subject continuity and pending-
+  question disposition. This activation remains the sole producer of current-
+  turn location/date scope fields. Treat an unclear or missing resolver result
+  as non-authorizing.
 - `set` contains only location/date authority supplied or confirmed in the
   current shopper turn. Omitted components never inherit. Omit
   `weather_scope` only when the entire scope is unchanged.
 - A missing `event_location` or `event_date` question is persisted as the
   scope's typed pending binding with the originating shopper-turn sequence.
-  Only the isolated resolver's `answers_pending` decision may authorize
-  retaining its counterpart, and only when the resolver echoes the binding's
-  exact opaque source-turn handle and this activation sets the named missing
-  component. `answers_pending` means the reply answers only that question; if
-  it also changes or withdraws the opposite component, use `same_subject`.
+  Only `same_subject/answered` may authorize retaining its counterpart, and
+  only when the resolver echoes the binding's exact opaque source-turn handle
+  and this activation sets the named missing component. It means the reply
+  answers only that question; if it also changes or withdraws the opposite
+  component, use `same_subject/not_addressed`.
   Never include the handle in `weather_scope`; the server carries and memory
   verifies it through a separate completion control. When semantic resolution
   is unavailable or unclear, clear every proposed retain and reject
@@ -124,7 +125,10 @@ tools_granted:
   questionnaire.
 - A pending question records that it was already asked. If the shopper
   continues product work without answering it, do not repeat it; leave the
-  pending binding available for a later direct answer.
+  pending binding available for a later direct answer. The resolver may select
+  `unchanged/resume_requested` with the exact handle when the shopper asks what
+  information is still needed; when no current-turn scope facts are supplied,
+  ask the stored pending question again without authoring a scope update.
 - For non-event weather styling, ask only for the missing location or bounded
   date. Never ask for a venue.
 - When activation selected `event_location`, ask location. When it selected

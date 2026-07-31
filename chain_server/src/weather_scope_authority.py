@@ -46,9 +46,9 @@ def resolver_pending_binding_is_valid(
     current_scope: CurrentWeatherScope,
     decision: WeatherScopeResolverDecision,
 ) -> bool:
-    """Accept a pending answer only for the exact durable question handle."""
+    """Accept pending-question control only for the exact durable handle."""
 
-    if decision.decision != "answers_pending":
+    if decision.pending_disposition == "not_addressed":
         return True
     return bool(
         current_scope.pending_question is not None
@@ -85,26 +85,37 @@ def compile_weather_scope_authority(
         and decision is not None
         and not resolver_pending_binding_is_valid(current_scope, decision)
     ):
-        decision = WeatherScopeResolverDecision(decision="unclear")
+        decision = WeatherScopeResolverDecision(
+            subject_relation="unclear",
+            pending_disposition="not_addressed",
+        )
 
     resolver_fails_closed = bool(
         resolver_required
-        and (decision is None or decision.decision == "unclear")
+        and (
+            decision is None
+            or decision.subject_relation == "unclear"
+        )
     )
     resolver_new_subject = bool(
         resolver_applies
         and decision is not None
-        and decision.decision == "new_subject"
+        and decision.subject_relation == "new_subject"
     )
     resolver_unchanged = bool(
         resolver_applies
         and decision is not None
-        and decision.decision == "unchanged"
+        and decision.subject_relation == "unchanged"
     )
     resolver_answers_pending = bool(
         resolver_applies
         and decision is not None
-        and decision.decision == "answers_pending"
+        and decision.pending_disposition == "answered"
+    )
+    resolver_resumes_pending = bool(
+        resolver_applies
+        and decision is not None
+        and decision.pending_disposition == "resume_requested"
     )
 
     resolution = proposed_resolution
@@ -121,6 +132,7 @@ def compile_weather_scope_authority(
         resolver_fails_closed
         or resolver_new_subject
         or resolver_answers_pending
+        or resolver_resumes_pending
     ):
         refresh = False
         receipt_id = None
@@ -193,9 +205,19 @@ def compile_weather_scope_authority(
     ):
         raise ValueError("weather refresh requires a complete effective scope")
 
-    accepted_question = next_question
+    resume_without_scope_write = bool(
+        resolver_resumes_pending
+        and resolution is None
+        and current_scope.pending_question is not None
+    )
+    accepted_question = (
+        current_scope.pending_question
+        if resume_without_scope_write
+        else next_question
+    )
     if (
         resolver_unchanged
+        and not resolver_resumes_pending
         and current_scope.pending_question is not None
         and accepted_question == current_scope.pending_question
     ):
@@ -245,10 +267,14 @@ def compile_weather_scope_authority(
     ):
         accepted_question = "none"
 
-    if resolution is None and accepted_question in {
-        "event_location",
-        "event_date",
-    }:
+    if (
+        not resume_without_scope_write
+        and resolution is None
+        and accepted_question in {
+            "event_location",
+            "event_date",
+        }
+    ):
         if not atomic_scope_supported:
             raise ValueError("atomic weather scope is unavailable")
         resolution = _pending_scope_resolution(
@@ -438,7 +464,8 @@ def _same_subject_preserves_pending_binding(
 ) -> bool:
     if (
         decision is None
-        or decision.decision != "same_subject"
+        or decision.subject_relation != "same_subject"
+        or decision.pending_disposition != "not_addressed"
         or resolution is None
         or next_question != "none"
         or current_scope.pending_question is None

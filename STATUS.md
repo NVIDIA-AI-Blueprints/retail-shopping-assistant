@@ -21,6 +21,24 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   date, skipped weather, and asked for the missing date. The qualified run and
   timing comparison are archived under
   `~/exec-briefs/retail-shopping-assistant/quality/weather_scope_continuity/`;
+- the request-local weather resolver now separates subject continuity from
+  pending-question behavior. Its strict schema accepts only six canonical
+  `subject_relation`/`pending_disposition` pairs; no legacy mixed decision,
+  keyword matcher, or intent router remains. Exact-handle
+  `same_subject/answered` completes a pending binding, while exact-handle
+  `unchanged/resume_requested` re-renders the stored question without creating
+  a scope resolution or rotating its source when no current-turn scope facts
+  are supplied; independently validated `set` values still survive.
+  `unchanged/not_addressed` retains
+  the existing non-repeat behavior for product work. Diagnostics expose only
+  the two axes and never the opaque handle. The focused resolver/compiler/
+  runtime set passes 318 tests and the complete Python unit suite passes 1,626.
+  The new three-turn conference resumption live fixture passes all deterministic
+  diagnostics and all three GPT-5.2 Judge calls at 5/4/4 (4.33/5) with 10.35s
+  average latency: it asks location, resumes that exact question with no scope
+  write or tool call, then completes it with Seattle and makes one forecast.
+  Its canonical run and golden comparison are under
+  `~/exec-briefs/retail-shopping-assistant/quality/weather_pending_resumption/`;
 - memory migration 10's scope uses response contract 4 for
   atomic finalize-time resolution. It owns the monotonic core scope and optional
   memory-stamped location/date authority. Migration 11 moves
@@ -36,16 +54,16 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   scope's location, date, and pending bindings, independent of summary
   compaction and `MEMORY_RECENT_TURNS`. A request-local tools-disabled semantic
   resolver compares that lane with the current query through one forced typed
-  control call; it is neither a business tool nor a subagent. That call owns only the
-  semantic relation and never duplicates location/date extraction. Normal
+  control call; it is neither a business tool nor a subagent. That call owns
+  only orthogonal subject-continuity and pending-question controls and never
+  duplicates location/date extraction. Normal
   activation supplies the one atomic scope selection. Invalid, unavailable,
   timed-out, or unclear output fails closed; `new_subject` clears all proposed
   retains, while `same_subject` may retain ordinary same-subject authority.
   Completing a pending component may retain its stored counterpart only through
-  `answers_pending`, which must echo the exact opaque pending source-turn handle
-  at the resolver boundary while activation sets the named missing component.
-  The relation is pending-answer-only; a turn that also changes or withdraws
-  the opposite component uses `same_subject`. Runtime issues a server-only
+  exact-handle `same_subject/answered` while activation sets the named missing
+  component. A turn that also changes or withdraws the opposite component uses
+  `same_subject/not_addressed`. Runtime issues a server-only
   `complete_pending_source_turn_id`, and shared/memory validation atomically
   rechecks the exact live binding plus the canonical completion shape. An
   existing counterpart is retained, a current-turn replacement remains set,
@@ -70,9 +88,9 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   Ungranted weather controls therefore cannot mutate scope, grant weather, or
   consume the one activation repair for a valid product turn. A pending
   question is not repeated merely because an intervening product request did
-  not answer it. When the resolver says `unchanged`, an activation that repeats
-  the exact live pending question is normalized to `none` without a scope
-  resolution or pending-handle rotation;
+  not answer it: `unchanged/not_addressed` keeps it silent. Exact-handle
+  `unchanged/resume_requested` instead re-renders that durable question without
+  a scope resolution or pending-handle rotation;
 - focused validation for the final atomic pending-completion boundary passes a
   458-test backend subset, and the complete Python unit suite passes 1,596
   tests. Three Judge-free live diagnostics pass all 9 turns. The
@@ -178,8 +196,10 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   `retain`/`set`/`clear` actions. Deterministic compilation accepts `set`
   authority only from the current turn. Exact source-bound semantic resolution
   is isolated before activation; resolver-approved same-subject retention is
-  accepted directly. `answers_pending` must echo the exact stored opaque handle
-  and set the question's named component. An unavailable or unclear resolver
+  accepted directly. `same_subject/answered` must echo the exact stored opaque
+  handle and set the question's named component;
+  `unchanged/resume_requested` uses the same exact binding only to ask the
+  stored question again. An unavailable or unclear resolver
   clears every retain and blocks prior-dependent weather; a validated
   current-turn `set`/`set` replacement does not depend on that resolver.
   Recent prose and the rolling summary cannot authorize the zero-argument
@@ -290,8 +310,9 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   `retain`/`set`/`clear` selection.
   Deterministic compilation accepts `set` only from current-turn authority;
   prior raw turns and summary prose never become adapter arguments. Only an
-  approved `same_subject` relation or an exact-handle `answers_pending`
-  relation may authorize prior retention. A `new_subject` relation clears
+  approved `same_subject/not_addressed` outcome or exact-handle
+  `same_subject/answered` may authorize prior retention. A `new_subject`
+  relation clears
   every proposed retain. Unavailable or unclear semantic resolution also
   clears every proposed retain and blocks prior-dependent weather; a validated
   current-turn `set`/`set` replacement remains independent authority.

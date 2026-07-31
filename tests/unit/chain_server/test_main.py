@@ -3472,7 +3472,8 @@ class TestDeepAgentsRuntimeRefs:
                 weather_scope_resolver_decision=(
                     WeatherScopeResolverDecision.model_validate(
                         {
-                            "decision": "answers_pending",
+                            "subject_relation": "same_subject",
+                            "pending_disposition": "answered",
                             "pending_source_turn_id": "turn-seattle",
                         }
                     )
@@ -3530,7 +3531,10 @@ class TestDeepAgentsRuntimeRefs:
                 ),
                 weather_scope_resolver_decision=(
                     WeatherScopeResolverDecision.model_validate(
-                        {"decision": "same_subject"}
+                        {
+                            "subject_relation": "same_subject",
+                            "pending_disposition": "not_addressed",
+                        }
                     )
                 ),
             ),
@@ -3584,7 +3588,10 @@ class TestDeepAgentsRuntimeRefs:
                 current_weather_scope=venue_scope,
                 weather_scope_resolver_decision=(
                     WeatherScopeResolverDecision.model_validate(
-                        {"decision": "unchanged"}
+                        {
+                            "subject_relation": "unchanged",
+                            "pending_disposition": "not_addressed",
+                        }
                     )
                 ),
             ),
@@ -3625,7 +3632,8 @@ class TestDeepAgentsRuntimeRefs:
                 weather_scope_resolver_decision=(
                     WeatherScopeResolverDecision.model_validate(
                         {
-                            "decision": "answers_pending",
+                            "subject_relation": "same_subject",
+                            "pending_disposition": "answered",
                             "pending_source_turn_id": "turn-venue",
                         }
                     )
@@ -3698,7 +3706,10 @@ class TestDeepAgentsRuntimeRefs:
                 ),
                 weather_scope_resolver_decision=(
                     WeatherScopeResolverDecision.model_validate(
-                        {"decision": "new_subject"}
+                        {
+                            "subject_relation": "new_subject",
+                            "pending_disposition": "not_addressed",
+                        }
                     )
                 ),
             ),
@@ -3768,7 +3779,10 @@ class TestDeepAgentsRuntimeRefs:
                 ),
                 weather_scope_resolver_decision=(
                     WeatherScopeResolverDecision.model_validate(
-                        {"decision": "new_subject"}
+                        {
+                            "subject_relation": "new_subject",
+                            "pending_disposition": "not_addressed",
+                        }
                     )
                 ),
             ),
@@ -3824,7 +3838,8 @@ class TestDeepAgentsRuntimeRefs:
                 weather_scope_resolver_decision=(
                     WeatherScopeResolverDecision.model_validate(
                         {
-                            "decision": "unclear",
+                            "subject_relation": "unclear",
+                            "pending_disposition": "not_addressed",
                         }
                     )
                 ),
@@ -3858,7 +3873,11 @@ class TestDeepAgentsRuntimeRefs:
             '"authority":"semantic_resolver"'
             in conference_activation
         )
-        assert '"decision":"unclear"' in conference_activation
+        assert '"subject_relation":"unclear"' in conference_activation
+        assert (
+            '"pending_disposition":"not_addressed"'
+            in conference_activation
+        )
         assert '"location_action":"clear"' in conference_activation
         assert captured_weather["binding"].resolution.location_action == "clear"
         assert captured_weather["binding"].resolution.window_action == "set"
@@ -3890,7 +3909,10 @@ class TestDeepAgentsRuntimeRefs:
                 ),
                 weather_scope_resolver_decision=(
                     WeatherScopeResolverDecision.model_validate(
-                        {"decision": "unclear"}
+                        {
+                            "subject_relation": "unclear",
+                            "pending_disposition": "not_addressed",
+                        }
                     )
                 ),
             ),
@@ -3946,7 +3968,8 @@ class TestDeepAgentsRuntimeRefs:
                 weather_scope_resolver_decision=(
                     WeatherScopeResolverDecision.model_validate(
                         {
-                            "decision": "answers_pending",
+                            "subject_relation": "same_subject",
+                            "pending_disposition": "answered",
                             "pending_source_turn_id": "turn-conference",
                         }
                     )
@@ -4024,7 +4047,8 @@ class TestDeepAgentsRuntimeRefs:
                 weather_scope_resolver_decision=(
                     WeatherScopeResolverDecision.model_validate(
                         {
-                            "decision": "answers_pending",
+                            "subject_relation": "same_subject",
+                            "pending_disposition": "answered",
                             "pending_source_turn_id": "turn-conference",
                         }
                     )
@@ -4077,7 +4101,10 @@ class TestDeepAgentsRuntimeRefs:
                 current_weather_scope=pending_location_scope,
                 weather_scope_resolver_decision=(
                     WeatherScopeResolverDecision.model_validate(
-                        {"decision": "same_subject"}
+                        {
+                            "subject_relation": "same_subject",
+                            "pending_disposition": "not_addressed",
+                        }
                     )
                 ),
             ),
@@ -4118,7 +4145,10 @@ class TestDeepAgentsRuntimeRefs:
                 current_weather_scope=pending_location_scope,
                 weather_scope_resolver_decision=(
                     WeatherScopeResolverDecision.model_validate(
-                        {"decision": "same_subject"}
+                        {
+                            "subject_relation": "same_subject",
+                            "pending_disposition": "not_addressed",
+                        }
                     )
                 ),
             ),
@@ -4169,7 +4199,10 @@ class TestDeepAgentsRuntimeRefs:
                 current_weather_scope=pending_location_scope,
                 weather_scope_resolver_decision=(
                     WeatherScopeResolverDecision.model_validate(
-                        {"decision": "same_subject"}
+                        {
+                            "subject_relation": "same_subject",
+                            "pending_disposition": "not_addressed",
+                        }
                     )
                 ),
             ),
@@ -4234,7 +4267,10 @@ class TestDeepAgentsRuntimeRefs:
                 ),
                 weather_scope_resolver_decision=(
                     WeatherScopeResolverDecision.model_validate(
-                        {"decision": "unclear"}
+                        {
+                            "subject_relation": "unclear",
+                            "pending_disposition": "not_addressed",
+                        }
                     )
                 ),
             ),
@@ -4267,7 +4303,9 @@ class TestDeepAgentsRuntimeRefs:
             '"authority":"skill_activation"'
             in resolver_failed_replacement_activation
         )
-        assert '"decision":"unclear"' in resolver_failed_replacement_activation
+        assert '"subject_relation":"unclear"' in (
+            resolver_failed_replacement_activation
+        )
         resolver_failed_replacement = captured_weather["binding"].resolution
         assert resolver_failed_replacement.location_action == "set"
         assert resolver_failed_replacement.window_action == "set"
@@ -4321,7 +4359,10 @@ class TestDeepAgentsRuntimeRefs:
                 ),
                 weather_scope_resolver_decision=(
                     WeatherScopeResolverDecision.model_validate(
-                        {"decision": "unchanged"}
+                        {
+                            "subject_relation": "unchanged",
+                            "pending_disposition": "not_addressed",
+                        }
                     )
                 ),
             ),
@@ -4351,7 +4392,7 @@ class TestDeepAgentsRuntimeRefs:
         assert '"authority":"skill_activation"' in (
             unchanged_replacement_activation
         )
-        assert '"decision":"unchanged"' in (
+        assert '"subject_relation":"unchanged"' in (
             unchanged_replacement_activation
         )
         unchanged_replacement = captured_weather["binding"].resolution
@@ -4385,7 +4426,8 @@ class TestDeepAgentsRuntimeRefs:
                 weather_scope_resolver_decision=(
                     WeatherScopeResolverDecision.model_validate(
                         {
-                            "decision": "answers_pending",
+                            "subject_relation": "same_subject",
+                            "pending_disposition": "answered",
                             "pending_source_turn_id": "wrong-turn",
                         }
                     )
@@ -4429,7 +4471,10 @@ class TestDeepAgentsRuntimeRefs:
                 current_weather_scope=pending_location_scope,
                 weather_scope_resolver_decision=(
                     WeatherScopeResolverDecision.model_validate(
-                        {"decision": "same_subject"}
+                        {
+                            "subject_relation": "same_subject",
+                            "pending_disposition": "not_addressed",
+                        }
                     )
                 ),
             ),
@@ -4491,7 +4536,10 @@ class TestDeepAgentsRuntimeRefs:
                 ),
                 weather_scope_resolver_decision=(
                     WeatherScopeResolverDecision.model_validate(
-                        {"decision": "unchanged"}
+                        {
+                            "subject_relation": "unchanged",
+                            "pending_disposition": "not_addressed",
+                        }
                     )
                 ),
             ),
@@ -4522,7 +4570,10 @@ class TestDeepAgentsRuntimeRefs:
             current_weather_scope=pending_location_scope,
             weather_scope_resolver_decision=(
                 WeatherScopeResolverDecision.model_validate(
-                    {"decision": "unchanged"}
+                    {
+                        "subject_relation": "unchanged",
+                        "pending_disposition": "not_addressed",
+                    }
                 )
             ),
         )
@@ -4554,6 +4605,50 @@ class TestDeepAgentsRuntimeRefs:
             "get_weather_forecast_tool"
         ] == runtime_mod._EVENT_CONTEXT_LOCATION_REQUIRED_WEATHER_BLOCK
 
+        pending_resume_state = State(
+            user_id=111,
+            query="What information do you still need for the conference?",
+            conversation_projection_version=5,
+            conversation_memory_contract_version=5,
+            current_weather_scope=pending_location_scope,
+            weather_scope_resolver_decision=(
+                WeatherScopeResolverDecision.model_validate(
+                    {
+                        "subject_relation": "unchanged",
+                        "pending_disposition": "resume_requested",
+                        "pending_source_turn_id": "turn-conference",
+                    }
+                )
+            ),
+        )
+        runtime._create_agent(pending_resume_state, identity)
+        pending_resume_tools = {
+            fn.__name__: fn for fn in captured["tools"]
+        }
+        _, pending_resume_gate = captured["middleware"]
+        pending_resume_activation = pending_resume_tools[
+            "activate_shopper_skills_tool"
+        ](
+            skill_names=["outfit-styling", "event-context"],
+            event_context_next_question="none",
+        )
+        assert pending_resume_activation.startswith(
+            runtime_mod.SKILL_ACTIVATION_COMPLETE
+        )
+        assert (
+            "EVENT_CONTEXT_NEXT_QUESTION_BOUNDARY: event_location"
+            in pending_resume_activation
+        )
+        assert captured_weather["binding"].resolution is None
+        assert (
+            pending_resume_state.current_weather_scope.pending_source_turn_id
+            == "turn-conference"
+        )
+        assert pending_resume_gate._required_tool is None
+        assert pending_resume_gate._runtime_tool_rejections[
+            "get_weather_forecast_tool"
+        ] == runtime_mod._EVENT_CONTEXT_LOCATION_REQUIRED_WEATHER_BLOCK
+
         runtime._create_agent(
             State(
                 user_id=111,
@@ -4573,7 +4668,10 @@ class TestDeepAgentsRuntimeRefs:
                 ),
                 weather_scope_resolver_decision=(
                     WeatherScopeResolverDecision.model_validate(
-                        {"decision": "unchanged"}
+                        {
+                            "subject_relation": "unchanged",
+                            "pending_disposition": "not_addressed",
+                        }
                     )
                 ),
             ),
@@ -4622,7 +4720,10 @@ class TestDeepAgentsRuntimeRefs:
                 ),
                 weather_scope_resolver_decision=(
                     WeatherScopeResolverDecision.model_validate(
-                        {"decision": "unchanged"}
+                        {
+                            "subject_relation": "unchanged",
+                            "pending_disposition": "not_addressed",
+                        }
                     )
                 ),
             ),
@@ -4674,7 +4775,10 @@ class TestDeepAgentsRuntimeRefs:
                 ),
                 weather_scope_resolver_decision=(
                     WeatherScopeResolverDecision.model_validate(
-                        {"decision": "unchanged"}
+                        {
+                            "subject_relation": "unchanged",
+                            "pending_disposition": "not_addressed",
+                        }
                     )
                 ),
             ),

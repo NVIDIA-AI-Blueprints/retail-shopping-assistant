@@ -232,8 +232,9 @@ tools-disabled semantic resolver compares the current query with the exact
 shopper turns named by the stored location, date, and pending-question source
 sequences. It makes one
 forced typed control call and is neither a business tool nor a subagent.
-The resolver returns only the semantic relation; it does not duplicate
-location/date extraction. Normal activation is the sole producer of one atomic
+The resolver returns only two orthogonal semantic controls—subject continuity
+and pending-question disposition—and does not duplicate location/date
+extraction. Normal activation is the sole producer of one atomic
 `weather_scope` selection: it copies the scope revision and chooses `retain`,
 `set`, or `clear` independently for location and date. Only current-turn
 shopper authority can enter a `set`. A pure authority compiler receives that
@@ -242,17 +243,18 @@ unauthorized `retain`s become `clear`, while every current-turn `set` survives.
 Invalid, unavailable, or unclear output therefore blocks only
 prior-dependent weather. Self-contained incomplete proposals use the ordinary
 missing-location/date gate; a complete current-turn `set`/`set` replacement may
-require a fresh forecast. Completing a typed pending component is a
-narrower boundary: only exact-handle `answers_pending` may retain its stored
-counterpart. That relation means the reply answers only the pending question;
-a reply that also changes or withdraws the opposite component is
-`same_subject`, whose explicit `set` or `clear` remains authoritative.
+require a fresh forecast. Completing a typed pending component is a narrower
+boundary: only exact-handle `same_subject/answered` may retain its stored
+counterpart. That disposition means the reply answers only the pending
+question; a reply that also changes or withdraws the opposite component is
+`same_subject/not_addressed`, whose explicit `set` or `clear` remains
+authoritative.
 
 When activation asks for a missing location or date, that question is stored in
 the singleton as a typed pending binding stamped with the originating turn ID
 and sequence, even when the location/date authority values otherwise remain
-unchanged. `answers_pending` is accepted only when the relation call echoes the
-exact opaque pending handle and activation sets the named missing component.
+unchanged. `same_subject/answered` is accepted only when the resolver echoes
+the exact opaque pending handle and activation sets the named missing component.
 The opaque handle is resolver-only and is never part of the normal activation
 scope. The runtime carries it to memory only as the server-authored
 `complete_pending_source_turn_id`; memory independently verifies the exact live
@@ -268,13 +270,17 @@ cleared without erasing a current-turn `set`, and receipt/refresh reuse is
 rejected. Weather remains blocked only when the effective scope still depends
 on prior authority; a complete current-turn `set`/`set` replacement may proceed
 without importing an older subject.
-The pending binding records that the question was already asked. If activation
-nevertheless proposes that exact live question while the resolver says the
-subject is `unchanged`, runtime accepts `none`, creates no scope resolution,
-and leaves the original binding untouched. This preserves a new conference's
-stated date while asking its location, then safely combines the location-only
-reply with that date. The durable singleton—not the rolling summary or recent
-prose—is the only cross-turn weather authority.
+The pending binding records that the question was already asked.
+`unchanged/not_addressed` suppresses an accidental repeat during unrelated
+product work. If the shopper explicitly asks what information is still needed,
+the resolver may instead return exact-handle
+`unchanged/resume_requested`; when activation supplies no current-turn scope
+facts, runtime re-renders the durable pending question without creating a scope
+resolution or rotating its source binding. Any independently validated
+current-turn `set` still survives. This
+preserves a new conference's stated date while asking its location, then safely
+combines a location-only answer with that date. The durable singleton—not the
+rolling summary or recent prose—is the only cross-turn weather authority.
 
 The forecast tool is model-visible but has an empty argument schema. After
 activation, the runtime derives the provider location and exact date window

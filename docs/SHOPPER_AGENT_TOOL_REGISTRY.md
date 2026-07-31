@@ -66,18 +66,21 @@ query with the exact completed shopper turns named by its component source
 identities. Contract v5 supplies those turns in a dedicated lane independent of
 summary compaction and raw-tail limits. The resolver
 must emit one forced typed control call. This internal schema channel is neither
-a business tool nor a subagent, and it emits only the semantic relation.
+a business tool nor a subagent, and it emits only orthogonal subject-continuity
+and pending-question controls.
 Activation alone proposes one atomic selection that copies the scope revision
 and chooses `retain`, `set`, or `clear` independently for location and date. A
 pure authority compiler preserves every validated current-turn `set` and
 applies the resolver only to prior-state operations. Invalid, unavailable,
 timed-out, or unclear semantic output therefore fails closed for prior
 authority without erasing current facts. A missing location/date question is
-persisted as a typed pending binding. Only an exact-handle
-`answers_pending` relation may authorize retaining its counterpart, and only
-when activation sets the named missing component. It means a pending-only
-answer; a reply that also changes or withdraws the counterpart is
-`same_subject`. Runtime and memory carry and atomically verify the exact handle
+persisted as a typed pending binding. Only exact-handle
+`same_subject/answered` may authorize retaining its counterpart, and only when
+activation sets the named missing component. A reply that also changes or
+withdraws the counterpart is `same_subject/not_addressed`. Exact-handle
+`unchanged/resume_requested` re-renders the stored question without a scope
+write when activation supplies no current-turn scope facts;
+`unchanged/not_addressed` keeps it silent. Runtime and memory carry and atomically verify the exact handle
 through a server-only completion control; without a usable
 resolver result, every retain is cleared and prior-dependent weather is
 blocked. Self-contained incomplete proposals use normal missing-component

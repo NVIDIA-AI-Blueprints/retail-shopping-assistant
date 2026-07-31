@@ -63,7 +63,8 @@ Every shopper turn uses two model phases inside the same Deep Agents run:
    current query with the dedicated contract-v5 lane of exact completed turns
    named by the scope's location, date, and pending-question source identities
    and must emit one forced typed
-   control call. It is neither a business tool nor a subagent. The activation
+   control call. It is neither a business tool nor a subagent and returns only
+   orthogonal subject-continuity and pending-question controls. The activation
    call may then submit one atomic
    `weather_scope` that copies the revision and selects `retain`, `set`, or
    `clear` independently for location and date. A pure authority compiler
@@ -313,12 +314,15 @@ forecast context to occasion-led styling.
   The scope copies the current revision and resolves both components explicitly
   with `retain`, `set`, or `clear`. A selected missing location/date question is
   persisted as the typed pending binding and stamped at finalization with its
-  originating turn ID and sequence. Intervening product work neither answers
-  nor repeats that already-asked question. Only an `answers_pending` relation
-  that echoes the exact opaque pending source-turn handle may authorize
-  retaining the counterpart, and activation must set its named component.
-  That relation means the reply answers only the pending question; a reply
-  that also changes or withdraws the opposite component is `same_subject`.
+  originating turn ID and sequence. `unchanged/not_addressed` suppresses an
+  accidental repeat during intervening product work. Exact-handle
+  `unchanged/resume_requested` asks the stored question again without a scope
+  write when activation supplies no current-turn scope facts. Only
+  `same_subject/answered` with that exact opaque handle may
+  authorize retaining the counterpart, and activation must set its named
+  component. `answered` means the reply answers only the pending question; a
+  reply that also changes or withdraws the opposite component is
+  `same_subject/not_addressed`.
   Runtime and memory carry and verify the exact handle through a server-only
   completion control; the handle is not part of model-authored `weather_scope`.
   Unavailable or unclear semantic

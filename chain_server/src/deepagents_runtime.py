@@ -130,6 +130,7 @@ from .weather_scope_resolver import (
     WEATHER_SCOPE_RESOLVER_SYSTEM_PROMPT,
     WeatherScopeResolverDecision,
     build_weather_scope_resolver_prompt,
+    is_canonical_weather_scope_resolver_outcome,
     parse_weather_scope_resolver_tool_call,
 )
 from .weather_scope_authority import (
@@ -1899,7 +1900,9 @@ class DeepAgentsRuntime:
             )
             if state.weather_scope_resolver_decision is not None:
                 state.agent_diagnostics["weather_scope_resolver"] = (
-                    state.weather_scope_resolver_decision.decision
+                    _weather_scope_resolver_axes(
+                        state.weather_scope_resolver_decision
+                    )
                 )
             _bind_weather_diagnostics_to_current_scope(
                 state.agent_diagnostics,
@@ -1972,7 +1975,9 @@ class DeepAgentsRuntime:
             )
             if state.weather_scope_resolver_decision is not None:
                 state.agent_diagnostics["weather_scope_resolver"] = (
-                    state.weather_scope_resolver_decision.decision
+                    _weather_scope_resolver_axes(
+                        state.weather_scope_resolver_decision
+                    )
                 )
             if capture_error:
                 state.agent_diagnostics["partial_graph_capture_error"] = capture_error
@@ -2086,7 +2091,8 @@ class DeepAgentsRuntime:
                 ),
             )
             return WeatherScopeResolverDecision(
-                decision="unclear",
+                subject_relation="unclear",
+                pending_disposition="not_addressed",
             )
         prompt = build_weather_scope_resolver_prompt(
             current_query=state.query,
@@ -2106,7 +2112,8 @@ class DeepAgentsRuntime:
         )
         if timeout_seconds <= 0:
             return WeatherScopeResolverDecision(
-                decision="unclear",
+                subject_relation="unclear",
+                pending_disposition="not_addressed",
             )
 
         try:
@@ -2142,7 +2149,8 @@ class DeepAgentsRuntime:
                 ),
             )
             return WeatherScopeResolverDecision(
-                decision="unclear",
+                subject_relation="unclear",
+                pending_disposition="not_addressed",
             )
         except Exception:  # noqa: BLE001 - resolver fails closed for weather.
             state.timings["weather_scope_resolver"] = time.monotonic() - start
@@ -2158,7 +2166,8 @@ class DeepAgentsRuntime:
             )
             logger.exception("Weather-scope semantic resolver failed")
             return WeatherScopeResolverDecision(
-                decision="unclear",
+                subject_relation="unclear",
+                pending_disposition="not_addressed",
             )
 
         state.timings["weather_scope_resolver"] = time.monotonic() - start
@@ -2179,7 +2188,8 @@ class DeepAgentsRuntime:
                 ),
             )
             return WeatherScopeResolverDecision(
-                decision="unclear",
+                subject_relation="unclear",
+                pending_disposition="not_addressed",
             )
 
         if not resolver_pending_binding_is_valid(
@@ -2197,7 +2207,8 @@ class DeepAgentsRuntime:
                 ),
             )
             return WeatherScopeResolverDecision(
-                decision="unclear",
+                subject_relation="unclear",
+                pending_disposition="not_addressed",
             )
 
         _add_model_usage(
@@ -3097,7 +3108,10 @@ class DeepAgentsRuntime:
             scope lacks a bounded date; otherwise none. Never ask venue for
             non-event weather styling. When a typed pending question was already
             asked and the shopper instead continues product work, choose none
-            rather than repeating it.
+            rather than repeating it. When SERVER WEATHER SCOPE DECISION sets
+            pending_disposition to resume_requested, choose the exact pending
+            question shown in CURRENT WEATHER SCOPE and omit weather_scope;
+            the server will re-render it without changing its durable binding.
             CURRENT WEATHER SCOPE is the only prior location/date authority.
             Supply one atomic weather_scope when the current turn establishes
             or changes it. Copy the exact scope_revision and choose retain,
@@ -3106,8 +3120,9 @@ class DeepAgentsRuntime:
             or weather-planning subject. For a different subject, clear every
             component it does not establish now. Set accepts only current-turn
             shopper authority, and no omitted component inherits. The isolated
-            resolver supplies only semantic continuity; this activation is the
-            sole author of current-turn location/date component facts. Choose
+            resolver supplies only subject continuity and pending-question
+            disposition; this activation is the sole author of current-turn
+            location/date component facts. Choose
             the context question after
             applying this same call's weather_scope: when it supplies the
             missing date, choose none, never event_date. Omit weather_scope
@@ -3328,11 +3343,8 @@ class DeepAgentsRuntime:
                             else "skill_activation"
                         )
                     ),
-                    "decision": (
-                        resolver_decision.decision
-                        if resolver_applies
-                        and resolver_decision is not None
-                        else None
+                    **_weather_scope_resolver_axes(
+                        resolver_decision if resolver_applies else None
                     ),
                     "weather_scope": _accepted_weather_scope_summary(
                         scope_resolution,
@@ -5214,8 +5226,11 @@ def _collect_agent_diagnostics(
                     entry["weather_scope_authority"] = accepted_scope.get(
                         "authority"
                     )
-                    entry["weather_scope_resolver_decision"] = (
-                        accepted_scope.get("decision")
+                    entry["weather_scope_subject_relation"] = (
+                        accepted_scope.get("subject_relation")
+                    )
+                    entry["weather_scope_pending_disposition"] = (
+                        accepted_scope.get("pending_disposition")
                     )
                     entry["accepted_weather_scope"] = accepted_scope.get(
                         "weather_scope"
@@ -6262,22 +6277,24 @@ def _accepted_weather_scope(
         "skill_activation",
     }:
         return None
-    decision = payload.get("decision")
-    if decision not in {
-        None,
-        "same_subject",
-        "new_subject",
-        "answers_pending",
-        "unchanged",
-        "unclear",
-    }:
+    subject_relation = payload.get("subject_relation")
+    pending_disposition = payload.get("pending_disposition")
+    if (subject_relation is None) != (pending_disposition is None):
+        return None
+    if subject_relation is not None and not (
+        is_canonical_weather_scope_resolver_outcome(
+            subject_relation,
+            pending_disposition,
+        )
+    ):
         return None
     weather_scope = payload.get("weather_scope")
     if weather_scope is not None and not isinstance(weather_scope, dict):
         return None
     return {
         "authority": payload.get("authority"),
-        "decision": decision,
+        "subject_relation": subject_relation,
+        "pending_disposition": pending_disposition,
         "weather_scope": weather_scope,
     }
 
@@ -8605,10 +8622,11 @@ def _format_weather_scope_resolver_decision(
 
     if decision is None:
         return "SERVER WEATHER SCOPE DECISION:\n(none required)"
-    payload = {"decision": decision.decision}
+    payload = _weather_scope_resolver_axes(decision)
     return (
         "SERVER WEATHER SCOPE DECISION "
-        "(tools-disabled semantic authority for location/date continuity; "
+        "(tools-disabled semantic subject continuity and pending-question "
+        "disposition; "
         "it applies only if event-context is selected and is otherwise inert; "
         "when applicable activation must not independently merge prior scope "
         "components; it is not forecast evidence):\n"
@@ -8619,6 +8637,21 @@ def _format_weather_scope_resolver_decision(
             ensure_ascii=False,
         )
     )
+
+
+def _weather_scope_resolver_axes(
+    decision: WeatherScopeResolverDecision | None,
+) -> dict[str, str | None]:
+    """Expose semantic axes without the opaque pending binding handle."""
+
+    return {
+        "subject_relation": (
+            decision.subject_relation if decision is not None else None
+        ),
+        "pending_disposition": (
+            decision.pending_disposition if decision is not None else None
+        ),
+    }
 
 
 def _shopper_authored_texts(state: State) -> tuple[str, ...]:
@@ -8650,7 +8683,10 @@ def _active_weather_scope_shopper_texts(state: State) -> tuple[str, ...]:
         )
         or (
             state.weather_scope_resolver_decision is not None
-            and state.weather_scope_resolver_decision.decision == "unchanged"
+            and (
+                state.weather_scope_resolver_decision.subject_relation
+                == "unchanged"
+            )
         )
     )
     if resolution is None:

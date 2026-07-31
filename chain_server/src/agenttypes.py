@@ -174,8 +174,8 @@ class State(BaseModel):
     weather_scope_resolver_decision: WeatherScopeResolverDecision | None = Field(
         default=None,
         description=(
-            "Request-local business-tool-disabled semantic decision for an existing "
-            "weather scope; never persisted as conversation authority"
+            "Request-local business-tool-disabled subject relation and pending-question "
+            "disposition for an existing weather scope; never persisted as authority"
         ),
     )
     cart: Cart = Field(default_factory=Cart, description="User's shopping cart")

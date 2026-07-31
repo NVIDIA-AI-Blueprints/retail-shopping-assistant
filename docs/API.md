@@ -563,9 +563,11 @@ allows one client-internal retry only after a timeout or HTTP 5xx. HTTP 400
 maps to generic `weather_request_invalid`; other 4xx, connection, and
 response-validation failures are not retried:
 
-- before normal activation, an existing scope is presented to one request-local
-  tools-disabled semantic resolver together with the exact shopper turns named
-  by its component source sequences and the current query. The resolver must
+- before normal activation, response contract 5 supplies the exact completed
+  shopper turns named by the existing scope's component source identities in a
+  dedicated isolated lane used only for subject resolution and protected
+  styling provenance. That lane and the current query are presented to one
+  request-local tools-disabled semantic resolver. The resolver must
   emit exactly one forced `WeatherScopeResolverDecision` control call. It is
   neither a registered business tool nor a subagent. Missing source turns,
   timeout, malformed output, structural invalidity, or an unclear relation
@@ -590,7 +592,10 @@ response-validation failures are not retried:
   current-turn location/date authority for `set`. An accepted missing-location
   or missing-date question is persisted as the singleton's typed
   `pending_question` together with its originating turn ID and sequence, even
-  when the location/date authority values are unchanged. A resolver-approved
+  when the location/date authority values are unchanged. If activation repeats
+  the exact live pending question while the resolver says `unchanged`,
+  deterministic compilation accepts `none`, creates no scope resolution, and
+  leaves that binding untouched. A resolver-approved
   `same_subject` decision may authorize ordinary same-subject retains, while
   `new_subject` clears them. Completing a pending component by retaining its
   stored counterpart requires `answers_pending`, the exact opaque pending
@@ -1299,12 +1304,17 @@ excludes abandoned turns before creating model context. Raw media is not stored;
 the request digest includes ordered media content hashes so exact retries can
 be distinguished safely.
 
-The serving chain requests `?response_contract=4` as its maximum supported
+The serving chain requests `?response_contract=5` as its maximum supported
 version. Memory returns the highest version it supports up to that maximum.
 Contract 2 adds summary/receipt lanes and contract 3 adds the current
 weather-planning scope with its legacy transition. Contract 4 adds the atomic
 two-component resolution, typed pending location/date binding, and
-finalize-write capability used by the current chain. Without an opt-in, memory
+finalize-write capability. Contract 5 adds the top-level
+`current_weather_scope_source_turns` read lane. It is required even when empty
+for v5 and absent from contracts 1–4. At most three sorted, unique completed
+turns must exactly match the adjacent scope's `(turn_id, sequence)` pointers;
+memory reads them without the summary watermark or `MEMORY_RECENT_TURNS`
+limit. Without an opt-in, memory
 returns the exact pre-summary response shape: summary, compaction, receipt, and
 contract-version fields are omitted, and the bounded raw tail is read from
 sequence zero. Older chain instances can therefore continue after memory is
@@ -1344,9 +1354,9 @@ inert.
 ```json
 {
   "turn_id": "8e40575d5e5a4dbca34e1d08a2cb1692",
-  "contract_version": 4,
+  "contract_version": 5,
   "attempt_id": "bd77b851b3494e37a764e3dfa7500208",
-  "sequence": 4,
+  "sequence": 5,
   "replayed": false,
   "status": "started",
   "shopper_context": {
@@ -1356,13 +1366,13 @@ inert.
   },
   "recent_turns": [
     {
-      "sequence": 3,
-      "shopper_text": "Show me a beige top",
-      "assistant_text": "Here are the grounded beige options.",
+      "sequence": 4,
+      "shopper_text": "The conference is August 12; where should I shop for?",
+      "assistant_text": "What event location should I plan around?",
       "status": "completed"
     }
   ],
-  "unsummarized_turn_count": 1,
+  "unsummarized_turn_count": 2,
   "summary_compaction_source": {
     "expected_projection_version": 3,
     "after_sequence": 2,
@@ -1377,6 +1387,15 @@ inert.
     ]
   },
   "previous_selected_skill_names": ["outfit-styling"],
+  "current_weather_scope_source_turns": [
+    {
+      "turn_id": "conference-turn-id",
+      "sequence": 4,
+      "shopper_text": "The conference is August 12; where should I shop for?",
+      "assistant_text": "What event location should I plan around?",
+      "status": "completed"
+    }
+  ],
   "projection": {
     "version": 3,
     "summary_text": "The shopper is assembling a semi-formal wedding outfit.",
@@ -1410,7 +1429,7 @@ inert.
         ]
       }
     ],
-    "last_turn_id": "prior-turn-id"
+    "last_turn_id": "conference-turn-id"
   },
   "cart": [],
   "assistant_text": null,
@@ -1455,6 +1474,16 @@ different consumers. It carries the projection version and exact before/after
 boundary. The runtime never derives a compaction watermark from the newest raw
 tail. Finalization may advance to any exact turn boundary within that freshly
 re-read offered prefix; a boundary outside it is rejected atomically.
+
+`current_weather_scope_source_turns` is a third, independent read lane for one
+narrow consumer. It may intentionally overlap summary coverage or
+`recent_turns`, is not counted by compaction, and is never merged into general
+conversation context. The chain validates exact pointer equality, redacts
+stale assistant forecast prose, and supplies the lane only to
+weather-subject resolution and protected styling provenance. It is not
+location/date authority by itself, cannot authorize current-turn `set`, and is
+not forecast evidence. On an exact replay, the current projection may
+legitimately reference a source later than the replayed historical turn.
 
 The chain server renders `summary_text`, `recent_turns`, and
 `product_reference_index` as separate prompt/state sections. The summary is

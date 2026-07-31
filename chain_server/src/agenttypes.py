@@ -16,8 +16,10 @@ from shared.weather_receipts import (
     WeatherReceiptPromotion,
 )
 from shared.weather_scope import (
+    MAX_CURRENT_WEATHER_SCOPE_SOURCE_TURNS,
     CurrentWeatherScope,
     CurrentWeatherScopeResolution,
+    CurrentWeatherScopeSourceTurn,
     CurrentWeatherScopeTransition,
 )
 from .weather_scope_resolver import WeatherScopeResolverDecision
@@ -118,6 +120,17 @@ class State(BaseModel):
         description=(
             "Request-local structured bounded turns used to resolve typed "
             "weather-scope source-sequence semantics"
+        ),
+    )
+    current_weather_scope_source_turns: List[
+        CurrentWeatherScopeSourceTurn
+    ] = Field(
+        default_factory=list,
+        max_length=MAX_CURRENT_WEATHER_SCOPE_SOURCE_TURNS,
+        description=(
+            "Durable turns referenced by the current weather scope, with "
+            "assistant weather prose sanitized and the lane isolated from "
+            "general conversation context"
         ),
     )
     historical_product_context: str = Field(

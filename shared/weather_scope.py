@@ -12,8 +12,26 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from .weather_receipts import WeatherLocationScope, WeatherReceiptWindow
 
 
+MAX_CURRENT_WEATHER_SCOPE_SOURCE_TURNS = 3
+
+
 class _WeatherScopeModel(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
+
+
+class CurrentWeatherScopeSourceTurn(_WeatherScopeModel):
+    """One exact completed turn referenced by the current weather scope."""
+
+    turn_id: str = Field(..., min_length=1, max_length=256)
+    sequence: int = Field(..., ge=1)
+    shopper_text: str = Field(..., min_length=1, max_length=100_000)
+    assistant_text: str = Field(..., max_length=100_000)
+    status: Literal["completed"]
+
+    @field_validator("turn_id")
+    @classmethod
+    def _validate_turn_id(cls, value: str) -> str:
+        return _validate_source_turn_id(value)
 
 
 class WeatherScopeLocationAuthority(_WeatherScopeModel):
@@ -95,6 +113,39 @@ class CurrentWeatherScope(_WeatherScopeModel):
         if self.pending_question == "event_date" and self.window is not None:
             raise ValueError("pending date question requires a missing window")
         return self
+
+
+def current_weather_scope_source_references(
+    scope: CurrentWeatherScope,
+) -> tuple[tuple[str, int], ...]:
+    """Return the scope's unique source-turn identities in durable order."""
+
+    references: set[tuple[str, int]] = set()
+    if scope.location is not None:
+        references.add(
+            (
+                scope.location.source_turn_id,
+                scope.location.source_sequence,
+            )
+        )
+    if scope.window is not None:
+        references.add(
+            (
+                scope.window.source_turn_id,
+                scope.window.source_sequence,
+            )
+        )
+    if (
+        scope.pending_source_turn_id is not None
+        and scope.pending_source_sequence is not None
+    ):
+        references.add(
+            (
+                scope.pending_source_turn_id,
+                scope.pending_source_sequence,
+            )
+        )
+    return tuple(sorted(references, key=lambda item: (item[1], item[0])))
 
 
 class CurrentWeatherScopeTransition(_WeatherScopeModel):

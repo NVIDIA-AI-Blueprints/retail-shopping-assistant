@@ -158,6 +158,7 @@ from shared.weather_receipts import (
 from shared.weather_scope import (
     CurrentWeatherScope,
     CurrentWeatherScopeResolution,
+    current_weather_scope_source_references,
     effective_resolved_weather_scope_values,
 )
 
@@ -1734,6 +1735,7 @@ class DeepAgentsRuntime:
         state.shopper_context = None
         state.conversation_summary = ""
         state.recent_conversation_turns = []
+        state.current_weather_scope_source_turns = []
         state.historical_product_context = ""
         state.conversation_projection_version = 0
         state.conversation_memory_contract_version = 1
@@ -2042,33 +2044,45 @@ class DeepAgentsRuntime:
         ):
             return None
 
+        source_references = set(
+            current_weather_scope_source_references(
+                state.current_weather_scope
+            )
+        )
         source_sequences = {
-            authority.source_sequence
-            for authority in (
-                state.current_weather_scope.location,
-                state.current_weather_scope.window,
-            )
-            if authority is not None
+            sequence for _turn_id, sequence in source_references
         }
-        if state.current_weather_scope.pending_source_sequence is not None:
-            source_sequences.add(
-                state.current_weather_scope.pending_source_sequence
-            )
-        scope_source_turns = [
-            turn
-            for turn in state.recent_conversation_turns
-            if turn.get("sequence") in source_sequences
-        ]
-        if {
-            turn.get("sequence") for turn in scope_source_turns
-        } != source_sequences:
+        if state.conversation_memory_contract_version >= 5:
+            returned_source_references = {
+                (turn.turn_id, turn.sequence)
+                for turn in state.current_weather_scope_source_turns
+            }
+            scope_source_turns = [
+                {
+                    "sequence": turn.sequence,
+                    "shopper_text": turn.shopper_text,
+                    "assistant_text": turn.assistant_text,
+                }
+                for turn in state.current_weather_scope_source_turns
+            ]
+            sources_match = returned_source_references == source_references
+        else:
+            scope_source_turns = [
+                turn
+                for turn in state.recent_conversation_turns
+                if turn.get("sequence") in source_sequences
+            ]
+            sources_match = {
+                turn.get("sequence") for turn in scope_source_turns
+            } == source_sequences
+        if not sources_match:
             _add_model_usage(
                 state,
                 "app_llm_weather_scope_resolver",
                 status="not_used",
                 calls=0,
                 detail=(
-                    "Weather-scope source turn is outside bounded raw context; "
+                    "Weather-scope source turn is unavailable or mismatched; "
                     "prior-scope retention unavailable"
                 ),
             )
@@ -3189,6 +3203,13 @@ class DeepAgentsRuntime:
             validated_next_question = (
                 validated_activation.event_context_next_question
             )
+            if (
+                resolver_unchanged
+                and state.current_weather_scope.pending_question is not None
+                and validated_next_question
+                == state.current_weather_scope.pending_question
+            ):
+                validated_next_question = "none"
             validated_weather_scope = validated_activation.weather_scope
             validated_weather_refresh = validated_activation.weather_refresh
             validated_receipt_id = validated_activation.weather_receipt_id
@@ -4904,6 +4925,7 @@ Rules:
             state.conversation_summary = ""
             state.context = ""
             state.recent_conversation_turns = []
+            state.current_weather_scope_source_turns = []
             state.historical_product_context = ""
             state.conversation_projection_version = 0
             state.conversation_memory_contract_version = 1
@@ -4978,6 +5000,16 @@ Rules:
             for item in turn.recent_turns
             if item.status not in {"abandoned", "blocked"}
             and item.assistant_text is not None
+        ]
+        state.current_weather_scope_source_turns = [
+            item.model_copy(
+                update={
+                    "assistant_text": _summary_safe_assistant_text(
+                        item.assistant_text
+                    )
+                }
+            )
+            for item in turn.current_weather_scope_source_turns
         ]
         state.previous_selected_skill_names = list(
             turn.previous_selected_skill_names
@@ -9036,6 +9068,7 @@ def _shopper_authored_texts(state: State) -> tuple[str, ...]:
 def _active_weather_scope_shopper_texts(state: State) -> tuple[str, ...]:
     """Return only shopper text bound to the effective weather subject."""
 
+    source_references: set[tuple[str, int]] = set()
     source_sequences: set[int] = set()
     resolution = state.current_weather_scope_resolution
     include_current_query = (
@@ -9054,10 +9087,22 @@ def _active_weather_scope_shopper_texts(state: State) -> tuple[str, ...]:
     )
     if resolution is None:
         if state.current_weather_scope.location is not None:
+            source_references.add(
+                (
+                    state.current_weather_scope.location.source_turn_id,
+                    state.current_weather_scope.location.source_sequence,
+                )
+            )
             source_sequences.add(
                 state.current_weather_scope.location.source_sequence
             )
         if state.current_weather_scope.window is not None:
+            source_references.add(
+                (
+                    state.current_weather_scope.window.source_turn_id,
+                    state.current_weather_scope.window.source_sequence,
+                )
+            )
             source_sequences.add(
                 state.current_weather_scope.window.source_sequence
             )
@@ -9066,6 +9111,12 @@ def _active_weather_scope_shopper_texts(state: State) -> tuple[str, ...]:
             resolution.location_action == "retain"
             and state.current_weather_scope.location is not None
         ):
+            source_references.add(
+                (
+                    state.current_weather_scope.location.source_turn_id,
+                    state.current_weather_scope.location.source_sequence,
+                )
+            )
             source_sequences.add(
                 state.current_weather_scope.location.source_sequence
             )
@@ -9073,28 +9124,50 @@ def _active_weather_scope_shopper_texts(state: State) -> tuple[str, ...]:
             resolution.window_action == "retain"
             and state.current_weather_scope.window is not None
         ):
+            source_references.add(
+                (
+                    state.current_weather_scope.window.source_turn_id,
+                    state.current_weather_scope.window.source_sequence,
+                )
+            )
             source_sequences.add(
                 state.current_weather_scope.window.source_sequence
             )
 
-    source_texts = {
-        int(turn["sequence"]): str(turn["shopper_text"]).strip()
-        for turn in state.recent_conversation_turns
-        if isinstance(turn, dict)
-        and isinstance(turn.get("sequence"), int)
-        and isinstance(turn.get("shopper_text"), str)
-        and str(turn["shopper_text"]).strip()
-    }
+    if state.conversation_memory_contract_version >= 5:
+        source_texts = {
+            (turn.turn_id, turn.sequence): turn.shopper_text.strip()
+            for turn in state.current_weather_scope_source_turns
+            if turn.shopper_text.strip()
+        }
+        bound_source_texts = [
+            source_texts[reference]
+            for reference in sorted(
+                source_references,
+                key=lambda item: (item[1], item[0]),
+            )
+            if reference in source_texts
+        ]
+    else:
+        source_texts = {
+            int(turn["sequence"]): str(turn["shopper_text"]).strip()
+            for turn in state.recent_conversation_turns
+            if isinstance(turn, dict)
+            and isinstance(turn.get("sequence"), int)
+            and isinstance(turn.get("shopper_text"), str)
+            and str(turn["shopper_text"]).strip()
+        }
+        bound_source_texts = [
+            source_texts[sequence]
+            for sequence in sorted(source_sequences)
+            if sequence in source_texts
+        ]
     return tuple(
         dict.fromkeys(
             text
             for text in [
                 state.query.strip() if include_current_query else "",
-                *(
-                    source_texts[sequence]
-                    for sequence in sorted(source_sequences)
-                    if sequence in source_texts
-                ),
+                *bound_source_texts,
             ]
             if text
         )

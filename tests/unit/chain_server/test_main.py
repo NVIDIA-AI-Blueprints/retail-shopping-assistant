@@ -1423,6 +1423,103 @@ class TestDeepAgentsRuntimeScopes:
             "product-discovery"
         ]
 
+    def test_v5_weather_scope_sources_hydrate_outside_general_context(
+        self,
+        base_config,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+        identity = runtime_mod.RequestIdentity(
+            session_id="session-a",
+            conversation_id="conversation-a",
+            cart_id="cart-a",
+            context_user_id=111,
+            cart_user_id=222,
+            request_id="request-a",
+        )
+        raw_source_assistant = (
+            "Keep the silhouette polished. Live forecast: Aug 15 is rainy, "
+            "65–76°F. [Weather Data Provided by Visual Crossing]"
+        )
+        memory = _ConversationMemoryStub(
+            TurnStartResult.model_validate(
+                {
+                    "turn_id": "turn-3",
+                    "contract_version": 5,
+                    "attempt_id": "attempt-3",
+                    "sequence": 3,
+                    "recent_turns": [
+                        {
+                            "sequence": 2,
+                            "shopper_text": "Show me black flats.",
+                            "assistant_text": "Here are the current candidates.",
+                            "status": "completed",
+                        }
+                    ],
+                    "current_weather_scope_source_turns": [
+                        {
+                            "turn_id": "turn-1",
+                            "sequence": 1,
+                            "shopper_text": (
+                                "My Seattle wedding is on August 15."
+                            ),
+                            "assistant_text": raw_source_assistant,
+                            "status": "completed",
+                        }
+                    ],
+                    "shopper_context": None,
+                    "projection": {
+                        "current_weather_scope": {
+                            "revision": 1,
+                            "location": {
+                                "value": {
+                                    "kind": "shopper_provided_location",
+                                    "location": "Seattle",
+                                },
+                                "source_turn_id": "turn-1",
+                                "source_sequence": 1,
+                            },
+                            "window": {
+                                "value": {
+                                    "start_date": "2026-08-15",
+                                    "end_date": "2026-08-15",
+                                },
+                                "source_turn_id": "turn-1",
+                                "source_sequence": 1,
+                            },
+                        }
+                    },
+                }
+            )
+        )
+        runtime._conversation_memory = memory
+        state = State(
+            user_id=111,
+            query="Refresh that wedding forecast.",
+            guardrails=False,
+        )
+
+        turn = runtime._start_conversation_turn(state, identity)
+        user_message = runtime._build_user_message(state, identity)
+
+        assert turn is not None
+        assert state.conversation_memory_contract_version == 5
+        assert [item["sequence"] for item in state.recent_conversation_turns] == [
+            2
+        ]
+        assert "Show me black flats." in state.context
+        assert "My Seattle wedding is on August 15." not in state.context
+        assert "My Seattle wedding is on August 15." not in user_message
+        assert len(state.current_weather_scope_source_turns) == 1
+        source = state.current_weather_scope_source_turns[0]
+        assert source.turn_id == "turn-1"
+        assert source.shopper_text == "My Seattle wedding is on August 15."
+        assert source.assistant_text != raw_source_assistant
+        assert runtime_mod._PRIOR_WEATHER_CONTEXT_REDACTION in (
+            source.assistant_text
+        )
+
     @pytest.mark.asyncio
     async def test_finalized_replay_skips_agent_work(
         self,
@@ -4333,6 +4430,46 @@ class TestDeepAgentsRuntimeRefs:
             in accepted_location_question
         )
 
+        repeated_pending_state = State(
+            user_id=111,
+            query="Heels or flats for this look?",
+            conversation_projection_version=5,
+            conversation_memory_contract_version=5,
+            current_weather_scope=pending_location_scope,
+            weather_scope_resolver_decision=(
+                WeatherScopeResolverDecision.model_validate(
+                    {"decision": "unchanged"}
+                )
+            ),
+        )
+        runtime._create_agent(repeated_pending_state, identity)
+        repeated_pending_tools = {
+            fn.__name__: fn for fn in captured["tools"]
+        }
+        _, repeated_pending_gate = captured["middleware"]
+        repeated_pending_activation = repeated_pending_tools[
+            "activate_shopper_skills_tool"
+        ](
+            skill_names=["outfit-styling", "event-context"],
+            event_context_next_question="event_location",
+        )
+        assert repeated_pending_activation.startswith(
+            runtime_mod.SKILL_ACTIVATION_COMPLETE
+        )
+        assert (
+            "EVENT_CONTEXT_NEXT_QUESTION_BOUNDARY: none"
+            in repeated_pending_activation
+        )
+        assert captured_weather["binding"].resolution is None
+        assert (
+            repeated_pending_state.current_weather_scope.pending_source_turn_id
+            == "turn-conference"
+        )
+        assert repeated_pending_gate._required_tool is None
+        assert repeated_pending_gate._runtime_tool_rejections[
+            "get_weather_forecast_tool"
+        ] == runtime_mod._EVENT_CONTEXT_LOCATION_REQUIRED_WEATHER_BLOCK
+
         runtime._create_agent(
             State(
                 user_id=111,
@@ -6516,6 +6653,64 @@ class TestDeepAgentsRuntimeRefs:
         )
 
         assert runtime_mod._active_weather_scope_shopper_texts(state) == ()
+
+    def test_v5_weather_styling_text_uses_durable_scope_source_lane(
+        self,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        state = State(
+            user_id=111,
+            query="Seattle.",
+            conversation_memory_contract_version=5,
+            recent_conversation_turns=[],
+            current_weather_scope_source_turns=[
+                {
+                    "turn_id": "conference-turn",
+                    "sequence": 2,
+                    "shopper_text": (
+                        "I also have an outdoor conference on August 12."
+                    ),
+                    "assistant_text": "What location should I plan around?",
+                    "status": "completed",
+                }
+            ],
+            current_weather_scope=CurrentWeatherScope.model_validate(
+                {
+                    "revision": 2,
+                    "pending_question": "event_location",
+                    "pending_source_turn_id": "conference-turn",
+                    "pending_source_sequence": 2,
+                    "window": {
+                        "value": {
+                            "start_date": "2026-08-12",
+                            "end_date": "2026-08-12",
+                        },
+                        "source_turn_id": "conference-turn",
+                        "source_sequence": 2,
+                    },
+                }
+            ),
+            current_weather_scope_resolution=(
+                CurrentWeatherScopeResolution.model_validate(
+                    {
+                        "expected_projection_version": 2,
+                        "expected_scope_revision": 2,
+                        "location_action": "set",
+                        "window_action": "retain",
+                        "location_scope": {
+                            "kind": "shopper_provided_location",
+                            "location": "Seattle",
+                        },
+                    }
+                )
+            ),
+        )
+
+        assert runtime_mod._active_weather_scope_shopper_texts(state) == (
+            "Seattle.",
+            "I also have an outdoor conference on August 12.",
+        )
 
     @pytest.mark.asyncio
     async def test_event_weather_success_is_grounded_attributed_and_uncertain(

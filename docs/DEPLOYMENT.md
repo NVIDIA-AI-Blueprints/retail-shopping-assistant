@@ -412,9 +412,11 @@ when destination is missing and material, `event_venue` only after destination
 is established when venue or setting is missing and material, `event_date`
 only after destination and any material venue are established when live weather
 is enabled and material and the effective scope has no bounded date, and
-`none` otherwise. For an existing scope, a request-local tools-disabled
-semantic resolver first compares the current query with the exact shopper turns
-named by its component source sequences through one forced typed control call.
+`none` otherwise. For an existing scope, response contract 5 supplies a
+separate, derived lane of the exact completed shopper/assistant turns named by
+its component source identities. A request-local tools-disabled semantic
+resolver compares that lane with the current query through one forced typed
+control call.
 It is neither a business tool nor a subagent, and any missing, invalid,
 timed-out, or unclear result fails closed. The resolver returns only the
 semantic relation and does not duplicate scope extraction. Activation alone
@@ -447,6 +449,9 @@ materiality, and intent remain model-owned semantic guidance. The dynamic enum
 is typed argument consistency, not an intent router or keyword routing layer.
 Only the accepted activation result authorizes that event-context follow-up;
 the server does not infer one from weather configuration or missing context.
+If activation repeats the exact live pending question while the resolver says
+`unchanged`, the server accepts `none`, creates no scope resolution, and leaves
+the original pending source binding untouched.
 The same activation may bind
 one currently valid `weather_receipt_id` only with
 `event_context_next_question=none`, no scope update, no refresh request, and
@@ -602,7 +607,9 @@ deployments must preserve an equivalent internal-only boundary. The chain
 server starts a durable row before guardrail/model/tool work,
 receives the rolling summary, bounded model-context-eligible
 shopper/assistant turns, a separate product ledger, one current weather-planning
-scope, at most four valid typed weather receipts, and the authoritative cart,
+scope, its at-most-three exact source turns in an isolated lane used only for
+subject resolution and protected styling provenance, at most four valid typed
+weather receipts, and the authoritative cart,
 then finalizes the row as
 `completed`, `blocked`, or `failed`. An exact retry of
 a finalized request replays the stored response and output without another
@@ -611,7 +618,7 @@ excluded from both the next-turn service projection and the chain prompt
 formatter.
 
 Turn start negotiates additive memory response fields with
-`response_contract=4`, interpreted as the caller's maximum supported version.
+`response_contract=5`, interpreted as the caller's maximum supported version.
 Memory returns the highest version it supports up to that maximum. New memory
 defaults an unversioned caller to the exact
 legacy response shape and computes that caller's bounded raw tail from sequence
@@ -621,8 +628,12 @@ staging-era abandoned raw turns with no assistant text and filtering them
 before model context; v2+ raw turns remain strictly memory-owned eligible
 rows. Contract 3 remains supported with its
 legacy transition and without the v4-only pending question or its source
-fields; contract 4 advertises atomic scope-finalize write capability. Deploy
-memory first and chain second.
+fields; contract 4 advertises atomic scope-finalize write capability. Contract
+5 adds only `current_weather_scope_source_turns`, required even when empty and
+absent from contracts 1–4. Its sorted, deduplicated completed rows exactly
+match the adjacent scope's unique `(turn_id, sequence)` pointers and are read
+without the summary watermark or raw-tail limit. Deploy memory first and chain
+second.
 A new chain negotiating only v3 fails closed for an atomic scope update, while
 an older chain remains usable after rollback. Fresh projection DDL also uses
 database defaults for every additive non-null summary/receipt/scope column,
@@ -707,6 +718,15 @@ those keys from
 pre-v4 models during rollback. The pending payload records its scope revision
 and is merged only when that revision matches the core scope. A rollback-era
 core mutation therefore leaves stale pending state inert.
+
+Response contract 5 is derived from existing durable turns and scope pointers;
+it adds no SQLite column or migration. A max-v4 chain receives the exact v4
+shape from v5 memory. A v5 chain negotiating v4 retains the bounded raw-tail
+fallback and fails closed if a referenced source is no longer present there.
+The v5 lane may overlap summarized or recent turns, but it feeds only
+weather-subject resolution and protected styling provenance—not general
+conversation context, compaction, current-turn `set` authority, or forecast
+evidence.
 
 Memory receipt-promotion conflicts retain their exact error codes through the
 chain HTTP client and trigger one finalize retry without the optional

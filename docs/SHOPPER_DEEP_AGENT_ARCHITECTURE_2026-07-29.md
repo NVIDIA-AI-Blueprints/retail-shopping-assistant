@@ -17,8 +17,9 @@ that summary is not carried into the next shopper request. The agreed
 correction below addresses that general gap without adding an event-specific
 state machine. Its durable summary boundary, rolling compaction, and bounded
 cross-turn weather-receipt projection are now built. The weather continuity
-correction adds one typed current scope plus a source-sequence-bound semantic
-resolver and durable pending-question binding. Both scope components are
+correction adds one typed current scope plus a source-identity-bound semantic
+resolver, durable pending-question binding, and response-contract-v5 lane
+containing the exact completed turns referenced by that scope. Both scope components are
 resolved atomically through `retain`, `set`, or `clear`; deterministic
 compilation accepts `set` only from current-turn authority, and the forecast
 tool accepts no location/date arguments. Prior raw turns and the rolling
@@ -151,7 +152,7 @@ thing as a Deep Agents graph checkpoint or its automatic summarization.
 | Lifetime and owner | Persisted contents | Use on a later turn |
 | --- | --- | --- |
 | Memory-service installation | Five immutable representative-shopper records | Resolves the profile selected for a conversation |
-| Conversation | Ordered shopper/assistant turns, the nullable profile binding enforced through those turns, structured event envelopes, the rolling-summary projection, the bounded product-reference projection, one typed current weather-planning scope with a pending location/date binding, at most four valid typed weather receipts, and its last finalized turn | Reconstructs recent dialogue, resolves historically presented products, carries current location/date authority without an event registry, and keeps short-lived exact-scope forecast evidence server-side for explicit binding |
+| Conversation | Ordered shopper/assistant turns, the nullable profile binding enforced through those turns, structured event envelopes, the rolling-summary projection, the bounded product-reference projection, one typed current weather-planning scope with a pending location/date binding, at most four valid typed weather receipts, and its last finalized turn | Reconstructs recent dialogue, resolves historically presented products, carries current location/date authority without an event registry, derives an at-most-three exact scope-source read lane across compaction, and keeps short-lived exact-scope forecast evidence server-side for explicit binding |
 | Cart owner | Current cart rows with stable cart-line IDs and the cart-mutation idempotency ledger | Supplies the authoritative current cart; the bundled UI creates a new cart identity with a new conversation |
 | Finalized request | Request and attempt identity, request/finalize digests, sequence, status, termination reason, catalog revision, assistant text, product/image response artifacts, diagnostics, and selected skill names | Exactly replays the same finalized request and exposes the immediately previous skill names as a non-authorizing hint |
 | Chain-server process and request | Full Deep Agents messages, tool calls and results, model reasoning, current-turn evidence maps, and the LangGraph checkpoint | Not durable conversation state; the checkpoint is request-scoped and deleted after successful finalization |
@@ -175,14 +176,16 @@ At turn start, the memory boundary currently supplies:
 - the immediately previous selected skill names as a continuity hint; and
 - one typed current weather-planning scope with optional pending
   `event_location`/`event_date`; and
+- at most three exact completed turns referenced by that scope in a
+  lane isolated to subject resolution and protected styling provenance; and
 - a bounded list of validated, unexpired `weather_forecast.v1` receipts.
 
 The raw turns are bounded first by the memory service's turn limit and again by
 the chain server's character limit. Blocked and abandoned turns are durable for
 audit or replay semantics but are excluded from the model context.
 
-The additive summary, receipt, and current-weather-scope lanes use negotiated
-turn-start response contracts. The current chain requests contract 4 as its
+The additive summary, receipt, current-weather-scope, and scope-source lanes use
+negotiated turn-start response contracts. The current chain requests contract 5 as its
 maximum, and memory returns the highest version it supports. An unversioned
 caller receives the exact earlier response shape and a bounded raw tail read
 from sequence zero, so an older chain remains usable after memory deploys first
@@ -193,7 +196,10 @@ text; the chain filters them before model context and applies the strict
 memory-owned eligibility invariant only to contract 2 and later. Contract 3
 remains supported with the legacy scope transition and
 without the v4-only pending question or either source field. Contract 4 marks
-atomic scope-finalize write capability. Deploy memory first, then chain; a new chain negotiating only v3
+atomic scope-finalize write capability. Contract 5 adds only the exact
+scope-source read lane, required even when empty and absent from earlier
+contracts. It derives from existing rows and needs no migration. Deploy memory
+first, then chain; a new chain negotiating only v3
 fails closed for an atomic update. Fresh and upgraded SQLite
 schemas give the additive non-null projection columns equivalent database
 defaults, allowing the memory binary to roll back without making old projection
@@ -240,14 +246,17 @@ products, styling claims, and forecast evidence remain in their existing
 semantic/evidence lanes and never enter this scope. The same singleton can
 represent an event request or ordinary weather-appropriate dressing.
 
-Before normal skill activation, a request-local tools-disabled resolver compares
-the current query with the exact shopper turns named by the current scope's
-location, date, and pending-question source sequences. It must make exactly one
+Before normal skill activation, response contract 5 supplies the exact
+completed shopper/assistant turns named by the current scope's location, date,
+and pending-question source identities in a separate lane. A request-local
+tools-disabled resolver compares that lane with the current query. It must make exactly one
 forced typed
 `WeatherScopeResolverDecision` control call. It is not a registered business
 tool, not a separate weather agent, and not a subagent. Rolling summary and
-other recent turns may provide semantics but cannot supply authority. Missing
-source turns, timeout, malformed output, structural invalidity, or an unclear
+other recent turns may provide semantics but cannot supply authority. The
+source lane is independent of compaction and raw-tail eviction; contract 4
+retains the bounded-tail fallback during rolling deployment. Missing source
+turns, timeout, malformed output, structural invalidity, or an unclear
 relation fails closed.
 
 The isolated resolver owns only the semantic relation; it never duplicates
@@ -269,7 +278,10 @@ current-turn replacement, or rotates an absent counterpart into the newly
 source-bound pending question. Preserving an otherwise unanswered
 pending binding during another same-subject update likewise requires an exact
 server-authored source handle; without it memory binds the question to the
-current finalized turn. When the
+current finalized turn. If activation repeats the exact live pending question
+while the resolver says `unchanged`, deterministic compilation accepts `none`,
+creates no scope resolution, and leaves the original pending binding
+untouched. When the
 isolated resolver is unavailable or unclear, every proposed retained
 component is cleared, receipt/refresh reuse is rejected, and prior-dependent
 weather is blocked. A validated current-turn `set`/`set` replacement remains
@@ -305,11 +317,11 @@ disputed scope update.
 
 ### Serving-boundary validation — 2026-07-31
 
-Focused offline validation passes a 174-test backend subset covering resolver
+Focused offline validation passes a 458-test backend subset covering resolver
 parsing, atomic scope compilation, source-bound pending questions,
 capability-scoped activation enforcement, receipt/finalize recovery, memory
 application, diagnostics, and the live-fixture contract. The complete Python
-unit suite also passes 1,581 tests.
+unit suite also passes 1,596 tests.
 
 The activation boundary removes every event-context-only question, scope,
 refresh, and receipt field before nested validation when `event-context` was
@@ -402,6 +414,8 @@ The current next-turn context is:
 ```text
 rolling semantic summary
     + non-overlapping bounded raw-turn tail
+    + exact current-weather-scope source turns
+      (isolated subject/provenance lane; may overlap)
     + selected shopper profile
     + authoritative current cart
     + bounded historical product-reference index
@@ -417,7 +431,7 @@ The persistence additions are deliberately small:
 
 | Lifetime and owner | Built addition | Explicitly not added |
 | --- | --- | --- |
-| Conversation projection | Rolling summary text, its through-sequence watermark, and a bounded set of active typed receipts | Full tool history, model reasoning, or a conversation-long graph checkpoint |
+| Conversation projection | Rolling summary text, its through-sequence watermark, a bounded set of active typed receipts, and one current weather scope whose existing pointers derive the response-only source-turn lane | Full tool history, model reasoning, duplicated source rows, or a conversation-long graph checkpoint |
 | Finalized request | Source identity for any receipt promoted by that request and an atomic summary/projection update under the existing attempt fence | A second copy of the rolling summary or raw provider output |
 | Request-local Deep Agent | No new durable state; it is hydrated from memory at the start of each request | Cross-request authorization or ownership of profile, cart, catalog, or receipt truth |
 
@@ -447,6 +461,11 @@ turn alone exceeds the input budget, that call receives explicit deterministic
 head-and-tail excerpts of the turn, marked as a bounded input projection. The
 durable transcript and exact replay are not altered. The compactor does not
 receive or reproduce the complete tool transcript.
+
+The source-turn lane is outside this summary/raw non-overlap invariant. It may
+copy one to three exact completed turns from either side of the watermark
+because its sole purpose is dereferencing the current scope's durable
+identities. It is not compactor input or general Deep Agent context.
 
 Compaction should occur only when the raw tail reaches its configured bound,
 not after every shopper message. A successful compaction advances the sequence
@@ -552,16 +571,21 @@ With this addition, one request proceeds as follows:
 
 1. Memory durably starts the request and returns the summary plus its sequence
    watermark, only the later bounded raw turns, profile context, cart,
-   product-reference projection, prior-skill hint, and valid receipt
-   projection.
+   product-reference projection, prior-skill hint, valid receipt projection,
+   current weather scope, and its exact source turns in an isolated lane used
+   only for subject resolution and protected styling provenance.
+   Memory returns exact durable text; chain hydration replaces recognized
+   assistant forecast prose with a fixed redaction before either consumer sees
+   the lane.
 2. The chain server renders those sections separately in one bounded
-   current-turn context. It does not merge summary prose into authoritative
-   evidence.
+   current-turn context. It does not merge summary prose or the scope-source
+   lane into general discussion or authoritative evidence.
 3. One request-scoped Deep Agent selects skills and performs the turn. Its
    built-in summarization may still compact a long graph execution, but it
    remains request-local.
-4. The isolated source-sequence-bound resolver and activation may atomically
-   update the singleton with current-turn authority through explicit
+4. The isolated source-identity-bound resolver reads only the dedicated source
+   lane plus semantic context. It and activation may atomically update the
+   singleton with current-turn authority through explicit
    location/date `retain`/`set`/`clear` actions and a typed pending binding.
    They may instead bind exactly one listed receipt
    only with `event-context`, `event_context_next_question=none`, no scope

@@ -62,7 +62,9 @@ for the request without a second mid-turn wall-clock check.
 
 The activation input contains the typed current weather scope. For an existing
 scope, a separate request-local tools-disabled resolver compares the current
-query with the exact shopper turns named by its component source sequences and
+query with the exact completed shopper turns named by its component source
+identities. Contract v5 supplies those turns in a dedicated lane independent of
+summary compaction and raw-tail limits. The resolver
 must emit one forced typed control call. This internal schema channel is neither
 a business tool nor a subagent, and it emits only the semantic relation.
 Activation alone proposes one atomic selection that copies the scope revision

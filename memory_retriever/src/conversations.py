@@ -49,11 +49,14 @@ from shared.weather_receipts import (
     weather_scope_key,
 )
 from shared.weather_scope import (
+    MAX_CURRENT_WEATHER_SCOPE_SOURCE_TURNS,
     CurrentWeatherScope,
     CurrentWeatherScopeResolution,
+    CurrentWeatherScopeSourceTurn,
     CurrentWeatherScopeTransition,
     apply_current_weather_scope_resolution,
     apply_current_weather_scope_transition,
+    current_weather_scope_source_references,
     effective_resolved_weather_scope_values,
 )
 
@@ -76,7 +79,7 @@ CURRENT_WEATHER_SCOPE_REVISION_CONFLICT = (
 CURRENT_WEATHER_SCOPE_RESOLUTION_CONFLICT = (
     "current_weather_scope_resolution_conflict"
 )
-MEMORY_RESPONSE_CONTRACT_MAX = 4
+MEMORY_RESPONSE_CONTRACT_MAX = 5
 _CURRENT_WEATHER_PENDING_FIELDS = (
     "pending_question",
     "pending_source_turn_id",
@@ -527,6 +530,58 @@ def _context_turn_dict(turn: ConversationTurn) -> dict[str, Any]:
     }
 
 
+def _current_weather_scope_source_turns(
+    db,
+    conversation_id: str,
+    scope: CurrentWeatherScope,
+) -> list[dict[str, Any]]:
+    """Return every exact completed turn referenced by the current scope."""
+
+    references = current_weather_scope_source_references(scope)
+    if not references:
+        return []
+    if len(references) > MAX_CURRENT_WEATHER_SCOPE_SOURCE_TURNS:
+        raise HTTPException(
+            status_code=500,
+            detail="current_weather_scope_source_turns_invalid",
+        )
+    rows = (
+        db.query(ConversationTurn)
+        .filter(
+            ConversationTurn.conversation_id == conversation_id,
+            ConversationTurn.turn_id.in_(
+                [turn_id for turn_id, _sequence in references]
+            ),
+        )
+        .all()
+    )
+    rows_by_reference = {
+        (row.turn_id, row.sequence): row
+        for row in rows
+    }
+    if set(rows_by_reference) != set(references):
+        raise HTTPException(
+            status_code=500,
+            detail="current_weather_scope_source_turns_invalid",
+        )
+    try:
+        return [
+            CurrentWeatherScopeSourceTurn(
+                turn_id=rows_by_reference[reference].turn_id,
+                sequence=rows_by_reference[reference].sequence,
+                shopper_text=rows_by_reference[reference].shopper_text,
+                assistant_text=rows_by_reference[reference].assistant_text,
+                status=rows_by_reference[reference].status,
+            ).model_dump(mode="json")
+            for reference in references
+        ]
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="current_weather_scope_source_turns_invalid",
+        ) from exc
+
+
 def _summary_compaction_state(
     db,
     conversation_id: str,
@@ -671,6 +726,14 @@ def _start_response(
                 "summary_compaction_source": summary_compaction_source,
             }
         )
+    if response_contract >= 5:
+        result["current_weather_scope_source_turns"] = (
+            _current_weather_scope_source_turns(
+                db,
+                turn.conversation_id,
+                _current_weather_scope(projection),
+            )
+        )
     return result
 
 
@@ -772,7 +835,7 @@ def _start_turn(
     conversation_id: str,
     request: TurnStartRequest,
     *,
-    response_contract: Literal[1, 2],
+    response_contract: int,
 ) -> dict[str, Any]:
     db.execute(text("BEGIN IMMEDIATE"))
     current_time = time.time()

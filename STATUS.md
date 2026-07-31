@@ -6,7 +6,7 @@ Updated: 2026-07-31
 
 The current working tree extends the shopper-serving Deep Agent architecture:
 
-- memory migration 10's scope now uses turn-start response contract 4 for
+- memory migration 10's scope uses response contract 4 for
   atomic finalize-time resolution. It owns the monotonic core scope and optional
   memory-stamped location/date authority. Migration 11 moves
   the v4 pending binding into a defaulted `current_weather_pending_json` lane,
@@ -16,10 +16,12 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   revision matches the core revision; a rollback-era core mutation makes stale
   pending state inert. Each resolution copies the scope
   revision and chooses `retain`, `set`, or `clear` independently for both
-  components. A request-local tools-disabled semantic resolver compares the
-  current query with the exact shopper turns named by the scope's location,
-  date, and pending-question source sequences through one forced typed control
-  call; it is neither a business tool nor a subagent. That call owns only the
+  components. Response contract 5 derives a separate, at-most-three-turn lane
+  containing the exact completed shopper/assistant rows referenced by the
+  scope's location, date, and pending bindings, independent of summary
+  compaction and `MEMORY_RECENT_TURNS`. A request-local tools-disabled semantic
+  resolver compares that lane with the current query through one forced typed
+  control call; it is neither a business tool nor a subagent. That call owns only the
   semantic relation and never duplicates location/date extraction. Normal
   activation supplies the one atomic scope selection. Invalid, unavailable,
   timed-out, or unclear output fails closed; `new_subject` clears all proposed
@@ -53,9 +55,11 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   Ungranted weather controls therefore cannot mutate scope, grant weather, or
   consume the one activation repair for a valid product turn. A pending
   question is not repeated merely because an intervening product request did
-  not answer it;
+  not answer it. When the resolver says `unchanged`, an activation that repeats
+  the exact live pending question is normalized to `none` without a scope
+  resolution or pending-handle rotation;
 - focused validation for the final atomic pending-completion boundary passes a
-  174-test backend subset, and the complete Python unit suite passes 1,581
+  458-test backend subset, and the complete Python unit suite passes 1,596
   tests. Three Judge-free live diagnostics pass all 9 turns. The
   activation-boundary scenario creates a source-bound
   pending rainy-day location question, completes an intervening pink-skirt
@@ -89,7 +93,7 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   `~/exec-briefs/retail-shopping-assistant/quality/shopping/comparisons/` and
   `~/exec-briefs/retail-shopping-assistant/quality/shopping/runs/current_wip/`;
 - memory turn start now negotiates additive response lanes. The current chain
-  requests response contract 4 as its maximum. Memory returns the highest
+  requests response contract 5 as its maximum. Memory returns the highest
   version it supports up to that maximum; an unversioned caller receives the exact
   staging-era response shape and a bounded raw tail from sequence zero, so an
   older chain neither rejects unfamiliar summary/receipt fields after memory
@@ -97,7 +101,12 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   contract markers degrade the current chain to version 1; a negotiated
   version 3 retains the legacy scope shape and strips all v4-only pending
   question and source-binding fields.
-  Contract 4 is the current chain's atomic finalize-write capability marker.
+  Contract 4 remains the atomic finalize-write capability marker. Contract 5
+  adds only the derived, isolated current-scope source-turn read lane for
+  subject resolution and protected styling provenance; it introduces no
+  database column or migration. A v5 memory returns the exact v4
+  shape to a max-v4 chain, while a v5 chain negotiating v4 retains the bounded
+  raw-tail fallback and fails closed when a referenced turn is unavailable.
   A staging-era v1 response may include abandoned turns without assistant
   text. The chain accepts that negotiated legacy lane and filters it before
   model context, while v2+ retains strict completed/failed, post-watermark
@@ -132,6 +141,10 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   product ledger, tool transcripts, media, diagnostics, and request IDs never
   enter the compactor. Invalid, timed-out, or failed compaction preserves the
   old watermark and raw turns.
+  The derived weather-scope source-turn lane is separate from both raw summary
+  lanes: it may intentionally overlap either, feeds only subject resolution and
+  protected weather styling, and never becomes current-turn `set` authority,
+  forecast evidence, or general conversation context.
   Accepted advancement commits atomically with finalization and affects only
   the next request; a summary-only conflict gets one deterministic finalize
   retry without the optional update and no model rerun. Migration 9 adds a
@@ -256,8 +269,9 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   destination is established when venue or setting is missing and material,
   `event_date` only after destination and any material venue are established
   when live weather is enabled and material and the typed scope has no bounded
-  date, and `none` otherwise. The isolated source-sequence-bound resolver
-  supplies only a semantic relation; activation alone supplies the atomic
+  date, and `none` otherwise. The isolated source-identity-bound resolver reads
+  the dedicated contract-v5 source lane and supplies only a semantic relation;
+  activation alone supplies the atomic
   `retain`/`set`/`clear` selection.
   Deterministic compilation accepts `set` only from current-turn authority;
   prior raw turns and summary prose never become adapter arguments. Only an

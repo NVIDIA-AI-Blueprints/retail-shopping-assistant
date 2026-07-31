@@ -135,9 +135,15 @@ def test_turn_start_negotiates_v2_and_future_requests_to_server_max(
         request_id="request-v2",
         response_contract=2,
     )
-    future = _start_turn(
+    v4 = _start_turn(
         conversation_db,
         "conversation-contract-v4",
+        request_id="request-v4",
+        response_contract=4,
+    )
+    future = _start_turn(
+        conversation_db,
+        "conversation-contract-v5",
         request_id="request-v3",
         response_contract=999,
     )
@@ -145,11 +151,15 @@ def test_turn_start_negotiates_v2_and_future_requests_to_server_max(
     assert v2.status_code == 200
     assert v2.json()["contract_version"] == 2
     assert "current_weather_scope" not in v2.json()["projection"]
+    assert v4.status_code == 200
+    assert v4.json()["contract_version"] == 4
+    assert "current_weather_scope_source_turns" not in v4.json()
     assert future.status_code == 200
-    assert future.json()["contract_version"] == 4
+    assert future.json()["contract_version"] == 5
     assert future.json()["projection"]["current_weather_scope"] == {
         "revision": 0
     }
+    assert future.json()["current_weather_scope_source_turns"] == []
 
 
 def test_v1_start_reads_raw_tail_before_v2_summary_watermark(
@@ -885,6 +895,127 @@ def test_v4_weather_scope_resolution_preserves_retained_authority_provenance(
     assert resolved["window"]["value"]["start_date"] == "2026-08-04"
     assert resolved["window"]["source_turn_id"] == second["turn_id"]
     assert resolved["window"]["source_sequence"] == second["sequence"]
+
+
+def test_v5_weather_scope_sources_survive_summary_and_raw_tail_eviction(
+    conversation_db: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MEMORY_RECENT_TURNS", "1")
+    conversation_id = "conversation-weather-sources-v5"
+    first = _start_turn(
+        conversation_db,
+        conversation_id,
+        request_id="request-1",
+        shopper_text="Style me for a Seattle event on August 3.",
+        response_contract=5,
+    ).json()
+    assert first["current_weather_scope_source_turns"] == []
+    assert (
+        _finalize_turn(
+            conversation_db,
+            conversation_id,
+            first["turn_id"],
+            request_id="request-1",
+            attempt_id=first["attempt_id"],
+            assistant_text="Here is the first event direction.",
+            current_weather_scope_resolution=_weather_scope_resolution(
+                expected_projection_version=first["projection"]["version"],
+                expected_scope_revision=0,
+                location_action="set",
+                window_action="set",
+                location="Seattle",
+                forecast_date=date(2026, 8, 3),
+            ),
+        ).status_code
+        == 200
+    )
+
+    second = _start_turn(
+        conversation_db,
+        conversation_id,
+        request_id="request-2",
+        shopper_text="The same event moved to August 4.",
+        response_contract=5,
+    ).json()
+    assert [turn["sequence"] for turn in second["recent_turns"]] == [1]
+    assert [
+        (turn["turn_id"], turn["sequence"])
+        for turn in second["current_weather_scope_source_turns"]
+    ] == [(first["turn_id"], 1)]
+    assert (
+        _finalize_turn(
+            conversation_db,
+            conversation_id,
+            second["turn_id"],
+            request_id="request-2",
+            attempt_id=second["attempt_id"],
+            assistant_text="Here is the updated event direction.",
+            summary_advance={
+                "expected_projection_version": second["projection"]["version"],
+                "summary_text": "The shopper is planning a Seattle event.",
+                "summary_through_sequence": 1,
+            },
+            current_weather_scope_resolution=_weather_scope_resolution(
+                expected_projection_version=second["projection"]["version"],
+                expected_scope_revision=1,
+                location_action="retain",
+                window_action="set",
+                forecast_date=date(2026, 8, 4),
+            ),
+        ).status_code
+        == 200
+    )
+
+    replayed_first = _start_turn(
+        conversation_db,
+        conversation_id,
+        request_id="request-1",
+        shopper_text="Style me for a Seattle event on August 3.",
+        response_contract=5,
+    ).json()
+    assert replayed_first["replayed"] is True
+    assert replayed_first["sequence"] == 1
+    assert [
+        turn["sequence"]
+        for turn in replayed_first["current_weather_scope_source_turns"]
+    ] == [1, 2]
+
+    third = _start_turn(
+        conversation_db,
+        conversation_id,
+        request_id="request-3",
+        shopper_text="Refresh that event forecast.",
+        response_contract=5,
+    ).json()
+
+    assert third["projection"]["summary_through_sequence"] == 1
+    assert [turn["sequence"] for turn in third["recent_turns"]] == [2]
+    assert [
+        {
+            "turn_id": turn["turn_id"],
+            "sequence": turn["sequence"],
+            "shopper_text": turn["shopper_text"],
+            "assistant_text": turn["assistant_text"],
+            "status": turn["status"],
+        }
+        for turn in third["current_weather_scope_source_turns"]
+    ] == [
+        {
+            "turn_id": first["turn_id"],
+            "sequence": 1,
+            "shopper_text": "Style me for a Seattle event on August 3.",
+            "assistant_text": "Here is the first event direction.",
+            "status": "completed",
+        },
+        {
+            "turn_id": second["turn_id"],
+            "sequence": 2,
+            "shopper_text": "The same event moved to August 4.",
+            "assistant_text": "Here is the updated event direction.",
+            "status": "completed",
+        },
+    ]
 
 
 def test_v4_weather_scope_resolution_never_inherits_a_cleared_component(

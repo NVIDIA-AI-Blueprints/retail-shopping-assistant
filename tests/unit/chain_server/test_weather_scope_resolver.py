@@ -364,6 +364,188 @@ async def test_runtime_resolver_isolates_a_new_subject_before_activation(
 
 
 @pytest.mark.asyncio
+async def test_v5_resolver_uses_exact_scope_sources_outside_recent_context(
+    base_config,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("WEATHER_API_KEY", "test-weather-key")
+    base_config.weather.enabled = True
+    model = _ResolverModel(
+        _resolver_call(
+            {
+                "decision": "same_subject",
+            }
+        )
+    )
+    runtime = DeepAgentsRuntime(base_config)
+    monkeypatch.setattr(runtime, "_create_chat_model", lambda: model)
+    state = State(
+        user_id=1,
+        query="Refresh that wedding forecast.",
+        conversation_projection_version=4,
+        conversation_memory_contract_version=5,
+        current_weather_scope=_current_scope(),
+        current_weather_scope_source_turns=[
+            {
+                "turn_id": "wedding-turn",
+                "sequence": 1,
+                "shopper_text": (
+                    "Give me weather styling for my NYC wedding on August 8."
+                ),
+                "assistant_text": "Here is the wedding forecast guidance.",
+                "status": "completed",
+            }
+        ],
+        recent_conversation_turns=[
+            {
+                "sequence": 8,
+                "shopper_text": "Show me black flats.",
+                "assistant_text": "Here are the current catalog candidates.",
+            }
+        ],
+    )
+
+    decision = await runtime._resolve_existing_weather_scope(
+        state,
+        current_utc_date=date(2026, 7, 30),
+        execution_deadline=time.monotonic() + 10,
+    )
+
+    assert decision is not None
+    assert decision.decision == "same_subject"
+    resolver_payload = json.loads(model.calls[0][1]["content"])
+    assert resolver_payload["scope_subject_context"]["turns"] == [
+        {
+            "sequence": 1,
+            "shopper_text": (
+                "Give me weather styling for my NYC wedding on August 8."
+            ),
+            "assistant_text": "Here is the wedding forecast guidance.",
+        }
+    ]
+    assert resolver_payload["semantic_context"]["recent_turns"] == (
+        state.recent_conversation_turns
+    )
+
+
+@pytest.mark.asyncio
+async def test_v5_resolver_answers_pending_from_source_outside_recent_context(
+    base_config,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("WEATHER_API_KEY", "test-weather-key")
+    base_config.weather.enabled = True
+    model = _ResolverModel(
+        _resolver_call(
+            {
+                "decision": "answers_pending",
+                "pending_source_turn_id": "conference-turn",
+            }
+        )
+    )
+    runtime = DeepAgentsRuntime(base_config)
+    monkeypatch.setattr(runtime, "_create_chat_model", lambda: model)
+    state = State(
+        user_id=1,
+        query="Seattle.",
+        conversation_projection_version=4,
+        conversation_memory_contract_version=5,
+        current_weather_scope=CurrentWeatherScope.model_validate(
+            {
+                "revision": 2,
+                "pending_question": "event_location",
+                "pending_source_turn_id": "conference-turn",
+                "pending_source_sequence": 2,
+                "window": {
+                    "value": {
+                        "start_date": "2026-08-12",
+                        "end_date": "2026-08-12",
+                    },
+                    "source_turn_id": "conference-turn",
+                    "source_sequence": 2,
+                },
+            }
+        ),
+        current_weather_scope_source_turns=[
+            {
+                "turn_id": "conference-turn",
+                "sequence": 2,
+                "shopper_text": (
+                    "My outdoor conference is August 12. "
+                    "I still need to give you the city."
+                ),
+                "assistant_text": "What location should I plan around?",
+                "status": "completed",
+            }
+        ],
+        recent_conversation_turns=[
+            {
+                "sequence": 8,
+                "shopper_text": "Show me black flats.",
+                "assistant_text": "Here are the current catalog candidates.",
+            }
+        ],
+    )
+
+    decision = await runtime._resolve_existing_weather_scope(
+        state,
+        current_utc_date=date(2026, 7, 30),
+        execution_deadline=time.monotonic() + 10,
+    )
+
+    assert decision is not None
+    assert decision.decision == "answers_pending"
+    assert decision.pending_source_turn_id == "conference-turn"
+    resolver_payload = json.loads(model.calls[0][1]["content"])
+    assert resolver_payload["scope_subject_context"]["turns"][0][
+        "shopper_text"
+    ].startswith("My outdoor conference")
+    assert resolver_payload["semantic_context"]["recent_turns"] == (
+        state.recent_conversation_turns
+    )
+
+
+@pytest.mark.asyncio
+async def test_v5_resolver_rejects_same_sequence_with_wrong_source_turn(
+    base_config,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("WEATHER_API_KEY", "test-weather-key")
+    base_config.weather.enabled = True
+    model = _ResolverModel(_resolver_call({"decision": "same_subject"}))
+    runtime = DeepAgentsRuntime(base_config)
+    monkeypatch.setattr(runtime, "_create_chat_model", lambda: model)
+    state = State(
+        user_id=1,
+        query="Refresh that event forecast.",
+        conversation_memory_contract_version=5,
+        current_weather_scope=_current_scope(),
+        current_weather_scope_source_turns=[
+            {
+                "turn_id": "different-turn",
+                "sequence": 1,
+                "shopper_text": "A different event on the same sequence.",
+                "assistant_text": "Different event guidance.",
+                "status": "completed",
+            }
+        ],
+    )
+
+    decision = await runtime._resolve_existing_weather_scope(
+        state,
+        current_utc_date=date(2026, 7, 30),
+        execution_deadline=time.monotonic() + 10,
+    )
+
+    assert decision is not None
+    assert decision.decision == "unclear"
+    assert model.calls == []
+    assert state.model_usage["app_llm_weather_scope_resolver"]["status"] == (
+        "not_used"
+    )
+
+
+@pytest.mark.asyncio
 async def test_runtime_resolver_rejects_answers_pending_without_handle(
     base_config,
     monkeypatch: pytest.MonkeyPatch,

@@ -53,7 +53,10 @@ The Retail Shopping Assistant is an AI-powered blueprint that provides a compreh
   shape and full bounded raw tail during rolling deployment or rollback. The
   chain accepts staging-era v1 abandoned/null-assistant rows and filters them
   before model context, while v2+ keeps strict memory-owned eligible-tail
-  semantics
+  semantics. Contract v5 also returns at most three exact completed source
+  turns referenced by the current weather scope in an isolated lane used only
+  for subject resolution and protected styling provenance; it is independent
+  of summary compaction and the raw-tail limit
 - 💭 **Durable Product Continuity**: Finalized product-card output becomes
   ordered `candidate_set_presented` evidence in SQLite; a typed resolver can
   recover one exact earlier product or require clarification without another
@@ -116,13 +119,16 @@ The application follows a microservices architecture:
   oldest compaction prefix, a bounded versioned projection of short-lived typed
   weather receipts, one versioned current weather-planning scope core with
   per-component source turns plus a separately stored, revision-matched pending
-  location/date binding, typed
+  location/date binding, a derived at-most-three exact source-turn lane for
+  weather-subject resolution, typed
   prior-skill continuity, presented-product
   events and a compact reference index, stable cart-line IDs, atomically idempotent
   add/remove/quantity mutations, an immutable five-row representative shopper
   registry, atomic conversation/profile binding, and request-scoped database
   sessions. Additive summary, receipt, and current-weather-scope lanes negotiate
-  the highest response contract both services support. Contract 4 advertises
+  the highest response contract both services support. Contract 5 adds the
+  isolated scope-source read lane for subject resolution and protected styling
+  provenance; contract 4 continues to advertise
   atomic finalize-time scope resolution while contract 3 remains supported for
   rolling deployment. Contract v1 remains a legacy downstream-filtered raw
   lane; v2 and later require memory-owned context eligibility. Migration 11
@@ -261,11 +267,13 @@ cleared and receipt/refresh reuse is rejected. Weather remains blocked only
 when the effective scope still depends on prior authority; a complete
 current-turn `set`/`set` replacement may proceed without importing an older
 subject.
-The pending binding records that the question was already asked, so an
-intervening product turn is instructed not to repeat it. This preserves a new
-conference's stated date while asking its location, then safely combines the
-location-only reply with that date. The durable singleton—not the rolling
-summary or recent prose—is the only cross-turn weather authority.
+The pending binding records that the question was already asked. If activation
+nevertheless proposes that exact live question while the resolver says the
+subject is `unchanged`, runtime accepts `none`, creates no scope resolution,
+and leaves the original binding untouched. This preserves a new conference's
+stated date while asking its location, then safely combines the location-only
+reply with that date. The durable singleton—not the rolling summary or recent
+prose—is the only cross-turn weather authority.
 
 The forecast tool is model-visible but has an empty argument schema. After
 activation, the runtime derives the provider location and exact date window
@@ -622,9 +630,15 @@ content.
 
 At turn start, the memory service returns the durable semantic summary, a
 bounded newest raw-turn tail strictly after its watermark, and a separate
-bounded oldest unsummarized prefix for compaction, plus the authoritative cart
-and a service-issued attempt token. The summary, exact raw discussion, and
-historical product index remain separate prompt/state lanes: summary prose is
+bounded oldest unsummarized prefix for compaction, plus the authoritative cart,
+  a service-issued attempt token, and a bounded isolated copy of the exact
+  completed turns referenced by the current weather scope. That source lane is
+  used only for subject resolution and protected styling provenance. It may
+  overlap summarized or recent history but never enters general model context.
+  Memory returns exact durable text; chain state replaces assistant weather
+  prose with a fixed redaction before either permitted consumer sees the lane.
+The summary, exact raw discussion, and historical product index remain separate
+prompt/state lanes: summary prose is
 continuity only and cannot become exact shopper wording, product/cart/tool
 evidence, location/date authority, policy, availability, or current weather.
 Blocked and abandoned turns remain durable and exactly replayable but are

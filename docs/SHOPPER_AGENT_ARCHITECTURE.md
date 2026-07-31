@@ -23,7 +23,7 @@ see the [Shopper Agent Leadership Note](SHOPPER_AGENT_LEADERSHIP_NOTE.md).
 | --- | --- | --- |
 | Published catalog | Product records, taxonomy, filter values, field roles, prices, details, and retrieval results | Shopper intent, styling judgment, cart state, or inventory |
 | Deep Agents runtime | Semantic intent, skill selection, deterministic selected-skill tool grants, tool selection, styling judgment, and one server-resolved representative-shopper soft-guidance block | Product facts, policy facts, cart truth, or profile ownership |
-| Memory service | Immutable representative-shopper registry and conversation binding, typed three-field shopper snapshots, ordered durable shopper/assistant turns, exact finalized replay, a versioned rolling summary, separate newest raw-turn tail and oldest exact compaction prefix, one current weather-planning scope with source sequences and a pending location/date binding, a capped projection of short-lived typed weather receipts, presented-product events and compact index, deterministic same-conversation reference resolution, authoritative cart state, and atomic mutation replay records | Catalog facts, model reasoning, learned preferences, sentiment, active-anchor collections, venue/occasion state, summary semantics, raw provider data, or cross-conversation memory |
+| Memory service | Immutable representative-shopper registry and conversation binding, typed three-field shopper snapshots, ordered durable shopper/assistant turns, exact finalized replay, a versioned rolling summary, separate newest raw-turn tail and oldest exact compaction prefix, one current weather-planning scope with source identities and a pending location/date binding, a derived at-most-three exact source-turn lane, a capped projection of short-lived typed weather receipts, presented-product events and compact index, deterministic same-conversation reference resolution, authoritative cart state, and atomic mutation replay records | Catalog facts, model reasoning, learned preferences, sentiment, active-anchor collections, venue/occasion state, summary semantics, raw provider data, or cross-conversation memory |
 | Graph checkpointer | Request-scoped working graph/tool state within one chain-server process | Durable transcript storage, cross-turn shopper memory, cross-replica context, or product-ref authorization |
 | Event-weather boundary | Closed location/venue/date question ordering and weather authority validation, exact shopper location provenance, optional exact-prefix region/country qualifiers, direct Visual Crossing resolution, server-owned bare-range and exact-weekday `next week` normalization, normalized current-turn forecast evidence, explicit exact-scope receipt binding, sanitized typed failures, redacted raw data plus categorical tracing, deterministic location disclosure, attribution, and uncertainty | Product facts or constraints, a rewritten shopper place, an unstated ZIP, inferred beach/outdoor/indoor/terrain setting, unbound prior forecast authority, provider-plan rights, or a public weather API |
 
@@ -192,8 +192,10 @@ The detailed contracts and implementation live in:
 1. The runtime scopes the request and starts a durable memory-service turn before
    guardrail, model, or tool work. That transaction returns bounded
    model-context-eligible raw turns, a compact historical-product index, the
-   prior turn's selected skill names, the authoritative cart, and an opaque
-   execution `attempt_id`. Blocked turns stay durable for exact replay and audit
+   prior turn's selected skill names, the authoritative cart, an opaque
+   execution `attempt_id`, and an isolated lane containing the exact completed
+   turns referenced by the current weather scope for subject resolution and
+   protected styling provenance. Blocked turns stay durable for exact replay and audit
    but are excluded from both the service projection and chain prompt formatter.
    The raw turns replace the legacy rolling context blob. LangGraph working state
    is isolated to this request under a collision-safe pair of conversation ID and
@@ -215,7 +217,7 @@ The detailed contracts and implementation live in:
    effective typed scope has no bounded date, and `none` otherwise. The same
    activation may compile one atomic `weather_scope` resolution, choosing
    `retain`, `set`, or `clear` for both components. The isolated resolver uses
-   exact source-sequence-bound shopper turns for subject semantics, while
+   the dedicated exact source-identity-bound lane for subject semantics, while
    current-turn provenance is required for each `set`; neither raw-turn dates
    nor summary prose can become tool authority. An
    explicitly shopper-stated outdoor patio, beach, garden,
@@ -460,7 +462,8 @@ Those additive lanes are negotiated through turn-start response contracts.
 The request is a maximum supported version, and memory returns the highest
 version it supports up to that maximum. Contract 2 adds summary/receipt lanes;
 contract 3 adds the legacy current weather scope, and contract 4 adds atomic
-two-component resolution plus its typed pending location/date binding. An unversioned caller receives the
+two-component resolution plus its typed pending location/date binding. Contract
+5 adds the derived exact scope-source read lane, required even when empty. An unversioned caller receives the
 exact earlier response shape and a bounded raw tail from sequence zero. That
 legacy v1 tail may contain an abandoned turn without assistant text; the chain
 filters it before model context instead of applying the v2 eligibility contract
@@ -468,13 +471,17 @@ retroactively.
 Equivalent database defaults on fresh and upgraded SQLite schemas preserve old
 memory inserts during rollback. Contract 3 remains supported and omits the
 v4-only pending question and both of its source fields. Deploy memory first,
-then chain; contract 4 is the current chain's finalize-write capability marker.
+then chain; contract 4 remains the finalize-write capability marker and
+contract 5 adds no database migration. A max-v4 caller receives no v5 field,
+while a v5 chain negotiating v4 keeps the bounded raw-tail fallback.
 Migration 11 stores the pending fields in a separate defaulted lane and keeps
 the core scope JSON strict pre-v4-readable.
 
-The serving runtime now renders four separate lanes: semantic summary, exact
-newest raw discussion, the historical product index, and active typed weather
-receipts. Memory also returns
+The serving runtime keeps semantic summary, exact newest raw discussion, the
+historical product index, active typed weather receipts, current scope, and its
+source turns separate. The source-turn lane may overlap summarized or recent
+history but feeds only weather-subject resolution and protected styling
+provenance; it never enters general context. Memory also returns
 the total unsummarized count and a separate oldest exact prefix of up to four
 turns. Only that prefix can feed the compactor; the newest prompt tail never
 sets a watermark. With default policy, six unsummarized turns trigger one
@@ -518,6 +525,12 @@ must match the resulting complete scope. Venue, occasion, products, styling
 facts, forecast evidence, and multiple event anchors are deliberately excluded.
 The serving runtime renders this lane separately and binds the zero-argument
 forecast tool to the accepted effective scope.
+
+Response contract 5 derives at most three exact completed source turns from
+the scope pointers inside turn start, independently of the summary watermark
+and `MEMORY_RECENT_TURNS`. The chain validates exact `(turn_id, sequence)` set
+equality and keeps the lane out of compaction, general prompt context,
+current-turn `set` provenance, and forecast evidence.
 
 Migration 11 adds defaulted `current_weather_pending_json`. It extracts a
 complete pending binding embedded by the pre-split v4 work, drops incomplete
@@ -612,8 +625,9 @@ with an explicit add request uses `outfit-styling`, `event-context`,
 Event context composes additively with outfit styling for event and non-event
 weather guidance. Activation owns the typed next-question boundary and one
 optional atomic scope proposal. When a prior scope exists, an isolated
-request-local resolver compares the current query with the exact shopper turns
-named by its location, date, and pending-question source sequences and must
+request-local resolver compares the current query with the dedicated exact
+completed turns named by its location, date, and pending-question source
+identities and must
 emit one forced typed control call. It has no business-tool or subagent
 authority and emits only the semantic relation. Activation alone proposes
 explicit `retain`/`set`/`clear` actions for both location and date;
@@ -641,7 +655,9 @@ unavailable or unclear, every retain is cleared, receipt/refresh reuse is
 rejected, and prior-dependent weather is blocked. A validated current-turn
 `set`/`set` replacement remains independent authority and may require weather. The
 binding also records that the question was already asked; intervening product
-work is instructed not to repeat it. The
+work does not repeat it. If activation proposes the exact live pending question
+while the resolver says `unchanged`, deterministic compilation accepts `none`,
+creates no scope resolution, and preserves the original binding. The
 effective singleton is the only provider-request authority, and the
 model-visible weather tool has no arguments.
 

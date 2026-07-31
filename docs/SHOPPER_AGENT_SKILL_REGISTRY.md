@@ -60,8 +60,9 @@ Every shopper turn uses two model phases inside the same Deep Agents run:
    missing and material, `event_date` when live weather is material and the
    typed scope lacks a bounded window, and `none` otherwise. For an existing
    scope, a separate request-local tools-disabled resolver first compares the
-   current query with the exact shopper turns named by the scope's location,
-   date, and pending-question source sequences and must emit one forced typed
+   current query with the dedicated contract-v5 lane of exact completed turns
+   named by the scope's location, date, and pending-question source identities
+   and must emit one forced typed
    control call. It is neither a business tool nor a subagent. The activation
    call may then submit one atomic
    `weather_scope` that copies the revision and selects `retain`, `set`, or

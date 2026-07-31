@@ -125,6 +125,40 @@ def _start_payload() -> dict[str, Any]:
     }
 
 
+def _v5_start_payload() -> dict[str, Any]:
+    payload = _start_payload()
+    payload["contract_version"] = 5
+    payload["projection"]["current_weather_scope"] = {
+        "revision": 1,
+        "location": {
+            "value": {
+                "kind": "shopper_provided_location",
+                "location": "Seattle",
+            },
+            "source_turn_id": "turn-1",
+            "source_sequence": 1,
+        },
+        "window": {
+            "value": {
+                "start_date": "2026-08-15",
+                "end_date": "2026-08-15",
+            },
+            "source_turn_id": "turn-1",
+            "source_sequence": 1,
+        },
+    }
+    payload["current_weather_scope_source_turns"] = [
+        {
+            "turn_id": "turn-1",
+            "sequence": 1,
+            "shopper_text": "Seattle on August 15.",
+            "assistant_text": "Here is the weather-aware direction.",
+            "status": "completed",
+        }
+    ]
+    return payload
+
+
 def test_request_digest_uses_exact_query_and_ordered_media_hashes() -> None:
     media = [
         {"type": "image", "data": "data:image/png;base64,AAAA"},
@@ -205,7 +239,7 @@ def test_start_turn_posts_one_request_without_raw_media() -> None:
     assert result.cart[0].cart_line_id == "line-1"
     assert session.calls[0]["url"] == (
         "http://memory:8011/conversations/conversation%2Fa/turn/start"
-        "?response_contract=4"
+        "?response_contract=5"
     )
     request_payload = session.calls[0]["json"]
     assert request_payload == {
@@ -245,7 +279,7 @@ def test_start_turn_accepts_legacy_v1_response_from_old_memory() -> None:
     assert result.contract_version == 1
     assert result.projection.summary_text == ""
     assert result.projection.active_receipts == []
-    assert session.calls[0]["url"].endswith("?response_contract=4")
+    assert session.calls[0]["url"].endswith("?response_contract=5")
 
 
 def test_start_turn_accepts_and_filters_legacy_v1_abandoned_turn() -> None:
@@ -373,7 +407,134 @@ def test_start_turn_accepts_negotiated_v4_atomic_weather_scope_contract() -> Non
     assert result.contract_version == 4
     assert result.projection.current_weather_scope.revision == 1
     assert result.projection.current_weather_scope.location is None
-    assert session.calls[0]["url"].endswith("?response_contract=4")
+    assert session.calls[0]["url"].endswith("?response_contract=5")
+
+
+def test_start_turn_accepts_v5_exact_weather_scope_source_lane() -> None:
+    payload = _v5_start_payload()
+    client = ConversationMemoryClient(
+        "http://memory",
+        session=FakeSession(FakeResponse(payload)),
+    )
+
+    result = client.start_turn(
+        "conversation-a",
+        request_id="request-a",
+        shopper_text="Refresh that forecast.",
+        cart_user_id=17,
+    )
+
+    assert result.contract_version == 5
+    assert len(result.current_weather_scope_source_turns) == 1
+    source = result.current_weather_scope_source_turns[0]
+    assert source.turn_id == "turn-1"
+    assert source.sequence == 1
+    assert source.shopper_text == "Seattle on August 15."
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda payload: payload.pop("current_weather_scope_source_turns"),
+        lambda payload: payload.update(
+            {"current_weather_scope_source_turns": []}
+        ),
+        lambda payload: payload["current_weather_scope_source_turns"][0].update(
+            {"turn_id": "another-turn"}
+        ),
+        lambda payload: payload["current_weather_scope_source_turns"][0].update(
+            {"status": "failed"}
+        ),
+    ],
+)
+def test_start_turn_rejects_invalid_v5_weather_scope_source_lane(
+    mutate,
+) -> None:
+    payload = _v5_start_payload()
+    mutate(payload)
+    client = ConversationMemoryClient(
+        "http://memory",
+        session=FakeSession(FakeResponse(payload)),
+    )
+
+    with pytest.raises(ConversationMemoryError) as caught:
+        client.start_turn(
+            "conversation-a",
+            request_id="request-a",
+            shopper_text="Refresh that forecast.",
+            cart_user_id=17,
+        )
+
+    assert caught.value.code == "memory_response_invalid"
+
+
+def test_start_turn_rejects_v5_lane_before_contract_v5() -> None:
+    payload = _v5_start_payload()
+    payload["contract_version"] = 4
+    client = ConversationMemoryClient(
+        "http://memory",
+        session=FakeSession(FakeResponse(payload)),
+    )
+
+    with pytest.raises(ConversationMemoryError) as caught:
+        client.start_turn(
+            "conversation-a",
+            request_id="request-a",
+            shopper_text="Refresh that forecast.",
+            cart_user_id=17,
+        )
+
+    assert caught.value.code == "memory_response_invalid"
+
+
+def test_v5_replay_accepts_sources_later_than_replayed_turn() -> None:
+    payload = _v5_start_payload()
+    payload.update(
+        {
+            "sequence": 1,
+            "replayed": True,
+            "status": "completed",
+            "assistant_text": "Original replayed answer.",
+            "recent_turns": [],
+            "unsummarized_turn_count": 0,
+            "summary_compaction_source": None,
+        }
+    )
+    payload["projection"]["current_weather_scope"] = {
+        "revision": 2,
+        "location": {
+            "value": {
+                "kind": "shopper_provided_location",
+                "location": "Seattle",
+            },
+            "source_turn_id": "turn-4",
+            "source_sequence": 4,
+        },
+    }
+    payload["current_weather_scope_source_turns"] = [
+        {
+            "turn_id": "turn-4",
+            "sequence": 4,
+            "shopper_text": "The later event moved to Seattle.",
+            "assistant_text": "Here is the updated direction.",
+            "status": "completed",
+        }
+    ]
+    client = ConversationMemoryClient(
+        "http://memory",
+        session=FakeSession(FakeResponse(payload)),
+    )
+
+    result = client.start_turn(
+        "conversation-a",
+        request_id="request-a",
+        shopper_text="Original request.",
+        cart_user_id=17,
+    )
+
+    assert result.replayed is True
+    assert result.sequence == 1
+    assert result.current_weather_scope_source_turns[0].sequence == 4
 
 
 @pytest.mark.parametrize(

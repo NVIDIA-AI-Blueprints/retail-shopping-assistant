@@ -30,9 +30,12 @@ from shared.weather_receipts import (
     WeatherReceiptPromotion,
 )
 from shared.weather_scope import (
+    MAX_CURRENT_WEATHER_SCOPE_SOURCE_TURNS,
     CurrentWeatherScope,
     CurrentWeatherScopeResolution,
+    CurrentWeatherScopeSourceTurn,
     CurrentWeatherScopeTransition,
+    current_weather_scope_source_references,
 )
 
 
@@ -54,7 +57,7 @@ EventType = Literal[
 _DEFAULT_TIMEOUT_SECONDS = 10.0
 _DEFAULT_CONTEXT_MAX_CHARS = 16_384
 _MAX_CONVERSATION_SUMMARY_CHARS = 16_384
-_MEMORY_RESPONSE_CONTRACT = 4
+_MEMORY_RESPONSE_CONTRACT = 5
 _TRUNCATION_MARKER = "…"
 
 
@@ -188,7 +191,7 @@ class TurnStartResult(_MemoryModel):
     """Combined conversation context and cart for one turn."""
 
     turn_id: str = Field(..., min_length=1, max_length=256)
-    contract_version: Literal[1, 2, 3, 4] = 1
+    contract_version: Literal[1, 2, 3, 4, 5] = 1
     attempt_id: str = Field(..., min_length=1, max_length=128)
     sequence: int = Field(..., ge=1)
     replayed: bool = False
@@ -199,6 +202,12 @@ class TurnStartResult(_MemoryModel):
     )
     unsummarized_turn_count: int = Field(default=0, ge=0)
     summary_compaction_source: SummaryCompactionSource | None = None
+    current_weather_scope_source_turns: list[
+        CurrentWeatherScopeSourceTurn
+    ] = Field(
+        default_factory=list,
+        max_length=MAX_CURRENT_WEATHER_SCOPE_SOURCE_TURNS,
+    )
     previous_selected_skill_names: list[str] = Field(
         default_factory=list,
         max_length=5,
@@ -239,6 +248,21 @@ class TurnStartResult(_MemoryModel):
             )
         if version >= 3 and "current_weather_scope" not in projection_keys:
             raise ValueError("memory contract v3 response omitted weather scope")
+        if (
+            version < 5
+            and "current_weather_scope_source_turns" in value
+        ):
+            raise ValueError(
+                "memory response contains weather scope sources before "
+                "contract v5"
+            )
+        if (
+            version >= 5
+            and "current_weather_scope_source_turns" not in value
+        ):
+            raise ValueError(
+                "memory contract v5 response omitted weather scope sources"
+            )
         return value
 
     @model_validator(mode="after")
@@ -272,6 +296,33 @@ class TurnStartResult(_MemoryModel):
             raise ValueError(
                 "unsummarized_turn_count cannot be smaller than compaction source"
             )
+        if self.contract_version >= 5:
+            source_references = [
+                (turn.turn_id, turn.sequence)
+                for turn in self.current_weather_scope_source_turns
+            ]
+            if source_references != sorted(
+                set(source_references),
+                key=lambda item: (item[1], item[0]),
+            ):
+                raise ValueError(
+                    "weather scope source turns must be strictly ordered"
+                )
+            if set(source_references) != set(
+                current_weather_scope_source_references(
+                    self.projection.current_weather_scope
+                )
+            ):
+                raise ValueError(
+                    "weather scope source turns must exactly match the scope"
+                )
+            if not self.replayed and any(
+                turn.sequence >= self.sequence
+                for turn in self.current_weather_scope_source_turns
+            ):
+                raise ValueError(
+                    "weather scope source turns must precede a new active turn"
+                )
         return self
 
 

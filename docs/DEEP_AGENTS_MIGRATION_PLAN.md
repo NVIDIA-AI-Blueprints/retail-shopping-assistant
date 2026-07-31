@@ -478,16 +478,18 @@ low/high temperature, precipitation probability/types, attribution, and
 forecast uncertainty. Protected event decision rendering is selected from
 current-turn evidence, not an activation action. It applies only when event
 context is active, no current non-weather business-tool activity exists, and a
-current typed weather outcome (success or failure) exists. Missing
-location/venue or an empty draft skips the decision editor. A separate
-prior-candidate fallback uses deterministic event assembly only when the draft
-is empty; prior candidates with a nonempty draft remain on ordinary grounding
+current typed weather outcome (success or failure) exists. An accepted context
+question or an empty draft skips the decision editor; a scope-resolution object
+alone stays on ordinary grounding. A separate prior-candidate fallback uses
+deterministic event assembly only when the draft is empty; prior candidates
+with a nonempty draft remain on ordinary grounding
 only when there is no current weather outcome. A comparison that calls only
 weather remains protected. Other protected weather-outcome turns accept no
-free-form prose: their exact two-key JSON must contain an exact shopper-authored
-venue quote and one or two distinct allowlisted adjustment codes. Malformed,
-ungrounded, extra-key, duplicate, unknown, or wrong-cardinality output falls
-back. The server maps
+free-form prose: their exact two-key JSON must contain `venue_quote` as an exact
+shopper-authored quote or explicit `null`, plus one or two distinct allowlisted
+adjustment codes. A missing key, malformed output, an ungrounded non-null quote,
+an extra key, or duplicate/unknown/wrong-cardinality adjustments fall back. The
+server maps
 valid codes to fixed phrases and deterministically assembles exact newest prior
 names, its weather direction, only the accepted question, and the typed weather
 failure or canonical success block. Any current non-weather business-tool

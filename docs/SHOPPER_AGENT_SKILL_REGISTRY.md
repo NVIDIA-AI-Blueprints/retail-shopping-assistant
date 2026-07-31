@@ -368,9 +368,10 @@ forecast context to occasion-led styling.
   activation action. It applies only when event context is active, there is no
   current non-weather business-tool activity, and a current typed weather
   outcome (success or failure) or explicitly bound valid receipt exists.
-  Missing-location/venue or an empty draft
-  skips that editor. A separate prior-candidate fallback uses deterministic
-  event assembly only when the draft is empty. Product comparison with current
+  An accepted typed context question or an empty draft skips that editor. A
+  scope-resolution object alone stays on ordinary
+  grounding. A separate prior-candidate fallback uses deterministic event
+  assembly only when the draft is empty. Product comparison with current
   resolution/detail activity remains on ordinary grounding and uses a bound
   receipt silently without repeating its exact facts. Other protected
   weather-evidence turns give the narrow decision editor only bounded
@@ -464,9 +465,10 @@ forecast context to occasion-led styling.
   dates/values that lack current weather evidence while preserving ordinary
   grounded styling language. Protected context-only rendering accepts no
   free-form shopper-facing styling. Its exact two-key JSON decision must contain
-  an exact shopper-authored venue quote and one or two distinct allowlisted
-  adjustment codes. Malformed, ungrounded, extra-key, duplicate, unknown, or
-  wrong-cardinality output falls back. The server maps valid codes to fixed
+  `venue_quote` as an exact shopper-authored quote or explicit `null`, plus one
+  or two distinct allowlisted adjustment codes. A missing key, malformed output,
+  an ungrounded non-null quote, an extra key, or duplicate/unknown/wrong-cardinality
+  adjustment falls back. The server maps valid codes to fixed
   phrases and deterministically assembles exact prior names, its weather
   direction, only the accepted question, and a current typed weather failure
   or current canonical success block. Product comparison with a bound receipt

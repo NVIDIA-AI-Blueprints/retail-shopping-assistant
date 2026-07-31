@@ -3687,32 +3687,34 @@ class DeepAgentsRuntime:
             )
             else weather_outcome
         )
-        protected_event_response = (
-            enforce_event_context
-            and not has_current_non_weather_business_activity
-            and (
-                weather_outcome is not None
-                or state.current_weather_scope_resolution is not None
-                or event_context_next_question
-                in {"event_location", "event_venue", "event_date"}
-                or (
-                    not draft_response.strip()
-                    and bool(
-                        _historical_product_names(
-                            state.historical_product_context
-                        )
-                    )
-                )
-            )
-        )
         scope_transition_acknowledgment = (
             _context_only_scope_transition_acknowledgment(state)
         )
-        if (
-            protected_event_response
-            and event_context_next_question
-            in {"event_location", "event_venue", "event_date"}
-        ):
+        event_response_mode = _select_event_context_response_mode(
+            event_context_active=enforce_event_context,
+            has_non_weather_business_activity=(
+                has_current_non_weather_business_activity
+            ),
+            weather_outcome=weather_outcome,
+            next_question=event_context_next_question,
+            has_unavailable_transition=bool(
+                state.current_weather_scope_resolution is not None
+                and (
+                    state.current_weather_scope_resolution.location_action
+                    == "unavailable"
+                    or state.current_weather_scope_resolution.window_action
+                    == "unavailable"
+                )
+            ),
+            draft_response=draft_response,
+            has_historical_products=bool(
+                _historical_product_names(
+                    state.historical_product_context
+                )
+            ),
+        )
+        protected_weather_response = event_response_mode == "protected_weather"
+        if event_response_mode == "typed_transition":
             return _compose_context_only_event_response(
                 state,
                 styling=scope_transition_acknowledgment,
@@ -3720,18 +3722,7 @@ class DeepAgentsRuntime:
                 weather_outcome=weather_outcome,
                 include_weather_facts=not reused_weather_receipt,
             )
-        if (
-            protected_event_response
-            and weather_outcome is None
-            and scope_transition_acknowledgment
-        ):
-            return _compose_context_only_event_response(
-                state,
-                styling=scope_transition_acknowledgment,
-                next_question=event_context_next_question,
-                weather_outcome=None,
-            )
-        if protected_event_response and not draft_response.strip():
+        if event_response_mode == "deterministic_fallback":
             return _compose_context_only_event_response(
                 state,
                 styling="",
@@ -3745,7 +3736,7 @@ class DeepAgentsRuntime:
         )
         has_current_search_candidates = bool(current_search_groups)
         if not getattr(self.config, "grounding_rewrite_enabled", True):
-            if protected_event_response:
+            if protected_weather_response:
                 return _compose_context_only_event_response(
                     state,
                     styling="",
@@ -3813,7 +3804,7 @@ class DeepAgentsRuntime:
             and not current_evidence
             and not prior_evidence
         )
-        if protected_event_response:
+        if protected_weather_response:
             editor_system_prompt = (
                 "You select a tiny event-setting styling decision. Return only "
                 "one JSON object with exactly these keys:\n"
@@ -3889,7 +3880,7 @@ class DeepAgentsRuntime:
                 f"{_GROUNDING_EDITOR_SYSTEM_PROMPT}"
             )
         if isinstance(weather_outcome, WeatherForecastEvidence) and not (
-            protected_event_response
+            protected_weather_response
         ):
             if reused_weather_receipt:
                 weather_editor_rule = (
@@ -3919,7 +3910,7 @@ class DeepAgentsRuntime:
                     "- Ask no repeated location, venue, or date question.\n\n"
                 )
             editor_system_prompt = weather_editor_rule + editor_system_prompt
-        if protected_event_response:
+        if protected_weather_response:
             shopper_event_text = "\n".join(
                 f"- {text}"
                 for text in _active_weather_scope_shopper_texts(state)
@@ -4021,7 +4012,7 @@ class DeepAgentsRuntime:
                     result,
                     request_id=request_id,
                 )
-            if protected_event_response:
+            if protected_weather_response:
                 return _compose_context_only_event_response(
                     state,
                     styling="",
@@ -4052,7 +4043,7 @@ class DeepAgentsRuntime:
                     result,
                     request_id=request_id,
                 )
-            if protected_event_response:
+            if protected_weather_response:
                 return _compose_context_only_event_response(
                     state,
                     styling="",
@@ -4091,7 +4082,7 @@ class DeepAgentsRuntime:
                     result,
                     request_id=request_id,
                 )
-            if protected_event_response:
+            if protected_weather_response:
                 return _compose_context_only_event_response(
                     state,
                     styling="",
@@ -4112,7 +4103,7 @@ class DeepAgentsRuntime:
             calls=1,
             detail="Final response grounding rewrite",
         )
-        if protected_event_response:
+        if protected_weather_response:
             return _compose_context_only_event_response(
                 state,
                 styling=_render_context_only_event_styling_decision(
@@ -6413,6 +6404,39 @@ def _weather_forecast_from_receipt(
         return None
 
 
+def _select_event_context_response_mode(
+    *,
+    event_context_active: bool,
+    has_non_weather_business_activity: bool,
+    weather_outcome: WeatherForecastEvidence | WeatherFailure | None,
+    next_question: str | None,
+    has_unavailable_transition: bool,
+    draft_response: str,
+    has_historical_products: bool,
+) -> Literal[
+    "ordinary",
+    "typed_transition",
+    "protected_weather",
+    "deterministic_fallback",
+]:
+    """Select a renderer from typed turn outcomes, never shopper wording."""
+
+    if not event_context_active or has_non_weather_business_activity:
+        return "ordinary"
+    if (
+        next_question in {"event_location", "event_venue", "event_date"}
+        or has_unavailable_transition
+    ):
+        return "typed_transition"
+    if weather_outcome is not None:
+        if draft_response.strip():
+            return "protected_weather"
+        return "deterministic_fallback"
+    if not draft_response.strip() and has_historical_products:
+        return "deterministic_fallback"
+    return "ordinary"
+
+
 def _effective_weather_outcome(
     state: State,
     result: Any,
@@ -6830,7 +6854,7 @@ def _render_context_only_event_styling_decision(
     *,
     shopper_texts: tuple[str, ...],
 ) -> str:
-    """Render only an exact shopper venue quote plus allowlisted adjustments."""
+    """Render allowlisted adjustments with an optional exact venue quote."""
 
     try:
         decision = json.loads(response)
@@ -6845,11 +6869,7 @@ def _render_context_only_event_styling_decision(
     venue_quote = decision.get("venue_quote")
     adjustments = decision.get("adjustments")
     if (
-        not isinstance(venue_quote, str)
-        or venue_quote != venue_quote.strip()
-        or not 1 <= len(venue_quote) <= 80
-        or "\n" in venue_quote
-        or not isinstance(adjustments, list)
+        not isinstance(adjustments, list)
         or not 1 <= len(adjustments) <= 2
         or any(not isinstance(value, str) for value in adjustments)
         or len(set(adjustments)) != len(adjustments)
@@ -6860,18 +6880,26 @@ def _render_context_only_event_styling_decision(
     ):
         return ""
 
-    canonical_quote = ""
-    for shopper_text in shopper_texts:
-        match = re.search(
-            re.escape(venue_quote),
-            shopper_text,
-            flags=re.IGNORECASE,
-        )
-        if match:
-            canonical_quote = shopper_text[match.start() : match.end()]
-            break
-    if not canonical_quote:
-        return ""
+    canonical_quote: str | None = None
+    if venue_quote is not None:
+        if (
+            not isinstance(venue_quote, str)
+            or venue_quote != venue_quote.strip()
+            or not 1 <= len(venue_quote) <= 80
+            or "\n" in venue_quote
+        ):
+            return ""
+        for shopper_text in shopper_texts:
+            match = re.search(
+                re.escape(venue_quote),
+                shopper_text,
+                flags=re.IGNORECASE,
+            )
+            if match:
+                canonical_quote = shopper_text[match.start() : match.end()]
+                break
+        if canonical_quote is None:
+            return ""
 
     phrases = [
         _CONTEXT_ONLY_EVENT_ADJUSTMENT_PHRASES[value]
@@ -6881,6 +6909,8 @@ def _render_context_only_event_styling_decision(
         direction = phrases[0]
     else:
         direction = f"{phrases[0]} and {phrases[1]}"
+    if canonical_quote is None:
+        return f"{direction[:1].upper()}{direction[1:]}."
     return (
         "Based on your venue detail "
         f"(“{_escape_markdown_inline(canonical_quote)}”), "

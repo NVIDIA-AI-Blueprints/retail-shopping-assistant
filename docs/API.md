@@ -752,9 +752,11 @@ Response handling selects the protected event decision renderer structurally,
 not from an activation mode: `event-context` must be active, the current turn
 must have no non-weather business-tool activity, and a current typed weather
 outcome (success or failure) or explicitly bound valid receipt must exist.
-Missing-location/venue or an empty draft skips its decision editor. A separate
-prior-candidate fallback uses deterministic event assembly only when the draft
-is empty. Current product-resolution/detail activity guarantees ordinary
+An accepted typed question or an empty draft skips its decision editor. A
+scope-resolution object alone never selects it, so an ordinary scope update
+with a useful draft stays on ordinary grounding. A separate prior-candidate
+fallback uses deterministic event assembly only when the draft is empty. Current
+product-resolution/detail activity guarantees ordinary
 grounding even when a receipt is bound. Other protected weather-evidence turns
 with a nonempty draft give the narrow decision
 editor only bounded shopper-authored event text and the server-owned
@@ -764,9 +766,11 @@ protected renderer.
 For ordinary weather-plus-business paths, grounding-editor sentences containing
 weather-domain fact language or fact-shaped dates/values are removed while
 ordinary grounded styling language remains. The context-only decision accepts an
-exact two-key JSON object containing a shopper-grounded `venue_quote` and one
-or two distinct allowlisted adjustment codes. Malformed JSON, extra keys, a
-missing/non-shopper quote, or invalid/duplicate codes falls back. The server
+exact two-key JSON object containing `venue_quote` as either a shopper-grounded
+quote or explicit `null`, plus one or two distinct allowlisted adjustment codes.
+Malformed JSON, extra or missing keys, an ungrounded non-null quote, or
+invalid/duplicate codes falls back. Explicit `null` renders adjustment-only
+guidance. The server
 maps valid codes to fixed phrases and deterministically assembles exact newest
 prior names, its weather direction, only the accepted question, and a current
 typed weather failure or current canonical success block. It never asks for state, region,

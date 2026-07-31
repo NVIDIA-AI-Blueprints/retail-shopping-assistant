@@ -1214,18 +1214,19 @@ Outputs:
   `event-context` is active, no current non-weather business-tool activity
   occurred, and a current typed weather outcome (success or failure) or
   explicitly bound valid receipt exists.
-  Missing location/venue or an empty draft skips that editor. A separate
-  prior-candidate fallback uses deterministic event assembly only when the
-  draft is empty. A comparison with current product resolution/details stays
+  An accepted typed question or an empty draft skips that editor. A scope
+  resolution alone never selects it. A separate prior-candidate fallback uses
+  deterministic event assembly only when the draft is empty. A comparison with
+  current product resolution/details stays
   on ordinary grounding. Other protected weather-evidence turns must return
   exactly one JSON object with exactly `venue_quote` and `adjustments`.
-  `venue_quote` must be a trimmed,
-  single-line, 1–80-character exact case-insensitive substring of bounded
-  shopper-authored event text. `adjustments` must contain one or two distinct
+  `venue_quote` is explicit `null` when no bounded shopper-authored event text
+  names a venue; otherwise it must be a trimmed, single-line, 1–80-character
+  exact case-insensitive substring of that text. `adjustments` must contain one or two distinct
   values from `streamlined_accessories`, `lower_profile_footwear`,
-  `polished_unfussy_finish`, and `adaptable_finishing`. A null/missing or
-  non-shopper quote, malformed JSON, extra key, wrong cardinality, duplicate,
-  or unknown code falls back.
+  `polished_unfussy_finish`, and `adaptable_finishing`. A missing key,
+  non-shopper non-null quote, malformed JSON, extra key, wrong cardinality,
+  duplicate, or unknown code falls back.
 - The server maps valid adjustment codes to fixed phrases, escapes the
   canonical shopper quote, and deterministically assembles exact names from the
   newest historical candidate set, the fixed venue sentence when valid, its

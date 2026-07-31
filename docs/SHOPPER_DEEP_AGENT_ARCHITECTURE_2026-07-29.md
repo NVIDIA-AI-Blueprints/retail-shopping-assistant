@@ -48,9 +48,21 @@ tool evidence
 ```
 
 The editor may improve wording within the supplied evidence. On the protected
-event path, it may also select one shopper-authored venue quote and one or two
-allowlisted styling-adjustment codes. It cannot select skills, call tools,
+event path, it may also select an optional shopper-authored venue quote and one
+or two allowlisted styling-adjustment codes. An explicit null venue renders the
+adjustments without inventing a setting. It cannot select skills, call tools,
 change tool results, or reopen the Deep Agent.
+
+Response-path selection is one pure structural boundary with four outcomes:
+`ordinary`, `typed_transition`, `protected_weather`, and
+`deterministic_fallback`. Current non-weather business activity or an ordinary
+scope update with useful draft text stays `ordinary`; an accepted typed question
+or unavailability transition selects `typed_transition`; a typed current or
+explicitly bound weather outcome with a nonempty draft selects
+`protected_weather`; and an empty weather/prior-candidate turn selects
+`deterministic_fallback`. The selector reads typed outcomes and evidence
+presence only. It never classifies shopper wording, and the existence of a
+scope-resolution object alone carries no rendering authority.
 
 ## Serving Flow
 

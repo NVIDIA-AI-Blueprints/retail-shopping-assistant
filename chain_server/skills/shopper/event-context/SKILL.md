@@ -283,14 +283,16 @@ tools_granted:
   remains protected; a comparison with current non-weather business activity is
   guaranteed to use ordinary grounding. The protected editor accepts no
   free-form prose and must return exactly one JSON object with only
-  `venue_quote` and `adjustments`. `venue_quote` must be a trimmed,
-  single-line, 1–80-character exact case-insensitive substring of bounded
-  shopper-authored event text that explicitly names the setting.
+  `venue_quote` and `adjustments`. `venue_quote` is `null` when no bounded
+  shopper-authored text explicitly names the setting; otherwise it must be a
+  trimmed, single-line, 1–80-character exact case-insensitive substring of
+  that text.
   `adjustments` must contain one or two distinct values from
   `streamlined_accessories`, `lower_profile_footwear`,
-  `polished_unfussy_finish`, and `adaptable_finishing`. A null/missing or
-  non-shopper quote, malformed JSON, extra key, wrong cardinality, duplicate,
-  or unknown code falls back.
+  `polished_unfussy_finish`, and `adaptable_finishing`. A missing key,
+  non-shopper non-null quote, malformed JSON, extra key, wrong cardinality,
+  duplicate, or unknown code falls back. Explicit `null` renders only the
+  allowlisted adjustments.
 - The server maps valid codes to fixed phrases, escapes the canonical shopper
   quote, and assembles exact names from the newest historical candidate set,
   that fixed venue sentence when valid, its deterministic weather direction,

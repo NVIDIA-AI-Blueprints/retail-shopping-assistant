@@ -1,0 +1,53 @@
+set_name: Weather response without an invented venue
+shopper_profile_id: shopper_jordan
+queries:
+  - >-
+    Before we shop, give me a weather-aware semi-formal wedding outfit
+    direction for Seattle tomorrow.
+answers:
+  - >-
+    Treat Seattle and tomorrow as complete current-turn weather authority. Call
+    weather exactly once and give concise product-agnostic styling guidance
+    grounded in the returned forecast. Because the shopper did not state a
+    venue or setting, do not invent beach, patio, indoor, outdoor, terrain, or
+    local-norm context and do not ask a venue question. Include the exact
+    attributed forecast, ask no follow-up, and run no catalog tool.
+diagnostic_expectations:
+  - required_skills: [outfit-styling, event-context]
+    required_event_context_next_question: none
+    forbidden_skills:
+      - product-discovery
+      - budget-shopping
+      - cart-management
+      - store-policy-answers
+    required_tools: [get_weather_forecast_tool]
+    required_business_sequence: [get_weather_forecast_tool]
+    forbidden_tools:
+      - search_catalog_tool
+      - resolve_conversation_products_tool
+      - get_product_details_tool
+      - check_product_availability_tool
+      - check_active_promotions_tool
+    weather_tool_calls: 1
+    required_weather_scope:
+      scope_revision: 0
+      location_action: set
+      window_action: set
+      location_source: shopper_provided_location
+      location_supplied: true
+      date_supplied: true
+    required_weather_trace:
+      request_shape: exact_date
+      location_source: shopper_provided_location
+      provider_input: location_query
+      outcome: success
+    required_weather_receipt_status: promotion_prepared
+    required_response_phrases:
+      - Seattle
+      - Weather Data Provided by Visual Crossing
+    forbidden_response_phrases:
+      - Based on your venue detail
+      - beach
+      - patio
+      - indoor
+      - outdoor

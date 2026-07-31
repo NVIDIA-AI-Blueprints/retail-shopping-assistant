@@ -7416,12 +7416,39 @@ class TestDeepAgentsRuntimeRefs:
             "streamlined and favor lower-profile footwear."
         )
 
+    def test_context_only_event_styling_accepts_null_venue_decision(
+        self,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        styling = runtime_mod._render_context_only_event_styling_decision(
+            json.dumps(
+                {
+                    "venue_quote": None,
+                    "adjustments": [
+                        "streamlined_accessories",
+                        "adaptable_finishing",
+                    ],
+                }
+            ),
+            shopper_texts=("The event is in Cancun.",),
+        )
+
+        assert styling == (
+            "Keep accessories streamlined and keep the finishing details "
+            "simple and adaptable."
+        )
+
     @pytest.mark.parametrize(
         "response",
         [
             "The Marina wrap at €89 is the safest choice.",
             "For the beach, favor breathable linen and stable sandals.",
             "Can you confirm whether the venue is outdoors.",
+            "{",
+            '{"adjustments":["streamlined_accessories"]}',
+            '{"venue_quote":"","adjustments":["streamlined_accessories"]}',
+            '{"venue_quote":null}',
             '{"venue_quote":"beach","adjustments":["unknown"]}',
             (
                 '{"venue_quote":"beach","adjustments":'
@@ -7569,6 +7596,92 @@ class TestDeepAgentsRuntimeRefs:
         editor_prompt = captured["messages"][1]["content"]
         assert "DRAFT RESPONSE" in editor_prompt
         assert "Compare Intricate Lace Gown" in editor_prompt
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "resolution_payload",
+        [
+            {
+                "expected_projection_version": 2,
+                "expected_scope_revision": 1,
+                "location_action": "set",
+                "window_action": "clear",
+                "location_scope": {
+                    "kind": "shopper_provided_location",
+                    "location": "Seattle",
+                },
+            },
+            {
+                "expected_projection_version": 2,
+                "expected_scope_revision": 1,
+                "location_action": "clear",
+                "window_action": "set",
+                "requested_window": {
+                    "start_date": "2026-08-14",
+                    "end_date": "2026-08-14",
+                },
+            },
+        ],
+        ids=("location-set-date-clear", "location-clear-date-set"),
+    )
+    async def test_ordinary_scope_resolution_uses_ordinary_grounding(
+        self,
+        base_config,
+        monkeypatch: pytest.MonkeyPatch,
+        resolution_payload: dict[str, Any],
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+        from langchain_core.messages import AIMessage
+
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+        captured: dict[str, object] = {}
+        styling = (
+            "Keep the polished midi silhouette and pair it with a refined flat."
+        )
+
+        class OrdinaryEventEditor:
+            async def ainvoke(self, messages):
+                captured["messages"] = messages
+                return AIMessage(content=styling)
+
+        monkeypatch.setattr(
+            runtime,
+            "_create_chat_model",
+            lambda: OrdinaryEventEditor(),
+        )
+        state = State(
+            user_id=111,
+            query="Keep the same styling direction with the updated plan.",
+            current_weather_scope_resolution=(
+                CurrentWeatherScopeResolution.model_validate(
+                    resolution_payload
+                )
+            ),
+            agent_diagnostics={
+                "skill_files_read": [
+                    "/shopper/outfit-styling/SKILL.md",
+                    "/shopper/event-context/SKILL.md",
+                ]
+            },
+        )
+        result = {
+            "messages": [
+                {"role": "user", "content": "REQUEST ID: current-request"},
+                *_event_context_activation_messages("none"),
+            ]
+        }
+
+        response = await runtime._rewrite_response_for_grounding(
+            state,
+            result,
+            styling,
+            request_id="current-request",
+        )
+
+        assert response == styling
+        messages = captured["messages"]
+        assert "Return only one JSON object" not in messages[0]["content"]
+        assert f"DRAFT RESPONSE:\n{styling}" in messages[1]["content"]
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(

@@ -565,9 +565,11 @@ The protected event decision renderer is selected structurally when
 `event-context` is active, no current non-weather business-tool activity
 occurred, and a current typed weather outcome (success or failure) or explicitly
 bound valid receipt exists.
-Missing-location/venue or an empty draft skips its decision editor. A separate
-prior-candidate fallback uses deterministic event assembly only when the draft
-is empty. A comparison with current product-resolution/detail activity remains
+An accepted typed question or an empty draft skips its decision editor. A
+scope-resolution object alone does not select it, so an ordinary scope update
+with a useful draft stays on ordinary grounding. A separate prior-candidate
+fallback uses deterministic event assembly only when the draft is empty. A
+comparison with current product-resolution/detail activity remains
 on ordinary grounding and uses a bound receipt silently without repeating
 exact forecast facts or the prior canonical block. Other protected
 weather-evidence turns with a
@@ -578,10 +580,11 @@ business-evidence grounding path.
 For ordinary weather-plus-business paths, grounding-editor sentences containing
 weather-domain fact language or fact-shaped dates/values are removed while
 ordinary grounded styling language remains. The context-only decision accepts
-only exact two-key JSON containing a shopper-grounded venue quote plus one or
-two distinct allowlisted adjustment codes. Malformed/extra-key output, a
-missing or non-shopper quote, and unknown/duplicate/wrong-cardinality codes fall
-back. The server maps valid codes to fixed phrases and deterministically
+only exact two-key JSON containing `venue_quote` as either a shopper-grounded
+quote or explicit `null`, plus one or two distinct allowlisted adjustment codes.
+Malformed/extra-key output, a missing key or non-shopper non-null quote, and
+unknown/duplicate/wrong-cardinality codes fall back. Explicit `null` renders
+the adjustments without a venue sentence. The server maps valid codes to fixed phrases and deterministically
 assembles exact prior names, its weather direction, only the accepted question,
 and a current typed weather failure or current canonical success block. It never asks for
 state, region, country, or finer location solely because the lookup failed.

@@ -6,6 +6,29 @@ Updated: 2026-07-31
 
 The current working tree extends the shopper-serving Deep Agent architecture:
 
+- event response routing is now one pure structural four-mode boundary:
+  `ordinary`, `typed_transition`, `protected_weather`, or
+  `deterministic_fallback`. A scope-resolution object alone has no rendering
+  authority, so symmetric `set/clear` and `clear/set` updates with useful draft
+  styling remain on ordinary grounding. Accepted questions and typed
+  unavailability render their server-owned transition; current or explicitly
+  bound weather evidence with a nonempty draft uses the protected decision
+  editor; an empty weather/prior-candidate turn uses deterministic assembly.
+  The selector consumes typed outcomes and evidence presence, never shopper
+  wording or an intent label. The protected editor's existing two-key contract
+  now accepts explicit `venue_quote: null`, rendering only one or two
+  allowlisted adjustment phrases when the shopper stated no setting; missing,
+  empty, malformed, ungrounded non-null, duplicate, unknown, and extra-key
+  output still fails closed. The focused response class passes 168 tests, the
+  complete offline suite passes 1,725 tests, and the explicit
+  Seattle/tomorrow/no-venue live gate passes its deterministic diagnostic and
+  scores 4/5 with no target or Judge error at 26.21s. Two broader live attempts
+  are preserved but excluded before Judge: their activation model respectively
+  failed to set an explicit pending `tomorrow` date and asked for `event_date`
+  despite `next week`; neither trace reached the response-router condition and
+  no code was changed around them. Canonical quality/timing evidence is local
+  under
+  `~/exec-briefs/retail-shopping-assistant/quality/shopping/targeted/event_context/response_routing_slice2/`;
 - pending-question eligibility is now reconciled from the complete effective
   weather scope after both component actions are compiled. If either component
   is source-bound `unavailable`, every location/date follow-up and every
@@ -521,12 +544,14 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   precipitation fact, attribution, and forecast uncertainty.
   For ordinary-grounding weather paths, grounding-editor sentences containing
   weather-domain fact language or fact-shaped dates/values are removed while
-  ordinary grounded styling language remains. Missing-location/venue or an
-  empty draft skips the protected decision editor. Other protected
+  ordinary grounded styling language remains. An accepted context question or
+  an empty draft skips the protected decision editor; a scope-resolution object
+  alone stays on ordinary grounding. Other protected
   weather-outcome turns expose only bounded shopper-authored event text and the
   server-owned deterministic weather styling direction, and accept only exact
-  JSON with a grounded venue quote plus one or two distinct allowlisted
-  adjustment codes. Malformed, ungrounded, or invalid output falls back. The
+  JSON with an optional grounded venue quote plus one or two distinct
+  allowlisted adjustment codes. Explicit null renders adjustment-only guidance;
+  a missing key, ungrounded non-null quote, or invalid output falls back. The
   server maps valid codes to fixed phrases and deterministically assembles exact
   newest prior names when present, its weather direction, only the accepted
   question, and a current typed failure or current canonical forecast block.

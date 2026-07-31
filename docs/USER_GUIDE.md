@@ -214,17 +214,18 @@ weather.
 The protected event decision renderer is selected structurally only when event
 context is active, the current turn has no non-weather business-tool activity,
 and a current typed weather outcome (success or failure) or explicitly selected
-valid receipt exists. Missing
-location/setting or an empty draft skips that decision step. A separate
-prior-candidate fallback deterministically keeps the options only when the
-draft is empty. A comparison with current product resolution/details remains
+valid receipt exists. An accepted context question or an empty draft skips that
+decision step; a scope update by itself stays on ordinary grounding. A separate
+prior-candidate fallback deterministically keeps the options only when the draft
+is empty. A comparison with current product resolution/details remains
 on ordinary grounding and may use a selected receipt silently, while current
 non-weather business activity guarantees ordinary grounding. Other protected
 weather-evidence turns give the
 narrow decision step only bounded shopper-authored event text and a
 server-generated weather styling direction. It returns structured choices, not
-shopper-facing prose: an exact setting quote from your words and one or two
-allowlisted adjustments. Invalid or invented output is ignored. The server
+shopper-facing prose: an exact setting quote from your words when one exists,
+otherwise no quote, plus one or two allowlisted adjustments. Invalid or
+invented output is ignored. The server
 renders fixed phrases, the exact prior names, its weather direction, only the
 one selected follow-up, and any current safe weather failure or current
 canonical forecast block.

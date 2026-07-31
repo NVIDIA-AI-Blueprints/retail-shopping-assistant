@@ -735,9 +735,11 @@ authorization remain unchanged.
 Protected event decision rendering is selected from typed evidence, not from an
 activation action. It applies only when event context is active, there is no
 current non-weather business-tool activity, and a current typed weather outcome
-or explicitly bound valid receipt exists. Missing-location/venue or an empty
-draft skips the decision editor. A separate prior-candidate fallback uses
-deterministic event assembly only when the draft is empty. Product comparison
+or explicitly bound valid receipt exists. An accepted typed context question or
+an empty draft skips the decision editor. A scope-resolution object alone never selects
+it, so an ordinary scope update with a useful draft stays on ordinary grounding.
+A separate prior-candidate fallback uses deterministic event assembly only when
+the draft is empty. Product comparison
 with current resolution/detail activity remains on ordinary grounding; a bound
 receipt may guide styling but does not repeat its exact facts. Other protected
 weather-evidence turns give a narrow tools-disabled decision editor
@@ -798,10 +800,11 @@ probability/types, Visual Crossing attribution, and forecast uncertainty.
 Normal grounding removes weather-domain fact language or fact-shaped
 dates/values that lack current weather evidence while preserving ordinary
 grounded styling language. Protected context-only rendering accepts no
-shopper-facing editor prose. Its decision must be exact two-key JSON with one
-exact shopper-authored venue quote and one or two distinct allowlisted
-adjustment codes; malformed, ungrounded, extra-key, duplicate, or unknown-code
-output falls back. The server maps valid codes to fixed phrases and
+shopper-facing editor prose. Its decision must be exact two-key JSON with
+`venue_quote` set to one exact shopper-authored quote or explicit `null`, plus
+one or two distinct allowlisted adjustment codes; a missing key, malformed
+output, an ungrounded non-null quote, an extra key, or duplicate/unknown code
+falls back. The server maps valid codes to fixed phrases and
 deterministically assembles exact newest prior names, the fixed venue sentence,
 its weather direction, only the accepted question, and a current typed failure
 or current canonical success block. Product comparison using a bound receipt

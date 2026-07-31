@@ -192,19 +192,26 @@ from restoring unrelated names from the historical-product index. The
 protected decision renderer is selected structurally only when event context is
 active, there is no current non-weather business-tool activity, and either a
 current typed weather outcome or the one explicitly bound durable receipt
-supplies event evidence. Missing location/venue or an empty draft skips its
-decision editor. A separate prior-candidate fallback uses deterministic event
-assembly only when the draft is empty. A comparison with current product
+supplies event evidence. An accepted typed context question or an empty draft
+skips its decision editor. A scope-resolution object alone never selects it: an
+ordinary scope update with a useful draft stays on ordinary grounding. A separate
+prior-candidate fallback uses deterministic event assembly only when the draft
+is empty. A comparison with current product
 resolution/detail activity stays on ordinary grounding: a bound receipt may
 guide the styling judgment silently, but it does not repeat the prior canonical
 forecast facts. Other protected weather-evidence turns with a nonempty draft
 give a narrow tools-disabled editor only bounded shopper-authored event text and
 the server-owned deterministic weather styling direction. It accepts only exact
-JSON containing an exact shopper-authored venue quote and one or two distinct
-allowlisted adjustment codes; malformed or ungrounded output falls back. The
+JSON containing `venue_quote` as either an exact shopper-authored quote or
+`null` when no venue was stated, plus one or two distinct allowlisted
+adjustment codes; malformed or ungrounded output falls back. The
 server renders fixed phrases and assembles exact prior names when present, the
 deterministic weather direction, only the accepted location/venue/date question,
 and a current typed failure or current canonical forecast block.
+
+Internally this is one four-way structural choice—ordinary grounding, typed
+transition rendering, protected weather rendering, or deterministic fallback.
+It consumes typed outcomes and evidence presence, never shopper-language rules.
 
 An explicit comparison of established candidates remains part of
 `outfit-styling`; it does not create a comparison skill, deterministic intent
@@ -468,9 +475,11 @@ For ordinary-grounding weather paths, grounding-editor sentences containing
 weather-domain fact language or fact-shaped dates/values are removed while
 ordinary grounded styling language remains. The structurally selected protected
 weather-outcome decision path never accepts free-form editor prose: the exact
-JSON decision contains only a shopper-grounded venue quote and one or two
-allowlisted adjustments. Invalid, malformed, extra-key, non-shopper-quote, or
-unknown/duplicate-code output falls back. The prior-candidate-only empty-draft
+JSON decision contains only an optional shopper-grounded `venue_quote` and one
+or two allowlisted adjustments. Explicit `null` renders the adjustments without
+a venue sentence; a missing key, malformed/extra-key output, an ungrounded
+non-null quote, or an unknown/duplicate code falls back. The
+prior-candidate-only empty-draft
 branch bypasses that editor and assembles deterministically. The server maps
 valid codes to fixed phrases and deterministically assembles exact newest names
 when present, its weather styling direction, the accepted question, and the

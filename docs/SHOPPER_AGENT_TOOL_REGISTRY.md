@@ -8,8 +8,10 @@ responses.
 The runtime sources of truth are
 `chain_server/src/tool_policy.py` for the immutable tool policy and validated
 frontmatter grants,
+`chain_server/src/catalog_tool_contract.py` for the capability-derived catalog
+search schema, structural taxonomy mapping, and canonical search-scope identity,
 `chain_server/src/deepagents_runtime.py::DeepAgentsRuntime._create_agent` for
-wrapper registration, and
+wrapper registration, per-turn state, service execution, and evidence, and
 `chain_server/src/skill_activation.py::ShopperSkillActivationMiddleware` for
 model binding and dispatch enforcement, with
 termination policy in

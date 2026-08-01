@@ -49,7 +49,11 @@ occasion, weather, and style modifiers. For a genuinely open role, it is the
 one advertised subcategory selected for that role. It is provenance rather
 than taxonomy or ranking text and is `null` only for image-only search. The taxonomy envelope has stable
 `category` and `subcategory` roles, but their enum values are generated from the
-cached capability contract. `required_constraints` exposes only advertised
+cached capability contract. The pure
+`chain_server/src/catalog_tool_contract.py` module constructs these Pydantic
+models, maps structural taxonomy roles to advertised filter fields, and owns
+canonical duplicate-scope identity. The runtime composes that contract with
+per-turn state and service execution. `required_constraints` exposes only advertised
 non-taxonomy hard-filter properties, advertised enum values, typed numeric range
 shape, and the explicit `unadvertised_requirements` lane. The chain keeps the
 full capability object for deterministic mapping and validation, while the
@@ -144,9 +148,12 @@ Implementation map:
 - embedding retrieval, filtering, and deterministic ranking:
   `catalog_retriever/src/retriever.py`;
 - lifecycle caching and compact prompt rendering: `chain_server/src/catalog_capabilities.py`;
+- capability-derived tool schema, structural taxonomy mapping, and canonical
+  scope identity: `chain_server/src/catalog_tool_contract.py`;
 - intent validation: `chain_server/src/catalog_request.py`;
 - plan-to-request mapping: `chain_server/src/catalog_execution.py`; and
-- agent tool wiring: `chain_server/src/deepagents_runtime.py`.
+- agent tool registration, per-turn state, service execution, and evidence:
+  `chain_server/src/deepagents_runtime.py`.
 
 ## What Changed From the Old Catalog
 

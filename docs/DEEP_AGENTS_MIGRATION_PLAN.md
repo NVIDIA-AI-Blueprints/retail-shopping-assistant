@@ -24,8 +24,10 @@ entrypoint.
 Current constraints:
 
 - The current model-facing catalog boundary is one flat executable search
-  schema constructed in `chain_server/src/deepagents_runtime.py`, with reusable
-  model-visible rules in `chain_server/src/catalog_scope.py`. Its fields are
+  schema constructed by the pure
+  `chain_server/src/catalog_tool_contract.py` module and composed into registered
+  wrappers by `chain_server/src/deepagents_runtime.py`, with reusable model-
+  visible rules in `chain_server/src/catalog_scope.py`. Its fields are
   `semantic_query`, `shopper_guidance`, `requested_product_type`, `taxonomy`,
   `required_constraints`, `scope_complete`, and optional `search_mode`. It has
   no model-authored taxonomy relationship, clarification branch, or

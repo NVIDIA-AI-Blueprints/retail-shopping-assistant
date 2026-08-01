@@ -6,6 +6,14 @@ Updated: 2026-08-01
 
 The current working tree extends the shopper-serving Deep Agent architecture:
 
+- the capability-derived catalog tool contract is now isolated in the pure
+  `chain_server/src/catalog_tool_contract.py` module. It owns only the stable
+  search argument models, dynamic capability-derived schema, structural
+  taxonomy-to-filter mapping, and canonical search-scope identity. The serving
+  runtime remains the composition root for tool registration, per-turn limits,
+  service calls, product evidence, and rendering. Runtime compatibility aliases
+  preserve existing call sites and generated Pydantic model names; this is a
+  behavior-neutral extraction with no new shopper-language parser or router;
 - local app-code mode now keeps React browser API requests under a scoped
   `/local-api` prefix on port `3000` and forwards them through the development
   proxy to the chain server without Create React App's package-proxy Host
@@ -289,6 +297,21 @@ lives in [Schema-Driven Catalog Architecture](docs/CATALOG_REFACTOR_PLAN.md).
 The newest focused gate is recorded first. Older implementation gates remain
 below as comparison points; generated quality and timing
 artifacts stay in the required local archive rather than versioned source.
+
+- Catalog-contract extraction gate (2026-08-01): the runtime is 490 lines
+  smaller after moving only pure capability-derived Pydantic models, structural
+  taxonomy mapping, and canonical scope identity into
+  `catalog_tool_contract.py`. All seven compatibility symbols retain object
+  identity. Ruff, `git diff --check`, and 224 focused runtime, schema, activation,
+  repair, and diagnostic tests pass. Four fresh-identity GPT-5.2 live turns
+  passed every exact structural pre-Judge check; Judge scores were 5, 5, 4, and
+  4 (4.50/5, 4/4 at score >=4) with no target or Judge error. Against the
+  immediately prior identical focused cohort, mean / median / linear p95
+  latency improved from 28.59s / 29.64s / 38.56s to
+  21.76s / 17.77s / 34.00s. Two hosted-model/retrieval samples moved 5→4 while
+  typed calls remained identical; no prompt, handler, renderer, model config,
+  or service path changed. The paired report is in the canonical local archive
+  under `~/exec-briefs/retail-shopping-assistant/quality/baselines/`.
 
 - Catalog semantic-authority gate (2026-08-01): 816 focused offline tests pass
   across the chain runtime, capability-generated schema, one turn-wide repair,

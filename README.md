@@ -82,7 +82,8 @@ The Retail Shopping Assistant is an AI-powered blueprint that provides a compreh
 The application follows a microservices architecture:
 - **Chain Server**: Deep Agents SDK orchestration with five registered shopper
   skills, a required per-turn activation phase, an eleven-tool registry with
-  deterministic per-skill binding, capability-derived search schemas, bounded
+  deterministic per-skill binding, a pure capability-derived catalog tool
+  contract composed by the runtime, bounded
   search-schema repair, a category-aware no-I/O availability stub for known
   product refs, a no-I/O active-promotions stub, typed same-conversation product
   resolution, grounded response assembly, a configurable Deep Agents execution
@@ -136,8 +137,12 @@ Conversation context still matters: a terse item-only follow-up inside an
 active outfit-building or style-led single-piece thread remains an
 `outfit-styling` task.
 `search_catalog_tool` exposes one flat, capability-derived executable search
-schema. The model cannot submit a clarification or catalog-absence result
-through that tool. The active skills and tool descriptions instruct the model
+schema. `catalog_tool_contract.py` owns its Pydantic models, exact capability-
+derived values, structural taxonomy mapping, and canonical duplicate-scope
+identity; `DeepAgentsRuntime` remains the composition root and owns per-turn
+state, tool registration, service calls, and evidence. The model cannot submit
+a clarification or catalog-absence result through that tool. The active skills
+and tool descriptions instruct the model
 to author `requested_product_type`, select faithful advertised taxonomy, use a
 category-only scope only when it judges that category to be a faithful parent,
 or ask one concise clarification directly without a tool call. Runtime does not

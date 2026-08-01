@@ -92,11 +92,12 @@ The application follows a microservices architecture:
   filtering, normalized COSINE relevance scores, and deterministic result
   ranking
 - **Memory Retriever**: Ordered durable turns with start/finalize and exact
-  replay, bounded recent-turn reads, typed prior-skill continuity, presented-
-  product events and a compact reference index, stable cart-line IDs, atomically
-  idempotent add/remove/quantity mutations, an immutable five-row representative
-  shopper registry, atomic conversation/profile binding, and request-scoped
-  database sessions; standard Compose exposes its host port on loopback only
+  replay, a negotiated rolling-summary contract with bounded recent-turn reads,
+  typed prior-skill continuity, presented-product events and a compact reference
+  index, stable cart-line IDs, atomically idempotent add/remove/quantity
+  mutations, an immutable five-row representative shopper registry, atomic
+  conversation/profile binding, and request-scoped database sessions; standard
+  Compose exposes its host port on loopback only
 - **Guardrails**: Content safety and moderation
 - **UI**: React-based frontend interface with Guest/representative-shopper
   dropdown selection required before a new chat session starts
@@ -363,19 +364,37 @@ shopper-facing answer, the runtime returns a safe retry response and records the
 termination reason as `incomplete_agent_response` rather than exposing internal
 content.
 
-At turn start, the memory service returns a bounded set of prior raw
-shopper/assistant turns eligible for model context, the authoritative cart, and
-a service-issued attempt token. Blocked turns remain durable and exactly
-replayable but are excluded by both the service projection and chain prompt
-formatter; abandoned turns are also excluded by the formatter. Only the latest
-abandoned turn can reopen; reopening retains its request identity but rotates
-the attempt token, so a late finalize cannot overwrite the retry. Those recent
-turns replace the legacy rolling context blob, while the
-memory service also returns a compact index of products actually presented as
-ordered cards on earlier turns. When a needed product is not established in the
-current request, the selected discovery, styling, or cart skill may make one
-typed batch resolution call. An exact single match becomes request-local
-evidence for details, availability, or cart add; zero or multiple matches require
+At turn start, the chain explicitly negotiates memory response contract v2. The
+memory service returns three independent context lanes: a durable rolling
+semantic summary, exact bounded raw turns strictly newer than its watermark,
+and the compact index of products actually presented as ordered cards on
+earlier turns. The summary is continuity guidance only; it cannot establish
+exact wording, product identity or facts, cart state, tool evidence, policy,
+availability, or tool permission. Those claims require the raw turn, product,
+cart, or current tool-evidence lanes. The response also offers a bounded exact
+oldest raw prefix for compaction. After a completed guarded response, a
+tools-disabled model may summarize only the previous summary plus that offered
+prefix. Memory validates the offered boundary and projection version, then
+commits the summary advance atomically with normal turn finalization. A timeout,
+invalid output, conflict, or failed turn retains the raw source; one oversized
+oldest turn uses a deterministic bounded head/tail projection so the watermark
+can still advance.
+
+The default compaction policy triggers at six unsummarized eligible turns,
+retains at least the newest two as raw context, caps summary output at 4,096
+characters, and gives the conditional summary call its own 15-second timeout.
+It records separate timing and model-usage metadata when that call runs.
+
+Unversioned turn starts retain the legacy v1 response shape for rolling deploys
+and rollback. Deploy memory before chain; rollback chain before memory. Blocked
+turns remain durable and exactly replayable but are excluded by both the service
+projection and chain prompt formatter; abandoned turns are also excluded by the
+formatter. Only the latest abandoned turn can reopen; reopening retains its
+request identity but rotates the attempt token, so a late finalize cannot
+overwrite the retry. When a needed product is not established in the current
+request, the selected discovery, styling, or cart skill may make one typed batch
+resolution call. An exact single match becomes request-local evidence for
+details, availability, or cart add; zero or multiple matches require
 clarification and never authorize a guess. Resolution is limited to the current
 conversation and does not add fuzzy matching, embeddings, cross-conversation
 memory, preference/sentiment memory, or catalog-revision revalidation.

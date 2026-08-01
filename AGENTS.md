@@ -7,7 +7,7 @@ This file is a working guide for coding agents and contributors in this reposito
 Retail Shopping Assistant is a multi-service application with:
 - `chain_server`: FastAPI + Deep Agents SDK orchestration over deterministic catalog and cart tools.
 - `catalog_retriever`: FastAPI service for text/image embedding retrieval against Milvus.
-- `memory_retriever`: FastAPI + single-replica SQLite service for an immutable representative-shopper registry, ordered durable conversation turns, exact finalized-turn replay, stable cart-line IDs, and atomically idempotent add/remove/quantity mutations.
+- `memory_retriever`: FastAPI + single-replica SQLite service for an immutable representative-shopper registry, ordered durable conversation turns, exact finalized-turn replay, negotiated rolling semantic summaries, stable cart-line IDs, and atomically idempotent add/remove/quantity mutations.
 - `guardrails`: FastAPI wrapper around NeMo Guardrails input/output safety checks.
 - `ui`: React + TypeScript chat UI using SSE streaming.
 - `shared`: Shared YAML configs, JSONL catalog data/role sidecars, and image assets.
@@ -19,7 +19,7 @@ Top-level orchestration is via `docker-compose.yaml`; optional local NIM model c
 1. UI posts to `/api/query/stream` (nginx proxy on port `3000`).
 2. Nginx routes `/api/*` to `chain-server:8009`.
 3. Chain server request flow:
-   - `DeepAgentsRuntime` first starts a durable turn in the memory service, which returns bounded model-context-eligible raw turns, the prior turn's selected skill names, the authoritative cart, and an optional server-resolved representative-shopper snapshot. Blocked turns remain durable and exactly replayable but are excluded from both the service projection and chain prompt formatter. Graph working state uses a request-scoped pair of `conversation_id` and `request_id`. A selected profile ID is bound immutably to that conversation and renders one compact current-turn context block containing only type, behavior, and saved ZIP. Profile precedence and non-authority rules are also present only for selected-profile turns; Guest receives neither the block nor profile-specific prompt rules. The block is soft guidance: current explicit instructions and recent explicit preferences take precedence, and it cannot establish budget, product constraints or facts, cart intent, skill selection, or tool grants. Unknown caller fields remain backward-compatibly ignored, and caller-supplied persona objects are never injected.
+   - `DeepAgentsRuntime` first starts a durable turn in the memory service using negotiated response contract v2. Memory returns a durable semantic summary, bounded model-context-eligible raw turns strictly after its watermark, a separate compact historical-product index, a bounded oldest compaction source, the prior turn's selected skill names, the authoritative cart, and an optional server-resolved representative-shopper snapshot. Summary text is continuity guidance only and cannot establish exact wording, product identity/facts, cart truth, tool evidence, policy, availability, or permission. After a completed guarded response, a tools-disabled compactor receives only the prior summary and memory-owned source; a compare-and-swap summary advance commits atomically with turn finalization. Timeout, invalid output, conflict, cancellation, and failed turns retain raw source. Blocked turns remain durable and exactly replayable but are excluded from both the service projection and chain prompt formatter. Graph working state uses a request-scoped pair of `conversation_id` and `request_id`. A selected profile ID is bound immutably to that conversation and renders one compact current-turn context block containing only type, behavior, and saved ZIP. Profile precedence and non-authority rules are also present only for selected-profile turns; Guest receives neither the block nor profile-specific prompt rules. The block is soft guidance: current explicit instructions and recent explicit preferences take precedence, and it cannot establish budget, product constraints or facts, cart intent, skill selection, or tool grants. Unknown caller fields remain backward-compatibly ignored, and caller-supplied persona objects are never injected.
    - Optional input guardrails run before model/tool work; attached media is analyzed through the configured perception client.
    - Deep Agents graph execution has a configurable 45-second default deadline. A timeout captures bounded partial graph messages, clears unsent products, finalizes the durable turn as failed, and deletes the request checkpoint only after that finalization succeeds.
    - Every turn begins with a required model step that semantically selects the smallest applicable set from five registered shopper skills. The latest durable selected names are supplied as a read-only continuity hint; they never authorize tools or replace the fresh selection. Product work uses exactly one primary procedure: product discovery or outfit styling. Budget shopping is a modifier only when the shopper states a budget; cart and policy requests may use their standalone skills. An invalid composition receives its typed reason and one correction attempt; a second invalid composition ends with a deterministic clarification and runs no shopping tool. Multiple activation calls in one response execute none and clarify immediately. The runtime injects the complete selected files and exposes only the union of their declared `tools_granted`; dispatch independently rechecks the selected skills, grant union, and immutable tool policy. Pre-activation, same-batch, and ungranted shopping calls are execution-blocked.
@@ -50,6 +50,8 @@ Top-level orchestration is via `docker-compose.yaml`; optional local NIM model c
 - Shopper-skill registry, frontmatter validation, and immutable tool policy: `chain_server/src/tool_policy.py`
 - Per-turn skill activation, model-visible tool binding, and dispatch grant gate: `chain_server/src/skill_activation.py`
 - Durable conversation-turn client and wire contracts: `chain_server/src/conversation_memory.py`
+- Pure rolling-summary input planning and output validation:
+  `chain_server/src/conversation_summary.py`
 - Representative-shopper read client: `chain_server/src/shopper_profiles.py`
 - API contract and SSE endpoint: `chain_server/src/main.py`
 - Catalog capability cache/prompt projection: `chain_server/src/catalog_capabilities.py`
@@ -275,12 +277,25 @@ Key env vars:
   as failed using `agent_timeout` and `grounding_timeout`, respectively. Timeout
   finalization uses the existing durable attempt fence; do not substitute the
   stale-turn abandonment setting for this live execution deadline.
+- `conversation_summary` in chain config defaults to enabled, triggers at six
+  unsummarized eligible turns, retains the newest two raw turns, caps output at
+  4,096 characters, and uses a separate 15-second timeout. Its tools-disabled
+  call runs only after a completed guarded response and is outside the shared
+  graph/grounding deadline. When no eligible source is offered, it makes no
+  model call.
 - Durable raw turns contain shopper/assistant text, the nullable representative
   profile binding, selected skill names, bounded replay, and ordered event
   envelopes. They do not store the rendered shopper-context block, raw media,
-  model reasoning, or the complete graph/tool transcript. Presented-product
-  events and deterministic historical resolution are implemented; active
-  anchors and effective preferences remain reserved and unused.
+  model reasoning, or the complete graph/tool transcript. Contract v2 adds a
+  rolling semantic-summary projection and watermark without deleting raw rows.
+  The serving prompt keeps the summary, exact post-watermark raw tail, and
+  historical-product projection in distinct lanes. Memory offers at most four
+  exact oldest eligible turns for one compare-and-swap advance; the chain never
+  selects source turns itself. Unversioned v1 responses remain available for a
+  rolling deployment: deploy memory before chain and roll back chain before
+  memory. Presented-product events and deterministic historical resolution are
+  implemented; active anchors and effective preferences remain reserved and
+  unused.
 - The memory API has no service authentication. Standard Compose limits its
   host mapping to `127.0.0.1:8011`; keep it on an internal network in other
   deployments. Detailed agent diagnostics remain internal and public query

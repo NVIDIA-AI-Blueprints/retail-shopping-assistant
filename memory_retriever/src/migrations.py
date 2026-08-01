@@ -189,6 +189,26 @@ def _conversation_shopper_profile(connection: Connection) -> None:
         )
 
 
+def _conversation_summary_projection(connection: Connection) -> None:
+    """Add the durable rolling-summary boundary without rewriting projections."""
+
+    columns = _table_columns(connection, "conversation_projection")
+    if "summary_text" not in columns:
+        connection.execute(
+            text(
+                "ALTER TABLE conversation_projection "
+                "ADD COLUMN summary_text TEXT NOT NULL DEFAULT ''"
+            )
+        )
+    if "summary_through_sequence" not in columns:
+        connection.execute(
+            text(
+                "ALTER TABLE conversation_projection "
+                "ADD COLUMN summary_through_sequence INTEGER NOT NULL DEFAULT 0"
+            )
+        )
+
+
 _MIGRATIONS = (
     (1, _legacy_schema),
     (2, _conversation_schema),
@@ -196,6 +216,7 @@ _MIGRATIONS = (
     (4, _conversation_attempt_id),
     (5, _shopper_profiles_schema),
     (6, _conversation_shopper_profile),
+    (7, _conversation_summary_projection),
 )
 
 

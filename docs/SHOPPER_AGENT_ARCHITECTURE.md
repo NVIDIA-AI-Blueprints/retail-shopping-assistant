@@ -19,7 +19,7 @@ see the [Shopper Agent Leadership Note](SHOPPER_AGENT_LEADERSHIP_NOTE.md).
 | --- | --- | --- |
 | Published catalog | Product records, taxonomy, filter values, field roles, prices, details, and retrieval results | Shopper intent, styling judgment, cart state, or inventory |
 | Deep Agents runtime | Semantic intent, skill selection, deterministic selected-skill tool grants, tool selection, styling judgment, and one server-resolved representative-shopper soft-guidance block | Product facts, policy facts, cart truth, or profile ownership |
-| Memory service | Immutable representative-shopper registry and conversation binding, typed three-field shopper snapshots, ordered durable shopper/assistant turns, exact finalized replay, bounded recent-turn reads, presented-product events and compact index, deterministic same-conversation reference resolution, authoritative cart state, and atomic mutation replay records | Catalog facts, model reasoning, learned preferences, sentiment, active anchors, or cross-conversation memory |
+| Memory service | Immutable representative-shopper registry and conversation binding, typed three-field shopper snapshots, ordered durable shopper/assistant turns, exact finalized replay, negotiated rolling semantic summary plus bounded raw/source lanes, presented-product events and compact index, deterministic same-conversation reference resolution, authoritative cart state, and atomic mutation replay records | Catalog facts, model reasoning, learned preferences, sentiment, active anchors, or cross-conversation memory |
 | Graph checkpointer | Request-scoped working graph/tool state within one chain-server process | Durable transcript storage, cross-turn shopper memory, cross-replica context, or product-ref authorization |
 | Dormant weather boundary | Closed US ZIP/date request validation, one provider adapter, normalized daily forecast evidence, and sanitized typed failures | Shopper selection, relative-date interpretation, model context, agent registration, styling advice, persistence, or public API |
 
@@ -120,14 +120,18 @@ The detailed contracts and implementation live in:
 ## 2. One Shopper Turn
 
 1. The runtime scopes the request and starts a durable memory-service turn before
-   guardrail, model, or tool work. That transaction returns bounded
-   model-context-eligible raw turns, a compact historical-product index, the
-   prior turn's selected skill names, the authoritative cart, and an opaque
-   execution `attempt_id`. Blocked turns stay durable for exact replay and audit
-   but are excluded from both the service projection and chain prompt formatter.
-   The raw turns replace the legacy rolling context blob. LangGraph working state
-   is isolated to this request under a collision-safe pair of conversation ID and
-   request ID.
+   guardrail, model, or tool work, explicitly negotiating response contract v2.
+   That transaction returns three separate context lanes: a durable semantic
+   summary, bounded exact model-context-eligible raw turns strictly after its
+   watermark, and a compact historical-product index. It also returns a bounded
+   exact oldest raw prefix that only the summary compactor may consume, the prior
+   turn's selected skill names, the authoritative cart, and an opaque execution
+   `attempt_id`. The summary is continuity guidance, never exact evidence or
+   authority for products, cart, tools, policy, availability, or permissions.
+   Blocked turns stay durable for exact replay and audit but are excluded from
+   both the service projection and chain prompt formatter. LangGraph working
+   state is isolated to this request under a collision-safe pair of conversation
+   ID and request ID.
 2. The first model step can call only `activate_shopper_skills_tool`. It selects
    the smallest registered skill set for the current intent. The prior turn's
    selected skill names, persisted with the prior terminal turn, are included
@@ -321,6 +325,17 @@ The detailed contracts and implementation live in:
    cancellation propagates; cart idempotency and the timeout response's
    cart-check guidance cover that narrow interval.
 
+   After a completed guarded response, a tools-disabled summary call receives
+   only the previous durable summary and memory's offered oldest prefix. It
+   cannot see the current query, profile, cart, product ledger, media, request
+   identifiers, or tool trace. Closed output validation accepts only one bounded
+   `summary_text` value. Memory then verifies the service-issued projection
+   version and an offered prefix boundary and applies the advance in the same
+   transaction as finalization. Timeout, malformed output, failure, cancellation,
+   or compare-and-swap conflict keeps the raw source eligible for a later turn.
+   If one oldest turn exceeds the input budget, deterministic head/tail excerpts
+   permit bounded progress without changing durable text.
+
    Finalization derives one `candidate_set_presented` event only from the
    ordered product cards in the terminal replay output, then rebuilds the compact
    product-reference projection in the same transaction. After that durable
@@ -330,8 +345,12 @@ The detailed contracts and implementation live in:
    failure and otherwise ends with the request.
 
 The durable transcript contains raw shopper/assistant text, selected skill
-names, bounded replay output, and ordered event envelopes. It does not contain
-raw media, model reasoning, or the full graph/tool transcript. Product-card
+names, bounded replay output, and ordered event envelopes. Migration 7 adds a
+rolling `summary_text` and `summary_through_sequence` projection with database
+defaults that remain safe for an older memory binary. Raw rows are not deleted.
+Unversioned starts preserve the v1 wire shape, so rolling deployment is memory
+first then chain; rollback is chain first then memory. The transcript does not
+contain raw media, model reasoning, or the full graph/tool transcript. Product-card
 output populates durable `candidate_set_presented` events and a bounded compact
 product-reference index. The projection keeps the newest complete candidate sets within 16,384
 serialized characters. A typed batch resolver matches exact product ref,
@@ -409,6 +428,7 @@ replays and conflicting key reuse cannot change the cart.
 The serving implementation is split across the
 [Deep Agents runtime](../chain_server/src/deepagents_runtime.py),
 [conversation-memory client](../chain_server/src/conversation_memory.py),
+[rolling-summary planner](../chain_server/src/conversation_summary.py),
 [conversation-product boundary](../chain_server/src/conversation_products.py),
 [shopper-profile read boundary](../chain_server/src/shopper_profiles.py),
 [shopper tool policy](../chain_server/src/tool_policy.py),

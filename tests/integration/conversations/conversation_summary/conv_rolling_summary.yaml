@@ -1,0 +1,48 @@
+set_name: Rolling semantic continuity
+queries:
+  - >-
+    I'm planning a versatile work capsule, but I'm just setting the direction
+    for now: my preferred colors are navy and cream.
+  - "Keep it polished, not flashy—we'll choose products later."
+  - "The main use will be client lunches and commuting; still no product search yet."
+  - "A blazer can be optional; clean lines matter more."
+  - "For shoes, remember that I prefer flats over heels."
+  - "And please keep future suggestions easy to rewear."
+  - "Before we choose items, summarize the direction in one sentence."
+  - "Which two colors did I say I preferred at the beginning?"
+answers:
+  - >-
+    Acknowledge navy and cream as the shopper's stated palette for a versatile
+    work capsule. Do not claim that products were searched or selected.
+  - >-
+    Carry forward the work-capsule context and acknowledge polished, restrained
+    styling rather than flashy styling. No product facts are needed.
+  - >-
+    Naturally incorporate client lunches and commuting into the ongoing work-
+    capsule direction without inventing product suitability.
+  - >-
+    Preserve the shopper's preference for clean lines and treat a blazer as
+    optional, not required.
+  - >-
+    Preserve the explicit footwear preference for flats rather than heels.
+  - >-
+    Preserve easy rewear as part of the capsule direction without claiming
+    unverified product properties.
+  - >-
+    Give one concise direction that coherently reflects the actual conversation:
+    a polished, restrained, easy-to-rewear work capsule for commuting and client
+    lunches, with clean lines and flats. Product search is not required.
+  - >-
+    Answer directly that the shopper preferred navy and cream. Those colors were
+    stated at the beginning of this same conversation and must remain available
+    after older turns are compacted.
+diagnostic_expectations:
+  - {}
+  - {}
+  - {}
+  - {}
+  - {}
+  - {}
+  - conversation_summary_compaction: prepared
+    conversation_summary_input_projection: exact
+  - {}

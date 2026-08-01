@@ -12,6 +12,7 @@ from chain_server.src.conversation_memory import (
     ConversationEvent,
     ConversationMemoryClient,
     ConversationMemoryError,
+    ConversationSummaryAdvance,
     RecentConversationTurn,
     TurnReplayOutput,
     build_request_digest,
@@ -59,6 +60,7 @@ class FakeSession:
 def _start_payload() -> dict[str, Any]:
     return {
         "turn_id": "turn-2",
+        "contract_version": 2,
         "attempt_id": "attempt-2",
         "sequence": 2,
         "replayed": False,
@@ -71,10 +73,26 @@ def _start_payload() -> dict[str, Any]:
                 "status": "completed",
             }
         ],
+        "unsummarized_turn_count": 1,
+        "summary_compaction_source": {
+            "expected_projection_version": 1,
+            "after_sequence": 0,
+            "through_sequence": 1,
+            "turns": [
+                {
+                    "sequence": 1,
+                    "shopper_text": "Show me bags",
+                    "assistant_text": "Here are two bags.",
+                    "status": "completed",
+                }
+            ],
+        },
         "previous_selected_skill_names": ["outfit-styling"],
         "shopper_context": None,
         "projection": {
             "version": 1,
+            "summary_text": "",
+            "summary_through_sequence": 0,
             "active_anchors": [],
             "effective_preferences": [{"field": "color", "value": "blue"}],
             "product_reference_index": [
@@ -181,6 +199,7 @@ def test_start_turn_posts_one_request_without_raw_media() -> None:
     assert result.cart[0].cart_line_id == "line-1"
     assert session.calls[0]["url"] == (
         "http://memory:8011/conversations/conversation%2Fa/turn/start"
+        "?response_contract=2"
     )
     request_payload = session.calls[0]["json"]
     assert request_payload == {
@@ -197,6 +216,128 @@ def test_start_turn_posts_one_request_without_raw_media() -> None:
     }
     assert raw_media not in str(request_payload)
     assert session.calls[0]["timeout"] == 4
+
+
+def _as_legacy_v1(payload: dict[str, Any]) -> dict[str, Any]:
+    payload.pop("contract_version", None)
+    payload.pop("unsummarized_turn_count", None)
+    payload.pop("summary_compaction_source", None)
+    payload["projection"].pop("summary_text", None)
+    payload["projection"].pop("summary_through_sequence", None)
+    return payload
+
+
+def test_start_turn_accepts_legacy_v1_response_from_old_memory() -> None:
+    payload = _as_legacy_v1(_start_payload())
+    client = ConversationMemoryClient(
+        "http://memory",
+        session=FakeSession(FakeResponse(payload)),
+    )
+
+    result = client.start_turn(
+        "conversation-a",
+        request_id="request-a",
+        shopper_text="Continue.",
+        cart_user_id=17,
+    )
+
+    assert result.contract_version == 1
+    assert result.projection.summary_text == ""
+    assert result.projection.summary_through_sequence == 0
+
+
+def test_start_turn_accepts_and_filters_legacy_v1_abandoned_turn() -> None:
+    payload = _as_legacy_v1(_start_payload())
+    payload["recent_turns"].insert(
+        0,
+        {
+            "sequence": 1,
+            "shopper_text": "Request interrupted before an answer.",
+            "assistant_text": None,
+            "status": "abandoned",
+        },
+    )
+    payload["recent_turns"][1]["sequence"] = 2
+    payload["sequence"] = 3
+    client = ConversationMemoryClient(
+        "http://memory",
+        session=FakeSession(FakeResponse(payload)),
+    )
+
+    result = client.start_turn(
+        "conversation-a",
+        request_id="request-a",
+        shopper_text="Continue.",
+        cart_user_id=17,
+    )
+
+    assert result.contract_version == 1
+    assert [turn.status for turn in result.recent_turns] == [
+        "abandoned",
+        "completed",
+    ]
+    rendered = format_conversation_context(result.recent_turns)
+    assert "Request interrupted before an answer." not in rendered
+    assert "Show me bags" in rendered
+
+
+def test_start_turn_rejects_abandoned_turn_in_v2_raw_context() -> None:
+    payload = _start_payload()
+    payload["recent_turns"][0].update(
+        {"assistant_text": None, "status": "abandoned"}
+    )
+    client = ConversationMemoryClient(
+        "http://memory",
+        session=FakeSession(FakeResponse(payload)),
+    )
+
+    with pytest.raises(ConversationMemoryError) as caught:
+        client.start_turn(
+            "conversation-a",
+            request_id="request-a",
+            shopper_text="Continue.",
+            cart_user_id=17,
+        )
+
+    assert caught.value.code == "memory_response_invalid"
+
+
+def test_start_turn_rejects_v2_lanes_without_contract_marker() -> None:
+    payload = _start_payload()
+    payload.pop("contract_version")
+    client = ConversationMemoryClient(
+        "http://memory",
+        session=FakeSession(FakeResponse(payload)),
+    )
+
+    with pytest.raises(ConversationMemoryError) as caught:
+        client.start_turn(
+            "conversation-a",
+            request_id="request-a",
+            shopper_text="Continue.",
+            cart_user_id=17,
+        )
+
+    assert caught.value.code == "memory_response_invalid"
+
+
+def test_start_turn_rejects_inconsistent_summary_source() -> None:
+    payload = _start_payload()
+    payload["summary_compaction_source"]["expected_projection_version"] = 9
+    client = ConversationMemoryClient(
+        "http://memory",
+        session=FakeSession(FakeResponse(payload)),
+    )
+
+    with pytest.raises(ConversationMemoryError) as caught:
+        client.start_turn(
+            "conversation-a",
+            request_id="request-a",
+            shopper_text="Continue.",
+            cart_user_id=17,
+        )
+
+    assert caught.value.code == "memory_response_invalid"
 
 
 @pytest.mark.parametrize(
@@ -383,6 +524,11 @@ def test_finalize_turn_posts_the_typed_event_contract() -> None:
         termination_reason="completed",
         events=[event],
         output=output,
+        summary_advance=ConversationSummaryAdvance(
+            expected_projection_version=1,
+            summary_text="The shopper is comparing work bags.",
+            summary_through_sequence=1,
+        ),
     )
 
     assert result.status == "completed"
@@ -403,6 +549,11 @@ def test_finalize_turn_posts_the_typed_event_contract() -> None:
     assert call["json"]["attempt_id"] == "attempt-2"
     assert call["json"]["output"]["retrieved"] == {"Cobalt Bag": "/images/bag-1.png"}
     assert call["json"]["output"]["selected_skill_names"] == ["outfit-styling"]
+    assert call["json"]["summary_advance"] == {
+        "expected_projection_version": 1,
+        "summary_text": "The shopper is comparing work bags.",
+        "summary_through_sequence": 1,
+    }
 
 
 def test_context_formatter_preserves_separate_speaker_lines() -> None:
@@ -518,6 +669,28 @@ def test_active_turn_conflict_is_retryable() -> None:
         )
 
     assert caught.value.code == "turn_in_progress"
+    assert caught.value.retryable is True
+
+
+@pytest.mark.parametrize(
+    "detail",
+    ["projection_version_conflict", "summary_boundary_conflict"],
+)
+def test_summary_conflicts_preserve_retryable_error_code(detail: str) -> None:
+    client = ConversationMemoryClient(
+        "http://memory",
+        session=FakeSession(FakeResponse({"detail": detail}, status_code=409)),
+    )
+
+    with pytest.raises(ConversationMemoryError) as caught:
+        client.start_turn(
+            "conversation-a",
+            request_id="request-a",
+            shopper_text="hello",
+            cart_user_id=17,
+        )
+
+    assert caught.value.code == detail
     assert caught.value.retryable is True
 
 

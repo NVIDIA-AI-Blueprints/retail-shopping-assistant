@@ -90,6 +90,12 @@ agent_choices: [
             "chatter"
         ]
 memory_length: 16384
+conversation_summary:
+  enabled: true
+  trigger_raw_turns: 6
+  retain_raw_turns: 2
+  max_output_chars: 4096
+  timeout_seconds: 15.0
 top_k_retrieve: 4
 deepagents_recursion_limit: 24
 deepagents_execution_timeout_seconds: 45.0

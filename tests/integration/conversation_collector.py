@@ -4,6 +4,7 @@ import requests
 import time
 import os
 import random
+from uuid import uuid4
 
 parser = argparse.ArgumentParser(
                     prog='ConvTest',
@@ -43,6 +44,10 @@ yaml_files = [f for f in os.listdir(INPUT_DIRECTORY) if f.endswith('.yaml') or f
 for filename in yaml_files:
 
     user_id = random.randint(0,99999)
+    scope_id = uuid4().hex
+    session_id = f"integration-session-{scope_id}"
+    conversation_id = f"integration-conversation-{scope_id}"
+    cart_id = f"integration-cart-{scope_id}"
 
     print(f"USER_ID: {user_id}")
     
@@ -61,11 +66,15 @@ for filename in yaml_files:
 
     print(f"Processing file: {filename} (set: {set_name})")
 
-    for query in queries:
+    for query_index, query in enumerate(queries):
         payload = {
             "user_id" : user_id,
             "query": query,
             "guardrails": not args.disable_guardrails,
+            "session_id": session_id,
+            "conversation_id": conversation_id,
+            "cart_id": cart_id,
+            "request_id": f"integration-request-{scope_id}-{query_index}",
             }
         try:
             response = requests.post(API_ENDPOINT, json=payload, timeout=args.request_timeout)
@@ -77,6 +86,7 @@ for filename in yaml_files:
                 "content": response_text,
                 "response": response_text,
                 "timing": data.get("timings", "No timing collected." ),
+                "model_usage": data.get("model_usage", {}),
                 "agent_diagnostics": data.get("agent_diagnostics", {}),
             })
         except Exception as e:

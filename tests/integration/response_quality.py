@@ -164,6 +164,28 @@ def _validate_diagnostic_expectations(
                 f"{sorted(actual_detail_names)}"
             )
 
+    expected_compaction = expected.get("conversation_summary_compaction")
+    if (
+        expected_compaction is not None
+        and trace.get("conversation_summary_compaction") != expected_compaction
+    ):
+        raise AssertionError(
+            f"{label}: expected conversation summary compaction "
+            f"{expected_compaction!r}, found "
+            f"{trace.get('conversation_summary_compaction')!r}"
+        )
+    expected_projection = expected.get("conversation_summary_input_projection")
+    if (
+        expected_projection is not None
+        and trace.get("conversation_summary_input_projection")
+        != expected_projection
+    ):
+        raise AssertionError(
+            f"{label}: expected conversation summary input projection "
+            f"{expected_projection!r}, found "
+            f"{trace.get('conversation_summary_input_projection')!r}"
+        )
+
 
 def _preflight_diagnostic_expectations(
     query_dir: str,

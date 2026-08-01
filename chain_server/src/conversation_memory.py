@@ -12,7 +12,15 @@ from typing import Any, Literal, TypeVar
 from urllib.parse import quote
 
 import requests
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    JsonValue,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from .agenttypes import SHOPPER_PROFILE_ID_PATTERN, ShopperContext
 from shared.commerce_contracts import ProductSummary
@@ -35,6 +43,8 @@ EventType = Literal[
 
 _DEFAULT_TIMEOUT_SECONDS = 10.0
 _DEFAULT_CONTEXT_MAX_CHARS = 16_384
+_MAX_CONVERSATION_SUMMARY_CHARS = 16_384
+_MEMORY_RESPONSE_CONTRACT = 2
 _TRUNCATION_MARKER = "…"
 
 
@@ -72,10 +82,45 @@ class RecentConversationTurn(_MemoryModel):
     status: TurnStatus | None = None
 
 
+class SummaryCompactionTurn(_MemoryModel):
+    """One exact context-eligible turn in memory's oldest raw prefix."""
+
+    sequence: int = Field(..., ge=1)
+    shopper_text: str = Field(..., min_length=1, max_length=100_000)
+    assistant_text: str = Field(..., max_length=100_000)
+    status: Literal["completed", "failed"]
+
+
+class SummaryCompactionSource(_MemoryModel):
+    """Memory-owned exact oldest prefix eligible for one summary advance."""
+
+    expected_projection_version: int = Field(..., ge=0)
+    after_sequence: int = Field(..., ge=0)
+    through_sequence: int = Field(..., ge=1)
+    turns: list[SummaryCompactionTurn] = Field(..., min_length=1, max_length=100)
+
+    @model_validator(mode="after")
+    def _turns_match_boundary(self) -> "SummaryCompactionSource":
+        sequences = [turn.sequence for turn in self.turns]
+        if sequences != sorted(set(sequences)):
+            raise ValueError("summary compaction turns must be strictly ordered")
+        if (
+            sequences[0] <= self.after_sequence
+            or sequences[-1] != self.through_sequence
+        ):
+            raise ValueError("summary compaction turns must match their boundary")
+        return self
+
+
 class ConversationProjection(_MemoryModel):
-    """Reserved projection lanes returned but not consumed in Slice 4."""
+    """Durable conversation-level summary and grounding projections."""
 
     version: int = Field(default=0, ge=0)
+    summary_text: str = Field(
+        default="",
+        max_length=_MAX_CONVERSATION_SUMMARY_CHARS,
+    )
+    summary_through_sequence: int = Field(default=0, ge=0)
     active_anchors: list[JsonValue] = Field(default_factory=list, max_length=50)
     effective_preferences: list[JsonValue] = Field(
         default_factory=list,
@@ -86,6 +131,21 @@ class ConversationProjection(_MemoryModel):
         max_length=100,
     )
     last_turn_id: str | None = Field(default=None, min_length=1, max_length=256)
+
+    @field_validator("summary_text")
+    @classmethod
+    def _require_trimmed_summary(cls, value: str) -> str:
+        if value and value != value.strip():
+            raise ValueError("summary_text must not contain outer whitespace")
+        return value
+
+    @model_validator(mode="after")
+    def _summary_pair_is_consistent(self) -> "ConversationProjection":
+        if bool(self.summary_text) != (self.summary_through_sequence > 0):
+            raise ValueError(
+                "summary_text and summary_through_sequence must be set together"
+            )
+        return self
 
 
 class ConversationCartItem(_MemoryModel):
@@ -111,6 +171,7 @@ class TurnStartResult(_MemoryModel):
     """Combined conversation context and cart for one turn."""
 
     turn_id: str = Field(..., min_length=1, max_length=256)
+    contract_version: Literal[1, 2] = 1
     attempt_id: str = Field(..., min_length=1, max_length=128)
     sequence: int = Field(..., ge=1)
     replayed: bool = False
@@ -119,6 +180,8 @@ class TurnStartResult(_MemoryModel):
         default_factory=list,
         max_length=100,
     )
+    unsummarized_turn_count: int = Field(default=0, ge=0)
+    summary_compaction_source: SummaryCompactionSource | None = None
     previous_selected_skill_names: list[str] = Field(
         default_factory=list,
         max_length=5,
@@ -129,6 +192,56 @@ class TurnStartResult(_MemoryModel):
     assistant_text: str | None = Field(default=None, max_length=100_000)
     termination_reason: str | None = Field(default=None, max_length=1_024)
     output: TurnReplayOutput | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _contract_lanes_match_version(cls, value: Any) -> Any:
+        if not isinstance(value, Mapping):
+            return value
+        version = value.get("contract_version", 1)
+        projection = value.get("projection")
+        projection_keys = (
+            set(projection) if isinstance(projection, Mapping) else set()
+        )
+        v2_top_level = {"unsummarized_turn_count", "summary_compaction_source"}
+        v2_projection = {"summary_text", "summary_through_sequence"}
+        if version != 2 and (
+            v2_top_level.intersection(value)
+            or v2_projection.intersection(projection_keys)
+        ):
+            raise ValueError("memory contract v1 response contains v2-only lanes")
+        return value
+
+    @model_validator(mode="after")
+    def _summary_sources_are_consistent(self) -> "TurnStartResult":
+        watermark = self.projection.summary_through_sequence
+        recent_sequences = [turn.sequence for turn in self.recent_turns]
+        if recent_sequences != sorted(set(recent_sequences)):
+            raise ValueError("recent conversation turns must be strictly ordered")
+        if self.contract_version >= 2 and any(
+            turn.sequence <= watermark
+            or turn.status not in {"completed", "failed"}
+            or turn.assistant_text is None
+            for turn in self.recent_turns
+        ):
+            raise ValueError(
+                "recent conversation turns must be eligible and post-summary"
+            )
+        source = self.summary_compaction_source
+        if source is not None and (
+            source.expected_projection_version != self.projection.version
+            or source.after_sequence != watermark
+            or source.through_sequence >= self.sequence
+        ):
+            raise ValueError(
+                "summary compaction source must match the turn projection"
+            )
+        source_length = len(source.turns) if source is not None else 0
+        if self.unsummarized_turn_count < source_length:
+            raise ValueError(
+                "unsummarized_turn_count cannot be smaller than compaction source"
+            )
+        return self
 
 
 class ConversationEvent(_MemoryModel):
@@ -141,6 +254,25 @@ class ConversationEvent(_MemoryModel):
     payload: dict[str, JsonValue] = Field(default_factory=dict)
 
 
+class ConversationSummaryAdvance(_MemoryModel):
+    """One compare-and-swap update to the rolling summary boundary."""
+
+    expected_projection_version: int = Field(..., ge=0)
+    summary_text: str = Field(
+        ...,
+        min_length=1,
+        max_length=_MAX_CONVERSATION_SUMMARY_CHARS,
+    )
+    summary_through_sequence: int = Field(..., ge=1)
+
+    @field_validator("summary_text")
+    @classmethod
+    def _require_trimmed_summary(cls, value: str) -> str:
+        if value != value.strip():
+            raise ValueError("summary_text must not contain outer whitespace")
+        return value
+
+
 class TurnFinalizeRequest(_MemoryModel):
     """Idempotent input for one durable turn finalization."""
 
@@ -151,6 +283,7 @@ class TurnFinalizeRequest(_MemoryModel):
     termination_reason: str | None = Field(default=None, max_length=1_024)
     events: list[ConversationEvent] = Field(default_factory=list, max_length=128)
     output: TurnReplayOutput | None = None
+    summary_advance: ConversationSummaryAdvance | None = None
 
 
 class TurnFinalizeResult(_MemoryModel):
@@ -225,7 +358,10 @@ class ConversationMemoryClient:
             catalog_revision=catalog_revision,
         )
         payload = self._post(
-            f"/conversations/{_path_segment(conversation_id)}/turn/start",
+            (
+                f"/conversations/{_path_segment(conversation_id)}/turn/start"
+                f"?response_contract={_MEMORY_RESPONSE_CONTRACT}"
+            ),
             request.model_dump(mode="json"),
         )
         result = self._validate_response(payload, TurnStartResult)
@@ -248,6 +384,7 @@ class ConversationMemoryClient:
         termination_reason: str | None,
         events: Sequence[ConversationEvent] = (),
         output: TurnReplayOutput | None = None,
+        summary_advance: ConversationSummaryAdvance | None = None,
     ) -> TurnFinalizeResult:
         """Finalize one turn with deterministic structured events."""
 
@@ -259,6 +396,7 @@ class ConversationMemoryClient:
             termination_reason=termination_reason,
             events=list(events),
             output=output,
+            summary_advance=summary_advance,
         )
         payload = self._post(
             (
@@ -446,6 +584,16 @@ def _http_error(status_code: int, detail: str = "") -> ConversationMemoryError:
                 detail,
                 "The conversation turn was superseded by a newer turn or attempt.",
                 status_code=status_code,
+            )
+        if detail in {
+            "projection_version_conflict",
+            "summary_boundary_conflict",
+        }:
+            return ConversationMemoryError(
+                detail,
+                "Conversation summary state changed before finalization.",
+                status_code=status_code,
+                retryable=True,
             )
         return ConversationMemoryError(
             "memory_turn_conflict",

@@ -12,7 +12,7 @@ from hashlib import sha256
 from typing import Any, Literal
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -42,10 +42,15 @@ from .shopper_profiles import SHOPPER_PROFILE_ID_PATTERN
 
 DEFAULT_ABANDONED_SECONDS = 300
 DEFAULT_RECENT_TURNS_LIMIT = 8
+SUMMARY_COMPACTION_SOURCE_TURNS = 4
 MAX_RECENT_TURNS_LIMIT = 50
+MAX_CONVERSATION_SUMMARY_CHARS = 16_384
 SHOPPER_PROFILE_NOT_FOUND = "shopper_profile_not_found"
 CONVERSATION_PROFILE_MISMATCH = "conversation_profile_mismatch"
 REQUEST_INPUT_CONFLICT = "request_id was already used for different turn input"
+PROJECTION_VERSION_CONFLICT = "projection_version_conflict"
+SUMMARY_BOUNDARY_CONFLICT = "summary_boundary_conflict"
+MEMORY_RESPONSE_CONTRACT_MAX = 2
 
 
 class TurnStartRequest(BaseModel):
@@ -123,6 +128,27 @@ class TurnReplayOutput(BaseModel):
     selected_skill_names: list[str] = Field(default_factory=list, max_length=5)
 
 
+class ConversationSummaryAdvance(BaseModel):
+    """One complete compare-and-swap update to the rolling summary boundary."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    expected_projection_version: int = Field(..., ge=0)
+    summary_text: str = Field(
+        ...,
+        min_length=1,
+        max_length=MAX_CONVERSATION_SUMMARY_CHARS,
+    )
+    summary_through_sequence: int = Field(..., ge=1)
+
+    @field_validator("summary_text")
+    @classmethod
+    def _require_trimmed_summary(cls, value: str) -> str:
+        if value != value.strip():
+            raise ValueError("summary_text must not contain outer whitespace")
+        return value
+
+
 class TurnFinalizeRequest(BaseModel):
     request_id: str = Field(..., min_length=1, max_length=128)
     attempt_id: str = Field(..., min_length=1, max_length=128)
@@ -134,6 +160,7 @@ class TurnFinalizeRequest(BaseModel):
         max_length=128,
     )
     output: TurnReplayOutput | None = None
+    summary_advance: ConversationSummaryAdvance | None = None
 
     @model_validator(mode="after")
     def _event_keys_are_unique(self):
@@ -164,14 +191,33 @@ def _validate_conversation_id(conversation_id: str) -> None:
         raise HTTPException(status_code=422, detail="Invalid conversation_id")
 
 
-def _projection_dict(projection: ConversationProjection) -> dict[str, Any]:
-    return {
+def _projection_dict(
+    projection: ConversationProjection,
+    *,
+    include_v2_fields: bool = True,
+) -> dict[str, Any]:
+    summary_text = projection.summary_text or ""
+    summary_through_sequence = projection.summary_through_sequence or 0
+    if (not summary_text) != (summary_through_sequence == 0):
+        raise HTTPException(
+            status_code=500,
+            detail="conversation_summary_projection_invalid",
+        )
+    result = {
         "version": projection.version,
         "active_anchors": json.loads(projection.active_anchors_json),
         "effective_preferences": json.loads(projection.effective_preferences_json),
         "product_reference_index": json.loads(projection.product_reference_index_json),
         "last_turn_id": projection.last_turn_id,
     }
+    if include_v2_fields:
+        result.update(
+            {
+                "summary_text": summary_text,
+                "summary_through_sequence": summary_through_sequence,
+            }
+        )
+    return result
 
 
 def _get_or_create_projection(
@@ -222,28 +268,100 @@ def _recent_turns_limit() -> int:
     return min(MAX_RECENT_TURNS_LIMIT, max(1, configured))
 
 
-def _recent_turns(db, conversation_id: str) -> list[dict[str, Any]]:
-    """Return bounded prior turns eligible for downstream context filtering."""
+def _legacy_recent_turns(
+    db,
+    conversation_id: str,
+    *,
+    before_sequence: int,
+) -> list[dict[str, Any]]:
+    """Return the exact unversioned v1 recent-turn projection."""
 
     rows = (
         db.query(ConversationTurn)
         .filter(
             ConversationTurn.conversation_id == conversation_id,
+            ConversationTurn.sequence < before_sequence,
             ConversationTurn.status.notin_(("started", "blocked")),
         )
         .order_by(ConversationTurn.sequence.desc())
         .limit(_recent_turns_limit())
         .all()
     )
-    return [
-        {
-            "sequence": row.sequence,
-            "shopper_text": row.shopper_text,
-            "assistant_text": row.assistant_text,
-            "status": row.status,
-        }
-        for row in reversed(rows)
-    ]
+    return [_context_turn_dict(row) for row in reversed(rows)]
+
+
+def _recent_turns(
+    db,
+    conversation_id: str,
+    *,
+    after_sequence: int,
+    before_sequence: int,
+) -> list[dict[str, Any]]:
+    """Return a bounded raw tail strictly after the durable summary boundary."""
+
+    rows = (
+        db.query(ConversationTurn)
+        .filter(
+            ConversationTurn.conversation_id == conversation_id,
+            ConversationTurn.sequence > after_sequence,
+            ConversationTurn.sequence < before_sequence,
+            ConversationTurn.status.in_(("completed", "failed")),
+            ConversationTurn.assistant_text.is_not(None),
+        )
+        .order_by(ConversationTurn.sequence.desc())
+        .limit(_recent_turns_limit())
+        .all()
+    )
+    return [_context_turn_dict(row) for row in reversed(rows)]
+
+
+def _context_turn_dict(turn: ConversationTurn) -> dict[str, Any]:
+    return {
+        "sequence": turn.sequence,
+        "shopper_text": turn.shopper_text,
+        "assistant_text": turn.assistant_text,
+        "status": turn.status,
+    }
+
+
+def _summary_compaction_state(
+    db,
+    conversation_id: str,
+    *,
+    after_sequence: int,
+    before_sequence: int,
+    projection_version: int,
+) -> tuple[int, dict[str, Any] | None]:
+    """Return the count and bounded oldest prefix of unsummarized raw turns."""
+
+    eligibility = (
+        ConversationTurn.conversation_id == conversation_id,
+        ConversationTurn.sequence > after_sequence,
+        ConversationTurn.sequence < before_sequence,
+        ConversationTurn.status.in_(("completed", "failed")),
+        ConversationTurn.assistant_text.is_not(None),
+    )
+    count = (
+        db.query(func.count(ConversationTurn.turn_id))
+        .filter(*eligibility)
+        .scalar()
+        or 0
+    )
+    rows = (
+        db.query(ConversationTurn)
+        .filter(*eligibility)
+        .order_by(ConversationTurn.sequence.asc())
+        .limit(SUMMARY_COMPACTION_SOURCE_TURNS)
+        .all()
+    )
+    if not rows:
+        return int(count), None
+    return int(count), {
+        "expected_projection_version": projection_version,
+        "after_sequence": after_sequence,
+        "through_sequence": rows[-1].sequence,
+        "turns": [_context_turn_dict(row) for row in rows],
+    }
 
 
 def _turn_selected_skill_names(turn: ConversationTurn) -> list[str]:
@@ -307,22 +425,58 @@ def _start_response(
     shopper_profile: ShopperProfile | None,
     *,
     replayed: bool,
+    response_contract: int,
 ) -> dict[str, Any]:
-    return {
+    v2_response = response_contract >= 2
+    result = {
         "turn_id": turn.turn_id,
         "attempt_id": turn.attempt_id,
         "sequence": turn.sequence,
         "replayed": replayed,
         "status": turn.status,
-        "recent_turns": _recent_turns(db, turn.conversation_id),
+        "recent_turns": (
+            _recent_turns(
+                db,
+                turn.conversation_id,
+                after_sequence=projection.summary_through_sequence,
+                before_sequence=turn.sequence,
+            )
+            if v2_response
+            else _legacy_recent_turns(
+                db,
+                turn.conversation_id,
+                before_sequence=turn.sequence,
+            )
+        ),
         "previous_selected_skill_names": _previous_selected_skill_names(db, turn),
-        "projection": _projection_dict(projection),
+        "projection": _projection_dict(
+            projection,
+            include_v2_fields=v2_response,
+        ),
         "cart": _cart_for_user(db, turn.cart_user_id),
         "assistant_text": turn.assistant_text,
         "termination_reason": turn.termination_reason,
         "output": json.loads(turn.output_json) if turn.output_json else None,
         "shopper_context": _shopper_context(shopper_profile),
     }
+    if v2_response:
+        unsummarized_turn_count, summary_compaction_source = (
+            _summary_compaction_state(
+                db,
+                turn.conversation_id,
+                after_sequence=projection.summary_through_sequence,
+                before_sequence=turn.sequence,
+                projection_version=projection.version,
+            )
+        )
+        result.update(
+            {
+                "contract_version": response_contract,
+                "unsummarized_turn_count": unsummarized_turn_count,
+                "summary_compaction_source": summary_compaction_source,
+            }
+        )
+    return result
 
 
 def _finalize_response(
@@ -418,7 +572,13 @@ def _require_conversation_profile(
         )
 
 
-def _start_turn(db, conversation_id: str, request: TurnStartRequest) -> dict[str, Any]:
+def _start_turn(
+    db,
+    conversation_id: str,
+    request: TurnStartRequest,
+    *,
+    response_contract: int,
+) -> dict[str, Any]:
     db.execute(text("BEGIN IMMEDIATE"))
     current_time = time.time()
     _mark_stale_started_turns(
@@ -487,6 +647,7 @@ def _start_turn(db, conversation_id: str, request: TurnStartRequest) -> dict[str
                 projection,
                 shopper_profile,
                 replayed=False,
+                response_contract=response_contract,
             )
             db.commit()
             return response
@@ -497,6 +658,7 @@ def _start_turn(db, conversation_id: str, request: TurnStartRequest) -> dict[str
             projection,
             shopper_profile,
             replayed=True,
+            response_contract=response_contract,
         )
         db.commit()
         return response
@@ -553,6 +715,7 @@ def _start_turn(db, conversation_id: str, request: TurnStartRequest) -> dict[str
         projection,
         shopper_profile,
         replayed=False,
+        response_contract=response_contract,
     )
     db.commit()
     return response
@@ -591,6 +754,38 @@ def _append_events(
                 payload_json=_canonical_json(event.payload),
                 created_at=now,
             )
+        )
+
+
+def _validate_summary_advance(
+    db,
+    turn: ConversationTurn,
+    projection: ConversationProjection,
+    advance: ConversationSummaryAdvance | None,
+) -> None:
+    if advance is None:
+        return
+    if advance.expected_projection_version != projection.version:
+        raise HTTPException(
+            status_code=409,
+            detail=PROJECTION_VERSION_CONFLICT,
+        )
+    _count, source = _summary_compaction_state(
+        db,
+        turn.conversation_id,
+        after_sequence=projection.summary_through_sequence,
+        before_sequence=turn.sequence,
+        projection_version=projection.version,
+    )
+    offered_boundaries = (
+        {item["sequence"] for item in source["turns"]}
+        if source is not None
+        else set()
+    )
+    if advance.summary_through_sequence not in offered_boundaries:
+        raise HTTPException(
+            status_code=409,
+            detail=SUMMARY_BOUNDARY_CONFLICT,
         )
 
 
@@ -635,6 +830,13 @@ def _finalize_turn(
             detail=f"Conversation turn cannot be finalized from {turn.status}",
         )
 
+    projection = _get_or_create_projection(db, conversation_id)
+    _validate_summary_advance(
+        db,
+        turn,
+        projection,
+        request.summary_advance,
+    )
     now = time.time()
     _append_events(db, turn, request.events, now)
     db.flush()
@@ -645,8 +847,12 @@ def _finalize_turn(
         created_at=now,
     )
     db.flush()
-    projection = _get_or_create_projection(db, conversation_id)
     rebuild_product_reference_index(db, projection)
+    if request.summary_advance is not None:
+        projection.summary_text = request.summary_advance.summary_text
+        projection.summary_through_sequence = (
+            request.summary_advance.summary_through_sequence
+        )
     projection.version += 1
     projection.last_turn_id = turn.turn_id
     turn.assistant_text = request.assistant_text
@@ -741,11 +947,21 @@ def create_conversation_router(get_db) -> APIRouter:
     def start_conversation_turn(
         conversation_id: str,
         request: TurnStartRequest,
+        response_contract: int = Query(default=1, ge=1),
         db=Depends(get_db),
     ):
         _validate_conversation_id(conversation_id)
+        negotiated_contract = min(
+            response_contract,
+            MEMORY_RESPONSE_CONTRACT_MAX,
+        )
         try:
-            return _start_turn(db, conversation_id, request)
+            return _start_turn(
+                db,
+                conversation_id,
+                request,
+                response_contract=negotiated_contract,
+            )
         except Exception:
             db.rollback()
             raise

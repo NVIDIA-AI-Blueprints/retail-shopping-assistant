@@ -45,9 +45,22 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   once as bounded soft guidance, absent for Guest and never persisted inside
   transcript text;
 - a single memory-service SQLite replica now starts each turn durably before
-  guardrail/model/tool work, returns bounded model-context-eligible raw turns
-  plus the authoritative cart, and finalizes every completed, blocked, or
-  failed outcome. Blocked turns remain durable and exactly replayable but are
+  guardrail/model/tool work. Its additive response contract v2 returns a
+  durable rolling semantic summary, exact bounded post-watermark raw turns, a
+  separate historical-product projection, and a bounded memory-owned oldest
+  prefix for compaction, plus the authoritative cart. The chain explicitly
+  negotiates v2 while unversioned callers retain the exact v1 response shape.
+  Summary text is semantic continuity only and cannot authorize product, cart,
+  policy, availability, tool, or exact-fact claims. After a completed guarded
+  response, a tools-disabled call receives only the prior summary and offered
+  source. Memory compare-and-swap validates its projection version and boundary
+  and commits the advance atomically with finalization. A model timeout, invalid
+  output, conflict, cancellation, or failed turn retains the raw source; a
+  bounded head/tail projection lets one oversized oldest turn advance instead
+  of permanently wedging compaction. Migration 7 adds rollback-safe database
+  defaults. The safe rollout is memory first and chain second; rollback reverses
+  that order. Memory finalizes every completed, blocked, or failed outcome.
+  Blocked turns remain durable and exactly replayable but are
   excluded from both the service's recent-turn projection and the chain prompt
   formatter. An exact retry of a finalized request replays its stored response
   without another model turn. Finalized ordered product cards create durable
@@ -341,6 +354,20 @@ lives in [Schema-Driven Catalog Architecture](docs/CATALOG_REFACTOR_PLAN.md).
 The newest focused gate is recorded first. Older implementation gates remain
 below as comparison points; generated quality and timing
 artifacts stay in the required local archive rather than versioned source.
+
+- Rolling-summary contract gate (2026-08-01): 356 focused offline tests pass
+  across memory migration/negotiation/CAS behavior, legacy v1 rollback,
+  chain-client validation, isolated compaction planning, three separate prompt
+  lanes, cancellation, and lifecycle ordering. Ruff and `git diff --check`
+  pass. In a fresh UUID-scoped eight-turn live conversation, turn 7 prepared an
+  exact memory-owned prefix in 2.56 seconds and turn 8 recovered the original
+  navy-and-cream preference after the source turns moved behind the watermark.
+  Judge scored 7/8 turns at 5 and one unrelated premature-search opener at 3,
+  for 4.75/5 overall; mean/median/p95 latency was
+  15.02s / 16.19s / 24.17s. The first five-second operational setting timed
+  out before Judge preflight and was replaced by the measured 15-second config
+  default; the clean rerun had no target or Judge errors. Artifacts and the
+  incomparable-to-Staging report remain in the canonical local archive.
 
 - Clean rebuild product-comparison gate (2026-08-01): 171 focused offline tests
   pass for the styling procedure, typed historical-index projection, runtime
@@ -722,6 +749,13 @@ in the single-replica memory-service SQLite database on the Compose
 store remain open production decisions. Finalized product-card output now
 creates durable presented-product events and a compact reference index. Active
 anchors and preferences remain reserved and unused.
+
+Rolling summaries are deliberately non-authoritative and do not delete raw
+transcript rows. Their conditional model call adds latency only when the
+unsummarized threshold is reached. Timeout, malformed output, or compare-and-
+swap conflict retains and reoffers the source, but repeated provider failures
+can leave older semantic continuity outside the bounded raw prompt until a
+later compaction succeeds.
 
 Deep Agents graph checkpoints are request-scoped and process-local. They use a
 collision-safe pair of conversation ID and request ID, disappear on chain-server

@@ -205,9 +205,10 @@ server-owned session/thread service before broad rollout so customer context
 and cart state cannot bleed across sessions.
 
 Durable ordered shopper/assistant turns live in the single-replica
-memory-service SQLite database. At turn start the runtime consumes a bounded set
-of model-context-eligible recent turns and a compact product-reference
-projection in place of the legacy rolling context blob. Blocked turns remain
+memory-service SQLite database. At turn start the runtime consumes a durable
+semantic summary, a bounded exact post-watermark raw tail, and a separate
+compact product-reference projection. The summary replaces neither exact raw
+context nor grounding evidence. Blocked turns remain
 durable and exactly replayable but are excluded from both the service projection
 and chain prompt formatter. Products enter durable reference evidence
 only when they appear in the finalized ordered `product_results` sent as product
@@ -336,6 +337,13 @@ interface AgentDiagnostics {
   partial_graph_capture_error?: string;
   diagnostic_collection_error?: string;
   memory_finalize_error?: string;
+  conversation_summary_compaction?:
+    | 'prepared'
+    | 'timeout'
+    | 'error'
+    | 'invalid_output'
+    | 'conflict_raw_retained';
+  conversation_summary_input_projection?: 'exact' | 'bounded_head_tail';
 }
 ```
 
@@ -532,9 +540,15 @@ default; trusted operator/evaluation deployments may explicitly enable the
 detailed trace.
 
 Before guardrails or agent work, the chain server starts a durable conversation
-turn and receives bounded model-context-eligible recent turns plus the
-authoritative cart. Blocked turns remain durable and exactly replayable but do
-not enter a later model prompt.
+turn and receives the durable summary, bounded model-context-eligible recent
+turns, historical-product projection, and authoritative cart. Blocked turns
+remain durable and exactly replayable but do not enter a later model prompt.
+After a completed guarded response, a conditional tools-disabled compaction
+call runs before finalization and terminal SSE emission. Its isolated input is
+only the previous summary plus memory's bounded oldest source. When it runs,
+`timings.conversation_summary`,
+`model_usage.app_llm_conversation_summary`, and its tokens are included in the
+normal metrics aggregates.
 It finalizes that turn as `completed`, `blocked`, or `failed` before emitting the
 terminal SSE frames. An exact finalized retry replays the stored output without
 another model/tool turn. The public SSE frame shapes are unchanged.
@@ -1031,11 +1045,25 @@ Compose.
 
 Starts one durable turn transaction before guardrail, model, or tool work. The
 memory service accepts one active turn per conversation and assigns its ordered
-`sequence`. It returns the authoritative cart and at most
-`MEMORY_RECENT_TURNS` prior non-blocked raw turns. The chain formatter also
-excludes abandoned turns before creating model context. Raw media is not stored;
-the request digest includes ordered media content hashes so exact retries can
-be distinguished safely.
+`sequence`. The optional `response_contract` query parameter defaults to `1`;
+the service negotiates any value above its maximum down to `2`. Contract v1
+preserves the unversioned legacy response shape. Contract v2 returns the
+authoritative cart, a durable summary projection, at most
+`MEMORY_RECENT_TURNS` exact eligible raw turns strictly newer than the summary
+watermark, their total unsummarized count, and an at-most-four-turn exact oldest
+prefix that may be proposed for summary compaction. Raw media is not stored; the
+request digest includes ordered media content hashes so exact retries can be
+distinguished safely.
+
+| Request | Response shape | `recent_turns` behavior |
+| --- | --- | --- |
+| omitted or `response_contract=1` | Exact legacy shape; no version marker or summary lanes | Legacy bounded rows excluding only `started` and `blocked`; the chain filters abandoned rows before prompting |
+| `response_contract>=2` | Negotiated `contract_version: 2` plus summary lanes | Exact `completed` or `failed` rows with assistant text, strictly after the summary watermark |
+
+Values above 2 negotiate down to 2. The query parameter is not part of exact
+turn identity. The v2 oldest source is independently bounded from the newest
+`MEMORY_RECENT_TURNS` tail and is re-offered until an accepted summary advance
+moves the watermark.
 
 ```json
 {
@@ -1051,6 +1079,7 @@ be distinguished safely.
 ```json
 {
   "turn_id": "8e40575d5e5a4dbca34e1d08a2cb1692",
+  "contract_version": 2,
   "attempt_id": "bd77b851b3494e37a764e3dfa7500208",
   "sequence": 4,
   "replayed": false,
@@ -1068,9 +1097,25 @@ be distinguished safely.
       "status": "completed"
     }
   ],
+  "unsummarized_turn_count": 1,
+  "summary_compaction_source": {
+    "expected_projection_version": 3,
+    "after_sequence": 0,
+    "through_sequence": 3,
+    "turns": [
+      {
+        "sequence": 3,
+        "shopper_text": "Show me a beige top",
+        "assistant_text": "Here are the grounded beige options.",
+        "status": "completed"
+      }
+    ]
+  },
   "previous_selected_skill_names": ["outfit-styling"],
   "projection": {
     "version": 3,
+    "summary_text": "",
+    "summary_through_sequence": 0,
     "active_anchors": [],
     "effective_preferences": [],
     "product_reference_index": [
@@ -1097,6 +1142,16 @@ be distinguished safely.
 }
 ```
 
+The three model-facing continuity lanes remain independent. `summary_text` is
+semantic continuity only and cannot establish exact shopper wording, product
+identity or facts, cart state, tool evidence, policy, availability, or tool
+permission. `recent_turns` is exact bounded dialogue after the watermark.
+`projection.product_reference_index` is the separate authoritative locator for
+historical products. `summary_compaction_source` is not normal prompt context;
+only the isolated compactor receives it. A missing `contract_version` means v1,
+and v2-only top-level or projection fields under that shape are rejected by the
+chain client.
+
 Migration 6 adds nullable
 `conversation_turns.shopper_profile_id` with restrictive foreign-key actions;
 `NULL` means Guest. The first turn binds the conversation. Every later turn
@@ -1105,6 +1160,13 @@ resolved inside the existing atomic start transaction, and the response always
 includes either the exact three-field `shopper_context` or `null` for Guest.
 The rendered context block is not stored in shopper or assistant transcript
 text.
+
+Migration 7 adds non-null `conversation_projection.summary_text` and
+`summary_through_sequence` with database defaults. Existing rows become the
+empty summary at watermark zero. Fresh schemas retain server defaults so a
+staging-era memory binary can insert projection rows after rollback. For a
+rolling release, deploy memory before a v2 chain; for rollback, revert the chain
+before memory.
 
 `projection.product_reference_index` is a compact, bounded index of ordered
 product-card sets derived from durable `candidate_set_presented` events. The
@@ -1148,6 +1210,11 @@ using it are rejected with HTTP 422.
   "status": "completed",
   "termination_reason": "completed",
   "events": [],
+  "summary_advance": {
+    "expected_projection_version": 3,
+    "summary_text": "The shopper is assembling a semi-formal outfit.",
+    "summary_through_sequence": 3
+  },
   "output": {
     "product_results": [],
     "retrieved": {},
@@ -1182,8 +1249,15 @@ deletes the request-scoped checkpoint identified by that collision-safe
 conversation/request pair. Different final data, a
 request-ID mismatch, duplicate event keys, or an invalid status transition also
 returns a conflict and rolls back the transaction. Event envelopes are stored
-in logical order. Active anchors, preferences, and selections remain reserved;
-only presented-product candidate sets currently update a projection.
+in logical order. An optional `summary_advance` is accepted only when its
+`expected_projection_version` still matches and its watermark is one of the
+oldest prefix boundaries offered at turn start. It commits atomically with the
+normal turn and product-reference projection. A stale version returns HTTP 409
+`projection_version_conflict`; an invalid or aged boundary returns HTTP 409
+`summary_boundary_conflict`. The chain retries finalization once without the
+optional summary advance, preserving the shopper response and raw source rather
+than leaving the turn active. Active anchors, preferences, and selections
+remain reserved.
 
 ### Memory Retriever POST `/conversations/{conversation_id}/products/resolve`
 

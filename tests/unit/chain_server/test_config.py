@@ -19,6 +19,7 @@ from pydantic import ValidationError
 
 from chain_server.src.config import (
     ChainServerConfig,
+    ConversationSummaryConfig,
     load_config,
     load_config_data,
 )
@@ -92,6 +93,7 @@ class TestChainServerConfigValidation:
         assert config.deepagents_execution_timeout_seconds == 45.0
         assert config.max_product_detail_reads_per_turn == 2
         assert config.grounding_rewrite_max_evidence_chars == 12000
+        assert config.conversation_summary == ConversationSummaryConfig()
         assert config.media_input.max_images_per_turn == 1
         assert config.media_input.max_videos_per_turn == 1
 
@@ -150,6 +152,43 @@ class TestChainServerConfigValidation:
     ) -> None:
         with pytest.raises(ValidationError):
             ChainServerConfig(**{**valid_config_dict, "memory_length": value})
+
+    @pytest.mark.parametrize(
+        "summary_config",
+        [
+            {"retain_raw_turns": 1},
+            {"trigger_raw_turns": 2, "retain_raw_turns": 2},
+            {"timeout_seconds": 0},
+            {"max_output_chars": 16_385},
+        ],
+    )
+    def test_conversation_summary_policy_is_bounded(
+        self,
+        valid_config_dict: dict,
+        summary_config: dict,
+    ) -> None:
+        with pytest.raises(ValidationError):
+            ChainServerConfig(
+                **{
+                    **valid_config_dict,
+                    "conversation_summary": summary_config,
+                }
+            )
+
+    def test_conversation_summary_output_must_leave_source_headroom(
+        self,
+        valid_config_dict: dict,
+    ) -> None:
+        with pytest.raises(ValidationError):
+            ChainServerConfig(
+                **{
+                    **valid_config_dict,
+                    "memory_length": 1000,
+                    "conversation_summary": {
+                        "max_output_chars": 489,
+                    },
+                }
+            )
 
     @pytest.mark.parametrize("value", [0, -4])
     def test_top_k_retrieve_must_be_positive(
@@ -495,6 +534,19 @@ class TestLoadConfig:
 
 
 class TestRepoPromptContracts:
+    def test_conversation_summary_defaults_are_enabled_and_bounded(self) -> None:
+        config = load_config_data(
+            str(REPO_ROOT / "shared/configs/chain_server/config.yaml")
+        )
+
+        assert config["conversation_summary"] == {
+            "enabled": True,
+            "trigger_raw_turns": 6,
+            "retain_raw_turns": 2,
+            "max_output_chars": 4096,
+            "timeout_seconds": 15.0,
+        }
+
     def test_weather_config_is_dormant_and_indirect(self) -> None:
         config = load_config_data(
             str(REPO_ROOT / "shared/configs/chain_server/config.yaml")

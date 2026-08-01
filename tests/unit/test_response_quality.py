@@ -197,3 +197,32 @@ def test_diagnostic_expectations_require_exact_product_detail_set(monkeypatch):
             diagnostics,
             label="comparison turn",
         )
+
+
+def test_diagnostic_expectations_validate_summary_compaction(monkeypatch):
+    response_quality = _load_response_quality(monkeypatch)
+    expectations = {
+        "conversation_summary_compaction": "prepared",
+        "conversation_summary_input_projection": "exact",
+    }
+    diagnostics = {
+        "conversation_summary_compaction": "prepared",
+        "conversation_summary_input_projection": "exact",
+    }
+
+    response_quality._validate_diagnostic_expectations(
+        expectations,
+        diagnostics,
+        label="summary turn",
+    )
+
+    diagnostics["conversation_summary_input_projection"] = "bounded_head_tail"
+    with pytest.raises(
+        AssertionError,
+        match="expected conversation summary input projection",
+    ):
+        response_quality._validate_diagnostic_expectations(
+            expectations,
+            diagnostics,
+            label="summary turn",
+        )

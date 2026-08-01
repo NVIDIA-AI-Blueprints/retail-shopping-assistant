@@ -338,9 +338,11 @@ Separately, migration 5 creates `shopper_profiles`. Startup validates and
 immutably bootstraps exactly five eval-derived rows from shared memory-service
 configuration. The memory service exposes read-only list/get routes, and the
 chain server provides the typed list proxy used by the UI. No profile write
-route exists. Selecting another shopper remounts the chat surface and rotates
-the bundled UI's browser identities; it does not restore a profile-specific
-cart or transcript.
+route exists. The bundled UI gates a new session on an explicit dropdown choice
+of Guest mode or one of the five rows. Selecting another mode remounts the chat
+surface and rotates the browser identities; it does not restore a
+profile-specific cart or transcript. Reset keeps the selected mode while
+starting a clean conversation.
 
 Migration 6 adds nullable `conversation_turns.shopper_profile_id` with
 `ON DELETE RESTRICT` and `ON UPDATE RESTRICT`; `NULL` is the explicit Guest

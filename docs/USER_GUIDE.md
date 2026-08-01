@@ -65,12 +65,14 @@ category scopes always come from the ingested rows.
 
 ### Representative Shoppers
 
-The navigation bar includes a **Shop as** picker with Guest plus five fictional
-representative shoppers derived from the live-evaluation behavior set. Hover,
-keyboard-focus, or tap a shopper to see the exact behavior summary, internal
-shopper type, and saved ZIP. Only the selected profile ID is retained in the
+The navigation bar includes a required **Shop as** dropdown with Guest mode plus
+five fictional representative shoppers derived from the live-evaluation
+behavior set: Alex, Casey, Jordan, Morgan, and Riley. A new browser-tab session
+shows a short selection screen and does not start chat until you explicitly
+choose one of those six modes. Only a named profile's ID is retained in the
 current browser tab and sent with a chat request; profile contents are resolved
-by the server.
+by the server. An explicit Guest choice is retained as a mode but sends no
+profile ID.
 
 The selected behavior may guide interaction and styling, while your explicit
 request always wins. A profile never supplies an unstated budget, size, color,
@@ -81,12 +83,12 @@ profile context. A dormant internal weather client exists for direct operator
 testing, but it is not available to the assistant or UI and does not yet change
 clarification or style guidance.
 
-Switching shoppers starts a clean visible session: chat, product cards,
+Changing the dropdown starts a clean visible session: chat, product cards,
 selected product, attachments, inference activity, and metrics are cleared, and
 fresh session, conversation, and cart identities are created. A conversation
 cannot switch between Guest and a profile or between two profiles. The Reset
-button keeps the selected shopper while starting another clean session. If the
-profile service cannot load, Guest remains available.
+button keeps the explicitly selected shopper mode while starting another clean
+conversation. If the profile service cannot load, Guest mode remains available.
 
 ### Basic Interaction
 

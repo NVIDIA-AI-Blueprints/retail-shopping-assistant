@@ -1,6 +1,6 @@
 # Project Status
 
-Updated: 2026-07-27
+Updated: 2026-08-01
 
 ## Current Milestone
 
@@ -21,14 +21,16 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   `shopper_profiles` registry bootstrapped from five reviewed rows whose
   `shopper_type` and `behavior` values map 1:1 to the committed live-evaluation
   profiles. Memory and chain-server read endpoints expose only ID, display
-  name, type, behavior, and five-digit ZIP. The UI offers Guest plus those five
-  shoppers and exposes details on hover, keyboard focus, or tap. Switching
-  shoppers clears visible chat/product/media/metric state and rotates the
-  tab-scoped session, conversation, and cart identities. The UI sends only the
-  selected ID with each turn; memory atomically resolves and binds it to the
-  conversation, stores the nullable foreign key, and returns exactly type,
-  behavior, and ZIP. The runtime injects that snapshot once as bounded soft
-  guidance, absent for Guest and never persisted inside transcript text;
+  name, type, behavior, and five-digit ZIP. A new UI session gates chat on an
+  explicit dropdown choice of Guest mode or one of those five shoppers.
+  Switching choices clears visible chat/product/media/metric state and rotates
+  the tab-scoped session, conversation, and cart identities; Reset retains the
+  selected shopper mode. The UI sends only a named shopper's selected ID with
+  each turn, while explicit Guest omits it. Memory atomically resolves and
+  binds a named selection to the conversation, stores the nullable foreign key,
+  and returns exactly type, behavior, and ZIP. The runtime injects that snapshot
+  once as bounded soft guidance, absent for Guest and never persisted inside
+  transcript text;
 - a single memory-service SQLite replica now starts each turn durably before
   guardrail/model/tool work, returns bounded model-context-eligible raw turns
   plus the authoritative cart, and finalizes every completed, blocked, or
@@ -323,6 +325,24 @@ The newest focused gate is recorded first. Older implementation gates remain
 below as comparison points; generated quality and timing
 artifacts stay in the required local archive rather than versioned source.
 
+- Clean rebuild profile-selection gate (2026-08-01): the profile picker was
+  reapplied directly to the dormant-weather Staging baseline. Its 10 focused UI
+  tests pass, ESLint reports 0 errors and the same 3 pre-existing warnings, the
+  production build compiles, and `git diff --check` passes. No hosted model,
+  Judge, embedding, or weather-provider call was needed for this UI-only slice.
+  The preserved like-for-like quality and timing reference remains under
+  `~/exec-briefs/retail-shopping-assistant/quality/baselines/2026-07-27__styling-weather-guidance__profile-dropdown-slice1/`.
+
+- Styling-weather guidance Slice 1 profile-selection gate (2026-07-27): all 10
+  focused UI tests passed, UI lint reported 0 errors and 3 pre-existing
+  warnings, the production build compiled, and whitespace checks passed. This
+  slice changes only the browser UI, so no hosted app-model, Judge, weather
+  provider, or full live evaluation was run. The prior completed integration
+  run was preserved as a qualified/inherited regression reference, not as
+  feature-attributable evidence. Its immutable archive is
+  `~/exec-briefs/retail-shopping-assistant/quality/baselines/2026-07-27__styling-weather-guidance__profile-dropdown-slice1/`;
+  the staging comparison is
+  `~/exec-briefs/retail-shopping-assistant/quality/baselines/comparisons/staging__to__2026-07-27__styling-weather-guidance__profile-dropdown-slice1.md`.
 - Dormant weather-tool Slice 3 gate (2026-07-27): the full offline backend
   suite passed 1,136 tests with 1 expected xfail, and the focused
   weather/configuration/Compose/local-runner suite passed 193 tests. Changed

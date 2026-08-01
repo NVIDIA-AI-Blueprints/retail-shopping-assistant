@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  clearSelectedShopperProfileId,
   createApiRequest,
   getOrCreateUserSession,
   getSelectedShopperProfileId,
@@ -56,6 +57,8 @@ beforeEach(() => {
 });
 
 test("shopper selection is tab-scoped and separate from chat identity", () => {
+  expect(getSelectedShopperProfileId()).toBeUndefined();
+
   const firstSession = getOrCreateUserSession();
   setSelectedShopperProfileId(profile.shopper_profile_id);
 
@@ -67,11 +70,15 @@ test("shopper selection is tab-scoped and separate from chat identity", () => {
   expect(secondSession.cartId).not.toBe(firstSession.cartId);
 });
 
-test("Guest removes the stored shopper selection", () => {
+test("Guest is an explicit stored choice distinct from no selection", () => {
   setSelectedShopperProfileId(profile.shopper_profile_id);
   setSelectedShopperProfileId(null);
 
   expect(getSelectedShopperProfileId()).toBeNull();
+
+  clearSelectedShopperProfileId();
+
+  expect(getSelectedShopperProfileId()).toBeUndefined();
 });
 
 test("shopper profile responses are validated without caching profile contents", () => {

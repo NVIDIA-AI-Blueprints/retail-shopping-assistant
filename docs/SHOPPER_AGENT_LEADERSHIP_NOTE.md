@@ -7,8 +7,8 @@ The shopper agent now has clean boundaries:
 - the **published catalog** owns product truth;
 - **conversation state** supplies continuity but cannot override current data;
 - **skills** provide versioned behavior for an intent;
-- **typed tools** are the only path to catalog, cart, availability, or policy
-  actions; and
+- **typed tools** are the only path to catalog, cart, availability, promotions,
+  or policy actions; and
 - the **model owns semantic mapping** from shopper language, while deterministic
   validation enforces only typed structure, advertised capability values, hard
   filters, limits, and product evidence. Selected skills grant only their
@@ -21,6 +21,12 @@ turn storage now also preserves products actually presented and supports exact,
 same-conversation historical resolution without making the graph checkpoint a
 memory database.
 
+The response boundary is intentionally narrower than the reasoning context.
+The main Deep Agent can use the rolling summary and bounded full recent
+discussion; the final evidence composer receives only shopper-authored recent
+continuity plus current typed evidence, never prior assistant prose or the
+agent's draft.
+
 ## Current Request Flow
 
 ```mermaid
@@ -31,8 +37,8 @@ flowchart LR
     D --> E[Activate skills and bind grants]
     E --> F[Model proposes typed tool call]
     F --> G[Authorize and validate]
-    G --> H[Catalog, memory, cart, or policy owner]
-    H --> I[Grounded response and durable finalize]
+    G --> H[Owning service or deterministic app boundary]
+    H --> I[Evidence composition and durable finalize]
 ```
 
 1. **Scope and start the turn.** The API creates one request identity containing
@@ -51,7 +57,9 @@ flowchart LR
    prefix is offered only to the tools-disabled compactor and is not part of
    normal shopper-model context. LangGraph creates process-local working state
    for only this request under a collision-safe pair of conversation ID and
-   request ID.
+   request ID. The main Deep Agent receives the summary and full bounded recent
+   tail. A second request-scoped projection contains only shopper-authored
+   recent turns for final evidence composition.
 3. **Load the data contract.** The chain server reuses its process-lifetime
    catalog-capability snapshot. That contract advertises the exact taxonomy,
    hard filters, ranges, and retrieval modes available from the current catalog.
@@ -59,12 +67,14 @@ flowchart LR
    skills. The runtime injects the complete selected `SKILL.md`; only the union
    of those skills' declared tool grants is exposed on the following model step.
 5. **Propose one typed action.** The model chooses a catalog, conversation-
-   product, cart, availability, or policy tool and supplies its structured
-   arguments. Skills are tool permissions and behavioral instructions, but do
-   not access databases. The historical resolver is conditional: it runs only
-   when a needed product is absent from current-request evidence, batches all
-   needed references, and is enforced at most once per turn. Its compact index
-   keeps the newest complete candidate sets within 16,384 serialized characters.
+   product, cart, availability, promotions, or policy tool and supplies its
+   structured arguments. Skills are tool permissions and behavioral
+   instructions, but do not access databases. An exact strict historical
+   `PRODUCT_REF` may authorize its scalar detail read directly. Natural,
+   ordinal, shortened, or ambiguous earlier-product references use the
+   historical resolver, which batches all needed semantic references and is
+   enforced at most once per turn. Its compact index keeps the newest complete
+   candidate sets within 16,384 serialized characters.
 6. **Validate before execution.** Runtime middleware checks the request against
    the selected-skill grant and immutable tool policy, then applies advertised
    catalog capabilities, refs, service state, turn limits, and duplicate scopes.
@@ -77,12 +87,20 @@ flowchart LR
    applies hard filters and ranks Milvus candidates. Cart tools call the memory
    service. A typed reference batch resolves deterministically against that
    conversation's durable presented-product events: exactly one match is usable,
-   while zero or many require clarification. Policy lookup reads disabled-by-default operator content. The
-   availability tool is a deterministic no-I/O stub for known product refs; it
-   applies a fixed sized-versus-one-size category rule.
-8. **Finalize and return grounded evidence.** The response boundary uses only
-   current tool evidence for new results or mutations. It finalizes the durable
-   turn with the current attempt token as completed, blocked, or failed with
+   while zero or many require clarification. Policy lookup reads
+   disabled-by-default operator content. Availability and promotions use
+   deterministic no-I/O application boundaries: availability applies a fixed
+   sized-versus-one-size category rule for known product refs, and promotions
+   reports that no active promotion is configured through the assistant.
+8. **Compose evidence, finalize, and return.** Every successfully activated
+   turn without a fixed server response crosses this boundary, including
+   no-tool follow-ups with an empty typed-evidence lane. The main agent's rolling summary,
+   prior assistant prose, prior tool output, and draft stop before this boundary.
+   The final composer receives the current query, bounded shopper-authored
+   continuity, active-skill guidance, historical product identity, current
+   cart/images, and typed current-request evidence, including search, detail,
+   and cart results. The runtime then finalizes the durable turn with the
+   current attempt token as completed, blocked, or failed with
    replay output and ordered event envelopes. Ordered product cards produce one
    `candidate_set_presented` event and refresh the compact reference index in
    that same transaction. When compaction is due after a completed guarded
@@ -106,17 +124,19 @@ flowchart LR
 | Milvus | Vector candidates for the active catalog snapshot | Rebuilt or reused from the catalog fingerprint |
 | Memory-service SQLite | Ordered raw shopper/assistant turns, rolling semantic summary and watermark, exact post-watermark tail, memory-owned compaction source, exact finalized replay, presented-product events and compact index, typed same-conversation resolution, authoritative cart, product/cart-line identity, and atomic mutation replay | Named-volume persistence for one memory-service replica; retention is operator-owned |
 | LangGraph `MemorySaver` | Working graph messages and tool state keyed by a collision-safe conversation/request pair | Process-local; deleted after successful durable finalize and retained only on finalize failure |
-| Turn `State` | Query, media, context, cart, current evidence, timings, and diagnostics | Transient for one request |
+| Turn `State` | Query, media, main-agent summary/full recent context, shopper-only composer context, historical ref capabilities, cart, current evidence, timings, and diagnostics | Transient for one request |
 | Shopper skills | Reviewed behavioral instructions, response framing, roles, and tool grants | Versioned repository files; no customer or product state |
 
 Memory is guidance, not truth. A remembered statement that an item was added or
 is available cannot override the current cart or a current catalog result.
 The semantic summary, post-watermark raw tail, and products actually presented
 survive a chain-server restart through the memory service. Summary text remains
-guidance rather than exact evidence. The compact product index is read-only model context;
-the full event payload is the resolver's authority. A unique typed match becomes
-request-local evidence for details, availability, or cart add. Missing or
-ambiguous references require clarification. New-conversation requests such as
+guidance rather than exact evidence. The compact product index is read-only
+model context and a validated typed capability lane: an exact unconflicted
+`PRODUCT_REF` can authorize only its scalar detail read. The full event payload
+remains the resolver's authority for semantic references. A unique typed match
+becomes request-local evidence for details, availability, or cart add. Missing
+or ambiguous references require clarification. New-conversation requests such as
 “show me the bag from last week” remain unsupported. Preferences, sentiment,
 active anchors, fuzzy matching, embeddings, and stale-revision handling are not
 implemented.
@@ -169,8 +189,8 @@ Slice 3 closes the mutation-retry cases with one memory-service transaction
 boundary for add, remove, and quantity update. Slice 0 proves that only
 `cart-management` can expose cart mutators; it does not yet prove that the
 shopper requested a particular mutation. That narrower authorization boundary,
-invented-constraint assurance, and live quality validation of ambiguous
-historical references remain separate work.
+invented-constraint assurance, and broader live quality validation remain
+separate work.
 
 ### 2. Harden durable product identity only when needed
 
@@ -178,7 +198,8 @@ The minimal resolver deliberately stores only cards actually shown and performs
 exact same-conversation matching. The next identity work is catalog-revision
 invalidation or a stable upstream product ID if catalog replacement becomes a
 real operating requirement. Do not add fuzzy matching, embeddings, inferred
-preferences, or a transcript summarizer pre-emptively.
+preferences, or additional authoritative meaning to the existing rolling
+summary pre-emptively.
 
 ### 3. Select a production durable memory store
 

@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1600" height="920" viewBox="0 0 1600 920" role="img" aria-labelledby="title description">
   <title id="title">Shopper Deep Agent architecture</title>
-  <desc id="description">The published catalog feeds a deterministic catalog foundation. Each shopper turn uses request-scoped graph work while one SQLite memory-service replica durably stores turns and presented-product evidence.</desc>
+  <desc id="description">The published catalog feeds a deterministic catalog foundation. The main Deep Agent reasons over durable summary and bounded recent turns, selected skills expose an eleven-tool subset, and final composition uses shopper-authored continuity plus current typed evidence.</desc>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
       <path d="M 0 0 L 10 5 L 0 10 z" fill="#52606d"/>
@@ -24,7 +24,7 @@
   <rect width="1600" height="920" fill="#ffffff"/>
 
   <text x="70" y="56" class="title">Shopper Deep Agent Architecture</text>
-  <text x="70" y="86" class="subtitle">Published catalog truth → mandatory skills → deterministic tools → grounded response + durable product continuity</text>
+  <text x="70" y="86" class="subtitle">Published catalog truth → mandatory skills → typed tools → current-evidence response + durable product continuity</text>
   <circle cx="1422" cy="55" r="7" fill="#76b900"/>
   <text x="1438" y="61" class="note">Built</text>
 
@@ -89,7 +89,7 @@
     <rect x="382" y="472" width="292" height="9" rx="4" class="built-bar"/>
     <text x="528" y="513" text-anchor="middle" class="box-title">Deep Agents runtime</text>
     <text x="528" y="543" text-anchor="middle" class="box-text">
-      <tspan x="528" dy="0">Turn context + semantic judgment</tspan>
+      <tspan x="528" dy="0">Summary + full recent reasoning context</tspan>
       <tspan x="528" dy="24">Capability-derived tool schema</tspan>
       <tspan x="528" dy="24">Bounded tool-loop control</tspan>
       <tspan x="528" dy="24">No hard-coded shopper taxonomy</tspan>
@@ -115,9 +115,9 @@
     <text x="1306" y="485" text-anchor="middle" class="box-title">Eleven-tool registry · selected subset</text>
     <text x="1306" y="515" text-anchor="middle" class="box-text">
       <tspan x="1306" dy="0">Catalog: search · details · availability</tspan>
-      <tspan x="1306" dy="24">Memory: exact product resolver</tspan>
+      <tspan x="1306" dy="24">Products: strict refs · semantic resolver</tspan>
       <tspan x="1306" dy="24">Cart: read · total · add · remove · update</tspan>
-      <tspan x="1306" dy="24">Read boundaries: promotions · policy</tspan>
+      <tspan x="1306" dy="24">Reads: promotions · policy</tspan>
       <tspan x="1306" dy="24">Frontmatter + policy bind visibility</tspan>
       <tspan x="1306" dy="24">Dispatch rechecks grants before handlers</tspan>
     </text>
@@ -128,8 +128,8 @@
     <rect x="382" y="704" width="672" height="9" rx="4" class="built-bar"/>
     <text x="718" y="745" text-anchor="middle" class="box-title">Conversation state</text>
     <text x="718" y="775" text-anchor="middle" class="box-text">
-      <tspan x="718" dy="0">SQLite turns + presented cards + exact resolver · one replica</tspan>
-      <tspan x="718" dy="24">Graph MemorySaver · request-scoped working state</tspan>
+      <tspan x="718" dy="0">SQLite summary + exact tail + presented cards · one replica</tspan>
+      <tspan x="718" dy="24">Shopper-only composer lane · request graph state</tspan>
     </text>
   </g>
 
@@ -138,8 +138,8 @@
     <rect x="1104" y="704" width="404" height="9" rx="4" class="built-bar"/>
     <text x="1306" y="745" text-anchor="middle" class="box-title">Grounding boundary</text>
     <text x="1306" y="775" text-anchor="middle" class="box-text">
-      <tspan x="1306" dy="0">Tool-role evidence → shopper response</tspan>
-      <tspan x="1306" dy="24">Finalize turn · delete request checkpoint</tspan>
+      <tspan x="1306" dy="0">Shopper continuity + current typed evidence</tspan>
+      <tspan x="1306" dy="24">No prior assistant/draft · finalize + cleanup</tspan>
     </text>
   </g>
 
@@ -157,10 +157,10 @@
   <text x="450" y="681" text-anchor="middle" class="arrow-label">start / load / finalize</text>
   <path d="M 1160 670 L 1160 686 L 600 686 L 600 704" class="flow-both"/>
   <path d="M 1370 670 L 1370 704" class="flow"/>
-  <text x="1430" y="692" text-anchor="middle" class="arrow-label">evidence</text>
+  <text x="1430" y="692" text-anchor="middle" class="arrow-label">current evidence</text>
 
   <path d="M 1104 797 L 1080 797 Q 1070 797 1070 842 L 207 842 Q 162 842 162 797 L 162 628" class="flow"/>
   <text x="260" y="836" class="arrow-label">grounded response · next turn retains conversation scope</text>
 
-  <text x="70" y="892" class="note">Built: exact same-conversation product resolution. Not built: cross-conversation memory, fuzzy matching, preferences, or multi-replica durable state.</text>
+  <text x="70" y="892" class="note">Built: strict historical refs, semantic product resolution, shopper-only composition. Dormant weather is unregistered; no fuzzy matching, preferences, or multi-replica state.</text>
 </svg>

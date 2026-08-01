@@ -55,10 +55,6 @@ The Retail Shopping Assistant is an AI-powered blueprint that provides a compreh
   session requires an explicit dropdown choice of Guest mode or one of those
   five shoppers before chat starts. The selected ID is bound to the durable
   conversation and resolved into compact soft guidance
-- 🌦️ **Dormant Weather Contract**: A disabled-by-default, directly testable
-  daily forecast tool accepts a five-digit US ZIP plus today, one exact date,
-  or an inclusive date range. It is not registered with the shopper agent and
-  does not yet influence conversation or styling
 - 📚 **Enforced Shopper Skills**: Every turn first semantically selects and
   fully loads the smallest applicable skill set; each selected `SKILL.md`
   declares its role and tool grants, only their grant union becomes
@@ -115,15 +111,15 @@ selection clears visible chat/product state and rotates the browser-scoped
 session, conversation, and cart identities. Reset keeps the explicit shopper
 mode while rotating the conversation identity.
 
-The Slice 3 weather boundary is intentionally dormant. Direct callers can
-construct a typed Visual Crossing adapter for a five-digit US ZIP and an
-optional exact date or inclusive date range, but the wrapper is absent from the
-Deep Agents tool registry, skill grants, prompts, request context, FastAPI, and
-UI. `WEATHER_ENABLED` defaults to `false`; no API key or provider request is
-needed for ordinary startup, health checks, shopper turns, or offline tests.
-Enabling direct construction requires `WEATHER_API_KEY` in the chain-server
-environment. The key is not stored in YAML or an image, and this integration
-does not require MCP.
+The weather boundary is intentionally dormant. Direct callers can construct a
+typed Visual Crossing adapter for a five-digit US ZIP and an optional exact
+date or inclusive date range, but the wrapper is absent from the Deep Agents
+tool registry, skill grants, prompts, request context, FastAPI, and UI.
+`WEATHER_ENABLED` defaults to `false`; no API key or provider request is needed
+for ordinary startup, health checks, shopper turns, or offline tests. Enabling
+direct construction requires `WEATHER_API_KEY` in the chain-server environment.
+The key is not stored in YAML or an image, and this integration does not require
+MCP.
 
 Every turn still makes a fresh semantic skill-selection decision. The previous
 turn's selected skill names are persisted with its durable output and supplied
@@ -163,9 +159,9 @@ returning no tool call. The server discards that model prose and emits the fixed
 clarification `Could you clarify the product type or requirement you want me to
 use?`. If another requested search scope already succeeded, its deterministic
 grounded products are kept before that clarification. If another shopping tool
-already completed, the existing grounding editor preserves that evidence with
-the fixed clarification. The base runtime prompt, invalid AI/tool history, and
-prior conversation history are absent.
+already completed, the final evidence composer combines its current typed
+evidence with the fixed clarification. The base runtime prompt, invalid AI/tool
+history, prior assistant prose, and prior tool evidence are absent.
 Native validation feedback contains only rejected top-level field names; raw
 Pydantic `input_value` metadata and free-form `requested_product_type` text are
 never copied into the authoritative repair message. After activation, the
@@ -189,17 +185,23 @@ process-local `CHECKPOINT_STORE=memory`. Each graph thread is request-scoped
 with a collision-safe pair of conversation ID and request ID, deleted after
 successful durable finalization, and retained only when finalization fails.
 Deep Agents model-stage execution defaults to one 45-second deadline shared by
-the graph and grounding editor. A graph timeout is captured as `agent_timeout`,
-clears unsent products, finalizes the durable turn as failed, releases the
-durable conversation turn, and then deletes its request checkpoint. The
-grounding editor receives only the remaining time. Its timeout is finalized as
+the graph and final evidence composer. A graph timeout is captured as
+`agent_timeout`, clears product cards and images, and finalizes the durable turn
+as failed. The bounded checkpoint can still produce deterministic catalog-search
+or product-detail text only when every current-request business
+call—pending or completed—is classified read-only by the immutable tool policy
+and the matching typed evidence validates. Mutating or unknown calls and
+unusable evidence receive the fixed retry/cart-check response. Salvaged text
+still crosses output guardrails. Finalization releases the durable conversation
+turn and then permits deletion of its request checkpoint. The evidence composer
+receives only the remaining time. Its timeout is finalized as
 failed with `grounding_timeout`: search-only turns use the existing deterministic
 catalog renderer, while turns with current successful product-detail evidence
 retain only verified names, prices, categories, and listed fields. Only a
 current tool-role result named `get_product_details_tool` whose content begins
 with the canonical success marker qualifies; the fallback never invents a
-comparison judgment. Other non-search turns return a fixed retry/cart-check
-response instead of the unverified draft. Editor errors and empty or
+comparison judgment. Other turns return a fixed retry/cart-check
+response instead of the unverified draft. Composer errors and empty or
 whitespace-only output follow the same evidence-preserving split with
 `grounding_error`.
 
@@ -239,7 +241,10 @@ guides.
    owns that provenance plus all alternative, comparison, ordering, negation,
    and faithful-parent semantics. Runtime does not derive or suffix-match those
    meanings from shopper prose and does not validate
-   `requested_product_type` against taxonomy. When the model submits multiple
+   `requested_product_type` against taxonomy. A shopper-supplied product title
+   stays intact as identity in `semantic_query`; its product noun supplies
+   `requested_product_type`, and title words become hard requirements only when
+   the shopper states them separately. When the model submits multiple
    advertised subcategories from one category through the typed
    taxonomy field, the valid request remains one catalog execution; its
    candidate window expands for that selection, then rank-preserving selection
@@ -277,11 +282,18 @@ Deterministic validation does not compare `requested_product_type` with the
 shopper's prose or selected taxonomy. The semantic query remains independent
 soft ranking direction and need not repeat the taxonomy noun. Successful search
 evidence preserves it as a private ranking preference.
-For a completed successful search-only turn, the runtime allows one final
-tools-disabled synthesis under the active skill and then grounds that draft
-against tool-role evidence. The pre-retrieval `shopper_guidance` and active
-skill's static `response_guidance` support deterministic fallback when synthesis
-or editing cannot produce an answer. If the shopper's goal depends on a
+For a completed successful search-only turn, the Deep Agent completes its
+tools-disabled step under the active skill, then the final evidence composer
+builds the shopper response from the current request, bounded shopper-authored
+continuity, historical product identity, active response guidance, current cart
+and images, and current-request typed tool evidence, including search, detail,
+and cart results. It receives no rolling
+summary, prior assistant prose, prior tool evidence, or graph draft. The
+same boundary handles activated no-tool follow-ups with an empty evidence lane,
+so prior assistant prose cannot become current factual authority. The
+pre-retrieval `shopper_guidance` and active skill's static `response_guidance`
+support deterministic fallback when composition cannot produce an answer. If
+the shopper's goal depends on a
 material, fit, comfort, durability, care, weather, or other functional property
 that the evidence does not confirm, final grounding states that gap and presents
 the candidates as the closest catalog or styling direction rather than as
@@ -293,8 +305,8 @@ framing; the semantic query, taxonomy, constraints, and executed search remain
 unchanged. The scrub includes outdoor-surface or outdoor-walking claims and
 constructions such as "handle rain," "work well for outdoor surfaces," or
 "stay secure for outdoor walking," plus `wet conditions` and "works well in wet
-weather/conditions." Candidate results, filters, and the assistant draft are not
-rewritten into guidance after retrieval. Deterministic code
+weather/conditions." Candidate results and filters are not rewritten into
+guidance after retrieval. Deterministic code
 separately lists every returned candidate with its name, price, category,
 and only the confirmed filters from that candidate's search. For multi-role
 results, each guidance sentence is grouped with the products from the search
@@ -311,9 +323,10 @@ Separate searches are never flattened into one global filter claim. Zero-result
 evidence retains its exact taxonomy and filter scope and cannot support a claim
 about a different product type or the whole catalog.
 Operator diagnostics include bounded `catalog_scope_outcomes` for zero-result
-scopes. The grounding boundary keeps current-turn and prior-turn
-tool-role evidence separate, so earlier results can resolve references but
-cannot prove that a new search or cart mutation ran. If every current-turn
+scopes. The final composition boundary admits only current-request tool-role
+evidence; earlier shopper wording and the compact historical index may supply
+continuity and identity but cannot prove that a new search, detail read, cart
+mutation, or policy result ran. If every current-turn
 business call is a rejected catalog search and no current product evidence
 exists, the runtime returns a fixed retry response before model-based response
 editing; prior evidence cannot be presented as results from the rejected search.
@@ -351,25 +364,29 @@ turns remain durable and exactly replayable but are excluded by both the service
 projection and chain prompt formatter; abandoned turns are also excluded by the
 formatter. Only the latest abandoned turn can reopen; reopening retains its
 request identity but rotates the attempt token, so a late finalize cannot
-overwrite the retry. When a needed product is not established in the current
-request, the selected discovery, styling, or cart skill may make one typed batch
-resolution call. An exact single match becomes request-local evidence for
-details, availability, or cart add; zero or multiple matches require
-clarification and never authorize a guess. Resolution is limited to the current
-conversation and does not add fuzzy matching, embeddings, cross-conversation
-memory, preference/sentiment memory, or catalog-revision revalidation.
+overwrite the retry. An exact opaque ref from the validated compact product
+projection may authorize its own detail read without another resolver call.
+Natural, ordinal, shortened, or ambiguous earlier-product references still use
+the selected discovery, styling, or cart skill's one typed batch resolution
+call. A unique match becomes request-local evidence; zero or multiple matches
+require clarification and never authorize a guess. Conflicting projection
+entries are excluded, and a direct exact-ref detail read must still match the
+active catalog item before detail facts become evidence. The exact-ref path
+does not enter general request-local product evidence. Resolution remains
+same-conversation only and adds no fuzzy matching, embeddings,
+cross-conversation memory, learned preference state, or catalog-revision
+revalidation.
 The model-facing index is compact JSON whose field names match the typed
 resolver request, so opaque product refs are presented without display wrappers
 or lossy rewriting.
 
 An explicit comparison of established candidates remains part of
 `outfit-styling`; it does not create a comparison skill, intent router, or
-rediscovery search. The model resolves all missing prior candidates together,
-then reads each unique product through separate detail calls before comparing
-confirmed fields. The default two-detail-read limit fits one pair; a ref absent
-from current-request evidence performs no catalog read and consumes no read
-budget. Missing or ambiguous members receive one clarification without a
-substitute search.
+rediscovery search. Exact indexed refs may proceed directly to separate detail
+calls; other prior references are resolved together first. The default
+two-detail-read limit fits one pair. An unauthorized, conflicting, or stale ref
+fails closed without a substitute search, and missing or ambiguous members
+receive one clarification.
 
 LangGraph `MemorySaver` now holds only one request's working graph state under a
 collision-safe pair of conversation ID and request ID. It is deleted only after

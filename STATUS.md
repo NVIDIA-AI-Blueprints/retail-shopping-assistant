@@ -25,17 +25,17 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   picker makes one delayed automatic retry after an unavailable profile load,
   then retries on browser-online or tab-focus events without polling for the
   app lifetime or interrupting an active Guest conversation;
-- the chain server now has a dormant, provider-neutral weather forecast
+- the chain server retains a dormant, provider-neutral weather forecast
   contract with a Visual Crossing Timeline adapter and a directly constructible
   `get_weather_forecast_tool` wrapper. It accepts only an exact five-digit US
   ZIP plus local today, one ISO date, or a complete inclusive ISO range of at
-  most 15 days; returns bounded normalized daily evidence with attribution;
-  rejects non-live provider sources; and maps transport/provider failures into
-  sanitized typed outcomes. `WEATHER_ENABLED=false` is the default, the key
-  remains an indirect `WEATHER_API_KEY` environment reference scoped only to
-  the chain server, and startup/health paths perform no provider request. The
-  wrapper is deliberately absent from the runtime registry, tool policy, skill
-  grants, prompts, request context, FastAPI, UI, and shopper-profile behavior;
+  most 15 days; returns bounded normalized daily evidence with attribution; and
+  maps transport/provider failures into sanitized typed outcomes.
+  `WEATHER_ENABLED=false` is the default, and the key remains an indirect
+  chain-server-only `WEATHER_API_KEY` reference. The wrapper is absent from the
+  runtime registry, immutable policy, skill grants, prompts, shopper context,
+  FastAPI, and UI. Startup, health checks, and shopper turns make no provider
+  request;
 - the memory-service SQLite database now owns an immutable
   `shopper_profiles` registry bootstrapped from five reviewed rows whose
   `shopper_type` and `behavior` values map 1:1 to the committed live-evaluation
@@ -72,10 +72,12 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   excluded from both the service's recent-turn projection and the chain prompt
   formatter. An exact retry of a finalized request replays its stored response
   without another model turn. Finalized ordered product cards create durable
-  `candidate_set_presented` events and a compact reference index. One exact
-  typed batch resolver returns 0/1/many same-conversation matches; only a unique
-  match becomes request-local evidence, while zero or many require
-  clarification. MemorySaver is request-scoped with a collision-safe pair of
+  `candidate_set_presented` events and a compact reference index. A validated
+  exact opaque ref from that projection may authorize its own detail read;
+  conflicting entries are excluded and the active catalog name is verified.
+  Natural, ordinal, shortened, or ambiguous references use the one typed batch
+  resolver, whose 0/1/many result authorizes only a unique match. MemorySaver is
+  request-scoped with a collision-safe pair of
   conversation ID and request ID, deleted after successful durable
   finalization, and preserved on finalize failure. The compact reference index
   is capped at 16,384 characters and resolution is enforced at most once per
@@ -96,20 +98,28 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   single-piece thread still select `outfit-styling` from conversation context.
   Outfit styling is a focused fashion procedure for anchors, clarification,
   color, proportion, silhouette, formality, occasion, texture, and response
-  judgment. It retains search, details, availability, and same-conversation
-  product-resolution grants; catalog transport and validation remain with the
-  catalog boundary, while cart work requires the cart skill. Product discovery
-  and cart management also grant the resolver for their own historical product
-  references. Established-product comparison stays inside `outfit-styling`:
-  all missing prior members use one batched resolver call, each unique ref gets
-  a separate detail read, and missing or ambiguous members clarify without a
-  substitute search. No comparison router or extra skill is introduced.
+  judgment. It retains search, details, availability, promotions, and
+  same-conversation product-resolution grants; catalog transport and validation
+  remain with the catalog boundary, while cart work requires the cart skill.
+  Product discovery and cart management also grant the resolver for their own
+  historical product references. Established-product comparison stays inside
+  `outfit-styling`:
+  exact indexed refs can proceed directly to separate detail reads; other
+  earlier references use one batched resolver first. Missing, ambiguous,
+  conflicting, or stale members clarify without a substitute search. No
+  comparison router or extra skill is introduced.
   Each skill also declares product-agnostic `response_guidance` in
   frontmatter as a fallback. Each catalog call supplies required pre-retrieval
   `shopper_guidance` authored under the active skill. Completed successful
-  search-only turns receive one tools-disabled synthesis under that skill and
-  then the grounding editor; deterministic candidate formatting remains the
-  fail-closed fallback when synthesis or editing cannot produce an answer.
+  search-only turns receive one tools-disabled completion under that skill and
+  then the final evidence composer. Every successfully activated turn without a
+  fixed server response crosses that boundary, including no-tool follow-ups.
+  The composer receives current typed evidence (which may be empty), the current
+  request, shopper-only continuity,
+  historical identity, active response guidance, server requirements, cart,
+  and images—not the rolling summary, prior assistant prose, prior tool
+  evidence, or the graph draft. Deterministic typed formatting remains the
+  fail-closed fallback when composition cannot produce an answer.
   Grounding now requires an explicit gap when the requested outcome depends on
   a functional product property absent from evidence, and deterministic
   fallback carries the same generic unverified-property disclosure. Selection and
@@ -124,6 +134,10 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   cover cart quantity update, controlled
   policy lookup, category-aware no-I/O availability, a no-I/O active-promotions
   signal, and deterministic durable same-conversation product resolution;
+- shopper-supplied product titles are treated as identity: the full title stays
+  in semantic ranking context, its product noun supplies
+  `requested_product_type`, and title words do not become hard catalog
+  requirements unless the shopper independently states them as requirements;
 - memory-service schema migrations, turn start/finalize/replay, bounded
   recent-turn reads, and cart snapshots use transactional SQLite operations;
   stale active turns are recovered during startup and atomically at the next
@@ -134,13 +148,17 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   `memory_finalize_error` while retaining the request checkpoint. Successful
   finalization atomically records presented products and then deletes the
   checkpoint. Cancelled runtime turns are finalized before cancellation
-  propagates. Deep Agents graph execution and the grounding editor now share a
+  propagates. Deep Agents graph execution and the final evidence composer share a
   configurable 45-second default deadline. A graph timeout captures bounded
-  partial state and finalizes as failed with `agent_timeout`; a grounding timeout
-  finalizes as failed with `grounding_timeout`, uses deterministic catalog
-  rendering for search-only evidence, renders only verified current-turn
-  product-detail facts when those exist, and otherwise returns a fixed
-  retry/cart-check response instead of the unverified draft. The checkpoint is
+  partial state, clears product cards and images, and finalizes as failed with
+  `agent_timeout`. It can deterministically render only valid current-request
+  typed search or detail evidence when every observed and pending
+  business call is classified read-only by the immutable tool policy; a
+  mutating or unknown call forces the fixed retry/cart-check response. Salvaged
+  text still crosses output guardrails. A grounding timeout finalizes as failed
+  with `grounding_timeout`, uses deterministic catalog rendering for typed
+  search evidence, renders only verified current-turn product-detail facts when
+  those exist, and otherwise returns the fixed retry/cart-check response. The checkpoint is
   released only after durable finalization. Database sessions
   remain request-scoped and are always returned to the SQLAlchemy pool after
   successful and failed API requests;
@@ -150,7 +168,8 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   Redis checkpoint packages remain absent;
 - representative-shopper context cannot create a budget, product requirement,
   size, color, material, cart intent, product reference, skill selection, tool
-  authorization, product fact, weather fact, or current-location claim.
+  authorization, product fact, weather fact, or current-location claim. Saved
+  ZIP remains background profile data and triggers no weather behavior.
   Explicit current-turn instructions take precedence, followed by explicit
   recent-conversation preferences; unknown caller fields remain ignored for
   backward compatibility, and caller-supplied persona objects are never
@@ -276,7 +295,7 @@ The schema-driven catalog refactor is implemented:
   Zero-result evidence retains the exact advertised taxonomy and filter scope
   and cannot support broader absence claims. Turns containing only rejected
   catalog searches and no current product evidence return a fixed retry response
-  before model-based editing, so prior evidence cannot become claimed results;
+  before final composition, so continuity cannot become claimed results;
 - final-response extraction excludes tool messages, assistant tool-call
   messages, and internal activation markers. A completed graph with no
   shopper-facing answer returns a safe retry response and records
@@ -294,9 +313,92 @@ lives in [Schema-Driven Catalog Architecture](docs/CATALOG_REFACTOR_PLAN.md).
 
 ## Verification
 
-The newest focused gate is recorded first. Older implementation gates remain
+The newest verification gate is recorded first. Older implementation gates remain
 below as comparison points; generated quality and timing
 artifacts stay in the required local archive rather than versioned source.
+
+- Corrected non-weather release gate (2026-08-01): the active request-scoped
+  weather slice was withdrawn because weather-related styling is out of scope
+  for this refactor. The provider/config adapter remains dormant, while runtime
+  registration, immutable policy, weather-tool grants, feature-specific
+  prompts/request context, and weather integration fixtures are removed. A
+  fresh GPT-5.2 app and Judge run completed all 48 canonical shopping turns
+  with populated trusted diagnostics, zero target/Judge errors, zero timeout
+  terminations, and zero weather-tool calls. Final offline validation passed
+  all 1,198 Python tests with one dependency warning; all 13 UI tests passed,
+  ESLint reported zero errors and three pre-existing warnings, Ruff passed for
+  every changed Python file, and the production UI build completed. The
+  release-scoped 43 non-weather turns exclude `conv_6.yaml` and scored
+  4.4186/5, with 40/43 at least 4 and distribution
+  `2: 3, 4: 16, 5: 24`; mean / median / linear p95 / maximum latency was
+  15.724s / 14.443s / 25.788s / 28.277s. The complete canonical result scored
+  4.4167/5, with 45/48 at least 4 and distribution
+  `2: 3, 4: 19, 5: 26`; mean / median / linear p95 / maximum latency was
+  16.127s / 14.745s / 27.116s / 28.277s. Against the preceding WIP's paired
+  non-weather turns, average quality moved -0.0698 and one fewer turn scored at
+  least 4, while mean and p95 improved by 15.585s and 19.029s and all three
+  non-weather `agent_timeout` terminations disappeared. Against the prior
+  committed paired cohort, quality improved by 1.2093 and 19 more turns scored
+  at least 4; mean was effectively flat (+0.003s) and p95 improved by 42.093s,
+  with model/evaluator treatment differences making that comparison
+  directional. The three remaining score-2 turns are concrete response gaps:
+  denim-skirt absence, low-heeled black shoes, and casual-sneaker absence need
+  more useful catalog-safe alternatives. An initial diagnostics-disabled run
+  was rejected as incomparable and preserved under the local invalid-run
+  archive; shopping Judge preflight now stops before paid scoring when trusted
+  diagnostics are missing. The canonical run and comparisons are local under
+  `~/exec-briefs/retail-shopping-assistant/quality/shopping/`.
+
+- Withdrawn weather-enabled Slice 6 historical gate (2026-08-01): the full
+  sequential offline
+  Python suite passed 1,212/1,212 tests. The activation test fixture now derives
+  its mock skill-to-tool grant map from the immutable production policies, so a
+  newly registered grant cannot leave a copied test map stale; its 26 focused
+  tests pass. All 13 UI tests pass, ESLint reports 0 errors and the same 3
+  pre-existing warnings, and the production build compiles. The completed
+  GPT-5.2 Judge regression guard returned and judged all 48 fixed shopping
+  turns at 4.3750/5, with 43/48 scoring at least 4 and distribution
+  `2: 1, 3: 4, 4: 19, 5: 24`. Mean / median / linear p95 / maximum latency was
+  30.948s / 30.097s / 45.029s / 45.068s. Forty-three turns completed normally;
+  five reached the server-owned 45-second graph deadline, returned bounded
+  `agent_timeout` responses, and did not cascade into blocked follow-ups.
+  Against the immediately preceding WIP, quality improved by 0.4583 and five
+  more turns scored at least 4, while mean and p95 latency regressed by 14.097s
+  and 19.427s and a fully completed cohort became 43 completed plus five
+  timeouts. Against pinned Staging, the directional score gain is 1.1667 and
+  score-4-or-better coverage gains 20 turns, but mean latency is 16.026s slower;
+  the Judge, catalog, runtime, and evaluator treatments differ. This is a
+  strong historical quality result with a material latency and completion cost,
+  not release evidence for the corrected non-weather scope. The immutable
+  report and comparisons remain under
+  `~/exec-briefs/retail-shopping-assistant/quality/baselines/2026-08-01__styling-weather-guidance-clean__request-scoped-weather-slice6/`
+  and `~/exec-briefs/retail-shopping-assistant/quality/shopping/comparisons/`.
+
+- Withdrawn request-scoped weather-styling feature gate (2026-08-01): the final
+  eight-turn
+  GPT-5.2 app/Judge run used the production-default 45-second model-stage
+  deadline and passed every focused fixture's exact tool and non-tool preflight.
+  Judge score was 4.50/5, with five 5s, two 4s, and one 3. Coverage includes
+  named NYC normalization, Cancun without venue inference, provisional
+  saved-ZIP use, explicitly unavailable location/date, unrelated styling with
+  no weather call, and a three-turn weather-to-second-product-to-comparison
+  flow. The comparison turn used both verified detail reads, no substitute
+  search, and no repeated forecast. Mean end-to-end time was 34.52 seconds;
+  the three-turn comparison scenario averaged 26.88 seconds. Against the prior
+  90-second-deadline focused run, quality moved from 4.625 to 4.50 and mean
+  latency improved by 13.66 seconds. Two full-look turns reached
+  `agent_timeout`: the new boundary returned only validated current-request
+  weather/search text, kept the durable turn failed, and emitted no product
+  cards or images. The NYC timeout scored 3 because only the first outfit role
+  completed; that is retained as an explicit latency/completeness risk rather
+  than hidden by a larger deadline. The Cancun composer timeout used the same
+  typed deterministic evidence lanes. The direct redacted Visual Crossing
+  adapter smoke for New York on 2026-08-02 also completed in 173.8 ms. Focused
+  offline validation is 325 passing tests plus Ruff, XML, and whitespace gates.
+  This is historical evidence for the withdrawn out-of-scope feature, not a
+  release gate for the current refactor. The immutable final run and comparison
+  remain under
+  `~/exec-briefs/retail-shopping-assistant/quality/weather_styling/`.
 
 - Catalog-contract extraction gate (2026-08-01): the runtime is 490 lines
   smaller after moving only pure capability-derived Pydantic models, structural
@@ -767,29 +869,36 @@ and failed during startup recovery. That local database was not deleted or
 modified. Upgrade compatibility for that legacy artifact requires a separate
 migration-order audit.
 
-`PRODUCT_REF` authorization exists only in request-local evidence. Current-turn
-search adds it directly; one unique durable same-conversation resolution can
-restore an earlier presented product after restart or on another worker.
-Missing or ambiguous references never authorize a downstream tool. Matching is
-exact, catalog revision is not yet enforced, and catalog replacement can still
-require a fresh search.
+`PRODUCT_REF` authorization comes from current-turn evidence or the validated
+same-conversation historical projection. Search adds it directly; an exact
+opaque historical ref may initiate only one verified detail read, while a
+natural, ordinal, shortened, or ambiguous reference still needs one unique
+durable resolution. Conflicting historical entries are excluded and exact
+detail refs are checked against the active catalog display name without
+entering general request-local product evidence. Missing or ambiguous
+references never authorize a downstream tool. Catalog revision is not yet
+enforced, so catalog replacement can still require a fresh current product
+choice.
 The fixed representative-shopper registry is a trusted, typed source and its
 selected row is now bound at durable turn start. It remains static soft
 guidance, not learned preference state. Caller-supplied or mutable customer
 personas remain unavailable until their ownership and input-safety contracts
 are defined.
 
-The weather tool is not yet a shopper capability. A later leveraging slice must
-define trusted saved-ZIP versus event-location precedence, resolve relative
-dates, register and grant the tool, preserve its output as grounded current-turn
-evidence, display provider attribution and forecast uncertainty, and prevent
-weather from silently establishing waterproofing, warmth, safety, or any other
-catalog constraint. Visual Crossing plan terms must be reviewed before storing
-or displaying forecast data; Slice 3 persists and displays none.
+The weather tool is not a shopper capability in this refactor. The dormant
+client and direct-construction wrapper remain disabled by default and accept
+only the closed five-digit US ZIP/date contract. They are not registered,
+granted, prompted, connected to representative-shopper context, exposed through
+FastAPI, or called by the UI. Any future shopper-facing weather work requires a
+separately scoped feature decision, provider-terms review, grounded evidence and
+attribution behavior, and fresh quality validation.
 
-Judge product evidence is capped at 24 records and 32,000 serialized characters
-per turn. `product_evidence_truncated` makes omissions explicit; a truncated
-turn may still require a narrower rerun when the omitted fact is material to the
+Exposed current-turn product diagnostics are capped at 24 records and 32,000
+serialized characters per turn. The shopping Judge projects at most 20 of
+those records and 12,000 characters into its prompt, and now refuses to start
+paid scoring when trusted evaluation diagnostics are absent.
+`product_evidence_truncated` makes runtime omissions explicit; a truncated turn
+may still require a narrower rerun when the omitted fact is material to the
 score.
 
 Mandatory activation normally adds one bounded app-model step to every Deep

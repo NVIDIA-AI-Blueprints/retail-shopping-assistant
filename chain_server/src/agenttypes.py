@@ -11,6 +11,8 @@ from operator import ior
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing import Annotated, Dict, List, Any
 
+from shared.commerce_contracts import ProductSummary
+
 
 SHOPPER_PROFILE_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
 
@@ -102,9 +104,17 @@ class State(BaseModel):
         default="",
         description="Exact bounded raw conversation turns",
     )
+    grounding_context: str = Field(
+        default="",
+        description="Bounded shopper-authored continuity for final composition",
+    )
     historical_product_context: str = Field(
         default="",
         description="Authoritative bounded historical product-reference projection",
+    )
+    historical_product_capabilities: List[ProductSummary] = Field(
+        default_factory=list,
+        description="Validated exact historical refs authorized for detail reads",
     )
     cart: Cart = Field(default_factory=Cart, description="User's shopping cart")
     response: str = Field(default="", description="Generated response from agents")

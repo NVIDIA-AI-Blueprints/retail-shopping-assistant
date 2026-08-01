@@ -208,15 +208,22 @@ Durable ordered shopper/assistant turns live in the single-replica
 memory-service SQLite database. At turn start the runtime consumes a durable
 semantic summary, a bounded exact post-watermark raw tail, and a separate
 compact product-reference projection. The summary replaces neither exact raw
-context nor grounding evidence. Blocked turns remain
+context nor grounding evidence. The main Deep Agent receives summary and raw
+dialogue for semantic continuity; the final evidence composer uses a separate
+bounded shopper-only projection for every successfully activated turn without a
+fixed server response, even when the current typed-evidence lane is empty. It
+receives no summary or prior assistant prose, so a no-tool follow-up cannot
+repeat an earlier assistant claim as current evidence. Blocked turns remain
 durable and exactly replayable but are excluded from both the service projection
 and chain prompt formatter. Products enter durable reference evidence
 only when they appear in the finalized ordered `product_results` sent as product
-cards. The selected discovery, styling, or cart skill may conditionally resolve
-typed references against those events. Exactly one match becomes request-local
-evidence; zero or multiple matches require clarification and do not authorize a
-detail, availability, or cart tool. The deterministic resolver adds no separate
-model or catalog call.
+cards. An exact opaque ref from the validated compact projection may authorize
+its own detail read, subject to conflict exclusion and active-catalog name
+verification. Natural, ordinal, shortened, or ambiguous earlier-product
+references use the selected discovery, styling, or cart skill's one typed batch
+resolver. Exactly one match becomes request-local evidence; zero or multiple
+matches require clarification and do not authorize a downstream tool. The
+deterministic resolver adds no separate model or catalog call.
 
 `MemorySaver` remains process-local and is not shared across workers or
 replicas, but its graph thread now exists only for one request. It is deleted
@@ -357,19 +364,24 @@ with the safe attempt-fencing response described below.
 `final_termination_reason: "agent_timeout"` means the Deep Agents graph exceeded
 `DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS`. The response contains no unsent products
 or images, the durable turn is finalized as failed, and partial graph messages
-are captured on a bounded best-effort basis before checkpoint cleanup. An
-already-started synchronous tool operation may finish while cancellation is
-propagating; clients should follow the response's cart-check guidance before
-retrying a mutation.
+are captured on a bounded best-effort basis before checkpoint cleanup. If every
+current-request business call in that checkpoint, including pending calls, is
+classified read-only by the immutable tool policy, valid typed search or detail
+evidence may be rendered deterministically as text and then checked by
+output guardrails. Product cards and images remain empty. Any mutating or
+unknown call, or the absence of usable typed evidence, forces the fixed timeout
+response with cart-check guidance. An already-started synchronous tool operation
+may finish while cancellation is propagating; clients should follow that
+guidance before retrying a mutation.
 
 `final_termination_reason: "grounding_timeout"` means the graph completed but
-the grounding editor exhausted the remaining shared execution budget. The
-durable turn is finalized as failed. Search-only evidence uses deterministic
-catalog rendering; all other turns return a fixed retry/cart-check response
-instead of the unverified draft.
+the final evidence composer exhausted the remaining shared execution budget.
+The durable turn is finalized as failed. Typed current-turn catalog search and
+verified detail evidence use their deterministic renderers; other
+turns return a fixed retry/cart-check response.
 
 `final_termination_reason: "grounding_error"` uses the same failed-turn and
-fail-closed response behavior when the grounding editor raises an error or
+fail-closed response behavior when the evidence composer raises an error or
 returns empty or whitespace-only output rather than a usable response.
 
 Successful turns leave `partial_graph_messages` empty. Before a failed graph
@@ -404,9 +416,10 @@ missing legacy list fields to `[]` and `product_evidence_truncated` to `false`.
 Successful internal search-tool results carry `SEARCH_DIRECTION_EVIDENCE`, the
 model-authored semantic query used as an independent private ranking preference,
 and required pre-retrieval `shopper_guidance` authored under the active skill.
-For completed search-only turns, the runtime runs one tools-disabled synthesis
-under the active skill and grounds the draft against tool-role evidence. Static
-skill `response_guidance` and pre-retrieval guidance support deterministic
+For completed search-only turns, the runtime may run one tools-disabled
+synthesis under the active skill, but the final evidence composer starts from
+its narrower current-request evidence lanes rather than that draft. Static skill
+`response_guidance` and pre-retrieval guidance support deterministic
 fallback, which separately renders every returned candidate
 with its name, price, category, and the confirmed-filter group from its own
 search. A partial successful result set receives a neutral continuation. A zero-result tool response
@@ -496,12 +509,12 @@ interface StreamingChunk {
 
 ### Weather boundary (no HTTP route)
 
-Slice 3 adds a disabled, directly constructible weather client/tool inside the
-chain server, but it exposes no application, chain-server, or memory-service
-weather endpoint. It is absent from query request/response schemas, agent tool
-registration, prompts, and UI payloads. `/query/stream` and `/query/timing`
-therefore do not perform weather lookups, including when a selected shopper has
-a saved ZIP or a message mentions an event or date.
+The disabled, directly constructible weather client/tool exposes no
+application, chain-server, or memory-service weather endpoint. It is absent
+from query request/response schemas, agent tool registration, prompts, and UI
+payloads. `/query/stream` and `/query/timing` therefore do not perform weather
+lookups, including when a selected shopper has a saved ZIP or a message mentions
+an event or date.
 
 ### GET `/shopper-profiles`
 
@@ -556,9 +569,9 @@ another model/tool turn. The public SSE frame shapes are unchanged.
 
 Every unblocked Deep Agents turn includes one bounded activation model step
 before normal shopping-tool selection. That step selects registered shopper
-skills; the runtime injects their complete instructions before exposing the
-eleven shopping tools. It is included in `token_usage.model_calls` and
-`agent_diagnostics`.
+skills; the runtime injects their complete instructions before exposing only
+their grant union from the eleven-tool shopping registry. The activation step
+is included in `token_usage.model_calls` and `agent_diagnostics`.
 
 Token-level Deep Agents streaming is a known limitation for this PR and is
 planned as a follow-up after the harness migration is stable.
@@ -894,8 +907,8 @@ The no-tool response is only branch/control state: the server marks it, discards
 the model prose, and emits `Could you clarify the product type or requirement
 you want me to use?`. If another requested search scope already succeeded, its
 deterministic grounded products precede that clarification. If a different
-shopping tool already completed, the existing grounding editor combines its
-evidence with the fixed clarification. Repair middleware may restore
+shopping tool already completed, the final evidence composer combines its
+current typed evidence with the fixed clarification. Repair middleware may restore
 independently capability-valid `required_constraints`, `scope_complete`, and
 `search_mode`; it does not restore taxonomy, requested type, semantic query, or
 shopper guidance. The handler independently preserves capability-validated
@@ -915,8 +928,9 @@ The search tool emits product evidence or a scoped `zero_results` outcome for a
 valid executed search; it emits no semantic “no direct catalog match” outcome.
 For multi-role output, each pre-retrieval guidance sentence remains grouped with
 products from its originating search. Completed turns get one tools-disabled
-synthesis from collected evidence; search-only drafts pass through grounding,
-with deterministic rendering as fail-closed fallback.
+synthesis from collected evidence; final composition starts from the narrower
+current-request evidence lanes, with deterministic rendering as fail-closed
+fallback.
 
 The chain server also bounds product-detail reads with
 `max_product_detail_reads_per_turn`. Detail reads are intended for direct
@@ -1178,8 +1192,12 @@ before memory.
 
 `projection.product_reference_index` is a compact, bounded index of ordered
 product-card sets derived from durable `candidate_set_presented` events. The
-runtime uses it as read-only context for typed historical resolution; the
-authoritative full product payload remains in the event. The active-anchor and
+runtime validates it into an exact-ref capability lane for detail reads and
+also renders it as read-only context for typed historical resolution. A
+conflicting ref is excluded, and a direct exact-ref detail read is verified
+against the active catalog name before detail facts become evidence; it does
+not enter general request-local product evidence. The authoritative
+full product payload remains in the event. The active-anchor and
 preference lanes remain reserved and unused. Its serialized value is capped at
 16,384 characters by retaining the newest complete candidate sets. On an exact retry of a finalized
 turn, `replayed` is `true` and the response includes stored `assistant_text`,

@@ -221,6 +221,8 @@ def _preflight_diagnostic_expectations(
     query_dir: str,
     result_dir: str,
     filenames: Sequence[str],
+    *,
+    require_agent_diagnostics: bool = False,
 ) -> None:
     """Validate every trace before the first paid Judge request."""
 
@@ -240,9 +242,16 @@ def _preflight_diagnostic_expectations(
         for index, (expected, result) in enumerate(
             zip(expectations, result_entries)
         ):
+            diagnostics = result.get("agent_diagnostics")
+            if require_agent_diagnostics and not diagnostics:
+                raise AssertionError(
+                    f"{filename} turn {index}: missing agent diagnostics; "
+                    "restart the trusted evaluation service with "
+                    "EXPOSE_AGENT_DIAGNOSTICS=true before running the paid Judge"
+                )
             _validate_diagnostic_expectations(
                 expected,
-                result.get("agent_diagnostics"),
+                diagnostics,
                 label=f"{filename} turn {index}",
             )
 
@@ -436,7 +445,12 @@ if __name__ == "__main__":
     res_files = sorted([f for f in os.listdir(RES_DIR) if f.endswith('.yaml')])
 
     assert query_files == res_files, "Mismatch between query and result filenames!"
-    _preflight_diagnostic_expectations(QUERY_DIR, RES_DIR, query_files)
+    _preflight_diagnostic_expectations(
+        QUERY_DIR,
+        RES_DIR,
+        query_files,
+        require_agent_diagnostics=CONVERSATION == "shopping",
+    )
 
     for filename in query_files:
         with open(os.path.join(QUERY_DIR, filename), 'r') as qf:

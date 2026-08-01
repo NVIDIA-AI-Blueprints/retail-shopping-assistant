@@ -21,21 +21,56 @@ Top-level orchestration is via `docker-compose.yaml`; optional local NIM model c
 3. Chain server request flow:
    - `DeepAgentsRuntime` first starts a durable turn in the memory service using negotiated response contract v2. Memory returns a durable semantic summary, bounded model-context-eligible raw turns strictly after its watermark, a separate compact historical-product index, a bounded oldest compaction source, the prior turn's selected skill names, the authoritative cart, and an optional server-resolved representative-shopper snapshot. Summary text is continuity guidance only and cannot establish exact wording, product identity/facts, cart truth, tool evidence, policy, availability, or permission. After a completed guarded response, a tools-disabled compactor receives only the prior summary and memory-owned source; a compare-and-swap summary advance commits atomically with turn finalization. Timeout, invalid output, conflict, cancellation, and failed turns retain raw source. Blocked turns remain durable and exactly replayable but are excluded from both the service projection and chain prompt formatter. Graph working state uses a request-scoped pair of `conversation_id` and `request_id`. A selected profile ID is bound immutably to that conversation and renders one compact current-turn context block containing only type, behavior, and saved ZIP. Profile precedence and non-authority rules are also present only for selected-profile turns; Guest receives neither the block nor profile-specific prompt rules. The block is soft guidance: current explicit instructions and recent explicit preferences take precedence, and it cannot establish budget, product constraints or facts, cart intent, skill selection, or tool grants. Unknown caller fields remain backward-compatibly ignored, and caller-supplied persona objects are never injected.
    - Optional input guardrails run before model/tool work; attached media is analyzed through the configured perception client.
-   - Deep Agents graph execution has a configurable 45-second default deadline. A timeout captures bounded partial graph messages, clears unsent products, finalizes the durable turn as failed, and deletes the request checkpoint only after that finalization succeeds.
+   - Deep Agents graph execution has a configurable 45-second default deadline. A timeout captures bounded partial graph messages and clears product cards and images. When every current-request business call in that checkpoint is classified `read` by the immutable tool policy and valid typed search or detail evidence is present, a deterministic renderer may return only that evidence through output guardrails. Any pending or completed mutating call, unknown call, or unusable evidence receives the fixed retry/cart-check response. The durable turn remains failed with `agent_timeout`, and the request checkpoint is deleted only after finalization succeeds.
    - Every turn begins with a required model step that semantically selects the smallest applicable set from five registered shopper skills. The latest durable selected names are supplied as a read-only continuity hint; they never authorize tools or replace the fresh selection. Product work uses exactly one primary procedure: product discovery or outfit styling. Budget shopping is a modifier only when the shopper states a budget; cart and policy requests may use their standalone skills. An invalid composition receives its typed reason and one correction attempt; a second invalid composition ends with a deterministic clarification and runs no shopping tool. Multiple activation calls in one response execute none and clarify immediately. The runtime injects the complete selected files and exposes only the union of their declared `tools_granted`; dispatch independently rechecks the selected skills, grant union, and immutable tool policy. Pre-activation, same-batch, and ungranted shopping calls are execution-blocked.
    - Established-product comparison remains a model-owned procedure inside
      `outfit-styling`; there is no comparison skill or deterministic intent
-     router. Products absent from current-request evidence are submitted
-     together in the one batched historical-resolution call, then each unique
-     ref is read through a separate scalar detail call. The default two-read
-     cap fits one pair; an unauthorized ref performs no catalog read and
-     consumes no read budget. Missing or ambiguous members clarify without a
-     substitute search.
-   - Catalog capabilities generate `search_catalog_tool`'s flat schema with exact taxonomy values and non-taxonomy required-constraint properties. Product meaning is model-owned: the active skills and tool descriptions instruct the model to author `requested_product_type`, select faithful advertised taxonomy, use a category-only scope only when it judges that category to be a faithful parent, and clarify directly when it cannot make a faithful selection. Runtime does not parse current or recent shopper prose, suffix-match product phrases, classify shopper-named versus open roles, or validate a semantic relationship between `requested_product_type` and taxonomy. It validates structural completeness, capability-derived values and types, the one-category bound, category/subcategory coherence, supported search mode, and advertised hard constraints. A category-only search records the model-authored requested role and searched category separately; grounding presents category-scoped candidates under their actual catalog categories without asserting a parent relationship or catalog absence.
+     router. An exact opaque ref from the validated server-owned historical
+     product projection may authorize its own scalar detail read directly.
+     Natural, ordinal, shortened, or ambiguous earlier-product references are
+     submitted together in the one batched historical-resolution call before
+     separate detail reads. The default two-read cap fits one pair; an
+     unauthorized, conflicting, missing, or stale ref performs no substitute
+     search. Missing or ambiguous members clarify.
+   - Catalog capabilities generate `search_catalog_tool`'s flat schema with exact taxonomy values and non-taxonomy required-constraint properties. Product meaning is model-owned: the active skills and tool descriptions instruct the model to author `requested_product_type`, select faithful advertised taxonomy, use a category-only scope only when it judges that category to be a faithful parent, and clarify directly when it cannot make a faithful selection. A shopper-supplied product title remains identity: the full title stays in `semantic_query`, its product noun supplies `requested_product_type`, and title words do not become hard requirements unless the shopper states them independently. Runtime does not parse current or recent shopper prose, suffix-match product phrases, classify shopper-named versus open roles, or validate a semantic relationship between `requested_product_type` and taxonomy. It validates structural completeness, capability-derived values and types, the one-category bound, category/subcategory coherence, supported search mode, and advertised hard constraints. A category-only search records the model-authored requested role and searched category separately; grounding presents category-scoped candidates under their actual catalog categories without asserting a parent relationship or catalog absence.
    - Every search also carries required pre-retrieval `shopper_guidance`: one concise, product-agnostic sentence authored under the active skill. Any nonempty `unadvertised_requirements` lane fails closed without retrieval or repair. At most one structural catalog repair is available for the entire turn, not per semantic scope. It receives the current shopper message, typed search tool, compact capabilities, sanitized validator feedback, and active skill context. Independently valid `required_constraints`, `scope_complete`, and `search_mode` are preserved; `requested_product_type` and taxonomy are not locked from shopper prose. A no-tool repair produces the fixed clarification, and another validation failure after the repair closes to synthesis. Distinct valid taxonomy-plus-hard-constraint scopes may continue within the configured three-search cap.
-   - Cart mutations require explicit product/cart-line refs. Grounding reads actual tool-role messages, separates current-request evidence from prior-turn evidence, and never treats an assistant draft as evidence. Successful searches preserve the taxonomy-independent semantic query as internal ranking evidence, the pre-retrieval `shopper_guidance` as product-agnostic response framing, and each confirmed filter set with the products from that search. A completed search gets one final tools-disabled model step under the active skill, followed by the grounding editor. If the requested outcome depends on an unconfirmed material, fit, comfort, durability, care, weather, or other functional property, the response must disclose that gap and frame results as the closest catalog or styling direction rather than as proven suitable. If that draft or editor is unavailable, deterministic fallback uses search guidance, static skill `response_guidance`, returned names, prices, categories, and search-scoped confirmed filters, followed by the same generic unverified-property disclosure. Scoped zero-result evidence cannot establish absence outside its exact taxonomy and filters. The graph and grounding editor share one execution deadline; a grounding timeout finalizes as failed with `grounding_timeout`, uses the deterministic catalog renderer for search-only evidence, a verified-detail renderer for current successful detail evidence, and otherwise returns a fixed retry/cart-check response rather than the unverified draft. The detail renderer accepts only current tool-role messages named `get_product_details_tool` whose content starts with the canonical success marker, and preserves names, prices, categories, and listed fields—not a model-authored comparison judgment. Editor errors and empty or whitespace-only editor output use the same evidence-preserving split with `grounding_error`.
+   - Cart mutations require explicit product/cart-line refs. The main Deep Agent
+     receives the durable summary and bounded raw dialogue for semantic
+     continuity. Its final evidence composer is a separate authority boundary:
+     for every successfully activated turn without a fixed server response it
+     receives the current shopper request, bounded
+     shopper-authored continuity, the exact historical-product identity index,
+     active-skill response guidance, server-owned response requirements, the
+     authoritative cart, available images, and current-request typed tool
+     evidence, which may be empty. It does not receive the rolling summary,
+     prior assistant prose, prior-turn tool evidence, or the graph draft. This
+     also prevents a no-tool follow-up from repeating an earlier assistant claim
+     as current evidence.
+     Successful searches preserve
+     the taxonomy-independent semantic query as internal ranking evidence, the
+     pre-retrieval `shopper_guidance` as product-agnostic response framing, and
+     each confirmed filter set with the products from that search. If an outcome
+     depends on an unconfirmed material, fit, comfort, durability, care,
+     weather, or other functional property, the response discloses that gap and
+     frames results as the closest catalog or styling direction rather than as
+     proven suitable. Deterministic fallback uses current typed evidence,
+     search guidance, static skill `response_guidance`, and verified catalog
+     fields. Scoped zero-result evidence cannot establish absence outside its
+     exact taxonomy and filters. The graph and composer share one execution
+     deadline; a composition timeout finalizes as failed with
+     `grounding_timeout`, uses the deterministic catalog renderer for
+     search-only evidence, a verified-detail renderer for current successful
+     detail evidence, and otherwise returns a fixed retry/cart-check response.
+     Empty or invalid
+     composition uses the same evidence-preserving split with `grounding_error`.
    - Optional output guardrails run, then the memory service finalizes the durable turn as completed, blocked, or failed before products, images, content, and metrics are emitted over SSE. An exact retry of a finalized request replays its stored response without model/tool work. Internal diagnostics include bounded current-turn product evidence from successful catalog search and detail results plus bounded `catalog_scope_outcomes` for zero-result scopes; each search scope remains attached to its own products. Public query responses contain an empty diagnostics object by default. `EXPOSE_AGENT_DIAGNOSTICS=true` exposes the detailed trace only for a trusted operator or evaluation deployment. Final-text extraction skips tool, tool-calling, and internal activation messages; if no shopper-facing answer exists, the runtime returns a safe fallback with `incomplete_agent_response`. On graph failure, bounded current-turn messages are captured before checkpoint cleanup.
-   - A provider-neutral daily weather client and `get_weather_forecast_tool` factory exist as a dormant boundary. They accept only a five-digit US ZIP plus today, one exact date, or a complete inclusive date range. `WEATHER_ENABLED=false` is the default. The wrapper is not registered with Deep Agents, granted by a skill, mentioned in prompts, connected to shopper context, exposed through FastAPI, or called by the UI; startup, health checks, and shopper turns make no weather request.
+   - A provider-neutral daily weather client and `get_weather_forecast_tool`
+     factory exist as a dormant boundary. They accept only a five-digit US ZIP
+     plus today, one exact date, or a complete inclusive date range.
+     `WEATHER_ENABLED=false` is the default. The wrapper is not registered with
+     Deep Agents, granted by a skill, mentioned in prompts, connected to shopper
+     context, exposed through FastAPI, or called by the UI; startup, health
+     checks, and shopper turns make no weather request.
 4. For product discovery, chain server calls catalog retriever:
    - `/query/text` for text-only.
    - `/query/image` for text + image.
@@ -179,6 +214,9 @@ Current test assets:
   assistant turns plus bounded current-turn structured catalog evidence. The
   generated history is authoritative when it conflicts with a reference
   answer.
+- Shopping Judge preflight requires nonempty trusted evaluation diagnostics
+  before the first paid Judge request. Start the chain service with
+  `EXPOSE_AGENT_DIAGNOSTICS=true`; public/default responses remain unchanged.
 - Legacy/basic guardrails coverage under `guardrails/test/test_rails.py`.
 - GitHub Actions runs offline Python unit tests on pull requests when backend Python files, backend requirements, or unit-test files change (`.github/workflows/python-unit-tests.yml`). This workflow intentionally uses placeholder API-key environment values and must not depend on live services or external model endpoints.
 - GitHub Actions builds modified service Docker images on pull requests when service directories or compose build wiring change (`.github/workflows/docker-image-builds.yml`). This workflow is build-only and must not push images or require secrets.
@@ -274,11 +312,16 @@ Key env vars:
   `CHECKPOINT_STORE=memory` is the only supported value; a compliant production
   shared graph backend remains an open decision.
 - `DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS` defaults to 45 seconds and bounds one
-  model-stage budget shared by the Deep Agents graph and grounding editor. The
-  editor receives only the remaining time. Graph and grounding timeouts finalize
-  as failed using `agent_timeout` and `grounding_timeout`, respectively. Timeout
-  finalization uses the existing durable attempt fence; do not substitute the
-  stale-turn abandonment setting for this live execution deadline.
+  model-stage budget shared by the Deep Agents graph and final evidence
+  composer. The composer receives only the remaining time. Graph and grounding
+  timeouts finalize as failed using `agent_timeout` and `grounding_timeout`,
+  respectively. A graph timeout may salvage only current-request typed search
+  or detail text when every observed and pending business call is
+  policy-classified as read-only; product cards and images remain empty. Any
+  mutating or unknown call forces the retry/cart-check response. Timeout
+  finalization uses the existing durable attempt fence;
+  do not substitute the stale-turn abandonment setting for this live execution
+  deadline.
 - `conversation_summary` in chain config defaults to enabled, triggers at six
   unsummarized eligible turns, retains the newest two raw turns, caps output at
   4,096 characters, and uses a separate 15-second timeout. Its tools-disabled
@@ -290,8 +333,10 @@ Key env vars:
   envelopes. They do not store the rendered shopper-context block, raw media,
   model reasoning, or the complete graph/tool transcript. Contract v2 adds a
   rolling semantic-summary projection and watermark without deleting raw rows.
-  The serving prompt keeps the summary, exact post-watermark raw tail, and
-  historical-product projection in distinct lanes. Memory offers at most four
+  The main serving prompt keeps the summary, exact post-watermark raw tail, and
+  historical-product projection in distinct lanes. The final evidence composer
+  instead receives a bounded shopper-only projection and no summary or prior
+  assistant text. Memory offers at most four
   exact oldest eligible turns for one compare-and-swap advance; the chain never
   selects source turns itself. Unversioned v1 responses remain available for a
   rolling deployment: deploy memory before chain and roll back chain before
@@ -346,12 +391,15 @@ Key env vars:
   `/products/{product_id}`; current generated IDs are safe only within the
   active snapshot, so stale refs require a fresh search.
 - Current-request product evidence is process-local. Finalized product cards
-  also create a bounded durable same-conversation reference index; one unique
-  exact resolution can restore a prior product after restart or on another
-  worker. Its model-facing representation is compact JSON aligned with the
-  typed resolver fields; opaque refs have no display wrappers. Missing,
-  ambiguous, or stale-catalog references require clarification or a fresh
-  search.
+  also create a bounded durable same-conversation reference index. A validated
+  exact opaque ref in that projection may authorize a detail read directly;
+  natural, ordinal, shortened, or ambiguous references use one typed batch
+  resolver. Conflicting projection entries are excluded, and an exact-ref
+  detail read is checked against the active catalog name before its facts
+  become evidence. That narrow path does not authorize availability or cart
+  work.
+  Missing, ambiguous, or stale-catalog references require clarification or a
+  fresh current product choice.
 - Local LLM service is named `nemotron` (was `llama`); chain-server reaches it through `shared/configs/models.yaml` when the app LLM role uses `source: local_nim`.
 - Tool calling against the local NIM requires `--enable-auto-tool-choice --tool-call-parser llama3_json` passthrough args. Without them, requests with `tool_choice="auto"` 400.
 - The Deep Agents model first selects shopper skills through the internal
@@ -399,16 +447,19 @@ Key env vars:
   three-search cap, but the turn receives no second repair.
 - Duplicate search identity is normalized taxonomy plus hard constraints;
   changing only semantic wording cannot repeat a retrieval.
-- Grounding accepts product evidence only from tool-role messages. Current-turn
-  evidence is isolated by the server request marker; prior-turn tool evidence
-  may resolve a direct reference but cannot establish a new search or mutation.
+- Grounding accepts factual evidence only from current-request tool-role
+  messages isolated by the server request marker. Prior turns may supply
+  shopper-authored continuity and exact historical identity, but prior
+  assistant prose, prior tool evidence, the rolling summary, and the graph draft
+  are absent from final tool-backed composition and cannot establish a search,
+  detail read, mutation, or policy result.
   Successful search evidence records the model-authored semantic query as
   internal ranking direction and required pre-retrieval `shopper_guidance` as
   product-agnostic response framing. Completed successful search-only responses
-  receive one tools-disabled synthesis under the active skill and then the
-  grounding editor. Outcomes that depend on product properties absent from
+  receive one tools-disabled completion under the active skill and then the
+  final evidence composer. Outcomes that depend on product properties absent from
   tool evidence are disclosed as unconfirmed and framed as the closest catalog
-  or styling direction, not as proven suitable. If synthesis or editing cannot
+  or styling direction, not as proven suitable. If final composition cannot
   produce an answer, static
   `response_guidance` and deterministic per-search candidate and filter groups
   provide the fallback plus the same generic unverified-property disclosure. A
@@ -423,13 +474,12 @@ Key env vars:
   it must not claim a mutation without a successful cart result or invent facts
   absent from catalog detail evidence.
 - The right chat panel is fixed between the nav bar and global footer; keep `ui/src/chatbox.css` aligned with the navbar/footer heights when changing layout.
-- The Slice 3 weather client/tool is deliberately dormant. Keep it out of
+- The weather client/tool remains deliberately dormant. Keep it out of
   `DeepAgentsRuntime` registration, `SHOPPING_TOOL_POLICIES`, shopper-skill
   grants, prompts, request/state models, FastAPI, and UI until a separate
-  leveraging slice defines trusted location/date precedence, grounded evidence,
-  provider attribution, and forecast-uncertainty behavior. It needs no MCP
-  server and must never log the key, prepared URL, ZIP, requested dates,
-  resolved location, provider body, or raw exception.
+  leveraging slice is explicitly in scope. It needs no MCP server and must never
+  log the key, prepared URL, ZIP, requested dates, resolved location, provider
+  body, or raw exception.
 
 ## 8) Contribution and Commit Notes
 

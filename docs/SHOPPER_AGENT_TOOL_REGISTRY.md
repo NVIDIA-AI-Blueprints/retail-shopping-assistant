@@ -58,10 +58,13 @@ Every text search also requires `requested_product_type`, the shortest product
 noun or true umbrella from the current turn or direct antecedent. It excludes
 color, material, fit, occasion, weather, and style modifiers. It is `null` only
 for image-only search. The model owns exact, umbrella, open-role, alternative,
-comparison, ordering, negation, and parent-category semantics. A typed
-selection of multiple advertised subcategories in one category uses one catalog
-execution. Its candidate window covers the complete selection, and
-rank-preserving selection keeps one returned candidate per selected subcategory
+comparison, ordering, negation, and parent-category semantics. A
+shopper-supplied product title stays complete in `semantic_query`; its product
+noun supplies `requested_product_type`, and words within that title are not
+promoted into hard constraints unless the shopper independently states them as
+requirements. A typed selection of multiple advertised subcategories in one
+category uses one catalog execution. Its candidate window covers the complete
+selection, and rank-preserving selection keeps one returned candidate per selected subcategory
 when available before trimming to the configured result count. The runtime does
 not extract or validate that meaning from shopper prose. Each call covers at
 most one category. A category-only text search emits neutral evidence that
@@ -131,15 +134,22 @@ final configured search slot records `SEARCH_BUDGET_EXHAUSTED`; the next model
 step removes only `search_catalog_tool`. Product-detail, availability, and cart
 tools plus honest partial synthesis remain available.
 
-Grounding reads only tool-role messages and partitions current-turn evidence by
-the server-owned request marker. Prior-turn tool evidence may resolve a direct
-reference but cannot prove that a new search or mutation ran. For search-only
+The main Deep Agent reasons over the rolling semantic summary and full bounded
+shopper/assistant tail, but the final evidence composer receives a narrower
+request-scoped lane. It sees the current query, bounded shopper-authored
+continuity, active-skill response guidance, the historical product identity
+index, current cart and images, and only typed tool-role evidence partitioned by
+the server-owned request marker. That evidence lane may be empty: activated
+no-tool follow-ups still use the composer unless the server already owns a fixed
+response. It does not receive the rolling summary, prior
+assistant prose, prior tool output, or the main agent's draft. For search-only
 turns, successful search results carry `SEARCH_DIRECTION_EVIDENCE`: the
 model-authored semantic query used as an independent internal ranking preference,
 plus required pre-retrieval `shopper_guidance` authored under the active skill.
-A closed search gets one tools-disabled synthesis under that skill and then the
-grounding editor. Static skill `response_guidance` and pre-retrieval guidance
-support deterministic fallback. If the requested outcome depends on a
+A closed search may get one tools-disabled synthesis under that skill, but the
+final composer starts from its allowed evidence lanes rather than that draft.
+Static skill `response_guidance` and pre-retrieval guidance support
+deterministic fallback. If the requested outcome depends on a
 functional product property absent from evidence, grounding discloses the gap
 and frames candidates as the closest catalog or styling direction rather than
 as proven suitable; deterministic fallback makes the same generic disclosure.
@@ -198,7 +208,7 @@ termination reason to `incomplete_agent_response`.
 | --- | --- | --- | --- |
 | `activate_shopper_skills_tool` | `internal_control` | Validated static shopper-skill registry | Registered; required first step |
 | `search_catalog_tool` | `read_only_catalog` | Catalog retriever | Registered |
-| `get_product_details_tool` | `read_only_catalog` | Active catalog snapshot; request-local evidence authorizes the ref | Registered |
+| `get_product_details_tool` | `read_only_catalog` | Active catalog snapshot; request-local evidence or one strict historical ref capability authorizes the scalar read | Registered |
 | `resolve_conversation_products_tool` | `read_only_conversation` | Durable same-conversation presented-product events | Registered |
 | `get_cart_tool` | `read_only_cart` | Memory cart service | Registered |
 | `view_cart_total_tool` | `computed_read_cart` | Memory cart service plus cached line prices | Registered |
@@ -358,10 +368,11 @@ Outputs:
   no shopper-language interpretation, query expansion, or learned reranking.
 - Successful results carry the pre-retrieval `shopper_guidance` separately from
   product evidence. For a completed search-only response, the runtime runs one
-  tools-disabled synthesis under the active skill and grounds the draft against
-  tool-role evidence. Static skill `response_guidance` and pre-retrieval guidance
+  tools-disabled synthesis under the active skill, then composes the final
+  answer from the narrower current-evidence lanes described above rather than
+  from that draft. Static skill `response_guidance` and pre-retrieval guidance
   support deterministic fallback. Unconfirmed functional properties remain
-  explicit in both grounded synthesis and deterministic fallback, which frames
+  explicit in both final composition and deterministic fallback, which frames
   the products as the closest direction rather than as proven suitable.
   Prohibited outdoor/weather guarantee wording
 is first replaced with neutral selected-role guidance in that fallback; this does not
@@ -417,17 +428,21 @@ Failure behavior:
   exhausted detail budget, or other `STOP_TOOL_USE` result closes further tool
   use. Search-budget exhaustion removes only `search_catalog_tool`, as described
   above. Completed turns receive one tools-disabled synthesis from collected
-  evidence. Search-only drafts then pass through grounding, with deterministic
-  rendering as fail-closed fallback. The grounding editor receives only the
+  evidence. The final composer then starts from its allowed evidence lanes,
+  with deterministic rendering as fail-closed fallback. It receives only the
   remaining shared model-stage deadline. A timeout finalizes as failed with
-  `grounding_timeout`; verified current-turn product-detail evidence receives a
-  facts-only deterministic rendering, while other non-search turns receive a
-  fixed retry/cart-check response instead of the unverified draft. Other editor
-  failures and empty or whitespace-only successful editor responses use the
+  `grounding_timeout`; typed search evidence receives its deterministic
+  rendering, verified current-turn product-detail evidence
+  receives a facts-only deterministic rendering, and other turns receive the
+  fixed retry/cart-check response instead of the unverified draft. Other
+  composer failures and empty or whitespace-only successful responses use the
   same evidence-dependent fail-closed response with `grounding_error`.
-- If the Deep Agents loop fails after catalog search has returned products, the
-  runtime clears the failed thread checkpoint and returns a grounded partial
-  product summary instead of a generic shopper-facing error.
+- If the Deep Agents loop reaches `agent_timeout`, the runtime clears product
+  cards and images and finalizes the durable turn as failed. It may render valid
+  current-request typed search or detail evidence only when every observed and
+  pending business call is policy-classified as read-only; mutating or unknown
+  calls force the fixed retry/cart-check response. The request checkpoint is
+  deleted only after durable finalization succeeds.
 
 Skills that grant this tool:
 
@@ -445,22 +460,30 @@ Current limitations:
 
 ### `get_product_details_tool`
 
-Purpose: Read deeper facts for a known product established in current-request
-evidence by search or unique historical resolution.
+Purpose: Read deeper facts for a known product established by current-turn
+evidence, a unique semantic historical resolution, or an exact strict
+`PRODUCT_REF` capability from the validated historical index.
 
 Inputs:
 
-- `product_ref`: A `PRODUCT_REF` from current-turn search or a unique result from
-  `resolve_conversation_products_tool`.
+- `product_ref`: A `PRODUCT_REF` from current-turn search, a unique result from
+  `resolve_conversation_products_tool`, or the exact opaque ref exposed in the
+  server-validated historical-product index.
 
 Preconditions:
 
-- The ref must exist in request-local product evidence.
+- The ref must exist in request-local product evidence or exactly match one
+  unconflicted typed ref in the server-validated historical projection. The
+  latter authorizes only this scalar detail read and never enters general
+  request-local product evidence.
 - The agent must not pass display names as refs.
+- Natural names, shortened names, ordinals, pronouns, and other semantic
+  references still require the batched historical resolver; runtime does not
+  translate those phrases into refs.
 - For an explicit two-product comparison, call this scalar tool once per unique
   ref in separate model steps before answering. The default cap fits one pair.
-- A ref absent from request-local evidence performs no catalog read and consumes
-  no read budget.
+- A ref absent from both current evidence and the strict historical capability
+  set performs no catalog read and consumes no read budget.
 - The per-turn product-detail read cap applies. When reached, the tool returns
   a `STOP_TOOL_USE` instruction so the agent answers from details already read.
 
@@ -493,7 +516,9 @@ Side effects:
 
 Failure behavior:
 
-- Returns guidance to search the catalog first when the ref is unknown.
+- Returns a stop instruction to resolve the semantic reference or ask one
+  concise clarification when the ref is unknown; it does not substitute a
+  search.
 - Returns guidance to search again when an evidence-backed ref is absent from the
   active catalog snapshot.
 
@@ -506,9 +531,10 @@ Current limitations:
 
 - Source IDs in the current feed are generated and are not guaranteed across
   catalog replacements. Lookup is deterministic within the active snapshot.
-- Historical authorization requires one unique durable same-conversation
-  resolution in the current request. The resolver does not perform fuzzy
-  matching or enforce catalog-revision freshness.
+- Exact projected `PRODUCT_REF` authorization is limited to detail reads. Other
+  downstream operations still require current-request evidence from search or
+  one unique durable resolution. The resolver does not perform fuzzy matching
+  or enforce catalog-revision freshness.
 
 ### `resolve_conversation_products_tool`
 
@@ -985,8 +1011,9 @@ required. Normalized results preserve provider attribution metadata. A later
 shopper-facing slice must display the attribution required by the operator's
 license, add forecast-uncertainty language, and review
 [Visual Crossing storage and sharing terms](https://www.visualcrossing.com/weather-service-terms/)
-before persisting or exposing results. Slice 3 stores and displays no forecast
-and makes no weather request during startup, health checks, or shopper turns.
+before persisting or exposing results. The dormant boundary stores and displays
+no forecast and makes no weather request during startup, health checks, or
+shopper turns.
 
 ## Registration Standards For New Tools
 

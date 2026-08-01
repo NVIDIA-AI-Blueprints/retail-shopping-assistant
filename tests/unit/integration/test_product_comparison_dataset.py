@@ -33,13 +33,10 @@ def test_product_comparison_dataset_is_one_three_turn_gate() -> None:
 
     comparison = conversation["diagnostic_expectations"][2]
     assert comparison["required_skills"] == ["outfit-styling"]
-    assert comparison["required_tools"] == [
-        "resolve_conversation_products_tool",
-        "get_product_details_tool",
-    ]
+    assert comparison["required_tools"] == ["get_product_details_tool"]
     assert comparison["tool_call_counts"] == {
-        "resolve_conversation_products_tool": 1,
         "search_catalog_tool": 0,
+        "get_product_details_tool": 2,
     }
     assert comparison["required_product_detail_names"] == [
         "Intricate Lace Gown",

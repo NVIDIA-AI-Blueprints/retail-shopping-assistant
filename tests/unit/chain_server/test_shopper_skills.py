@@ -181,11 +181,13 @@ def test_outfit_styling_compares_prior_products_through_current_evidence() -> No
     assert "## compare established products" in normalized
     assert "not a request to search for those products again" in normalized
     assert "newest historical-product index" in normalized
-    assert "absent from current-request evidence together" in normalized
+    assert "exact opaque refs" in normalized
+    assert "already authorize product-detail reads" in normalized
+    assert "every unresolved compared product together" in normalized
     assert "single `resolve_conversation_products_tool` call" in normalized
     assert "never invent a fuzzy alias" in normalized
     assert "ambiguous or not found" in normalized
-    assert "once for each uniquely resolved product_ref" in normalized
+    assert "once for each exact or uniquely resolved product_ref" in normalized
     assert "separate model steps" in normalized
     assert "compare only item-specific confirmed fields" in normalized
 

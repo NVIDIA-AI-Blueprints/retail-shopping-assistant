@@ -70,6 +70,7 @@ from .conversation_memory import (
     TurnReplayOutput,
     TurnStartResult,
     format_conversation_context,
+    format_shopper_turn_context,
 )
 from .conversation_summary import (
     CONVERSATION_SUMMARY_SYSTEM_PROMPT,
@@ -84,6 +85,7 @@ from .conversation_products import (
     ResolveConversationProductsRequest,
     format_historical_product_index,
     format_product_resolution,
+    historical_product_capabilities,
 )
 from .media_perception import MediaPerceptionClient
 from .skill_activation import (
@@ -98,6 +100,7 @@ from .skill_activation import (
     selected_skill_names_for_turn,
 )
 from .tool_policy import (
+    SHOPPING_TOOL_POLICIES,
     load_shopper_skill_registry as _shopper_skill_registry,
     validate_registered_tool_names,
 )
@@ -259,11 +262,12 @@ _SHOPPER_CONTEXT_SYSTEM_RULES = """Representative-shopper precedence and safety:
 - A saved ZIP code is background location data only. It is not proof of current
   location, event location, weather, or a product requirement. Perform no
   weather lookup or weather inference from it."""
-_GROUNDING_EDITOR_SYSTEM_PROMPT = """You are a final response editor for a retail shopping assistant.
+_GROUNDING_EDITOR_SYSTEM_PROMPT = """You are the final evidence composer for a retail shopping assistant.
 
-Rewrite the draft response only as needed so it is grounded in TOOL EVIDENCE
-and CURRENT CART. Keep the shopper's requested task and any successful cart
-action intact.
+Compose one shopper-facing response only from the labeled inputs. CURRENT-TURN
+TOOL EVIDENCE and CURRENT CART are factual authority. USER QUERY, RECENT SHOPPER
+CONTEXT, ACTIVE SKILL RESPONSE GUIDANCE, and the historical product index supply
+intent and continuity but never product facts or tool outcomes.
 
 Rules:
 - Return only the final shopper-facing response text.
@@ -277,9 +281,8 @@ Rules:
   rationale and offer a detail check instead of inventing item-level differences.
 - Do not add products, prices, cart actions, or product facts absent from TOOL
   EVIDENCE or CURRENT CART.
-- CURRENT-TURN TOOL EVIDENCE is the only evidence for a search or mutation in
-  this turn. PRIOR-TURN TOOL EVIDENCE may support direct references to products
-  previously shown, but it does not prove that a new search or mutation ran.
+- CURRENT-TURN TOOL EVIDENCE is the only evidence for a search, detail read,
+  policy result, or mutation in this turn.
 - If TOOL EVIDENCE records a requested role separately from a category-only
   search scope, state which advertised category was searched. Keep each
   product's actual catalog category and do not relabel any result as the
@@ -288,21 +291,16 @@ Rules:
   and filter scope returned no products. It does not prove that a different,
   unsearched, or unadvertised product type is absent, and it never supports a
   catalog-wide availability claim.
-- Use RECENT DISCUSSION to resolve direct references such as "that" and
-  "those." A discussed product or styling anchor does not need to be in CURRENT
-  CART. RECENT DISCUSSION cannot establish whether the current search succeeded
-  or supply the current turn's candidates. Do not introduce an absent-cart
-  caveat unless the shopper asks about the cart or requests a cart mutation.
-- DURABLE CONVERSATION SUMMARY is semantic continuity only. It cannot establish
-  exact shopper wording, product identity or facts, cart truth, tool evidence,
-  tool permission, policy, or availability.
+- Use RECENT SHOPPER CONTEXT to understand shopper-authored direct antecedents.
+  The historical product index supplies exact product identity only. Neither
+  lane establishes product facts or a current tool outcome. Do not introduce an
+  absent-cart caveat unless the shopper asks about the cart or a cart mutation.
 - Remove PRODUCT_REF, CART_LINE_ID, tool names, and internal IDs.
 - Remove internal skill, mode, evaluator, judge, cache, backend, tool-evidence,
   structured-field, and data-layer language. Use shopper-safe phrasing such as
   "I don't have fabric or care details available for that item."
-- If the draft says "product detail tool", "catalog detail tool", "the tool
-  requires", or similar internal mechanics, rewrite it into shopper-safe
-  language without the word "tool".
+- Do not mention internal tool mechanics. Express an unavailable detail in
+  shopper-safe language without the word "tool".
 - If a product appears only in search results, you may state only its name,
   price, category/role, image availability, exact values in confirmed search-
   filter evidence, and a modest styling reason. Every other word in its display
@@ -312,8 +310,8 @@ Rules:
   value; multiple allowed values prove only membership in the set, not which
   value each product has. Do not infer adjacent attributes that the evidence
   does not name.
-- For styling, preserve a concise candidate set and the draft's grounded styling
-  rationale. Do not omit or override a confirmed filter merely because words in
+- For styling, give a concise candidate set and grounded styling rationale.
+  Do not omit or override a confirmed filter merely because words in
   a display name appear to conflict. If that visible conflict matters
   to the request, flag it as catalog information worth verifying rather than
   resolving it from the name.
@@ -362,7 +360,6 @@ Rules:
   simply answer the comparison.
 - Preserve exact cart totals and cart contents when they are present in CURRENT
   CART or tool evidence.
-- If the draft is already compliant, return it unchanged.
 """
 _EXCLUDED_DEEP_AGENT_TOOLS = frozenset(
     {"write_todos", "ls", "write_file", "edit_file", "glob", "grep", "execute"}
@@ -739,7 +736,9 @@ class DeepAgentsRuntime:
         state.shopper_context = None
         state.conversation_summary = ""
         state.context = ""
+        state.grounding_context = ""
         state.historical_product_context = ""
+        state.historical_product_capabilities = []
         turn = self._start_conversation_turn(state, identity)
         if turn is not None and turn.replayed:
             await self._delete_turn_checkpoint(identity)
@@ -843,6 +842,7 @@ class DeepAgentsRuntime:
             "recursion_limit": self.config.deepagents_recursion_limit,
         }
         agent = None
+        salvaged_agent_timeout = False
         try:
             execution_deadline = (
                 time.monotonic()
@@ -932,10 +932,27 @@ class DeepAgentsRuntime:
             if termination_reason == "agent_timeout":
                 state.product_results = []
                 state.retrieved = {}
-                state.response = (
-                    "This request took too long to complete. Please retry. If it "
-                    "involved a cart change, check your cart first."
+                partial_result = {"messages": partial_messages}
+                typed_response = (
+                    self._grounding_failure_fallback(
+                        state,
+                        partial_result,
+                        request_id=identity.request_id,
+                    )
+                    if _timeout_salvage_is_read_only(
+                        partial_result,
+                        request_id=identity.request_id,
+                    )
+                    else _GROUNDING_FAILURE_RESPONSE
                 )
+                if typed_response != _GROUNDING_FAILURE_RESPONSE:
+                    state.response = typed_response
+                    salvaged_agent_timeout = True
+                else:
+                    state.response = (
+                        "This request took too long to complete. Please retry. If it "
+                        "involved a cart change, check your cart first."
+                    )
             else:
                 fallback_response = _partial_product_results_response(state)
                 state.response = fallback_response or (
@@ -944,7 +961,8 @@ class DeepAgentsRuntime:
                 )
             _record_language_model_failure(state)
             state.timings["deepagents_error"] = time.monotonic() - start
-            return state
+            if not salvaged_agent_timeout:
+                return state
 
         if state.guardrails:
             safety_start = time.monotonic()
@@ -961,7 +979,8 @@ class DeepAgentsRuntime:
                     "final_termination_reason"
                 ] = "output_guardrail_blocked"
 
-        state.timings["deepagents"] = time.monotonic() - start
+        if not salvaged_agent_timeout:
+            state.timings["deepagents"] = time.monotonic() - start
         return state
 
     def _create_agent(
@@ -1018,6 +1037,9 @@ class DeepAgentsRuntime:
         product_detail_reads_this_turn = 0
         pending_taxonomy_constraints: dict[str, Any] | None = None
         product_evidence = ProductEvidence()
+        historical_product_evidence = ProductEvidence(
+            state.historical_product_capabilities
+        )
         product_resolution_used = False
         product_resolution_lock = Lock()
 
@@ -1402,19 +1424,29 @@ class DeepAgentsRuntime:
         @tool(return_direct=False)
         def get_product_details_tool(product_ref: str) -> str:
             """Get detailed facts (material, care, dimensions, closures) for a
-            product established in this turn by search or historical-product
-            resolution. Requires a PRODUCT_REF — not a product name. Do NOT call
-            for initial recommendations. For an explicit comparison, call once
-            for each compared PRODUCT_REF in separate model steps before
-            answering. Stop immediately if STOP_TOOL_USE is returned.
+            product established by current-turn evidence or by an exact
+            PRODUCT_REF in the server-owned historical index. Natural, ordinal,
+            shortened, or ambiguous earlier-product references still require one
+            batched historical-product resolution first. Do NOT pass a product
+            name and do NOT call for initial recommendations. For an explicit
+            comparison, call once for each compared PRODUCT_REF in separate
+            model steps before answering. Stop immediately if STOP_TOOL_USE is
+            returned.
             """
 
             nonlocal product_detail_reads_this_turn
             cached_product = product_evidence.get(product_ref)
+            historical_detail_capability = False
+            if cached_product is None:
+                cached_product = historical_product_evidence.get(product_ref)
+                if cached_product is not None:
+                    historical_detail_capability = True
             if cached_product is None:
                 return (
-                    f"No product with PRODUCT_REF '{product_ref}' is available. "
-                    "Search this turn or resolve the earlier product first."
+                    "STOP_TOOL_USE: No authorized product matches that exact "
+                    "PRODUCT_REF. Resolve a natural earlier-product reference "
+                    "once, or ask one concise clarification. Do not search for "
+                    "a substitute."
                 )
             if (
                 product_detail_reads_this_turn
@@ -1433,15 +1465,28 @@ class DeepAgentsRuntime:
                 timeout_seconds=self.config.catalog_search_timeout_seconds,
             )
             if not detail_result.ok or detail_result.product is None:
-                return _product_detail_failure_message(
+                failure = _product_detail_failure_message(
                     detail_result.error,
                     cart_validation=False,
                 )
+                if historical_detail_capability:
+                    return (
+                        "STOP_TOOL_USE: The historical product could not be "
+                        f"verified in the current catalog. {failure} Do not "
+                        "search for a substitute."
+                    )
+                return failure
             product = detail_result.product
             if not _same_product_display_name(
                 product.display_name,
                 cached_product.display_name,
             ):
+                if historical_detail_capability:
+                    return (
+                        "STOP_TOOL_USE: That historical PRODUCT_REF now maps to "
+                        "a different catalog item. Ask the shopper to choose a "
+                        "current product; do not search for a substitute."
+                    )
                 return (
                     "That product reference now resolves to a different item. "
                     "Search the catalog again before using its details."
@@ -1984,6 +2029,7 @@ class DeepAgentsRuntime:
         request_id: str,
         timeout_seconds: float | None = None,
     ) -> str:
+        response_requirement = ""
         clarification = _catalog_repair_clarification_response(
             result,
             request_id=request_id,
@@ -2006,7 +2052,7 @@ class DeepAgentsRuntime:
                 request_id=request_id,
             ):
                 return _scrub_internal_shopper_language(clarification)
-            draft_response = clarification
+            response_requirement = clarification
         rejected_search_response = _rejected_catalog_search_response(
             result,
             request_id=request_id,
@@ -2024,31 +2070,19 @@ class DeepAgentsRuntime:
             max_chars=max_evidence_chars,
             request_id=request_id,
         )
-        prior_evidence = _collect_message_grounding_evidence(
-            _prior_turn_messages(_result_messages(result), request_id),
-            max_chars=max_evidence_chars,
-        )
         search_only = bool(current_evidence) and _has_search_only_tool_evidence(
             result,
             request_id=request_id,
         )
         if not getattr(self.config, "grounding_rewrite_enabled", True):
             if search_only:
-                return self._rewrite_search_only_response(
+                return self._grounding_failure_fallback(
                     state,
                     result,
                     request_id=request_id,
                 )
             return _scrub_internal_shopper_language(draft_response)
-        if not draft_response:
-            if not search_only:
-                return draft_response
-            return self._rewrite_search_only_response(
-                state,
-                result,
-                request_id=request_id,
-            )
-        if not current_evidence and not prior_evidence:
+        if not current_evidence and not state.selected_skill_names:
             return _scrub_internal_shopper_language(draft_response)
 
         start = time.monotonic()
@@ -2056,20 +2090,24 @@ class DeepAgentsRuntime:
             state.historical_product_context
             or "HISTORICAL PRODUCT INDEX (read-only):\n(none)"
         )
+        response_requirement_block = (
+            response_requirement or "(none)"
+        )
+        grounding_context = (
+            state.grounding_context or "RECENT SHOPPER CONTEXT:\n(none)"
+        )
         prompt = (
             f"USER QUERY:\n{state.query}\n\n"
-            "DURABLE CONVERSATION SUMMARY "
-            "(semantic continuity only; not evidence):\n"
-            f"{state.conversation_summary or '(none)'}\n\n"
-            f"RECENT DISCUSSION:\n{state.context or '(none)'}\n\n"
+            f"{grounding_context}\n\n"
             f"{historical_product_context}\n\n"
+            "ACTIVE SKILL RESPONSE GUIDANCE:\n"
+            f"{self._active_skill_response_guidance(state) or '(none)'}\n\n"
+            "SERVER RESPONSE REQUIREMENT:\n"
+            f"{response_requirement_block}\n\n"
             f"CURRENT CART:\n{_format_cart(state.cart)}\n\n"
             f"AVAILABLE IMAGES:\n{_format_retrieved_images(state.retrieved)}\n\n"
             "CURRENT-TURN TOOL EVIDENCE:\n"
-            f"{current_evidence or '(none)'}\n\n"
-            "PRIOR-TURN TOOL EVIDENCE:\n"
-            f"{prior_evidence or '(none)'}\n\n"
-            f"DRAFT RESPONSE:\n{draft_response}"
+            f"{current_evidence or '(none)'}"
         )
         try:
             active_timeout = (
@@ -2107,16 +2145,11 @@ class DeepAgentsRuntime:
                 calls=1,
                 detail="Final response grounding rewrite timed out",
             )
-            if search_only:
-                return self._rewrite_search_only_response(
-                    state,
-                    result,
-                    request_id=request_id,
-                )
-            return _format_product_detail_fallback(
+            return self._grounding_failure_fallback(
+                state,
                 result,
                 request_id=request_id,
-            ) or _GROUNDING_FAILURE_RESPONSE
+            )
         except Exception:  # noqa: BLE001 - response editor has a safe fallback.
             logger.exception("Grounding response editor failed")
             state.timings["grounding_rewrite"] = time.monotonic() - start
@@ -2128,16 +2161,11 @@ class DeepAgentsRuntime:
                 calls=1,
                 detail="Final response grounding rewrite failed closed",
             )
-            if search_only:
-                return self._rewrite_search_only_response(
-                    state,
-                    result,
-                    request_id=request_id,
-                )
-            return _format_product_detail_fallback(
+            return self._grounding_failure_fallback(
+                state,
                 result,
                 request_id=request_id,
-            ) or _GROUNDING_FAILURE_RESPONSE
+            )
 
         state.timings["grounding_rewrite"] = time.monotonic() - start
         state.token_usage = _merge_token_usage(
@@ -2157,16 +2185,11 @@ class DeepAgentsRuntime:
                 calls=1,
                 detail="Final response grounding rewrite returned empty output",
             )
-            if search_only:
-                return self._rewrite_search_only_response(
-                    state,
-                    result,
-                    request_id=request_id,
-                )
-            return _format_product_detail_fallback(
+            return self._grounding_failure_fallback(
+                state,
                 result,
                 request_id=request_id,
-            ) or _GROUNDING_FAILURE_RESPONSE
+            )
         _add_model_usage(
             state,
             "app_llm_grounding_editor",
@@ -2175,6 +2198,29 @@ class DeepAgentsRuntime:
             detail="Final response grounding rewrite",
         )
         return _scrub_internal_shopper_language(rewritten)
+
+    def _grounding_failure_fallback(
+        self,
+        state: State,
+        result: Any,
+        *,
+        request_id: str,
+    ) -> str:
+        """Compose independent typed evidence lanes without model rewriting."""
+
+        detail_response = _format_product_detail_fallback(
+            result,
+            request_id=request_id,
+        )
+        if detail_response:
+            return detail_response
+        if _search_result_groups(result, request_id=request_id):
+            return self._rewrite_search_only_response(
+                state,
+                result,
+                request_id=request_id,
+            )
+        return _GROUNDING_FAILURE_RESPONSE
 
     def _rewrite_search_only_response(
         self,
@@ -2506,8 +2552,9 @@ Rules:
 - When the shopper asks to add multiple selected products, call
   add_cart_items_tool once with an item list. The tool may report partial
   success; the final answer must clearly distinguish added items from failures.
-- Use PRODUCT_REF established by current-turn search or historical-product
-  resolution when requesting product details. Do not pass display names to
+- Use PRODUCT_REF established by current-turn search, an exact ref in the
+  server-owned historical product index, or historical-product resolution when
+  requesting product details. Do not pass display names to
   get_product_details_tool.
 - Use internal identifiers only in tool calls. Do not expose PRODUCT_REF or
   CART_LINE_ID in customer-facing responses.
@@ -2653,7 +2700,9 @@ Rules:
             logger.error("Failed to start durable conversation turn: %s", exc)
             state.conversation_summary = ""
             state.context = ""
+            state.grounding_context = ""
             state.historical_product_context = ""
+            state.historical_product_capabilities = []
             state.cart = Cart()
             state.shopper_context = None
             error_code = getattr(exc, "code", "memory_start_payload_invalid")
@@ -2707,6 +2756,10 @@ Rules:
             turn.recent_turns,
             max_chars=max(1000, int(self.config.memory_length)),
         )
+        state.grounding_context = format_shopper_turn_context(
+            turn.recent_turns,
+            max_chars=max(1000, int(self.config.memory_length)),
+        )
         state.previous_selected_skill_names = list(
             turn.previous_selected_skill_names
         )
@@ -2715,6 +2768,11 @@ Rules:
             turn.projection.product_reference_index
         )
         state.historical_product_context = historical_products
+        state.historical_product_capabilities = list(
+            historical_product_capabilities(
+                turn.projection.product_reference_index
+            )
+        )
         state.cart = Cart(
             contents=[
                 item.model_dump(mode="json", exclude_none=True) for item in turn.cart
@@ -3059,19 +3117,6 @@ def _current_turn_messages(messages: list[Any], request_id: str) -> list[Any]:
         if marker in _content_to_text(_value(message, "content")):
             start = index + 1
     return [] if start is None else messages[start:]
-
-
-def _prior_turn_messages(messages: list[Any], request_id: str) -> list[Any]:
-    """Return messages before the current server-owned request marker."""
-
-    marker = f"REQUEST ID: {request_id}"
-    for index in range(len(messages) - 1, -1, -1):
-        message = messages[index]
-        if _message_type(message) != "human":
-            continue
-        if marker in _content_to_text(_value(message, "content")):
-            return messages[:index]
-    return []
 
 
 def _rejected_catalog_search_response(
@@ -3585,6 +3630,31 @@ def _partial_product_results_response(state: State) -> str:
     return "\n".join(lines)
 
 
+def _timeout_salvage_is_read_only(result: Any, *, request_id: str) -> bool:
+    """Allow timeout salvage only when every business call is policy-read-only."""
+
+    observed_read = False
+    for message in _current_turn_messages(_result_messages(result), request_id):
+        message_type = _message_type(message)
+        if message_type == "ai":
+            tool_names = [
+                _normalized_tool_call(raw_call)["tool_name"]
+                for raw_call in list(_value(message, "tool_calls") or [])
+            ]
+        elif message_type == "tool":
+            tool_names = [str(_value(message, "name") or "")]
+        else:
+            continue
+        for tool_name in tool_names:
+            if tool_name in {SKILL_ACTIVATION_TOOL_NAME, "read_file"}:
+                continue
+            policy = SHOPPING_TOOL_POLICIES.get(tool_name)
+            if policy is None or policy.risk != "read":
+                return False
+            observed_read = True
+    return observed_read
+
+
 def _has_search_only_tool_evidence(result: Any, *, request_id: str) -> bool:
     """Return whether current-turn commerce evidence contains only searches."""
 
@@ -3839,6 +3909,8 @@ def _search_result_groups(result: Any, *, request_id: str) -> list[dict[str, Any
     for message in _current_turn_messages(_result_messages(result), request_id):
         if _message_type(message) != "tool":
             continue
+        if str(_value(message, "name") or "") != "search_catalog_tool":
+            continue
         content = _content_to_text(_value(message, "content"))
         if "SEARCH_RESULT_GROUNDING_NOTE" not in content:
             continue
@@ -3862,9 +3934,9 @@ def _search_result_groups(result: Any, *, request_id: str) -> list[dict[str, Any
 def _grouped_search_response_lines(
     groups: list[dict[str, Any]],
 ) -> tuple[list[str], set[str]]:
-    """Render multi-search candidates without losing their guidance scope."""
+    """Render typed search groups without losing their guidance scope."""
 
-    if len(groups) < 2 or not all(group.get("guidance") for group in groups):
+    if not groups or not all(group.get("guidance") for group in groups):
         return [], set()
     lines: list[str] = []
     displayed_names: set[str] = set()

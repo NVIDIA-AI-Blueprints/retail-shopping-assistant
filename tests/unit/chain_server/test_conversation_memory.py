@@ -17,6 +17,7 @@ from chain_server.src.conversation_memory import (
     TurnReplayOutput,
     build_request_digest,
     format_conversation_context,
+    format_shopper_turn_context,
 )
 
 _MISSING = object()
@@ -596,6 +597,32 @@ def test_context_formatter_excludes_blocked_turns() -> None:
     assert "blocked response" not in rendered
     assert "Show me bags" in rendered
     assert "Here are two bags." in rendered
+
+
+def test_shopper_context_formatter_excludes_all_assistant_prose() -> None:
+    rendered = format_shopper_turn_context(
+        [
+            RecentConversationTurn(
+                sequence=1,
+                shopper_text="I need a polished look for next Friday.",
+                assistant_text="Both candidates are definitely silk.",
+                status="completed",
+            ),
+            RecentConversationTurn(
+                sequence=2,
+                shopper_text="Now compare the two dresses.",
+                assistant_text="I compared them.",
+                status="completed",
+            ),
+        ],
+        max_chars=420,
+    )
+
+    assert rendered.startswith("RECENT SHOPPER CONTEXT:")
+    assert "I need a polished look for next Friday." in rendered
+    assert "Now compare the two dresses." in rendered
+    assert "definitely silk" not in rendered
+    assert "I compared them" not in rendered
 
 
 def test_context_formatter_is_bounded_and_keeps_the_newest_turn() -> None:

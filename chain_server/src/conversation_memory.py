@@ -507,6 +507,48 @@ def format_conversation_context(
     return _format_recent_turns(selected, max_chars)
 
 
+def format_shopper_turn_context(
+    recent_turns: Sequence[RecentConversationTurn],
+    *,
+    max_chars: int = _DEFAULT_CONTEXT_MAX_CHARS,
+) -> str:
+    """Render bounded shopper-authored continuity without assistant prose."""
+
+    if max_chars < 256:
+        raise ValueError("max_chars must be at least 256")
+    selected = sorted(
+        (
+            turn
+            for turn in recent_turns
+            if turn.status not in {"abandoned", "blocked"}
+            and turn.assistant_text is not None
+        ),
+        key=lambda turn: turn.sequence,
+    )
+    heading = "RECENT SHOPPER CONTEXT:"
+    if not selected:
+        return ""
+
+    retained: list[str] = []
+    used = len(heading) + 1
+    for turn in reversed(selected):
+        shopper = _inline_text(turn.shopper_text) or "(empty)"
+        block = f"[turn {turn.sequence}] User: {shopper}"
+        separator = 1 if retained else 0
+        available = max_chars - used - separator
+        if len(block) <= available:
+            retained.append(block)
+            used += len(block) + separator
+            continue
+        if not retained and available >= 32:
+            retained.append(_truncate(block, available))
+        break
+
+    if not retained:
+        return heading
+    return f"{heading}\n" + "\n".join(reversed(retained))
+
+
 def _format_recent_turns(
     turns: Sequence[RecentConversationTurn],
     max_chars: int,

@@ -22,6 +22,11 @@ CATALOG_SEARCH_RULES = """- Call search_catalog_tool when exact advertised
   umbrella. For example, skirts can satisfy bottoms; dresses cannot.
 - Each search owns one complete retrieval scope. `semantic_query` supplies
   ranking direction only; it cannot change or repair the selected taxonomy.
+- When the shopper supplies a product title, treat the title as product identity:
+  keep the complete title in `semantic_query`, use its product noun for
+  `requested_product_type`, and do not split words inside the title into
+  `required_constraints`. A title word becomes a separate requirement only
+  when the shopper independently states that attribute as required.
 - Each search covers at most one catalog category and one focused product role.
   Include every faithful advertised subtype for that role in the same search.
   Use separate searches for separate roles, up to the configured turn limit.

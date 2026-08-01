@@ -41,11 +41,14 @@ SDK adapter:
   returned by catalog search for add operations, and `CART_LINE_ID` values
   returned by cart reads for remove operations. They do not perform hidden
   product-name lookup or fuzzy cart-line matching.
-- Deep Agents product details lookup uses explicit `PRODUCT_REF` values from a
-  current-turn search or a unique durable same-conversation resolution, then
-  reads the active catalog through `GET /products/{product_id}`. It is not a
-  second broad search path. Authorization exists only in request-local product
-  evidence, not the graph checkpoint.
+- Deep Agents product details lookup uses an explicit `PRODUCT_REF` from a
+  current-turn search, a unique durable same-conversation resolution, or an
+  exact unconflicted ref in the validated historical-product projection. That
+  last path is a narrow typed capability for the scalar detail read only;
+  natural names, ordinals, and shortened references still use the resolver.
+  The tool then reads the active catalog through
+  `GET /products/{product_id}`. It is not a second broad search path, and no
+  authorization comes from the graph checkpoint or assistant prose.
 - Finalized ordered product-card output creates one durable
   `candidate_set_presented` event and refreshes a compact per-conversation
   reference index. The typed resolver returns 0/1/many matches; only one match
@@ -110,7 +113,6 @@ SDK adapter:
   placeholders and sets `configured: true`. Product availability is a
   deliberate no-I/O stub for a known conversation product ref. It reports
   `in_stock` using a fixed category rule; it does not query live inventory.
-
 The runtime Deep Agents tool names, risk classes, skill access boundaries, and
 registered-vs-planned status are tracked separately in
 [Shopper Agent Tool Registry](SHOPPER_AGENT_TOOL_REGISTRY.md). This document
@@ -213,9 +215,16 @@ Every successful search tool result carries `SEARCH_DIRECTION_EVIDENCE`, the
 model-authored `semantic_query` used as an independent private catalog ranking
 preference, and the pre-retrieval `shopper_guidance` authored under the active
 skill. Neither is a confirmed product attribute. Completed search-only
-responses receive one tools-disabled synthesis under the active skill and then
-the grounding editor. Product-agnostic guidance and static skill
-`response_guidance` support deterministic fallback, which lists all returned candidates, adds a
+responses may receive one tools-disabled synthesis under the active skill. The
+main Deep Agent may reason with the rolling summary and full bounded
+shopper/assistant tail, but final composition is narrower: current query,
+bounded shopper-authored continuity, active-skill guidance, historical product
+identity, current cart/images, and typed current-request tool evidence. It
+excludes the rolling summary, prior assistant prose, prior tool output, and the
+main agent's draft. The evidence composer therefore starts from authoritative
+lanes rather than rewriting model prose. Product-agnostic guidance and static
+skill `response_guidance` support deterministic fallback, which lists all
+returned candidates, adds a
 neutral continuation for partial successful evidence, and groups each search's
 guidance and confirmed filters with its originating products. When the requested
 outcome depends on a functional product property absent from evidence, grounding
@@ -223,11 +232,12 @@ must disclose the gap and frame candidates as the closest catalog or styling
 direction rather than as proven suitable; deterministic fallback carries the
 same generic unverified-property disclosure. A zero-result response
 retains its exact advertised taxonomy and confirmed filters, so it cannot
-establish absence for another product type or the whole catalog. The grounding
-editor receives only the remaining shared model-stage deadline. A timeout
-finalizes as failed with `grounding_timeout`; non-search turns receive a fixed
-retry/cart-check response instead of the unverified draft. Other editor failures
-and empty or whitespace-only successful editor responses use the same
+establish absence for another product type or the whole catalog. The final
+composer receives only the remaining shared model-stage deadline. A timeout
+finalizes as failed with `grounding_timeout`; typed search and detail evidence
+use their deterministic renderers, while other turns receive the fixed
+retry/cart-check response instead of the unverified draft. Other composer
+failures and empty or whitespace-only successful responses use the same
 fail-closed response with `grounding_error`.
 Tool-loop repair is also bounded: the first eligible invalid search may consume
 the turn's single structural repair. Repair middleware may preserve
@@ -267,9 +277,13 @@ Milvus primary keys and product names are never commerce identities. The
 current feed's generated IDs are only guaranteed within the active catalog
 snapshot. Detail reads and cart adds verify refs against that snapshot and
 require a fresh search when a ref is stale. The runtime keeps refs only in
-request-local evidence. A later turn can recover one exact product from durable
-product-card events in the same conversation, including after a chain-server
-restart. The current resolver does not perform fuzzy matching,
+request-local evidence for general downstream work. A later turn can recover
+one exact product from durable product-card events in the same conversation,
+including after a chain-server restart. In addition, an exact opaque
+`PRODUCT_REF` from the validated compact projection is a strict capability for
+that product's scalar detail read without a resolver call. Natural, ordinal,
+shortened, or otherwise semantic references still use the resolver. The
+current resolver does not perform fuzzy matching,
 cross-conversation lookup, or catalog-revision invalidation, so an absent or
 changed active product still requires a fresh search.
 

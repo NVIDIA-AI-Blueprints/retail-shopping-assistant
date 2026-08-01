@@ -17,12 +17,12 @@ answers:
     performance properties.
   - >-
     Treat this as a comparison inside the active outfit-styling thread, not as
-    another search. Resolve the Intricate Lace Gown and Wavy Hem Satin Dress
-    from the durable prior-product index in one batched call, then read current
-    catalog details for both before comparing them. Compare only confirmed
-    prices, categories, and product-detail facts, distinguish styling judgment
-    from catalog facts, disclose material gaps, and make a concise choice for
-    the stated occasion. Run no catalog search.
+    another search. Use exact refs in the durable prior-product index directly,
+    or resolve the named pair once if semantic resolution is needed, then read
+    current catalog details for both. Compare only confirmed prices, categories,
+    and product-detail facts, distinguish styling judgment from catalog facts,
+    disclose material gaps, and make a concise choice for the stated occasion.
+    Run no catalog search.
 diagnostic_expectations:
   - required_tools: [search_catalog_tool]
     forbidden_tools:
@@ -45,16 +45,14 @@ diagnostic_expectations:
       resolve_conversation_products_tool: 0
       get_product_details_tool: 0
   - required_skills: [outfit-styling]
-    required_tools:
-      - resolve_conversation_products_tool
-      - get_product_details_tool
+    required_tools: [get_product_details_tool]
     forbidden_tools:
       - search_catalog_tool
       - check_product_availability_tool
       - check_active_promotions_tool
     tool_call_counts:
-      resolve_conversation_products_tool: 1
       search_catalog_tool: 0
+      get_product_details_tool: 2
     required_product_detail_names:
       - Intricate Lace Gown
       - Wavy Hem Satin Dress

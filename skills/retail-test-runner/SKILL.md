@@ -66,6 +66,10 @@ The integration suite lives under `tests/integration` and drives live HTTP endpo
 - For LLM-as-judge scoring, set explicit judge configuration in the repo-root
   `.env` or launching shell: `JUDGE_BASE_URL`, `JUDGE_MODEL`,
   `JUDGE_API_KEY_ENV`, and the API key variable named by `JUDGE_API_KEY_ENV`.
+  Start the trusted evaluation chain service with
+  `EXPOSE_AGENT_DIAGNOSTICS=true`; shopping Judge preflight rejects empty
+  diagnostics before the first paid Judge request so catalog-backed products
+  are not scored without their authoritative current-turn evidence.
   Use `--skip-quality` to run endpoint integration without the judge stage.
 
 The runner preflights the selected conversation directory and service URL. Use `--no-preflight` only when intentionally testing a nonstandard setup.

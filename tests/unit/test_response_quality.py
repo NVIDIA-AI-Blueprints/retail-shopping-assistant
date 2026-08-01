@@ -279,3 +279,33 @@ def test_diagnostic_expectations_match_structural_tool_argument_subset(monkeypat
             diagnostics,
             label="catalog turn",
         )
+
+
+def test_shopping_judge_preflight_requires_exposed_agent_diagnostics(
+    monkeypatch,
+    tmp_path,
+):
+    response_quality = _load_response_quality(monkeypatch)
+    query_dir = tmp_path / "golden"
+    result_dir = tmp_path / "results"
+    query_dir.mkdir()
+    result_dir.mkdir()
+    (query_dir / "conv_0.yaml").write_text(
+        "queries:\n- Show me bags.\nanswers:\n- Here are some bags.\n",
+        encoding="utf-8",
+    )
+    (result_dir / "conv_0.yaml").write_text(
+        "results:\n"
+        "- query: Show me bags.\n"
+        "  response: Here are two bags.\n"
+        "  agent_diagnostics: {}\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(AssertionError, match="EXPOSE_AGENT_DIAGNOSTICS=true"):
+        response_quality._preflight_diagnostic_expectations(
+            str(query_dir),
+            str(result_dir),
+            ["conv_0.yaml"],
+            require_agent_diagnostics=True,
+        )

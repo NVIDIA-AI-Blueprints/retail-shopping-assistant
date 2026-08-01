@@ -49,12 +49,18 @@ Use for search, browse, and filter requests. Do not expose skill names or tool n
 ## Operating Principles
 
 - Use this as the single primary procedure for non-styling discovery; do not combine it with outfit-styling. Budget-shopping may accompany it only as a modifier.
-- Use `resolve_conversation_products_tool` only for an earlier product not
-  established this turn. Zero or multiple matches require one concise
-  clarification; never guess, search for a substitute, or mutate the cart.
+- An exact `PRODUCT_REF` in the server-owned historical index can be used
+  directly for a product-detail read. Use `resolve_conversation_products_tool`
+  once for natural, shortened, ordinal, or otherwise semantic earlier-product
+  references. Zero or multiple matches require one concise clarification;
+  never guess, search for a substitute, or mutate the cart.
 - When one selected taxonomy value directly represents the requested role, `requested_product_type` must name that value. When a true shopper-named umbrella spans multiple advertised children, include every selected value that is genuinely a kind of that umbrella. The semantic query may focus on soft ranking direction.
 - An objective attribute that defines the requested products is a must-have even when the shopper does not say the words "must have." For example, "Do you have water-resistant bags?" makes water resistance required. Subjective recommendation adjectives always remain semantic ranking direction.
 - Start with one focused catalog search using exact advertised values that faithfully represent the shopper's product type. If the type is not separately advertised and one advertised category is its faithful broader parent, select only that category and keep the type as semantic ranking direction. If either choice would require guessing, ask one concise clarification directly without calling the tool. For a true umbrella or explicit alternatives, include every faithful advertised child in the same search. Never substitute a sibling or arbitrary adjacent type. Do not fan out with synonym queries for the same scope.
+- Treat a shopper-supplied product title as identity. Keep the whole title in
+  the semantic query and use its product noun as `requested_product_type`; do
+  not split title words into hard requirements unless the shopper separately
+  states that attribute as required.
 - Set `requested_product_type` to the shortest product noun or umbrella. Exclude color, material, fit, occasion, weather, and style modifiers. For a genuinely open role, use the one advertised subcategory chosen for that role. Use null only for image-only search.
 - For one requested product role, make one inclusive search using only faithful advertised types for that role. Do not spend unused search budget on adjacent categories or one-piece substitutes.
 - Each search covers at most one catalog category. Include all faithful advertised subtypes for the requested role in that call, but do not mix unrelated categories in one retrieval.

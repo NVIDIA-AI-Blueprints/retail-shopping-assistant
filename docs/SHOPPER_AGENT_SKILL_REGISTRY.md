@@ -114,21 +114,24 @@ records `SEARCH_BUDGET_EXHAUSTED`; the next model step removes only
 `search_catalog_tool`. Product-detail, availability, and cart work plus honest
 partial synthesis remain available.
 
-After the Deep Agent drafts a response from tool calls, the runtime can run a
-configurable grounding boundary over the final shopper-facing text. It accepts
-only actual tool-role messages, isolates current-turn evidence with the
-server-owned request marker, and supplies prior-turn tool evidence separately.
-Prior evidence may support a direct reference to an earlier product, but it
-cannot prove that a new search or cart mutation ran. Assistant drafts are never
-re-ingested as evidence.
+The main Deep Agent reasons with the rolling semantic summary and full bounded
+shopper/assistant tail. After it calls tools, the configurable final evidence
+composer uses a deliberately narrower request-scoped projection: the current
+query, bounded shopper-authored continuity, active-skill response guidance, the
+read-only historical product identity index, current cart and images, and only
+actual current-turn tool-role messages isolated by the server-owned request
+marker. It receives neither the rolling summary, prior assistant prose, prior
+tool output, nor the main agent's draft. An earlier response therefore cannot
+become current search or mutation evidence merely by being repeated.
 
 For a completed successful search-only turn, each search carries the
 model-authored semantic query as independent internal `SEARCH_DIRECTION_EVIDENCE`
 and required pre-retrieval `shopper_guidance` authored under the active skill.
-The runtime gives the active skill one final tools-disabled synthesis step, then
-grounds that draft against tool-role evidence. Static `response_guidance` and
-the pre-retrieval guidance are used by the deterministic fallback when the
-draft or editor is unavailable. If the requested outcome depends on a
+The runtime may give the active skill one final tools-disabled synthesis step,
+but the final composer starts again from the allowed evidence lanes rather than
+that draft. Static `response_guidance` and the pre-retrieval guidance are used
+by deterministic fallback when synthesis or composition is unavailable. If the
+requested outcome depends on a
 functional product property absent from evidence, final grounding explicitly
 marks it unconfirmed and presents the candidates as the closest catalog or
 styling direction rather than as proven suitable; deterministic fallback ends
@@ -151,14 +154,14 @@ rejection is the sole current-turn business-tool outcome.
 An incomplete successful scope receives a neutral
 offer to continue with the next requested piece or search scope. Scoped
 zero-result evidence retains its exact advertised taxonomy and filters and
-cannot support a broader absence claim. Other
-tool-backed responses use the grounding editor to remove unsupported product
-claims, surface guarantees, and internal refs.
-The editor receives only the remaining shared model-stage deadline. A timeout
-finalizes the turn as failed with `grounding_timeout`; search-only evidence uses
-deterministic catalog rendering, current-turn verified product-detail evidence
-uses a facts-only deterministic rendering, and other turns receive a fixed
-retry/cart-check response instead of the unverified draft. Editor errors and
+cannot support a broader absence claim. Other current-evidence turns use the
+final composer to produce a shopper-facing answer without unsupported product
+claims, surface guarantees, or internal refs.
+The composer receives only the remaining shared model-stage deadline. A timeout
+finalizes the turn as failed with `grounding_timeout`; typed search evidence
+uses deterministic rendering, current-turn verified product-detail
+evidence uses a facts-only deterministic rendering, and other turns receive the
+fixed retry/cart-check response instead of the unverified draft. Composer errors and
 empty or whitespace-only output use the same evidence-dependent fail-closed
 response with `grounding_error`.
 Grounding is enabled by default and can be disabled with
@@ -185,7 +188,7 @@ outcomes from diagnostics.
 | Skill | Source | Status | Role | Tools granted | Primary entry modes |
 | --- | --- | --- | --- | --- | --- |
 | `product-discovery` | `chain_server/skills/shopper/product-discovery/SKILL.md` | Registered | `primary` / `product_procedure` | Search, details, availability, promotions, same-conversation product resolution | General search, category browsing, filter-driven discovery without styling intent |
-| `outfit-styling` | `chain_server/skills/shopper/outfit-styling/SKILL.md` | Registered | `primary` / `product_procedure` | Search, details, availability, promotions, same-conversation product resolution | Build, complete, or refine a look; coordinate a requested piece with an anchor; use cart evidence only when cart management is also active |
+| `outfit-styling` | `chain_server/skills/shopper/outfit-styling/SKILL.md` | Registered | `primary` / `product_procedure` | Search, details, availability, promotions, same-conversation product resolution | Build, complete, compare, or refine a look; use cart evidence only when cart management is also active |
 | `cart-management` | `chain_server/skills/shopper/cart-management/SKILL.md` | Registered | `standalone` | Cart read, total, add, remove, update, same-conversation product resolution | Explicit cart reads and mutations, alone or beside a product procedure |
 | `budget-shopping` | `chain_server/skills/shopper/budget-shopping/SKILL.md` | Registered | `modifier` | None | Stated price ceilings and budget bundles; combine with cart management for cart-total checks |
 | `store-policy-answers` | `chain_server/skills/shopper/store-policy-answers/SKILL.md` | Registered | `standalone` | Policy lookup | Returns, shipping, sizing, payment, price matching, and gift cards |
@@ -252,11 +255,14 @@ combined with `outfit-styling`.
 - Uses the availability tool rather than treating catalog results as inventory.
 - Uses the promotions tool for explicit sale or promotion status rather than
   treating catalog search or price as markdown evidence.
-- Uses the historical resolver only when a needed product is not already
-  established in the current turn. A unique exact match becomes request-local
-  evidence; missing or ambiguous results require clarification rather than a
-  substitute search. Batch all needed references because the runtime permits
-  this resolver at most once per turn.
+- Uses an exact opaque `PRODUCT_REF` from the validated historical index
+  directly only for a scalar detail read. Natural names, shortened references,
+  ordinals, pronouns, availability work, and cart authorization still use the
+  typed historical resolver when the product is not already established in the
+  current turn. A unique match becomes request-local evidence; missing or
+  ambiguous results require clarification rather than a substitute search.
+  Batch all needed semantic references because the runtime permits this
+  resolver at most once per turn.
 
 ## `cart-management`
 
@@ -315,20 +321,22 @@ evidence. Catalog presence is never treated as stock or sale status.
 For a named follow-up role, the skill keeps the anchor as context and searches
 only that role. Confirmed anchor attributes guide coordination, but do not
 become requirements on a complementary piece unless the shopper explicitly
-asks for the same or a matching value. When a needed earlier product is absent
-from current-turn evidence, the skill can submit exact descriptors from the
-read-only historical-product index. The durable resolver returns 0/1/many;
-missing and ambiguous references require one clarification, and only a unique
-match can authorize a downstream tool.
+asks for the same or a matching value. An exact strict historical
+`PRODUCT_REF` can authorize its scalar detail read directly. When the shopper
+uses a name, ordinal, pronoun, shortened reference, or other semantic reference,
+the skill submits the matching typed descriptors from the read-only
+historical-product index. The durable resolver returns 0/1/many; missing and
+ambiguous references require one clarification, and only a unique match can
+authorize general downstream work.
 
 Established-product comparison is a procedure within this skill, not another
-skill or rediscovery request. The model submits every missing compared product
-in one resolver call and, after all required products resolve uniquely, calls
-the scalar detail tool once per ref in separate model steps. The default
-two-read cap covers one pair; an unauthorized ref performs no catalog read and
-consumes no read budget. Missing or ambiguous products clarify without a
-substitute search. Responses compare confirmed fields only and keep styling
-judgment separate from catalog facts.
+skill or rediscovery request. Exact strict refs can proceed directly to scalar
+detail reads; every missing semantic reference is submitted together in one
+resolver call. The model then calls the scalar detail tool once per authorized
+ref in separate model steps. The default two-read cap covers one pair; an
+unauthorized ref performs no catalog read and consumes no read budget. Missing
+or ambiguous products clarify without a substitute search. Responses compare
+confirmed fields only and keep styling judgment separate from catalog facts.
 
 Cart and budget responsibilities stay with their owning skills. When
 `cart-management` is co-active, confirmed cart lines may be styling anchors;

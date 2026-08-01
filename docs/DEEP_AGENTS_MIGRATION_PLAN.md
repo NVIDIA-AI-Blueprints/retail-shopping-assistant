@@ -36,10 +36,9 @@ Current constraints:
   the type as semantic direction. If neither a direct type nor one faithful
   parent can be selected, the assistant asks one concise clarification directly
   without calling the tool.
-- The Deep Agents adapter exposes eleven thin request-scoped shopping tools
-  over deterministic catalog, conversation-product, cart, policy,
-  availability, and promotions functions, plus one internal skill-activation
-  control tool.
+- The Deep Agents adapter exposes eleven thin request-scoped shopping tools over
+  deterministic catalog, conversation-product, cart, policy, availability, and
+  promotions functions, plus one internal skill-activation control tool.
 - Five shopper-facing skills are discovered under
   `chain_server/skills/shopper/`: product discovery, outfit styling, cart
   management, budget shopping, and store-policy answers.
@@ -86,7 +85,10 @@ Current constraints:
   typed batch resolver returns 0/1/many exact matches; only one match becomes
   request-local product evidence. The index keeps the newest complete candidate
   sets within 16,384 serialized characters, and runtime permits at most one
-  batched resolver call per turn.
+  batched resolver call per turn. The same validated projection supplies a
+  stricter capability lane: an exact unconflicted `PRODUCT_REF` may authorize
+  only its scalar detail read without calling the resolver. Natural, ordinal,
+  shortened, and ambiguous references still use the resolver.
 - MemorySaver is request-scoped under a collision-safe pair of conversation ID
   and request ID, deleted only after successful durable finalization, and preserved on finalize failure. It
   remains process-local but no longer supplies cross-turn shopper memory or
@@ -155,14 +157,21 @@ Current constraints:
 - Catalog, cart, policy, availability, and promotions tools return to the Deep Agents loop
   so a single shopper turn can complete a compound request before the final
   shopper-facing response.
-- Grounding uses actual tool-role messages only. Current-turn evidence is
-  isolated by the server-owned request marker; prior-turn tool evidence may
-  resolve direct references but cannot prove that a new search or mutation ran.
+- The main Deep Agent reasons over the rolling semantic summary and full bounded
+  shopper/assistant tail. Final evidence composition uses a separate narrow
+  lane: current query, bounded shopper-authored continuity, active-skill
+  guidance, historical product identity, current cart/images, and actual
+  current-turn tool-role messages isolated by the server-owned request marker.
+  It does not receive the rolling summary, prior assistant prose, prior tool
+  output, or the main agent's draft.
   Every successful search records the model-authored semantic query as
   independent internal `SEARCH_DIRECTION_EVIDENCE` and the required
   pre-retrieval, product-agnostic `shopper_guidance` authored under the active
-  skill. Completed successful search-only responses receive one tools-disabled
-  synthesis under the active skill and then the grounding editor. Static skill
+  skill. Completed successful search-only responses may receive one
+  tools-disabled synthesis under the active skill, but the final composer starts
+  from its allowed evidence lanes rather than that draft. Activated no-tool
+  turns use the same boundary with an empty typed-evidence lane, preventing
+  prior assistant facts from bypassing current authority. Static skill
   `response_guidance` and pre-retrieval guidance support deterministic fallback.
   Before fallback guidance becomes shopper-facing text, a
   narrow scrub replaces documented unsupported outdoor/weather guarantee terms
@@ -268,6 +277,7 @@ POST /query/stream
   -> keep the memory-owned compaction source outside normal model context
   -> replay stored finalized output and stop, when request identity matches
   -> invoke Deep Agents SDK with thread_id = [conversation_id, request_id]
+  -> give the main agent semantic summary + full bounded recent discussion; derive a shopper-only continuity lane for final composition
   -> force structured per-turn skill selection
   -> load and inject complete selected SKILL.md files
   -> expose deterministic shopping tools
@@ -275,7 +285,7 @@ POST /query/stream
   -> select and validate exact advertised values or stop on a no-retrieval path
   -> tools call catalog and cart services or controlled policy/availability/promotion boundaries
   -> stop the graph at the configured execution deadline and finalize agent_timeout
-  -> ground current-turn results separately from prior-turn tool evidence
+  -> compose from shopper-authored continuity + current typed evidence, excluding prior assistant prose and the agent draft
   -> finalize durable turn as completed, blocked, or failed with the current attempt token
   -> stream assistant response back to the UI
 ```
@@ -318,12 +328,14 @@ finalize from the older attempt is rejected rather than overwriting the retry.
 Product evidence identity is a separate, narrower bridge. The runtime keeps at
 most one request's returned or uniquely resolved `PRODUCT_REF` values in
 request-local evidence. Ordered product cards from a finalized turn are stored
-as durable same-conversation events. The typed resolver can restore a unique
-earlier product after restart or on another worker; ambiguous and missing
-references do not authorize details, availability, or cart adds. This evidence
-is not part of the LangGraph checkpoint. Product IDs remain valid only within
-the catalog's identity guarantees, and stale-revision invalidation is not yet
-implemented.
+as durable same-conversation events. The validated compact projection also
+provides an exact strict capability: one unconflicted opaque `PRODUCT_REF` can
+authorize only its scalar detail read without a resolver call. Natural,
+ordinal, shortened, and ambiguous references still use the typed resolver;
+only a unique result enters general request-local evidence for details,
+availability, or cart adds. This evidence is not part of the LangGraph
+checkpoint. Product IDs remain valid only within the catalog's identity
+guarantees, and stale-revision invalidation is not yet implemented.
 
 ## Session Isolation Requirements
 
@@ -335,9 +347,11 @@ implemented.
 - Durable raw turn, replay-output, and event rows use `conversation_id` plus
   ordered sequence and unique `request_id` identities. Each active execution is
   fenced by a memory-service-issued `attempt_id`.
-- Product-ref authorization is request-local and is established by current-turn
-  search or one unique durable same-conversation resolution. It is not recovered
-  from the checkpoint.
+- General product-ref authorization is request-local and is established by
+  current-turn search or one unique durable same-conversation resolution. An
+  exact unconflicted ref from the validated historical projection has the
+  narrower authority to initiate only its scalar detail read. Neither path is
+  recovered from the checkpoint.
 - Customer profile lookup uses `customer_id`, but profile lookup must not merge
   conversation state across sessions.
 - Anonymous sessions must not be addressable by guessable numeric IDs.
@@ -376,7 +390,12 @@ that creates inconsistent context and hard-to-debug race conditions.
 The tool layer is small, typed, and deterministic:
 
 - `search_catalog`: read-only, stateless product discovery.
-- `get_product_details`: read-only product facts for one product.
+- `get_product_details`: read-only product facts for one product authorized by
+  current evidence, unique semantic resolution, or an exact strict historical
+  `PRODUCT_REF` capability.
+- `resolve_conversation_products`: read-only deterministic resolution against
+  products presented in the same durable conversation; one batched call returns
+  0/1/many matches and only a unique match becomes request-local evidence.
 - `get_cart`: read-only cart state for a `cart_id`.
 - `add_cart_item`: mutating cart write using a `PRODUCT_REF` previously returned
   by product search; identical idempotency-key retries replay the stored result.
@@ -395,32 +414,30 @@ The tool layer is small, typed, and deterministic:
   promotion configured through the assistant. Catalog retrieval and price do
   not establish markdown status.
 - `get_weather_forecast`: implemented provider-neutral read-only contract for
-  an exact US ZIP and optional ISO date/range, but dormant in Slice 3 and not
-  registered, granted, prompted, or connected to shopper context.
+  an exact US ZIP and optional ISO date/range, but dormant and not registered,
+  granted, prompted, or connected to shopper context.
 
 `load_customer_persona` remains unregistered. Representative-shopper context is
 resolved as part of the existing durable turn-start call, not through an
 agent-callable tool. It does not grant skills or tools and is not independently
 refetched by shopper skills.
 
-`get_weather_forecast` is likewise absent from the serving registry. Direct
-construction validates a closed ZIP/date schema, returns bounded normalized
-daily evidence through the Visual Crossing adapter, rejects non-live forecast
-sources, and emits sanitized typed failures. `WEATHER_ENABLED=false` is the
-default and needs no credential; an enabled direct client reads the key only
-from the environment variable named by config. A later leveraging slice owns
-relative-date resolution, trusted location precedence, agent registration,
-grounded weather evidence, attribution display, uncertainty language, and the
-rule that weather cannot silently become a catalog must-have.
+`get_weather_forecast` is absent from the serving registry. Direct construction
+validates a closed ZIP/date schema, returns bounded normalized daily evidence
+through the Visual Crossing adapter, rejects non-live forecast sources, and
+emits sanitized typed failures. `WEATHER_ENABLED=false` is the default and
+needs no credential; an enabled direct client reads the key only from the
+environment variable named by config. A later leveraging slice owns any agent
+registration, shopper-context connection, grounded weather evidence,
+attribution display, or uncertainty language.
 
 The active shopper-serving Deep Agents tool registry is documented in
 [Shopper Agent Tool Registry](SHOPPER_AGENT_TOOL_REGISTRY.md). The active skill
 registry is documented in
 [Shopper Agent Skill Registry](SHOPPER_AGENT_SKILL_REGISTRY.md). Those
 registries are the source for which tools and skills are actually registered
-today, their boundaries, and current limitations. Planned contracts in this
-section should not be treated as agent-callable until they appear in the
-registries as registered runtime capabilities.
+today, their boundaries, and current limitations. Historical migration slices
+below record the state at that time; they do not override the active registries.
 
 The activation control tool is forced at turn start. After activation, the Deep
 Agent decides when to call a shopping tool; that tool decides whether the call
@@ -459,8 +476,8 @@ configured search slot instead records `SEARCH_BUDGET_EXHAUSTED`; the next
 model step removes only the search tool, preventing a futile additional search
 without blocking product details, availability, cart work, or honest partial
 synthesis. Completed turns receive one tools-disabled synthesis from collected
-evidence. Search-only drafts then pass through grounding, with deterministic
-rendering as fail-closed fallback.
+evidence. The final composer then starts from the narrower allowed evidence
+lanes, with deterministic rendering as fail-closed fallback.
 
 The search contract has two explicit no-search boundaries. When the model
 cannot select a faithful advertised scope, the assistant asks one concise
@@ -489,12 +506,17 @@ subcategories from one category through the typed taxonomy field, the selection
 produces one catalog execution, with a widened candidate window and
 rank-preserving coverage when each selected subcategory returns a candidate.
 
-Final grounding accepts evidence only from tool-role messages. The current
-request is isolated by its request marker and prior-turn evidence is supplied
-separately for references to products already shown. Completed successful
-search-only turns receive one tools-disabled synthesis under the active skill,
-then grounding against tool-role evidence. Pre-retrieval `shopper_guidance` and
-static `response_guidance` support deterministic fallback. Candidate facts and confirmed filters are rendered
+Final composition accepts current-request facts only from tool-role messages
+isolated by the request marker. The model's reasoning loop still sees the
+rolling summary and bounded full recent discussion, but the composer receives
+only the current query, shopper-authored recent continuity, active-skill
+guidance, the historical product identity index, current cart/images, and
+current typed tool evidence. Prior assistant prose, prior tool output, the
+rolling summary, and the main agent draft are absent. Completed successful
+search-only turns may receive one tools-disabled synthesis under the active
+skill, but final composition starts again from the permitted evidence lanes.
+Pre-retrieval `shopper_guidance` and static `response_guidance` support
+deterministic fallback. Candidate facts and confirmed filters are rendered
 deterministically, with each search retaining its own guidance, product, and
 filter-evidence group. Grouped candidates deduplicate by `product_ref`, not
 display name. Mixed-outcome turns retain successful product groups when another
@@ -503,7 +525,6 @@ apply only when the rejection is the sole
 current-turn business-tool outcome. A partial successful result set gets a neutral offer to continue with the
 next requested piece or search scope. A zero-result group retains its exact
 scope and supports no claim about other product types or catalog-wide absence.
-
 ## Skills
 
 Skills are domain instructions and examples, not hidden business logic. The
@@ -567,9 +588,11 @@ selection among the registered skills remains a model-quality concern;
 silently running a shopping turn without complete skill instructions is no
 longer possible.
 
-Planned future roles include dedicated visual shopping, product comparison, and
-persona-aware recommendation. Keep them as markdown-guided behavior until
-evaluation shows a need for a dedicated subagent or separate tool budget.
+Potential future roles include dedicated visual shopping and authenticated
+persona-aware recommendation. Product comparison remains a procedure inside
+the existing product or styling skill; do not promote it to another skill or
+subagent unless evaluation demonstrates a separate tool budget or private
+planning boundary is necessary.
 
 ## Filesystem And Context
 
@@ -588,6 +611,10 @@ For this retail assistant:
   summary, an exact bounded post-watermark raw tail, and the compact historical-
   product index. The memory-owned oldest compaction prefix is a separate source
   lane and is never copied into normal shopper-model context.
+- Give the main Deep Agent the summary and exact bounded recent tail for
+  reasoning. Derive a separate bounded shopper-authored continuity projection
+  for final evidence composition; do not copy the summary, prior assistant
+  prose, prior tool output, or the agent draft into that final lane.
 - Do not use local files as the production source of truth for customer
   profiles, carts, prices, inventory, orders, or payment state.
 - Do not share a writable filesystem namespace across customers.
@@ -654,6 +681,11 @@ Implications:
 - Backpressure is required for model calls and slow downstream services.
 
 ## Migration Slices
+
+The slices below are the historical implementation sequence. Their scope
+statements describe the boundary at the time each slice landed; the Current
+Implementation Notes and active registries above describe today's serving
+runtime.
 
 ### Slice 1: Deep Agents Adapter
 
@@ -752,6 +784,10 @@ Implications:
 - Only finalized ordered product-card output creates durable reference evidence.
 - Exact typed historical resolution returns 0/1/many; only one match enters
   request-local evidence, while zero or many require clarification.
+- An exact unconflicted historical `PRODUCT_REF` can initiate its scalar detail
+  read without a resolver call. A conflicting, malformed, natural, ordinal, or
+  shortened reference cannot use that strict path and performs no unauthorized
+  catalog read.
 - A chain-server restart does not remove durable same-conversation presented-
   product evidence.
 - Graph thread IDs combine conversation and request identity; successful durable
@@ -795,8 +831,8 @@ Implications:
   synthesis because no second repair is available in that turn. Malformed or
   nonempty free-form `unadvertised_requirements` closes without repair or
   semantic provenance review. Successful completed turns receive one
-  tools-disabled synthesis from collected evidence; search-only drafts then
-  pass through grounding with deterministic fallback.
+  tools-disabled synthesis from collected evidence; final composition starts
+  from the narrower allowed evidence lanes, with deterministic fallback.
 - Taxonomy and required-constraint schemas contain only capability-derived
   advertised fields and values, plus the explicit
   `unadvertised_requirements` lane.
@@ -835,8 +871,11 @@ Implications:
   slot carries `SEARCH_BUDGET_EXHAUSTED`. The next model step exposes no search
   tool but retains applicable product-detail, availability, and cart tools plus
   honest partial synthesis.
-- Grounding accepts only tool-role evidence, isolates current-turn evidence by
-  request ID, and cannot treat a prior assistant draft as tool evidence.
+- Final composition accepts facts only from current-turn tool-role evidence
+  isolated by request ID. Its prompt contains shopper-authored continuity but
+  excludes the rolling summary, prior assistant prose, prior tool output, and
+  the main agent's draft; prior assistant claims therefore cannot survive as
+  current evidence on a later product-only turn.
 - Completed successful search-only output receives one tools-disabled synthesis
   under the active skill and then grounding against tool-role evidence.
   Pre-retrieval `shopper_guidance` and static `response_guidance` support
@@ -875,13 +914,18 @@ Implications:
   and request ID. The runtime deletes it after successful durable finalization and preserves it after a
   finalize failure. Durable turns and presented-product events, not the graph
   checkpoint, provide cross-turn continuity.
-- Deep Agents graph execution and the grounding editor share one 45-second
-  model-stage deadline through `DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS`. The editor
+- Deep Agents graph execution and the final evidence composer share one 45-second
+  model-stage deadline through `DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS`. The composer
   receives only the remaining time. A graph timeout finalizes as failed with
-  `agent_timeout` and preserves bounded partial diagnostics. A grounding timeout
-  finalizes as failed with `grounding_timeout`; search-only evidence uses
-  deterministic catalog rendering, while other turns return a fixed
-  retry/cart-check response instead of the unverified draft. Other editor
+  `agent_timeout`, preserves bounded partial diagnostics, and clears product
+  cards and images. It can deterministically render valid current-request typed
+  search or detail evidence only when all observed and pending business
+  calls are classified read-only by the immutable tool policy; mutating or
+  unknown calls force the fixed retry/cart-check response. Salvaged text crosses
+  output guardrails. A grounding timeout finalizes as failed with
+  `grounding_timeout`; typed search and detail evidence use their
+  deterministic renderers, while other turns return the fixed retry/cart-check
+  response instead of the unverified draft. Other composer
   errors and empty or whitespace-only output use the same response rule with
   `grounding_error`. Checkpoint release
   occurs only after durable finalization.
@@ -899,7 +943,6 @@ Implications:
   same-conversation resolver adds only unique matches to request-local evidence.
 - Registered skills use `/shopper/<skill>/SKILL.md` under the virtual backend;
   shared read-only references may live directly under `/shopper`.
-
 ## Open Decisions
 
 - Which shared multi-writer store should replace single-replica SQLite for

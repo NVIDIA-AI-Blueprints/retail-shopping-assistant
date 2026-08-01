@@ -11,7 +11,14 @@ from typing import Any, Literal
 from urllib.parse import quote
 
 import requests
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from shared.commerce_contracts import ProductSummary
 
@@ -22,6 +29,42 @@ _DEFAULT_INDEX_MAX_CHARS = 12_000
 
 class _ConversationProductModel(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+
+class _HistoricalProductItem(BaseModel):
+    """One strictly validated item from memory's compact product projection."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True, strict=True)
+
+    ref: str = Field(..., min_length=1, max_length=512)
+    name: str = Field(..., min_length=1, max_length=512)
+    category: str | None = Field(default=None, min_length=1, max_length=256)
+    position: int = Field(..., ge=1)
+
+    @field_validator("ref", "name", "category")
+    @classmethod
+    def _require_one_line(cls, value: str | None) -> str | None:
+        if value is not None and value != " ".join(value.split()):
+            raise ValueError("historical product fields must be one trimmed line")
+        return value
+
+
+class _HistoricalProductSet(BaseModel):
+    """Strict wire shape for one server-owned historical candidate set."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True, strict=True)
+
+    candidate_set_id: str = Field(..., min_length=1, max_length=64)
+    turn_seq: int = Field(..., ge=1)
+    catalog_revision: str | None = Field(default=None, min_length=1, max_length=512)
+    products: list[_HistoricalProductItem] = Field(..., min_length=1, max_length=100)
+
+    @field_validator("candidate_set_id", "catalog_revision")
+    @classmethod
+    def _require_one_line(cls, value: str | None) -> str | None:
+        if value is not None and value != " ".join(value.split()):
+            raise ValueError("historical set fields must be one trimmed line")
+        return value
 
 
 class ProductReferenceDescriptor(_ConversationProductModel):
@@ -303,6 +346,45 @@ def format_historical_product_index(
         lines.append(marker)
     lines.extend(reversed(selected_newest_first))
     return "\n".join(lines)
+
+
+def historical_product_capabilities(
+    reference_sets: Sequence[Any],
+) -> tuple[ProductSummary, ...]:
+    """Return exact refs that a validated conversation projection authorizes.
+
+    The compact memory projection is a typed capability lane, not prose. Invalid
+    sets are ignored, and a ref with conflicting names or categories is excluded
+    entirely so it can never authorize a detail read by accident.
+    """
+
+    products_by_ref: dict[str, ProductSummary] = {}
+    conflicting_refs: set[str] = set()
+    for raw_set in reference_sets:
+        try:
+            reference_set = _HistoricalProductSet.model_validate(raw_set)
+        except ValidationError:
+            continue
+        for item in reference_set.products:
+            product = ProductSummary(
+                product_id=item.ref,
+                display_name=item.name,
+                category=item.category,
+            )
+            existing = products_by_ref.get(item.ref)
+            if existing is not None and (
+                existing.display_name != product.display_name
+                or existing.category != product.category
+            ):
+                conflicting_refs.add(item.ref)
+                continue
+            products_by_ref[item.ref] = product
+
+    return tuple(
+        product
+        for product_ref, product in products_by_ref.items()
+        if product_ref not in conflicting_refs
+    )
 
 
 def _format_reference_set(value: Any) -> str:

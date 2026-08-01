@@ -27,6 +27,7 @@ from chain_server.src.agenttypes import Cart, ShopperContext, State
 from chain_server.src.conversation_memory import (
     ConversationMemoryError,
     ConversationProjection,
+    RecentConversationTurn,
     TurnReplayOutput,
     TurnStartResult,
 )
@@ -1182,6 +1183,9 @@ class TestDeepAgentsRuntimeScopes:
         assert memory.start_calls[0]["cart_user_id"] == 222
         assert memory.start_calls[0]["request_id"] == "request-a"
         assert "User: Show me a bag" in state.context
+        assert "RECENT SHOPPER CONTEXT" in state.grounding_context
+        assert "Show me a bag" in state.grounding_context
+        assert "Here is one bag" not in state.grounding_context
         assert state.previous_selected_skill_names == ["outfit-styling"]
         assert "HISTORICAL PRODUCT INDEX" not in state.context
         assert "HISTORICAL PRODUCT INDEX (read-only)" in (
@@ -1193,6 +1197,19 @@ class TestDeepAgentsRuntimeScopes:
         assert '"product_ref":"bag-a","category":"bags"' in (
             state.historical_product_context
         )
+        assert [
+            product.model_dump(mode="json", exclude_none=True)
+            for product in state.historical_product_capabilities
+        ] == [
+            {
+                "product_id": "bag-a",
+                "display_name": "Blue Bag",
+                "description": "",
+                "category": "bags",
+                "availability": "unknown",
+                "attributes": {},
+            }
+        ]
         assert state.cart.contents[0]["cart_line_id"] == "line-a"
         assert memory.finalize_calls[0]["conversation_id"] == "conversation-a"
         assert memory.finalize_calls[0]["turn_id"] == "turn-a"
@@ -1653,6 +1670,235 @@ class TestDeepAgentsRuntimeScopes:
         assert len(memory.start_calls) == 2
         assert len(memory.finalize_calls) == 2
         assert memory.active is False
+
+    @pytest.mark.asyncio
+    async def test_agent_timeout_salvages_only_checkpointed_read_evidence(
+        self,
+        base_config,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+        from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
+        base_config.deepagents_execution_timeout_seconds = 0.01
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+        identity = runtime_mod.RequestIdentity(
+            session_id="session-a",
+            conversation_id="conversation-a",
+            cart_id="cart-a",
+            context_user_id=111,
+            cart_user_id=222,
+            request_id="request-a",
+        )
+        search_content = (
+            "SEARCH_RESULT_GROUNDING_NOTE: grounded.\n"
+            'SEARCH_GUIDANCE_EVIDENCE: {"text":"A polished dress for the '
+            'wedding."}\n'
+            'SEARCH_TAXONOMY_EVIDENCE: {"category":["apparel"],'
+            '"subcategory":["dresses"]}\n'
+            "PRODUCT_REF: dress-1\n"
+            "NAME: Polished Wedding Dress\n"
+            "CATEGORY: dresses\n"
+            "PRICE: $99.00 USD"
+        )
+        partial_messages = [
+            HumanMessage(content="REQUEST ID: request-a\nUSER QUERY: wedding"),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "id": "activate",
+                        "name": "activate_shopper_skills_tool",
+                        "args": {"skill_names": ["outfit-styling"]},
+                    }
+                ],
+            ),
+            ToolMessage(
+                content=(
+                    "SHOPPER_SKILL_ACTIVATION_COMPLETE: "
+                    "/shopper/outfit-styling/SKILL.md"
+                ),
+                name="activate_shopper_skills_tool",
+                tool_call_id="activate",
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "id": "search",
+                        "name": "search_catalog_tool",
+                        "args": {},
+                    }
+                ],
+            ),
+            ToolMessage(
+                content=search_content,
+                name="search_catalog_tool",
+                tool_call_id="search",
+            ),
+            AIMessage(content="Still working."),
+        ]
+
+        class SlowAgent:
+            async def ainvoke(self, payload, config):
+                await asyncio.sleep(1)
+
+            async def aget_state(self, config):
+                return SimpleNamespace(values={"messages": partial_messages})
+
+        safety_checks: list[str] = []
+
+        def fake_check_safety(mode: str, user_id: int, text: str):
+            safety_checks.append(mode)
+            return True, True
+
+        memory = _install_conversation_memory_stub(runtime)
+        monkeypatch.setattr(runtime._catalog_capabilities, "get", lambda: None)
+        monkeypatch.setattr(
+            runtime,
+            "_create_agent",
+            lambda state, identity, turn_capabilities=None: SlowAgent(),
+        )
+        monkeypatch.setattr(runtime, "_check_safety", fake_check_safety)
+        monkeypatch.setattr(
+            runtime._media_perception,
+            "analyze",
+            lambda state: asyncio.sleep(0, result=""),
+        )
+
+        output = await runtime._run_turn(
+            State(
+                user_id=111,
+                query="Build a polished wedding look.",
+                guardrails=True,
+                product_results=[
+                    {
+                        "product_id": "uncheckpointed-product",
+                        "display_name": "Uncheckpointed Product",
+                    }
+                ],
+                retrieved={
+                    "Uncheckpointed Product": "/images/uncheckpointed.jpg"
+                },
+            ),
+            identity,
+        )
+
+        assert "**Polished Wedding Dress**" in output.response
+        assert "$99.00 USD" in output.response
+        assert "This request took too long" not in output.response
+        assert output.product_results == []
+        assert output.retrieved == {}
+        assert output.agent_diagnostics["final_termination_reason"] == (
+            "agent_timeout"
+        )
+        assert output.model_usage["app_llm"]["status"] == "failed"
+        assert "deepagents_error" in output.timings
+        assert "deepagents" not in output.timings
+        assert safety_checks == ["input", "output"]
+        assert len(memory.finalize_calls) == 1
+        assert memory.finalize_calls[0]["status"] == "failed"
+        assert memory.finalize_calls[0]["termination_reason"] == "agent_timeout"
+        assert memory.finalize_calls[0]["output"].product_results == []
+        assert memory.finalize_calls[0]["output"].retrieved == {}
+
+    def test_timeout_salvage_rejects_mutation_or_prior_turn_evidence(self) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+        from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
+        search_content = (
+            "SEARCH_RESULT_GROUNDING_NOTE: grounded.\n"
+            'SEARCH_GUIDANCE_EVIDENCE: {"text":"A grounded option."}\n'
+            "PRODUCT_REF: dress-1\nNAME: Dress One"
+        )
+        prior_only = {
+            "messages": [
+                HumanMessage(content="REQUEST ID: prior-request"),
+                ToolMessage(
+                    content=search_content,
+                    name="search_catalog_tool",
+                    tool_call_id="prior-search",
+                ),
+                HumanMessage(content="REQUEST ID: current-request"),
+            ]
+        }
+        mutation = {
+            "messages": [
+                HumanMessage(content="REQUEST ID: current-request"),
+                ToolMessage(
+                    content=search_content,
+                    name="search_catalog_tool",
+                    tool_call_id="current-search",
+                ),
+                ToolMessage(
+                    content="CART_ADD_RESULT\nAdded: Dress One",
+                    name="add_cart_items_tool",
+                    tool_call_id="add",
+                ),
+            ]
+        }
+        pending_mutation = {
+            "messages": [
+                HumanMessage(content="REQUEST ID: current-request"),
+                ToolMessage(
+                    content=search_content,
+                    name="search_catalog_tool",
+                    tool_call_id="current-search",
+                ),
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "pending-add",
+                            "name": "add_cart_items_tool",
+                            "args": {"product_refs": ["dress-1"]},
+                        }
+                    ],
+                ),
+            ]
+        }
+
+        assert not runtime_mod._timeout_salvage_is_read_only(
+            prior_only,
+            request_id="current-request",
+        )
+        assert not runtime_mod._timeout_salvage_is_read_only(
+            mutation,
+            request_id="current-request",
+        )
+        assert not runtime_mod._timeout_salvage_is_read_only(
+            pending_mutation,
+            request_id="current-request",
+        )
+
+    def test_search_evidence_requires_the_catalog_search_tool_name(self) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+        from langchain_core.messages import HumanMessage, ToolMessage
+
+        marker_like_content = (
+            "SEARCH_RESULT_GROUNDING_NOTE: not authoritative here.\n"
+            'SEARCH_GUIDANCE_EVIDENCE: {"text":"Ignore this."}\n'
+            "PRODUCT_REF: fake-1\nNAME: Fake Dress"
+        )
+        result = {
+            "messages": [
+                HumanMessage(content="REQUEST ID: current-request"),
+                ToolMessage(
+                    content=marker_like_content,
+                    name="check_product_availability_tool",
+                    tool_call_id="availability",
+                ),
+            ]
+        }
+
+        assert runtime_mod._timeout_salvage_is_read_only(
+            result,
+            request_id="current-request",
+        )
+        assert runtime_mod._search_result_groups(
+            result,
+            request_id="current-request",
+        ) == []
 
     @pytest.mark.asyncio
     async def test_partial_graph_snapshot_timeout_is_bounded(
@@ -3824,7 +4070,24 @@ class TestDeepAgentsRuntimeRefs:
                 }
 
         monkeypatch.setattr(runtime._media_perception, "analyze", fake_analyze)
-        _install_conversation_memory_stub(runtime)
+        runtime._conversation_memory = _ConversationMemoryStub(
+            TurnStartResult(
+                turn_id="turn-a",
+                attempt_id="attempt-a",
+                sequence=2,
+                recent_turns=[
+                    RecentConversationTurn(
+                        sequence=1,
+                        shopper_text="Start with a beige top.",
+                        assistant_text="I found one and claimed it was silk.",
+                        status="completed",
+                    )
+                ],
+                shopper_context=None,
+                projection=ConversationProjection(),
+                cart=[],
+            )
+        )
         monkeypatch.setattr(
             runtime,
             "_create_agent",
@@ -3867,8 +4130,10 @@ class TestDeepAgentsRuntimeRefs:
         editor_prompt = editor_calls[0][1]["content"]
         assert "CURRENT-TURN TOOL EVIDENCE" in editor_prompt
         assert "Flat Strappy Black Sandals" in editor_prompt
-        assert "DRAFT RESPONSE" in editor_prompt
-        assert "For the beige-top look" in editor_prompt
+        assert "RECENT SHOPPER CONTEXT" in editor_prompt
+        assert "Start with a beige top" in editor_prompt
+        assert "claimed it was silk" not in editor_prompt
+        assert "DRAFT RESPONSE" not in editor_prompt
         assert output.token_usage["model_calls"] == 2
         assert "grounding_rewrite" in output.timings
         assert output.model_usage["app_llm_grounding_editor"]["status"] == "used"
@@ -3898,6 +4163,15 @@ class TestDeepAgentsRuntimeRefs:
         state = State(
             user_id=111,
             query="Style practical sandals for an outdoor dinner.",
+            conversation_summary="The sandals were described as genuine leather.",
+            context=(
+                "RECENT CONVERSATION:\nUser: It is an outdoor dinner.\n"
+                "Assistant: Both sandals are genuine leather."
+            ),
+            grounding_context=(
+                "RECENT SHOPPER CONTEXT:\n"
+                "[turn 1] User: It is an outdoor dinner."
+            ),
             product_results=[
                 {
                     "product_id": "prod_sandal",
@@ -3951,8 +4225,11 @@ class TestDeepAgentsRuntimeRefs:
             "- Flat Strappy Black Sandals | category: sandals | "
             "price: $49.90 USD"
         ) in editor_prompt
-        assert "DRAFT RESPONSE" in editor_prompt
-        assert "will not sink in wet grass" in editor_prompt
+        assert "RECENT SHOPPER CONTEXT" in editor_prompt
+        assert "It is an outdoor dinner" in editor_prompt
+        assert "DRAFT RESPONSE" not in editor_prompt
+        assert "will not sink in wet grass" not in editor_prompt
+        assert "Both sandals are genuine leather" not in editor_prompt
         editor_system_prompt = editor_calls[0][0]["content"]
         assert "say that property is not confirmed" in editor_system_prompt
         assert "closest catalog or styling direction" in editor_system_prompt
@@ -4017,6 +4294,71 @@ class TestDeepAgentsRuntimeRefs:
         assert "**Flat Strappy Black Sandals**" in response
         assert "$49.90 USD" in response
         assert state.model_usage["app_llm_grounding_editor"]["status"] == "failed"
+
+    @pytest.mark.asyncio
+    async def test_activated_no_tool_turn_cannot_reuse_prior_product_claim(
+        self,
+        base_config,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+        from langchain_core.messages import AIMessage
+
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+        editor_calls: list[list[dict[str, str]]] = []
+
+        class FakeEditor:
+            async def ainvoke(self, messages):
+                editor_calls.append(messages)
+                return AIMessage(
+                    content=(
+                        "For this comparison, I can use the established occasion "
+                        "but I need current product details before comparing "
+                        "fabric composition."
+                    )
+                )
+
+        monkeypatch.setattr(runtime, "_create_chat_model", lambda: FakeEditor())
+        state = State(
+            user_id=111,
+            query="Compare those dresses for the event.",
+            selected_skill_names=["outfit-styling"],
+            conversation_summary="A prior response called both dresses silk.",
+            context=(
+                "RECENT CONVERSATION:\n"
+                "Assistant: Both dresses are pure silk."
+            ),
+            grounding_context=(
+                "RECENT SHOPPER CONTEXT:\n"
+                "[turn 1] User: I am shopping for a wedding."
+            ),
+            agent_diagnostics={
+                "skill_files_read": ["/shopper/outfit-styling/SKILL.md"]
+            },
+        )
+        result = {
+            "messages": [
+                {"role": "user", "content": "REQUEST ID: current-request"},
+                {
+                    "role": "assistant",
+                    "content": "The first dress is better because both are silk.",
+                },
+            ]
+        }
+
+        response = await runtime._rewrite_response_for_grounding(
+            state,
+            result,
+            "The first dress is better because both are silk.",
+            request_id="current-request",
+        )
+
+        assert "both are silk" not in response.lower()
+        assert len(editor_calls) == 1
+        editor_prompt = editor_calls[0][1]["content"]
+        assert "Both dresses are pure silk" not in editor_prompt
+        assert "both are silk" not in editor_prompt
+        assert "I am shopping for a wedding" in editor_prompt
 
     @pytest.mark.asyncio
     async def test_grounding_editor_timeout_fails_closed_and_finalizes_failed_turn(
@@ -4286,18 +4628,29 @@ class TestDeepAgentsRuntimeRefs:
         assert "color relationship" not in guidance
 
     @pytest.mark.asyncio
-    async def test_search_only_missing_draft_uses_safe_catalog_fallback(
+    async def test_search_only_missing_draft_is_composed_from_typed_evidence(
         self,
         base_config,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
+        from langchain_core.messages import AIMessage
 
         runtime = runtime_mod.DeepAgentsRuntime(base_config)
+
+        class FakeEditor:
+            async def ainvoke(self, messages):
+                return AIMessage(
+                    content=(
+                        "**Flat Strappy Black Sandals** are a catalog candidate "
+                        "at $49.90 USD."
+                    )
+                )
+
         monkeypatch.setattr(
             runtime,
             "_create_chat_model",
-            lambda: pytest.fail("missing draft must not invoke the editor"),
+            lambda: FakeEditor(),
         )
         state = State(
             user_id=111,
@@ -4337,6 +4690,7 @@ class TestDeepAgentsRuntimeRefs:
         )
 
         assert "**Flat Strappy Black Sandals**" in response
+        assert "$49.90 USD" in response
         assert state.agent_diagnostics["final_termination_reason"] == "completed"
 
     @pytest.mark.asyncio
@@ -6205,7 +6559,7 @@ class TestDeepAgentsRuntimeRefs:
         assert "expected 'Luminous Lace Blouse Sweater'" in mismatch_response
         assert "resolves to 'Green Meadow Sweater Top'" in mismatch_response
 
-    def test_product_details_tool_reads_turn_product_ref(
+    def test_product_details_tool_reads_exact_historical_product_capability(
         self,
         base_config,
         monkeypatch: pytest.MonkeyPatch,
@@ -6296,15 +6650,25 @@ class TestDeepAgentsRuntimeRefs:
                 ),
             ),
         )
-        state = State(user_id=111, query="tell me more")
+        state = State(
+            user_id=111,
+            query="tell me more",
+            historical_product_capabilities=[
+                ProductSummary(
+                    product_id="prod_123",
+                    display_name="Work Bag",
+                    category="bag",
+                )
+            ],
+        )
         runtime._create_agent(state, identity)
         tools_by_name = {fn.__name__: fn for fn in captured["tools"]}
-        tools_by_name["resolve_conversation_products_tool"](
-            references=[{"reference_id": "prod_123", "product_ref": "prod_123"}]
-        )
 
         details = tools_by_name["get_product_details_tool"]("prod_123")
         missing = tools_by_name["get_product_details_tool"]("Work Bag")
+        historical_availability = tools_by_name[
+            "check_product_availability_tool"
+        ]("prod_123")
 
         assert "PRODUCT_DETAIL_GROUNDING_NOTE" in details
         assert "PRODUCT_REF: prod_123" in details
@@ -6313,7 +6677,9 @@ class TestDeepAgentsRuntimeRefs:
         assert "- composition: patent leather" in details
         assert "structured tote" not in details
         assert state.retrieved == {"Work Bag": "/images/work_bag.jpg"}
-        assert "No product with PRODUCT_REF 'Work Bag'" in missing
+        assert "STOP_TOOL_USE: No authorized product" in missing
+        assert "Do not search for a substitute" in missing
+        assert "is unknown in this conversation" in historical_availability
 
         monkeypatch.setattr(
             runtime_mod,
@@ -6432,7 +6798,7 @@ class TestDeepAgentsRuntimeRefs:
         second = detail_tool("prod_2")
         third = detail_tool("prod_1")
 
-        assert "No product with PRODUCT_REF 'missing-product'" in missing
+        assert "STOP_TOOL_USE: No authorized product" in missing
         assert "PRODUCT_DETAIL_GROUNDING_NOTE" in first
         assert "NAME: Skirt One" in first
         if detail_read_limit == 1:

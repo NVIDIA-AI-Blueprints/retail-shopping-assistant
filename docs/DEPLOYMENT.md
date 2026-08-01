@@ -331,7 +331,7 @@ docker stack deploy -c docker-compose.prod.yaml retail-assistant
 | `EMBED_API_KEY` | Embedding model API key | Yes | - |
 | `RAIL_API_KEY` | Guardrails API key | Yes | - |
 | `GUARDRAILS_ENABLED` | Default chain-server guardrails setting for requests that omit `guardrails`; accepts true/false, yes/no, on/off, or 1/0 | No | `true` |
-| `DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS` | Shared deadline for the Deep Agents graph and grounding editor before the durable turn fails cleanly | No | `45` |
+| `DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS` | Shared deadline for the Deep Agents graph and final evidence composer before the durable turn fails cleanly | No | `45` |
 | `EXPOSE_AGENT_DIAGNOSTICS` | Expose detailed agent/tool traces in query responses; enable only behind a trusted operator or evaluation surface | No | `false` |
 | `CATALOG_SEARCH_TIMEOUT_SECONDS` | Optional chain-server timeout for catalog search requests | No | no timeout |
 | `MAX_CATALOG_SEARCHES_PER_TURN` | Caps distinct catalog taxonomy-plus-hard-constraint scope executions in one assistant turn; a repeated scope is stopped even when semantic wording changes | No | `3` |
@@ -351,10 +351,10 @@ docker stack deploy -c docker-compose.prod.yaml retail-assistant
 
 The chain server includes a provider-neutral daily weather client and a
 `get_weather_forecast_tool` factory, with Visual Crossing as the first adapter.
-Slice 3 leaves it disabled and unregistered: it is not model-visible, not
-granted by any shopper skill, not connected to selected-shopper ZIP, and not
-exposed through FastAPI or the UI. Ordinary startup, health checks, shopper
-turns, and offline tests perform no provider request and require no weather key.
+It remains disabled and unregistered: it is not model-visible, not granted by
+any shopper skill, not connected to selected-shopper ZIP, and not exposed
+through FastAPI or the UI. Ordinary startup, health checks, shopper turns, and
+offline tests perform no provider request and require no weather key.
 
 The complete non-secret configuration is in
 `shared/configs/chain_server/config.yaml`:
@@ -393,13 +393,13 @@ Before running it, set `WEATHER_ENABLED=true`, `WEATHER_API_KEY`, and
 `WEATHER_SMOKE_START_DATE`/`WEATHER_SMOKE_END_DATE` pair. The command prints
 only provider/config label, request mode, window length, outcome category,
 schema validity, and latency. It never prints the ZIP, dates, location,
-forecast, key, URL, provider body, or raw exception. It is not run by startup,
-CI, health checks, or shopper traffic.
+forecast, key, URL, provider body, or raw exception. It is not run by
+startup, CI, health checks, or shopper traffic.
 
 The adapter emits normalized daily forecast evidence and attribution metadata
 but persists nothing. Before a later slice displays or stores this evidence,
-operators must confirm the selected Visual Crossing plan's attribution,
-storage, sharing, and uncertainty requirements in the
+operators must confirm the selected Visual Crossing plan's
+attribution, storage, sharing, and uncertainty requirements in the
 [pricing terms](https://www.visualcrossing.com/weather-data-editions/) and
 [service terms](https://www.visualcrossing.com/weather-service-terms/).
 
@@ -420,15 +420,20 @@ excluded from both the next-turn service projection and the chain prompt
 formatter.
 
 `DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS` is one model-stage deadline shared by the
-active graph and grounding editor. The editor receives only the remaining time.
+active graph and final evidence composer. The composer receives only the
+remaining time.
 A graph timeout records `agent_timeout`, captures bounded partial graph messages,
-clears unsent products and images, and finalizes the durable turn as failed. A
-grounding timeout records `grounding_timeout` and also finalizes as failed;
-search-only evidence uses deterministic catalog rendering, while other turns
-receive a fixed retry/cart-check response instead of the unverified draft. The
-same response rule applies to editor errors and empty or whitespace-only output,
-recorded as `grounding_error`. The request checkpoint is deleted only after finalization
-succeeds. This live deadline is separate from
+clears product cards and images, and finalizes the durable turn as failed. It may
+render only valid current-request typed search or detail evidence when
+every observed and pending business call is classified read-only by
+`SHOPPING_TOOL_POLICIES`; a mutating or unknown call forces the fixed
+retry/cart-check response. Salvaged text still passes through output guardrails.
+A grounding timeout records `grounding_timeout` and also finalizes as failed;
+typed search and detail evidence use their deterministic renderers,
+while other turns receive the fixed retry/cart-check response instead of the
+unverified draft. The same response rule applies to composer errors and empty or
+whitespace-only output, recorded as `grounding_error`. The request checkpoint is
+deleted only after finalization succeeds. This live deadline is separate from
 `MEMORY_TURN_ABANDON_SECONDS`, which handles unfinished turns left by a crash or
 process loss.
 

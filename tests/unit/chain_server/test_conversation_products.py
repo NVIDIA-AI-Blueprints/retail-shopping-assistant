@@ -20,6 +20,7 @@ from chain_server.src.conversation_products import (
     ResolveConversationProductsResult,
     format_historical_product_index,
     format_product_resolution,
+    historical_product_capabilities,
 )
 from shared.commerce_contracts import Money, ProductSummary
 
@@ -253,6 +254,74 @@ def test_historical_index_bound_keeps_newest_sets() -> None:
     assert '"candidate_set_id":"set-1"' not in rendered
     assert "earlier historical products omitted" in rendered
     assert len(rendered) <= 320
+
+
+def test_historical_product_capabilities_require_strict_unambiguous_rows() -> None:
+    capabilities = historical_product_capabilities(
+        [
+            {
+                "candidate_set_id": "set-1",
+                "turn_seq": 1,
+                "catalog_revision": "catalog-v1",
+                "products": [
+                    {
+                        "ref": "dress-1",
+                        "name": "Satin Dress",
+                        "category": "dresses",
+                        "position": 1,
+                    },
+                    {
+                        "ref": "dress-conflict",
+                        "name": "First Name",
+                        "position": 2,
+                    },
+                ],
+            },
+            {
+                "candidate_set_id": "set-2",
+                "turn_seq": 2,
+                "products": [
+                    {
+                        "ref": "dress-conflict",
+                        "name": "Different Name",
+                        "position": 1,
+                    }
+                ],
+            },
+            {
+                "candidate_set_id": "set-bad",
+                "turn_seq": 3,
+                "unexpected": True,
+                "products": [
+                    {"ref": "unsafe", "name": "Unsafe", "position": 1}
+                ],
+            },
+        ]
+    )
+
+    assert [(item.product_id, item.display_name, item.category) for item in capabilities] == [
+        ("dress-1", "Satin Dress", "dresses")
+    ]
+
+
+def test_historical_product_capabilities_reject_malformed_product_rows() -> None:
+    capabilities = historical_product_capabilities(
+        [
+            {
+                "candidate_set_id": "set-1",
+                "turn_seq": 1,
+                "products": [
+                    {
+                        "ref": "dress-1",
+                        "name": "Satin\nDress",
+                        "position": 1,
+                    }
+                ],
+            }
+        ]
+    )
+
+    assert capabilities == ()
 
 
 def test_evidence_adds_only_unique_resolved_products() -> None:

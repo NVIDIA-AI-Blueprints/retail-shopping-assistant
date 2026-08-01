@@ -39,6 +39,7 @@ from chain_server.src.skill_activation import (
     ShopperSkillActivationMiddleware,
     selected_skill_names_for_turn,
 )
+from chain_server.src.tool_policy import SHOPPING_TOOL_POLICIES
 from chain_server.src.tool_loop_control import SERVER_CATALOG_CLARIFICATION
 from shared.commerce_contracts import (
     CatalogCapabilities,
@@ -53,37 +54,22 @@ from shared.commerce_contracts import (
 
 
 REQUEST_ID = "request-a"
+SKILL_NAMES = frozenset(
+    {
+        "budget-shopping",
+        "cart-management",
+        "outfit-styling",
+        "product-discovery",
+        "store-policy-answers",
+    }
+)
 SKILL_TOOL_GRANTS = {
-    "budget-shopping": frozenset(),
-    "cart-management": frozenset(
-        {
-            "add_cart_items_tool",
-            "get_cart_tool",
-            "remove_cart_item_tool",
-            "resolve_conversation_products_tool",
-            "update_cart_items_tool",
-            "view_cart_total_tool",
-        }
-    ),
-    "outfit-styling": frozenset(
-        {
-            "check_active_promotions_tool",
-            "check_product_availability_tool",
-            "get_product_details_tool",
-            "resolve_conversation_products_tool",
-            "search_catalog_tool",
-        }
-    ),
-    "product-discovery": frozenset(
-        {
-            "check_active_promotions_tool",
-            "check_product_availability_tool",
-            "get_product_details_tool",
-            "resolve_conversation_products_tool",
-            "search_catalog_tool",
-        }
-    ),
-    "store-policy-answers": frozenset({"get_store_policy_tool"}),
+    skill_name: frozenset(
+        tool_name
+        for tool_name, policy in SHOPPING_TOOL_POLICIES.items()
+        if skill_name in policy.allowed_skills_any_of
+    )
+    for skill_name in SKILL_NAMES
 }
 
 

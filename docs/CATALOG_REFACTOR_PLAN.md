@@ -47,7 +47,11 @@ For every text search,
 shopper's current turn or direct antecedent, excluding color, material, fit,
 occasion, weather, and style modifiers. For a genuinely open role, it is the
 one advertised subcategory selected for that role. It is provenance rather
-than taxonomy or ranking text and is `null` only for image-only search. The taxonomy envelope has stable
+than taxonomy or ranking text and is `null` only for image-only search. A
+shopper-supplied product title remains identity: the complete title stays in
+`semantic_query`, its product noun supplies `requested_product_type`, and title
+words do not become `required_constraints` unless the shopper independently
+states them as requirements. The taxonomy envelope has stable
 `category` and `subcategory` roles, but their enum values are generated from the
 cached capability contract. The pure
 `chain_server/src/catalog_tool_contract.py` module constructs these Pydantic
@@ -366,7 +370,7 @@ the server discards the model prose and emits `Could you clarify the product
 type or requirement you want me to use?`. Grounded products from any successful
 requested scope are preserved before that clarification.
 Successful evidence from another shopping tool is combined with the fixed
-clarification through the existing grounding editor.
+clarification through the final evidence composer.
 Repair middleware may restore independently capability-valid
 `required_constraints`, `scope_complete`, and `search_mode`. It never restores
 model-owned taxonomy, requested type, semantic query, or shopper guidance. When
@@ -383,7 +387,12 @@ three successful searches. Each successful search-tool result records
 the model-authored semantic query as internal `SEARCH_DIRECTION_EVIDENCE` and
 the pre-retrieval `shopper_guidance` authored under the active skill. For a
 completed successful search-only turn, the active skill gets one tools-disabled
-synthesis and the draft passes through the grounding editor. That guidance and
+synthesis. The final evidence composer does not rewrite that draft. It starts
+from the current shopper query, bounded shopper-authored continuity,
+active-skill guidance, historical product identity, current cart/images, and
+typed current-request tool evidence; the rolling summary, prior assistant
+prose, prior tool output, and draft are excluded. Activated no-tool turns use
+the same boundary with an empty typed-evidence lane. Pre-retrieval guidance and
 static skill `response_guidance` support deterministic fallback, which lists all
 returned candidates, adds a neutral
 continuation for partial successful evidence, and groups each pre-retrieval
@@ -415,9 +424,9 @@ language-to-scope selection remains an agent judgment.
 Search results return the source `record_id` as `product_id`; Milvus primary
 keys and product names are never identities. `GET /products/{product_id}` reads
 the active snapshot and returns fields marked `detail`, including exact care
-instructions when provided. The agent requires a product ref from search,
-performs this lookup, and preserves the returned fields through its grounding
-editor.
+instructions when provided. The agent requires an authorized product ref,
+performs this lookup, and preserves the returned fields through final evidence
+composition.
 
 Current generated IDs are safe only within the active snapshot because the
 feed does not guarantee cross-catalog stability. Detail reads and cart adds
@@ -425,13 +434,18 @@ verify both request-evidence ID and display name against the active catalog;
 stale or reused refs require a fresh search. Transient catalog failures leave
 the cart unchanged and are not described as product removal.
 
-The chain server authorizes refs only from current-request evidence: either a
-search in that request or one unique exact resolution from durable product-card
-events in the same conversation. That resolver survives chain-server restart
-and makes no catalog call. It records catalog revision metadata when supplied
-but does not yet enforce revision freshness, so catalog replacement can still
-require a fresh search before details or cart adds. This does not change the
-catalog service or its stateless request boundary.
+The chain server generally authorizes refs from current-request evidence:
+either a search in that request or one unique exact resolution from durable
+product-card events in the same conversation. The validated historical
+projection adds one narrower path: an exact unconflicted opaque `PRODUCT_REF`
+may authorize only its scalar detail read without a resolver call. Natural,
+ordinal, shortened, or ambiguous references still use the resolver, and
+availability or cart work still requires general request-local evidence. The
+resolver survives chain-server restart and makes no catalog call. It records
+catalog revision metadata when supplied but does not yet enforce revision
+freshness, so catalog replacement can still require a fresh search before
+details or cart adds. This does not change the catalog service or its stateless
+request boundary.
 
 An internal fingerprint covers the JSONL, sidecar, embedding model names,
 image-search state, local image bytes when image search is enabled, and

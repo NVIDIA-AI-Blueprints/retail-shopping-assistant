@@ -35,5 +35,7 @@ def test_catalog_search_rules_allow_model_selected_parent_category() -> None:
         CATALOG_SEARCH_RULES
     )
     assert "ask one concise clarification question directly" in CATALOG_SEARCH_RULES
+    assert "treat the title as product identity" in CATALOG_SEARCH_RULES
+    assert "do not split words inside the title" in CATALOG_SEARCH_RULES
     assert "taxonomy_status" not in CATALOG_SEARCH_RULES
     assert "no_direct_catalog_match" not in CATALOG_SEARCH_RULES

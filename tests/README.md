@@ -112,6 +112,16 @@ expectations are checked before any Judge call. The comparison turn must use
 one batched historical resolver call, two product-detail reads, and no catalog
 search. Run it with `--test-path product_comparison`; each collector run
 generates a fresh conversation identity.
+The focused `catalog_semantic_authority` dataset proves the model/validator
+boundary with four one-turn, fresh-identity fixtures. Its pre-Judge structural
+subset checks cover a combined alternatives taxonomy call, a neutral
+category-only scope, an empty hard-constraint object for a semantic preference,
+and a rejected unsupported requirement. Run it with
+`--test-path catalog_semantic_authority`.
+`tool_call_expectations` match only fixture-declared structural subsets of one
+diagnostic call; nested object keys are partial and list membership is
+order-independent. They validate tool status, rejection reason, taxonomy, and
+constraint arguments without interpreting shopper text.
 The Judge receives the generated prior turns plus a bounded, ref-free projection
 of current-turn structured catalog evidence; product facts present in that
 projection are authoritative for scoring.

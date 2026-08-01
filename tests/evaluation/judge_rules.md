@@ -69,12 +69,9 @@ incomplete. Do not call a fact invented solely because the supporting record
 may have been omitted by that bound.
 
 Each turn may also include `catalog_scope_outcomes`, bounded server-authored
-records for valid searches that returned zero products or for an explicitly
-requested product type with no direct advertised taxonomy match. A
-`no_direct_catalog_match` outcome supports only the statement that the type is
-not advertised; it does not prove that no semantically similar product exists.
-A `zero_results` outcome applies only to its recorded taxonomy and filters and
-never proves catalog-wide absence. Missing outcomes prove nothing.
+records for valid searches that returned zero products. A `zero_results`
+outcome applies only to its recorded taxonomy and filters and never proves
+catalog-wide absence. Missing outcomes prove nothing.
 
 ## Critical Failures
 

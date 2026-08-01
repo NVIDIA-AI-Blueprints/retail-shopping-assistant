@@ -16,7 +16,6 @@ import re
 from threading import Lock
 import time
 from typing import Any, AsyncIterator, Literal
-import unicodedata
 import uuid
 
 from langgraph.checkpoint.memory import MemorySaver
@@ -96,14 +95,12 @@ from .tool_policy import (
     validate_registered_tool_names,
 )
 from .tool_loop_control import (
-    CONSTRAINT_REVIEW_PREFIX,
     SEARCH_BUDGET_EXHAUSTED_PREFIX,
     SEARCH_SCOPE_COMPLETE_PREFIX,
     SEARCH_VALIDATION_ERROR_PREFIX,
     SERVER_CATALOG_CLARIFICATION,
     SERVER_RESTORED_TOOL_CALL_FIELDS,
     ToolLoopControlMiddleware,
-    _SERVER_REJECTED_TOOL_CALLS,
 )
 from shared.commerce_contracts import (
     AddCartItemInput,
@@ -216,10 +213,6 @@ _UNSUPPORTED_SEARCH_MODE_MESSAGE = (
     "The requested search mode is not available for the active catalog. "
     "Ask the shopper to use an advertised mode."
 )
-_NO_DIRECT_TAXONOMY_RESPONSE = (
-    "The catalog doesn't advertise a product type that directly matches this "
-    "request. Would you like me to search a different advertised product type?"
-)
 _REJECTED_CATALOG_SEARCH_RESPONSE = (
     "I couldn't complete a valid catalog search for that request, so I don't "
     "have catalog results to show. Please try again or ask me to search a "
@@ -280,15 +273,10 @@ Rules:
 - CURRENT-TURN TOOL EVIDENCE is the only evidence for a search or mutation in
   this turn. PRIOR-TURN TOOL EVIDENCE may support direct references to products
   previously shown, but it does not prove that a new search or mutation ran.
-- If TOOL EVIDENCE says there is no direct advertised taxonomy match for one
-  requested role, do not claim a search ran for that role. Report that role's
-  gap, preserve any other successful current-turn role, and ask whether to
-  search a different advertised type. Do not name alternatives unless their
-  exact taxonomy values appear in TOOL EVIDENCE.
-- If TOOL EVIDENCE says a requested type is not separately advertised and a
-  broader advertised category was searched, say so plainly. Present the
-  returned products as closest options and keep each product's actual catalog
-  category; do not relabel any result as the requested type.
+- If TOOL EVIDENCE records a requested role separately from a category-only
+  search scope, state which advertised category was searched. Keep each
+  product's actual catalog category and do not relabel any result as the
+  requested type without catalog evidence.
 - A scoped zero-result search proves only that its exact advertised taxonomy
   and filter scope returned no products. It does not prove that a different,
   unsearched, or unadvertised product type is absent, and it never supports a
@@ -422,78 +410,6 @@ class CatalogTaxonomyToolInput(BaseModel):
         return list(dict.fromkeys(value)) if isinstance(value, list) else value
 
 
-def _singularize_product_word(word: str) -> str:
-    """Conservatively singularize one normalized product-type word."""
-
-    if word.endswith("ies") and len(word) > 3:
-        return f"{word[:-3]}y"
-    if word.endswith(("sses", "shes", "ches", "xes", "zes")):
-        return word[:-2]
-    if word.endswith("s") and not word.endswith("ss") and len(word) > 1:
-        return word[:-1]
-    return word
-
-
-def _normalize_product_text(value: str) -> str:
-    """Normalize product-type text for deterministic lexical comparison."""
-
-    normalized = unicodedata.normalize("NFKC", value).casefold()
-    normalized = normalized.replace("&", " and ").replace("/", " or ")
-    words = re.findall(r"[^\W_]+", normalized.replace("_", " "))
-    return " ".join(_singularize_product_word(word) for word in words)
-
-
-def _has_alternative_connector(value: str) -> bool:
-    """Return whether a product phrase joins explicit alternatives."""
-
-    normalized = _normalize_product_text(value)
-    return bool(re.search(r"\b(?:and|or)\b", normalized))
-
-
-def _text_mentions_product_type(text: str, product_type: str) -> bool:
-    """Return whether text names a normalized product-type form."""
-
-    normalized_text = _normalize_product_text(text)
-    padded_text = f" {normalized_text} "
-    normalized_product_type = _normalize_product_text(product_type)
-    return bool(normalized_product_type) and (
-        f" {normalized_product_type} " in padded_text
-    )
-
-
-def _requirement_word_stem(word: str) -> str:
-    """Return a conservative stem for literal requirement provenance."""
-
-    for suffix in ("ance", "ence", "ancy", "ency", "ant", "ent", "ing", "ed"):
-        if word.endswith(suffix) and len(word) > len(suffix) + 3:
-            return word[: -len(suffix)]
-    return _singularize_product_word(word)
-
-
-def _shopper_stated_requirement(query: str, requirement: str) -> bool:
-    """Return whether a proposed requirement is grounded in the current turn."""
-
-    normalized_query = unicodedata.normalize("NFKC", query).casefold()
-    query_words = {
-        _requirement_word_stem(word)
-        for word in re.findall(r"[^\W_]+", normalized_query)
-    }
-    requirement_words = {
-        _requirement_word_stem(word)
-        for word in re.findall(
-            r"[^\W_]+",
-            unicodedata.normalize("NFKC", requirement).casefold(),
-        )
-    }
-    return bool(requirement_words) and requirement_words.issubset(query_words)
-
-
-def _product_scope_key(value: str | None) -> str:
-    """Return the full normalized product phrase preserved across repair."""
-
-    return _normalize_product_text(value or "")
-
-
 def _generic_shopper_guidance(requested_product_type: str | None) -> str:
     """Return safe guidance after an inferred attribute is removed."""
 
@@ -533,186 +449,6 @@ def _unsupported_requirement_message(requirements: list[str]) -> str:
         )
         + ". Ask the shopper whether to treat it as a preference."
     )
-
-
-def _recent_shopper_statements(context: str, *, limit: int = 4) -> str:
-    """Extract prior shopper text without exposing assistant responses."""
-
-    statements = re.findall(
-        r"(?:^|\n)User:\s*(.*?)(?=\nAssistant:|\nUser:|\Z)",
-        context or "",
-        flags=re.DOTALL,
-    )
-    compact = [" ".join(statement.split()) for statement in statements]
-    return "\n".join(statement for statement in compact[-limit:] if statement)
-
-
-def _shopper_stated_product_scope(
-    query: str,
-    context: str,
-    product_scope_key: str,
-) -> bool:
-    """Return whether current or recent shopper text states a product scope."""
-
-    shopper_text = "\n".join(
-        value for value in (query, _recent_shopper_statements(context)) if value
-    )
-    return _text_mentions_product_type(shopper_text, product_scope_key)
-
-
-def _resolved_agent_selected_product_type(
-    *,
-    query: str,
-    context: str,
-    requested_product_type: str | None,
-    taxonomy_status: str,
-    taxonomy: BaseModel | dict[str, Any],
-) -> str | None:
-    """Derive open-role provenance from the agent's single taxonomy choice."""
-
-    if taxonomy_status != "agent_selected_type":
-        return requested_product_type
-    scope_key = _product_scope_key(requested_product_type)
-    if scope_key and _shopper_stated_product_scope(query, context, scope_key):
-        return requested_product_type
-    payload = taxonomy.model_dump() if isinstance(taxonomy, BaseModel) else taxonomy
-    subcategories = payload.get("subcategory") or []
-    if len(subcategories) == 1:
-        return str(subcategories[0])
-    return requested_product_type
-
-
-def _agent_selected_scope_is_advertised(
-    requested_product_type: str | None,
-    taxonomy: BaseModel | dict[str, Any],
-) -> bool:
-    """Check that an open-role choice names its advertised taxonomy scope."""
-
-    requested = _normalize_product_text(requested_product_type or "")
-    payload = taxonomy.model_dump() if isinstance(taxonomy, BaseModel) else taxonomy
-    subcategories = {
-        _normalize_product_text(value)
-        for value in (payload.get("subcategory") or [])
-    }
-    return len(subcategories) == 1 and requested in subcategories
-
-
-def _advertised_subcategories_for_selection(
-    taxonomy: BaseModel | dict[str, Any],
-    capabilities: CatalogCapabilities,
-) -> list[str]:
-    """Return advertised role choices within the selected category."""
-
-    payload = taxonomy.model_dump() if isinstance(taxonomy, BaseModel) else taxonomy
-    selected_categories = payload.get("category") or []
-    categories = capabilities.taxonomy.categories
-    category_names = selected_categories or list(categories)
-    return sorted(
-        {
-            subcategory
-            for category_name in category_names
-            if (category := categories.get(category_name)) is not None
-            for subcategory in category.subcategories
-        }
-    )
-
-
-def _advertised_taxonomy_value(
-    requested_product_type: str | None,
-    capabilities: CatalogCapabilities,
-) -> str | None:
-    """Return the matching advertised taxonomy value, if one exists."""
-
-    requested = _normalize_product_text(requested_product_type or "")
-    for category_name, category in capabilities.taxonomy.categories.items():
-        if requested == _normalize_product_text(category_name):
-            return category_name
-        for subcategory_name in category.subcategories:
-            if requested == _normalize_product_text(subcategory_name):
-                return subcategory_name
-    return None
-
-
-def _advertised_scope_match(
-    requested_product_type: str | None,
-    capabilities: CatalogCapabilities,
-) -> tuple[str, str, str, str] | None:
-    """Return the longest advertised exact or suffix scope match."""
-
-    raw_requested = requested_product_type or ""
-    requested = _normalize_product_text(raw_requested)
-    suffix_match_allowed = not _has_alternative_connector(raw_requested)
-    matches: list[tuple[str, str, str, str]] = []
-    for category_name, category in capabilities.taxonomy.categories.items():
-        normalized_category = _normalize_product_text(category_name)
-        if requested == normalized_category or (
-            suffix_match_allowed
-            and requested.endswith(f" {normalized_category}")
-        ):
-            matches.append(
-                ("category", category_name, category_name, normalized_category)
-            )
-        for subcategory_name in category.subcategories:
-            normalized_subcategory = _normalize_product_text(subcategory_name)
-            if requested == normalized_subcategory or (
-                suffix_match_allowed
-                and requested.endswith(f" {normalized_subcategory}")
-            ):
-                matches.append(
-                    (
-                        "subcategory",
-                        subcategory_name,
-                        category_name,
-                        normalized_subcategory,
-                    )
-                )
-    return max(
-        matches,
-        key=lambda match: (len(match[3].split()), len(match[3])),
-        default=None,
-    )
-
-
-def _duplicates_unavailable_product_type(
-    requirements: Any,
-    requested_product_type: str | None,
-    capabilities: CatalogCapabilities,
-) -> bool:
-    """Return whether requirements only repeat an unavailable product type."""
-
-    requested = _normalize_product_text(requested_product_type or "")
-    return bool(
-        requested
-        and isinstance(requirements, list)
-        and len(requirements) == 1
-        and not _has_alternative_connector(requested_product_type or "")
-        and _advertised_scope_match(requested_product_type, capabilities) is None
-        and all(
-            isinstance(requirement, str)
-            and _normalize_product_text(requirement) == requested
-            for requirement in requirements
-        )
-    )
-
-
-def _same_product_scope(
-    first: str,
-    second: str,
-    capabilities: CatalogCapabilities,
-) -> bool:
-    """Compare full product scopes without conflating advertised siblings."""
-
-    if first == second:
-        return True
-    if _has_alternative_connector(first):
-        return False
-    first_advertised = _advertised_taxonomy_value(first, capabilities)
-    if first_advertised:
-        return False
-    advertised_match = _advertised_scope_match(first, capabilities)
-    if advertised_match:
-        return second == advertised_match[3]
-    return first.endswith(f" {second}")
 
 
 def _selected_advertised_subcategories(
@@ -765,13 +501,11 @@ def _products_with_subcategory_coverage(
     _, subcategories = selection
     selected_indexes: set[int] = set()
     for subcategory in subcategories:
-        normalized_subcategory = _normalize_product_text(subcategory)
         match = next(
             (
                 index
                 for index, product in enumerate(products)
-                if _normalize_product_text(product.category or "")
-                == normalized_subcategory
+                if product.category == subcategory
             ),
             None,
         )
@@ -783,122 +517,6 @@ def _products_with_subcategory_coverage(
             break
         selected_indexes.add(index)
     return [products[index] for index in sorted(selected_indexes)]
-
-
-def _advertised_taxonomy_scope_issue(
-    requested_product_type: str | None,
-    taxonomy_status: str,
-    taxonomy: BaseModel | dict[str, Any],
-    capabilities: CatalogCapabilities,
-) -> str | None:
-    """Enforce capability-owned relations for exact advertised scopes."""
-
-    advertised_match = _advertised_scope_match(
-        requested_product_type,
-        capabilities,
-    )
-    if advertised_match is None:
-        return None
-    scope_kind, advertised_name, category_name, _ = advertised_match
-    payload = taxonomy.model_dump() if isinstance(taxonomy, BaseModel) else taxonomy
-    selected_categories = payload.get("category") or []
-    selected_subcategories = payload.get("subcategory") or []
-    normalized_category = _normalize_product_text(category_name)
-    normalized_selected_categories = {
-        _normalize_product_text(value) for value in selected_categories
-    }
-    normalized_selected_subcategories = {
-        _normalize_product_text(value) for value in selected_subcategories
-    }
-    if scope_kind == "category":
-        category = capabilities.taxonomy.categories[category_name]
-        owned_subcategories = {
-            _normalize_product_text(value) for value in category.subcategories
-        }
-        selected_owned_children = (
-            bool(normalized_selected_subcategories)
-            and normalized_selected_subcategories.issubset(owned_subcategories)
-            and normalized_selected_categories in (set(), {normalized_category})
-        )
-        if taxonomy_status == "exact_requested_type" and selected_owned_children:
-            return (
-                f"Requested product type '{requested_product_type}' binds to "
-                f"advertised category '{advertised_name}', while the selected "
-                "taxonomy contains only its advertised children. Keep those "
-                "children together for the shopper's umbrella request."
-            )
-        exact_category = (
-            taxonomy_status == "exact_requested_type"
-            and not normalized_selected_subcategories
-            and normalized_selected_categories == {normalized_category}
-        )
-        owned_children = (
-            taxonomy_status
-            in {"member_of_requested_umbrella", "agent_selected_type"}
-            and selected_owned_children
-        )
-        if exact_category or owned_children:
-            return None
-        return (
-            f"Requested product type '{requested_product_type}' binds to advertised "
-            f"category '{advertised_name}'. Select that category directly or only "
-            "its advertised children; do not substitute another category."
-        )
-    selected_matches = (
-        len(selected_subcategories) == 1
-        and _normalize_product_text(selected_subcategories[0])
-        == _normalize_product_text(advertised_name)
-        and normalized_selected_categories in (set(), {normalized_category})
-    )
-    if selected_matches and taxonomy_status in {
-        "exact_requested_type",
-        "agent_selected_type",
-    }:
-        return None
-    return (
-        f"Requested product type '{requested_product_type}' binds to advertised "
-        f"subcategory '{advertised_name}'. Select only that exact subcategory; "
-        "do not substitute an advertised sibling."
-    )
-
-
-def _catalog_execution_taxonomy_status(
-    requested_product_type: str | None,
-    taxonomy: BaseModel | dict[str, Any],
-    semantic_query: str,
-    capabilities: CatalogCapabilities,
-    *,
-    shopper_stated_scope: bool,
-) -> str:
-    """Derive the legacy execution mode without asking the model to label it."""
-
-    payload = taxonomy.model_dump() if isinstance(taxonomy, BaseModel) else taxonomy
-    categories = payload.get("category") or []
-    subcategories = payload.get("subcategory") or []
-    if (
-        not semantic_query.strip()
-        and not requested_product_type
-        and not categories
-        and not subcategories
-    ):
-        return "image_only"
-    if not shopper_stated_scope:
-        return "agent_selected_type"
-
-    advertised_match = _advertised_scope_match(
-        requested_product_type,
-        capabilities,
-    )
-    if advertised_match is not None:
-        scope_kind = advertised_match[0]
-        if scope_kind == "category" and subcategories:
-            return "member_of_requested_umbrella"
-        return "exact_requested_type"
-    if len(categories) == 1 and not subcategories:
-        return "parent_category_alternative"
-    if subcategories:
-        return "member_of_requested_umbrella"
-    return "exact_requested_type"
 
 
 class SearchCatalogToolArguments(BaseModel):
@@ -999,24 +617,13 @@ class SearchCatalogToolArguments(BaseModel):
 
 
 class SearchCatalogToolInput(SearchCatalogToolArguments):
-    """Runtime-validated catalog search request."""
-
-    taxonomy_status: Literal[
-        "exact_requested_type",
-        "member_of_requested_umbrella",
-        "parent_category_alternative",
-        "agent_selected_type",
-        "no_direct_catalog_match",
-        "image_only",
-    ] = Field(..., description="Server-derived catalog execution mode.")
+    """Catalog search request validated only against structural capabilities."""
 
     @model_validator(mode="after")
     def text_search_has_taxonomy_scope(self) -> "SearchCatalogToolInput":
         if len(set(self.taxonomy.category)) > 1:
             raise ValueError("catalog search accepts at most one category")
-        has_taxonomy = bool(
-            self.taxonomy.category or self.taxonomy.subcategory
-        )
+        has_taxonomy = bool(self.taxonomy.category or self.taxonomy.subcategory)
         has_query = bool(self.semantic_query.strip())
         has_shopper_guidance = bool(self.shopper_guidance.strip())
         requested_product_type = (
@@ -1024,116 +631,33 @@ class SearchCatalogToolInput(SearchCatalogToolArguments):
             if isinstance(self.requested_product_type, str)
             else ""
         )
-        if self.taxonomy_status in {
-            "image_only",
-            "no_direct_catalog_match",
-        }:
+        image_only = not has_query and not has_taxonomy and not requested_product_type
+        if image_only:
             if has_shopper_guidance:
                 raise ValueError(
-                    "A non-text retrieval path requires empty shopper_guidance"
-                )
-        elif not has_shopper_guidance:
-            raise ValueError(
-                "catalog retrieval requires non-empty shopper_guidance"
-            )
-        if self.taxonomy_status != "image_only" and not requested_product_type:
-            raise ValueError(
-                "text catalog search requires requested_product_type"
-            )
-        if self.taxonomy_status == "image_only" and requested_product_type:
-            raise ValueError(
-                "image-only search requires requested_product_type=null"
-            )
-        if self.taxonomy_status == "no_direct_catalog_match":
-            if has_taxonomy:
-                raise ValueError(
-                    "a non-retrieval result requires empty taxonomy arrays"
-                )
-            if not has_query:
-                raise ValueError(
-                    "a non-retrieval result requires a requested product type"
+                    "image-only search requires empty shopper_guidance"
                 )
             constraints = (
                 self.required_constraints.model_dump(exclude_none=True)
                 if isinstance(self.required_constraints, BaseModel)
                 else self.required_constraints
             )
-            has_constraint = any(
-                value not in (None, "", [], {})
-                for value in constraints.values()
-            )
-            if has_constraint:
+            if any(value not in (None, "", [], {}) for value in constraints.values()):
                 raise ValueError(
-                    "a non-retrieval result cannot include required constraints"
+                    "image-only search requires empty required_constraints"
                 )
             return self
-        if self.taxonomy_status == "image_only":
-            if has_query or has_taxonomy:
-                raise ValueError(
-                    "image-only search requires an empty semantic query and taxonomy"
-                )
-            return self
-        if self.taxonomy_status == "member_of_requested_umbrella" and not (
-            self.taxonomy.subcategory
-        ):
-            raise ValueError(
-                "an umbrella search requires an advertised subcategory"
-            )
-        if self.taxonomy_status == "agent_selected_type" and not (
-            self.taxonomy.subcategory
-        ):
-            raise ValueError(
-                "an open-role search requires an advertised subcategory"
-            )
-        if self.taxonomy_status == "parent_category_alternative" and not (
-            len(self.taxonomy.category) == 1
-            and not self.taxonomy.subcategory
-        ):
-            raise ValueError(
-                "a parent-category alternative requires one advertised category "
-                "and no subcategory"
-            )
-        if has_query and not has_taxonomy:
+        if not requested_product_type:
+            raise ValueError("text catalog search requires requested_product_type")
+        if not has_shopper_guidance:
+            raise ValueError("catalog retrieval requires non-empty shopper_guidance")
+        if not has_taxonomy:
             raise ValueError(
                 "text catalog search requires an advertised category or subcategory"
             )
         if not has_query:
             raise ValueError("text catalog search requires a semantic query")
         return self
-
-
-def _exact_taxonomy_issue(
-    requested_product_type: str,
-    taxonomy: BaseModel | dict[str, Any],
-) -> str | None:
-    """Return a coherence issue for an exact taxonomy claim."""
-
-    payload = taxonomy.model_dump() if isinstance(taxonomy, BaseModel) else taxonomy
-    categories = payload.get("category") or []
-    subcategories = payload.get("subcategory") or []
-    requested_matches_category = not subcategories and any(
-        _normalize_product_text(requested_product_type)
-        == _normalize_product_text(category)
-        for category in categories
-    )
-    if requested_matches_category:
-        return None
-
-    selected_product_types = subcategories or categories
-    if len(selected_product_types) != 1:
-        return (
-            "The selected taxonomy must faithfully represent one requested type "
-            "or every child of a shopper-requested umbrella."
-        )
-    selected_product_type = selected_product_types[0]
-    if _normalize_product_text(requested_product_type) == _normalize_product_text(
-        selected_product_type
-    ):
-        return None
-    return (
-        "A single taxonomy value must match requested_product_type. If no "
-        "advertised value faithfully represents it, ask a clarification instead"
-    )
 
 
 class _CatalogNumberConstraint(BaseModel):
@@ -1844,15 +1368,9 @@ class DeepAgentsRuntime:
                 request_id=identity.request_id,
                 final_termination_reason="completed",
             )
-            state.response = (
-                _no_direct_taxonomy_response(
-                    result,
-                    request_id=identity.request_id,
-                )
-                or _unsupported_requirement_response(
-                    result,
-                    request_id=identity.request_id,
-                )
+            state.response = _unsupported_requirement_response(
+                result,
+                request_id=identity.request_id,
             )
             if not state.response:
                 remaining_seconds = max(
@@ -1986,69 +1504,44 @@ class DeepAgentsRuntime:
         ].annotation
         catalog_searches_this_turn = 0
         searched_catalog_scopes: list[dict[str, Any]] = []
-        searched_shopper_scopes: set[tuple[str, str]] = set()
         catalog_tool_lock = Lock()
         product_detail_reads_this_turn = 0
-        failed_repair_scope_key: str | None = None
-        failed_agent_selected_scope = False
-        failed_constraint_scope_key: str | None = None
-        constraint_reviewed_scopes: set[str] = set()
-        pending_constraint_reviews: dict[str, dict[str, Any]] = {}
         pending_taxonomy_constraints: dict[str, Any] | None = None
-        pending_no_direct_constraint_clear = False
-        pending_schema_requirements: list[str] = []
         product_evidence = ProductEvidence()
         product_resolution_used = False
         product_resolution_lock = Lock()
 
         def _lock_taxonomy_constraint_values(
-            scope_key: str | None,
             constraints: dict[str, Any],
-            *,
-            allow_no_direct_clear: bool = False,
         ) -> str:
-            """Store canonical hard constraints for one taxonomy repair."""
+            """Preserve capability-valid hard constraints through one repair."""
 
             nonlocal pending_taxonomy_constraints
-            nonlocal pending_no_direct_constraint_clear
             constraints = _normalized_scope_value(constraints)
             constraints.pop("unadvertised_requirements", None)
             pending_taxonomy_constraints = constraints
-            pending_no_direct_constraint_clear = allow_no_direct_clear
             serialized_constraints = json.dumps(
                 constraints,
                 ensure_ascii=False,
                 sort_keys=True,
             )
-            if allow_no_direct_clear:
-                return (
-                    " Clear advertised required_constraints if the corrected "
-                    "request does not retrieve. Otherwise preserve these "
-                    "capability-validated advertised required_constraints "
-                    f"exactly: {serialized_constraints}."
-                )
             if not constraints:
                 return (
                     " The rejected call had no advertised required_constraints. "
-                    "Keep advertised required_constraints empty on repair. "
-                    "Change only taxonomy or an explicitly identified ungrounded "
-                    "product scope."
+                    "Keep advertised required_constraints empty on repair."
                 )
             return (
                 " Preserve these capability-validated advertised "
                 "required_constraints exactly on repair: "
-                f"{serialized_constraints}. Change only taxonomy or an "
-                "explicitly identified ungrounded product scope."
+                f"{serialized_constraints}."
             )
 
         def _lock_taxonomy_constraints(
-            scope_key: str | None,
             request: SearchCatalogToolArguments,
         ) -> str:
             """Preserve validated hard constraints across one taxonomy repair."""
 
             return _lock_taxonomy_constraint_values(
-                scope_key,
                 request.required_constraints.model_dump(exclude_none=True),
             )
 
@@ -2072,78 +1565,12 @@ class DeepAgentsRuntime:
             """
 
             nonlocal catalog_searches_this_turn
-            nonlocal failed_agent_selected_scope
-            nonlocal failed_constraint_scope_key
-            nonlocal failed_repair_scope_key
-            nonlocal pending_no_direct_constraint_clear
             nonlocal pending_taxonomy_constraints
-            nonlocal pending_schema_requirements
             taxonomy = taxonomy or {"category": [], "subcategory": []}
             required_constraints = required_constraints or {}
             capabilities = turn_capabilities
             if capabilities.catalog_id == "unavailable" and not capabilities.filters:
                 return "Catalog search is unavailable. Please try again."
-            initial_scope_key = _product_scope_key(requested_product_type)
-            shopper_stated_requested_scope = bool(
-                initial_scope_key
-                and _shopper_stated_product_scope(
-                    state.query,
-                    state.context,
-                    initial_scope_key,
-                )
-            )
-            taxonomy_status = _catalog_execution_taxonomy_status(
-                requested_product_type,
-                taxonomy,
-                semantic_query,
-                capabilities,
-                shopper_stated_scope=shopper_stated_requested_scope,
-            )
-
-            requested_product_type = _resolved_agent_selected_product_type(
-                query=state.query,
-                context=state.context,
-                requested_product_type=requested_product_type,
-                taxonomy_status=taxonomy_status,
-                taxonomy=taxonomy,
-            )
-            candidate_scope_key = _product_scope_key(requested_product_type)
-            locked_repair_scope = (
-                failed_constraint_scope_key or failed_repair_scope_key
-            )
-            repairing_same_scope = bool(
-                locked_repair_scope
-                and (
-                    candidate_scope_key == failed_constraint_scope_key
-                    if failed_constraint_scope_key
-                    else _same_product_scope(
-                        locked_repair_scope,
-                        candidate_scope_key,
-                        capabilities,
-                    )
-                )
-            )
-            if (
-                locked_repair_scope
-                and not repairing_same_scope
-            ):
-                expected_scope_key = locked_repair_scope
-                return (
-                    SEARCH_VALIDATION_ERROR_PREFIX
-                    + "A catalog search repair cannot replace product scope "
-                    f"'{expected_scope_key}' "
-                    f"with '{candidate_scope_key or 'none'}'. Preserve the "
-                    "requested_product_type and repair taxonomy instead."
-                )
-            if (
-                failed_agent_selected_scope
-                and taxonomy_status != "agent_selected_type"
-            ):
-                return (
-                    SEARCH_VALIDATION_ERROR_PREFIX
-                    + "This open-role repair must choose exactly one advertised "
-                    "subcategory for the role."
-                )
 
             taxonomy_payload = (
                 taxonomy.model_dump()
@@ -2155,64 +1582,12 @@ class DeepAgentsRuntime:
                 if isinstance(required_constraints, BaseModel)
                 else required_constraints
             )
-            shopper_stated_scope = bool(
-                candidate_scope_key
-                and _shopper_stated_product_scope(
-                    state.query,
-                    state.context,
-                    candidate_scope_key,
-                )
-            )
-            raw_unadvertised_requirements = (
-                constraint_payload.get("unadvertised_requirements", [])
-                if isinstance(constraint_payload, dict)
-                else []
-            )
-            duplicated_product_type = bool(
-                shopper_stated_scope
-                and _duplicates_unavailable_product_type(
-                    raw_unadvertised_requirements,
-                    requested_product_type,
-                    capabilities,
-                )
-            )
-            if duplicated_product_type:
-                failed_repair_scope_key = candidate_scope_key
-                failed_agent_selected_scope = False
-                return (
-                    SEARCH_VALIDATION_ERROR_PREFIX
-                    + "Product types never belong in "
-                    "unadvertised_requirements. Preserve the shopper-stated "
-                    "requested_product_type, remove it from requirements, and "
-                    "preserve the selected advertised parent category when it is "
-                    "a faithful broader scope. Otherwise ask one concise "
-                    "clarification."
-                )
-            stated_unadvertised_requirements = (
-                [
-                    requirement
-                    for requirement in raw_unadvertised_requirements
-                    if isinstance(requirement, str)
-                    and _shopper_stated_requirement(state.query, requirement)
-                ]
-                if isinstance(raw_unadvertised_requirements, list)
-                else []
-            )
-            if (
-                isinstance(raw_unadvertised_requirements, list)
-                and raw_unadvertised_requirements
-                and (shopper_stated_scope or stated_unadvertised_requirements)
-            ):
-                return _unsupported_requirement_message(
-                    raw_unadvertised_requirements
-                )
             try:
                 request = search_input_model.model_validate(
                     {
                         "semantic_query": semantic_query,
                         "shopper_guidance": shopper_guidance,
                         "requested_product_type": requested_product_type,
-                        "taxonomy_status": taxonomy_status,
                         "taxonomy": taxonomy_payload,
                         "required_constraints": constraint_payload,
                         "scope_complete": scope_complete,
@@ -2228,79 +1603,6 @@ class DeepAgentsRuntime:
                     }
                     for error in exc.errors(include_url=False)
                 ]
-                taxonomy_error = any(
-                    any(
-                        marker in (
-                            str(error.get("loc", ""))
-                            + " "
-                            + str(error.get("msg", ""))
-                        )
-                        .replace("_", " ")
-                        .casefold()
-                        for marker in (
-                            "taxonomy",
-                            "category",
-                            "subcategory",
-                            "requested product type",
-                        )
-                    )
-                    for error in validation_errors
-                )
-                repair_guidance = ""
-                canonical_agent_selected_scope = bool(
-                    candidate_scope_key
-                    and taxonomy_status == "agent_selected_type"
-                    and _agent_selected_scope_is_advertised(
-                        requested_product_type,
-                        taxonomy,
-                    )
-                )
-                if shopper_stated_scope or canonical_agent_selected_scope:
-                    failed_repair_scope_key = candidate_scope_key
-                    failed_agent_selected_scope = False
-                elif taxonomy_error and taxonomy_status == "agent_selected_type":
-                    failed_agent_selected_scope = True
-                if candidate_scope_key and taxonomy_error:
-                    if (
-                        taxonomy_status == "agent_selected_type"
-                        and not shopper_stated_scope
-                    ):
-                        advertised_choices = _advertised_subcategories_for_selection(
-                            taxonomy,
-                            capabilities,
-                        )
-                        repair_guidance = (
-                            " For an open-role search, choose "
-                            "exactly one advertised subcategory and copy it into "
-                            "requested_product_type. Choose exactly one of these "
-                            "currently advertised subcategories: "
-                            + json.dumps(advertised_choices, ensure_ascii=False)
-                            + "."
-                        )
-                        constraints = (
-                            required_constraints.model_dump(exclude_none=True)
-                            if isinstance(required_constraints, BaseModel)
-                            else required_constraints
-                        )
-                        proposed_requirements = constraints.get(
-                            "unadvertised_requirements",
-                            [],
-                        )
-                        if proposed_requirements:
-                            pending_schema_requirements = list(
-                                proposed_requirements
-                            )
-                            repair_guidance += (
-                                " The rejected call proposed "
-                                "unadvertised_requirements "
-                                + json.dumps(
-                                    proposed_requirements,
-                                    ensure_ascii=False,
-                                )
-                                + ". Preserve only an objective product attribute "
-                                "directly stated for the selected role; remove one "
-                                "inferred from season, weather, occasion, or style."
-                            )
                 constraint_lock = ""
                 try:
                     validated_constraints = constraint_input_model.model_validate(
@@ -2309,18 +1611,17 @@ class DeepAgentsRuntime:
                 except ValidationError:
                     pass
                 else:
-                    constraint_lock = _lock_taxonomy_constraint_values(
-                        candidate_scope_key,
-                        validated_constraints.model_dump(exclude_none=True),
-                        allow_no_direct_clear=(
-                            taxonomy_status == "no_direct_catalog_match"
-                        ),
+                    validated_payload = validated_constraints.model_dump(
+                        exclude_none=True
                     )
+                    if not validated_payload.get("unadvertised_requirements"):
+                        constraint_lock = _lock_taxonomy_constraint_values(
+                            validated_payload
+                        )
                 return (
                     SEARCH_VALIDATION_ERROR_PREFIX
                     + "The catalog search request does not match current "
                     f"capabilities: {validation_errors}"
-                    + repair_guidance
                     + constraint_lock
                 )
 
@@ -2336,381 +1637,25 @@ class DeepAgentsRuntime:
             )
             if (
                 pending_taxonomy_constraints is not None
-                and not (
-                    pending_no_direct_constraint_clear
-                    and request.taxonomy_status == "no_direct_catalog_match"
-                )
                 and normalized_advertised_constraints
                 != pending_taxonomy_constraints
             ):
                 return (
                     SEARCH_VALIDATION_ERROR_PREFIX
                     + "A taxonomy repair must preserve previously validated "
-                    "advertised required_constraints exactly. Change only "
-                    "taxonomy or an explicitly identified "
-                    "ungrounded product scope."
+                    "advertised required_constraints exactly."
                 )
             if pending_taxonomy_constraints is not None:
                 pending_taxonomy_constraints = None
-                pending_no_direct_constraint_clear = False
             normalized_constraints = dict(all_constraints)
             unadvertised_requirements = normalized_constraints.pop(
                 "unadvertised_requirements",
                 [],
             )
-            shopper_stated_scope = bool(
-                candidate_scope_key
-                and _shopper_stated_product_scope(
-                    state.query,
-                    state.context,
-                    candidate_scope_key,
-                )
-            )
-            if unadvertised_requirements and shopper_stated_scope:
+            if unadvertised_requirements:
                 return _unsupported_requirement_message(
                     unadvertised_requirements
                 )
-
-            advertised_taxonomy_issue = _advertised_taxonomy_scope_issue(
-                request.requested_product_type,
-                request.taxonomy_status,
-                request.taxonomy,
-                capabilities,
-            )
-            if advertised_taxonomy_issue:
-                if shopper_stated_scope:
-                    failed_repair_scope_key = candidate_scope_key
-                    failed_agent_selected_scope = False
-                return (
-                    SEARCH_VALIDATION_ERROR_PREFIX
-                    + advertised_taxonomy_issue
-                    + _lock_taxonomy_constraints(candidate_scope_key, request)
-                    + (
-                        " Preserve the shopper-stated requested_product_type."
-                        if shopper_stated_scope
-                        else " The rejected requested_product_type was not "
-                        "shopper-stated. Re-read the current shopper request "
-                        "and correct it rather than preserving this scope."
-                    )
-                )
-
-            if pending_schema_requirements and not unadvertised_requirements:
-                request = request.model_copy(
-                    update={
-                        "shopper_guidance": _generic_shopper_guidance(
-                            request.requested_product_type
-                        )
-                    }
-                )
-                pending_schema_requirements = []
-            pending_constraint_review = pending_constraint_reviews.get(
-                candidate_scope_key
-            )
-            if pending_constraint_review and (
-                request.taxonomy.model_dump()
-                != pending_constraint_review["taxonomy"]
-                or request.scope_complete
-                != pending_constraint_review["scope_complete"]
-                or request.search_mode != pending_constraint_review["search_mode"]
-                or normalized_constraints
-                != pending_constraint_review["required_constraints"]
-            ):
-                return (
-                    SEARCH_VALIDATION_ERROR_PREFIX
-                    + "A constraint-provenance repair must preserve "
-                    "requested_product_type, taxonomy, scope_complete, "
-                    "search_mode, and all "
-                    "advertised required constraints exactly. Change only the "
-                    "reviewed unadvertised requirement wording or remove an "
-                    "inferred requirement; the soft semantic query may be "
-                    "corrected within the preserved product scope."
-                )
-            agent_selected_issue: str | None = None
-            agent_selected_shopper_scope = False
-            if (
-                request.taxonomy_status == "agent_selected_type"
-                and (
-                    _shopper_stated_product_scope(
-                        state.query,
-                        state.context,
-                        candidate_scope_key,
-                    )
-                    or not _agent_selected_scope_is_advertised(
-                        request.requested_product_type,
-                        request.taxonomy,
-                    )
-                )
-            ):
-                agent_selected_shopper_scope = bool(
-                    candidate_scope_key
-                    and _shopper_stated_product_scope(
-                        state.query,
-                        state.context,
-                        candidate_scope_key,
-                    )
-                )
-                if agent_selected_shopper_scope:
-                    payload = request.taxonomy.model_dump()
-                    selected_values = (
-                        payload.get("subcategory")
-                        or payload.get("category")
-                        or []
-                    )
-                    advertised_match = _advertised_scope_match(
-                        request.requested_product_type,
-                        capabilities,
-                    )
-                    exact_selected_scope = bool(
-                        advertised_match
-                        and len(selected_values) == 1
-                        and _normalize_product_text(selected_values[0])
-                        == _normalize_product_text(advertised_match[1])
-                    )
-                    repair_status = (
-                        "Keep that exact advertised taxonomy selection."
-                        if exact_selected_scope
-                        else (
-                            "Select only advertised values that are kinds of the "
-                            "named scope; do not narrow to one convenient child."
-                        )
-                    )
-                    agent_selected_issue = (
-                        "The shopper named requested_product_type "
-                        f"'{request.requested_product_type}', so "
-                        "preserve that requested_product_type and these advertised "
-                        "values on repair: "
-                        + json.dumps(selected_values, sort_keys=True)
-                        + ". "
-                        + repair_status
-                    )
-                else:
-                    advertised_choices = _advertised_subcategories_for_selection(
-                        request.taxonomy,
-                        capabilities,
-                    )
-                    agent_selected_issue = (
-                        "An open-role search must select exactly one advertised "
-                        "subcategory and copy that exact "
-                        "subcategory into requested_product_type. Do not use a "
-                        "parent category or an unadvertised role. Choose exactly "
-                        "one of these currently advertised subcategories: "
-                        + json.dumps(advertised_choices, ensure_ascii=False)
-                        + ". Rewrite "
-                        "shopper_guidance for that selected role without "
-                        "asserting an inferred product attribute."
-                    )
-            if agent_selected_issue:
-                if agent_selected_shopper_scope:
-                    failed_repair_scope_key = candidate_scope_key
-                    failed_agent_selected_scope = False
-                elif candidate_scope_key:
-                    failed_agent_selected_scope = True
-                constraint_issue = ""
-                if unadvertised_requirements:
-                    constraint_issue = (
-                        " The same rejected call proposed "
-                        "unadvertised_requirements "
-                        + json.dumps(
-                            unadvertised_requirements,
-                            ensure_ascii=False,
-                        )
-                        + ". Preserve only an objective product attribute "
-                        "directly stated for the selected role. If it was "
-                        "inferred from season, weather, occasion, or style, "
-                        "send an empty list and remove its promise from "
-                        "shopper_guidance."
-                    )
-                return (
-                    SEARCH_VALIDATION_ERROR_PREFIX
-                    + agent_selected_issue
-                    + constraint_issue
-                    + _lock_taxonomy_constraints(candidate_scope_key, request)
-                )
-            failed_agent_selected_scope = False
-
-            if (
-                request.taxonomy_status != "no_direct_catalog_match"
-                and unadvertised_requirements
-            ):
-                stated_requirements = [
-                    requirement
-                    for requirement in unadvertised_requirements
-                    if _shopper_stated_requirement(state.query, requirement)
-                ]
-                shopper_stated_scope = bool(
-                    candidate_scope_key
-                    and _shopper_stated_product_scope(
-                        state.query,
-                        state.context,
-                        candidate_scope_key,
-                    )
-                )
-                if stated_requirements or shopper_stated_scope:
-                    return _unsupported_requirement_message(
-                        unadvertised_requirements
-                    )
-                review_scope = candidate_scope_key or "__unknown__"
-                if review_scope in constraint_reviewed_scopes:
-                    return (
-                        "The requested catalog requirement cannot be enforced: "
-                        "its current-turn provenance could not be established. "
-                        "Ask the shopper to state the exact required attribute "
-                        "or allow it to be treated as a preference."
-                    )
-                constraint_reviewed_scopes.add(review_scope)
-                pending_constraint_reviews[review_scope] = {
-                    "requirements": list(unadvertised_requirements),
-                    "taxonomy": request.taxonomy.model_dump(),
-                    "scope_complete": request.scope_complete,
-                    "search_mode": request.search_mode,
-                    "required_constraints": dict(normalized_constraints),
-                }
-                failed_constraint_scope_key = review_scope
-                return (
-                    CONSTRAINT_REVIEW_PREFIX
-                    + "These proposed unadvertised requirements do not match "
-                    "the current shopper turn's normalized wording: "
-                    + json.dumps(unadvertised_requirements, ensure_ascii=False)
-                    + ". Preserve requested_product_type "
-                    + json.dumps(request.requested_product_type)
-                    + ", taxonomy "
-                    + json.dumps(request.taxonomy.model_dump(), sort_keys=True)
-                    + ", and scope_complete "
-                    + json.dumps(request.scope_complete)
-                    + ", search_mode "
-                    + json.dumps(request.search_mode)
-                    + ", and advertised required constraints "
-                    + json.dumps(normalized_constraints, sort_keys=True)
-                    + ". Keep semantic_query within that same product scope; "
-                    "you may remove inferred attribute wording from it"
-                    + ". If the shopper explicitly stated the same objective "
-                    "requirement using different words, replace each value with "
-                    "the shopper's shortest exact wording. Otherwise the model "
-                    "inferred it: remove it from required_constraints and remove "
-                    "the attribute claim from shopper_guidance. Implied weather, "
-                    "occasion, or style goals are not explicit requirements."
-                )
-
-            reviewed_constraint = pending_constraint_reviews.pop(
-                candidate_scope_key,
-                None,
-            )
-            if reviewed_constraint:
-                request = request.model_copy(
-                    update={
-                        "shopper_guidance": _generic_shopper_guidance(
-                            request.requested_product_type
-                        )
-                    }
-                )
-
-            exact_taxonomy_issue = (
-                _exact_taxonomy_issue(
-                    request.requested_product_type or "",
-                    request.taxonomy,
-                )
-                if (
-                    request.taxonomy_status == "exact_requested_type"
-                    and _advertised_scope_match(
-                        request.requested_product_type,
-                        capabilities,
-                    )
-                    is None
-                )
-                else None
-            )
-            if exact_taxonomy_issue:
-                shopper_stated_scope = bool(
-                    candidate_scope_key
-                    and _shopper_stated_product_scope(
-                        state.query,
-                        state.context,
-                        candidate_scope_key,
-                    )
-                )
-                if shopper_stated_scope:
-                    failed_repair_scope_key = candidate_scope_key
-                    failed_agent_selected_scope = False
-                return (
-                    SEARCH_VALIDATION_ERROR_PREFIX
-                    + exact_taxonomy_issue
-                    + _lock_taxonomy_constraints(candidate_scope_key, request)
-                    + (
-                        ". Preserve the shopper-stated requested_product_type "
-                        f"{json.dumps(request.requested_product_type)}."
-                        if shopper_stated_scope
-                        else ". Re-read the current shopper request and correct "
-                        "requested_product_type if the rejected value was not "
-                        "shopper-stated."
-                    )
-                    + " Choose only advertised taxonomy values that faithfully "
-                    "represent that scope. If none does, ask one concise "
-                    "clarifying question instead of searching an adjacent type."
-                )
-
-            advertised_match = (
-                _advertised_taxonomy_value(
-                    request.requested_product_type,
-                    capabilities,
-                )
-                if request.taxonomy_status == "no_direct_catalog_match"
-                else None
-            )
-            if advertised_match:
-                failed_repair_scope_key = candidate_scope_key
-                failed_agent_selected_scope = False
-                return (
-                    SEARCH_VALIDATION_ERROR_PREFIX
-                    + f"The requested product type '{request.requested_product_type}' "
-                    f"matches advertised taxonomy value '{advertised_match}'. "
-                    "Select that advertised value instead of reporting a gap."
-                    + _lock_taxonomy_constraints(candidate_scope_key, request)
-                )
-
-            failed_repair_scope_key = None
-            failed_constraint_scope_key = None
-            failed_agent_selected_scope = False
-
-            shopper_scope_key = (
-                (_normalize_product_text(state.query), candidate_scope_key)
-                if candidate_scope_key
-                and _text_mentions_product_type(
-                    state.query,
-                    candidate_scope_key,
-                )
-                else None
-            )
-
-            if request.taxonomy_status == "no_direct_catalog_match":
-                with catalog_tool_lock:
-                    if (
-                        shopper_scope_key is not None
-                        and shopper_scope_key in searched_shopper_scopes
-                    ):
-                        return (
-                            "STOP_TOOL_USE: This shopper-requested product scope "
-                            "was already searched in this turn. Do not search an "
-                            "adjacent taxonomy or report the requested scope as "
-                            "unavailable. Use the result already returned.\n\n"
-                            + _SEARCH_SCOPE_COMPLETE_NOTE
-                        )
-                lines = [
-                    "STOP_TOOL_USE: No faithful advertised catalog taxonomy "
-                    "matches the requested product type "
-                    f"'{request.requested_product_type}'. "
-                    "Do not search adjacent product types. Tell the shopper the "
-                    "requested type is not advertised and ask before offering an "
-                    "alternative.",
-                    _format_catalog_scope_outcome(
-                        {
-                            "outcome": "no_direct_catalog_match",
-                            "requested_product_type": request.requested_product_type,
-                        }
-                    ),
-                ]
-                if request.scope_complete:
-                    lines.append(_SEARCH_SCOPE_COMPLETE_NOTE)
-                return "\n\n".join(lines)
 
             taxonomy_constraints, taxonomy_issues = _taxonomy_hard_constraints(
                 request.taxonomy,
@@ -2734,9 +1679,12 @@ class DeepAgentsRuntime:
                 )
             if taxonomy_issues:
                 return (
-                    "The requested catalog taxonomy cannot be enforced: "
+                    SEARCH_VALIDATION_ERROR_PREFIX
+                    + "The catalog taxonomy selection does not match current "
+                    "capabilities: "
                     + "; ".join(taxonomy_issues)
-                    + ". Ask the shopper to choose an advertised product type."
+                    + "."
+                    + _lock_taxonomy_constraints(request)
                 )
 
             normalized_search_mode = _tool_search_mode(request.search_mode)
@@ -2794,16 +1742,6 @@ class DeepAgentsRuntime:
                     taxonomy_constraints,
                     normalized_constraints,
                 )
-                if (
-                    shopper_scope_key is not None
-                    and shopper_scope_key in searched_shopper_scopes
-                ):
-                    return (
-                        "STOP_TOOL_USE: This shopper-requested product scope "
-                        "was already searched in this turn. Do not search an "
-                        "adjacent taxonomy. Use the result already returned.\n\n"
-                        + _SEARCH_SCOPE_COMPLETE_NOTE
-                    )
                 if search_scope in searched_catalog_scopes:
                     return (
                         "STOP_TOOL_USE: This catalog taxonomy and constraint scope was already "
@@ -2819,8 +1757,6 @@ class DeepAgentsRuntime:
                         "clarifying question if the available products are not enough."
                     )
                 searched_catalog_scopes.append(search_scope)
-                if shopper_scope_key is not None:
-                    searched_shopper_scopes.add(shopper_scope_key)
                 catalog_searches_this_turn += 1
                 search_budget_exhausted = (
                     catalog_searches_this_turn
@@ -2876,7 +1812,11 @@ class DeepAgentsRuntime:
                     requested_product_type=request.requested_product_type or "",
                     advertised_category=request.taxonomy.category[0],
                 )
-                if request.taxonomy_status == "parent_category_alternative"
+                if (
+                    request.requested_product_type
+                    and len(request.taxonomy.category) == 1
+                    and not request.taxonomy.subcategory
+                )
                 else ""
             )
             if not result.products:
@@ -4500,10 +3440,7 @@ def _collect_agent_diagnostics(
     for message in turn_messages:
         if _message_type(message) != "ai":
             continue
-        calls = [
-            (raw_call, None)
-            for raw_call in (_value(message, "tool_calls") or [])
-        ]
+        calls = list(_value(message, "tool_calls") or [])
         additional_kwargs = _value(message, "additional_kwargs") or {}
         restored_fields_by_call: dict[str, list[str]] = {}
         if isinstance(additional_kwargs, dict):
@@ -4521,23 +3458,14 @@ def _collect_agent_diagnostics(
                     restored_fields_by_call[tool_call_id] = [
                         str(field)[:64] for field in fields[:8]
                     ]
-            calls.extend(
-                (raw_call, str(_value(raw_call, "rejection_reason") or "rejected"))
-                for raw_call in (
-                    additional_kwargs.get(_SERVER_REJECTED_TOOL_CALLS) or []
-                )
-            )
-        for raw_call, forced_rejection_reason in calls:
+        for raw_call in calls:
             call = _normalized_tool_call(raw_call)
             sequence = len(diagnostics["tool_calls"]) + 1
             result_message = tool_results.get(call["tool_call_id"])
-            if forced_rejection_reason:
-                status, rejection_reason = "rejected", forced_rejection_reason
-            else:
-                status, rejection_reason = _tool_call_status(
-                    call["tool_name"],
-                    result_message,
-                )
+            status, rejection_reason = _tool_call_status(
+                call["tool_name"],
+                result_message,
+            )
             entry = {
                 "sequence": sequence,
                 "tool_name": call["tool_name"],
@@ -4636,37 +3564,6 @@ def _prior_turn_messages(messages: list[Any], request_id: str) -> list[Any]:
     return []
 
 
-def _no_direct_taxonomy_response(
-    result: Any,
-    *,
-    request_id: str,
-) -> str | None:
-    """Return the fixed shopper response for a current-turn no-match result."""
-
-    outcomes = _business_tool_result_contents(
-        _current_turn_messages(_result_messages(result), request_id)
-    )
-    no_direct_outcomes = [
-        content
-        for content in outcomes
-        if content.startswith(
-            "STOP_TOOL_USE: No faithful advertised catalog taxonomy"
-        )
-    ]
-    repair_or_no_direct = all(
-        content.startswith(
-            (
-                SEARCH_VALIDATION_ERROR_PREFIX,
-                "STOP_TOOL_USE: No faithful advertised catalog taxonomy",
-            )
-        )
-        for content in outcomes
-    )
-    if no_direct_outcomes and repair_or_no_direct:
-        return _NO_DIRECT_TAXONOMY_RESPONSE
-    return None
-
-
 def _rejected_catalog_search_response(
     result: Any,
     *,
@@ -4680,31 +3577,16 @@ def _rejected_catalog_search_response(
     for message in messages:
         if _message_type(message) != "ai":
             continue
-        calls = [
-            (raw_call, False)
-            for raw_call in (_value(message, "tool_calls") or [])
-        ]
-        additional_kwargs = _value(message, "additional_kwargs") or {}
-        if isinstance(additional_kwargs, dict):
-            calls.extend(
-                (raw_call, True)
-                for raw_call in (
-                    additional_kwargs.get(_SERVER_REJECTED_TOOL_CALLS) or []
-                )
-            )
-        for raw_call, server_rejected in calls:
+        calls = list(_value(message, "tool_calls") or [])
+        for raw_call in calls:
             call = _normalized_tool_call(raw_call)
             tool_name = call["tool_name"]
             if tool_name in {SKILL_ACTIVATION_TOOL_NAME, "read_file"}:
                 continue
-            status = (
-                "rejected"
-                if server_rejected
-                else _tool_call_status(
-                    tool_name,
-                    tool_results.get(call["tool_call_id"]),
-                )[0]
-            )
+            status = _tool_call_status(
+                tool_name,
+                tool_results.get(call["tool_call_id"]),
+            )[0]
             business_calls.append((tool_name, status))
 
     if not business_calls:
@@ -4862,10 +3744,6 @@ def _tool_rejection_reason(content: str) -> str | None:
         ),
         ("STOP_TOOL_USE: Catalog search limit reached", "catalog_search_limit"),
         (
-            "STOP_TOOL_USE: No faithful advertised catalog taxonomy",
-            "no_advertised_taxonomy_match",
-        ),
-        (
             "STOP_TOOL_USE: Product-detail read limit reached",
             "product_detail_read_limit",
         ),
@@ -4874,7 +3752,6 @@ def _tool_rejection_reason(content: str) -> str | None:
             "invalid_catalog_request",
         ),
         (SEARCH_VALIDATION_ERROR_PREFIX, "invalid_catalog_request"),
-        (CONSTRAINT_REVIEW_PREFIX, "constraint_review_required"),
         (
             "The requested catalog taxonomy cannot be enforced:",
             "unsupported_catalog_taxonomy",
@@ -5054,8 +3931,7 @@ def _diagnostic_catalog_scope_outcomes(
         if (
             not outcome
             or not set(outcome).issubset(allowed_fields)
-            or outcome.get("outcome")
-            not in {"no_direct_catalog_match", "zero_results"}
+            or outcome.get("outcome") != "zero_results"
         ):
             continue
         bounded = _bounded_product_evidence_value(outcome)
@@ -5299,7 +4175,7 @@ def _format_search_only_response(
                 parts.append(category.replace("_", " "))
             lines.append("- " + " — ".join(parts))
 
-    parent_relations = []
+    category_scopes = []
     for group in search_groups:
         relation = group.get("scope_relation") or {}
         requested_type = str(
@@ -5311,21 +4187,22 @@ def _format_search_only_response(
             "advertised_category": category,
         }
         if (
-            relation.get("relation") == "model_selected_parent_category"
+            relation.get("relation") == "model_selected_category_scope"
             and requested_type
             and category
-            and normalized not in parent_relations
+            and normalized not in category_scopes
         ):
-            parent_relations.append(normalized)
-    if parent_relations:
+            category_scopes.append(normalized)
+    if category_scopes:
         relation_lines = [
             (
-                f"The catalog does not advertise **{relation['requested_product_type']}** "
-                "as a separate product type. I searched the broader "
-                f"**{relation['advertised_category']}** category for the closest "
-                "options; each result keeps its actual catalog category."
+                "The search used the advertised "
+                f"**{relation['advertised_category']}** category for the requested "
+                f"**{relation['requested_product_type']}** role. These are "
+                "category-scoped candidates, and each result keeps its actual "
+                "catalog category."
             )
-            for relation in parent_relations
+            for relation in category_scopes
         ]
         lines = relation_lines + [""] + lines
 
@@ -5344,17 +4221,6 @@ def _format_search_only_response(
                 else "Search candidates"
             )
             lines.append(f"- {scope}: {'; '.join(group['statements'])}.")
-    unavailable_types = _no_direct_search_types(
-        result,
-        request_id=request_id,
-    )
-    if unavailable_types:
-        lines.extend(("", "Unavailable requested catalog types:"))
-        lines.extend(
-            f"- **{product_type}** is not advertised; I did not substitute "
-            "an adjacent product type."
-            for product_type in unavailable_types
-        )
     if _has_unsupported_requirement_outcome(
         result,
         request_id=request_id,
@@ -5542,25 +4408,6 @@ def _format_search_group(
         lines.append("- " + " — ".join(parts))
     lines.append("")
     return lines
-
-
-def _no_direct_search_types(result: Any, *, request_id: str) -> list[str]:
-    """Return current-turn product types with a server-authored no-direct outcome."""
-
-    product_types: list[str] = []
-    for message in _current_turn_messages(_result_messages(result), request_id):
-        if _message_type(message) != "tool":
-            continue
-        outcome = _search_json_evidence(
-            _content_to_text(_value(message, "content")),
-            _CATALOG_SCOPE_OUTCOME_PREFIX,
-        )
-        if not outcome or outcome.get("outcome") != "no_direct_catalog_match":
-            continue
-        product_type = str(outcome.get("requested_product_type") or "").strip()
-        if product_type and product_type not in product_types:
-            product_types.append(product_type)
-    return product_types
 
 
 def _search_scope_is_complete(result: Any, *, request_id: str) -> bool:
@@ -5974,17 +4821,6 @@ def _customer_safe_tool_evidence(content: str) -> str:
             "scope was established and no retrieval ran. This does not support "
             "a product-availability or catalog-absence claim."
         )
-    if content.startswith(
-        "STOP_TOOL_USE: No faithful advertised catalog taxonomy"
-    ):
-        return (
-            "CUSTOMER_SAFE_NO_MATCH_EVIDENCE: The active catalog has no direct "
-            "advertised taxonomy match for this requested product role. "
-            "No retrieval ran and no alternative product type was selected. Say "
-            "that plainly, preserve any successful evidence for other roles, and "
-            "ask permission before searching a different advertised type. Do not "
-            "name alternatives."
-        )
     if "SEARCH_NO_MATCH_GROUNDING_NOTE" in content:
         taxonomy = _search_taxonomy_evidence(content)
         confirmed_filters = _search_filter_evidence(content)
@@ -6119,10 +4955,10 @@ def _customer_safe_scope_relation(
     *,
     has_products: bool,
 ) -> str:
-    """Describe one model-selected parent search without asserting subtype identity."""
+    """Expose category-only scope without interpreting a semantic relationship."""
 
     relation = _search_scope_relation_evidence(content)
-    if relation.get("relation") != "model_selected_parent_category":
+    if relation.get("relation") != "model_selected_category_scope":
         return ""
     requested_type = str(relation.get("requested_product_type") or "").strip()
     category = str(relation.get("advertised_category") or "").strip()
@@ -6130,16 +4966,16 @@ def _customer_safe_scope_relation(
         return ""
     if not has_products:
         return (
-            f"REQUESTED_SCOPE_RELATION: {requested_type} is not separately "
-            f"advertised. The broader advertised category {category} returned "
-            "zero products for this search, so do not claim that the requested "
-            "type is absent from the whole catalog."
+            f"REQUESTED_SCOPE: The requested role was {requested_type}; the "
+            f"search used advertised category {category} and returned zero "
+            "products. Do not claim that the requested type is absent from the "
+            "whole catalog."
         )
     return (
-        f"REQUESTED_SCOPE_RELATION: {requested_type} is not separately "
-        f"advertised. The search used the broader advertised category {category}. "
-        "Present these as closest options and keep every returned product's "
-        "actual catalog category; do not relabel them as the requested type."
+        f"REQUESTED_SCOPE: The requested role was {requested_type}; the search "
+        f"used advertised category {category}. Keep every returned product's "
+        "actual catalog category and do not relabel it as the requested type "
+        "without catalog evidence."
     )
 
 
@@ -6372,13 +5208,13 @@ def _format_search_scope_relation_evidence(
     requested_product_type: str,
     advertised_category: str,
 ) -> str:
-    """Record a model-selected advertised parent for honest response framing."""
+    """Record model-authored role and category-only retrieval scope separately."""
 
     return (
         f"{_SEARCH_SCOPE_RELATION_EVIDENCE_PREFIX} "
         + json.dumps(
             {
-                "relation": "model_selected_parent_category",
+                "relation": "model_selected_category_scope",
                 "requested_product_type": requested_product_type,
                 "advertised_category": advertised_category,
             },

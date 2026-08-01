@@ -1,0 +1,24 @@
+set_name: Model-owned category-only scope
+queries:
+  - >-
+    I'm after casual sneakers. If sneakers are not a catalog type, show me the
+    closest footwear options and keep their actual types clear.
+answers:
+  - >-
+    Use the shopper-authorized broader footwear category as one category-only
+    search while retaining sneakers as semantic direction. State that footwear
+    was searched, keep every result's actual catalog category, and do not claim
+    that sneakers are absent or relabel another footwear type as sneakers.
+diagnostic_expectations:
+  - required_skills: [product-discovery]
+    required_tools: [search_catalog_tool]
+    tool_call_counts:
+      search_catalog_tool: 1
+    tool_call_expectations:
+      - tool_name: search_catalog_tool
+        status: completed
+        arguments:
+          taxonomy:
+            category: [footwear]
+            subcategory: []
+          required_constraints: {}

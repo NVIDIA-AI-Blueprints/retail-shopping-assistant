@@ -382,10 +382,11 @@ explicit reads of those files; other reference-file reads remain visible in
 `tool_calls`. Every Deep Agents turn starts with an internal
 `activate_shopper_skills_tool` call. A pre-activation or same-batch shopping
 call is rejected with `rejection_reason: "skill_activation_required"`.
-For a one-shot catalog repair, middleware may restore only the independently
-valid structural `scope_complete` field. It never restores or rewrites taxonomy,
-constraints, requested type, or search mode. `restored_fields` therefore
-contains only bounded structural field names, never a second copy of values.
+For the turn's single catalog repair, middleware may restore independently
+capability-valid `required_constraints`, `scope_complete`, and `search_mode`.
+It never restores or rewrites model-owned taxonomy, requested type, semantic
+query, or shopper guidance. `restored_fields` contains only bounded structural
+field names, never a second copy of values.
 
 `product_evidence` contains only structured records derived from successful
 current-turn `search_catalog_tool` and `get_product_details_tool` result
@@ -849,7 +850,10 @@ contains no model-authored taxonomy relationship or catalog-absence field. The
 schema is generated from Catalog capabilities with exact taxonomy values,
 hard-filter properties and enum values, typed numeric range shape, and
 search-mode values while deliberately omitting cross-field validators. The
-handler translates it into the existing strict semantic search model.
+handler applies only structural validation: required text-search fields,
+one-category cardinality, category/subcategory ownership, advertised
+hard-filter values, and advertised search modes. It does not interpret shopper
+language or decide whether the model's product meaning is semantically correct.
 `requested_product_type` is the shortest product noun or true
 umbrella from the shopper's current turn or direct antecedent. It excludes
 color, material, fit, occasion, weather, and style modifiers. For a genuinely
@@ -861,10 +865,10 @@ Taxonomy and hard constraints are enforced through their structured fields.
 and is not sent to the catalog service.
 Each call accepts at most one category. For a broad request that names no type,
 the model selects exactly one advertised subcategory as the focused starting
-role and names it in `requested_product_type`. That open-role path is forbidden
-when the shopper named the role's type, including an alternative, confirmation,
-comparison, or follow-up. Invalid open-role provenance is rejected rather than
-silently reinterpreted.
+role and names it in `requested_product_type`. Whether the shopper named a role,
+whether several advertised types are alternatives, and whether one category is
+a faithful broader scope are model-owned semantic judgments; the runtime does
+not infer or police those relationships from shopper prose.
 If a shopper-named type is not separately advertised, the model may select one
 faithful advertised parent category while preserving the original type in
 `requested_product_type` and the semantic query. Returned products keep their
@@ -879,7 +883,8 @@ repeat a retrieval while a genuinely different hard-filter scope may run within
 selections to advertised field names and sends the semantic query as a singleton
 `text` list.
 
-One invalid agent search may receive one bounded repair per distinct scope.
+One invalid agent search may receive the turn's single bounded structural
+repair.
 That isolated call receives the capability-derived typed search tool, compact
 server-generated Catalog capabilities, the current shopper message, bounded
 sanitized validator feedback, and the active skill instructions. It may submit
@@ -888,23 +893,26 @@ needed.
 The no-tool response is only branch/control state: the server marks it, discards
 the model prose, and emits `Could you clarify the product type or requirement
 you want me to use?`. If another requested search scope already succeeded, its
-deterministic grounded products precede that clarification. Runtime protects a
-shopper-grounded requested scope across native and strict validation paths. If a
-different shopping tool already completed, the existing grounding editor
-combines its evidence with the fixed clarification. Repair middleware may
-restore only structural `scope_complete`; it does not rewrite catalog fields.
-When strict handler validation has already accepted advertised constraints, its
-feedback may include that finite object and a repaired call that drifts is
-rejected rather than overwritten.
+deterministic grounded products precede that clarification. If a different
+shopping tool already completed, the existing grounding editor combines its
+evidence with the fixed clarification. Repair middleware may restore
+independently capability-valid `required_constraints`, `scope_complete`, and
+`search_mode`; it does not restore taxonomy, requested type, semantic query, or
+shopper guidance. The handler independently preserves capability-validated
+advertised constraints across a taxonomy repair and rejects a repaired call
+that weakens them.
 Malformed or nonempty free-form `unadvertised_requirements` arguments on a
-native schema-invalid call fail closed. A schema-valid, genuinely open role may
-consume that scope's repair for model-owned review: preserve an explicit
-objective must-have, or remove only an inferred or subjective requirement.
-Deterministic code does not parse shopper prose. The
-repair cannot replace a shopper-stated product-scope noun. A successful partial
-search may continue to another valid role with its own one-repair opportunity;
-no scope receives two repairs. Completed scopes and deterministic stop results
-close the loop, and the configured turn cap remains three successful searches.
+native schema-invalid call fail closed without repair. A schema-valid nonempty
+`unadvertised_requirements` list also fails closed before retrieval; there is no
+server-side semantic review of whether the model inferred or copied the
+requirement. Deterministic code does not parse shopper prose. The repair may
+change model-owned semantic fields, but its corrected call must still satisfy
+the same capability-derived structural contract. A successful repaired search
+may be followed by later valid roles, but any later invalid search receives no
+second repair. Completed scopes and deterministic stop results close the loop,
+and the configured turn cap remains three successful searches.
+The search tool emits product evidence or a scoped `zero_results` outcome for a
+valid executed search; it emits no semantic “no direct catalog match” outcome.
 For multi-role output, each pre-retrieval guidance sentence remains grouped with
 products from its originating search. Completed turns get one tools-disabled
 synthesis from collected evidence; search-only drafts pass through grounding,

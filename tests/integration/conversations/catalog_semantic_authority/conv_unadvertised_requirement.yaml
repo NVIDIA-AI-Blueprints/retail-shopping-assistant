@@ -1,0 +1,16 @@
+set_name: Unadvertised must-have fails closed
+queries:
+  - "Show me water-resistant bags; water resistance is required."
+answers:
+  - >-
+    Preserve water resistance as an unenforceable must-have, run no catalog
+    retrieval, and clearly ask whether the shopper wants to continue with it as
+    a preference. Do not weaken the requirement or present unverified products.
+diagnostic_expectations:
+  - required_skills: [product-discovery]
+    tool_call_counts:
+      search_catalog_tool: 1
+    tool_call_expectations:
+      - tool_name: search_catalog_tool
+        status: rejected
+        rejection_reason: unsupported_catalog_constraint

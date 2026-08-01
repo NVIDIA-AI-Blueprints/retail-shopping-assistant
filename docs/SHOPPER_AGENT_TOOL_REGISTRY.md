@@ -45,32 +45,26 @@ are `semantic_query`, `shopper_guidance`, `requested_product_type`, `taxonomy`,
 capabilities generate the exact taxonomy values, hard-filter properties and
 enum values, typed numeric ranges, and search-mode enum. The schema has no
 model-authored taxonomy relationship, clarification branch, or catalog-absence
-result. It omits cross-field validators. Runtime applies the existing strict
-semantic search model, so invalid individual values fail at the tool boundary
-while cross-field failures reach capability-aware validation.
-Capability-owned exact category/subcategory relationships determine whether the
-selection is coherent.
+result. The model owns how shopper language maps to the requested role,
+semantic direction, taxonomy, and constraints. Runtime validates only
+structural shape and capability-owned invariants: exact field values,
+text-versus-image requirements, one-category cardinality,
+category/subcategory ownership, hard filters, retrieval mode, duplicate hard
+scopes, and turn limits. It does not classify the shopper's product wording or
+infer a semantic relationship between `requested_product_type` and taxonomy.
 Every text search also requires `requested_product_type`, the shortest product
 noun or true umbrella from the current turn or direct antecedent. It excludes
 color, material, fit, occasion, weather, and style modifiers. It is `null` only
-for image-only search. Literal validation may bind the longest exact advertised
-suffix in a modifier-bearing model phrase (`waterproof boots` to `boots`), but
-disables that shortcut for explicit alternatives containing `and`, `or`, `/`,
-or `&`. `closed shoes or boots` remains model-owned alternative or umbrella
-reasoning. The model owns alternative, comparison, ordering, and negation
-semantics. A typed selection of multiple advertised subcategories in one
-category uses one catalog execution. Its candidate window covers the complete
-selection, and rank-preserving selection keeps one returned candidate per
-selected subcategory when available before trimming to the configured result
-count. The runtime does not extract that selection from shopper prose. Each call
-covers at most one category.
-For a broad request that names no type, the model selects exactly one advertised
-subcategory and names it in `requested_product_type`. That open-role path is
-rejected for a shopper-named scope rather than silently reinterpreted. When an
-open-role call is malformed, deterministic validation stops
-before retrieval, reports the exact eligible subcategories from the current
-capability contract, and returns related cross-field corrections. The model
-operating under the active skill still owns semantic selection.
+for image-only search. The model owns exact, umbrella, open-role, alternative,
+comparison, ordering, negation, and parent-category semantics. A typed
+selection of multiple advertised subcategories in one category uses one catalog
+execution. Its candidate window covers the complete selection, and
+rank-preserving selection keeps one returned candidate per selected subcategory
+when available before trimming to the configured result count. The runtime does
+not extract or validate that meaning from shopper prose. Each call covers at
+most one category. A category-only text search emits neutral evidence that
+records the model-authored requested role and the advertised category searched;
+it does not claim the role is unavailable or prove a parent relationship.
 
 The activation boundary fails closed. Missing or invalid skill content exposes
 no commerce tools. A commerce call placed in the same model response as the
@@ -103,85 +97,37 @@ runtime does not also enable Deep Agents' checkpointed `SkillsMiddleware`
 metadata, so checkpoint state cannot retain stale skill descriptions or removed
 names if skill files change while the process remains alive.
 
-After activation, parallel shopping calls remain disabled. Repair accounting
-also rejects any active model response containing more than one shopping tool
-call before execution. Repair accounting
-uses the full normalized, model-authored `requested_product_type` phrase. It
-does not reconstruct shopper alternatives or equate connector and ordering
-changes. Each scope has one total repair. A schema correction
-or a fresh constraint-provenance review can
-consume that shared budget; constraint feedback returned by an in-flight schema
-repair closes the loop for synthesis rather than opening another repair. The
-isolated request receives the capability-derived typed search tool, compact
-server-generated Catalog capabilities, the current shopper message, bounded
-sanitized validator feedback in a separate Human data message, and the complete
-active shopper-skill instructions. Echoed rejected arguments are stripped; native
-Pydantic feedback is reduced to rejected top-level field names, and free-form
-requested-scope text is not replayed. Invalid AI/tool history and earlier
-conversation history are absent. Only `search_catalog_tool` remains exposed,
-tool choice stays automatic so the model can signal clarification by returning
-no tool call, and parallel calls stay disabled. A no-tool repair is only
-branch/control state: the server marks it, discards the model prose, and emits
-`Could you clarify the product type or requirement you want me to use?`. A
-successful partial search may
-continue to another valid role with its own single repair opportunity. For a
-native tool-transport failure, the requested scope is locked only when current
-or recent shopper text grounds it; an ungrounded model-generated scope may be
-corrected. A rejected change to a grounded free-form scope that cannot be
-reconstructed safely is removed before execution and recorded in
-`agent_diagnostics` with reason `repair_scope_changed`. Runtime
-validation separately enforces capability-owned advertised sibling coherence. A
-strict request rejection with an independently valid constraint object snapshots
-its advertised `required_constraints` privately. The isolated feedback includes
-that exact finite object, including an explicit empty object, rather than asking
-the repair to reconstruct advertised values. Free-form rejected arguments stay
-excluded.
-The repaired call must preserve capability-validated advertised constraints;
-the strict handler rejects drift instead of overwriting model output. Repair
-middleware never restores or rewrites taxonomy, constraints, requested type, or
-search mode. It may restore only the independently valid structural
-`scope_complete` flag, with that field name recorded in bounded
-`restored_fields` diagnostics.
-Open-role validation failures also include the shopper-named/open-role
-provenance rule in the same repair feedback. A shopper-named role retains the
-shopper's noun or umbrella; a genuinely open role selects and names one
-advertised subtype. The same repair may signal a clarification by returning no
-tool call; only the fixed server-authored clarification reaches the shopper. A
-native failure confined to `required_constraints` receives sanitized field
-feedback plus the typed search tool and compact Catalog capabilities, never the
-free-form scope, query, or guidance. Scope comparison is private. Middleware
-does not reconstruct or overwrite rejected catalog values; a changed
-shopper-grounded scope closes as `repair_scope_changed`. Malformed or nonempty
-free-form `unadvertised_requirements` arguments are never restored. A native
-schema-invalid call containing one closes without repair. A
-schema-valid, genuinely open request retains the bounded
-review for a proposed inferred requirement. A completed scope, an exhausted repair budget,
-or any tool result
-beginning with `STOP_TOOL_USE` removes tools from the following model step and
-closes the loop. Closed turns get one tools-disabled synthesis from evidence
-already collected. Successful search-only drafts then pass through the
-grounding editor, with deterministic rendering as fail-closed fallback. When a
-runtime semantic open-role schema repair removes a proposed inferred
-requirement, runtime replaces its submitted pre-search guidance with neutral
-generic guidance for the selected role. A successful or zero-result search that
-consumes the final configured search slot records `SEARCH_BUDGET_EXHAUSTED`;
-the next model step removes only `search_catalog_tool`. Product-detail,
-availability, and cart tools plus honest partial synthesis remain available.
+After activation, parallel shopping calls remain disabled. Catalog repair is a
+separate bounded structural phase with one opportunity total per turn. It does
+not normalize `requested_product_type` into a repair key, classify shopper
+prose, lock a semantic product scope, or reject a correction because its role
+noun changed. The isolated request receives the capability-derived typed search
+tool, compact server-generated Catalog capabilities, the current shopper
+message, bounded sanitized validator feedback in a separate Human data message,
+and the complete active shopper-skill instructions. Echoed rejected arguments
+are stripped; native Pydantic feedback is reduced to rejected top-level field
+names. Invalid AI/tool history and earlier conversation history are absent.
+Only `search_catalog_tool` remains exposed, tool choice stays automatic so the
+model can signal clarification by returning no tool call, and parallel calls
+stay disabled. A no-tool repair is branch/control state: the server marks it,
+discards the model prose, and emits `Could you clarify the product type or
+requirement you want me to use?`.
 
-Every unadvertised requirement on a shopper-stated product scope fails closed
-before retrieval, including when the model uses a synonym rather than the
-shopper's exact wording. The bounded constraint review is reserved for a
-proposed inferred requirement on a genuinely open role when its shared repair
-budget remains. It must preserve requested type, taxonomy, completion state,
-`search_mode`, and every advertised
-hard constraint. Within that preserved hard scope, it may correct only the soft
-`semantic_query`, the reviewed unadvertised-requirement lane, and its associated
-`shopper_guidance`; the requirement is either replaced with the shopper's
-shortest exact wording or removed. Exact wording and unresolved provenance fail
-closed; constraint feedback after a schema repair closes the loop for
-synthesis. Removal scrubs the product-attribute claim from `shopper_guidance`.
-Only a successful repaired result whose scope remains explicitly
-partial may continue with another valid role.
+The model may correct semantic fields, including `requested_product_type` and
+taxonomy. Runtime validates the repaired call independently against structural
+and capability invariants and never rewrites those fields. Independently valid
+finite structural fields—advertised `required_constraints`, `scope_complete`,
+and `search_mode`—may be preserved across the repair; bounded
+`restored_fields` diagnostics identify any restoration. Malformed or nonempty
+free-form `unadvertised_requirements` closes without repair or semantic
+provenance review. Once the repair is used, a later invalid catalog call closes
+to tools-disabled synthesis. A successful partial repaired search may continue
+with later valid work, but no second repair is available in that turn.
+Completed scopes and `STOP_TOOL_USE` outcomes retain their existing bounded
+termination behavior. A successful or zero-result search that consumes the
+final configured search slot records `SEARCH_BUDGET_EXHAUSTED`; the next model
+step removes only `search_catalog_tool`. Product-detail, availability, and cart
+tools plus honest partial synthesis remain available.
 
 Grounding reads only tool-role messages and partitions current-turn evidence by
 the server-owned request marker. Prior-turn tool evidence may resolve a direct
@@ -362,40 +308,30 @@ Preconditions:
 - The agent semantically maps the shopper's request to exact advertised
   taxonomy values, hard-filter properties and enum values, and typed numeric
   range shape through the capability-derived flat schema.
-  The strict handler model validates cross-field relationships, then maps valid
-  values to catalog fields. The runtime does not maintain taxonomy keyword
-  aliases.
-- If a shopper-named type is not separately advertised, the model may select
-  one faithful advertised parent category while preserving the type in
-  `requested_product_type` and `semantic_query`. The tool emits structured
-  scope-relation evidence so the response describes returned products as
-  closest alternatives under their actual categories. If neither a direct type
-  nor one faithful parent can be selected, the agent clarifies without
-  retrieval or a catalog-absence claim. An unsupported modifier does not erase
-  an advertised type, and subjective style stays in `semantic_query`.
+  Runtime validates structural shape, exact capability values, and
+  category/subcategory ownership, then maps valid values to catalog fields. It
+  does not maintain taxonomy keyword aliases or compare shopper wording with
+  the submitted scope.
+- The model owns whether one category-only scope faithfully represents the
+  requested role. When it selects that shape, the tool emits neutral structured
+  evidence containing the requested role and advertised category searched.
+  The evidence does not assert that the role is unavailable, prove the category
+  is its parent, or relabel returned products. If the model cannot choose a
+  faithful advertised scope, the agent clarifies without retrieval or a
+  catalog-absence claim.
 - A zero-result retrieval reports only that its exact advertised taxonomy and
   filter scope returned no matches. It cannot establish absence for a different
   product type or the whole catalog.
 - A product must-have absent from the generated schema belongs in
-  `unadvertised_requirements`. Every such requirement on a shopper-stated
-  product scope fails closed before retrieval, even when the model uses a
-  synonym. The bounded review is reserved for a proposed inferred requirement
-  on a genuinely open role when the shared scope repair is still available. It
-  freezes requested type, taxonomy, completion state, `search_mode`, and all
-  advertised hard constraints. Within
-  that preserved hard scope, it may correct only the soft `semantic_query`, the
-  reviewed unadvertised-requirement lane, and its associated guidance; the
-  requirement is either replaced with the shopper's shortest exact wording or
-  removed. Removed
-  requirements scrub product-attribute guidance; unresolved provenance fails
-  closed, and constraint feedback after an in-flight schema repair closes the
-  loop for synthesis.
+  `unadvertised_requirements`. Any nonempty lane fails closed before retrieval.
+  Runtime does not inspect shopper wording to decide whether the requirement
+  was explicit or inferred and does not open a constraint-provenance review;
+  that semantic distinction belongs to the active skill and model before the
+  call.
 - Capability-derived taxonomy mapping and all other hard-filter validation
-  complete before retrieval. Unsupported fields, values, and operators stop the
-  search instead of becoming semantic relevance. For a malformed open-role
-  call, the repair error enumerates the exact eligible
-  advertised subcategories and includes any submitted unadvertised requirement
-  plus its associated guidance correction in the same result.
+  complete before retrieval. Unsupported fields, values, operators, and
+  category/subcategory combinations stop the search instead of becoming
+  semantic relevance.
 - One normalized taxonomy-plus-hard-constraint scope may execute once per turn.
   Duplicate values are removed before the scope key is reserved, and partially
   incompatible category/subcategory sets are rejected before retrieval. A
@@ -459,29 +395,22 @@ Side effects:
 Failure behavior:
 
 - Returns a short tool-readable failure string such as unavailable catalog,
-  invalid search request, catalog failure, or no matching products.
-- When neither a direct advertised type nor one faithful parent category can be
-  selected, the assistant asks one concise clarification directly instead of
-  calling this tool.
+  invalid search request, or catalog failure. An exact-scope no-product result
+  is recorded only as `zero_results`.
+- When the model cannot select a faithful advertised scope, the assistant asks
+  one concise clarification directly instead of calling this tool.
 - Returns without calling catalog search when a required constraint cannot be
-  enforced by the active capabilities. An unadvertised must-have on a
-  shopper-stated product scope fails closed even when the model uses a synonym.
-  Its fixed shopper-safe response applies only when that rejection is the sole
-  current-turn business-tool outcome. Only a proposed inferred requirement on
-  a genuinely open role may receive one
-  constraint-provenance review; a second mismatch or other unresolved
-  provenance fails closed.
-- A full normalized `requested_product_type` scope receives one total repair.
-  Alternative, comparison, ordering, and negation semantics remain model-owned;
-  deterministic repair does not reconstruct them from shopper prose. A schema
-  failure or fresh constraint-provenance question can consume the repair.
-  Constraint
-  feedback after an in-flight schema repair closes the loop for synthesis. A
-  successful partial search may continue to another valid role
-  with its own single repair opportunity; the configured turn cap remains three
-  searches. A successful or zero-result third search carries
-  `SEARCH_BUDGET_EXHAUSTED`, so no fourth search is possible while non-search
-  tools and synthesis remain available.
+  enforced by the active capabilities. Any nonempty
+  `unadvertised_requirements` lane fails closed; its fixed shopper-safe response
+  applies only when that rejection is the sole current-turn business-tool
+  outcome.
+- The turn receives one structural repair total. The repair model may correct
+  semantic fields, but runtime performs no shopper-prose classification or
+  semantic scope lock. After that repair is consumed, a later invalid catalog
+  call closes to synthesis. Later valid role searches may continue within the
+  configured cap of three successful searches. A successful or zero-result
+  third search carries `SEARCH_BUDGET_EXHAUSTED`, so no fourth search is
+  possible while non-search tools and synthesis remain available.
 - A completed scope, unsupported taxonomy or requirement, repeated scope,
   exhausted detail budget, or other `STOP_TOOL_USE` result closes further tool
   use. Search-budget exhaustion removes only `search_catalog_tool`, as described

@@ -178,42 +178,6 @@ def test_tool_trace_records_pre_activation_execution_rejection() -> None:
     assert diagnostics["skill_files_read"] == []
 
 
-def test_tool_trace_records_native_repair_scope_rejection() -> None:
-    messages = [
-        HumanMessage(content="REQUEST ID: request-repair-scope"),
-        AIMessage(
-            content="I couldn't establish a reliable catalog match.",
-            additional_kwargs={
-                "server_rejected_tool_calls": [
-                    {
-                        "id": "changed-repair",
-                        "name": "search_catalog_tool",
-                        "args": {"requested_product_type": "tote_bags"},
-                        "rejection_reason": "repair_scope_changed",
-                    }
-                ]
-            },
-        ),
-    ]
-
-    diagnostics = _collect_agent_diagnostics(
-        messages,
-        request_id="request-repair-scope",
-        final_termination_reason="completed",
-    )
-
-    assert diagnostics["tool_calls"] == [
-        {
-            "sequence": 1,
-            "tool_name": "search_catalog_tool",
-            "arguments": {"requested_product_type": "tote_bags"},
-            "status": "rejected",
-            "rejection_reason": "repair_scope_changed",
-        }
-    ]
-    assert diagnostics["rejected_tool_calls"] == [1]
-
-
 def test_tool_trace_records_bounded_server_restored_fields() -> None:
     messages = [
         HumanMessage(content="REQUEST ID: request-repair-restore"),

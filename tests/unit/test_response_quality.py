@@ -226,3 +226,56 @@ def test_diagnostic_expectations_validate_summary_compaction(monkeypatch):
             diagnostics,
             label="summary turn",
         )
+
+
+def test_diagnostic_expectations_match_structural_tool_argument_subset(monkeypatch):
+    response_quality = _load_response_quality(monkeypatch)
+    expectations = {
+        "tool_call_expectations": [
+            {
+                "tool_name": "search_catalog_tool",
+                "status": "completed",
+                "arguments": {
+                    "taxonomy": {
+                        "category": ["footwear"],
+                        "subcategory": ["heels", "flats"],
+                    },
+                    "required_constraints": {},
+                },
+            }
+        ]
+    }
+    diagnostics = {
+        "tool_calls": [
+            {
+                "sequence": 2,
+                "tool_name": "search_catalog_tool",
+                "status": "completed",
+                "arguments": {
+                    "semantic_query": "polished heels or flats",
+                    "requested_product_type": "shoes",
+                    "taxonomy": {
+                        "category": ["footwear"],
+                        "subcategory": ["flats", "heels"],
+                    },
+                    "required_constraints": {},
+                },
+            }
+        ]
+    }
+
+    response_quality._validate_diagnostic_expectations(
+        expectations,
+        diagnostics,
+        label="catalog turn",
+    )
+
+    expectations["tool_call_expectations"][0]["arguments"][
+        "required_constraints"
+    ] = {"primary_color": ["black"]}
+    with pytest.raises(AssertionError, match="no tool call matched expectation"):
+        response_quality._validate_diagnostic_expectations(
+            expectations,
+            diagnostics,
+            label="catalog turn",
+        )

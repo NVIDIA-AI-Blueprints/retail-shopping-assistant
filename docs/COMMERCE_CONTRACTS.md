@@ -61,9 +61,10 @@ SDK adapter:
 - Catalog search remains stateless: no user, cart, memory, session, or
   conversation-history fields are passed to `search_catalog`.
 - Catalog request-building is now separate from catalog execution. The
-  request-builder layer validates structured agent intent against catalog-owned
+  request-builder layer validates the submitted structure against catalog-owned
   capabilities and produces a `CatalogSearchPlan`; the catalog execution layer
-  only maps that plan to catalog service requests.
+  only maps that plan to catalog service requests. Product meaning and the
+  relationship between shopper language and selected scope remain model-owned.
 - Structured agent intent includes one `semantic_query`, required pre-retrieval
   product-agnostic `shopper_guidance`, required `requested_product_type` product
   noun/umbrella provenance, a capability-derived `taxonomy` envelope, and
@@ -73,12 +74,14 @@ SDK adapter:
   style modifiers. For a genuinely open role, it is the one advertised
   subcategory selected for that role; it is `null` only for image-only search.
   The chain maps generic taxonomy roles to advertised field names, validates
-  scope consistency and other must-haves, and produces catalog hard filters.
+  category/subcategory ownership, cardinality, and advertised hard-filter
+  values, and produces catalog hard filters. It does not classify shopper prose
+  or validate the semantic relationship between that prose and the submitted
+  product role.
   Each call accepts at most one category. For a broad request that names no
   type, the model selects exactly one advertised subcategory as the focused
-  starting role and names it in `requested_product_type`. That open-role path
-  is forbidden when the shopper named the role, including an alternative,
-  confirmation, comparison, or follow-up.
+  starting role and names it in `requested_product_type`. Whether the role is
+  open, shopper-named, or an alternative set is the model's semantic judgment.
   Duplicate identity is normalized taxonomy plus hard
   constraints, so semantic paraphrases do not fan out while genuinely different
   hard-filter scopes can run within the per-turn cap.
@@ -168,14 +171,15 @@ or true umbrella from the shopper's current turn or direct antecedent, excludes
 color, material, fit, occasion, weather, and style modifiers, and uses the one
 advertised subcategory chosen for a genuinely open role. It is `null` only for
 image-only search and is not passed as catalog taxonomy or ranking text; it lets
-the chain validate the relation between the requested role and selected
-advertised scope. The model-facing schema has no taxonomy-relationship or
-catalog-absence label. The chain derives its private execution mode after the
-typed request validates, maps taxonomy roles to the actual
-advertised field names, checks every required field and value, refuses requests
-that cannot be enforced, and sends `queries=[semantic_query]` plus the validated
-hard filters. `shopper_guidance` remains in the chain tool-result boundary and
-is not sent to the catalog service. `search_catalog` itself remains a pure read.
+the model preserve its own role provenance. The model-facing schema has no
+taxonomy-relationship or catalog-absence label. The chain maps taxonomy roles
+to the actual advertised field names, checks structural requirements,
+category/subcategory ownership, and every submitted hard-filter field and
+value, then sends `queries=[semantic_query]` plus the validated hard filters.
+It does not derive a private semantic execution mode or verify product meaning
+against shopper prose. `shopper_guidance` remains in the chain tool-result
+boundary and is not sent to the catalog service. `search_catalog` itself remains
+a pure read.
 
 If a shopper-named type is not separately advertised but the model selects one
 faithful advertised parent category, the chain searches that category once,
@@ -184,17 +188,18 @@ scope-relation evidence. Grounding must disclose the broader search and keep
 every product's actual catalog category. If neither a direct type nor one
 faithful parent can be selected, the assistant asks one concise clarification
 without calling the search tool, substituting an adjacent type, or claiming
-catalog absence. An unsupported
+catalog absence. Those direct, parent, and open-role relationships are
+model-owned semantic judgments. An unsupported
 modifier does not erase an advertised type. Unsupported direct must-haves use
 `unadvertised_requirements`, while subjective style and other soft preferences
 remain in the taxonomy-independent `semantic_query`. Malformed or nonempty
-free-form arguments on a native schema-invalid call fail closed. A schema-valid,
-genuinely open role may consume its one model repair for review: preserve an
-explicit objective must-have so the repaired call fails closed, or remove only
-an inferred or subjective requirement. The same bounded schema repair may
-instead return one server-marked clarification. Deterministic code does not
-parse shopper prose. A successful partial search may advance to another valid
-role with its own repair opportunity; no scope receives two repairs.
+free-form arguments on a native schema-invalid call fail closed without repair.
+A schema-valid nonempty `unadvertised_requirements` list also fails closed before
+retrieval; there is no server-side review of whether the model inferred or
+copied the requirement. The turn's one bounded structural repair may instead
+return one server-marked clarification. Deterministic code does not parse
+shopper prose. A successful repaired search may advance to another valid role,
+but a later invalid search receives no second repair.
 
 The catalog makes no chat/completion call and performs no shopper-language
 interpretation or query expansion. It generates the configured text/image
@@ -224,11 +229,16 @@ finalizes as failed with `grounding_timeout`; non-search turns receive a fixed
 retry/cart-check response instead of the unverified draft. Other editor failures
 and empty or whitespace-only successful editor responses use the same
 fail-closed response with `grounding_error`.
-Tool-loop repair is also bounded: one invalid search or eligible open-role
-unadvertised-requirement review may consume the single repair for that distinct
-scope. A successful partial scope may continue to another valid role with its
-own one-repair opportunity, but no scope receives two repairs; the configured
-turn cap remains three successful searches.
+Tool-loop repair is also bounded: the first eligible invalid search may consume
+the turn's single structural repair. Repair middleware may preserve
+independently capability-valid `required_constraints`, `scope_complete`, and
+`search_mode`, but model-owned taxonomy, requested type, semantic query, and
+shopper guidance remain editable. A successful repaired search may continue to
+another valid role; any later invalid search closes without a second repair.
+The configured turn cap remains three successful searches.
+For a valid executed search, the only product-free catalog scope outcome is
+`zero_results`; the runtime emits no semantic “no direct catalog match”
+outcome.
 
 The chain-server request-builder consumes `CatalogCapabilities` before it
 creates a product search request. Authoritative field roles come from the

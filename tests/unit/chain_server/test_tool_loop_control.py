@@ -13,14 +13,12 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 from langchain_core.tools import tool
 
 from chain_server.src.tool_loop_control import (
-    CONSTRAINT_REVIEW_PREFIX,
     SEARCH_BUDGET_EXHAUSTED_PREFIX,
     SEARCH_VALIDATION_ERROR_PREFIX,
     SERVER_CATALOG_CLARIFICATION,
     UNSUPPORTED_CONSTRAINT_PREFIX,
     UNSUPPORTED_TAXONOMY_PREFIX,
     ToolLoopControlMiddleware,
-    _normalize_scope,
 )
 from chain_server.src.skill_activation import ShopperSkillActivationMiddleware
 from chain_server.src.tool_policy import SHOPPING_TOOL_POLICIES
@@ -321,37 +319,6 @@ def test_closed_loop_strips_a_model_emitted_tool_call() -> None:
     )
 
 
-def test_no_direct_match_fallback_does_not_claim_grounded_products() -> None:
-    middleware = ToolLoopControlMiddleware()
-    messages = _messages_with_result(
-        _tool_result(
-            "STOP_TOOL_USE: No faithful advertised catalog taxonomy matches "
-            "casual sneakers."
-        )
-    )
-
-    def handler(request: ModelRequest) -> ModelResponse:
-        return ModelResponse(
-            result=[
-                AIMessage(
-                    content="",
-                    tool_calls=[
-                        {
-                            "id": "ignored-search",
-                            "name": "search_catalog_tool",
-                            "args": {"semantic_query": "sandals"},
-                        }
-                    ],
-                )
-            ]
-        )
-
-    response = middleware.wrap_model_call(_model_request(messages), handler)
-
-    assert "grounded options" not in response.result[0].content
-    assert "reliable catalog match" in response.result[0].content
-
-
 def test_closed_loop_strips_a_model_emitted_invalid_tool_call() -> None:
     middleware = ToolLoopControlMiddleware()
     messages = _messages_with_result(
@@ -433,7 +400,7 @@ def test_one_search_schema_repair_is_exposed_then_tools_are_removed() -> None:
     assert _capture_model_request(middleware, completed_messages).tools == []
 
 
-def test_incomplete_successful_repair_allows_one_repair_for_next_scope() -> None:
+def test_one_structural_repair_is_the_turn_wide_limit() -> None:
     middleware = ToolLoopControlMiddleware()
     first_invalid_call = AIMessage(
         content="",
@@ -496,43 +463,16 @@ def test_incomplete_successful_repair_allows_one_repair_for_next_scope() -> None
         tool_call_id="call-c",
         status="error",
     )
-    second_repair_call = AIMessage(
-        content="",
-        tool_calls=[
-            {
-                "id": "call-d",
-                "name": "search_catalog_tool",
-                "args": {"requested_product_type": "boots"},
-            }
-        ],
-    )
     second_repair = _capture_model_request(
         middleware,
         [*continued_messages, second_invalid_call, second_error],
-        model_response=second_repair_call,
     )
 
-    assert [tool.name for tool in second_repair.tools] == ["search_catalog_tool"]
-    assert second_repair.tool_choice == "auto"
-
-    failed_second_repair = _tool_result(
-        SEARCH_VALIDATION_ERROR_PREFIX + "{} with error: still invalid",
-        tool_call_id="call-d",
-        status="error",
-    )
-    assert _capture_model_request(
-        middleware,
-        [
-            *continued_messages,
-            second_invalid_call,
-            second_error,
-            second_repair_call,
-            failed_second_repair,
-        ],
-    ).tools == []
+    assert second_repair.tools == []
+    assert second_repair.tool_choice == "none"
 
 
-def test_incomplete_success_does_not_reset_repair_for_the_same_scope() -> None:
+def test_incomplete_success_does_not_reset_turn_repair_budget() -> None:
     middleware = ToolLoopControlMiddleware()
     first_call = AIMessage(
         content="",
@@ -576,125 +516,6 @@ def test_incomplete_success_does_not_reset_repair_for_the_same_scope() -> None:
     assert _capture_model_request(
         middleware,
         [*continued_messages, repeated_call, repeated_error],
-    ).tools == []
-
-
-def test_constraint_review_after_schema_repair_closes_the_scope() -> None:
-    middleware = ToolLoopControlMiddleware()
-    invalid_call = AIMessage(
-        content="",
-        tool_calls=[
-            {
-                "id": "call-a",
-                "name": "search_catalog_tool",
-                "args": {"requested_product_type": "outerwear"},
-            }
-        ],
-    )
-    schema_error = _tool_result(
-        SEARCH_VALIDATION_ERROR_PREFIX + "invalid taxonomy",
-        status="error",
-    )
-    messages = [HumanMessage(content="rainy outfit"), invalid_call, schema_error]
-    _capture_model_request(middleware, messages)
-
-    constraint_call = AIMessage(
-        content="",
-        tool_calls=[
-            {
-                "id": "call-b",
-                "name": "search_catalog_tool",
-                "args": {"requested_product_type": "outerwear"},
-            }
-        ],
-    )
-    constraint_review = _tool_result(
-        CONSTRAINT_REVIEW_PREFIX + "Remove the inferred requirement.",
-        tool_call_id="call-b",
-    )
-    constraint_messages = [*messages, constraint_call, constraint_review]
-    prepared = _capture_model_request(middleware, constraint_messages)
-
-    assert prepared.tools == []
-    assert prepared.tool_choice == "none"
-
-    repeated_review = _tool_result(
-        CONSTRAINT_REVIEW_PREFIX + "Still present.",
-        tool_call_id="call-c",
-    )
-    repeated_call = AIMessage(
-        content="",
-        tool_calls=[
-            {
-                "id": "call-c",
-                "name": "search_catalog_tool",
-                "args": {"requested_product_type": "outerwear"},
-            }
-        ],
-    )
-    assert _capture_model_request(
-        middleware,
-        [*constraint_messages, repeated_call, repeated_review],
-    ).tools == []
-
-
-def test_constraint_repair_cannot_reopen_with_scope_modifiers() -> None:
-    middleware = ToolLoopControlMiddleware()
-    first_call = AIMessage(
-        content="",
-        tool_calls=[
-            {
-                "id": "call-a",
-                "name": "search_catalog_tool",
-                "args": {"requested_product_type": "crossbody_bags"},
-            }
-        ],
-    )
-    first_review = _tool_result(
-        CONSTRAINT_REVIEW_PREFIX + "Remove the inferred requirement.",
-    )
-    messages = [HumanMessage(content="show me bags"), first_call, first_review]
-    drifted_call = AIMessage(
-        content="",
-        tool_calls=[
-            {
-                "id": "call-b",
-                "name": "search_catalog_tool",
-                "args": {"requested_product_type": "formal crossbody bags"},
-            }
-        ],
-    )
-    prepared = _capture_model_request(
-        middleware,
-        messages,
-        model_response=drifted_call,
-    )
-    assert [tool.name for tool in prepared.tools] == ["search_catalog_tool"]
-
-    drifted_review = _tool_result(
-        CONSTRAINT_REVIEW_PREFIX + "Still present.",
-        tool_call_id="call-b",
-    )
-    drifted_messages = [*messages, drifted_call, drifted_review]
-    assert _capture_model_request(middleware, drifted_messages).tools == []
-
-    repeated_call = AIMessage(
-        content="",
-        tool_calls=[
-            {
-                "id": "call-c",
-                "name": "search_catalog_tool",
-                "args": {"requested_product_type": "red formal crossbody bags"},
-            }
-        ],
-    )
-    repeated_review = _tool_result(
-        CONSTRAINT_REVIEW_PREFIX + "Still present.",
-        tool_call_id="call-c",
-    )
-    assert _capture_model_request(
-        middleware,
-        [*drifted_messages, repeated_call, repeated_review],
     ).tools == []
 
 
@@ -756,7 +577,16 @@ def test_search_repair_keeps_active_skill_instructions() -> None:
     assert [tool.name for tool in prepared.tools] == ["search_catalog_tool"]
 
 
-def test_native_validation_repair_cannot_replace_shopper_scope() -> None:
+@pytest.mark.parametrize(
+    "shopper_text",
+    [
+        "Which shoes: heels or flats for this look?",
+        "Heels or flats for this look?",
+    ],
+)
+def test_structural_repair_is_independent_of_shopper_wording(
+    shopper_text: str,
+) -> None:
     middleware = ToolLoopControlMiddleware()
     invalid_call = AIMessage(
         content="",
@@ -764,21 +594,26 @@ def test_native_validation_repair_cannot_replace_shopper_scope() -> None:
             {
                 "id": "call-a",
                 "name": "search_catalog_tool",
-                "args": {"requested_product_type": "crossbody_bags"},
+                "args": {"requested_product_type": "shoes"},
             }
         ],
     )
     native_error = _tool_result(
         SEARCH_VALIDATION_ERROR_PREFIX
-        + "{'requested_product_type': 'crossbody_bags'} with error:\n"
-        + "invalid taxonomy",
+        + "{'requested_product_type': 'shoes'} with error:\n"
+        + "taxonomy.subcategory\n"
+        + "  Select an advertised value [type=value_error]",
         status="error",
     )
     request = _model_request(
-        [HumanMessage(content="show me crossbody bags"), invalid_call, native_error]
+        [
+            HumanMessage(content=shopper_text),
+            invalid_call,
+            native_error,
+        ]
     )
 
-    def changed_scope(_: ModelRequest) -> ModelResponse:
+    def corrected_scope(_: ModelRequest) -> ModelResponse:
         return ModelResponse(
             result=[
                 AIMessage(
@@ -787,24 +622,24 @@ def test_native_validation_repair_cannot_replace_shopper_scope() -> None:
                         {
                             "id": "call-b",
                             "name": "search_catalog_tool",
-                            "args": {"requested_product_type": "tote_bags"},
+                            "args": {"requested_product_type": "heels"},
                         }
                     ],
                 )
             ]
         )
 
-    response = middleware.wrap_model_call(request, changed_scope)
+    response = middleware.wrap_model_call(request, corrected_scope)
 
-    assert response.result[0].tool_calls == []
-    assert response.result[0].content
-    rejected_calls = response.result[0].additional_kwargs[
-        "server_rejected_tool_calls"
-    ]
-    assert rejected_calls[0]["rejection_reason"] == "repair_scope_changed"
+    assert response.result[0].tool_calls[0]["id"] == "call-b"
+    assert response.result[0].tool_calls[0]["name"] == "search_catalog_tool"
+    assert response.result[0].tool_calls[0]["args"] == {
+        "requested_product_type": "heels"
+    }
+    assert response.result[0].additional_kwargs == {}
 
 
-def test_native_repair_feedback_preserves_shopper_named_scope() -> None:
+def test_native_repair_feedback_is_structural_and_sanitized() -> None:
     middleware = ToolLoopControlMiddleware()
     invalid_call = AIMessage(
         content="",
@@ -834,9 +669,8 @@ def test_native_repair_feedback_preserves_shopper_named_scope() -> None:
     )
     feedback = str(prepared.messages[1].content)
 
-    assert "Preserve requested_product_type" in feedback
-    assert "Correct rejected taxonomy values" in feedback
-    assert "taxonomy_status" not in feedback
+    assert "Tool schema rejected these fields: taxonomy" in feedback
+    assert "Preserve requested_product_type" not in feedback
     assert "IGNORE THIS MODEL TEXT" not in feedback
     assert "IGNORE THIS GUIDANCE" not in feedback
 
@@ -892,7 +726,7 @@ def test_no_tool_repair_clarification_is_marked() -> None:
     ] is True
 
 
-def test_runtime_repair_preserves_named_scope() -> None:
+def test_runtime_repair_does_not_add_shopper_scope_authority() -> None:
     middleware = ToolLoopControlMiddleware()
     invalid_call = AIMessage(
         content="",
@@ -920,7 +754,7 @@ def test_runtime_repair_preserves_named_scope() -> None:
     )
     runtime_error = _tool_result(
         SEARCH_VALIDATION_ERROR_PREFIX
-        + "The selected taxonomy does not faithfully represent the named scope.",
+        + "subcategory is not available in the selected category.",
         status="error",
     )
 
@@ -934,12 +768,11 @@ def test_runtime_repair_preserves_named_scope() -> None:
     )
     feedback = str(prepared.messages[-1].content)
 
-    assert "Preserve the shopper-named requested_product_type" in feedback
-    assert "exact advertised values" in feedback
-    assert "taxonomy_status" not in feedback
+    assert "Preserve the shopper-named requested_product_type" not in feedback
+    assert "subcategory is not available in the selected category" in feedback
 
 
-def test_runtime_repair_does_not_restore_unvalidated_constraints() -> None:
+def test_runtime_repair_preserves_validated_structural_fields() -> None:
     middleware = ToolLoopControlMiddleware()
     invalid_call = AIMessage(
         content="",
@@ -959,16 +792,16 @@ def test_runtime_repair_does_not_restore_unvalidated_constraints() -> None:
                             "tote_bags",
                         ],
                     },
-                    "required_constraints": {"color": ["black"]},
+                    "required_constraints": {"primary_color": ["black"]},
                     "scope_complete": True,
-                    "search_mode": "typo-mode",
+                    "search_mode": "text",
                 },
             }
         ],
     )
     runtime_error = _tool_result(
         SEARCH_VALIDATION_ERROR_PREFIX
-        + "The selected taxonomy does not faithfully represent the named scope.",
+        + "subcategory is not available in the selected category.",
         status="error",
     )
     request = _model_request(
@@ -1003,10 +836,9 @@ def test_runtime_repair_does_not_restore_unvalidated_constraints() -> None:
                                     ],
                                 },
                                 "required_constraints": {
-                                    "primary_color": ["black"]
+                                    "primary_color": ["beige"]
                                 },
-                                "scope_complete": True,
-                                "search_mode": "text",
+                                "scope_complete": False,
                             },
                         }
                     ],
@@ -1028,7 +860,17 @@ def test_runtime_repair_does_not_restore_unvalidated_constraints() -> None:
         "primary_color": ["black"]
     }
     assert repaired.tool_calls[0]["args"]["search_mode"] == "text"
-    assert "server_restored_tool_call_fields" not in repaired.additional_kwargs
+    assert repaired.tool_calls[0]["args"]["scope_complete"] is True
+    assert repaired.additional_kwargs["server_restored_tool_call_fields"] == [
+        {
+            "tool_call_id": "call-b",
+            "fields": [
+                "required_constraints",
+                "scope_complete",
+                "search_mode",
+            ],
+        }
+    ]
 
 
 @pytest.mark.parametrize(
@@ -1094,7 +936,7 @@ def test_runtime_repair_does_not_restore_unvalidated_constraints() -> None:
         ),
     ],
 )
-def test_native_taxonomy_repair_keeps_named_scope(
+def test_native_taxonomy_repair_accepts_model_owned_scope_correction(
     shopper_query: str,
     arguments: dict[str, Any],
     repaired_arguments: dict[str, Any],
@@ -1143,9 +985,8 @@ def test_native_taxonomy_repair_keeps_named_scope(
     feedback = str(captured[0].messages[-1].content)
 
     assert response.result[0].tool_calls
-    assert "Preserve requested_product_type" in feedback
-    assert "Correct rejected taxonomy values" in feedback
-    assert "taxonomy_status" not in feedback
+    assert "Tool schema rejected these fields: taxonomy" in feedback
+    assert "Preserve requested_product_type" not in feedback
 
 
 def test_native_constraint_repair_does_not_replay_unvalidated_relation() -> None:
@@ -1266,7 +1107,65 @@ def test_native_repair_does_not_restore_unvalidated_taxonomy() -> None:
     assert "server_restored_tool_call_fields" not in repaired.additional_kwargs
 
 
-def test_native_repair_may_change_ungrounded_open_role() -> None:
+def test_native_repair_does_not_restore_invalid_top_level_control_field() -> None:
+    middleware = ToolLoopControlMiddleware()
+    invalid_call = AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "id": "call-a",
+                "name": "search_catalog_tool",
+                "args": {
+                    "requested_product_type": "shoes",
+                    "required_constraints": {"primary_color": ["black"]},
+                    "scope_complete": True,
+                    "search_mode": "typo-mode",
+                },
+            }
+        ],
+    )
+    native_error = _tool_result(
+        SEARCH_VALIDATION_ERROR_PREFIX
+        + "{'search_mode': 'typo-mode'} with error:\n"
+        + "search_mode: Input should be 'text'",
+        status="error",
+    )
+    request = _model_request(
+        [HumanMessage(content="Show me black shoes."), invalid_call, native_error]
+    )
+
+    def corrected_control_field(_: ModelRequest) -> ModelResponse:
+        return ModelResponse(
+            result=[
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "call-b",
+                            "name": "search_catalog_tool",
+                            "args": {
+                                "requested_product_type": "flats",
+                                "required_constraints": {
+                                    "primary_color": ["black"]
+                                },
+                                "scope_complete": True,
+                                "search_mode": "text",
+                            },
+                        }
+                    ],
+                )
+            ]
+        )
+
+    response = middleware.wrap_model_call(request, corrected_control_field)
+
+    repaired = response.result[0]
+    assert repaired.tool_calls[0]["args"]["requested_product_type"] == "flats"
+    assert repaired.tool_calls[0]["args"]["search_mode"] == "text"
+    assert "server_restored_tool_call_fields" not in repaired.additional_kwargs
+
+
+def test_native_repair_may_change_semantic_role() -> None:
     middleware = ToolLoopControlMiddleware()
     invalid_call = AIMessage(
         content="",
@@ -1343,11 +1242,11 @@ def test_native_repair_may_change_ungrounded_open_role() -> None:
     }
     assert arguments["required_constraints"] == {}
     assert arguments["scope_complete"] is False
-    assert "search_mode" not in arguments
+    assert arguments["search_mode"] == "text"
     assert repaired.additional_kwargs["server_restored_tool_call_fields"] == [
         {
             "tool_call_id": "call-b",
-            "fields": ["scope_complete"],
+            "fields": ["scope_complete", "search_mode"],
         }
     ]
 
@@ -1398,7 +1297,7 @@ def test_native_repair_may_change_ungrounded_open_role() -> None:
         ),
     ],
 )
-def test_missing_constraints_preserve_named_scope_without_locking_taxonomy(
+def test_missing_constraints_repair_leaves_semantics_model_owned(
     shopper_query: str,
     arguments: dict[str, Any],
     repaired_arguments: dict[str, Any],
@@ -1448,11 +1347,11 @@ def test_missing_constraints_preserve_named_scope_without_locking_taxonomy(
 
     assert response.result[0].tool_calls
     feedback = str(captured[0].messages[-1].content)
-    assert "Preserve the shopper-named requested_product_type" in feedback
-    assert "taxonomy_status" not in feedback
+    assert "Tool schema rejected these fields: required_constraints" in feedback
+    assert "Preserve the shopper-named requested_product_type" not in feedback
 
 
-def test_native_taxonomy_repair_does_not_restore_constraints() -> None:
+def test_native_taxonomy_repair_preserves_valid_constraints() -> None:
     middleware = ToolLoopControlMiddleware()
     invalid_call = AIMessage(
         content="",
@@ -1513,8 +1412,15 @@ def test_native_taxonomy_repair_does_not_restore_constraints() -> None:
     response = middleware.wrap_model_call(request, dropped_constraints)
 
     repaired = response.result[0]
-    assert repaired.tool_calls[0]["args"]["required_constraints"] == {}
-    assert "server_restored_tool_call_fields" not in repaired.additional_kwargs
+    assert repaired.tool_calls[0]["args"]["required_constraints"] == {
+        "primary_color": ["beige", "black"],
+    }
+    assert repaired.additional_kwargs["server_restored_tool_call_fields"] == [
+        {
+            "tool_call_id": "call-b",
+            "fields": ["required_constraints"],
+        }
+    ]
 
 
 def test_native_error_metadata_and_free_form_scope_never_enter_repair_prompt() -> None:
@@ -1640,6 +1546,48 @@ def test_native_validation_with_requirement_fails_closed(
     assert "## Catalog Search Repair" not in prepared.system_prompt
 
 
+def test_runtime_validation_with_requirement_fails_closed() -> None:
+    middleware = ToolLoopControlMiddleware()
+    invalid_call = AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "id": "call-a",
+                "name": "search_catalog_tool",
+                "args": {
+                    "semantic_query": "water-resistant bags",
+                    "shopper_guidance": "Finding a practical bag.",
+                    "requested_product_type": "bags",
+                    "taxonomy": {"category": [], "subcategory": []},
+                    "required_constraints": {
+                        "unadvertised_requirements": ["water resistance"],
+                    },
+                    "scope_complete": True,
+                },
+            }
+        ],
+    )
+    runtime_error = _tool_result(
+        SEARCH_VALIDATION_ERROR_PREFIX
+        + "The catalog search request does not match current capabilities.",
+        status="error",
+    )
+
+    prepared = _capture_model_request(
+        middleware,
+        [
+            HumanMessage(content="Show me water-resistant bags"),
+            invalid_call,
+            runtime_error,
+        ],
+    )
+
+    assert prepared.tools == []
+    assert prepared.tool_choice == "none"
+    assert "## Tool Loop Closed" in prepared.system_prompt
+    assert "## Catalog Search Repair" not in prepared.system_prompt
+
+
 def test_misplaced_top_level_requirement_fails_closed() -> None:
     middleware = ToolLoopControlMiddleware()
     invalid_call = AIMessage(
@@ -1728,7 +1676,7 @@ def test_native_validation_repair_may_correct_ungrounded_scope() -> None:
     }
 
 
-def test_native_repair_scope_lock_clears_after_incomplete_success() -> None:
+def test_successful_repair_allows_a_later_valid_search() -> None:
     middleware = ToolLoopControlMiddleware()
     invalid_call = AIMessage(
         content="",
@@ -1792,28 +1740,6 @@ def test_native_repair_scope_lock_clears_after_incomplete_success() -> None:
     }
 
 
-def test_constraint_review_uses_the_single_search_repair() -> None:
-    middleware = ToolLoopControlMiddleware()
-    review = _tool_result(
-        CONSTRAINT_REVIEW_PREFIX
-        + " Remove requirements inferred only from weather context."
-    )
-
-    prepared = _capture_model_request(middleware, _messages_with_result(review))
-
-    assert [tool.name for tool in prepared.tools] == ["search_catalog_tool"]
-    assert prepared.tool_choice == "auto"
-    normalized_prompt = " ".join(prepared.system_prompt.split())
-    assert "Remove requirements inferred only from weather context" not in (
-        normalized_prompt
-    )
-    assert prepared.messages[0] == HumanMessage(content="shopper request")
-    assert "Remove requirements inferred only from weather context" in (
-        prepared.messages[1].content
-    )
-    assert "legacy runtime prompt" not in normalized_prompt
-
-
 def test_native_validation_feedback_does_not_replay_rejected_kwargs() -> None:
     middleware = ToolLoopControlMiddleware()
     error = _tool_result(
@@ -1832,13 +1758,6 @@ def test_native_validation_feedback_does_not_replay_rejected_kwargs() -> None:
     assert "Tool arguments failed schema validation" in (
         prepared.messages[-1].content
     )
-
-
-def test_repair_scope_preserves_the_full_product_phrase() -> None:
-    assert _normalize_scope("crossbody_bags") == "crossbody bag"
-    assert _normalize_scope("Crossbody-Bags") == "crossbody bag"
-    assert _normalize_scope("tote_bags") == "tote bag"
-    assert _normalize_scope("crossbody_bags") != _normalize_scope("tote_bags")
 
 
 @pytest.mark.parametrize(

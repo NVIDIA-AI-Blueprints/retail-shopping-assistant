@@ -9,8 +9,10 @@ The shopper agent now has clean boundaries:
 - **skills** provide versioned behavior for an intent;
 - **typed tools** are the only path to catalog, cart, availability, or policy
   actions; and
-- deterministic validation rejects unsupported taxonomy, hard filters, and
-  product evidence, while selected skills now grant only their declared tools.
+- the **model owns semantic mapping** from shopper language, while deterministic
+  validation enforces only typed structure, advertised capability values, hard
+  filters, limits, and product evidence. Selected skills grant only their
+  declared tools.
 
 This gives us a scalable way to add skills and tools without rebuilding the
 agent. Slice 0 establishes the tool-binding foundation. The next investment is
@@ -24,8 +26,8 @@ memory database.
 ```mermaid
 flowchart LR
     A[Shopper request] --> B[Turn state and identity]
-    B --> C[Start durable turn; load recent turns and cart]
-    C --> D[Load recent turns and presented-product index]
+    B --> C[Start durable turn; load three context lanes and cart]
+    C --> D[Assemble summary, exact tail, and product refs]
     D --> E[Activate skills and bind grants]
     E --> F[Model proposes typed tool call]
     F --> G[Authorize and validate]
@@ -38,11 +40,16 @@ flowchart LR
    model, or tool work, the memory service transaction creates the ordered
    durable turn and returns an opaque attempt token, or exactly replays a
    matching finalized request.
-2. **Load continuity.** A new turn start returns bounded model-context-eligible
-   raw shopper/assistant turns, a compact index of products actually presented,
-   and the authoritative cart from SQLite. Blocked turns stay durable for exact
-   replay and audit but never enter this context. Those turns replace the legacy
-   rolling context blob. LangGraph creates separate process-local working state
+2. **Load continuity.** A negotiated v2 turn start returns three independent
+   lanes from SQLite: a non-authoritative rolling semantic summary, exact
+   bounded shopper/assistant turns strictly newer than its watermark, and a
+   compact index of products actually presented. It also returns the
+   authoritative cart. Blocked turns stay durable for exact replay and audit
+   but never enter the summary source or raw-tail context. The summary cannot
+   establish exact wording, product identity or facts, cart state, tool
+   evidence, policy, availability, or permission. A separate bounded oldest
+   prefix is offered only to the tools-disabled compactor and is not part of
+   normal shopper-model context. LangGraph creates process-local working state
    for only this request under a collision-safe pair of conversation ID and
    request ID.
 3. **Load the data contract.** The chain server reuses its process-lifetime
@@ -61,9 +68,11 @@ flowchart LR
 6. **Validate before execution.** Runtime middleware checks the request against
    the selected-skill grant and immutable tool policy, then applies advertised
    catalog capabilities, refs, service state, turn limits, and duplicate scopes.
-   A catalog scope gets at most one isolated repair;
-   independently valid finite fields are preserved, while semantic corrections
-   remain the model's responsibility.
+   The turn gets one isolated structural catalog repair total. The model may
+   correct semantic fields; runtime does not derive a semantic scope lock or
+   compare those corrections with shopper prose. Independently valid finite
+   structural fields may be preserved, and the repaired call is validated
+   afresh.
 7. **Call the owning service.** Catalog tools call the catalog retriever, which
    applies hard filters and ranks Milvus candidates. Cart tools call the memory
    service. A typed reference batch resolves deterministically against that
@@ -76,7 +85,14 @@ flowchart LR
    turn with the current attempt token as completed, blocked, or failed with
    replay output and ordered event envelopes. Ordered product cards produce one
    `candidate_set_presented` event and refresh the compact reference index in
-   that same transaction. After a successful commit, the runtime deletes the
+   that same transaction. When compaction is due after a completed guarded
+   response, a tools-disabled model receives only the prior summary and the
+   memory-owned source prefix. Memory validates the projection version and
+   offered boundary, then atomically commits that summary advance with normal
+   finalization; timeout, invalid output, conflict, or failed turns leave the
+   raw source intact. Unversioned starts preserve the v1 response shape for
+   rolling deployment, with memory deployed before chain and rollback in the
+   reverse order. After a successful commit, the runtime deletes the
    request checkpoint, then emits the response and diagnostics. Only the latest abandoned turn can reopen, and its token rotates;
    a stale finalizer receives a safe response with no stale products. A generic
    finalize outage keeps the grounded response and request checkpoint and
@@ -88,15 +104,16 @@ flowchart LR
 | --- | --- | --- |
 | Product JSONL + schema sidecar | Product records, taxonomy roles, filter roles, prices, and details | Operator-published catalog snapshot |
 | Milvus | Vector candidates for the active catalog snapshot | Rebuilt or reused from the catalog fingerprint |
-| Memory-service SQLite | Ordered raw shopper/assistant turns, exact finalized replay, presented-product events and compact index, typed same-conversation resolution, authoritative cart, product/cart-line identity, and atomic mutation replay | Named-volume persistence for one memory-service replica; retention is operator-owned |
+| Memory-service SQLite | Ordered raw shopper/assistant turns, rolling semantic summary and watermark, exact post-watermark tail, memory-owned compaction source, exact finalized replay, presented-product events and compact index, typed same-conversation resolution, authoritative cart, product/cart-line identity, and atomic mutation replay | Named-volume persistence for one memory-service replica; retention is operator-owned |
 | LangGraph `MemorySaver` | Working graph messages and tool state keyed by a collision-safe conversation/request pair | Process-local; deleted after successful durable finalize and retained only on finalize failure |
 | Turn `State` | Query, media, context, cart, current evidence, timings, and diagnostics | Transient for one request |
 | Shopper skills | Reviewed behavioral instructions, response framing, roles, and tool grants | Versioned repository files; no customer or product state |
 
 Memory is guidance, not truth. A remembered statement that an item was added or
 is available cannot override the current cart or a current catalog result.
-Raw turns and products actually presented now survive a chain-server restart
-through the memory service. The compact product index is read-only model context;
+The semantic summary, post-watermark raw tail, and products actually presented
+survive a chain-server restart through the memory service. Summary text remains
+guidance rather than exact evidence. The compact product index is read-only model context;
 the full event payload is the resolver's authority. A unique typed match becomes
 request-local evidence for details, availability, or cart add. Missing or
 ambiguous references require clarification. New-conversation requests such as
@@ -124,22 +141,25 @@ Assume the previous turn returned a group of tops confirmed by the catalog's
 5. The model calls `search_catalog_tool` once with:
 
    - requested type: `bottoms`;
-   - taxonomy relation: member of the requested umbrella;
    - taxonomy: `apparel/skirts`;
    - semantic direction: skirts that balance the beige top; and
    - hard constraints: none, unless the shopper also asked for beige or a
      same-color look.
 
-6. Deterministic validation confirms that every selected taxonomy value is an
-   advertised child of the requested role. The catalog then ranks only products
-   inside that hard skirt scope.
+6. Deterministic validation confirms that the submitted taxonomy values and
+   category/subcategory relationship exist in the advertised capability
+   contract. It does not decide whether `skirts` semantically satisfies
+   `bottoms`; that mapping remains the model's responsibility. The catalog then
+   ranks only products inside that hard skirt scope.
 7. The response presents grounded skirt candidates and explains their role in
    the beige-top outfit. It does not claim that the skirts themselves are beige
    and does not introduce dresses as substitutes.
 
 This is the intended division of labor: the skill supplies styling procedure,
 the model maps intent to the published contract, validation enforces the
-contract, and the catalog supplies product truth.
+contract, and the catalog supplies product truth. A category-only search records
+the requested role and searched category separately as neutral evidence; only
+`zero_results` may report that an exact submitted scope returned no products.
 
 ## What Comes Next
 

@@ -141,6 +141,20 @@ def _validate_diagnostic_expectations(
                 f"found {actual_count}"
             )
 
+    for call_expectation in expected.get("tool_call_expectations", []):
+        if not isinstance(call_expectation, dict):
+            raise AssertionError(
+                f"{label}: tool_call_expectations entries must be mappings"
+            )
+        if not any(
+            _diagnostic_subset_matches(call_expectation, call)
+            for call in normalized_calls
+        ):
+            raise AssertionError(
+                f"{label}: no tool call matched expectation "
+                f"{json.dumps(call_expectation, sort_keys=True)}"
+            )
+
     expected_detail_names = expected.get("required_product_detail_names")
     if expected_detail_names is not None:
         product_evidence = trace.get("product_evidence") or []
@@ -185,6 +199,22 @@ def _validate_diagnostic_expectations(
             f"{expected_projection!r}, found "
             f"{trace.get('conversation_summary_input_projection')!r}"
         )
+
+
+def _diagnostic_subset_matches(expected: object, actual: object) -> bool:
+    """Match a fixture-owned structural subset without interpreting text."""
+
+    if isinstance(expected, dict):
+        return isinstance(actual, dict) and all(
+            key in actual and _diagnostic_subset_matches(value, actual[key])
+            for key, value in expected.items()
+        )
+    if isinstance(expected, list):
+        return isinstance(actual, list) and all(
+            any(_diagnostic_subset_matches(item, candidate) for candidate in actual)
+            for item in expected
+        )
+    return expected == actual
 
 
 def _preflight_diagnostic_expectations(

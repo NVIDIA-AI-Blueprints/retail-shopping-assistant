@@ -1,0 +1,20 @@
+set_name: Semantic preference stays soft
+queries:
+  - "Show me sporty bags."
+answers:
+  - >-
+    Treat sporty as semantic ranking and styling direction rather than inventing
+    an unadvertised hard constraint. Run one valid bags search, present grounded
+    candidates, and avoid claiming unverified performance or construction facts.
+diagnostic_expectations:
+  - required_skills: [product-discovery]
+    required_tools: [search_catalog_tool]
+    tool_call_counts:
+      search_catalog_tool: 1
+    tool_call_expectations:
+      - tool_name: search_catalog_tool
+        status: completed
+        arguments:
+          taxonomy:
+            category: [bags]
+          required_constraints: {}

@@ -89,6 +89,8 @@ describe("ShopperPicker", () => {
 
     const select = container.querySelector('[aria-label="Shopper profile"]');
     expect(select.tagName).toBe("SELECT");
+    expect(select.id).toBe("shopper-profile");
+    expect(select.name).toBe("shopper-profile");
     expect(select.value).toBe("");
     expect(Array.from(select.options).map((option) => option.text)).toEqual([
       "Choose shopper",

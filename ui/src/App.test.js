@@ -190,6 +190,35 @@ describe("App shopper identity lifecycle", () => {
     expect(sessionStorage.getItem(SHOPPER_PROFILE_STORAGE_KEY)).not.toBeNull();
   });
 
+  test("shows named shopper context and keeps Guest mode uncluttered", async () => {
+    // eslint-disable-next-line testing-library/no-unnecessary-act
+    React.act(() => {
+      root.render(<App />);
+    });
+    await flushEffects();
+
+    expect(
+      container.querySelector('[aria-label="Selected shopper profile"]')
+    ).toBeNull();
+
+    await chooseShopper(container, "shopper_alex");
+
+    const summary = container.querySelector(
+      '[aria-label="Selected shopper profile"]'
+    );
+    expect(summary.textContent).toContain("Alex");
+    expect(summary.textContent).toContain("occasion driven explorer");
+    expect(summary.textContent).toContain(profiles[1].behavior);
+    expect(summary.textContent).toContain("Saved ZIP 98101");
+
+    await chooseShopper(container, "__guest__");
+
+    expect(
+      container.querySelector('[aria-label="Selected shopper profile"]')
+    ).toBeNull();
+    expect(container.querySelector(".input_test")).not.toBeNull();
+  });
+
   test("profile changes rotate identity while Reset retains the selected mode", async () => {
     const setItemSpy = jest.spyOn(Storage.prototype, "setItem");
 
@@ -274,7 +303,7 @@ describe("App shopper identity lifecycle", () => {
     expect(getSelectedShopperProfileId()).toBeNull();
   });
 
-  test("profile-service failure leaves explicit Guest mode available", async () => {
+  test("profile-service failure leaves Guest available and recovers in place", async () => {
     jest.spyOn(console, "warn").mockImplementation(() => {});
     global.fetch.mockImplementationOnce(() =>
       Promise.reject(new Error("profiles unavailable"))
@@ -286,13 +315,77 @@ describe("App shopper identity lifecycle", () => {
     });
     await flushEffects();
 
-    const select = container.querySelector('[aria-label="Shopper profile"]');
+    let select = container.querySelector('[aria-label="Shopper profile"]');
     expect(select.textContent).toContain("Guest mode");
     expect(select.textContent).toContain("Profiles unavailable");
     expect(container.querySelector(".input_test")).toBeNull();
 
     await chooseShopper(container, "__guest__");
+    const guestSession = getOrCreateUserSession();
 
     expect(container.querySelector(".input_test")).not.toBeNull();
+    React.act(() => {
+      jest.runOnlyPendingTimers();
+    });
+    await flushEffects();
+
+    select = container.querySelector('[aria-label="Shopper profile"]');
+    expect(Array.from(select.options).map((option) => option.text)).toEqual([
+      "Choose shopper",
+      "Guest mode",
+      "Morgan",
+      "Alex",
+      "Casey",
+      "Jordan",
+      "Riley",
+    ]);
+    expect(select.textContent).not.toContain("Profiles unavailable");
+    expect(select.value).toBe("__guest__");
+    expect(container.querySelector(".input_test")).not.toBeNull();
+    expect(getOrCreateUserSession()).toEqual(guestSession);
+  });
+
+  test("bounds automatic profile retries and retries again on focus", async () => {
+    jest.spyOn(console, "warn").mockImplementation(() => {});
+    global.fetch.mockImplementationOnce(() =>
+      Promise.reject(new Error("profiles unavailable"))
+    );
+    global.fetch.mockImplementationOnce(() =>
+      Promise.reject(new Error("profiles still unavailable"))
+    );
+
+    // eslint-disable-next-line testing-library/no-unnecessary-act
+    React.act(() => {
+      root.render(<App />);
+    });
+    await flushEffects();
+
+    React.act(() => {
+      jest.runOnlyPendingTimers();
+    });
+    await flushEffects();
+
+    const profileRequestCount = () =>
+      global.fetch.mock.calls.filter(([input]) =>
+        String(input).endsWith("/shopper-profiles")
+      ).length;
+
+    expect(profileRequestCount()).toBe(2);
+
+    React.act(() => {
+      jest.advanceTimersByTime(30000);
+    });
+    await flushEffects();
+    expect(profileRequestCount()).toBe(2);
+
+    React.act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    await flushEffects();
+
+    expect(profileRequestCount()).toBe(3);
+    expect(
+      container.querySelector('[aria-label="Shopper profile"]').textContent
+    ).toContain("Alex");
   });
 });

@@ -545,7 +545,9 @@ def start_ui(*, skip_install: bool) -> None:
     env = scope_service_env(UI_SERVICE, os.environ)
     env["PORT"] = "3000"
     env["BROWSER"] = "none"
-    env["REACT_APP_API_BASE_URL"] = "http://localhost:8009"
+    # Keep browser requests on port 3000. The scoped React development proxy
+    # forwards this prefix to the local chain server.
+    env["REACT_APP_API_BASE_URL"] = "/local-api"
     env.setdefault("CI", "true")
     start_process(UI_SERVICE, ["npm", "start"], cwd=REPO_ROOT / "ui", env=env, port=3000)
 

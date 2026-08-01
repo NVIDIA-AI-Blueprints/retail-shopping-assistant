@@ -41,6 +41,13 @@ const Navbar: React.FC<NavbarProps> = ({
   onShopperChange,
 }) => {
   const categories = config.ui.categories;
+  const selectedShopper =
+    typeof selectedShopperProfileId === "string"
+      ? shopperProfiles.find(
+          (profile) =>
+            profile.shopper_profile_id === selectedShopperProfileId
+        )
+      : undefined;
 
   return (
     <div className="shopper-nav">
@@ -130,6 +137,27 @@ const Navbar: React.FC<NavbarProps> = ({
           </p>
         </div>
       </div>
+
+      {selectedShopper && (
+        <section
+          className="shopper-profile-summary"
+          aria-label="Selected shopper profile"
+        >
+          <span className="shopper-profile-summary__eyebrow">
+            Shopping as
+          </span>
+          <strong>{selectedShopper.display_name}</strong>
+          <span className="shopper-profile-summary__tag">
+            {selectedShopper.shopper_type.replaceAll("_", " ")}
+          </span>
+          <span className="shopper-profile-summary__behavior">
+            {selectedShopper.behavior}
+          </span>
+          <span className="shopper-profile-summary__tag">
+            Saved ZIP {selectedShopper.zipcode}
+          </span>
+        </section>
+      )}
     </div>
   );
 };

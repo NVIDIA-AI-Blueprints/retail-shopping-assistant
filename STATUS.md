@@ -6,6 +6,17 @@ Updated: 2026-08-01
 
 The current working tree extends the shopper-serving Deep Agent architecture:
 
+- local app-code mode now keeps React browser API requests under a scoped
+  `/local-api` prefix on port `3000` and forwards them through the development
+  proxy to the chain server without Create React App's package-proxy Host
+  restriction. Remote browsers therefore load representative shoppers and chat
+  through the single forwarded UI port instead of failing into Guest-only mode
+  or `Invalid Host header` when port `8009` is not separately exposed.
+  Development responses use `Cache-Control: no-store` so tunneled browsers do
+  not retain an obsolete direct-port bundle. The
+  picker makes one delayed automatic retry after an unavailable profile load,
+  then retries on browser-online or tab-focus events without polling for the
+  app lifetime or interrupting an active Guest conversation;
 - the chain server now has a dormant, provider-neutral weather forecast
   contract with a Visual Crossing Timeline adapter and a directly constructible
   `get_weather_forecast_tool` wrapper. It accepts only an exact five-digit US
@@ -23,6 +34,8 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   profiles. Memory and chain-server read endpoints expose only ID, display
   name, type, behavior, and five-digit ZIP. A new UI session gates chat on an
   explicit dropdown choice of Guest mode or one of those five shoppers.
+  A named selection displays its type, behavior, and saved ZIP in a compact
+  navigation strip; Guest mode shows no profile strip.
   Switching choices clears visible chat/product/media/metric state and rotates
   the tab-scoped session, conversation, and cart identities; Reset retains the
   selected shopper mode. The UI sends only a named shopper's selected ID with
@@ -324,6 +337,13 @@ lives in [Schema-Driven Catalog Architecture](docs/CATALOG_REFACTOR_PLAN.md).
 The newest focused gate is recorded first. Older implementation gates remain
 below as comparison points; generated quality and timing
 artifacts stay in the required local archive rather than versioned source.
+
+- Clean rebuild local-browser proxy gate (2026-08-01): 8 focused React tests
+  and 5 local-runner tests pass, ESLint reports 0 errors and the same 3
+  pre-existing warnings, the production build compiles, and `git diff --check`
+  passes. This infrastructure-only slice made no hosted model, Judge,
+  embedding, or weather-provider call and does not change shopper-agent
+  behavior.
 
 - Clean rebuild profile-selection gate (2026-08-01): the profile picker was
   reapplied directly to the dormant-weather Staging baseline. Its 10 focused UI

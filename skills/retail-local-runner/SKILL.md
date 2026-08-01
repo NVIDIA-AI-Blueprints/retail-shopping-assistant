@@ -149,7 +149,13 @@ If another local Milvus is already healthy at `localhost:19530` with health on `
 - Use `.local-run/dev-venv/bin/python -m pytest ...` for local unit tests after `install-dev`.
 - UI dependencies are installed into `ui/node_modules` when missing.
 - The runner creates `ui/public/images -> shared/images` so React dev mode can serve catalog images from `/images/...`, matching the UI Dockerfile behavior.
-- The runner sets `SHARED_ROOT`, `SHARED_CONFIG_ROOT`, `REACT_APP_API_BASE_URL=http://localhost:8009`, and `BROWSER=none`.
+- The runner sets `SHARED_ROOT`, `SHARED_CONFIG_ROOT`,
+  `REACT_APP_API_BASE_URL=/local-api`, and `BROWSER=none`. A scoped React
+  development proxy forwards that same-origin prefix to the chain server
+  without Create React App's package-proxy Host restriction, so a remote
+  browser needs only port `3000` forwarded. Development responses use
+  `Cache-Control: no-store` so a forwarding layer cannot retain a bundle with
+  an obsolete browser API base URL.
 - `configure --nim-host` writes `.local-run/model-endpoints.env` with the per-role base URLs and model names.
 - When `NVIDIA_API_KEY` or `NGC_API_KEY` is present, the runner uses it as the default for `LLM_API_KEY`, `EMBED_API_KEY`, and `RAIL_API_KEY`; generated local endpoint envs use `local-nim` as a no-auth placeholder when no key is set.
 - `WEATHER_ENABLED` and `WEATHER_API_KEY` remain available only to the local

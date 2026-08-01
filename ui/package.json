@@ -16,6 +16,7 @@
     "@types/react-dom": "^18.2.18",
     "@types/showdown": "^2.0.6",
     "dompurify": "^3.4.7",
+    "http-proxy-middleware": "^2.0.9",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-scripts": "^5.0.1",

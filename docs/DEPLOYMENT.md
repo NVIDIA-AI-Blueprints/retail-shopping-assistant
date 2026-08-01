@@ -613,7 +613,12 @@ python skills/retail-local-runner/scripts/local_runner.py start
 ```
 
 The local runner writes ignored `.local-run/model-endpoints.env` with the
-derived per-role base URLs.
+derived per-role base URLs. Its React development server keeps browser API
+requests under the scoped `/local-api` prefix on port `3000` and proxies them
+to the chain server without Create React App's package-proxy Host restriction,
+so a remote browser does not also need port `8009` forwarded. Development
+responses use `Cache-Control: no-store` so a browser or forwarding layer cannot
+retain a bundle with an obsolete API base URL.
 
 #### Adding or Changing Models
 

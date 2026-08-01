@@ -155,7 +155,14 @@ The detailed contracts and implementation live in:
    historical resolver once with one or more exact descriptors from the compact
    index. Its 0/1/many result requires clarification for zero or many; only one
    match enters request-local product evidence. Resolution is deterministic and
-   makes no catalog, embedding, or separate model call. Before
+   makes no catalog, embedding, or separate model call. An established
+   two-product styling comparison remains inside `outfit-styling`: the model
+   submits all missing prior products in that one resolver call, then reads
+   each unique ref through the scalar detail tool in separate model steps. The
+   default two-read cap covers one pair; an unauthorized ref performs no
+   catalog read and consumes no read budget. Any required zero/many result
+   clarifies without a substitute search. This is semantic skill procedure, not a
+   deterministic comparison-intent gate. Before
    retrieval, every text search includes one nonempty, product-agnostic
    `shopper_guidance` sentence authored under the active skill; image-only search
    uses empty guidance. A shopper-named type not separately advertised may use
@@ -304,10 +311,11 @@ The detailed contracts and implementation live in:
    products and images that were not delivered, and finalizes as failed with
    `agent_timeout`. A grounding timeout finalizes as failed with
    `grounding_timeout`; search-only evidence uses deterministic catalog
-   rendering, while every other turn receives a fixed retry/cart-check response
-   instead of the unverified draft. Editor errors and empty or whitespace-only
-   output use the same response rule and finalize as failed with
-   `grounding_error`. Only a successful durable
+   rendering, current-turn verified product-detail evidence uses a
+   facts-only deterministic rendering, and every other turn receives a fixed
+   retry/cart-check response instead of the unverified draft. Editor errors and
+   empty or whitespace-only output use the same evidence-dependent response
+   rule and finalize as failed with `grounding_error`. Only a successful durable
    finalize permits checkpoint deletion and admission of the next conversation turn. An
    already-started synchronous tool operation may finish while graph
    cancellation propagates; cart idempotency and the timeout response's
@@ -328,7 +336,9 @@ output populates durable `candidate_set_presented` events and a bounded compact
 product-reference index. The projection keeps the newest complete candidate sets within 16,384
 serialized characters. A typed batch resolver matches exact product ref,
 display name, category, turn, candidate set, and one-based position within the
-current conversation. It is enforced at most once per turn and returns
+current conversation. The model sees those same resolver field names in compact
+JSON, without presentation wrappers around opaque refs. Resolution is enforced
+at most once per turn and returns
 `resolved`, `ambiguous`, or `not_found`; only a unique result becomes
 request-local evidence. Active anchors and effective preferences remain
 reserved. Fuzzy/embedding lookup, preference or sentiment extraction,

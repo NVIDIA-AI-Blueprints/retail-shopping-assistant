@@ -1,0 +1,60 @@
+set_name: Prior-product comparison
+queries:
+  - "Show me the Intricate Lace Gown."
+  - "Now show me the Wavy Hem Satin Dress."
+  - >-
+    Compare the Intricate Lace Gown and the Wavy Hem Satin Dress for a
+    semi-formal wedding.
+answers:
+  - >-
+    Run one catalog search for the shopper-named Intricate Lace Gown. Present
+    returned names, prices, and catalog categories without claiming unverified
+    material, fit, comfort, or performance properties.
+  - >-
+    Continue the same shopping thread and run one catalog search for the
+    shopper-named Wavy Hem Satin Dress. Present returned names, prices, and
+    catalog categories without claiming unverified material, fit, comfort, or
+    performance properties.
+  - >-
+    Treat this as a comparison inside the active outfit-styling thread, not as
+    another search. Resolve the Intricate Lace Gown and Wavy Hem Satin Dress
+    from the durable prior-product index in one batched call, then read current
+    catalog details for both before comparing them. Compare only confirmed
+    prices, categories, and product-detail facts, distinguish styling judgment
+    from catalog facts, disclose material gaps, and make a concise choice for
+    the stated occasion. Run no catalog search.
+diagnostic_expectations:
+  - required_tools: [search_catalog_tool]
+    forbidden_tools:
+      - resolve_conversation_products_tool
+      - get_product_details_tool
+      - check_product_availability_tool
+      - check_active_promotions_tool
+    tool_call_counts:
+      search_catalog_tool: 1
+      resolve_conversation_products_tool: 0
+      get_product_details_tool: 0
+  - required_tools: [search_catalog_tool]
+    forbidden_tools:
+      - resolve_conversation_products_tool
+      - get_product_details_tool
+      - check_product_availability_tool
+      - check_active_promotions_tool
+    tool_call_counts:
+      search_catalog_tool: 1
+      resolve_conversation_products_tool: 0
+      get_product_details_tool: 0
+  - required_skills: [outfit-styling]
+    required_tools:
+      - resolve_conversation_products_tool
+      - get_product_details_tool
+    forbidden_tools:
+      - search_catalog_tool
+      - check_product_availability_tool
+      - check_active_promotions_tool
+    tool_call_counts:
+      resolve_conversation_products_tool: 1
+      search_catalog_tool: 0
+    required_product_detail_names:
+      - Intricate Lace Gown
+      - Wavy Hem Satin Dress

@@ -106,6 +106,16 @@ shopping runs and their quality/timing comparisons outside the repository under
 archive stores judged output under `judge/`. In-repo generated folders are
 scratch output, not the reported quality artifact.
 
+The focused `product_comparison` dataset proves the prior-product path. Two
+shortlist turns establish one exact product apiece; its committed diagnostic
+expectations are checked before any Judge call. The comparison turn must use
+one batched historical resolver call, two product-detail reads, and no catalog
+search. Run it with `--test-path product_comparison`; each collector run
+generates a fresh conversation identity.
+The Judge receives the generated prior turns plus a bounded, ref-free projection
+of current-turn structured catalog evidence; product facts present in that
+projection are authoritative for scoring.
+
 The judge stage requires explicit environment configuration:
 
 ```bash

@@ -47,6 +47,154 @@ def _format_prior_turns(prior_turns: Sequence[Dict[str, str]] | None) -> str:
     return "\n".join(lines)
 
 
+def _format_current_catalog_evidence(
+    product_evidence: Sequence[Dict] | None,
+    *,
+    max_chars: int = 12_000,
+) -> str:
+    """Render a bounded, ref-free catalog projection for the Judge."""
+
+    if not product_evidence:
+        return ""
+    heading = (
+        "CURRENT-TURN STRUCTURED CATALOG EVIDENCE "
+        "(authoritative for product-specific facts):"
+    )
+    lines = [heading]
+    for raw_record in product_evidence[:20]:
+        if not isinstance(raw_record, dict):
+            continue
+        record = {
+            key: raw_record[key]
+            for key in (
+                "product_name",
+                "source_tool",
+                "evidence_type",
+                "facts",
+                "search_scope",
+            )
+            if raw_record.get(key) not in (None, "", [], {})
+        }
+        if not record:
+            continue
+        line = json.dumps(record, ensure_ascii=False, sort_keys=True)
+        if len("\n".join((*lines, line))) > max_chars:
+            lines.append("(additional structured evidence omitted)")
+            break
+        lines.append(line)
+    return "\n".join(lines) if len(lines) > 1 else ""
+
+
+def _validate_diagnostic_expectations(
+    expectations: Dict | None,
+    diagnostics: Dict | None,
+    *,
+    label: str = "turn",
+) -> None:
+    """Fail before judging when the live skill/tool trace violates the fixture."""
+
+    expected = expectations or {}
+    trace = diagnostics or {}
+    skill_files = set(trace.get("skill_files_read") or [])
+    tool_calls = trace.get("tool_calls") or []
+    if not isinstance(tool_calls, list):
+        raise AssertionError(
+            f"{label}: agent_diagnostics.tool_calls must be a list"
+        )
+
+    normalized_calls = [call for call in tool_calls if isinstance(call, dict)]
+    called_tools = {
+        str(call.get("tool_name") or "") for call in normalized_calls
+    }
+    completed_tools = {
+        str(call.get("tool_name") or "")
+        for call in normalized_calls
+        if call.get("status") == "completed"
+    }
+
+    for skill_name in expected.get("required_skills", []):
+        path = f"/shopper/{skill_name}/SKILL.md"
+        if path not in skill_files:
+            raise AssertionError(f"{label}: missing required skill {skill_name}")
+    for skill_name in expected.get("forbidden_skills", []):
+        path = f"/shopper/{skill_name}/SKILL.md"
+        if path in skill_files:
+            raise AssertionError(f"{label}: forbidden skill selected {skill_name}")
+    for tool_name in expected.get("required_tools", []):
+        if tool_name not in completed_tools:
+            raise AssertionError(
+                f"{label}: required tool did not complete {tool_name}"
+            )
+    for tool_name in expected.get("forbidden_tools", []):
+        if tool_name in called_tools:
+            raise AssertionError(f"{label}: forbidden tool called {tool_name}")
+
+    for tool_name, expected_count in (
+        expected.get("tool_call_counts") or {}
+    ).items():
+        actual_count = sum(
+            call.get("tool_name") == tool_name for call in normalized_calls
+        )
+        if actual_count != expected_count:
+            raise AssertionError(
+                f"{label}: expected {expected_count} {tool_name} calls, "
+                f"found {actual_count}"
+            )
+
+    expected_detail_names = expected.get("required_product_detail_names")
+    if expected_detail_names is not None:
+        product_evidence = trace.get("product_evidence") or []
+        if not isinstance(product_evidence, list):
+            raise AssertionError(
+                f"{label}: agent_diagnostics.product_evidence must be a list"
+            )
+        actual_detail_names = {
+            str(record.get("product_name") or "")
+            for record in product_evidence
+            if isinstance(record, dict)
+            and record.get("source_tool") == "get_product_details_tool"
+            and record.get("evidence_type") == "product_detail"
+            and record.get("product_name")
+        }
+        required_detail_names = {str(name) for name in expected_detail_names}
+        if actual_detail_names != required_detail_names:
+            raise AssertionError(
+                f"{label}: expected product detail evidence "
+                f"{sorted(required_detail_names)}, found "
+                f"{sorted(actual_detail_names)}"
+            )
+
+
+def _preflight_diagnostic_expectations(
+    query_dir: str,
+    result_dir: str,
+    filenames: Sequence[str],
+) -> None:
+    """Validate every trace before the first paid Judge request."""
+
+    for filename in filenames:
+        with open(os.path.join(query_dir, filename), "r") as query_file:
+            query_data = yaml.safe_load(query_file) or {}
+        with open(os.path.join(result_dir, filename), "r") as result_file:
+            result_data = yaml.safe_load(result_file) or {}
+        expectations = query_data.get("diagnostic_expectations") or [
+            {} for _ in query_data.get("queries", [])
+        ]
+        result_entries = result_data.get("results") or []
+        if len(expectations) != len(result_entries):
+            raise AssertionError(
+                f"Mismatch in diagnostic expectation counts in {filename}"
+            )
+        for index, (expected, result) in enumerate(
+            zip(expectations, result_entries)
+        ):
+            _validate_diagnostic_expectations(
+                expected,
+                result.get("agent_diagnostics"),
+                label=f"{filename} turn {index}",
+            )
+
+
 def _write_quality_summary(output_path: str, result_directory: str) -> None:
     summary_entries = []
     scores = []
@@ -135,6 +283,7 @@ def judge_test(
         ideal_answer: str,
         verbose: bool = True,
         prior_turns: Sequence[Dict[str, str]] | None = None,
+        product_evidence: Sequence[Dict] | None = None,
         ) -> Dict[str, str]:
     
     if verbose:
@@ -142,11 +291,15 @@ def judge_test(
 
     history = _format_prior_turns(prior_turns)
     history_section = f"\n{history}\n" if history else ""
+    evidence = _format_current_catalog_evidence(product_evidence)
+    evidence_section = f"\n{evidence}\n" if evidence else ""
     prompt = f"""
 You are an expert answer quality evaluator. Your task is to rate how well the RAG-generated answer answers the given question, compared to the ideal (reference) answer. 
 Note that these responses may sometimes vary. For instance, if two answers list different, but similar products, that is fine. 
 
 When prior turns are provided, the actual conversation history is authoritative for resolving references and shopper intent. The reference answer is guidance for expected quality and content, but it may contain assumptions that conflict with the real thread. It must not override the actual conversation history.
+
+When current-turn structured catalog evidence is provided, it is authoritative for product-specific facts in the generated answer. Do not mark a fact unconfirmed when that exact fact appears in this evidence.
 
 Consider the following criteria:
 - Relevance to the question
@@ -163,6 +316,7 @@ Return a score from 1 to 5:
 
 Also provide a brief justification (1-2 sentences).
 {history_section}
+{evidence_section}
 
 Question: {query}
 
@@ -230,6 +384,7 @@ if __name__ == "__main__":
     res_files = sorted([f for f in os.listdir(RES_DIR) if f.endswith('.yaml')])
 
     assert query_files == res_files, "Mismatch between query and result filenames!"
+    _preflight_diagnostic_expectations(QUERY_DIR, RES_DIR, query_files)
 
     for filename in query_files:
         with open(os.path.join(QUERY_DIR, filename), 'r') as qf:
@@ -254,6 +409,9 @@ if __name__ == "__main__":
                 answer=rag_answer,
                 ideal_answer=ideal_answer,
                 prior_turns=prior_turns,
+                product_evidence=(
+                    result_obj.get("agent_diagnostics") or {}
+                ).get("product_evidence"),
             )
 
             result_entry = {

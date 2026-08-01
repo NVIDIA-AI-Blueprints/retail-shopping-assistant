@@ -222,9 +222,12 @@ def test_historical_index_formatter_is_compact_and_ignores_bad_rows() -> None:
     )
 
     assert rendered.startswith("HISTORICAL PRODUCT INDEX (read-only):")
-    assert "set=set-2 turn=2" in rendered
-    assert "1:Structured Tote [tote_bags] <bag-1>" in rendered
-    assert "2:Cobalt Crossbody [crossbody_bags] <bag-2>" in rendered
+    assert '"candidate_set_id":"set-2"' in rendered
+    assert '"turn_sequence":2' in rendered
+    assert '"ordinal":1,"display_name":"Structured Tote"' in rendered
+    assert '"product_ref":"bag-1","category":"tote_bags"' in rendered
+    assert '"ordinal":2,"display_name":"Cobalt Crossbody"' in rendered
+    assert '"product_ref":"bag-2","category":"crossbody_bags"' in rendered
     assert format_historical_product_index([]) == ""
 
 
@@ -244,12 +247,12 @@ def test_historical_index_bound_keeps_newest_sets() -> None:
         for index in range(1, 5)
     ]
 
-    rendered = format_historical_product_index(reference_sets, max_chars=256)
+    rendered = format_historical_product_index(reference_sets, max_chars=320)
 
-    assert "set=set-4" in rendered
-    assert "set=set-1" not in rendered
+    assert '"candidate_set_id":"set-4"' in rendered
+    assert '"candidate_set_id":"set-1"' not in rendered
     assert "earlier historical products omitted" in rendered
-    assert len(rendered) <= 256
+    assert len(rendered) <= 320
 
 
 def test_evidence_adds_only_unique_resolved_products() -> None:

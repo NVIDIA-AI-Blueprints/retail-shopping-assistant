@@ -79,7 +79,10 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   product-resolution grants; catalog transport and validation remain with the
   catalog boundary, while cart work requires the cart skill. Product discovery
   and cart management also grant the resolver for their own historical product
-  references.
+  references. Established-product comparison stays inside `outfit-styling`:
+  all missing prior members use one batched resolver call, each unique ref gets
+  a separate detail read, and missing or ambiguous members clarify without a
+  substitute search. No comparison router or extra skill is introduced.
   Each skill also declares product-agnostic `response_guidance` in
   frontmatter as a fallback. Each catalog call supplies required pre-retrieval
   `shopper_guidance` authored under the active skill. Completed successful
@@ -114,7 +117,8 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   configurable 45-second default deadline. A graph timeout captures bounded
   partial state and finalizes as failed with `agent_timeout`; a grounding timeout
   finalizes as failed with `grounding_timeout`, uses deterministic catalog
-  rendering for search-only evidence, and otherwise returns a fixed
+  rendering for search-only evidence, renders only verified current-turn
+  product-detail facts when those exist, and otherwise returns a fixed
   retry/cart-check response instead of the unverified draft. The checkpoint is
   released only after durable finalization. Database sessions
   remain request-scoped and are always returned to the SQLAlchemy pool after
@@ -337,6 +341,15 @@ lives in [Schema-Driven Catalog Architecture](docs/CATALOG_REFACTOR_PLAN.md).
 The newest focused gate is recorded first. Older implementation gates remain
 below as comparison points; generated quality and timing
 artifacts stay in the required local archive rather than versioned source.
+
+- Clean rebuild product-comparison gate (2026-08-01): 171 focused offline tests
+  pass for the styling procedure, typed historical-index projection, runtime
+  detail fallback, diagnostic preflight, and three-turn fixture. The focused
+  live trace completed one batched historical resolution, grounded both detail
+  reads, and performed zero comparison-turn searches. The ref-free structured
+  evidence Judge projection scored all three turns 5/5 (5.00 average); mean
+  end-to-end time was 33.74 seconds. Quality, timing, raw conversations, and
+  the prior-run comparison remain in the canonical local archive.
 
 - Clean rebuild local-browser proxy gate (2026-08-01): 8 focused React tests
   and 5 local-runner tests pass, ESLint reports 0 errors and the same 3

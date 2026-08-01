@@ -4,6 +4,8 @@ import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RESPONSE_QUALITY_PATH = REPO_ROOT / "tests" / "integration" / "response_quality.py"
@@ -92,3 +94,106 @@ def test_judge_test_remains_compatible_without_prior_turns(monkeypatch):
 
     assert result == {"score": 5, "justification": "Clear and complete."}
     assert "ACTUAL PRIOR CONVERSATION" not in captured["messages"][1]["content"]
+
+
+def test_judge_prompt_includes_bounded_ref_free_catalog_evidence(monkeypatch):
+    response_quality = _load_response_quality(monkeypatch)
+    captured = {}
+
+    def create(**kwargs):
+        captured.update(kwargs)
+        return _judge_response()
+
+    response_quality.LLM_CLIENT = SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=create))
+    )
+
+    response_quality.judge_test(
+        query="Compare the dresses.",
+        answer="The lace gown is 90% silk.",
+        ideal_answer="Compare only confirmed facts.",
+        product_evidence=[
+            {
+                "product_ref": "internal-ref",
+                "product_name": "Intricate Lace Gown",
+                "source_tool": "get_product_details_tool",
+                "evidence_type": "product_detail",
+                "facts": {"composition": "90% silk, 10% spandex"},
+            }
+        ],
+        verbose=False,
+    )
+
+    prompt = captured["messages"][1]["content"]
+    assert "CURRENT-TURN STRUCTURED CATALOG EVIDENCE" in prompt
+    assert "authoritative for product-specific facts" in prompt
+    assert "Intricate Lace Gown" in prompt
+    assert "90% silk, 10% spandex" in prompt
+    assert "internal-ref" not in prompt
+
+
+def test_diagnostic_expectations_require_exact_product_detail_set(monkeypatch):
+    response_quality = _load_response_quality(monkeypatch)
+    expectations = {
+        "required_skills": ["outfit-styling"],
+        "required_tools": [
+            "resolve_conversation_products_tool",
+            "get_product_details_tool",
+        ],
+        "forbidden_tools": ["search_catalog_tool"],
+        "tool_call_counts": {
+            "resolve_conversation_products_tool": 1,
+            "get_product_details_tool": 2,
+            "search_catalog_tool": 0,
+        },
+        "required_product_detail_names": [
+            "Intricate Lace Gown",
+            "Wavy Hem Satin Dress",
+        ],
+    }
+    diagnostics = {
+        "skill_files_read": ["/shopper/outfit-styling/SKILL.md"],
+        "tool_calls": [
+            {
+                "tool_name": "resolve_conversation_products_tool",
+                "status": "completed",
+            },
+            {"tool_name": "get_product_details_tool", "status": "completed"},
+            {"tool_name": "get_product_details_tool", "status": "completed"},
+        ],
+        "product_evidence": [
+            {
+                "product_name": "Intricate Lace Gown",
+                "source_tool": "get_product_details_tool",
+                "evidence_type": "product_detail",
+            },
+            {
+                "product_name": "Wavy Hem Satin Dress",
+                "source_tool": "get_product_details_tool",
+                "evidence_type": "product_detail",
+            },
+        ],
+    }
+
+    response_quality._validate_diagnostic_expectations(
+        expectations,
+        diagnostics,
+        label="comparison turn",
+    )
+
+    diagnostics["product_evidence"].append(
+        {
+            "product_name": "Elegant Embroidered Lace Dress",
+            "source_tool": "get_product_details_tool",
+            "evidence_type": "product_detail",
+        }
+    )
+    with pytest.raises(
+        AssertionError,
+        match="expected product detail evidence",
+    ):
+        response_quality._validate_diagnostic_expectations(
+            expectations,
+            diagnostics,
+            label="comparison turn",
+        )

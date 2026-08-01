@@ -171,10 +171,11 @@ tool-backed responses use the grounding editor to remove unsupported product
 claims, surface guarantees, and internal refs.
 The editor receives only the remaining shared model-stage deadline. A timeout
 finalizes the turn as failed with `grounding_timeout`; search-only evidence uses
-deterministic catalog rendering, while other turns receive a fixed
+deterministic catalog rendering, current-turn verified product-detail evidence
+uses a facts-only deterministic rendering, and other turns receive a fixed
 retry/cart-check response instead of the unverified draft. Editor errors and
-empty or whitespace-only output use the same fail-closed response with
-`grounding_error`.
+empty or whitespace-only output use the same evidence-dependent fail-closed
+response with `grounding_error`.
 Grounding is enabled by default and can be disabled with
 `GROUNDING_REWRITE_ENABLED=false`; the evidence window is controlled by
 `GROUNDING_REWRITE_MAX_EVIDENCE_CHARS`.
@@ -342,6 +343,15 @@ from current-turn evidence, the skill can submit exact descriptors from the
 read-only historical-product index. The durable resolver returns 0/1/many;
 missing and ambiguous references require one clarification, and only a unique
 match can authorize a downstream tool.
+
+Established-product comparison is a procedure within this skill, not another
+skill or rediscovery request. The model submits every missing compared product
+in one resolver call and, after all required products resolve uniquely, calls
+the scalar detail tool once per ref in separate model steps. The default
+two-read cap covers one pair; an unauthorized ref performs no catalog read and
+consumes no read budget. Missing or ambiguous products clarify without a
+substitute search. Responses compare confirmed fields only and keep styling
+judgment separate from catalog facts.
 
 Cart and budget responsibilities stay with their owning skills. When
 `cart-management` is co-active, confirmed cart lines may be styling anchors;

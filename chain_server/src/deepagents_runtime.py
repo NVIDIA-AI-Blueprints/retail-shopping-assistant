@@ -2927,11 +2927,18 @@ class DeepAgentsRuntime:
             """Get detailed facts (material, care, dimensions, closures) for a
             product established in this turn by search or historical-product
             resolution. Requires a PRODUCT_REF — not a product name. Do NOT call
-            for initial recommendations. Stop immediately if STOP_TOOL_USE is
-            returned.
+            for initial recommendations. For an explicit comparison, call once
+            for each compared PRODUCT_REF in separate model steps before
+            answering. Stop immediately if STOP_TOOL_USE is returned.
             """
 
             nonlocal product_detail_reads_this_turn
+            cached_product = product_evidence.get(product_ref)
+            if cached_product is None:
+                return (
+                    f"No product with PRODUCT_REF '{product_ref}' is available. "
+                    "Search this turn or resolve the earlier product first."
+                )
             if (
                 product_detail_reads_this_turn
                 >= self.config.max_product_detail_reads_per_turn
@@ -2943,13 +2950,6 @@ class DeepAgentsRuntime:
                     "prices, categories, image availability, and styling role."
                 )
             product_detail_reads_this_turn += 1
-
-            cached_product = product_evidence.get(product_ref)
-            if cached_product is None:
-                return (
-                    f"No product with PRODUCT_REF '{product_ref}' is available. "
-                    "Search this turn or resolve the earlier product first."
-                )
             detail_result = get_product_details(
                 GetProductDetailsInput(product_id=cached_product.product_id),
                 self.config.retriever_port,
@@ -2979,9 +2979,12 @@ class DeepAgentsRuntime:
         ) -> str:
             """Resolve products the shopper refers to from earlier in this
             conversation. Use only when a needed product was not established
-            in the current turn. Submit exact descriptors from the historical
-            product index. If a reference is missing or ambiguous, ask one
-            concise clarification; do not guess or search for a substitute.
+            in the current turn. For a comparison, submit every compared
+            product missing from current-request evidence together in this one
+            batched call. Use exact descriptors
+            from the historical product index. If a reference is missing or
+            ambiguous, ask one concise clarification; do not guess or search
+            for a substitute.
             """
 
             nonlocal product_resolution_used
@@ -3522,7 +3525,10 @@ class DeepAgentsRuntime:
                     result,
                     request_id=request_id,
                 )
-            return _GROUNDING_FAILURE_RESPONSE
+            return _format_product_detail_fallback(
+                result,
+                request_id=request_id,
+            ) or _GROUNDING_FAILURE_RESPONSE
         except Exception:  # noqa: BLE001 - response editor has a safe fallback.
             logger.exception("Grounding response editor failed")
             state.timings["grounding_rewrite"] = time.monotonic() - start
@@ -3540,7 +3546,10 @@ class DeepAgentsRuntime:
                     result,
                     request_id=request_id,
                 )
-            return _GROUNDING_FAILURE_RESPONSE
+            return _format_product_detail_fallback(
+                result,
+                request_id=request_id,
+            ) or _GROUNDING_FAILURE_RESPONSE
 
         state.timings["grounding_rewrite"] = time.monotonic() - start
         state.token_usage = _merge_token_usage(
@@ -3566,7 +3575,10 @@ class DeepAgentsRuntime:
                     result,
                     request_id=request_id,
                 )
-            return _GROUNDING_FAILURE_RESPONSE
+            return _format_product_detail_fallback(
+                result,
+                request_id=request_id,
+            ) or _GROUNDING_FAILURE_RESPONSE
         _add_model_usage(
             state,
             "app_llm_grounding_editor",
@@ -3783,6 +3795,13 @@ Rules:
   reads per user turn. Product details are for direct product fact questions,
   cart or comparison follow-ups, or already-shortlisted items; they are not
   required for an initial no-anchor outfit recommendation.
+- A comparison of established products is part of the active primary procedure,
+  not a new catalog search. If any compared product is only in the historical
+  index, resolve every compared product missing from current-request evidence
+  together in the turn's single batched resolver call. Then call product
+  details once per uniquely resolved ref, in separate model steps, before
+  comparing. A missing or ambiguous required product needs one concise
+  clarification; do not guess, substitute, or search again.
 - If a tool returns STOP_TOOL_USE, stop tool calling immediately and produce the
   best concise shopper-facing answer from the evidence already available.
 - A tool result is enough to produce a final answer. Once you have at least one
@@ -5183,6 +5202,78 @@ def _format_search_only_response(
         )
     )
     return "\n".join(lines)
+
+
+def _format_product_detail_fallback(
+    result: Any,
+    *,
+    request_id: str,
+) -> str:
+    """Render verified current-turn detail facts when final editing fails."""
+
+    records: list[dict[str, Any]] = []
+    seen_refs: set[str] = set()
+    for message in _current_turn_messages(_result_messages(result), request_id):
+        if _message_type(message) != "tool":
+            continue
+        if str(_value(message, "name") or "") != "get_product_details_tool":
+            continue
+        content = _content_to_text(_value(message, "content"))
+        if not content.startswith(_PRODUCT_DETAIL_GROUNDING_NOTE):
+            continue
+        for record in _product_evidence_records(content):
+            product_ref = str(record.get("product_ref") or "").strip()
+            if not product_ref or product_ref in seen_refs:
+                continue
+            seen_refs.add(product_ref)
+            records.append(record)
+
+    if not records:
+        return ""
+
+    lines = ["Verified catalog details:"]
+    for record in records:
+        name = _escape_markdown_inline(str(record.get("name") or "").strip())
+        if not name:
+            continue
+        summary = [f"**{name}**"]
+        price = str(record.get("price") or "").strip()
+        if price:
+            summary.append(_escape_markdown_inline(price))
+        category = str(record.get("category") or "").strip()
+        if category:
+            summary.append(
+                _escape_markdown_inline(category.replace("_", " "))
+            )
+        lines.append("- " + " — ".join(summary))
+        for detail in record.get("details") or []:
+            label, separator, value = str(detail).partition(":")
+            if not separator or not label.strip() or not value.strip():
+                continue
+            lines.append(
+                "  - "
+                f"{_escape_markdown_inline(label.strip())}: "
+                f"{_escape_markdown_inline(value.strip())}"
+            )
+    if len(lines) == 1:
+        return ""
+    lines.extend(
+        (
+            "",
+            (
+                "Only the listed fields are confirmed. Any missing material, "
+                "construction, fit, care, comfort, or performance detail "
+                "remains unavailable."
+            ),
+        )
+    )
+    return "\n".join(lines)
+
+
+def _escape_markdown_inline(value: str) -> str:
+    """Escape catalog-owned text before placing it in Markdown."""
+
+    return re.sub(r"([\\`*_\[\]\(\)<>])", r"\\\1", value)
 
 
 def _search_result_groups(result: Any, *, request_id: str) -> list[dict[str, Any]]:

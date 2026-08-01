@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
+import json
 from typing import Any, Literal
 from urllib.parse import quote
 
@@ -312,7 +313,7 @@ def _format_reference_set(value: Any) -> str:
     products = value.get("products")
     if not set_id or not isinstance(turn, int) or not isinstance(products, list):
         return ""
-    rendered = []
+    rendered: list[dict[str, Any]] = []
     for product in products:
         if not isinstance(product, dict):
             continue
@@ -322,12 +323,25 @@ def _format_reference_set(value: Any) -> str:
         if not ref or not name or not isinstance(position, int):
             continue
         category = _one_line(product.get("category"))
-        rendered.append(
-            f"{position}:{name} [{category}] <{ref}>"
-            if category
-            else f"{position}:{name} <{ref}>"
-        )
-    return f"- set={set_id} turn={turn}: " + "; ".join(rendered) if rendered else ""
+        item: dict[str, Any] = {
+            "ordinal": position,
+            "display_name": name,
+            "product_ref": ref,
+        }
+        if category:
+            item["category"] = category
+        rendered.append(item)
+    if not rendered:
+        return ""
+    return "- " + json.dumps(
+        {
+            "candidate_set_id": set_id,
+            "turn_sequence": turn,
+            "products": rendered,
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
 
 
 def _one_line(value: Any) -> str:

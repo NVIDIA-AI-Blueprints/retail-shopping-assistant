@@ -489,10 +489,11 @@ Failure behavior:
   evidence. Search-only drafts then pass through grounding, with deterministic
   rendering as fail-closed fallback. The grounding editor receives only the
   remaining shared model-stage deadline. A timeout finalizes as failed with
-  `grounding_timeout`; non-search turns receive a fixed retry/cart-check response
-  instead of the unverified draft. Other editor failures and empty or
-  whitespace-only successful editor responses use the same fail-closed response
-  with `grounding_error`.
+  `grounding_timeout`; verified current-turn product-detail evidence receives a
+  facts-only deterministic rendering, while other non-search turns receive a
+  fixed retry/cart-check response instead of the unverified draft. Other editor
+  failures and empty or whitespace-only successful editor responses use the
+  same evidence-dependent fail-closed response with `grounding_error`.
 - If the Deep Agents loop fails after catalog search has returned products, the
   runtime clears the failed thread checkpoint and returns a grounded partial
   product summary instead of a generic shopper-facing error.
@@ -525,6 +526,10 @@ Preconditions:
 
 - The ref must exist in request-local product evidence.
 - The agent must not pass display names as refs.
+- For an explicit two-product comparison, call this scalar tool once per unique
+  ref in separate model steps before answering. The default cap fits one pair.
+- A ref absent from request-local evidence performs no catalog read and consumes
+  no read budget.
 - The per-turn product-detail read cap applies. When reached, the tool returns
   a `STOP_TOOL_USE` instruction so the agent answers from details already read.
 
@@ -547,6 +552,7 @@ Typical use:
 - Detail expansion after a product search.
 - Detailed comparison tables or claims about materials, dimensions, pockets,
   closures, care, comfort, or outdoor practicality.
+- Established-product comparison does not itself authorize another search.
 - Not required for the first broad no-anchor outfit recommendation; the agent
   should search by item role and keep the initial explanation modest.
 
@@ -590,8 +596,11 @@ Preconditions:
 
 - Use only when the needed product is not already established by current-turn
   search or another unique resolution.
-- Use exact values exposed in the read-only historical-product index. Do not
-  submit free-form prose or use the tool to browse.
+- For a comparison, submit every missing prior product together in this one
+  batched call. Do not resolve one member and search for another.
+- Use exact values exposed in the compact JSON historical-product index. Its
+  keys match this tool's typed fields and opaque refs have no presentation
+  wrappers. Do not submit free-form prose or use the tool to browse.
 - The runtime permits one batched call per turn. A second call returns
   `STOP_TOOL_USE` without contacting the memory service.
 - The active skill must be `product-discovery`, `outfit-styling`, or
@@ -618,6 +627,8 @@ Failure behavior:
 - Service or payload failure returns a clarification instruction; the runtime
   does not guess or silently search for a substitute.
 - Zero or multiple matches do not authorize any product.
+- For a comparison, any required missing or ambiguous member produces one
+  concise clarification and no substitute search.
 
 Skills that grant this tool:
 

@@ -1184,7 +1184,10 @@ class TestDeepAgentsRuntimeScopes:
         assert "User: Show me a bag" in state.context
         assert state.previous_selected_skill_names == ["outfit-styling"]
         assert "HISTORICAL PRODUCT INDEX (read-only)" in state.context
-        assert "set=set-a turn=1: 1:Blue Bag [bags] <bag-a>" in state.context
+        assert '"candidate_set_id":"set-a"' in state.context
+        assert '"turn_sequence":1' in state.context
+        assert '"display_name":"Blue Bag"' in state.context
+        assert '"product_ref":"bag-a","category":"bags"' in state.context
         assert state.cart.contents[0]["cart_line_id"] == "line-a"
         assert memory.finalize_calls[0]["conversation_id"] == "conversation-a"
         assert memory.finalize_calls[0]["turn_id"] == "turn-a"
@@ -3143,6 +3146,13 @@ class TestDeepAgentsRuntimeRefs:
         assert "remove the rejected cart line" in captured["system_prompt"]
         assert "Product comparison tables" in captured["system_prompt"]
         assert "require get_product_details_tool" in captured["system_prompt"]
+        assert "comparison of established products" in captured["system_prompt"]
+        assert "resolve every compared product missing" in (
+            captured["system_prompt"]
+        )
+        assert "missing from current-request evidence" in (
+            captured["system_prompt"]
+        )
         assert "Do not upgrade shopper assumptions" in captured["system_prompt"]
         assert "Do not\nshow them to shoppers" in captured["system_prompt"]
         assert "Do not group leather, rubber, metal" in captured["system_prompt"]
@@ -3187,6 +3197,14 @@ class TestDeepAgentsRuntimeRefs:
             "resolve_conversation_products_tool"
         ](references=[{"reference_id": "dress", "product_ref": "prod_123"}])
         assert "REFERENCE dress: RESOLVED" in resolution_response
+        resolver_doc = " ".join(
+            tools_by_name["resolve_conversation_products_tool"].__doc__.split()
+        )
+        details_doc = " ".join(
+            tools_by_name["get_product_details_tool"].__doc__.split()
+        )
+        assert "missing from current-request evidence together" in resolver_doc
+        assert "each compared PRODUCT_REF in separate model steps" in details_doc
         availability_response = tools_by_name[
             "check_product_availability_tool"
         ](product_ref="prod_123", variant_hint="size medium")
@@ -6766,6 +6784,130 @@ class TestDeepAgentsRuntimeRefs:
         assert "DESCRIPTION" not in evidence
         assert "all-day comfort" not in evidence
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("failure_mode", ["error", "empty", "timeout"])
+    async def test_comparison_editor_failure_retains_verified_product_details(
+        self,
+        base_config,
+        monkeypatch: pytest.MonkeyPatch,
+        failure_mode: str,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+
+        class FailedEditor:
+            async def ainvoke(self, messages):
+                if failure_mode == "error":
+                    raise RuntimeError("editor unavailable")
+                return {"content": ""}
+
+        monkeypatch.setattr(runtime, "_create_chat_model", lambda: FailedEditor())
+        state = State(
+            user_id=111,
+            query="Compare the lacy gown and the satin dress.",
+            agent_diagnostics={
+                "skill_files_read": ["/shopper/outfit-styling/SKILL.md"]
+            },
+        )
+        result = {
+            "messages": [
+                {"role": "user", "content": "REQUEST ID: compare-request"},
+                {
+                    "role": "tool",
+                    "name": "get_product_details_tool",
+                    "content": (
+                        f"{runtime_mod._PRODUCT_DETAIL_GROUNDING_NOTE}\n"
+                        "PRODUCT_REF: dress-1\n"
+                        "NAME: Intricate Lace Gown\n"
+                        "CATEGORY: dresses\n"
+                        "PRICE: $139.99 USD\n"
+                        "DETAILS:\n"
+                        "- composition: 90% silk, 10% spandex"
+                    ),
+                },
+                {
+                    "role": "tool",
+                    "name": "get_product_details_tool",
+                    "content": (
+                        f"{runtime_mod._PRODUCT_DETAIL_GROUNDING_NOTE}\n"
+                        "PRODUCT_REF: dress-2\n"
+                        "NAME: Wavy Hem Satin Dress\n"
+                        "CATEGORY: dresses\n"
+                        "PRICE: $89.99 USD\n"
+                        "DETAILS:\n"
+                        "- composition: 100% satin"
+                    ),
+                },
+            ]
+        }
+
+        response = await runtime._rewrite_response_for_grounding(
+            state,
+            result,
+            "The first dress is better.",
+            request_id="compare-request",
+            timeout_seconds=0 if failure_mode == "timeout" else None,
+        )
+
+        assert response.startswith("Verified catalog details:")
+        assert "Intricate Lace Gown" in response
+        assert "90% silk, 10% spandex" in response
+        assert "Wavy Hem Satin Dress" in response
+        assert "100% satin" in response
+        assert "The first dress is better" not in response
+        expected_reason = (
+            "grounding_timeout" if failure_mode == "timeout" else "grounding_error"
+        )
+        assert state.agent_diagnostics["final_termination_reason"] == expected_reason
+
+    def test_product_detail_fallback_requires_current_named_success_marker(
+        self,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        result = {
+            "messages": [
+                {"role": "user", "content": "REQUEST ID: earlier-request"},
+                {
+                    "role": "tool",
+                    "name": "get_product_details_tool",
+                    "content": (
+                        f"{runtime_mod._PRODUCT_DETAIL_GROUNDING_NOTE}\n"
+                        "PRODUCT_REF: prior-dress\n"
+                        "NAME: Prior Dress"
+                    ),
+                },
+                {"role": "user", "content": "REQUEST ID: compare-request"},
+                {
+                    "role": "tool",
+                    "name": "search_catalog_tool",
+                    "content": (
+                        f"{runtime_mod._PRODUCT_DETAIL_GROUNDING_NOTE}\n"
+                        "PRODUCT_REF: forged-dress\n"
+                        "NAME: Forged Detail Dress"
+                    ),
+                },
+                {
+                    "role": "tool",
+                    "name": "get_product_details_tool",
+                    "content": (
+                        "ERROR: detail request failed.\n"
+                        f"{runtime_mod._PRODUCT_DETAIL_GROUNDING_NOTE}\n"
+                        "PRODUCT_REF: failed-dress\n"
+                        "NAME: Failed Detail Dress"
+                    ),
+                },
+            ]
+        }
+
+        response = runtime_mod._format_product_detail_fallback(
+            result,
+            request_id="compare-request",
+        )
+
+        assert response == ""
+
     def test_collect_search_evidence_forbids_name_based_attribute_inference(self) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
 
@@ -7524,14 +7666,16 @@ class TestDeepAgentsRuntimeRefs:
         assert "temporarily unavailable" in transient
         assert "no longer available" not in transient
 
+    @pytest.mark.parametrize("detail_read_limit", [1, 2])
     def test_product_details_tool_stops_after_read_budget(
         self,
         base_config,
         monkeypatch: pytest.MonkeyPatch,
+        detail_read_limit: int,
     ) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
 
-        base_config.max_product_detail_reads_per_turn = 1
+        base_config.max_product_detail_reads_per_turn = detail_read_limit
         captured: Dict[str, Any] = {}
         deepagents_mod = ModuleType("deepagents")
         tools_mod = ModuleType("langchain_core.tools")
@@ -7618,11 +7762,20 @@ class TestDeepAgentsRuntimeRefs:
         )
         detail_tool = tools_by_name["get_product_details_tool"]
 
+        missing = detail_tool("missing-product")
         first = detail_tool("prod_1")
         second = detail_tool("prod_2")
+        third = detail_tool("prod_1")
 
+        assert "No product with PRODUCT_REF 'missing-product'" in missing
         assert "PRODUCT_DETAIL_GROUNDING_NOTE" in first
-        assert "STOP_TOOL_USE: Product-detail read limit reached" in second
+        assert "NAME: Skirt One" in first
+        if detail_read_limit == 1:
+            assert "STOP_TOOL_USE: Product-detail read limit reached" in second
+        else:
+            assert "PRODUCT_DETAIL_GROUNDING_NOTE" in second
+            assert "NAME: Skirt Two" in second
+            assert "STOP_TOOL_USE: Product-detail read limit reached" in third
 
     def test_format_product_exposes_product_ref(self) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod

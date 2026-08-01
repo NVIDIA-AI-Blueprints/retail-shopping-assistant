@@ -209,9 +209,14 @@ clears unsent products, finalizes the durable turn as failed, releases the
 durable conversation turn, and then deletes its request checkpoint. The
 grounding editor receives only the remaining time. Its timeout is finalized as
 failed with `grounding_timeout`: search-only turns use the existing deterministic
-catalog renderer, while every other turn returns a fixed retry/cart-check
-response instead of the unverified draft. Editor errors and empty or whitespace-
-only output follow the same fail-closed response rule with `grounding_error`.
+catalog renderer, while turns with current successful product-detail evidence
+retain only verified names, prices, categories, and listed fields. Only a
+current tool-role result named `get_product_details_tool` whose content begins
+with the canonical success marker qualifies; the fallback never invents a
+comparison judgment. Other non-search turns return a fixed retry/cart-check
+response instead of the unverified draft. Editor errors and empty or
+whitespace-only output follow the same evidence-preserving split with
+`grounding_error`.
 
 For the serving-agent flow, see
 [Shopper Agent Architecture](docs/SHOPPER_AGENT_ARCHITECTURE.md). The
@@ -374,6 +379,18 @@ evidence for details, availability, or cart add; zero or multiple matches requir
 clarification and never authorize a guess. Resolution is limited to the current
 conversation and does not add fuzzy matching, embeddings, cross-conversation
 memory, preference/sentiment memory, or catalog-revision revalidation.
+The model-facing index is compact JSON whose field names match the typed
+resolver request, so opaque product refs are presented without display wrappers
+or lossy rewriting.
+
+An explicit comparison of established candidates remains part of
+`outfit-styling`; it does not create a comparison skill, intent router, or
+rediscovery search. The model resolves all missing prior candidates together,
+then reads each unique product through separate detail calls before comparing
+confirmed fields. The default two-detail-read limit fits one pair; a ref absent
+from current-request evidence performs no catalog read and consumes no read
+budget. Missing or ambiguous members receive one clarification without a
+substitute search.
 
 LangGraph `MemorySaver` now holds only one request's working graph state under a
 collision-safe pair of conversation ID and request ID. It is deleted only after

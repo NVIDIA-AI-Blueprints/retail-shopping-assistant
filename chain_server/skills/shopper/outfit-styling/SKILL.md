@@ -71,6 +71,29 @@ internal reasoning to the shopper.
 - When the reference could identify multiple earlier products, ask which one
   the shopper means before acting on that dependent request.
 
+## Compare Established Products
+
+- A comparison of established candidates continues this styling procedure. It
+  is not a request to search for those products again. Search only when the
+  shopper explicitly requests a new or replacement candidate.
+- Map natural or shortened references against the newest historical-product
+  index. When any compared product is absent from current-request evidence,
+  submit every compared product absent from current-request evidence together
+  in the turn's single
+  `resolve_conversation_products_tool` call using exact index descriptors.
+  Never invent a fuzzy alias or rediscover a known candidate through search.
+- If any required resolution is ambiguous or not found, ask one concise product
+  clarification and stop. Do not guess, substitute, or compare a different
+  pair.
+- For an explicit two-product comparison, call
+  `get_product_details_tool` once for each uniquely resolved PRODUCT_REF in
+  separate model steps before answering. The default two-read budget fits one
+  pair. Never pass a display name as a ref.
+- Compare only item-specific confirmed fields. If a field is present for one
+  product and absent for the other, state that asymmetry instead of inferring a
+  winner on that dimension. Keep styling judgment separate from catalog facts
+  and tie the recommendation to the shopper's stated goal.
+
 ## When To Clarify
 
 - Ask one concise question when a style-led single-piece request does not name

@@ -13,7 +13,6 @@ import logging
 import os
 from pathlib import Path
 import re
-from threading import Lock
 import time
 from collections.abc import Sequence
 from typing import Any, AsyncIterator, Literal
@@ -68,7 +67,6 @@ from .conversation_memory import (
 from .conversation_products import (
     ConversationProductsClient,
     ConversationProductsError,
-    ProductEvidence,
     ProductReferenceDescriptor,
     ResolveConversationProductsRequest,
     format_historical_product_index,
@@ -86,6 +84,7 @@ from .skill_activation import (
     ShopperSkillActivationMiddleware,
     selected_skill_names_for_turn,
 )
+from .turn_scope import TurnScope
 from .tool_policy import (
     load_shopper_skill_registry as _shopper_skill_registry,
     validate_registered_tool_names,
@@ -1951,8 +1950,8 @@ class DeepAgentsRuntime:
         skill_activation_input = _skill_activation_input_model(
             tuple(skill_registry)
         )
-        retrieved: dict[str, str] = {}
-        state.retrieved = retrieved
+        scope = TurnScope()
+        state.retrieved = scope.retrieved
         search_input_model = _search_catalog_tool_input_model(turn_capabilities)
         search_tool_arguments_model = _search_catalog_tool_input_model(
             turn_capabilities,
@@ -1961,22 +1960,6 @@ class DeepAgentsRuntime:
         constraint_input_model = search_input_model.model_fields[
             "required_constraints"
         ].annotation
-        catalog_searches_this_turn = 0
-        searched_catalog_scopes: list[dict[str, Any]] = []
-        searched_shopper_scopes: set[tuple[str, str]] = set()
-        catalog_tool_lock = Lock()
-        product_detail_reads_this_turn = 0
-        failed_repair_scope_key: str | None = None
-        failed_agent_selected_scope = False
-        failed_constraint_scope_key: str | None = None
-        constraint_reviewed_scopes: set[str] = set()
-        pending_constraint_reviews: dict[str, dict[str, Any]] = {}
-        pending_taxonomy_constraints: dict[str, Any] | None = None
-        pending_no_direct_constraint_clear = False
-        pending_schema_requirements: list[str] = []
-        product_evidence = ProductEvidence()
-        product_resolution_used = False
-        product_resolution_lock = Lock()
 
         def _lock_taxonomy_constraint_values(
             scope_key: str | None,
@@ -1986,12 +1969,10 @@ class DeepAgentsRuntime:
         ) -> str:
             """Store canonical hard constraints for one taxonomy repair."""
 
-            nonlocal pending_taxonomy_constraints
-            nonlocal pending_no_direct_constraint_clear
             constraints = _normalized_scope_value(constraints)
             constraints.pop("unadvertised_requirements", None)
-            pending_taxonomy_constraints = constraints
-            pending_no_direct_constraint_clear = allow_no_direct_clear
+            scope.repair.pending_taxonomy_constraints = constraints
+            scope.repair.pending_no_direct_constraint_clear = allow_no_direct_clear
             serialized_constraints = json.dumps(
                 constraints,
                 ensure_ascii=False,
@@ -2048,13 +2029,6 @@ class DeepAgentsRuntime:
             filter scope with different semantic wording.
             """
 
-            nonlocal catalog_searches_this_turn
-            nonlocal failed_agent_selected_scope
-            nonlocal failed_constraint_scope_key
-            nonlocal failed_repair_scope_key
-            nonlocal pending_no_direct_constraint_clear
-            nonlocal pending_taxonomy_constraints
-            nonlocal pending_schema_requirements
             taxonomy = taxonomy or {"category": [], "subcategory": []}
             required_constraints = required_constraints or {}
             capabilities = turn_capabilities
@@ -2086,13 +2060,13 @@ class DeepAgentsRuntime:
             )
             candidate_scope_key = _product_scope_key(requested_product_type)
             locked_repair_scope = (
-                failed_constraint_scope_key or failed_repair_scope_key
+                scope.repair.failed_constraint_scope_key or scope.repair.failed_repair_scope_key
             )
             repairing_same_scope = bool(
                 locked_repair_scope
                 and (
-                    candidate_scope_key == failed_constraint_scope_key
-                    if failed_constraint_scope_key
+                    candidate_scope_key == scope.repair.failed_constraint_scope_key
+                    if scope.repair.failed_constraint_scope_key
                     else _same_product_scope(
                         locked_repair_scope,
                         candidate_scope_key,
@@ -2113,7 +2087,7 @@ class DeepAgentsRuntime:
                     "requested_product_type and repair taxonomy instead."
                 )
             if (
-                failed_agent_selected_scope
+                scope.repair.failed_agent_selected_scope
                 and taxonomy_status != "agent_selected_type"
             ):
                 return (
@@ -2154,8 +2128,8 @@ class DeepAgentsRuntime:
                 )
             )
             if duplicated_product_type:
-                failed_repair_scope_key = candidate_scope_key
-                failed_agent_selected_scope = False
+                scope.repair.failed_repair_scope_key = candidate_scope_key
+                scope.repair.failed_agent_selected_scope = False
                 return (
                     SEARCH_VALIDATION_ERROR_PREFIX
                     + "Product types never belong in "
@@ -2233,10 +2207,10 @@ class DeepAgentsRuntime:
                     )
                 )
                 if shopper_stated_scope or canonical_agent_selected_scope:
-                    failed_repair_scope_key = candidate_scope_key
-                    failed_agent_selected_scope = False
+                    scope.repair.failed_repair_scope_key = candidate_scope_key
+                    scope.repair.failed_agent_selected_scope = False
                 elif taxonomy_error and taxonomy_status == "agent_selected_type":
-                    failed_agent_selected_scope = True
+                    scope.repair.failed_agent_selected_scope = True
                 if candidate_scope_key and taxonomy_error:
                     if (
                         taxonomy_status == "agent_selected_type"
@@ -2264,7 +2238,7 @@ class DeepAgentsRuntime:
                             [],
                         )
                         if proposed_requirements:
-                            pending_schema_requirements = list(
+                            scope.repair.pending_schema_requirements = list(
                                 proposed_requirements
                             )
                             repair_guidance += (
@@ -2312,13 +2286,13 @@ class DeepAgentsRuntime:
                 None,
             )
             if (
-                pending_taxonomy_constraints is not None
+                scope.repair.pending_taxonomy_constraints is not None
                 and not (
-                    pending_no_direct_constraint_clear
+                    scope.repair.pending_no_direct_constraint_clear
                     and request.taxonomy_status == "no_direct_catalog_match"
                 )
                 and normalized_advertised_constraints
-                != pending_taxonomy_constraints
+                != scope.repair.pending_taxonomy_constraints
             ):
                 return (
                     SEARCH_VALIDATION_ERROR_PREFIX
@@ -2327,9 +2301,9 @@ class DeepAgentsRuntime:
                     "taxonomy or an explicitly identified "
                     "ungrounded product scope."
                 )
-            if pending_taxonomy_constraints is not None:
-                pending_taxonomy_constraints = None
-                pending_no_direct_constraint_clear = False
+            if scope.repair.pending_taxonomy_constraints is not None:
+                scope.repair.pending_taxonomy_constraints = None
+                scope.repair.pending_no_direct_constraint_clear = False
             normalized_constraints = dict(all_constraints)
             unadvertised_requirements = normalized_constraints.pop(
                 "unadvertised_requirements",
@@ -2356,8 +2330,8 @@ class DeepAgentsRuntime:
             )
             if advertised_taxonomy_issue:
                 if shopper_stated_scope:
-                    failed_repair_scope_key = candidate_scope_key
-                    failed_agent_selected_scope = False
+                    scope.repair.failed_repair_scope_key = candidate_scope_key
+                    scope.repair.failed_agent_selected_scope = False
                 return (
                     SEARCH_VALIDATION_ERROR_PREFIX
                     + advertised_taxonomy_issue
@@ -2371,7 +2345,7 @@ class DeepAgentsRuntime:
                     )
                 )
 
-            if pending_schema_requirements and not unadvertised_requirements:
+            if scope.repair.pending_schema_requirements and not unadvertised_requirements:
                 request = request.model_copy(
                     update={
                         "shopper_guidance": _generic_shopper_guidance(
@@ -2379,8 +2353,8 @@ class DeepAgentsRuntime:
                         )
                     }
                 )
-                pending_schema_requirements = []
-            pending_constraint_review = pending_constraint_reviews.get(
+                scope.repair.pending_schema_requirements = []
+            pending_constraint_review = scope.repair.pending_constraint_reviews.get(
                 candidate_scope_key
             )
             if pending_constraint_review and (
@@ -2478,10 +2452,10 @@ class DeepAgentsRuntime:
                     )
             if agent_selected_issue:
                 if agent_selected_shopper_scope:
-                    failed_repair_scope_key = candidate_scope_key
-                    failed_agent_selected_scope = False
+                    scope.repair.failed_repair_scope_key = candidate_scope_key
+                    scope.repair.failed_agent_selected_scope = False
                 elif candidate_scope_key:
-                    failed_agent_selected_scope = True
+                    scope.repair.failed_agent_selected_scope = True
                 constraint_issue = ""
                 if unadvertised_requirements:
                     constraint_issue = (
@@ -2503,7 +2477,7 @@ class DeepAgentsRuntime:
                     + constraint_issue
                     + _lock_taxonomy_constraints(candidate_scope_key, request)
                 )
-            failed_agent_selected_scope = False
+            scope.repair.failed_agent_selected_scope = False
 
             if (
                 request.taxonomy_status != "no_direct_catalog_match"
@@ -2527,22 +2501,22 @@ class DeepAgentsRuntime:
                         unadvertised_requirements
                     )
                 review_scope = candidate_scope_key or "__unknown__"
-                if review_scope in constraint_reviewed_scopes:
+                if review_scope in scope.repair.constraint_reviewed_scopes:
                     return (
                         "The requested catalog requirement cannot be enforced: "
                         "its current-turn provenance could not be established. "
                         "Ask the shopper to state the exact required attribute "
                         "or allow it to be treated as a preference."
                     )
-                constraint_reviewed_scopes.add(review_scope)
-                pending_constraint_reviews[review_scope] = {
+                scope.repair.constraint_reviewed_scopes.add(review_scope)
+                scope.repair.pending_constraint_reviews[review_scope] = {
                     "requirements": list(unadvertised_requirements),
                     "taxonomy": request.taxonomy.model_dump(),
                     "scope_complete": request.scope_complete,
                     "search_mode": request.search_mode,
                     "required_constraints": dict(normalized_constraints),
                 }
-                failed_constraint_scope_key = review_scope
+                scope.repair.failed_constraint_scope_key = review_scope
                 return (
                     CONSTRAINT_REVIEW_PREFIX
                     + "These proposed unadvertised requirements do not match "
@@ -2568,7 +2542,7 @@ class DeepAgentsRuntime:
                     "occasion, or style goals are not explicit requirements."
                 )
 
-            reviewed_constraint = pending_constraint_reviews.pop(
+            reviewed_constraint = scope.repair.pending_constraint_reviews.pop(
                 candidate_scope_key,
                 None,
             )
@@ -2606,8 +2580,8 @@ class DeepAgentsRuntime:
                     )
                 )
                 if shopper_stated_scope:
-                    failed_repair_scope_key = candidate_scope_key
-                    failed_agent_selected_scope = False
+                    scope.repair.failed_repair_scope_key = candidate_scope_key
+                    scope.repair.failed_agent_selected_scope = False
                 return (
                     SEARCH_VALIDATION_ERROR_PREFIX
                     + exact_taxonomy_issue
@@ -2634,8 +2608,8 @@ class DeepAgentsRuntime:
                 else None
             )
             if advertised_match:
-                failed_repair_scope_key = candidate_scope_key
-                failed_agent_selected_scope = False
+                scope.repair.failed_repair_scope_key = candidate_scope_key
+                scope.repair.failed_agent_selected_scope = False
                 return (
                     SEARCH_VALIDATION_ERROR_PREFIX
                     + f"The requested product type '{request.requested_product_type}' "
@@ -2644,9 +2618,9 @@ class DeepAgentsRuntime:
                     + _lock_taxonomy_constraints(candidate_scope_key, request)
                 )
 
-            failed_repair_scope_key = None
-            failed_constraint_scope_key = None
-            failed_agent_selected_scope = False
+            scope.repair.failed_repair_scope_key = None
+            scope.repair.failed_constraint_scope_key = None
+            scope.repair.failed_agent_selected_scope = False
 
             shopper_scope_key = (
                 (_normalize_product_text(state.query), candidate_scope_key)
@@ -2659,10 +2633,10 @@ class DeepAgentsRuntime:
             )
 
             if request.taxonomy_status == "no_direct_catalog_match":
-                with catalog_tool_lock:
+                with scope.catalog_lock:
                     if (
                         shopper_scope_key is not None
-                        and shopper_scope_key in searched_shopper_scopes
+                        and shopper_scope_key in scope.searched_shopper_scopes
                     ):
                         return (
                             "STOP_TOOL_USE: This shopper-requested product scope "
@@ -2766,14 +2740,14 @@ class DeepAgentsRuntime:
                     )
                 return "Catalog search requires a query or image."
 
-            with catalog_tool_lock:
+            with scope.catalog_lock:
                 search_scope = _catalog_search_scope(
                     taxonomy_constraints,
                     normalized_constraints,
                 )
                 if (
                     shopper_scope_key is not None
-                    and shopper_scope_key in searched_shopper_scopes
+                    and shopper_scope_key in scope.searched_shopper_scopes
                 ):
                     return (
                         "STOP_TOOL_USE: This shopper-requested product scope "
@@ -2781,26 +2755,26 @@ class DeepAgentsRuntime:
                         "adjacent taxonomy. Use the result already returned.\n\n"
                         + _SEARCH_SCOPE_COMPLETE_NOTE
                     )
-                if search_scope in searched_catalog_scopes:
+                if search_scope in scope.searched_catalog_scopes:
                     return (
                         "STOP_TOOL_USE: This catalog taxonomy and constraint scope was already "
                         "searched in this turn. Do not retry it "
                         "with a paraphrase or query expansion. Use the products "
                         "already returned, or ask one concise clarifying question."
                     )
-                if catalog_searches_this_turn >= self.config.max_catalog_searches_per_turn:
+                if scope.catalog_searches >= self.config.max_catalog_searches_per_turn:
                     return (
                         "STOP_TOOL_USE: Catalog search limit reached for this turn. "
                         "Do not call more tools this turn. Use the products already "
                         "returned in this turn to answer concisely, or ask one concise "
                         "clarifying question if the available products are not enough."
                     )
-                searched_catalog_scopes.append(search_scope)
+                scope.searched_catalog_scopes.append(search_scope)
                 if shopper_scope_key is not None:
-                    searched_shopper_scopes.add(shopper_scope_key)
-                catalog_searches_this_turn += 1
+                    scope.searched_shopper_scopes.add(shopper_scope_key)
+                scope.catalog_searches += 1
                 search_budget_exhausted = (
-                    catalog_searches_this_turn
+                    scope.catalog_searches
                     >= self.config.max_catalog_searches_per_turn
                 )
 
@@ -2823,7 +2797,7 @@ class DeepAgentsRuntime:
                         )
                     }
                 )
-            with catalog_tool_lock:
+            with scope.catalog_lock:
                 state.timings["catalog_search"] = max(
                     state.timings.get("catalog_search", 0.0),
                     catalog_elapsed,
@@ -2835,11 +2809,11 @@ class DeepAgentsRuntime:
                     fallback_attempted=execution.fallback_attempted,
                 )
                 if result.ok and result.products:
-                    product_evidence.add(result.products)
+                    scope.product_evidence.add(result.products)
                     _append_product_results(state, result.products)
                     for product in result.products:
                         if product.image_url:
-                            retrieved[product.display_name] = product.image_url
+                            scope.retrieved[product.display_name] = product.image_url
             if not result.ok:
                 return result.error.message if result.error else "Catalog search failed."
 
@@ -2920,9 +2894,9 @@ class DeepAgentsRuntime:
             cart = self._read_cart(identity.cart_user_id)
             state.cart = cart
             self._append_product_images(
-                retrieved,
+                scope.retrieved,
                 cart,
-                product_evidence.values(),
+                scope.product_evidence.values(),
             )
             return _format_cart(cart)
 
@@ -2935,9 +2909,8 @@ class DeepAgentsRuntime:
             returned.
             """
 
-            nonlocal product_detail_reads_this_turn
             if (
-                product_detail_reads_this_turn
+                scope.product_detail_reads
                 >= self.config.max_product_detail_reads_per_turn
             ):
                 return (
@@ -2946,9 +2919,9 @@ class DeepAgentsRuntime:
                     "details already read and keep any other products to names, "
                     "prices, categories, image availability, and styling role."
                 )
-            product_detail_reads_this_turn += 1
+            scope.product_detail_reads += 1
 
-            cached_product = product_evidence.get(product_ref)
+            cached_product = scope.product_evidence.get(product_ref)
             if cached_product is None:
                 return (
                     f"No product with PRODUCT_REF '{product_ref}' is available. "
@@ -2974,7 +2947,7 @@ class DeepAgentsRuntime:
                     "Search the catalog again before using its details."
                 )
             if product.image_url:
-                retrieved[product.display_name] = product.image_url
+                scope.retrieved[product.display_name] = product.image_url
             return _format_product_details(product)
 
         @tool(args_schema=ResolveConversationProductsRequest, return_direct=False)
@@ -2988,15 +2961,14 @@ class DeepAgentsRuntime:
             concise clarification; do not guess or search for a substitute.
             """
 
-            nonlocal product_resolution_used
-            with product_resolution_lock:
-                if product_resolution_used:
+            with scope.resolution_lock:
+                if scope.product_resolution_used:
                     return (
                         "STOP_TOOL_USE: Historical product resolution limit "
                         "reached for this turn. Use the first resolution result "
                         "and ask one concise clarification if needed."
                     )
-                product_resolution_used = True
+                scope.product_resolution_used = True
 
             try:
                 result = self._conversation_products.resolve(
@@ -3008,13 +2980,13 @@ class DeepAgentsRuntime:
                     "REFERENCE RESOLUTION UNAVAILABLE: Ask which earlier product "
                     "the shopper means; do not guess or search for a substitute."
                 )
-            product_evidence.add_resolutions(result.results)
+            scope.product_evidence.add_resolutions(result.results)
             for resolution in result.results:
                 if resolution.status != "resolved":
                     continue
                 product = resolution.matches[0].product
                 if product.image_url:
-                    retrieved[product.display_name] = product.image_url
+                    scope.retrieved[product.display_name] = product.image_url
             return format_product_resolution(result)
 
         @tool(args_schema=AddCartItemsToolInput, return_direct=False)
@@ -3036,7 +3008,7 @@ class DeepAgentsRuntime:
             failed: list[str] = []
             blocked: list[str] = []
             for product_ref, request in requested_items.items():
-                product = product_evidence.get(product_ref)
+                product = scope.product_evidence.get(product_ref)
                 if product is None:
                     failed.append(
                         f"- PRODUCT_REF '{product_ref}': Search this turn or "
@@ -3087,15 +3059,15 @@ class DeepAgentsRuntime:
                 _cart_add_scope_failures(
                     state.query,
                     [(product_ref, product) for product_ref, product, _ in resolved],
-                    product_evidence.values(),
+                    scope.product_evidence.values(),
                 )
             )
             if blocked:
                 state.cart = self._read_cart(identity.cart_user_id)
                 self._append_product_images(
-                    retrieved,
+                    scope.retrieved,
                     state.cart,
-                    product_evidence.values(),
+                    scope.product_evidence.values(),
                 )
                 return _format_cart_add_result([], failed + blocked, state.cart)
 
@@ -3128,9 +3100,9 @@ class DeepAgentsRuntime:
 
             state.cart = self._read_cart(identity.cart_user_id)
             self._append_product_images(
-                retrieved,
+                scope.retrieved,
                 state.cart,
-                product_evidence.values(),
+                scope.product_evidence.values(),
             )
             return _format_cart_add_result(added, failed, state.cart)
 
@@ -3160,9 +3132,9 @@ class DeepAgentsRuntime:
             )
             state.cart = self._read_cart(identity.cart_user_id)
             self._append_product_images(
-                retrieved,
+                scope.retrieved,
                 state.cart,
-                product_evidence.values(),
+                scope.product_evidence.values(),
             )
             return _format_cart_remove_result(
                 result,
@@ -3191,9 +3163,9 @@ class DeepAgentsRuntime:
             )
             state.cart = self._read_cart(identity.cart_user_id)
             self._append_product_images(
-                retrieved,
+                scope.retrieved,
                 state.cart,
-                product_evidence.values(),
+                scope.product_evidence.values(),
             )
             return _format_update_cart_result(result, state.cart)
 
@@ -3236,7 +3208,7 @@ class DeepAgentsRuntime:
             product categories.
             """
 
-            product = product_evidence.get(product_ref)
+            product = scope.product_evidence.get(product_ref)
             if product is None:
                 return (
                     f"PRODUCT_REF '{product_ref}' is unknown in this conversation. "
@@ -3272,9 +3244,9 @@ class DeepAgentsRuntime:
             cart = self._read_cart(identity.cart_user_id)
             state.cart = cart
             self._append_product_images(
-                retrieved,
+                scope.retrieved,
                 cart,
-                product_evidence.values(),
+                scope.product_evidence.values(),
             )
             return _format_cart_total(cart)
 

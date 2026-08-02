@@ -21,6 +21,7 @@ from chain_server.src.tool_loop_control import (
     UNSUPPORTED_TAXONOMY_PREFIX,
     ToolLoopControlMiddleware,
     _normalize_scope,
+    _shopper_stated_scope,
 )
 from chain_server.src.skill_activation import ShopperSkillActivationMiddleware
 from chain_server.src.tool_policy import SHOPPING_TOOL_POLICIES
@@ -757,7 +758,9 @@ def test_search_repair_keeps_active_skill_instructions() -> None:
 
 
 def test_native_validation_repair_cannot_replace_shopper_scope() -> None:
-    middleware = ToolLoopControlMiddleware()
+    middleware = ToolLoopControlMiddleware(
+        shopper_statements=("show me crossbody bags",),
+    )
     invalid_call = AIMessage(
         content="",
         tool_calls=[
@@ -805,7 +808,9 @@ def test_native_validation_repair_cannot_replace_shopper_scope() -> None:
 
 
 def test_native_repair_feedback_preserves_shopper_named_scope() -> None:
-    middleware = ToolLoopControlMiddleware()
+    middleware = ToolLoopControlMiddleware(
+        shopper_statements=("What bottoms go with that?",),
+    )
     invalid_call = AIMessage(
         content="",
         tool_calls=[
@@ -893,7 +898,9 @@ def test_no_tool_repair_clarification_is_marked() -> None:
 
 
 def test_runtime_repair_preserves_named_scope() -> None:
-    middleware = ToolLoopControlMiddleware()
+    middleware = ToolLoopControlMiddleware(
+        shopper_statements=("Any structured bags to match?",),
+    )
     invalid_call = AIMessage(
         content="",
         tool_calls=[
@@ -1099,7 +1106,9 @@ def test_native_taxonomy_repair_keeps_named_scope(
     arguments: dict[str, Any],
     repaired_arguments: dict[str, Any],
 ) -> None:
-    middleware = ToolLoopControlMiddleware()
+    middleware = ToolLoopControlMiddleware(
+        shopper_statements=(shopper_query,),
+    )
     invalid_call = AIMessage(
         content="",
         tool_calls=[
@@ -1403,7 +1412,9 @@ def test_missing_constraints_preserve_named_scope_without_locking_taxonomy(
     arguments: dict[str, Any],
     repaired_arguments: dict[str, Any],
 ) -> None:
-    middleware = ToolLoopControlMiddleware()
+    middleware = ToolLoopControlMiddleware(
+        shopper_statements=(shopper_query,),
+    )
     invalid_call = AIMessage(
         content="",
         tool_calls=[
@@ -1910,3 +1921,28 @@ async def test_async_completed_search_runs_one_tool_closed_synthesis() -> None:
     assert captured[0].tool_choice == "none"
     assert "## Tool Loop Closed" in captured[0].system_prompt
     assert response.result[0].content == "shopper answer"
+
+
+def test_typed_shopper_statements_see_the_whole_query() -> None:
+    """A multi-line query is no longer clipped at its first newline.
+
+    The retired scraper matched ``USER QUERY:\\s*([^\\n]*)`` against the
+    rendered prompt, so only the first line of a multi-line shopper query
+    reached repair accounting. The typed lane carries the whole query.
+    """
+
+    middleware = ToolLoopControlMiddleware(
+        shopper_statements=("I need something for a wedding\nmaybe heels",),
+    )
+
+    assert middleware._shopper_statements == (
+        "I need something for a wedding\nmaybe heels",
+    )
+    assert _shopper_stated_scope(middleware._shopper_statements, "heel") is True
+    assert _shopper_stated_scope(middleware._shopper_statements, "boot") is False
+
+
+def test_shopper_statements_default_to_no_stated_scope() -> None:
+    middleware = ToolLoopControlMiddleware()
+
+    assert _shopper_stated_scope(middleware._shopper_statements, "heel") is False

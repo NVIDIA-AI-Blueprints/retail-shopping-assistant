@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import pytest
@@ -14,9 +15,25 @@ from chain_server.src.conversation_memory import (
     ConversationMemoryError,
     RecentConversationTurn,
     TurnReplayOutput,
+    build_dialogue_context,
     build_request_digest,
     format_conversation_context,
 )
+
+# The regex the runtime used to scrape shopper text back out of rendered prose,
+# retained here only to prove the typed lane reproduces it exactly.
+_LEGACY_SHOPPER_TEXT_PATTERN = re.compile(
+    r"(?:^|\n)User:\s*(.*?)(?=\nAssistant:|\nUser:|\Z)",
+    flags=re.DOTALL,
+)
+
+
+def _legacy_scraped_shopper_text(rendered: str) -> list[str]:
+    return [
+        " ".join(statement.split())
+        for statement in _LEGACY_SHOPPER_TEXT_PATTERN.findall(rendered)
+    ]
+
 
 _MISSING = object()
 
@@ -607,3 +624,84 @@ def test_transport_and_invalid_response_failures_are_distinct() -> None:
     assert transport_error.value.retryable is True
     assert invalid_error.value.code == "memory_response_invalid"
     assert invalid_error.value.retryable is False
+
+
+def _turn(sequence: int, shopper: str, assistant: str | None, status: str = "completed"):
+    return RecentConversationTurn(
+        sequence=sequence,
+        shopper_text=shopper,
+        assistant_text=assistant,
+        status=status,
+    )
+
+
+@pytest.mark.parametrize(
+    "max_chars",
+    [256, 300, 420, 512, 700, 1024, 4096],
+)
+def test_typed_dialogue_matches_what_the_regex_would_have_scraped(
+    max_chars: int,
+) -> None:
+    """The typed lane must reproduce the retired scraper exactly.
+
+    Sweeping the budget walks the truncation boundary, where the rendered text
+    and the typed values are most likely to drift apart.
+    """
+
+    turns = [
+        _turn(1, "Start with a beige top.", "Here are three beige tops."),
+        _turn(2, "Do you have  crossbody   bags?", "Yes, six of them."),
+        _turn(3, "Go back to the beige look.", "Reusing the earlier top."),
+        _turn(4, "Add the second one.", "Added to your cart."),
+    ]
+
+    dialogue, rendered = build_dialogue_context(turns, max_chars=max_chars)
+
+    assert [turn.shopper_text for turn in dialogue] == _legacy_scraped_shopper_text(
+        rendered
+    )
+
+
+def test_typed_dialogue_and_rendered_text_come_from_one_selection() -> None:
+    turns = [
+        _turn(1, "Start with a beige top.", "Here are three beige tops."),
+        _turn(2, "Add the second one.", "Added to your cart."),
+    ]
+
+    dialogue, rendered = build_dialogue_context(turns, max_chars=4096)
+
+    assert [turn.sequence for turn in dialogue] == [1, 2]
+    for turn in dialogue:
+        assert f"User: {turn.shopper_text}" in rendered
+        assert f"Assistant: {turn.assistant_text}" in rendered
+
+
+def test_ineligible_turns_reach_neither_lane() -> None:
+    turns = [
+        _turn(1, "Blocked ask.", "Blocked reply.", status="blocked"),
+        _turn(2, "Abandoned ask.", "Abandoned reply.", status="abandoned"),
+        _turn(3, "Unfinished ask.", None),
+        _turn(4, "Kept ask.", "Kept reply."),
+    ]
+
+    dialogue, rendered = build_dialogue_context(turns, max_chars=4096)
+
+    assert [turn.sequence for turn in dialogue] == [4]
+    for excluded in ("Blocked", "Abandoned", "Unfinished"):
+        assert excluded not in rendered
+
+
+def test_rendering_is_unchanged_for_the_wrapper() -> None:
+    turns = [_turn(1, "Start with a beige top.", "Here are three beige tops.")]
+
+    dialogue, rendered = build_dialogue_context(turns, max_chars=4096)
+
+    assert format_conversation_context(turns, max_chars=4096) == rendered
+    assert dialogue and rendered.startswith("RECENT CONVERSATION:")
+
+
+def test_empty_selection_yields_both_lanes_empty() -> None:
+    dialogue, rendered = build_dialogue_context([], max_chars=4096)
+
+    assert dialogue == []
+    assert rendered == ""

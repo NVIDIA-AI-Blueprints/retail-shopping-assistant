@@ -6,6 +6,10 @@ Updated: 2026-08-02
 
 The current working tree extends the shopper-serving Deep Agent architecture:
 
+- per-turn mutable state is owned by one typed `TurnScope`
+  (`chain_server/src/turn_scope.py`) rather than by `nonlocal` variables shared
+  across tool closures, so a tool can now be read, tested, and relocated on its
+  own;
 - recent conversation turns reach the runtime as a typed `State.dialogue`
   lane. Eligibility filtering, budget selection, and rendering happen in one
   pass so the typed turns and the rendered prompt text cannot disagree, and
@@ -340,6 +344,20 @@ lives in [Schema-Driven Catalog Architecture](docs/CATALOG_REFACTOR_PLAN.md).
 The newest focused gate is recorded first. Older implementation gates remain
 below as comparison points; generated quality and timing
 artifacts stay in the required local archive rather than versioned source.
+
+- Request-local turn-scope gate (2026-08-02): the sixteen mutable
+  `nonlocal` variables that `_create_agent` shared across its twelve tool
+  closures now live on one typed `TurnScope` — search budget and scope
+  de-duplication, product-detail budget, catalog-repair bookkeeping, product
+  evidence, retrieved images, and the two locks. The change is provably
+  mechanical: normalizing the base and head `_create_agent` bodies for the
+  declared renames yields byte-identical 1,435-line bodies. Behavior, prompts,
+  and tool output are unchanged; the offline suite moved from 927 to 930
+  passed with 1 xfailed, adding three isolation contract tests. The
+  product-detail counter remains deliberately unguarded by a lock, matching
+  prior behavior rather than silently changing concurrency. This is the
+  prerequisite for splitting `deepagents_runtime.py`: until now every tool was
+  welded to one lexical scope and none could be relocated independently.
 
 - Typed turn-dialogue gate (2026-08-02): recent conversation turns are now
   carried as a typed `State.dialogue` lane instead of being flattened into

@@ -55,6 +55,7 @@ Top-level orchestration is via `docker-compose.yaml`; optional local NIM model c
 - Dormant, directly constructible weather wrapper:
   `chain_server/src/weather_tool.py`
 - Shared request/state models: `chain_server/src/agenttypes.py`
+- Tool-loop control prefixes are defined once in `chain_server/src/tool_loop_control.py`. Never re-declare one as a literal elsewhere; producers render from the constant and matchers key off it.
 - Request-local turn state: `chain_server/src/turn_scope.py`. Search budgets, catalog-repair bookkeeping, product evidence, and retrieved images live on one `TurnScope` per turn, not as closure variables. New per-turn mutable state belongs there.
 - Prior turns are carried typed on `State.dialogue`. `State.context` is rendered prompt text only and must never be parsed back into state or authority. Dialogue establishes shopper intent, never product, policy, inventory, or cart facts.
 - The pre-Deep-Agents pipeline (`graph.py`, `planner.py`, `retriever.py`, `cart.py`, `chatter.py`, `summarizer.py`, `functions.py`) has been deleted. `deepagents_runtime.py` is the only chain-server serving path.

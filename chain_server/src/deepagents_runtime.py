@@ -91,11 +91,14 @@ from .tool_policy import (
 )
 from .tool_loop_control import (
     CONSTRAINT_REVIEW_PREFIX,
+    STOP_TOOL_USE_PREFIX,
     SEARCH_BUDGET_EXHAUSTED_PREFIX,
     SEARCH_SCOPE_COMPLETE_PREFIX,
     SEARCH_VALIDATION_ERROR_PREFIX,
     SERVER_CATALOG_CLARIFICATION,
     SERVER_RESTORED_TOOL_CALL_FIELDS,
+    UNSUPPORTED_CONSTRAINT_PREFIX,
+    UNSUPPORTED_TAXONOMY_PREFIX,
     ToolLoopControlMiddleware,
     _SERVER_REJECTED_TOOL_CALLS,
 )
@@ -4432,14 +4435,14 @@ def _no_direct_taxonomy_response(
         content
         for content in outcomes
         if content.startswith(
-            "STOP_TOOL_USE: No faithful advertised catalog taxonomy"
+            f"{STOP_TOOL_USE_PREFIX} No faithful advertised catalog taxonomy"
         )
     ]
     repair_or_no_direct = all(
         content.startswith(
             (
                 SEARCH_VALIDATION_ERROR_PREFIX,
-                "STOP_TOOL_USE: No faithful advertised catalog taxonomy",
+                f"{STOP_TOOL_USE_PREFIX} No faithful advertised catalog taxonomy",
             )
         )
         for content in outcomes
@@ -4538,7 +4541,7 @@ def _unsupported_requirement_response(
         content
         for content in outcomes
         if content.startswith(
-            "The requested catalog requirement cannot be enforced:"
+            UNSUPPORTED_CONSTRAINT_PREFIX
         )
     ]
     if unsupported_outcomes and len(unsupported_outcomes) == len(outcomes):
@@ -4578,7 +4581,7 @@ def _has_unsupported_requirement_outcome(
     return any(
         _message_type(message) == "tool"
         and _content_to_text(_value(message, "content")).startswith(
-            "The requested catalog requirement cannot be enforced:"
+            UNSUPPORTED_CONSTRAINT_PREFIX
         )
         for message in _current_turn_messages(
             _result_messages(result),
@@ -4639,16 +4642,16 @@ def _tool_rejection_reason(content: str) -> str | None:
         (SKILL_TOOL_NOT_GRANTED, "skill_tool_not_granted"),
         ("SHOPPER_SKILL_ACTIVATION_FAILED:", "skill_activation_failed"),
         (
-            "STOP_TOOL_USE: This catalog taxonomy and constraint scope was already searched",
+            f"{STOP_TOOL_USE_PREFIX} This catalog taxonomy and constraint scope was already searched",
             "duplicate_catalog_scope",
         ),
-        ("STOP_TOOL_USE: Catalog search limit reached", "catalog_search_limit"),
+        (f"{STOP_TOOL_USE_PREFIX} Catalog search limit reached", "catalog_search_limit"),
         (
             "STOP_TOOL_USE: No faithful advertised catalog taxonomy",
             "no_advertised_taxonomy_match",
         ),
         (
-            "STOP_TOOL_USE: Product-detail read limit reached",
+            f"{STOP_TOOL_USE_PREFIX} Product-detail read limit reached",
             "product_detail_read_limit",
         ),
         (
@@ -4658,11 +4661,11 @@ def _tool_rejection_reason(content: str) -> str | None:
         (SEARCH_VALIDATION_ERROR_PREFIX, "invalid_catalog_request"),
         (CONSTRAINT_REVIEW_PREFIX, "constraint_review_required"),
         (
-            "The requested catalog taxonomy cannot be enforced:",
+            UNSUPPORTED_TAXONOMY_PREFIX,
             "unsupported_catalog_taxonomy",
         ),
         (
-            "The requested catalog requirement cannot be enforced:",
+            UNSUPPORTED_CONSTRAINT_PREFIX,
             "unsupported_catalog_constraint",
         ),
         (_UNSUPPORTED_SEARCH_MODE_MESSAGE, "unsupported_search_mode"),
@@ -4670,7 +4673,7 @@ def _tool_rejection_reason(content: str) -> str | None:
     for marker, reason in markers:
         if content.startswith(marker):
             return reason
-    if content.startswith("STOP_TOOL_USE:"):
+    if content.startswith(STOP_TOOL_USE_PREFIX):
         return "stop_tool_use"
     return None
 
@@ -5685,7 +5688,7 @@ def _customer_safe_tool_evidence(content: str) -> str:
             "a product-availability or catalog-absence claim."
         )
     if content.startswith(
-        "STOP_TOOL_USE: No faithful advertised catalog taxonomy"
+        f"{STOP_TOOL_USE_PREFIX} No faithful advertised catalog taxonomy"
     ):
         return (
             "CUSTOMER_SAFE_NO_MATCH_EVIDENCE: The active catalog has no direct "

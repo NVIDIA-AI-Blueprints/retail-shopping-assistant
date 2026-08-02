@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from typing import Any, cast
 
 import pytest
@@ -19,6 +21,7 @@ from chain_server.src.tool_loop_control import (
     SERVER_CATALOG_CLARIFICATION,
     UNSUPPORTED_CONSTRAINT_PREFIX,
     UNSUPPORTED_TAXONOMY_PREFIX,
+    STOP_TOOL_USE_PREFIX,
     ToolLoopControlMiddleware,
     _normalize_scope,
     _shopper_stated_scope,
@@ -1946,3 +1949,39 @@ def test_shopper_statements_default_to_no_stated_scope() -> None:
     middleware = ToolLoopControlMiddleware()
 
     assert _shopper_stated_scope(middleware._shopper_statements, "heel") is False
+
+
+def test_control_prefixes_have_a_single_definition() -> None:
+    """Producers and matchers must not carry independent copies of a prefix.
+
+    These strings are the contract between a tool result and the loop
+    controller. When the literal is written out separately in each module,
+    editing one silently stops the other from matching and control state fails
+    open with no test failing.
+    """
+
+    repo_root = Path(__file__).resolve().parents[3]
+    runtime_source = (repo_root / "chain_server/src/deepagents_runtime.py").read_text()
+
+    for prefix in (
+        UNSUPPORTED_TAXONOMY_PREFIX,
+        UNSUPPORTED_CONSTRAINT_PREFIX,
+    ):
+        assert f'"{prefix}"' not in runtime_source, (
+            f"{prefix!r} is duplicated as a literal; import the shared constant"
+        )
+
+
+def test_every_stop_signal_renders_the_shared_prefix() -> None:
+    """Any STOP_TOOL_USE text the runtime emits must start with the constant."""
+
+    repo_root = Path(__file__).resolve().parents[3]
+    runtime_source = (repo_root / "chain_server/src/deepagents_runtime.py").read_text()
+
+    for line in runtime_source.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith('"STOP_TOOL_USE'):
+            continue
+        assert stripped.startswith(f'"{STOP_TOOL_USE_PREFIX} '), (
+            f"stop signal does not render the shared prefix: {stripped[:60]}"
+        )

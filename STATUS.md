@@ -345,6 +345,16 @@ The newest focused gate is recorded first. Older implementation gates remain
 below as comparison points; generated quality and timing
 artifacts stay in the required local archive rather than versioned source.
 
+- Shared control-prefix gate (2026-08-02): the tool-loop control prefixes
+  (`STOP_TOOL_USE:` and the two "cannot be enforced" forms) were written as
+  independent string literals in both `tool_loop_control.py` and
+  `deepagents_runtime.py`. Editing one silently stopped the other from
+  matching, so loop control failed open with no test failing. Detection sites
+  now key off the shared constants, and two guards enforce it: no duplicated
+  literal, and every emitted stop signal renders the shared prefix. Verified by
+  mutation — changing the constant in one place fails the guard. Byte-identical
+  output; the offline suite moved from 930 to 932 passed with 1 xfailed.
+
 - Request-local turn-scope gate (2026-08-02): the sixteen mutable
   `nonlocal` variables that `_create_agent` shared across its twelve tool
   closures now live on one typed `TurnScope` — search budget and scope

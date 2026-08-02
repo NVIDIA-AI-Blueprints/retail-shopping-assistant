@@ -14,7 +14,7 @@ from urllib.parse import quote
 import requests
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError
 
-from .agenttypes import SHOPPER_PROFILE_ID_PATTERN, ShopperContext
+from .agenttypes import SHOPPER_PROFILE_ID_PATTERN, DialogueTurn, ShopperContext
 from shared.commerce_contracts import ProductSummary
 
 
@@ -73,18 +73,30 @@ class RecentConversationTurn(_MemoryModel):
 
 
 class ConversationProjection(_MemoryModel):
-    """Reserved projection lanes returned but not consumed in Slice 4."""
+    """Per-conversation derived summary rebuilt at each finalization.
 
+    Only ``product_reference_index`` is consumed by the runtime. The remaining
+    lanes are accepted so the memory contract stays stable, and are dropped
+    deliberately rather than by omission; see the field notes below.
+    """
+
+    #: Written by the memory service, deliberately unread by the runtime.
     version: int = Field(default=0, ge=0)
+    #: Reserved and never written. Would carry the item an outfit is built
+    #: around, which the model currently re-derives each turn.
     active_anchors: list[JsonValue] = Field(default_factory=list, max_length=50)
+    #: Reserved and never written. Would carry standing shopper constraints
+    #: that today survive only as long as the dialogue window.
     effective_preferences: list[JsonValue] = Field(
         default_factory=list,
         max_length=100,
     )
+    #: Consumed. The only lane with a full-conversation horizon.
     product_reference_index: list[JsonValue] = Field(
         default_factory=list,
         max_length=100,
     )
+    #: Written by the memory service, deliberately unread by the runtime.
     last_turn_id: str | None = Field(default=None, min_length=1, max_length=256)
 
 
@@ -346,12 +358,18 @@ def build_request_digest(
     return f"sha256:{hashlib.sha256(canonical.encode('utf-8')).hexdigest()}"
 
 
-def format_conversation_context(
+def build_dialogue_context(
     recent_turns: Sequence[RecentConversationTurn],
     *,
     max_chars: int = _DEFAULT_CONTEXT_MAX_CHARS,
-) -> str:
-    """Render model-safe service-bounded turns without merging speaker lines."""
+) -> tuple[list[DialogueTurn], str]:
+    """Select eligible turns within budget and render them in one pass.
+
+    Returns the typed turns that were actually rendered together with their
+    rendered text. Producing both from one selection is what stops the typed
+    lane and the prompt from drifting apart, and removes any need to parse the
+    rendered text back into state.
+    """
 
     if max_chars < 256:
         raise ValueError("max_chars must be at least 256")
@@ -365,58 +383,75 @@ def format_conversation_context(
         key=lambda turn: turn.sequence,
     )
     if not selected:
-        return ""
-    return _format_recent_turns(selected, max_chars)
+        return [], ""
 
-
-def _format_recent_turns(
-    turns: Sequence[RecentConversationTurn],
-    max_chars: int,
-) -> str:
     heading = "RECENT CONVERSATION:"
-    if not turns:
-        return f"{heading}\n(none)"
-
-    retained: list[str] = []
+    retained: list[tuple[DialogueTurn, str]] = []
     used = len(heading) + 1
-    for turn in reversed(turns):
-        block = _format_recent_turn(turn)
+    for turn in reversed(selected):
+        typed, block = _render_recent_turn(turn)
         separator = 1 if retained else 0
         available = max_chars - used - separator
         if len(block) <= available:
-            retained.append(block)
+            retained.append((typed, block))
             used += len(block) + separator
             continue
         if not retained and available >= 48:
-            retained.append(_format_recent_turn(turn, max_chars=available))
+            retained.append(_render_recent_turn(turn, max_chars=available))
         break
 
     if not retained:
-        return heading
-    return f"{heading}\n" + "\n".join(reversed(retained))
+        return [], heading
+    ordered = list(reversed(retained))
+    rendered = f"{heading}\n" + "\n".join(block for _, block in ordered)
+    return [typed for typed, _ in ordered], rendered
 
 
-def _format_recent_turn(
+def format_conversation_context(
+    recent_turns: Sequence[RecentConversationTurn],
+    *,
+    max_chars: int = _DEFAULT_CONTEXT_MAX_CHARS,
+) -> str:
+    """Render model-safe service-bounded turns without merging speaker lines."""
+
+    return build_dialogue_context(recent_turns, max_chars=max_chars)[1]
+
+
+def _render_recent_turn(
     turn: RecentConversationTurn,
     *,
     max_chars: int | None = None,
-) -> str:
+) -> tuple[DialogueTurn, str]:
+    """Return one turn as typed context and as its exact rendered block."""
+
     shopper = _inline_text(turn.shopper_text) or "(empty)"
     assistant = _inline_text(turn.assistant_text or "") or "(none)"
     prefix = f"[turn {turn.sequence}]\nUser: "
     separator = "\nAssistant: "
     rendered = f"{prefix}{shopper}{separator}{assistant}"
     if max_chars is None or len(rendered) <= max_chars:
-        return rendered
+        return _dialogue_turn(turn.sequence, shopper, assistant), rendered
 
     value_budget = max_chars - len(prefix) - len(separator)
     if value_budget < 2:
-        return rendered[:max_chars]
+        # Preserved edge case: the block is hard-sliced, so the typed lane keeps
+        # the untruncated values rather than inventing a split that never rendered.
+        return _dialogue_turn(turn.sequence, shopper, assistant), rendered[:max_chars]
     shopper_budget = max(1, value_budget // 2)
     assistant_budget = max(1, value_budget - shopper_budget)
+    shopper = _truncate(shopper, shopper_budget)
+    assistant = _truncate(assistant, assistant_budget)
     return (
-        f"{prefix}{_truncate(shopper, shopper_budget)}"
-        f"{separator}{_truncate(assistant, assistant_budget)}"
+        _dialogue_turn(turn.sequence, shopper, assistant),
+        f"{prefix}{shopper}{separator}{assistant}",
+    )
+
+
+def _dialogue_turn(sequence: int, shopper: str, assistant: str) -> DialogueTurn:
+    return DialogueTurn(
+        sequence=sequence,
+        shopper_text=shopper,
+        assistant_text=assistant,
     )
 
 

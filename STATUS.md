@@ -6,6 +6,13 @@ Updated: 2026-08-02
 
 The current working tree extends the shopper-serving Deep Agent architecture:
 
+- recent conversation turns reach the runtime as a typed `State.dialogue`
+  lane. Eligibility filtering, budget selection, and rendering happen in one
+  pass so the typed turns and the rendered prompt text cannot disagree, and
+  nothing parses rendered prompt text back into state. `State.context` is
+  rendered output only. Assistant text stays excluded from shopper-intent
+  reads: dialogue may establish what the shopper means, never product, policy,
+  inventory, or cart facts;
 - the pre-Deep-Agents routing pipeline has been removed. `graph.py`,
   `planner.py`, `retriever.py`, `cart.py`, `chatter.py`, `summarizer.py`, and
   `functions.py` were unreachable from `chain_server/src/main.py` and are
@@ -333,6 +340,24 @@ lives in [Schema-Driven Catalog Architecture](docs/CATALOG_REFACTOR_PLAN.md).
 The newest focused gate is recorded first. Older implementation gates remain
 below as comparison points; generated quality and timing
 artifacts stay in the required local archive rather than versioned source.
+
+- Typed turn-dialogue gate (2026-08-02): recent conversation turns are now
+  carried as a typed `State.dialogue` lane instead of being flattened into
+  prose and scraped back out. `build_dialogue_context` performs eligibility
+  filtering, budget selection, and rendering in one pass, returning the typed
+  turns actually rendered together with their rendered text, so the two cannot
+  drift. Three transcript scrapers are deleted: the duplicated
+  `User:` regex in `deepagents_runtime.py` and `tool_loop_control.py`, and the
+  `USER QUERY:` regex that re-parsed the runtime's own rendered prompt.
+  `ToolLoopControlMiddleware` now receives typed shopper statements from the
+  runtime. `State.context` remains only as rendered prompt text and is never
+  parsed back into state. Equivalence is proven by replaying the retired regex
+  against the new rendered output across a budget sweep that walks the
+  truncation boundary. The offline suite moved from 914 passed / 1 xfailed to
+  925 passed / 1 xfailed, adding 11 contract tests and changing no serving
+  behavior. Reserved projection lanes are now marked as deliberately
+  unconsumed, and the misleading presented-event row cap is documented as a
+  query safety bound rather than the effective context budget.
 
 - Legacy-pipeline removal gate (2026-08-02): the pre-Deep-Agents routing
   pipeline was deleted — `graph.py`, `planner.py`, `retriever.py`, `cart.py`,

@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 import json
 import re
 from threading import Lock
@@ -66,8 +66,18 @@ SERVER_CATALOG_CLARIFICATION = "server_catalog_clarification"
 class ToolLoopControlMiddleware(AgentMiddleware):
     """Allow one search repair and close completed tool loops."""
 
-    def __init__(self, *, catalog_context: str = "") -> None:
+    def __init__(
+        self,
+        *,
+        catalog_context: str = "",
+        shopper_statements: Sequence[str] = (),
+    ) -> None:
         self._catalog_context = catalog_context.strip()
+        # Typed shopper text for this turn. Supplied by the runtime so repair
+        # accounting never parses it back out of a rendered prompt.
+        self._shopper_statements = tuple(
+            statement for statement in shopper_statements if statement
+        )
         self._repair_pending = False
         self._repair_in_flight = False
         self._repair_pending_key: str | None = None
@@ -262,7 +272,10 @@ class ToolLoopControlMiddleware(AgentMiddleware):
         )
         sanitized_feedback = _sanitize_repair_feedback(content)
         arguments = _search_arguments(messages, tool_call_id)
-        shopper_stated_scope = _shopper_stated_scope(messages, repair_scope)
+        shopper_stated_scope = _shopper_stated_scope(
+            self._shopper_statements,
+            repair_scope,
+        )
         self._repair_pending_scope_lock = (
             repair_scope
             if native_validation_failure and shopper_stated_scope
@@ -278,6 +291,7 @@ class ToolLoopControlMiddleware(AgentMiddleware):
             + _native_taxonomy_repair_guidance(
                 messages,
                 tool_call_id,
+                shopper_statements=self._shopper_statements,
                 native_validation_failure=native_validation_failure,
                 invalid_fields=invalid_fields,
             )
@@ -636,6 +650,7 @@ def _native_taxonomy_repair_guidance(
     messages: list[Any],
     tool_call_id: str,
     *,
+    shopper_statements: Sequence[str],
     native_validation_failure: bool,
     invalid_fields: set[str],
 ) -> str:
@@ -644,7 +659,7 @@ def _native_taxonomy_repair_guidance(
     if not native_validation_failure:
         return ""
     repair_scope = _search_scope(messages, tool_call_id)
-    shopper_stated_scope = _shopper_stated_scope(messages, repair_scope)
+    shopper_stated_scope = _shopper_stated_scope(shopper_statements, repair_scope)
     taxonomy_needs_repair = bool(
         invalid_fields & {"requested_product_type", "taxonomy"}
     )
@@ -727,23 +742,12 @@ def _search_scope_from_arguments(arguments: dict[str, Any]) -> str:
     return _normalize_scope(str(requested_product_type))
 
 
-def _shopper_stated_scope(messages: list[Any], scope: str) -> bool:
-    """Check current and recent shopper text for a native repair scope."""
+def _shopper_stated_scope(shopper_statements: Sequence[str], scope: str) -> bool:
+    """Check typed current and recent shopper text for a native repair scope."""
 
-    current_messages = _current_shopper_message(messages)
-    if not current_messages:
+    if not shopper_statements:
         return False
-    content = _message_text(current_messages[-1])
-    statements = re.findall(r"(?:^|\n)USER QUERY:\s*([^\n]*)", content)
-    statements.extend(
-        re.findall(
-            r"(?:^|\n)User:\s*(.*?)(?=\nAssistant:|\nUser:|\Z)",
-            content,
-            flags=re.DOTALL,
-        )
-    )
-    shopper_text = "\n".join(statements) if statements else content
-    normalized = _normalize_scope(shopper_text)
+    normalized = _normalize_scope("\n".join(shopper_statements))
     return f" {scope} " in f" {normalized} "
 
 

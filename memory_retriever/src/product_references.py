@@ -16,7 +16,11 @@ from .models import ConversationEvent, ConversationProjection, ConversationTurn
 
 
 PRESENTED_PRODUCTS_EVENT_KEY = "runtime-presented-products"
-_MAX_REFERENCE_SETS = 100
+# Query safety bound only. The character budget below is the effective limit:
+# a compact set of eight products is roughly 1KB, so ~15 sets survive and this
+# row cap is never reached. Resolution itself is unbounded and still sees every
+# presented-product event in the conversation.
+_MAX_PRESENTED_EVENT_ROWS = 100
 _MAX_REFERENCE_INDEX_CHARS = 16_384
 _MAX_CLARIFICATION_MATCHES = 5
 
@@ -263,7 +267,7 @@ def _recent_presented_event_rows(db, conversation_id: str):
         .order_by(
             ConversationTurn.sequence.desc(), ConversationEvent.logical_order.desc()
         )
-        .limit(_MAX_REFERENCE_SETS)
+        .limit(_MAX_PRESENTED_EVENT_ROWS)
         .all()
     )
     return list(reversed(rows))

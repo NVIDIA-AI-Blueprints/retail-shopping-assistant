@@ -15,6 +15,7 @@ from pathlib import Path
 import re
 from threading import Lock
 import time
+from collections.abc import Sequence
 from typing import Any, AsyncIterator, Literal
 import unicodedata
 import uuid
@@ -33,7 +34,7 @@ from pydantic import (
 from pydantic_core import PydanticCustomError
 import requests
 
-from .agenttypes import Cart, ShopperContext, State
+from .agenttypes import Cart, DialogueTurn, ShopperContext, State
 from .catalog_capabilities import (
     CatalogCapabilitiesClient,
     effective_filter_capabilities,
@@ -62,7 +63,7 @@ from .conversation_memory import (
     FinalTurnStatus,
     TurnReplayOutput,
     TurnStartResult,
-    format_conversation_context,
+    build_dialogue_context,
 )
 from .conversation_products import (
     ConversationProductsClient,
@@ -526,27 +527,30 @@ def _unsupported_requirement_message(requirements: list[str]) -> str:
     )
 
 
-def _recent_shopper_statements(context: str, *, limit: int = 4) -> str:
-    """Extract prior shopper text without exposing assistant responses."""
+def _recent_shopper_statements(
+    dialogue: Sequence[DialogueTurn],
+    *,
+    limit: int = 4,
+) -> str:
+    """Read prior shopper text from the typed lane, never from rendered prose.
 
-    statements = re.findall(
-        r"(?:^|\n)User:\s*(.*?)(?=\nAssistant:|\nUser:|\Z)",
-        context or "",
-        flags=re.DOTALL,
-    )
-    compact = [" ".join(statement.split()) for statement in statements]
-    return "\n".join(statement for statement in compact[-limit:] if statement)
+    Assistant text is deliberately excluded: dialogue may carry shopper intent,
+    but assistant prose is not product, policy, inventory, or cart evidence.
+    """
+
+    recent = list(dialogue)[-limit:]
+    return "\n".join(turn.shopper_text for turn in recent if turn.shopper_text)
 
 
 def _shopper_stated_product_scope(
     query: str,
-    context: str,
+    dialogue: Sequence[DialogueTurn],
     product_scope_key: str,
 ) -> bool:
     """Return whether current or recent shopper text states a product scope."""
 
     shopper_text = "\n".join(
-        value for value in (query, _recent_shopper_statements(context)) if value
+        value for value in (query, _recent_shopper_statements(dialogue)) if value
     )
     return _text_mentions_product_type(shopper_text, product_scope_key)
 
@@ -554,7 +558,7 @@ def _shopper_stated_product_scope(
 def _resolved_agent_selected_product_type(
     *,
     query: str,
-    context: str,
+    dialogue: Sequence[DialogueTurn],
     requested_product_type: str | None,
     taxonomy_status: str,
     taxonomy: BaseModel | dict[str, Any],
@@ -564,7 +568,7 @@ def _resolved_agent_selected_product_type(
     if taxonomy_status != "agent_selected_type":
         return requested_product_type
     scope_key = _product_scope_key(requested_product_type)
-    if scope_key and _shopper_stated_product_scope(query, context, scope_key):
+    if scope_key and _shopper_stated_product_scope(query, dialogue, scope_key):
         return requested_product_type
     payload = taxonomy.model_dump() if isinstance(taxonomy, BaseModel) else taxonomy
     subcategories = payload.get("subcategory") or []
@@ -2061,7 +2065,7 @@ class DeepAgentsRuntime:
                 initial_scope_key
                 and _shopper_stated_product_scope(
                     state.query,
-                    state.context,
+                    state.dialogue,
                     initial_scope_key,
                 )
             )
@@ -2075,7 +2079,7 @@ class DeepAgentsRuntime:
 
             requested_product_type = _resolved_agent_selected_product_type(
                 query=state.query,
-                context=state.context,
+                dialogue=state.dialogue,
                 requested_product_type=requested_product_type,
                 taxonomy_status=taxonomy_status,
                 taxonomy=taxonomy,
@@ -2132,7 +2136,7 @@ class DeepAgentsRuntime:
                 candidate_scope_key
                 and _shopper_stated_product_scope(
                     state.query,
-                    state.context,
+                    state.dialogue,
                     candidate_scope_key,
                 )
             )
@@ -2335,7 +2339,7 @@ class DeepAgentsRuntime:
                 candidate_scope_key
                 and _shopper_stated_product_scope(
                     state.query,
-                    state.context,
+                    state.dialogue,
                     candidate_scope_key,
                 )
             )
@@ -2405,7 +2409,7 @@ class DeepAgentsRuntime:
                 and (
                     _shopper_stated_product_scope(
                         state.query,
-                        state.context,
+                        state.dialogue,
                         candidate_scope_key,
                     )
                     or not _agent_selected_scope_is_advertised(
@@ -2418,7 +2422,7 @@ class DeepAgentsRuntime:
                     candidate_scope_key
                     and _shopper_stated_product_scope(
                         state.query,
-                        state.context,
+                        state.dialogue,
                         candidate_scope_key,
                     )
                 )
@@ -2514,7 +2518,7 @@ class DeepAgentsRuntime:
                     candidate_scope_key
                     and _shopper_stated_product_scope(
                         state.query,
-                        state.context,
+                        state.dialogue,
                         candidate_scope_key,
                     )
                 )
@@ -2597,7 +2601,7 @@ class DeepAgentsRuntime:
                     candidate_scope_key
                     and _shopper_stated_product_scope(
                         state.query,
-                        state.context,
+                        state.dialogue,
                         candidate_scope_key,
                     )
                 )
@@ -3311,7 +3315,11 @@ class DeepAgentsRuntime:
         tool_loop_control = ToolLoopControlMiddleware(
             catalog_context=format_catalog_capabilities_for_prompt(
                 turn_capabilities
-            )
+            ),
+            shopper_statements=(
+                state.query,
+                *(turn.shopper_text for turn in state.dialogue),
+            ),
         )
 
         @tool(args_schema=skill_activation_input, return_direct=False)
@@ -4031,6 +4039,7 @@ Rules:
                 )
         except (ConversationMemoryError, ValidationError) as exc:
             logger.error("Failed to start durable conversation turn: %s", exc)
+            state.dialogue = []
             state.context = ""
             state.cart = Cart()
             state.shopper_context = None
@@ -4080,7 +4089,7 @@ Rules:
         finally:
             state.timings["memory"] = time.monotonic() - start
 
-        state.context = format_conversation_context(
+        state.dialogue, state.context = build_dialogue_context(
             turn.recent_turns,
             max_chars=max(1000, int(self.config.memory_length)),
         )

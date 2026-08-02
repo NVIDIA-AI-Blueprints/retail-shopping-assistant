@@ -5935,19 +5935,26 @@ class TestDeepAgentsRuntimeRefs:
 
     def test_recent_shopper_statements_exclude_assistant_responses(self) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
+        from chain_server.src.agenttypes import DialogueTurn
 
-        context = (
-            "User: Start with a beige top.\n"
-            "Assistant: Flat Strappy Black Sandals are breathable.\n"
-            "User: Go back to the beige look.\n"
-            "Assistant: Try the same sandals."
-        )
+        dialogue = [
+            DialogueTurn(
+                sequence=1,
+                shopper_text="Start with a beige top.",
+                assistant_text="Flat Strappy Black Sandals are breathable.",
+            ),
+            DialogueTurn(
+                sequence=2,
+                shopper_text="Go back to the beige look.",
+                assistant_text="Try the same sandals.",
+            ),
+        ]
 
-        assert runtime_mod._recent_shopper_statements(context) == (
+        assert runtime_mod._recent_shopper_statements(dialogue) == (
             "Start with a beige top.\nGo back to the beige look."
         )
         assert "Flat Strappy" not in runtime_mod._recent_shopper_statements(
-            context
+            dialogue
         )
 
     def test_private_taxonomy_helpers_validate_legacy_execution_modes(self) -> None:

@@ -37,6 +37,22 @@ class ShopperContext(BaseModel):
         return value
 
 
+class DialogueTurn(BaseModel):
+    """One prior exchange carried as typed intent context.
+
+    Dialogue may establish what the shopper means — "yes", "the first one" — but
+    never product, policy, inventory, or cart facts. Text here is exactly what
+    was rendered into the prompt, so the typed lane and the rendered lane can
+    never disagree.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    sequence: int = Field(..., ge=1)
+    shopper_text: str = Field(...)
+    assistant_text: str = Field(...)
+
+
 class Cart(BaseModel):
     """
     Shopping cart model for storing user's selected items.
@@ -94,7 +110,14 @@ class State(BaseModel):
         default=None,
         description="Server-resolved current-turn shopper guidance",
     )
-    context: str = Field(default="", description="Previous conversation context")
+    dialogue: List[DialogueTurn] = Field(
+        default_factory=list,
+        description="Typed prior turns; authoritative for shopper intent context"
+    )
+    context: str = Field(
+        default="",
+        description="Rendered prompt text only; never parsed back into state"
+    )
     cart: Cart = Field(default_factory=Cart, description="User's shopping cart")
     response: str = Field(default="", description="Generated response from agents")
     image: str = Field(default="", description="Base64 encoded image data")

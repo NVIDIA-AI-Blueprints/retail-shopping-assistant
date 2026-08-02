@@ -1,11 +1,22 @@
 # Project Status
 
-Updated: 2026-07-27
+Updated: 2026-08-02
 
 ## Current Milestone
 
 The current working tree extends the shopper-serving Deep Agent architecture:
 
+- the pre-Deep-Agents routing pipeline has been removed. `graph.py`,
+  `planner.py`, `retriever.py`, `cart.py`, `chatter.py`, `summarizer.py`, and
+  `functions.py` were unreachable from `chain_server/src/main.py` and are
+  deleted along with their unit tests and the dead required configuration they
+  alone consumed (`routing_prompt`, `chatter_prompt`, `agent_choices`, and the
+  optional legacy `categories` list). `deepagents_runtime.py` is now the only
+  chain-server serving path. This removes no serving behavior, catalog data,
+  catalog or memory service capability, cart path, or dormant weather boundary;
+  note that `chain_server/src/retriever.py` was the legacy `RetrieverAgent`, not
+  the `catalog_retriever` service, and `chain_server/src/cart.py` was the legacy
+  `CartAgent`, not the live `commerce_tools.py` cart path;
 - the chain server now has a dormant, provider-neutral weather forecast
   contract with a Visual Crossing Timeline adapter and a directly constructible
   `get_weather_forecast_tool` wrapper. It accepts only an exact five-digit US
@@ -322,6 +333,24 @@ lives in [Schema-Driven Catalog Architecture](docs/CATALOG_REFACTOR_PLAN.md).
 The newest focused gate is recorded first. Older implementation gates remain
 below as comparison points; generated quality and timing
 artifacts stay in the required local archive rather than versioned source.
+
+- Legacy-pipeline removal gate (2026-08-02): the pre-Deep-Agents routing
+  pipeline was deleted — `graph.py`, `planner.py`, `retriever.py`, `cart.py`,
+  `chatter.py`, `summarizer.py`, and `functions.py` — together with their unit
+  tests and the dead required configuration they were the sole consumers of
+  (`routing_prompt`, `chatter_prompt`, `agent_choices`, and the optional legacy
+  `categories` list). Import-reachability closure from
+  `chain_server/src/main.py` is unchanged for every serving module; the only
+  remaining unreachable module is the deliberately dormant `weather_tool.py`.
+  The offline suite moved from 1,136 passed / 1 xfailed to 914 passed / 1
+  xfailed, reconciling exactly: 1,136 − 217 collected tests in the seven deleted
+  files − 6 net configuration-test cases + 1 net new reintroduction guard. No
+  serving behavior, catalog data, catalog service, memory service, cart path, or
+  dormant weather boundary was touched. Changed Python passed Ruff,
+  `git diff --check` is clean, `docker compose config` validates, and the
+  trimmed configuration schema loads the shipped `config.yaml`. Two guards now
+  assert the legacy modules are absent and that no `chain_server/src` module
+  references them.
 
 - Dormant weather-tool Slice 3 gate (2026-07-27): the full offline backend
   suite passed 1,136 tests with 1 expected xfail, and the focused

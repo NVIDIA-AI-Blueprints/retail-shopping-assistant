@@ -81,7 +81,6 @@ class TestChainServerConfigValidation:
         config = ChainServerConfig(**valid_config_dict)
 
         assert config.llm_port == valid_config_dict["llm_port"]
-        assert config.categories == valid_config_dict["categories"]
         assert config.multimodal is True
         assert config.vlm_enabled is False
         assert config.guardrails_enabled is True
@@ -103,9 +102,6 @@ class TestChainServerConfigValidation:
             "retriever_port",
             "memory_port",
             "rails_port",
-            "routing_prompt",
-            "chatter_prompt",
-            "agent_choices",
             "memory_length",
             "top_k_retrieve",
             "multimodal",
@@ -249,23 +245,6 @@ class TestChainServerConfigValidation:
             ChainServerConfig(
                 **{**valid_config_dict, "grounding_rewrite_max_evidence_chars": value}
             )
-
-    @pytest.mark.parametrize("field", ["agent_choices"])
-    def test_empty_list_fields_are_rejected(
-        self, valid_config_dict: dict, field: str
-    ) -> None:
-        with pytest.raises(ValidationError):
-            ChainServerConfig(**{**valid_config_dict, field: []})
-
-    def test_categories_are_optional_legacy_config(
-        self, valid_config_dict: dict
-    ) -> None:
-        config_data = dict(valid_config_dict)
-        del config_data["categories"]
-
-        config = ChainServerConfig(**config_data)
-
-        assert config.categories == []
 
     def test_extra_fields_are_forbidden(self, valid_config_dict: dict) -> None:
         with pytest.raises(ValidationError):
@@ -513,29 +492,12 @@ class TestRepoPromptContracts:
             "max_range_days": 15,
         }
 
-    def test_budget_only_browse_routes_to_chatter_for_clarification(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_shipped_config_has_no_legacy_graph_keys(self) -> None:
+        """The pre-Deep-Agents routing pipeline is gone; its config must be too."""
+
         config = load_config_data(
             str(REPO_ROOT / "shared/configs/chain_server/config.yaml")
         )
 
-        routing_prompt = config["routing_prompt"]
-
-        assert "UNDERSPECIFIED SHOPPING CONSTRAINTS -> chatter" in routing_prompt
-        assert "show me anything under $100" in routing_prompt
-        assert "show me dresses under $100" in routing_prompt
-        assert "IMAGE ATTACHED is yes" in routing_prompt
-
-    def test_chatter_asks_clarification_before_no_results(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        config = load_config_data(
-            str(REPO_ROOT / "shared/configs/chain_server/config.yaml")
-        )
-
-        chatter_prompt = config["chatter_prompt"]
-
-        assert "AMBIGUITY BEFORE RESULTS" in chatter_prompt
-        assert "NO RESULTS AFTER RETRIEVAL" in chatter_prompt
-        assert "ask one concise clarifying question" in chatter_prompt
+        for legacy_key in ("routing_prompt", "chatter_prompt", "agent_choices", "categories"):
+            assert legacy_key not in config

@@ -56,8 +56,9 @@ SDK adapter:
 - All wrapper tools return results to the agent loop so compound discovery,
   policy, availability, and cart requests can finish before the final
   shopper-facing response.
-- The legacy `RetrieverAgent` and `CartAgent` files still exist in the repo for
-  reference and tests, but they are not the chain-server entrypoint.
+- The legacy `RetrieverAgent`, `CartAgent`, `PlannerAgent`, `ChatterAgent`, and
+  `SummaryAgent` files have been removed. The Deep Agents runtime is the only
+  chain-server serving path.
 - Catalog search remains stateless: no user, cart, memory, session, or
   conversation-history fields are passed to `search_catalog`.
 - Catalog request-building is now separate from catalog execution. The
@@ -308,8 +309,8 @@ catalog `product_id`; cart reads expose the memory service's opaque,
 non-reusable `cart_line_id` as `CART_LINE_ID`; and all registered mutation paths
 atomically enforce idempotency. Remaining commerce identity work is variant-
 level cart identity and a bounded retention policy for replay records.
-Legacy `RetrieverAgent` and `CartAgent` code remains for compatibility tests but
-is not the serving entrypoint.
+The legacy `RetrieverAgent` and `CartAgent` code has been removed; the Deep
+Agents runtime is the only serving entrypoint.
 
 The important rule is that ACP/UCP compatibility should be added as adapters
 around these contracts, not as fields or naming choices inside the core models.

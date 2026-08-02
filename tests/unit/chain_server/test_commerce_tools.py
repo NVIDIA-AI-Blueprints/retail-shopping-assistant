@@ -886,24 +886,48 @@ def test_check_product_availability_reports_one_size_for_other_categories() -> N
     )
 
 
-def test_commerce_tools_do_not_import_current_agents() -> None:
-    repo_root = Path(__file__).resolve().parents[3]
-    source = (repo_root / "chain_server/src/commerce_tools.py").read_text()
+LEGACY_AGENT_MODULES = (
+    "graph",
+    "planner",
+    "retriever",
+    "cart",
+    "chatter",
+    "summarizer",
+    "functions",
+)
 
-    forbidden_references = [
-        "PlannerAgent",
-        "RetrieverAgent",
-        "CartAgent",
-        "ChatterAgent",
-        "SummaryAgent",
-        "create_graph",
-        "from .planner",
-        "from .retriever",
-        "from .cart",
-        "from .chatter",
-        "from .summarizer",
-        "from .graph",
-    ]
+LEGACY_AGENT_REFERENCES = (
+    "PlannerAgent",
+    "RetrieverAgent",
+    "CartAgent",
+    "ChatterAgent",
+    "SummaryAgent",
+    "create_graph",
+    "from .planner",
+    "from .retriever",
+    "from .cart",
+    "from .chatter",
+    "from .summarizer",
+    "from .graph",
+    "from .functions",
+)
 
-    for reference in forbidden_references:
-        assert reference not in source
+
+def _chain_server_src() -> Path:
+    return Path(__file__).resolve().parents[3] / "chain_server/src"
+
+
+def test_legacy_agent_modules_are_absent() -> None:
+    """The pre-Deep-Agents pipeline is deleted and must not come back."""
+
+    for module in LEGACY_AGENT_MODULES:
+        assert not (_chain_server_src() / f"{module}.py").exists()
+
+
+def test_chain_server_sources_do_not_reference_legacy_agents() -> None:
+    """No serving-path module may import or name the deleted legacy stack."""
+
+    for source_path in sorted(_chain_server_src().glob("*.py")):
+        source = source_path.read_text()
+        for reference in LEGACY_AGENT_REFERENCES:
+            assert reference not in source, f"{source_path.name} references {reference}"

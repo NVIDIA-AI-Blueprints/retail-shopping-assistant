@@ -84,21 +84,7 @@ class ChainServerConfig(BaseModel):
     retriever_port: str = Field(..., description="Catalog retriever service endpoint")
     memory_port: str = Field(..., description="Memory retriever service endpoint")
     rails_port: str = Field(..., description="Guardrails service endpoint")
-    
-    # Prompts
-    routing_prompt: str = Field(..., description="System prompt for routing queries to appropriate agents")
-    chatter_prompt: str = Field(..., description="System prompt for general conversation")
-    
-    # Legacy Product Configuration
-    categories: List[str] = Field(
-        default_factory=list,
-        description=(
-            "Legacy category list for non-entrypoint graph agents. The active "
-            "Deep Agents runtime gets catalog filters from catalog capabilities."
-        ),
-    )
-    agent_choices: List[str] = Field(..., description="Available agent types")
-    
+
     # Performance Configuration
     memory_length: int = Field(..., description="Maximum memory length for context")
     top_k_retrieve: int = Field(..., description="Number of top results to retrieve")
@@ -224,14 +210,7 @@ class ChainServerConfig(BaseModel):
         if v is not None and v <= 0:
             raise ValueError("catalog_search_timeout_seconds must be positive")
         return v
-    
-    @validator('agent_choices')
-    def validate_lists_not_empty(cls, v):
-        """Validate that lists are not empty."""
-        if not v:
-            raise ValueError("List cannot be empty")
-        return v
-    
+
     class Config:
         """Pydantic configuration."""
         extra = "forbid"  # Prevent additional fields

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
 import pytest
@@ -886,24 +887,103 @@ def test_check_product_availability_reports_one_size_for_other_categories() -> N
     )
 
 
-def test_commerce_tools_do_not_import_current_agents() -> None:
-    repo_root = Path(__file__).resolve().parents[3]
-    source = (repo_root / "chain_server/src/commerce_tools.py").read_text()
+LEGACY_AGENT_MODULES = frozenset(
+    {
+        "graph",
+        "planner",
+        "retriever",
+        "cart",
+        "chatter",
+        "summarizer",
+        "functions",
+    }
+)
 
-    forbidden_references = [
+LEGACY_AGENT_SYMBOLS = frozenset(
+    {
         "PlannerAgent",
         "RetrieverAgent",
         "CartAgent",
         "ChatterAgent",
         "SummaryAgent",
         "create_graph",
-        "from .planner",
-        "from .retriever",
-        "from .cart",
-        "from .chatter",
-        "from .summarizer",
-        "from .graph",
-    ]
+    }
+)
 
-    for reference in forbidden_references:
-        assert reference not in source
+
+def _chain_server_src() -> Path:
+    return Path(__file__).resolve().parents[3] / "chain_server/src"
+
+
+def _chain_server_imports(tree: ast.AST) -> set[str]:
+    """Return chain-server module names imported by one parsed source file.
+
+    Only sibling-relative imports and absolute ``chain_server.src.<module>``
+    imports are considered, so third-party packages cannot collide with a
+    legacy module name.
+    """
+
+    modules: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            if node.level >= 1:
+                if node.module:
+                    # from .cart import X
+                    modules.add(node.module.split(".")[0])
+                else:
+                    # from . import cart
+                    modules.update(alias.name for alias in node.names)
+            elif node.module:
+                parts = node.module.split(".")
+                if parts[:2] == ["chain_server", "src"]:
+                    if len(parts) > 2:
+                        # from chain_server.src.cart import X
+                        modules.add(parts[2])
+                    else:
+                        # from chain_server.src import cart
+                        modules.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                parts = alias.name.split(".")
+                if parts[:2] == ["chain_server", "src"] and len(parts) > 2:
+                    modules.add(parts[2])
+    return modules
+
+
+def _referenced_symbols(tree: ast.AST) -> set[str]:
+    """Return every identifier named by one parsed source file."""
+
+    symbols: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            symbols.add(node.id)
+        elif isinstance(node, ast.Attribute):
+            symbols.add(node.attr)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                symbols.add(alias.asname or alias.name)
+    return symbols
+
+
+def test_legacy_agent_modules_are_absent() -> None:
+    """The pre-Deep-Agents pipeline is deleted and must not come back."""
+
+    for module in sorted(LEGACY_AGENT_MODULES):
+        assert not (_chain_server_src() / f"{module}.py").exists()
+
+
+def test_chain_server_sources_do_not_reference_legacy_agents() -> None:
+    """No serving-path module may import or name the deleted legacy stack.
+
+    Module and symbol names are compared exactly. Substring matching would
+    reject legitimate future modules such as ``cart_effects``.
+    """
+
+    for source_path in sorted(_chain_server_src().glob("*.py")):
+        tree = ast.parse(source_path.read_text())
+
+        imported = _chain_server_imports(tree) & LEGACY_AGENT_MODULES
+        assert not imported, f"{source_path.name} imports {sorted(imported)}"
+
+        named = _referenced_symbols(tree) & LEGACY_AGENT_SYMBOLS
+        assert not named, f"{source_path.name} names {sorted(named)}"

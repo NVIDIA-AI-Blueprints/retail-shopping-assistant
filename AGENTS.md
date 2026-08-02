@@ -55,7 +55,7 @@ Top-level orchestration is via `docker-compose.yaml`; optional local NIM model c
 - Dormant, directly constructible weather wrapper:
   `chain_server/src/weather_tool.py`
 - Shared request/state models: `chain_server/src/agenttypes.py`
-- `graph.py`, `planner.py`, `retriever.py`, `cart.py`, `chatter.py`, and `summarizer.py` are legacy compatibility paths, not the serving runtime.
+- The pre-Deep-Agents pipeline (`graph.py`, `planner.py`, `retriever.py`, `cart.py`, `chatter.py`, `summarizer.py`, `functions.py`) has been deleted. `deepagents_runtime.py` is the only chain-server serving path.
 
 - Catalog API entrypoints and request validation: `catalog_retriever/src/main.py`
 - JSONL loading/search-document construction: `catalog_retriever/src/catalog.py`

@@ -20,7 +20,7 @@ import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Dict, Iterator
+from typing import Any, Dict
 
 import pytest
 
@@ -54,16 +54,6 @@ def base_config() -> SimpleNamespace:
         retriever_port="http://localhost:8010",
         memory_port="http://localhost:8011",
         rails_port="http://localhost:8012",
-        routing_prompt="You are a routing assistant.",
-        chatter_prompt="You are a helpful shopping assistant.",
-        categories=[
-            "bag",
-            "sunglasses",
-            "dress",
-            "shoes",
-            "top blouse sweater",
-        ],
-        agent_choices=["cart", "retriever", "chatter"],
         memory_length=16384,
         top_k_retrieve=4,
         deepagents_recursion_limit=24,
@@ -107,10 +97,6 @@ def valid_config_dict() -> Dict[str, Any]:
         "retriever_port": "http://localhost:8010",
         "memory_port": "http://localhost:8011",
         "rails_port": "http://localhost:8012",
-        "routing_prompt": "You are a routing assistant.",
-        "chatter_prompt": "You are a helpful shopping assistant.",
-        "categories": ["bag", "shoes"],
-        "agent_choices": ["cart", "retriever", "chatter"],
         "memory_length": 16384,
         "top_k_retrieve": 4,
         "deepagents_recursion_limit": 24,
@@ -192,28 +178,3 @@ def make_openai_chat_response():
         return SimpleNamespace(choices=[SimpleNamespace(message=message)])
 
     return _build
-
-
-@pytest.fixture
-def stream_writer_capture(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[str]]:
-    """Capture LangGraph stream writer payloads emitted by agent ``invoke``.
-
-    Several chain-server agents call ``get_stream_writer()`` and push events
-    through it. For unit tests we intercept the factory and redirect writes
-    into a plain list so assertions can inspect what the agent streamed
-    without standing up the real LangGraph runtime.
-    """
-    from chain_server.src import chatter as chatter_mod
-    from chain_server.src import graph as graph_mod
-
-    captured: list[str] = []
-
-    def _fake_writer() -> Any:
-        def _write(payload: str) -> None:
-            captured.append(payload)
-
-        return _write
-
-    monkeypatch.setattr(chatter_mod, "get_stream_writer", _fake_writer)
-    monkeypatch.setattr(graph_mod, "get_stream_writer", _fake_writer)
-    yield captured

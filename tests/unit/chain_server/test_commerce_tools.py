@@ -926,14 +926,22 @@ def _chain_server_imports(tree: ast.AST) -> set[str]:
     modules: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom):
-            if node.level >= 1 and node.module:
-                modules.add(node.module.split(".")[0])
+            if node.level >= 1:
+                if node.module:
+                    # from .cart import X
+                    modules.add(node.module.split(".")[0])
+                else:
+                    # from . import cart
+                    modules.update(alias.name for alias in node.names)
             elif node.module:
                 parts = node.module.split(".")
-                if parts[:2] == ["chain_server", "src"] and len(parts) > 2:
-                    modules.add(parts[2])
-                if parts[:2] == ["chain_server", "src"] and len(parts) == 2:
-                    modules.update(alias.name for alias in node.names)
+                if parts[:2] == ["chain_server", "src"]:
+                    if len(parts) > 2:
+                        # from chain_server.src.cart import X
+                        modules.add(parts[2])
+                    else:
+                        # from chain_server.src import cart
+                        modules.update(alias.name for alias in node.names)
         elif isinstance(node, ast.Import):
             for alias in node.names:
                 parts = alias.name.split(".")

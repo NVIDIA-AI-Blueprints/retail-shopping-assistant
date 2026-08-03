@@ -137,11 +137,49 @@ def collect(run_dirs: list[pathlib.Path]) -> list[dict]:
     return scenarios
 
 
+#: A judged scenario whose conversation never happened still gets a score, and
+#: it is the floor. Reporting those scores produces a confident table that reads
+#: as a catastrophic regression when the real cause is a dead credential or a
+#: down service. Refuse to summarise instead.
+_INFRA_FAILURE_MARKERS = ("challenger_error", "judge_error", "target_error")
+
+
+def infrastructure_failures(scenarios: list[dict]) -> list[str]:
+    """Return distinct infrastructure errors seen across scenarios."""
+
+    seen: list[str] = []
+    for scenario in scenarios:
+        failures = (scenario.get("judge") or {}).get("critical_failures") or []
+        for failure in failures:
+            text = str(failure)
+            if not text.startswith(_INFRA_FAILURE_MARKERS):
+                continue
+            summary = text[:120]
+            if summary not in seen:
+                seen.append(summary)
+    return seen
+
+
 def summarise(scenarios: list[dict], baseline: dict[str, int] | None) -> None:
     judged = [s for s in scenarios if (s.get("judge") or {}).get("score") is not None]
     if not judged:
         print("no judged scenarios")
         return
+
+    infra = infrastructure_failures(scenarios)
+    if infra:
+        print("\n*** RUN INVALID -- NOT A QUALITY RESULT ***")
+        print("Conversations did not run. Scores below the floor are an artifact")
+        print("of infrastructure failure, not of the code under test.\n")
+        for line in infra:
+            print(f"  {line}")
+        print(
+            "\nMost often a missing or expired CHALLENGER_MODEL_API_KEY /"
+            "\nJUDGE_MODEL_API_KEY, or a stopped local service. Fix and re-run."
+            "\nNo scores are reported, deliberately."
+        )
+        return
+
     scores = [s["judge"]["score"] for s in judged]
     passes = sum(1 for s in judged if s["judge"].get("pass"))
     print(f"\nAVERAGE {sum(scores)/len(scores):.2f}/5    PASS {passes}/{len(judged)}\n")

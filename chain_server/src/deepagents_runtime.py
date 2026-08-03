@@ -80,6 +80,12 @@ from .conversation_products import (
     format_historical_product_index,
     format_product_resolution,
 )
+from .tool_evidence import (
+    ProductDetailEvidence,
+    SearchEvidence,
+    detail_evidence_of,
+    evidence_of,
+)
 from .message_shape import (
     _content_to_text,
     _current_turn_messages,
@@ -180,6 +186,23 @@ try:
     from deepagents.backends import FilesystemBackend as _FilesystemBackend
 except Exception:  # pragma: no cover - dependency import is validated at runtime.
     _FilesystemBackend = None
+
+_NO_DIRECT_CATALOG_MATCH_EVIDENCE = (
+    "CUSTOMER_SAFE_NO_MATCH_EVIDENCE: The active catalog has no direct "
+    "advertised taxonomy match for this requested product role. "
+    "No retrieval ran and no alternative product type was selected. Say "
+    "that plainly, preserve any successful evidence for other roles, and "
+    "ask permission before searching a different advertised type. Do not "
+    "name alternatives."
+)
+
+_PRODUCT_DETAIL_EVIDENCE_NOTE = (
+    "Product details were read for these products, but the available "
+    "detail data contains only the listed facts. Do "
+    "not state material, care, dimensions, closures, fit, sizing, "
+    "colorways, or outdoor performance unless the field appears in "
+    "this evidence summary."
+)
 
 _SEARCH_RESULT_GROUNDING_NOTE = (
     "SEARCH_RESULT_GROUNDING_NOTE: Use search results for candidate names, prices, "
@@ -2686,6 +2709,15 @@ class DeepAgentsRuntime:
                             + _SEARCH_SCOPE_COMPLETE_NOTE,
                             ControlSignal.STOP_TOOL_USE,
                         )
+                evidence = SearchEvidence(
+                    outcome="no_direct_catalog_match",
+                    requested_product_type=request.requested_product_type,
+                    scope_complete=bool(request.scope_complete),
+                    scope_outcome={
+                        "outcome": "no_direct_catalog_match",
+                        "requested_product_type": request.requested_product_type,
+                    },
+                )
                 lines = [
                     "STOP_TOOL_USE: No faithful advertised catalog taxonomy "
                     "matches the requested product type "
@@ -2693,16 +2725,11 @@ class DeepAgentsRuntime:
                     "Do not search adjacent product types. Tell the shopper the "
                     "requested type is not advertised and ask before offering an "
                     "alternative.",
-                    _format_catalog_scope_outcome(
-                        {
-                            "outcome": "no_direct_catalog_match",
-                            "requested_product_type": request.requested_product_type,
-                        }
-                    ),
+                    _format_catalog_scope_outcome(evidence.scope_outcome),
                 ]
-                if request.scope_complete:
+                if evidence.scope_complete:
                     lines.append(_SEARCH_SCOPE_COMPLETE_NOTE)
-                return "\n\n".join(lines)
+                return "\n\n".join(lines), evidence.as_artifact()
 
             taxonomy_constraints, taxonomy_issues = _taxonomy_hard_constraints(
                 request.taxonomy,
@@ -2866,66 +2893,97 @@ class DeepAgentsRuntime:
                 for name, value in plan.hard_filters.items()
                 if name not in taxonomy_fields
             }
+            # One derivation of the parent-scope fact: the payload carries it and
+            # the model-visible line is rendered from the same value.
+            advertised_category = (
+                request.taxonomy.category[0]
+                if request.taxonomy_status == "parent_category_alternative"
+                and request.taxonomy.category
+                else None
+            )
             scope_relation_evidence = (
                 _format_search_scope_relation_evidence(
                     requested_product_type=request.requested_product_type or "",
-                    advertised_category=request.taxonomy.category[0],
+                    advertised_category=advertised_category,
                 )
-                if request.taxonomy_status == "parent_category_alternative"
+                if advertised_category
                 else ""
             )
             if not result.products:
+                # Build the payload first; every line below renders from it.
+                evidence = SearchEvidence(
+                    outcome="zero_results",
+                    taxonomy=taxonomy_constraints,
+                    confirmed_filters=confirmed_filters,
+                    requested_product_type=request.requested_product_type,
+                    advertised_category=advertised_category,
+                    scope_complete=bool(request.scope_complete),
+                    budget_exhausted=bool(search_budget_exhausted),
+                    scope_outcome={
+                        "outcome": "zero_results",
+                        "requested_product_type": request.requested_product_type,
+                        "taxonomy": taxonomy_constraints,
+                        "confirmed_filters": confirmed_filters,
+                    },
+                )
                 lines = [
                     _SEARCH_NO_MATCH_GROUNDING_NOTE,
-                    _format_search_taxonomy_evidence(taxonomy_constraints),
+                    _format_search_taxonomy_evidence(evidence.taxonomy),
                 ]
                 if scope_relation_evidence:
                     lines.append(scope_relation_evidence)
-                if confirmed_filters:
-                    lines.append(_format_search_filter_evidence(confirmed_filters))
-                lines.append(
-                    _format_catalog_scope_outcome(
-                        {
-                            "outcome": "zero_results",
-                            "requested_product_type": request.requested_product_type,
-                            "taxonomy": taxonomy_constraints,
-                            "confirmed_filters": confirmed_filters,
-                        }
+                if evidence.confirmed_filters:
+                    lines.append(
+                        _format_search_filter_evidence(evidence.confirmed_filters)
                     )
-                )
-                if request.scope_complete:
+                lines.append(_format_catalog_scope_outcome(evidence.scope_outcome))
+                if evidence.scope_complete:
                     lines.append(_SEARCH_SCOPE_COMPLETE_NOTE)
-                elif search_budget_exhausted:
+                elif evidence.budget_exhausted:
                     lines.append(_SEARCH_BUDGET_EXHAUSTED_NOTE)
-                return "\n\n".join(lines)
+                return "\n\n".join(lines), evidence.as_artifact()
 
+            evidence = SearchEvidence(
+                outcome="results",
+                taxonomy=taxonomy_constraints,
+                confirmed_filters=confirmed_filters,
+                semantic_query=request.semantic_query,
+                shopper_guidance=_safe_shopper_guidance(
+                    request.shopper_guidance,
+                    request.requested_product_type,
+                ),
+                requested_product_type=request.requested_product_type,
+                advertised_category=advertised_category,
+                scope_complete=bool(request.scope_complete),
+                budget_exhausted=bool(search_budget_exhausted),
+                products=[
+                    _search_product_record(product) for product in result.products
+                ],
+            )
             lines = [
                 _SEARCH_RESULT_GROUNDING_NOTE,
-                _format_search_direction_evidence(request.semantic_query),
-                _format_search_guidance_evidence(
-                    _safe_shopper_guidance(
-                        request.shopper_guidance,
-                        request.requested_product_type,
-                    )
-                ),
-                _format_search_taxonomy_evidence(taxonomy_constraints),
+                _format_search_direction_evidence(evidence.semantic_query),
+                _format_search_guidance_evidence(evidence.shopper_guidance),
+                _format_search_taxonomy_evidence(evidence.taxonomy),
             ]
             if scope_relation_evidence:
                 lines.append(scope_relation_evidence)
-            if confirmed_filters:
-                lines.append(_format_search_filter_evidence(confirmed_filters))
-            if request.scope_complete:
+            if evidence.confirmed_filters:
+                lines.append(
+                    _format_search_filter_evidence(evidence.confirmed_filters)
+                )
+            if evidence.scope_complete:
                 lines.append(_SEARCH_SCOPE_COMPLETE_NOTE)
-            elif search_budget_exhausted:
+            elif evidence.budget_exhausted:
                 lines.append(_SEARCH_BUDGET_EXHAUSTED_NOTE)
-            for product in result.products:
-                lines.append(_format_product(product))
+            for record in evidence.products:
+                lines.append(_format_product_record(record))
             prefix = (
                 "Image similarity returned no matches; text fallback results:\n\n"
                 if execution.fallback_used
                 else ""
             )
-            return prefix + "\n\n".join(lines)
+            return prefix + "\n\n".join(lines), evidence.as_artifact()
 
         @tool(
             args_schema=search_tool_arguments_model,
@@ -3009,7 +3067,12 @@ class DeepAgentsRuntime:
                 )
             if product.image_url:
                 scope.retrieved[product.display_name] = product.image_url
-            return _format_product_details(product)
+            record = _product_detail_record(product)
+            evidence = ProductDetailEvidence(products=[record])
+            return (
+                _format_product_detail_record(record),
+                evidence.as_artifact(),
+            )
 
         @tool(return_direct=False, response_format="content_and_artifact")
         def get_product_details_tool(product_ref: str):
@@ -4895,28 +4958,31 @@ def _diagnostic_product_evidence(
 
         tool_call_id = str(_value(message, "tool_call_id") or "")
         source_tool = successful_tool_calls.get(tool_call_id)
-        content = _content_to_text(_value(message, "content"))
+        payload = evidence_of(message)
         if source_tool == "search_catalog_tool":
-            if "SEARCH_RESULT_GROUNDING_NOTE" not in content:
+            if not payload or payload.get("outcome") != "results":
                 continue
             evidence_type = "search_result"
             search_scope = {
                 "taxonomy": _bounded_product_evidence_value(
-                    _search_taxonomy_evidence(content)
+                    payload.get("taxonomy") or {}
                 ),
                 "confirmed_filters": _bounded_product_evidence_value(
-                    _search_filter_evidence(content)
+                    payload.get("confirmed_filters") or {}
                 ),
             }
+            records = payload.get("products") or []
         elif source_tool == "get_product_details_tool":
-            if "PRODUCT_DETAIL_GROUNDING_NOTE" not in content:
+            detail = detail_evidence_of(message)
+            if not detail:
                 continue
             evidence_type = "product_detail"
             search_scope = None
+            records = detail.get("products") or []
         else:
             continue
 
-        for product in _product_evidence_records(content):
+        for product in records:
             product_ref = product.get("product_ref")
             product_name = product.get("name")
             if not product_ref or not product_name:
@@ -4962,10 +5028,8 @@ def _diagnostic_catalog_scope_outcomes(
     for message in messages:
         if _message_type(message) != "tool":
             continue
-        outcome = _search_json_evidence(
-            _content_to_text(_value(message, "content")),
-            _CATALOG_SCOPE_OUTCOME_PREFIX,
-        )
+        payload = evidence_of(message)
+        outcome = (payload or {}).get("scope_outcome") or {}
         if (
             not outcome
             or not set(outcome).issubset(allowed_fields)
@@ -5150,15 +5214,13 @@ def _has_search_only_tool_evidence(result: Any, *, request_id: str) -> bool:
         if _message_type(message) != "tool":
             continue
         name = str(_value(message, "name") or "")
-        content = _content_to_text(_value(message, "content"))
-        if not name and "SEARCH_RESULT_GROUNDING_NOTE" in content:
+        returned_results = (evidence_of(message) or {}).get("outcome") == "results"
+        if not name and returned_results:
             name = "search_catalog_tool"
         if name in {SKILL_ACTIVATION_TOOL_NAME, "read_file"}:
             continue
         tool_names.append(name)
-        if name == "search_catalog_tool" and "SEARCH_RESULT_GROUNDING_NOTE" in (
-            content
-        ):
+        if name == "search_catalog_tool" and returned_results:
             has_search_result = True
     return (
         has_search_result
@@ -5333,21 +5395,17 @@ def _search_result_groups(result: Any, *, request_id: str) -> list[dict[str, Any
     for message in _current_turn_messages(_result_messages(result), request_id):
         if _message_type(message) != "tool":
             continue
-        content = _content_to_text(_value(message, "content"))
-        if "SEARCH_RESULT_GROUNDING_NOTE" not in content:
+        payload = evidence_of(message)
+        if not payload or payload.get("outcome") != "results":
             continue
-        guidance = _search_json_evidence(
-            content,
-            _SEARCH_GUIDANCE_EVIDENCE_PREFIX,
-        )
         groups.append(
             {
                 "guidance": _scrub_internal_shopper_language(
-                    str(guidance.get("text") or "")
+                    str(payload.get("shopper_guidance") or "")
                 ).strip(),
-                "products": _product_evidence_records(content),
-                "taxonomy": _search_taxonomy_evidence(content),
-                "scope_relation": _search_scope_relation_evidence(content),
+                "products": payload.get("products") or [],
+                "taxonomy": payload.get("taxonomy") or {},
+                "scope_relation": _scope_relation_payload(payload),
             }
         )
     return groups
@@ -5421,12 +5479,10 @@ def _no_direct_search_types(result: Any, *, request_id: str) -> list[str]:
     for message in _current_turn_messages(_result_messages(result), request_id):
         if _message_type(message) != "tool":
             continue
-        outcome = _search_json_evidence(
-            _content_to_text(_value(message, "content")),
-            _CATALOG_SCOPE_OUTCOME_PREFIX,
-        )
-        if not outcome or outcome.get("outcome") != "no_direct_catalog_match":
+        payload = evidence_of(message)
+        if not payload or payload.get("outcome") != "no_direct_catalog_match":
             continue
+        outcome = payload
         product_type = str(outcome.get("requested_product_type") or "").strip()
         if product_type and product_type not in product_types:
             product_types.append(product_type)
@@ -5451,15 +5507,11 @@ def _search_guidance_evidence(result: Any, *, request_id: str) -> list[str]:
     for message in _current_turn_messages(_result_messages(result), request_id):
         if _message_type(message) != "tool":
             continue
-        content = _content_to_text(_value(message, "content"))
-        if "SEARCH_RESULT_GROUNDING_NOTE" not in content:
+        payload = evidence_of(message)
+        if not payload or payload.get("outcome") != "results":
             continue
-        payload = _search_json_evidence(
-            content,
-            _SEARCH_GUIDANCE_EVIDENCE_PREFIX,
-        )
         text = _scrub_internal_shopper_language(
-            str((payload or {}).get("text") or "")
+            str(payload.get("shopper_guidance") or "")
         ).strip()
         if text and text not in guidance:
             guidance.append(text)
@@ -5478,8 +5530,10 @@ def _confirmed_search_filter_groups(
     for message in _current_turn_messages(_result_messages(result), request_id):
         if _message_type(message) != "tool":
             continue
-        content = _content_to_text(_value(message, "content"))
-        filters = _search_filter_evidence(content)
+        payload = evidence_of(message)
+        if not payload or payload.get("outcome") != "results":
+            continue
+        filters = payload.get("confirmed_filters") or {}
         statements: list[str] = []
         for name, value in filters.items():
             statement = _format_filter_statement(name, value)
@@ -5489,7 +5543,7 @@ def _confirmed_search_filter_groups(
             continue
         product_names = [
             product["name"]
-            for product in _product_evidence_records(content)
+            for product in (payload.get("products") or [])
             if product.get("name")
         ]
         if displayed_names is not None:
@@ -5829,7 +5883,7 @@ def _collect_message_grounding_evidence(
             continue
         if not _is_tool_evidence_message(message, content):
             continue
-        parts.append(_customer_safe_tool_evidence(content))
+        parts.append(_customer_safe_tool_evidence(content, message))
 
     evidence = "\n\n---\n\n".join(parts).strip()
     if len(evidence) <= max_chars:
@@ -5837,27 +5891,14 @@ def _collect_message_grounding_evidence(
     return evidence[-max_chars:]
 
 
-def _customer_safe_tool_evidence(content: str) -> str:
-    if content.startswith(SEARCH_VALIDATION_ERROR_PREFIX):
-        return (
-            "CUSTOMER_SAFE_INVALID_SEARCH_EVIDENCE: No valid catalog search "
-            "scope was established and no retrieval ran. This does not support "
-            "a product-availability or catalog-absence claim."
-        )
-    if content.startswith(
-        f"{STOP_TOOL_USE_PREFIX} No faithful advertised catalog taxonomy"
-    ):
-        return (
-            "CUSTOMER_SAFE_NO_MATCH_EVIDENCE: The active catalog has no direct "
-            "advertised taxonomy match for this requested product role. "
-            "No retrieval ran and no alternative product type was selected. Say "
-            "that plainly, preserve any successful evidence for other roles, and "
-            "ask permission before searching a different advertised type. Do not "
-            "name alternatives."
-        )
-    if "SEARCH_NO_MATCH_GROUNDING_NOTE" in content:
-        taxonomy = _search_taxonomy_evidence(content)
-        confirmed_filters = _search_filter_evidence(content)
+def _customer_safe_search_evidence(payload: dict[str, Any]) -> str:
+    """Build the composer summary from typed evidence, without parsing prose."""
+
+    taxonomy = payload.get("taxonomy") or {}
+    confirmed_filters = payload.get("confirmed_filters") or {}
+    if payload.get("outcome") == "no_direct_catalog_match":
+        return _NO_DIRECT_CATALOG_MATCH_EVIDENCE
+    if payload.get("outcome") == "zero_results":
         lines = [
             (
                 "CUSTOMER_SAFE_SCOPED_NO_MATCH_EVIDENCE: Zero products matched "
@@ -5877,60 +5918,102 @@ def _customer_safe_tool_evidence(content: str) -> str:
                 "CONFIRMED_SEARCH_FILTERS: "
                 + json.dumps(confirmed_filters, sort_keys=True)
             )
-        scope_relation = _customer_safe_scope_relation(
-            content,
-            has_products=False,
-        )
-        if scope_relation:
-            lines.append(scope_relation)
+        relation = _scope_relation_line(payload, has_products=False)
+        if relation:
+            lines.append(relation)
         return "\n".join(lines)
-    if "SEARCH_RESULT_GROUNDING_NOTE" in content:
-        summary = _summarize_product_evidence(
-            content,
-            heading="CUSTOMER_SAFE_SEARCH_EVIDENCE",
-            note=(
-                "Search results support only product names, prices, categories, "
-                "image availability, confirmed search filters, and a modest "
-                "styling role. Beyond an exact confirmed filter, they do not "
-                "support length, color, print, materials, care, construction, "
-                "fit, comfort, weather, grass, gravel, heat, or best-in-category "
-                "claims. Treat names as display names, not attribute evidence; "
-                "group claims require product-detail evidence for every item."
-            ),
-            confirmed_filters=_search_filter_evidence(content),
-            taxonomy_scope=_search_taxonomy_evidence(content),
+
+    summary = _summarize_typed_product_evidence(payload)
+    relation = _scope_relation_line(payload, has_products=True)
+    return f"{summary}\n{relation}" if relation else summary
+
+
+def _scope_relation_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Rebuild the scope-relation record from typed fields.
+
+    The relation is a constant whenever an advertised parent was substituted,
+    so presence of the parent is the whole condition.
+    """
+
+    category = payload.get("advertised_category")
+    requested = payload.get("requested_product_type")
+    if not category or not requested:
+        return {}
+    return {
+        "relation": "model_selected_parent_category",
+        "requested_product_type": str(requested),
+        "advertised_category": str(category),
+    }
+
+
+def _scope_relation_line(payload: dict[str, Any], *, has_products: bool) -> str:
+    """Say plainly that a broader advertised parent was searched, if it was."""
+
+    category = payload.get("advertised_category")
+    requested = payload.get("requested_product_type")
+    if not category or not requested:
+        return ""
+    if not has_products:
+        return (
+            f"REQUESTED_SCOPE_RELATION: {requested} is not separately "
+            f"advertised. The broader advertised category {category} returned "
+            "zero products for this search, so do not claim that the requested "
+            "type is absent from the whole catalog."
         )
-        scope_relation = _customer_safe_scope_relation(
-            content,
-            has_products=True,
-        )
-        return "\n".join(
-            part for part in (summary, scope_relation) if part
-        )
-    if "PRODUCT_DETAIL_GROUNDING_NOTE" in content:
-        return _summarize_product_evidence(
-            content,
-            heading="CUSTOMER_SAFE_PRODUCT_DETAIL_EVIDENCE",
-            note=(
-                "Product details were read for these products, but the available "
-                "detail data contains only the listed facts. Do "
-                "not state material, care, dimensions, closures, fit, sizing, "
-                "colorways, or outdoor performance unless the field appears in "
-                "this evidence summary."
-            ),
+    return (
+        f"REQUESTED_SCOPE_RELATION: {requested} is not separately "
+        f"advertised. The search used the broader advertised category {category}. "
+        "Present these as closest options and keep every returned product's "
+        "actual catalog category; do not relabel them as the requested type."
+    )
+
+
+def _customer_safe_tool_evidence(content: str, message: Any = None) -> str:
+    """Summarise one tool result for the composer.
+
+    Catalog evidence is read from the typed payload on the message artifact.
+    The text branches that follow handle results which carry no payload:
+    framework-generated tool errors, and tools that emit no evidence yet.
+    Nothing here parses catalog facts back out of prose.
+    """
+
+    if message is not None:
+        payload = evidence_of(message)
+        if payload is not None:
+            return _customer_safe_search_evidence(payload)
+        detail = detail_evidence_of(message)
+        if detail is not None:
+            return _render_product_evidence_summary(
+                detail.get("products") or [],
+                heading="CUSTOMER_SAFE_PRODUCT_DETAIL_EVIDENCE",
+                note=_PRODUCT_DETAIL_EVIDENCE_NOTE,
+            )
+
+    if content.startswith(SEARCH_VALIDATION_ERROR_PREFIX):
+        return (
+            "CUSTOMER_SAFE_INVALID_SEARCH_EVIDENCE: No valid catalog search "
+            "scope was established and no retrieval ran. This does not support "
+            "a product-availability or catalog-absence claim."
         )
     return _summarize_cart_evidence(content)
 
 
-def _summarize_product_evidence(
-    content: str,
+
+def _render_product_evidence_summary(
+    products: list[dict[str, Any]],
     *,
     heading: str,
     note: str,
     confirmed_filters: dict[str, Any] | None = None,
     taxonomy_scope: dict[str, Any] | None = None,
+    fallback_content: str | None = None,
 ) -> str:
-    products = _product_evidence_records(content)
+    """Render the composer's product summary from records.
+
+    Shared by the typed-payload path and the text path so the two cannot drift
+    in wording; only where the records come from differs.
+    """
+
     lines = [f"{heading}: {note}"]
     if confirmed_filters:
         lines.append(
@@ -5948,7 +6031,14 @@ def _summarize_product_evidence(
             + json.dumps(taxonomy_scope, sort_keys=True, default=str)
         )
     if not products:
-        return "\n".join(lines + [_strip_internal_ids_from_evidence_line(content)])
+        # The text path keeps emitting its stripped line even when that line is
+        # empty, so its output is unchanged. The typed path has no prose to fall
+        # back to and must not append a blank line in its place.
+        if fallback_content is None:
+            return "\n".join(lines)
+        return "\n".join(
+            lines + [_strip_internal_ids_from_evidence_line(fallback_content)]
+        )
     for product in products:
         summary_parts = [product["name"]]
         if product.get("category"):
@@ -5963,108 +6053,32 @@ def _summarize_product_evidence(
     return "\n".join(lines)
 
 
-def _search_filter_evidence(content: str) -> dict[str, Any]:
-    """Read the canonical hard-filter marker from one search result."""
+def _summarize_typed_product_evidence(payload: dict[str, Any]) -> str:
+    """Summarise search results for the composer straight from typed evidence."""
 
-    return _search_json_evidence(content, _SEARCH_FILTER_EVIDENCE_PREFIX)
-
-
-def _search_taxonomy_evidence(content: str) -> dict[str, Any]:
-    """Read the advertised taxonomy marker from one search result."""
-
-    return _search_json_evidence(content, _SEARCH_TAXONOMY_EVIDENCE_PREFIX)
-
-
-def _search_scope_relation_evidence(content: str) -> dict[str, Any]:
-    """Read the requested-to-advertised scope relation from one search result."""
-
-    return _search_json_evidence(
-        content,
-        _SEARCH_SCOPE_RELATION_EVIDENCE_PREFIX,
+    products = payload.get("products")
+    return _render_product_evidence_summary(
+        products if isinstance(products, list) else [],
+        heading="CUSTOMER_SAFE_SEARCH_EVIDENCE",
+            note=(
+                "Search results support only product names, prices, categories, "
+                "image availability, confirmed search filters, and a modest "
+                "styling role. Beyond an exact confirmed filter, they do not "
+                "support length, color, print, materials, care, construction, "
+                "fit, comfort, weather, grass, gravel, heat, or best-in-category "
+                "claims. Treat names as display names, not attribute evidence; "
+                "group claims require product-detail evidence for every item."
+            ),
+        confirmed_filters=payload.get("confirmed_filters") or {},
+        taxonomy_scope=payload.get("taxonomy") or {},
     )
 
 
-def _customer_safe_scope_relation(
-    content: str,
-    *,
-    has_products: bool,
-) -> str:
-    """Describe one model-selected parent search without asserting subtype identity."""
-
-    relation = _search_scope_relation_evidence(content)
-    if relation.get("relation") != "model_selected_parent_category":
-        return ""
-    requested_type = str(relation.get("requested_product_type") or "").strip()
-    category = str(relation.get("advertised_category") or "").strip()
-    if not requested_type or not category:
-        return ""
-    if not has_products:
-        return (
-            f"REQUESTED_SCOPE_RELATION: {requested_type} is not separately "
-            f"advertised. The broader advertised category {category} returned "
-            "zero products for this search, so do not claim that the requested "
-            "type is absent from the whole catalog."
-        )
-    return (
-        f"REQUESTED_SCOPE_RELATION: {requested_type} is not separately "
-        f"advertised. The search used the broader advertised category {category}. "
-        "Present these as closest options and keep every returned product's "
-        "actual catalog category; do not relabel them as the requested type."
-    )
 
 
-def _search_json_evidence(content: str, prefix: str) -> dict[str, Any]:
-    """Read one JSON evidence marker from a tool result."""
-
-    for raw_line in content.splitlines():
-        line = raw_line.strip()
-        if not line.startswith(prefix):
-            continue
-        payload = line.removeprefix(prefix).strip()
-        try:
-            parsed = json.loads(payload)
-        except json.JSONDecodeError:
-            return {}
-        return parsed if isinstance(parsed, dict) else {}
-    return {}
 
 
-def _product_evidence_records(content: str) -> list[dict[str, Any]]:
-    records: list[dict[str, Any]] = []
-    current: dict[str, Any] = {}
-    reading_details = False
-    key_map = {
-        "NAME:": "name",
-        "CATEGORY:": "category",
-        "BRAND:": "brand",
-        "PRICE:": "price",
-        "IMAGE_URL:": "image_url",
-    }
-    for raw_line in content.splitlines():
-        line = raw_line.strip()
-        if line.startswith("PRODUCT_REF:"):
-            if current.get("name"):
-                records.append(current)
-            current = {"product_ref": line.removeprefix("PRODUCT_REF:").strip()}
-            reading_details = False
-            continue
-        if line == "DETAILS:":
-            reading_details = True
-            continue
-        if reading_details and line.startswith("- ") and ":" in line:
-            label, value = line[2:].split(":", 1)
-            if label.strip() and value.strip():
-                current.setdefault("details", []).append(
-                    f"{label.strip()}: {value.strip()}"
-                )
-            continue
-        for prefix, key in key_map.items():
-            if line.startswith(prefix):
-                current[key] = line[len(prefix) :].strip()
-                break
-    if current.get("name"):
-        records.append(current)
-    return records
+
 
 
 def _summarize_cart_evidence(content: str) -> str:
@@ -6239,17 +6253,43 @@ def _format_catalog_scope_outcome(outcome: dict[str, Any]) -> str:
     )
 
 
+def _search_product_record(product: Any) -> dict[str, Any]:
+    """Project one search hit into the record both the model text and the
+    composer summary are rendered from.
+
+    Previously the model-visible text was the only rendering and the composer
+    parsed it back into this same shape. Building the record once removes the
+    round trip, and keeps the two renderings unable to disagree.
+    """
+
+    return {
+        "product_ref": str(product.product_id),
+        "name": str(product.display_name),
+        "category": str(getattr(product, "category", "") or ""),
+        "price": (
+            f"${product.price.amount:.2f} {product.price.currency}"
+            if product.price
+            else ""
+        ),
+        "image_url": str(product.image_url or ""),
+    }
+
+
 def _format_product(product: Any) -> str:
+    return _format_product_record(_search_product_record(product))
+
+
+def _format_product_record(record: dict[str, Any]) -> str:
     lines = [
-        f"PRODUCT_REF: {product.product_id}",
-        f"NAME: {product.display_name}",
+        f"PRODUCT_REF: {record['product_ref']}",
+        f"NAME: {record['name']}",
     ]
-    if getattr(product, "category", None):
-        lines.append(f"CATEGORY: {product.category}")
-    if product.price:
-        lines.append(f"PRICE: ${product.price.amount:.2f} {product.price.currency}")
-    if product.image_url:
-        lines.append(f"IMAGE_URL: {product.image_url}")
+    if record.get("category"):
+        lines.append(f"CATEGORY: {record['category']}")
+    if record.get("price"):
+        lines.append(f"PRICE: {record['price']}")
+    if record.get("image_url"):
+        lines.append(f"IMAGE_URL: {record['image_url']}")
     lines.append(
         "DETAILS: Call get_product_details_tool with this PRODUCT_REF before "
         "stating materials, dimensions, pockets, closures, care, comfort, or "
@@ -6258,26 +6298,48 @@ def _format_product(product: Any) -> str:
     return "\n".join(lines)
 
 
+def _product_detail_record(product: ProductDetail) -> dict[str, Any]:
+    """Project one product-detail read into the record the text renders from."""
+
+    return {
+        "product_ref": str(product.product_id),
+        "name": str(product.display_name),
+        "category": str(product.category or ""),
+        "brand": str(product.brand or ""),
+        "price": (
+            f"${product.price.amount:.2f} {product.price.currency}"
+            if product.price
+            else ""
+        ),
+        "image_url": str(product.image_url or ""),
+        "details": [
+            f"{name.replace('_', ' ')}: {_format_detail_value(value)}"
+            for name, value in sorted((product.attributes or {}).items())
+        ],
+    }
+
+
 def _format_product_details(product: ProductDetail) -> str:
+    return _format_product_detail_record(_product_detail_record(product))
+
+
+def _format_product_detail_record(record: dict[str, Any]) -> str:
     lines = [
         _PRODUCT_DETAIL_GROUNDING_NOTE,
-        f"PRODUCT_REF: {product.product_id}",
-        f"NAME: {product.display_name}",
+        f"PRODUCT_REF: {record['product_ref']}",
+        f"NAME: {record['name']}",
     ]
-    if product.category:
-        lines.append(f"CATEGORY: {product.category}")
-    if product.brand:
-        lines.append(f"BRAND: {product.brand}")
-    if product.price:
-        lines.append(f"PRICE: ${product.price.amount:.2f} {product.price.currency}")
-    if product.image_url:
-        lines.append(f"IMAGE_URL: {product.image_url}")
-    if product.attributes:
+    if record.get("category"):
+        lines.append(f"CATEGORY: {record['category']}")
+    if record.get("brand"):
+        lines.append(f"BRAND: {record['brand']}")
+    if record.get("price"):
+        lines.append(f"PRICE: {record['price']}")
+    if record.get("image_url"):
+        lines.append(f"IMAGE_URL: {record['image_url']}")
+    if record.get("details"):
         lines.append("DETAILS:")
-        for name, value in sorted(product.attributes.items()):
-            lines.append(
-                f"- {name.replace('_', ' ')}: {_format_detail_value(value)}"
-            )
+        lines.extend(f"- {detail}" for detail in record["details"])
     else:
         lines.append("NO_ADDITIONAL_STRUCTURED_DETAILS")
     return "\n".join(lines)

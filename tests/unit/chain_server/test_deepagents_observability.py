@@ -11,6 +11,13 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 import pytest
 
 from chain_server.src.agenttypes import State
+from chain_server.src.tool_evidence import SearchEvidence
+from .tool_evidence_fixtures import (
+    detail_artifact,
+    product,
+    product_detail,
+    search_evidence,
+)
 from chain_server.src.deepagents_runtime import (
     DeepAgentsRuntime,
     RequestIdentity,
@@ -296,6 +303,22 @@ def test_tool_trace_preserves_bounded_catalog_scope_outcome() -> None:
                 '"taxonomy": {"category": ["apparel"], '
                 '"subcategory": ["skirts"]}, "confirmed_filters": {}}'
             ),
+            # Diagnostics read the typed payload, not the prose. The text stays
+            # here so this still exercises the shape the tool actually emits.
+            artifact=SearchEvidence(
+                outcome="zero_results",
+                requested_product_type="skirts",
+                taxonomy={"category": ["apparel"], "subcategory": ["skirts"]},
+                scope_outcome={
+                    "outcome": "zero_results",
+                    "requested_product_type": "skirts",
+                    "taxonomy": {
+                        "category": ["apparel"],
+                        "subcategory": ["skirts"],
+                    },
+                    "confirmed_filters": {},
+                },
+            ).as_artifact(),
             name="search_catalog_tool",
             tool_call_id="zero-results",
         ),
@@ -465,38 +488,41 @@ def test_product_evidence_contains_only_successful_current_turn_product_tools() 
             ],
         ),
         ToolMessage(
-            content=(
-                "SEARCH_RESULT_GROUNDING_NOTE\n"
-                "SEARCH_DIRECTION_EVIDENCE: "
-                '"coordinate with beige top from last week"\n'
-                "SEARCH_FILTER_EVIDENCE: "
-                '{"color": ["beige"], "price": {"max": 100}}\n'
-                "SEARCH_TAXONOMY_EVIDENCE: "
-                '{"category": ["bottoms"], "subcategory": ["pants"]}\n'
-                "PRODUCT_REF: prod-1\n"
-                "NAME: Sand Trousers\n"
-                "CATEGORY: bottoms\n"
-                "PRICE: $49.00 USD\n"
-                "IMAGE_URL: https://catalog.invalid/prod-1.png\n"
-                "PRODUCT_REF: prod-2\n"
-                "NAME: Cream Pants\n"
-                "CATEGORY: bottoms\n"
-                "PRICE: $59.00 USD"
-            ),
+            content="SEARCH_RESULT_GROUNDING_NOTE",
+            artifact=search_evidence(
+                semantic_query="coordinate with beige top from last week",
+                confirmed_filters={"color": ["beige"], "price": {"max": 100}},
+                taxonomy={"category": ["bottoms"], "subcategory": ["pants"]},
+                products=[
+                    product(
+                        "Sand Trousers",
+                        product_ref="prod-1",
+                        category="bottoms",
+                        price="$49.00 USD",
+                        image_url="https://catalog.invalid/prod-1.png",
+                    ),
+                    product(
+                        "Cream Pants",
+                        product_ref="prod-2",
+                        category="bottoms",
+                        price="$59.00 USD",
+                    ),
+                ],
+            ).as_artifact(),
             name="search_catalog_tool",
             tool_call_id="search",
         ),
         ToolMessage(
-            content=(
-                "PRODUCT_DETAIL_GROUNDING_NOTE\n"
-                "PRODUCT_REF: prod-1\n"
-                "NAME: Sand Trousers\n"
-                "CATEGORY: bottoms\n"
-                "BRAND: Example Brand\n"
-                "PRICE: $49.00 USD\n"
-                "DETAILS:\n"
-                "- material: cotton\n"
-                "- care: machine wash"
+            content="PRODUCT_DETAIL_GROUNDING_NOTE",
+            artifact=detail_artifact(
+                product_detail(
+                    "Sand Trousers",
+                    product_ref="prod-1",
+                    category="bottoms",
+                    brand="Example Brand",
+                    price="$49.00 USD",
+                    details=["material: cotton", "care: machine wash"],
+                )
             ),
             name="get_product_details_tool",
             tool_call_id="detail",
@@ -615,27 +641,29 @@ def test_product_evidence_keeps_each_search_scope_with_its_products() -> None:
             ],
         ),
         ToolMessage(
-            content=(
-                "SEARCH_RESULT_GROUNDING_NOTE\n"
-                'SEARCH_FILTER_EVIDENCE: {"color": ["red"]}\n'
-                "SEARCH_TAXONOMY_EVIDENCE: "
-                '{"category": ["apparel"], "subcategory": ["tops"]}\n'
-                "PRODUCT_REF: red-top\n"
-                "NAME: Red Top\n"
-                "CATEGORY: apparel"
-            ),
+            content="SEARCH_RESULT_GROUNDING_NOTE",
+            artifact=search_evidence(
+                confirmed_filters={"color": ["red"]},
+                taxonomy={"category": ["apparel"], "subcategory": ["tops"]},
+                products=[
+                    product("Red Top", product_ref="red-top", category="apparel")
+                ],
+            ).as_artifact(),
             tool_call_id="red-apparel",
         ),
         ToolMessage(
-            content=(
-                "SEARCH_RESULT_GROUNDING_NOTE\n"
-                'SEARCH_FILTER_EVIDENCE: {"color": ["black"]}\n'
-                "SEARCH_TAXONOMY_EVIDENCE: "
-                '{"category": ["footwear"], "subcategory": ["shoes"]}\n'
-                "PRODUCT_REF: black-shoe\n"
-                "NAME: Black Shoe\n"
-                "CATEGORY: footwear"
-            ),
+            content="SEARCH_RESULT_GROUNDING_NOTE",
+            artifact=search_evidence(
+                confirmed_filters={"color": ["black"]},
+                taxonomy={"category": ["footwear"], "subcategory": ["shoes"]},
+                products=[
+                    product(
+                        "Black Shoe",
+                        product_ref="black-shoe",
+                        category="footwear",
+                    )
+                ],
+            ).as_artifact(),
             tool_call_id="black-footwear",
         ),
     ]
@@ -664,9 +692,7 @@ def test_product_evidence_keeps_each_search_scope_with_its_products() -> None:
 
 def test_product_evidence_bounds_facts_and_strings() -> None:
     long_value = "v" * 600
-    detail_fields = "\n".join(
-        f"- field-{index}: {long_value}" for index in range(45)
-    )
+    detail_fields = [f"field-{index}: {long_value}" for index in range(45)]
     messages = [
         HumanMessage(content="REQUEST ID: bounded-request"),
         AIMessage(
@@ -685,26 +711,28 @@ def test_product_evidence_bounds_facts_and_strings() -> None:
             ],
         ),
         ToolMessage(
-            content=(
-                "PRODUCT_DETAIL_GROUNDING_NOTE\n"
-                f"PRODUCT_REF: {'r' * 600}\n"
-                f"NAME: {'n' * 600}\n"
-                f"CATEGORY: {long_value}\n"
-                "BRAND: Example\n"
-                "PRICE: $1.00 USD\n"
-                "DETAILS:\n"
-                f"{detail_fields}"
+            content="PRODUCT_DETAIL_GROUNDING_NOTE",
+            artifact=detail_artifact(
+                product_detail(
+                    "n" * 600,
+                    product_ref="r" * 600,
+                    category=long_value,
+                    brand="Example",
+                    price="$1.00 USD",
+                    details=detail_fields,
+                )
             ),
             tool_call_id="bounded-detail",
         ),
         ToolMessage(
-            content=(
-                "SEARCH_RESULT_GROUNDING_NOTE\n"
-                f'SEARCH_FILTER_EVIDENCE: {{"style": "{long_value}"}}\n'
-                f'SEARCH_TAXONOMY_EVIDENCE: {{"category": ["{long_value}"]}}\n'
-                "PRODUCT_REF: scoped-product\n"
-                "NAME: Scoped Product"
-            ),
+            content="SEARCH_RESULT_GROUNDING_NOTE",
+            artifact=search_evidence(
+                confirmed_filters={"style": long_value},
+                taxonomy={"category": [long_value]},
+                products=[
+                    product("Scoped Product", product_ref="scoped-product")
+                ],
+            ).as_artifact(),
             tool_call_id="bounded-search",
         ),
     ]
@@ -728,10 +756,10 @@ def test_product_evidence_bounds_facts_and_strings() -> None:
 
 
 def test_product_evidence_reports_record_limit_truncation() -> None:
-    products = "\n".join(
-        f"PRODUCT_REF: product-{index}\nNAME: Product {index}"
+    many_products = [
+        product(f"Product {index}", product_ref=f"product-{index}")
         for index in range(25)
-    )
+    ]
     messages = [
         HumanMessage(content="REQUEST ID: record-limit"),
         AIMessage(
@@ -745,7 +773,8 @@ def test_product_evidence_reports_record_limit_truncation() -> None:
             ],
         ),
         ToolMessage(
-            content=f"SEARCH_RESULT_GROUNDING_NOTE\n{products}",
+            content="SEARCH_RESULT_GROUNDING_NOTE",
+            artifact=search_evidence(products=many_products).as_artifact(),
             tool_call_id="many-products",
         ),
     ]
@@ -762,21 +791,18 @@ def test_product_evidence_reports_record_limit_truncation() -> None:
 
 def test_product_evidence_reports_serialized_size_truncation() -> None:
     long_value = "v" * 600
-    detail_fields = "\n".join(
-        f"- field-{index}: {long_value}" for index in range(45)
-    )
-    products = "\n".join(
-        (
-            f"PRODUCT_REF: large-{index}\n"
-            f"NAME: Large Product {index}\n"
-            "CATEGORY: apparel\n"
-            "BRAND: Example\n"
-            "PRICE: $1.00 USD\n"
-            "DETAILS:\n"
-            f"{detail_fields}"
+    detail_fields = [f"field-{index}: {long_value}" for index in range(45)]
+    large_products = [
+        product_detail(
+            f"Large Product {index}",
+            product_ref=f"large-{index}",
+            category="apparel",
+            brand="Example",
+            price="$1.00 USD",
+            details=detail_fields,
         )
         for index in range(2)
-    )
+    ]
     messages = [
         HumanMessage(content="REQUEST ID: aggregate-limit"),
         AIMessage(
@@ -790,7 +816,8 @@ def test_product_evidence_reports_serialized_size_truncation() -> None:
             ],
         ),
         ToolMessage(
-            content=f"PRODUCT_DETAIL_GROUNDING_NOTE\n{products}",
+            content="PRODUCT_DETAIL_GROUNDING_NOTE",
+            artifact=detail_artifact(*large_products),
             tool_call_id="large-details",
         ),
     ]

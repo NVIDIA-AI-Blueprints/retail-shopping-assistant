@@ -48,6 +48,10 @@ class SearchEvidence:
     products: list[dict[str, Any]] = field(default_factory=list)
     #: The bounded, product-free outcome diagnostics report, when there is one.
     scope_outcome: dict[str, Any] | None = None
+    #: Shopper requirements the catalog cannot enforce as filters. These ranked
+    #: the search but were never applied, so no product below is confirmed to
+    #: meet them.
+    unconfirmed_requirements: list[str] = field(default_factory=list)
 
     def as_artifact(self) -> dict[str, Any]:
         return {
@@ -63,6 +67,7 @@ class SearchEvidence:
                 "budget_exhausted": self.budget_exhausted,
                 "products": self.products,
                 "scope_outcome": self.scope_outcome,
+                "unconfirmed_requirements": self.unconfirmed_requirements,
             }
         }
 

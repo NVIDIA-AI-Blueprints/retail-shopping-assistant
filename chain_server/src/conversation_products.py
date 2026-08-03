@@ -239,13 +239,38 @@ def format_product_resolution(result: ResolveConversationProductsResult) -> str:
     lines: list[str] = []
     for resolution in result.results:
         if resolution.status == "resolved":
-            product = resolution.matches[0].product
+            match = resolution.matches[0]
+            product = match.product
+            # The durable presentation event stores the whole ProductSummary, so
+            # these facts are already resolved and in hand. Rendering only the
+            # ref and the name discarded them, and the assistant then had no way
+            # to answer "which of those was cheapest" about products it had
+            # itself shown -- it re-searched, and still came back without the
+            # prices it had displayed a few turns earlier.
             lines.extend(
                 (
                     f"REFERENCE {resolution.reference_id}: RESOLVED",
                     f"PRODUCT_REF: {product.product_id}",
                     f"NAME: {product.display_name}",
                 )
+            )
+            if product.category:
+                lines.append(f"CATEGORY: {product.category}")
+            if product.price:
+                # Stated as what was shown, with the turn, because a stored
+                # presentation is evidence of what the shopper saw and not of
+                # today's price.
+                lines.append(
+                    f"PRICE_WHEN_SHOWN: ${product.price.amount:.2f} "
+                    f"{product.price.currency} (turn {match.turn_sequence})"
+                )
+            if product.image_url:
+                lines.append("IMAGE_AVAILABLE: yes")
+            lines.append(
+                "These are the facts presented earlier. Attributes such as "
+                "material, care, and dimensions require "
+                "get_product_details_tool. Confirm price with a fresh read "
+                "before a cart action or a budget claim."
             )
             continue
         if resolution.status == "ambiguous":

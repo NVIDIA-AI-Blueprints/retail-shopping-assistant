@@ -3792,10 +3792,19 @@ class TestDeepAgentsRuntimeRefs:
                 },
             )
         )
-        assert unsupported_result.startswith(
+        # An unenforceable requirement ranks the search; it does not veto it.
+        # The search must run, and the requirement must still be disclosed so
+        # the composer cannot present a candidate as confirmed.
+        assert "SEARCH_RESULT_GROUNDING_NOTE" in unsupported_result
+        assert (
             "The requested catalog requirement cannot be enforced"
+            in unsupported_result
         )
-        assert captured_plan.get("calls", 0) == 0
+        assert "'water resistance' is not an advertised hard filter" in (
+            unsupported_result
+        )
+        assert captured_plan.get("calls", 0) == 1
+        captured_plan["calls"] = 0
 
         unresolved_type_state = State(
             user_id=111,
@@ -3823,35 +3832,26 @@ class TestDeepAgentsRuntimeRefs:
                 },
             )
         )
-        assert misplaced_product_type.startswith(
+        # The product type is already carried by requested_product_type and the
+        # semantic query, and never becomes a filter. Rejecting the call
+        # discarded a search identical to one that succeeds, so it is corrected
+        # in place and retrieval runs.
+        assert "SEARCH_RESULT_GROUNDING_NOTE" in misplaced_product_type
+        assert not misplaced_product_type.startswith(
             runtime_mod.SEARCH_VALIDATION_ERROR_PREFIX
         )
-        assert "Product types never belong in unadvertised_requirements" in (
+        assert "The requested catalog requirement cannot be enforced" not in (
             misplaced_product_type
         )
-        assert "preserve the selected advertised parent category" in (
-            misplaced_product_type
-        )
-        assert captured_plan.get("calls", 0) == 0
-        unresolved_type_result = tool_text(
-            unresolved_type_tools[
-                "search_catalog_tool"
-            ](
-                semantic_query="casual sneakers for a sporty casual look",
-                shopper_guidance=(
-                    "Searching broader footwear for the closest casual options."
-                ),
-                requested_product_type="sneakers",
-                taxonomy={"category": ["footwear"], "subcategory": []},
-                required_constraints={},
-            )
-        )
-        assert "SEARCH_RESULT_GROUNDING_NOTE" in unresolved_type_result
+        # The corrected call is the search, so the parent-scope relation and the
+        # executed plan are asserted on it directly. Re-issuing the same scope
+        # now correctly trips the duplicate-scope guard rather than being the
+        # first real retrieval, so the former retry is gone.
         assert (
             'SEARCH_SCOPE_RELATION_EVIDENCE: {"advertised_category": '
             '"footwear", "relation": "model_selected_parent_category", '
             '"requested_product_type": "sneakers"}'
-            in unresolved_type_result
+            in misplaced_product_type
         )
         assert captured_plan["plan"].semantic_queries == [
             "casual sneakers for a sporty casual look"
@@ -4117,7 +4117,8 @@ class TestDeepAgentsRuntimeRefs:
         denim_tools["activate_shopper_skills_tool"](
             skill_names=["product-discovery"],
         )
-        required_constraint_failure = tool_text(
+        calls_before_denim = captured_plan["calls"]
+        denim_result = tool_text(
             denim_tools["search_catalog_tool"](
                 semantic_query="denim dresses",
                 shopper_guidance="Finding denim dresses for this request.",
@@ -4129,11 +4130,13 @@ class TestDeepAgentsRuntimeRefs:
             )
         )
 
-        assert "catalog requirement cannot be enforced" in required_constraint_failure
-        assert "'denim' is not an advertised hard filter" in (
-            required_constraint_failure
-        )
-        assert captured_plan["calls"] == 1
+        # "denim" cannot be hard-filtered, but it already ranks the search via
+        # the semantic query. The search runs and the limit is disclosed, so the
+        # shopper sees candidates instead of a refusal.
+        assert "SEARCH_RESULT_GROUNDING_NOTE" in denim_result
+        assert "catalog requirement cannot be enforced" in denim_result
+        assert "'denim' is not an advertised hard filter" in denim_result
+        assert captured_plan["calls"] == calls_before_denim + 1
 
         rainy_state = State(user_id=111, query="build a rainy day outfit")
         runtime._create_agent(rainy_state, identity)
@@ -4283,7 +4286,8 @@ class TestDeepAgentsRuntimeRefs:
         tools_by_name["activate_shopper_skills_tool"](
             skill_names=["product-discovery"],
         )
-        explicit_constraint_failure = tool_text(
+        calls_before_explicit = captured_plan["calls"]
+        explicit_constraint_result = tool_text(
             tools_by_name["search_catalog_tool"](
                 semantic_query="water-resistant bags",
                 shopper_guidance="Finding water-resistant bags for this request.",
@@ -4295,10 +4299,11 @@ class TestDeepAgentsRuntimeRefs:
             )
         )
 
+        assert "SEARCH_RESULT_GROUNDING_NOTE" in explicit_constraint_result
         assert "catalog requirement cannot be enforced" in (
-            explicit_constraint_failure
+            explicit_constraint_result
         )
-        assert captured_plan["calls"] == 2
+        assert captured_plan["calls"] == calls_before_explicit + 1
 
         synonym_state = State(user_id=111, query="Show me waterproof bags")
         runtime._create_agent(synonym_state, identity)
@@ -4318,8 +4323,9 @@ class TestDeepAgentsRuntimeRefs:
             )
         )
 
+        assert "SEARCH_RESULT_GROUNDING_NOTE" in synonym_failure
         assert "catalog requirement cannot be enforced" in synonym_failure
-        assert captured_plan["calls"] == 2
+        assert captured_plan["calls"] == calls_before_explicit + 2
 
         mismatched_taxonomy_failure = tool_text(
             synonym_tools["search_catalog_tool"](
@@ -4333,13 +4339,14 @@ class TestDeepAgentsRuntimeRefs:
             )
         )
 
-        assert "catalog requirement cannot be enforced" in (
+        # requested_product_type "bags" against a dresses taxonomy is a genuine
+        # mismatch. The unenforceable-requirement veto used to return first and
+        # hide it behind a requirement message; the real repair now surfaces.
+        assert runtime_mod.SEARCH_VALIDATION_ERROR_PREFIX in (
             mismatched_taxonomy_failure
         )
-        assert runtime_mod.SEARCH_VALIDATION_ERROR_PREFIX not in (
-            mismatched_taxonomy_failure
-        )
-        assert captured_plan["calls"] == 2
+        assert "binds to advertised category" in mismatched_taxonomy_failure
+        assert captured_plan["calls"] == calls_before_explicit + 2
 
         state = State(user_id=111, query="Show me sporty bags")
         runtime._create_agent(state, identity)
@@ -4364,7 +4371,7 @@ class TestDeepAgentsRuntimeRefs:
             "department": ["bags"],
             "product_type": ["satchels"],
         }
-        assert captured_plan["calls"] == 3
+        assert captured_plan["calls"] == 6
 
         state.query = "show me a black bag"
         no_result = tool_text(
@@ -4386,7 +4393,7 @@ class TestDeepAgentsRuntimeRefs:
         assert 'SEARCH_FILTER_EVIDENCE: {"color": ["black"]}' in no_result
         assert "SEARCH_SCOPE_COMPLETE" in no_result
         assert "PRODUCT_REF:" not in no_result
-        assert captured_plan["calls"] == 4
+        assert captured_plan["calls"] == 7
 
         image_state = State(
             user_id=111,
@@ -4408,7 +4415,7 @@ class TestDeepAgentsRuntimeRefs:
         assert "SEARCH_FILTER_EVIDENCE:" not in image_result
         assert "PRODUCT_REF: prod_1" in image_result
         assert captured_plan["plan"].search_mode == "hybrid"
-        assert captured_plan["calls"] == 5
+        assert captured_plan["calls"] == 8
         assert image_state.model_usage["text_embedding"]["status"] == "used"
         assert image_state.model_usage["text_embedding"]["calls"] == 1
         assert image_state.model_usage["image_embedding"]["status"] == "used"
@@ -4449,7 +4456,7 @@ class TestDeepAgentsRuntimeRefs:
             scrubbed_schema_repair
         )
         assert "waterproof dress" not in scrubbed_schema_repair
-        assert captured_plan["calls"] == 6
+        assert captured_plan["calls"] == 9
 
     def test_search_catalog_tool_enforces_per_turn_cap(
         self,
@@ -8016,6 +8023,83 @@ class TestCommittedMutationSurvivesTurnFailure:
         assert "review your cart" in receipt.lower()
         # must not look like the read-only catalog fallback
         assert "grounded catalog options" not in receipt
+
+
+class TestEvidenceFreeTurnsStillGetEdited:
+    """A turn with nothing to ground against is still edited.
+
+    The observed leak reached a shopper on exactly such a turn: no tool
+    evidence, empty cart, no history. The editor was skipped, leaving a fixed
+    list of literal string replacements as the only guard -- and a list cannot
+    cover what a model might say about its own machinery.
+    """
+
+    @pytest.mark.asyncio
+    async def test_editor_runs_when_no_lane_has_authority(
+        self,
+        base_config,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+        seen: dict[str, object] = {}
+
+        class RecordingEditor:
+            async def ainvoke(self, messages):
+                seen["called"] = True
+                return SimpleNamespace(content="I can help you shop.")
+
+        monkeypatch.setattr(runtime, "_create_chat_model", lambda: RecordingEditor())
+        state = State(user_id=111, query="what can you do?")
+        assert runtime_mod._has_grounding_authority(state, "") is False
+
+        response = await runtime._rewrite_response_for_grounding(
+            state,
+            {"messages": [{"role": "user", "content": "REQUEST ID: r1"}]},
+            "I only have cart tools in this chat.",
+            request_id="r1",
+        )
+
+        assert seen.get("called") is True
+        assert response == "I can help you shop."
+
+    @pytest.mark.asyncio
+    async def test_editor_failure_does_not_cost_the_shopper_the_reply(
+        self,
+        base_config,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Fail-closed guards unsupported product claims; there are none here.
+
+        Dropping the whole reply because an optional tidy-up failed would trade
+        a rare leak for a common hard failure.
+        """
+
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+
+        class FailingEditor:
+            async def ainvoke(self, messages):
+                raise RuntimeError("editor unavailable")
+
+        monkeypatch.setattr(runtime, "_create_chat_model", lambda: FailingEditor())
+        state = State(user_id=111, query="hello")
+        state.agent_diagnostics = {"final_termination_reason": "completed"}
+
+        response = await runtime._rewrite_response_for_grounding(
+            state,
+            {"messages": [{"role": "user", "content": "REQUEST ID: r1"}]},
+            "Happy to help you shop today.",
+            request_id="r1",
+        )
+
+        assert response == "Happy to help you shop today."
+        assert response != runtime_mod._GROUNDING_FAILURE_RESPONSE
+        # The turn completed; only the optional edit failed.
+        assert state.agent_diagnostics["final_termination_reason"] == "completed"
+        assert state.model_usage["app_llm_grounding_editor"]["status"] == "failed"
 
 
 class TestGroundingGateCountsHydratedLanes:

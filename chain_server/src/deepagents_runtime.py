@@ -85,7 +85,6 @@ from .message_shape import (
     _current_turn_messages,
     _extract_final_text,
     _message_type,
-    _prior_turn_messages,
     _result_messages,
     _tool_results_by_call_id,
     _value,
@@ -276,8 +275,9 @@ _SHOPPER_CONTEXT_SYSTEM_RULES = """Representative-shopper precedence and safety:
   weather lookup or weather inference from it."""
 _GROUNDING_EDITOR_SYSTEM_PROMPT = """You are a final response editor for a retail shopping assistant.
 
-Rewrite the draft response only as needed so it is grounded in TOOL EVIDENCE
-and CURRENT CART. Keep the shopper's requested task and any successful cart
+Rewrite the draft response only as needed so every factual claim is supported
+by a lane that can support it. CURRENT-TURN TOOL EVIDENCE, PRODUCTS SHOWN
+EARLIER, and CURRENT CART carry authority; CONVERSATION does not. Keep the shopper's requested task and any successful cart
 action intact.
 
 Rules:
@@ -293,8 +293,10 @@ Rules:
 - Do not add products, prices, cart actions, or product facts absent from TOOL
   EVIDENCE or CURRENT CART.
 - CURRENT-TURN TOOL EVIDENCE is the only evidence for a search or mutation in
-  this turn. PRIOR-TURN TOOL EVIDENCE may support direct references to products
-  previously shown, but it does not prove that a new search or mutation ran.
+  this turn. PRODUCTS SHOWN EARLIER may support a direct reference to something
+  already shown, but it establishes identity only: it never proves a product's
+  current price, availability, or attributes, and never proves that a search or
+  mutation ran this turn.
 - If TOOL EVIDENCE says there is no direct advertised taxonomy match for one
   requested role, do not claim a search ran for that role. Report that role's
   gap, preserve any other successful current-turn role, and ask whether to
@@ -308,11 +310,14 @@ Rules:
   and filter scope returned no products. It does not prove that a different,
   unsearched, or unadvertised product type is absent, and it never supports a
   catalog-wide availability claim.
-- Use RECENT DISCUSSION to resolve direct references such as "that" and
-  "those." A discussed product or styling anchor does not need to be in CURRENT
-  CART. RECENT DISCUSSION cannot establish whether the current search succeeded
-  or supply the current turn's candidates. Do not introduce an absent-cart
-  caveat unless the shopper asks about the cart or requests a cart mutation.
+- Use CONVERSATION to resolve direct references such as "that" and "those," and
+  to honour what the shopper has already told you. It carries intent only: it
+  can never establish a product fact, a price, availability, whether a search
+  succeeded, or what this turn's candidates are. Anything asserted only in
+  CONVERSATION and supported by no other lane must not be repeated as fact.
+  A discussed product or styling anchor does not need to be in CURRENT CART. Do
+  not introduce an absent-cart caveat unless the shopper asks about the cart or
+  requests a cart mutation.
 - Remove PRODUCT_REF, CART_LINE_ID, tool names, and internal IDs.
 - Remove internal skill, mode, evaluator, judge, cache, backend, tool-evidence,
   structured-field, and data-layer language. Use shopper-safe phrasing such as
@@ -3584,10 +3589,6 @@ class DeepAgentsRuntime:
             max_chars=max_evidence_chars,
             request_id=request_id,
         )
-        prior_evidence = _collect_message_grounding_evidence(
-            _prior_turn_messages(_result_messages(result), request_id),
-            max_chars=max_evidence_chars,
-        )
         search_only = bool(current_evidence) and _has_search_only_tool_evidence(
             result,
             request_id=request_id,
@@ -3608,19 +3609,23 @@ class DeepAgentsRuntime:
                 result,
                 request_id=request_id,
             )
-        if not _has_grounding_authority(state, current_evidence, prior_evidence):
+        if not _has_grounding_authority(state, current_evidence):
             return _scrub_internal_shopper_language(draft_response)
 
         start = time.monotonic()
+        # Separated authority lanes. Each is labelled with what it may be used
+        # for, because a lane that mixes intent with identity gives the editor
+        # no way to tell which half can support a factual claim.
         prompt = (
             f"USER QUERY:\n{state.query}\n\n"
-            f"RECENT DISCUSSION:\n{state.context or '(none)'}\n\n"
-            f"CURRENT CART:\n{_format_cart(state.cart)}\n\n"
-            f"AVAILABLE IMAGES:\n{_format_retrieved_images(state.retrieved)}\n\n"
-            "CURRENT-TURN TOOL EVIDENCE:\n"
+            "CURRENT-TURN TOOL EVIDENCE (facts established this turn):\n"
             f"{current_evidence or '(none)'}\n\n"
-            "PRIOR-TURN TOOL EVIDENCE:\n"
-            f"{prior_evidence or '(none)'}\n\n"
+            "PRODUCTS SHOWN EARLIER (identity only — not current facts):\n"
+            f"{format_historical_product_index(state.historical_product_sets) or '(none)'}\n\n"
+            f"CURRENT CART (authoritative):\n{_format_cart(state.cart)}\n\n"
+            "CONVERSATION (shopper intent only — never a product fact):\n"
+            f"{state.dialogue_context or '(none)'}\n\n"
+            f"AVAILABLE IMAGES:\n{_format_retrieved_images(state.retrieved)}\n\n"
             f"DRAFT RESPONSE:\n{draft_response}"
         )
         try:
@@ -4185,6 +4190,7 @@ Rules:
             logger.error("Failed to start durable conversation turn: %s", exc)
             state.dialogue = []
             state.historical_product_sets = []
+            state.dialogue_context = ""
             state.context = ""
             state.cart = Cart()
             state.shopper_context = None
@@ -4234,10 +4240,11 @@ Rules:
         finally:
             state.timings["memory"] = time.monotonic() - start
 
-        state.dialogue, state.context = build_dialogue_context(
+        state.dialogue, state.dialogue_context = build_dialogue_context(
             turn.recent_turns,
             max_chars=max(1000, int(self.config.memory_length)),
         )
+        state.context = state.dialogue_context
         state.previous_selected_skill_names = list(
             turn.previous_selected_skill_names
         )
@@ -5072,11 +5079,7 @@ def _committed_effect_receipt(
     return "\n".join(lines)
 
 
-def _has_grounding_authority(
-    state: State,
-    current_evidence: str,
-    prior_evidence: str,
-) -> bool:
+def _has_grounding_authority(state: State, current_evidence: str) -> bool:
     """Return whether this turn has any authority to check a draft against.
 
     Every turn hydrates memory lanes before the model runs. Gating the grounding
@@ -5092,7 +5095,6 @@ def _has_grounding_authority(
 
     return bool(
         current_evidence
-        or prior_evidence
         or state.historical_product_sets
         or state.cart.contents
     )

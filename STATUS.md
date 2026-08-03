@@ -345,6 +345,20 @@ The newest focused gate is recorded first. Older implementation gates remain
 below as comparison points; generated quality and timing
 artifacts stay in the required local archive rather than versioned source.
 
+- Composer authority-lane separation (2026-08-03): the grounding editor
+  received dialogue and the historical product index glued into one
+  `RECENT DISCUSSION` block, so it could not tell which half may support a
+  factual claim — shopper prose sat beside genuine product identity under one
+  label. The composer now receives separated lanes, each stating what it may be
+  used for: current-turn tool evidence (facts established this turn), products
+  shown earlier (identity only, never current price/availability/attributes),
+  the authoritative cart, and conversation (shopper intent only, never a product
+  fact). The editor's rules were rewritten to match. The dead
+  `PRIOR-TURN TOOL EVIDENCE` lane is deleted: `_prior_turn_messages` always
+  returns empty because the graph is invoked with one human message per turn.
+  The agent prompt is unchanged; only the composer's input changed. The offline
+  suite moved from 948 to 953 passed with 1 xfailed.
+
 - Unenforceable-requirement ownership fix (2026-08-03): when every tool outcome
   reported an unadvertised hard filter, the runtime discarded the model's
   composed answer and substituted a fixed question — "would you like me to treat

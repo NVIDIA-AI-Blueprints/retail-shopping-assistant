@@ -7963,7 +7963,7 @@ class TestGroundingGateCountsHydratedLanes:
         return State(user_id=1, query="q", **kw)
 
     def test_tool_evidence_alone_still_grounds(self) -> None:
-        assert self._gate()(self._state(), "SEARCH_RESULT...", "") is True
+        assert self._gate()(self._state(), "SEARCH_RESULT...") is True
 
     def test_historical_product_index_grounds_without_a_tool_call(self) -> None:
         """The regression this slice closes.
@@ -7979,14 +7979,14 @@ class TestGroundingGateCountsHydratedLanes:
             ]
         )
 
-        assert self._gate()(state, "", "") is True
+        assert self._gate()(state, "") is True
 
     def test_authoritative_cart_grounds_without_a_tool_call(self) -> None:
         from chain_server.src.agenttypes import Cart
 
         state = self._state(cart=Cart(contents=[{"item": "Work Bag", "amount": 1}]))
 
-        assert self._gate()(state, "", "") is True
+        assert self._gate()(state, "") is True
 
     def test_dialogue_alone_does_not_ground(self) -> None:
         """Dialogue carries intent, never product fact — it cannot verify a claim."""
@@ -8000,12 +8000,12 @@ class TestGroundingGateCountsHydratedLanes:
             context="RECENT CONVERSATION:\n[turn 1]\nUser: I like beige",
         )
 
-        assert self._gate()(state, "", "") is False
+        assert self._gate()(state, "") is False
 
     def test_a_genuinely_empty_turn_still_skips(self) -> None:
         """No tool, no history, no cart: nothing to check, so no model call."""
 
-        assert self._gate()(self._state(), "", "") is False
+        assert self._gate()(self._state(), "") is False
 
 
 class TestUnenforceableRequirementIsModelOwned:
@@ -8039,3 +8039,51 @@ class TestUnenforceableRequirementIsModelOwned:
         message = runtime_mod._unsupported_requirement_message(["matte"])
 
         assert "already told you" in message
+
+
+class TestComposerAuthorityLanes:
+    """The composer must receive lanes it can tell apart."""
+
+    def test_dialogue_and_product_identity_are_separate_lanes(self) -> None:
+        """They were glued under one RECENT DISCUSSION heading.
+
+        The editor could not tell which half may support a factual claim:
+        shopper prose sat beside genuine product identity under one label.
+        """
+
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        src = runtime_mod._GROUNDING_EDITOR_SYSTEM_PROMPT
+        assert "CONVERSATION" in src
+        assert "PRODUCTS SHOWN EARLIER" in src
+        assert "RECENT DISCUSSION" not in src
+
+    def test_conversation_lane_is_declared_non_authoritative(self) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        src = runtime_mod._GROUNDING_EDITOR_SYSTEM_PROMPT
+        assert "CONVERSATION does not" in src
+        assert "intent only" in src
+
+    def test_earlier_products_are_identity_not_current_fact(self) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        src = runtime_mod._GROUNDING_EDITOR_SYSTEM_PROMPT
+        assert "establishes identity only" in src
+        assert "never proves a product's" in src
+
+    def test_dead_prior_turn_lane_is_gone(self) -> None:
+        """_prior_turn_messages always returns [] — one human message per turn."""
+
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        assert "PRIOR-TURN TOOL EVIDENCE" not in runtime_mod._GROUNDING_EDITOR_SYSTEM_PROMPT
+
+    def test_dialogue_context_excludes_the_product_index(self) -> None:
+        from chain_server.src.agenttypes import State
+
+        state = State(user_id=1, query="q")
+        state.dialogue_context = "RECENT CONVERSATION:\n[turn 1]\nUser: hi"
+        state.context = state.dialogue_context + "\n\nHISTORICAL PRODUCT INDEX (read-only):\n- x"
+
+        assert "HISTORICAL PRODUCT INDEX" not in state.dialogue_context

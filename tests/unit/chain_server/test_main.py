@@ -6650,55 +6650,6 @@ class TestDeepAgentsRuntimeRefs:
             request_id="current-request",
         ) is False
 
-    def test_unsupported_requirement_response_is_fixed_and_current_turn_scoped(
-        self,
-    ) -> None:
-        from chain_server.src import deepagents_runtime as runtime_mod
-
-        result = {
-            "messages": [
-                {"role": "user", "content": "REQUEST ID: earlier-request"},
-                {
-                    "role": "tool",
-                    "content": (
-                        "The requested catalog requirement cannot be enforced: "
-                        "'water_resistant' is not an advertised hard filter."
-                    ),
-                },
-                {"role": "user", "content": "REQUEST ID: current-request"},
-            ]
-        }
-
-        assert runtime_mod._unsupported_requirement_response(
-            result,
-            request_id="current-request",
-        ) is None
-
-        result["messages"].append(result["messages"][1])
-        assert runtime_mod._unsupported_requirement_response(
-            result,
-            request_id="current-request",
-        ) == runtime_mod._UNSUPPORTED_REQUIREMENT_RESPONSE
-
-        detail_then_unsupported = {
-            "messages": [
-                {"role": "user", "content": "REQUEST ID: current-request"},
-                {
-                    "role": "tool",
-                    "name": "get_product_details_tool",
-                    "content": (
-                        "PRODUCT_DETAIL_GROUNDING_NOTE: verified details.\n"
-                        "PRODUCT_REF: bag-1\nNAME: Work Bag"
-                    ),
-                },
-                result["messages"][1],
-            ]
-        }
-        assert runtime_mod._unsupported_requirement_response(
-            detail_then_unsupported,
-            request_id="current-request",
-        ) is None
-
     def test_unsupported_requirement_preserves_successful_search_evidence(
         self,
         base_config,
@@ -6741,10 +6692,6 @@ class TestDeepAgentsRuntimeRefs:
             ]
         }
 
-        assert runtime_mod._unsupported_requirement_response(
-            result,
-            request_id="current-request",
-        ) is None
         response = runtime._build_search_only_response(
             state,
             result,
@@ -8059,3 +8006,36 @@ class TestGroundingGateCountsHydratedLanes:
         """No tool, no history, no cart: nothing to check, so no model call."""
 
         assert self._gate()(self._state(), "", "") is False
+
+
+class TestUnenforceableRequirementIsModelOwned:
+    """Deterministic code establishes the fact; the model decides what to say."""
+
+    def test_runtime_no_longer_seizes_the_turn(self) -> None:
+        """The fixed refusal override is gone.
+
+        It discarded the model's composed answer and substituted a question the
+        shopper had often already answered in the same message, and it bypassed
+        the grounding editor on those turns.
+        """
+
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        assert not hasattr(runtime_mod, "_unsupported_requirement_response")
+
+    def test_tool_outcome_states_the_fact_and_forbids_refusing(self) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        message = runtime_mod._unsupported_requirement_message(["matte"])
+
+        assert "not an advertised hard filter" in message
+        assert "Do not refuse the request." in message
+        # it must not dictate a single conversational move
+        assert "Ask the shopper whether to treat it as a preference." not in message
+
+    def test_outcome_defers_to_what_the_shopper_already_said(self) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        message = runtime_mod._unsupported_requirement_message(["matte"])
+
+        assert "already told you" in message

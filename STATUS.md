@@ -345,6 +345,19 @@ The newest focused gate is recorded first. Older implementation gates remain
 below as comparison points; generated quality and timing
 artifacts stay in the required local archive rather than versioned source.
 
+- Unenforceable-requirement ownership fix (2026-08-03): when every tool outcome
+  reported an unadvertised hard filter, the runtime discarded the model's
+  composed answer and substituted a fixed question — "would you like me to treat
+  it as a preference?" — even when the shopper had already answered it in the
+  same message. It also bypassed the grounding editor on those turns. This was
+  the single largest deterministic failure mode in the Challenger baseline: 9 of
+  141 turns, more than scope guards, grounding failures, and timeouts combined.
+  Deterministic code still establishes that a filter is not advertised; the
+  model now decides what to say about it, and the tool outcome defers to what
+  the shopper has already stated rather than prescribing a single move. The dead
+  override and its test were removed. The offline suite moved from 946 to 948
+  passed with 1 xfailed.
+
 - Grounding-gate hydration fix (2026-08-03): every turn hydrates memory lanes
   before the model runs, but the gate deciding whether to run the grounding
   editor counted only current-turn *tool* evidence — and prior-turn evidence is

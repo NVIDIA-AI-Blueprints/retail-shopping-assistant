@@ -24,6 +24,13 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from chain_server.src.agenttypes import Cart, ShopperContext, State
+from .tool_evidence_fixtures import (
+    detail_artifact,
+    product,
+    product_detail,
+    search_evidence,
+    search_tool_message,
+)
 from chain_server.src.conversation_memory import (
     ConversationMemoryError,
     ConversationProjection,
@@ -5126,17 +5133,18 @@ class TestDeepAgentsRuntimeRefs:
         result = {
             "messages": [
                 {"role": "user", "content": "REQUEST ID: current-request"},
-                {
-                    "role": "tool",
-                    "name": "search_catalog_tool",
-                    "content": (
-                        "SEARCH_RESULT_GROUNDING_NOTE: grounded.\n"
-                        "PRODUCT_REF: prod_sandal\n"
-                        "NAME: Flat Strappy Black Sandals\n"
-                        "CATEGORY: sandals\n"
-                        "PRICE: $49.90 USD"
-                    ),
-                },
+                search_tool_message(
+                    search_evidence(
+                        products=[
+                            product(
+                                "Flat Strappy Black Sandals",
+                                product_ref="prod_sandal",
+                                category="sandals",
+                                price="$49.90 USD",
+                            )
+                        ]
+                    )
+                ),
             ]
         }
 
@@ -5208,17 +5216,18 @@ class TestDeepAgentsRuntimeRefs:
         result = {
             "messages": [
                 {"role": "user", "content": "REQUEST ID: current-request"},
-                {
-                    "role": "tool",
-                    "name": "search_catalog_tool",
-                    "content": (
-                        "SEARCH_RESULT_GROUNDING_NOTE: grounded.\n"
-                        "PRODUCT_REF: prod_sandal\n"
-                        "NAME: Flat Strappy Black Sandals\n"
-                        "CATEGORY: sandals\n"
-                        "PRICE: $49.90 USD"
-                    ),
-                },
+                search_tool_message(
+                    search_evidence(
+                        products=[
+                            product(
+                                "Flat Strappy Black Sandals",
+                                product_ref="prod_sandal",
+                                category="sandals",
+                                price="$49.90 USD",
+                            )
+                        ]
+                    )
+                ),
             ]
         }
 
@@ -5531,17 +5540,18 @@ class TestDeepAgentsRuntimeRefs:
         result = {
             "messages": [
                 {"role": "user", "content": "REQUEST ID: current-request"},
-                {
-                    "role": "tool",
-                    "name": "search_catalog_tool",
-                    "content": (
-                        "SEARCH_RESULT_GROUNDING_NOTE: grounded.\n"
-                        "PRODUCT_REF: prod_sandal\n"
-                        "NAME: Flat Strappy Black Sandals\n"
-                        "CATEGORY: sandals\n"
-                        "PRICE: $49.90 USD"
-                    ),
-                },
+                search_tool_message(
+                    search_evidence(
+                        products=[
+                            product(
+                                "Flat Strappy Black Sandals",
+                                product_ref="prod_sandal",
+                                category="sandals",
+                                price="$49.90 USD",
+                            )
+                        ]
+                    )
+                ),
             ]
         }
 
@@ -5655,12 +5665,16 @@ class TestDeepAgentsRuntimeRefs:
             "messages": [
                 HumanMessage(content="REQUEST ID: current-request"),
                 ToolMessage(
-                    content=(
-                        "SEARCH_RESULT_GROUNDING_NOTE: grounded.\n"
-                        "PRODUCT_REF: boot-1\n"
-                        "NAME: Everyday Boot\n"
-                        "CATEGORY: boots"
-                    ),
+                    content="SEARCH_RESULT_GROUNDING_NOTE: grounded.",
+                    artifact=search_evidence(
+                        products=[
+                            product(
+                                "Everyday Boot",
+                                product_ref="boot-1",
+                                category="boots",
+                            )
+                        ]
+                    ).as_artifact(),
                     name="search_catalog_tool",
                     tool_call_id="boots-search",
                 ),
@@ -6244,17 +6258,19 @@ class TestDeepAgentsRuntimeRefs:
                     "role": "user",
                     "content": "REQUEST ID: current-request",
                 },
-                {
-                    "role": "tool",
-                    "name": "search_catalog_tool",
-                    "content": (
-                        "SEARCH_RESULT_GROUNDING_NOTE: grounded.\n"
-                        'SEARCH_FILTER_EVIDENCE: {"price": {"max": 50}}\n'
-                        "NAME: Everyday Bag\nCATEGORY: tote bags"
-                        "\nPRODUCT_REF: prod_satchel\n"
-                        "NAME: Work Satchel\nCATEGORY: satchels"
-                    ),
-                },
+                search_tool_message(
+                    search_evidence(
+                        confirmed_filters={"price": {"max": 50}},
+                        products=[
+                            product("Everyday Bag", category="tote bags"),
+                            product(
+                                "Work Satchel",
+                                product_ref="prod_satchel",
+                                category="satchels",
+                            ),
+                        ],
+                    )
+                ),
             ]
         }
 
@@ -6357,26 +6373,28 @@ class TestDeepAgentsRuntimeRefs:
         result = {
             "messages": [
                 {"role": "user", "content": "REQUEST ID: current-request"},
-                {
-                    "role": "tool",
-                    "name": "search_catalog_tool",
-                    "content": (
+                search_tool_message(
+                    search_evidence(
+                        advertised_category="footwear",
+                        requested_product_type="sneakers",
+                        shopper_guidance=(
+                            "Use casual footwear for a sporty direction."
+                        ),
+                        taxonomy={"department": ["footwear"]},
+                        products=[
+                            product(
+                                "Everyday Flat",
+                                product_ref="flat-1",
+                                category="flats",
+                                price="$49.00 USD",
+                            )
+                        ],
+                    ),
+                    content=(
                         "SEARCH_RESULT_GROUNDING_NOTE: grounded.\n"
-                        "SEARCH_SCOPE_RELATION_EVIDENCE: "
-                        '{"advertised_category": "footwear", '
-                        '"relation": "model_selected_parent_category", '
-                        '"requested_product_type": "sneakers"}\n'
-                        'SEARCH_GUIDANCE_EVIDENCE: {"text": "Use casual '
-                        'footwear for a sporty direction."}\n'
-                        "SEARCH_TAXONOMY_EVIDENCE: "
-                        '{"department": ["footwear"]}\n'
-                        "PRODUCT_REF: flat-1\n"
-                        "NAME: Everyday Flat\n"
-                        "CATEGORY: flats\n"
-                        "PRICE: $49.00 USD\n"
                         "SEARCH_SCOPE_COMPLETE: Answer now."
                     ),
-                },
+                ),
             ]
         }
 
@@ -6437,32 +6455,58 @@ class TestDeepAgentsRuntimeRefs:
         result = {
             "messages": [
                 {"role": "user", "content": "REQUEST ID: current-request"},
-                {
-                    "role": "tool",
-                    "name": "search_catalog_tool",
-                    "content": (
-                        "SEARCH_RESULT_GROUNDING_NOTE: skirts\n"
-                        'SEARCH_DIRECTION_EVIDENCE: "a skirt for a weekend look"\n'
-                        'SEARCH_GUIDANCE_EVIDENCE: {"text": "Use a skirt as the relaxed outfit base."}\n'
-                        'SEARCH_TAXONOMY_EVIDENCE: {"category": ["apparel"], "subcategory": ["skirts"]}\n'
-                        'SEARCH_FILTER_EVIDENCE: {"primary_color": ["black"]}\n'
-                        "PRODUCT_REF: skirt-1\nNAME: Skirt One\nCATEGORY: skirts\n"
-                        "PRODUCT_REF: skirt-2\nNAME: Skirt Two\nCATEGORY: skirts"
+                search_tool_message(
+                    search_evidence(
+                        semantic_query="a skirt for a weekend look",
+                        shopper_guidance=(
+                            "Use a skirt as the relaxed outfit base."
+                        ),
+                        taxonomy={
+                            "category": ["apparel"],
+                            "subcategory": ["skirts"],
+                        },
+                        confirmed_filters={"primary_color": ["black"]},
+                        products=[
+                            product(
+                                "Skirt One",
+                                product_ref="skirt-1",
+                                category="skirts",
+                            ),
+                            product(
+                                "Skirt Two",
+                                product_ref="skirt-2",
+                                category="skirts",
+                            ),
+                        ],
                     ),
-                },
-                {
-                    "role": "tool",
-                    "name": "search_catalog_tool",
-                    "content": (
-                        "SEARCH_RESULT_GROUNDING_NOTE: flats\n"
-                        'SEARCH_DIRECTION_EVIDENCE: "flats for a weekend look"\n'
-                        'SEARCH_GUIDANCE_EVIDENCE: {"text": "Add flats to finish the weekend outfit."}\n'
-                        'SEARCH_TAXONOMY_EVIDENCE: {"category": ["footwear"], "subcategory": ["flats"]}\n'
-                        'SEARCH_FILTER_EVIDENCE: {"heel_type": ["flat"]}\n'
-                        "PRODUCT_REF: flat-1\nNAME: Flat One\nCATEGORY: flats\n"
-                        "PRODUCT_REF: flat-2\nNAME: Flat Two\nCATEGORY: flats"
+                    content="SEARCH_RESULT_GROUNDING_NOTE: skirts",
+                ),
+                search_tool_message(
+                    search_evidence(
+                        semantic_query="flats for a weekend look",
+                        shopper_guidance=(
+                            "Add flats to finish the weekend outfit."
+                        ),
+                        taxonomy={
+                            "category": ["footwear"],
+                            "subcategory": ["flats"],
+                        },
+                        confirmed_filters={"heel_type": ["flat"]},
+                        products=[
+                            product(
+                                "Flat One",
+                                product_ref="flat-1",
+                                category="flats",
+                            ),
+                            product(
+                                "Flat Two",
+                                product_ref="flat-2",
+                                category="flats",
+                            ),
+                        ],
                     ),
-                },
+                    content="SEARCH_RESULT_GROUNDING_NOTE: flats",
+                ),
             ]
         }
 
@@ -6497,19 +6541,22 @@ class TestDeepAgentsRuntimeRefs:
         result = {
             "messages": [
                 {"role": "user", "content": "REQUEST ID: current-request"},
-                {
-                    "role": "tool",
-                    "name": "search_catalog_tool",
-                    "content": (
+                search_tool_message(
+                    search_evidence(
+                        outcome="zero_results",
+                        semantic_query="black tailored trousers",
+                        taxonomy={
+                            "category": ["apparel"],
+                            "subcategory": ["skirts"],
+                        },
+                        confirmed_filters={"primary_color": ["black"]},
+                    ),
+                    content=(
                         "SEARCH_NO_MATCH_GROUNDING_NOTE: Zero products matched "
                         "this exact advertised taxonomy and filter scope.\n"
-                        'SEARCH_DIRECTION_EVIDENCE: "black tailored trousers"\n'
-                        "SEARCH_TAXONOMY_EVIDENCE: "
-                        '{"category": ["apparel"], "subcategory": ["skirts"]}\n'
-                        'SEARCH_FILTER_EVIDENCE: {"primary_color": ["black"]}\n'
                         "SEARCH_SCOPE_COMPLETE: Answer now."
                     ),
-                },
+                ),
             ]
         }
 
@@ -6557,10 +6604,24 @@ class TestDeepAgentsRuntimeRefs:
     ) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
 
+        message = search_tool_message(
+            search_evidence(
+                outcome="no_direct_catalog_match",
+                requested_product_type="casual sneakers",
+                scope_outcome={
+                    "outcome": "no_direct_catalog_match",
+                    "requested_product_type": "casual sneakers",
+                },
+            ),
+            content=(
+                "STOP_TOOL_USE: No faithful advertised catalog taxonomy matches "
+                "the requested product type in 'casual sneakers'. Do not search "
+                "adjacent product types."
+            ),
+        )
         evidence = runtime_mod._customer_safe_tool_evidence(
-            "STOP_TOOL_USE: No faithful advertised catalog taxonomy matches "
-            "the requested product type in 'casual sneakers'. Do not search "
-            "adjacent product types."
+            message["content"],
+            message,
         )
 
         assert evidence.startswith("CUSTOMER_SAFE_NO_MATCH_EVIDENCE:")
@@ -6795,17 +6856,19 @@ class TestDeepAgentsRuntimeRefs:
             "messages": [
                 {
                     "role": "tool",
-                    "content": (
-                        "PRODUCT_DETAIL_GROUNDING_NOTE: State only facts.\n"
-                        "PRODUCT_REF: prod_skirt\n"
-                        "NAME: Zephyr Linen Skirt\n"
-                        "CATEGORY: skirt\n"
-                        "PRICE: $39.99 USD\n"
-                        "IMAGE_URL: /images/zephyr.jpg\n"
-                        "DETAILS:\n"
-                        "- care: Machine wash cold.\n"
-                        "- composition: 100% linen\n"
-                        "DESCRIPTION: 100% linen and breathable for all-day comfort."
+                    "content": "PRODUCT_DETAIL_GROUNDING_NOTE: State only facts.",
+                    "artifact": detail_artifact(
+                        product_detail(
+                            "Zephyr Linen Skirt",
+                            product_ref="prod_skirt",
+                            category="skirt",
+                            price="$39.99 USD",
+                            image_url="/images/zephyr.jpg",
+                            details=[
+                                "care: Machine wash cold.",
+                                "composition: 100% linen",
+                            ],
+                        )
                     ),
                 }
             ]
@@ -6829,27 +6892,34 @@ class TestDeepAgentsRuntimeRefs:
 
         result = {
             "messages": [
-                {
-                    "role": "tool",
-                    "content": (
-                        "SEARCH_RESULT_GROUNDING_NOTE: Use search results.\n"
-                        "SEARCH_TAXONOMY_EVIDENCE: "
-                        '{"category": ["footwear"], '
-                        '"subcategory": ["flats", "sandals"]}\n'
-                        "SEARCH_FILTER_EVIDENCE: "
-                        '{"heel_type": ["flat", "kitten", "block"], '
-                        '"primary_color": ["black"]}\n'
-                        "PRODUCT_REF: prod_ocean\n"
-                        "NAME: Ocean Breeze Maxi Dress\n"
-                        "CATEGORY: dress\n"
-                        "PRICE: $189.99 USD\n"
-                        "IMAGE_URL: /images/ocean.jpg\n"
-                        "PRODUCT_REF: prod_gazelle\n"
-                        "NAME: Gazelle Gingham Dress\n"
-                        "CATEGORY: dress\n"
-                        "PRICE: $149.99 USD"
+                search_tool_message(
+                    search_evidence(
+                        taxonomy={
+                            "category": ["footwear"],
+                            "subcategory": ["flats", "sandals"],
+                        },
+                        confirmed_filters={
+                            "heel_type": ["flat", "kitten", "block"],
+                            "primary_color": ["black"],
+                        },
+                        products=[
+                            product(
+                                "Ocean Breeze Maxi Dress",
+                                product_ref="prod_ocean",
+                                category="dress",
+                                price="$189.99 USD",
+                                image_url="/images/ocean.jpg",
+                            ),
+                            product(
+                                "Gazelle Gingham Dress",
+                                product_ref="prod_gazelle",
+                                category="dress",
+                                price="$149.99 USD",
+                            ),
+                        ],
                     ),
-                }
+                    content="SEARCH_RESULT_GROUNDING_NOTE: Use search results.",
+                )
             ]
         }
 
@@ -6898,26 +6968,28 @@ class TestDeepAgentsRuntimeRefs:
 
         result = {
             "messages": [
-                {
-                    "role": "tool",
-                    "content": (
-                        "SEARCH_RESULT_GROUNDING_NOTE: Use search results.\n"
-                        "SEARCH_SCOPE_RELATION_EVIDENCE: "
-                        '{"advertised_category": "footwear", '
-                        '"relation": "model_selected_parent_category", '
-                        '"requested_product_type": "sneakers"}\n'
-                        "SEARCH_TAXONOMY_EVIDENCE: "
-                        '{"department": ["footwear"]}\n'
-                        "PRODUCT_REF: prod_flat\n"
-                        "NAME: Everyday Flat\n"
-                        "CATEGORY: flats\n"
-                        "PRICE: $49.00 USD\n"
-                        "PRODUCT_REF: prod_sandal\n"
-                        "NAME: Weekend Sandal\n"
-                        "CATEGORY: sandals\n"
-                        "PRICE: $59.00 USD"
+                search_tool_message(
+                    search_evidence(
+                        advertised_category="footwear",
+                        requested_product_type="sneakers",
+                        taxonomy={"department": ["footwear"]},
+                        products=[
+                            product(
+                                "Everyday Flat",
+                                product_ref="prod_flat",
+                                category="flats",
+                                price="$49.00 USD",
+                            ),
+                            product(
+                                "Weekend Sandal",
+                                product_ref="prod_sandal",
+                                category="sandals",
+                                price="$59.00 USD",
+                            ),
+                        ],
                     ),
-                }
+                    content="SEARCH_RESULT_GROUNDING_NOTE: Use search results.",
+                )
             ]
         }
 
@@ -7047,26 +7119,21 @@ class TestDeepAgentsRuntimeRefs:
         result = {
             "messages": [
                 {"role": "user", "content": "REQUEST ID: current-request"},
-                {
-                    "role": "tool",
-                    "name": "search_catalog_tool",
-                    "content": (
-                        "SEARCH_RESULT_GROUNDING_NOTE: grounded.\n"
-                        "SEARCH_FILTER_EVIDENCE: "
-                        '{"heel_type": ["flat", "kitten", "block"], '
-                        '"primary_color": ["black"]}\n'
-                        "NAME: Black Flat\nCATEGORY: flats"
-                    ),
-                },
-                {
-                    "role": "tool",
-                    "name": "search_catalog_tool",
-                    "content": (
-                        "SEARCH_RESULT_GROUNDING_NOTE: grounded.\n"
-                        'SEARCH_FILTER_EVIDENCE: {"primary_color": ["red"]}\n'
-                        "NAME: Red Top\nCATEGORY: tops"
-                    ),
-                },
+                search_tool_message(
+                    search_evidence(
+                        confirmed_filters={
+                            "heel_type": ["flat", "kitten", "block"],
+                            "primary_color": ["black"],
+                        },
+                        products=[product("Black Flat", category="flats")],
+                    )
+                ),
+                search_tool_message(
+                    search_evidence(
+                        confirmed_filters={"primary_color": ["red"]},
+                        products=[product("Red Top", category="tops")],
+                    )
+                ),
             ]
         }
 

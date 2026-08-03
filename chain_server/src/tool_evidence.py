@@ -1,9 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Typed catalog-search evidence, and the text rendered from it.
+"""Typed tool evidence, and the text rendered from it.
 
-A search produces typed facts. Those facts were previously rendered into prose
+A catalog tool produces typed facts. Those facts were previously rendered into prose
 for the model and then parsed back out of that prose to rebuild the composer's
 evidence -- the runtime reading its own output to learn what it already knew.
 
@@ -28,12 +28,15 @@ from typing import Any
 #: Artifact key carrying the typed evidence for one search call.
 EVIDENCE_KEY = "search_evidence"
 
+#: Artifact key carrying the typed evidence for one product-detail read.
+DETAIL_EVIDENCE_KEY = "product_detail_evidence"
+
 
 @dataclass
 class SearchEvidence:
     """Everything a search established, as data rather than prose."""
 
-    outcome: str  # "results" | "zero_results"
+    outcome: str  # "results" | "zero_results" | "no_direct_catalog_match"
     taxonomy: dict[str, Any] = field(default_factory=dict)
     confirmed_filters: dict[str, Any] = field(default_factory=dict)
     semantic_query: str = ""
@@ -43,6 +46,8 @@ class SearchEvidence:
     scope_complete: bool = False
     budget_exhausted: bool = False
     products: list[dict[str, Any]] = field(default_factory=list)
+    #: The bounded, product-free outcome diagnostics report, when there is one.
+    scope_outcome: dict[str, Any] | None = None
 
     def as_artifact(self) -> dict[str, Any]:
         return {
@@ -57,6 +62,7 @@ class SearchEvidence:
                 "scope_complete": self.scope_complete,
                 "budget_exhausted": self.budget_exhausted,
                 "products": self.products,
+                "scope_outcome": self.scope_outcome,
             }
         }
 
@@ -72,4 +78,28 @@ def evidence_of(message: Any) -> dict[str, Any] | None:
     if not isinstance(artifact, dict):
         return None
     payload = artifact.get(EVIDENCE_KEY)
+    return payload if isinstance(payload, dict) else None
+
+
+@dataclass
+class ProductDetailEvidence:
+    """The facts one product-detail read established."""
+
+    products: list[dict[str, Any]] = field(default_factory=list)
+
+    def as_artifact(self) -> dict[str, Any]:
+        return {DETAIL_EVIDENCE_KEY: {"products": self.products}}
+
+
+def detail_evidence_of(message: Any) -> dict[str, Any] | None:
+    """Read typed product-detail evidence from a tool message."""
+
+    artifact = (
+        message.get("artifact")
+        if isinstance(message, dict)
+        else getattr(message, "artifact", None)
+    )
+    if not isinstance(artifact, dict):
+        return None
+    payload = artifact.get(DETAIL_EVIDENCE_KEY)
     return payload if isinstance(payload, dict) else None

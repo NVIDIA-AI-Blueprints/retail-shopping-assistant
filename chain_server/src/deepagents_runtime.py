@@ -67,6 +67,7 @@ from .conversation_memory import (
 from .control_signals import (
     EFFECTS_KEY,
     ControlSignal,
+    committed_effect,
     committed_effects_in,
     control,
     normalize_tool_result,
@@ -3219,7 +3220,7 @@ class DeepAgentsRuntime:
             return normalize_tool_result(_add_cart_items_impl(items))
 
         @tool(return_direct=False)
-        def remove_cart_item_tool(cart_line_id: str, quantity: int = 1) -> str:
+        def _remove_cart_item_impl(cart_line_id: str, quantity: int = 1):
             """Remove a cart line. Use ONLY on explicit shopper intent to remove
             an item. Requires CART_LINE_ID from get_cart_tool — do not guess.
             Use update_cart_items_tool to change quantity instead of removing
@@ -3248,13 +3249,36 @@ class DeepAgentsRuntime:
                 state.cart,
                 scope.product_evidence.values(),
             )
-            return _format_cart_remove_result(
+            rendered = _format_cart_remove_result(
                 result,
                 fallback=f"Removed {quantity} {line['item']} from cart.",
             )
+            if not result.ok:
+                return rendered
+            return committed_effect(
+                rendered,
+                operation="removed from cart",
+                idempotency_key=(
+                    f"{identity.request_id}:remove:{line['cart_line_id']}:{quantity}"
+                ),
+                cart_line_id=line["cart_line_id"],
+                product_id=line["item"],
+                quantity=quantity,
+            )
 
-        @tool(args_schema=_UpdateCartItemsInput, return_direct=False)
-        def update_cart_items_tool(cart_line_id: str, quantity: int) -> str:
+        @tool(return_direct=False, response_format="content_and_artifact")
+        def remove_cart_item_tool(cart_line_id: str, quantity: int = 1):
+            """Remove a cart line. Use ONLY on explicit shopper intent to remove
+            an item. Requires CART_LINE_ID from get_cart_tool — do not guess.
+            Use update_cart_items_tool to change quantity instead of removing
+            and re-adding.
+            """
+
+            return normalize_tool_result(
+                _remove_cart_item_impl(cart_line_id, quantity)
+            )
+
+        def _update_cart_items_impl(cart_line_id: str, quantity: int):
             """Change the quantity of an item already in the cart, or remove it
             by setting quantity to 0. Use ONLY when the shopper explicitly asks
             to change a quantity or remove by quantity. Do NOT use for initial
@@ -3279,7 +3303,33 @@ class DeepAgentsRuntime:
                 state.cart,
                 scope.product_evidence.values(),
             )
-            return _format_update_cart_result(result, state.cart)
+            rendered = _format_update_cart_result(result, state.cart)
+            if not result.ok:
+                return rendered
+            return committed_effect(
+                rendered,
+                operation="cart quantity updated",
+                idempotency_key=(
+                    f"{identity.request_id}:update:{cart_line_id}:{quantity}"
+                ),
+                cart_line_id=cart_line_id,
+                quantity=quantity,
+            )
+
+        @tool(
+            args_schema=_UpdateCartItemsInput,
+            return_direct=False,
+            response_format="content_and_artifact",
+        )
+        def update_cart_items_tool(cart_line_id: str, quantity: int):
+            """Set the exact quantity for one cart line. Use for quantity
+            changes instead of removing and re-adding. Requires CART_LINE_ID
+            from get_cart_tool.
+            """
+
+            return normalize_tool_result(
+                _update_cart_items_impl(cart_line_id, quantity)
+            )
 
         @tool(args_schema=_GetStorePolicyInput, return_direct=False)
         def get_store_policy_tool(

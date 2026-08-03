@@ -3290,9 +3290,11 @@ class TestDeepAgentsRuntimeRefs:
             ),
         )
 
-        update_response = tools_by_name["update_cart_items_tool"](
-            cart_line_id="Silk Dress",
-            quantity=2,
+        update_response = tool_text(
+            tools_by_name["update_cart_items_tool"](
+                cart_line_id="Silk Dress",
+                quantity=2,
+            )
         )
 
         assert update_response.startswith("CART UPDATED")
@@ -7936,3 +7938,67 @@ class TestCommittedMutationReceipt:
 
         assert committed_effects_in([ToolMessage(content="x", tool_call_id="a")]) == []
         assert committed_effects_in([]) == []
+
+
+class TestCommittedMutationSurvivesTurnFailure:
+    """End-to-end: a committed change must reach the shopper when the turn dies."""
+
+    def _runtime(self):
+        from chain_server.src import deepagents_runtime as runtime_mod
+        return runtime_mod
+
+    def test_each_mutation_kind_records_a_recoverable_effect(self) -> None:
+        """add, remove, and update must all be recoverable after a failure.
+
+        Wiring only `add` would leave remove and update silently concealed,
+        which is the same defect this slice exists to close.
+        """
+
+        from langchain_core.messages import ToolMessage
+
+        from chain_server.src.control_signals import (
+            EFFECTS_KEY,
+            committed_effect,
+            committed_effects_in,
+        )
+
+        kinds = [
+            ("added to cart", {"product_id": "Work Bag", "quantity": 1}),
+            ("removed from cart", {"cart_line_id": "line-3", "quantity": 1}),
+            ("cart quantity updated", {"cart_line_id": "line-4", "quantity": 5}),
+        ]
+        messages = []
+        for operation, fields in kinds:
+            text, artifact = committed_effect(
+                "rendered", operation=operation, idempotency_key="k", **fields
+            )
+            assert EFFECTS_KEY in artifact
+            messages.append(
+                ToolMessage(content=text, tool_call_id="c", artifact=artifact)
+            )
+
+        recovered = committed_effects_in(messages)
+
+        assert [e["operation"] for e in recovered] == [k for k, _ in kinds]
+
+    def test_failed_turn_reports_the_effect_instead_of_a_product_list(self) -> None:
+        runtime_mod = self._runtime()
+        cart = runtime_mod.Cart(contents=[{"item": "Work Bag", "amount": 1}])
+
+        receipt = runtime_mod._committed_effect_receipt(
+            [
+                {
+                    "operation": "removed from cart",
+                    "idempotency_key": "req:remove:line-3:1",
+                    "cart_line_id": "line-3",
+                    "quantity": 1,
+                }
+            ],
+            cart,
+        )
+
+        assert "removed from cart" in receipt
+        assert "line-3" in receipt
+        assert "review your cart" in receipt.lower()
+        # must not look like the read-only catalog fallback
+        assert "grounded catalog options" not in receipt

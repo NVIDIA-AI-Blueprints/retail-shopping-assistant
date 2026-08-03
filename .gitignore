@@ -75,3 +75,9 @@ tests/evaluation/results/*
 .env
 .env.*
 !.env.example
+
+# Generated evaluation output — archived under ~/exec-briefs, never committed
+tests/integration/conversations/*/quality/
+tests/integration/conversations/*/quality_progress/
+tests/integration/conversations/shopping/gate0_*/
+tests/integration/conversations/shopping/*_run*/

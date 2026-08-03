@@ -73,6 +73,16 @@ from .conversation_products import (
     format_historical_product_index,
     format_product_resolution,
 )
+from .message_shape import (
+    _content_to_text,
+    _current_turn_messages,
+    _extract_final_text,
+    _message_type,
+    _prior_turn_messages,
+    _result_messages,
+    _tool_results_by_call_id,
+    _value,
+)
 from .media_perception import MediaPerceptionClient
 from .skill_activation import (
     SKILL_ACTIVATION_COMPLETE,
@@ -4441,28 +4451,8 @@ def _safe_collect_agent_diagnostics(
         return diagnostics
 
 
-def _current_turn_messages(messages: list[Any], request_id: str) -> list[Any]:
-    marker = f"REQUEST ID: {request_id}"
-    start: int | None = None
-    for index, message in enumerate(messages):
-        if _message_type(message) != "human":
-            continue
-        if marker in _content_to_text(_value(message, "content")):
-            start = index + 1
-    return [] if start is None else messages[start:]
 
 
-def _prior_turn_messages(messages: list[Any], request_id: str) -> list[Any]:
-    """Return messages before the current server-owned request marker."""
-
-    marker = f"REQUEST ID: {request_id}"
-    for index in range(len(messages) - 1, -1, -1):
-        message = messages[index]
-        if _message_type(message) != "human":
-            continue
-        if marker in _content_to_text(_value(message, "content")):
-            return messages[:index]
-    return []
 
 
 def _no_direct_taxonomy_response(
@@ -4634,15 +4624,6 @@ def _has_unsupported_requirement_outcome(
     )
 
 
-def _tool_results_by_call_id(messages: list[Any]) -> dict[str, Any]:
-    results: dict[str, Any] = {}
-    for message in messages:
-        if _message_type(message) != "tool":
-            continue
-        tool_call_id = str(_value(message, "tool_call_id") or "")
-        if tool_call_id:
-            results[tool_call_id] = message
-    return results
 
 
 def _normalized_tool_call(raw_call: Any) -> dict[str, Any]:
@@ -4775,9 +4756,6 @@ def _serialize_partial_graph_messages(
     return serialized, truncated
 
 
-def _message_type(message: Any) -> str:
-    message_type = str(_value(message, "type") or _value(message, "role") or "")
-    return {"assistant": "ai", "user": "human"}.get(message_type, message_type)
 
 
 def _diagnostic_json_value(value: Any) -> Any:
@@ -4945,30 +4923,6 @@ def _bounded_product_evidence_value(value: Any, *, depth: int = 0) -> Any:
     return str(value)[:_MAX_DIAGNOSTIC_PRODUCT_STRING_CHARS]
 
 
-def _extract_final_text(result: Any) -> str:
-    if isinstance(result, dict):
-        messages = result.get("messages")
-        if isinstance(messages, list):
-            for message in reversed(messages):
-                if _message_type(message) in {"human", "system", "tool"}:
-                    continue
-                if _value(message, "tool_calls"):
-                    continue
-                content = getattr(message, "content", None)
-                if content is None and isinstance(message, dict):
-                    content = message.get("content")
-                text = _content_to_text(content)
-                if text and not text.startswith(
-                    (
-                        SKILL_ACTIVATION_COMPLETE,
-                        SKILL_ACTIVATION_REQUIRED,
-                        SKILL_TOOL_NOT_GRANTED,
-                        "SHOPPER_SKILL_ACTIVATION_FAILED:",
-                    )
-                ):
-                    return text
-        return _content_to_text(result.get("response")) or ""
-    return _content_to_text(getattr(result, "content", result)) or ""
 
 
 def _append_product_results(state: State, products: list[ProductSummary]) -> None:
@@ -6023,17 +5977,6 @@ def _empty_token_usage() -> dict[str, int]:
     }
 
 
-def _result_messages(result: Any) -> list[Any]:
-    if isinstance(result, dict):
-        messages = result.get("messages")
-        if isinstance(messages, list):
-            return messages
-        return [result]
-
-    messages = getattr(result, "messages", None)
-    if isinstance(messages, list):
-        return messages
-    return [result]
 
 
 def _message_token_usage_record(message: Any) -> Any:
@@ -6054,10 +5997,6 @@ def _message_token_usage_record(message: Any) -> Any:
     return None
 
 
-def _value(source: Any, key: str) -> Any:
-    if isinstance(source, dict):
-        return source.get(key)
-    return getattr(source, key, None)
 
 
 def _token_int(record: Any, keys: tuple[str, ...]) -> int | None:
@@ -6070,18 +6009,6 @@ def _token_int(record: Any, keys: tuple[str, ...]) -> int | None:
     return None
 
 
-def _content_to_text(content: Any) -> str:
-    if isinstance(content, str):
-        return content.strip()
-    if isinstance(content, list):
-        parts = []
-        for item in content:
-            if isinstance(item, str):
-                parts.append(item)
-            elif isinstance(item, dict) and isinstance(item.get("text"), str):
-                parts.append(item["text"])
-        return "\n".join(parts).strip()
-    return ""
 
 
 def _tool_search_mode(value: str | None) -> str | None:

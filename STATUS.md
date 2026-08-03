@@ -345,6 +345,15 @@ The newest focused gate is recorded first. Older implementation gates remain
 below as comparison points; generated quality and timing
 artifacts stay in the required local archive rather than versioned source.
 
+- Message-shape extraction gate (2026-08-03): eight pure message readers
+  (`_current_turn_messages`, `_prior_turn_messages`, `_tool_results_by_call_id`,
+  `_message_type`, `_extract_final_text`, `_result_messages`, `_value`,
+  `_content_to_text`) moved from `deepagents_runtime.py` into
+  `chain_server/src/message_shape.py`. All eight bodies are byte-identical to
+  their originals; the offline suite is unchanged at 935 passed with 1 xfailed.
+  This is the only cleanly separable boundary today — the larger diagnostics cut
+  has a two-way dependency with the evidence codecs and waits on that work.
+
 - Typed control-signal gate (2026-08-03): tool-loop control outcomes now travel
   as LangChain tool artifacts beside the model-visible text instead of being
   recovered by prefix-matching that text. The three signal-emitting tools use

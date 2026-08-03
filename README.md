@@ -277,16 +277,17 @@ guides.
    `unadvertised_requirements`, while preference, styling, occasion, weather,
    and anchor context remain in the semantic query. A product type never belongs
    in `unadvertised_requirements`. Every such requirement on a shopper-stated
-   product scope fails closed before retrieval, including when the model uses a
-   synonym rather than the shopper's exact wording. The bounded
+   product scope ranks retrieval and is returned to the shopper as unconfirmed,
+   including when the model uses a synonym rather than the shopper's exact
+   wording. It never becomes a hard filter and never suppresses the search. The bounded
    constraint-provenance review is reserved for a proposed inferred requirement
    on a genuinely open role when its shared repair budget remains. The review
    freezes `requested_product_type`, taxonomy, `scope_complete`, `search_mode`, and every
    advertised hard constraint. Within that preserved hard scope, it may correct
    only the soft `semantic_query`, the reviewed `unadvertised_requirements`
    lane, and its associated `shopper_guidance`; the requirement is either
-   replaced with the shopper's shortest exact wording or removed. Exact wording
-   fails closed as unenforceable. Removal also scrubs the corresponding
+   replaced with the shopper's shortest exact wording or removed. Exact wording is kept as an
+   unenforceable requirement: it ranks the search and is disclosed. Removal also scrubs the corresponding
    product-attribute claim from `shopper_guidance`. When a runtime semantic
    open-role schema repair removes
    its proposed inferred requirement, runtime replaces the submitted pre-search

@@ -36,6 +36,9 @@ class ControlSignal(StrEnum):
 #: Artifact key holding the recorded signals for one tool call.
 SIGNALS_KEY = "control_signals"
 
+#: Artifact key holding committed commerce effects for one tool call.
+EFFECTS_KEY = "committed_effects"
+
 
 def control(text: str, *signals: ControlSignal) -> tuple[str, dict[str, Any]]:
     """Return one tool result whose control outcome is typed, not parsed.
@@ -69,3 +72,47 @@ def normalize_tool_result(result: Any) -> tuple[str, dict[str, Any] | None]:
     if isinstance(result, tuple):
         return result
     return result, None
+
+
+def committed_effect(
+    text: str,
+    *,
+    operation: str,
+    idempotency_key: str,
+    product_id: str | None = None,
+    cart_line_id: str | None = None,
+    quantity: int | None = None,
+) -> tuple[str, dict[str, Any]]:
+    """Return a mutation result that records what was actually committed.
+
+    A committed effect must survive the turn even when the turn fails. Carrying
+    it on the tool artifact means the runtime can still find it in the graph
+    snapshot after an error, rather than inferring from prose that a cart change
+    may or may not have happened.
+    """
+
+    effect: dict[str, Any] = {
+        "operation": operation,
+        "idempotency_key": idempotency_key,
+    }
+    if product_id is not None:
+        effect["product_id"] = product_id
+    if cart_line_id is not None:
+        effect["cart_line_id"] = cart_line_id
+    if quantity is not None:
+        effect["quantity"] = quantity
+    return text, {EFFECTS_KEY: [effect]}
+
+
+def committed_effects_in(messages: Any) -> list[dict[str, Any]]:
+    """Collect committed effects recorded across one turn's tool messages."""
+
+    found: list[dict[str, Any]] = []
+    for message in messages or ():
+        artifact = getattr(message, "artifact", None)
+        if not isinstance(artifact, dict):
+            continue
+        recorded = artifact.get(EFFECTS_KEY)
+        if isinstance(recorded, list):
+            found.extend(e for e in recorded if isinstance(e, dict))
+    return found

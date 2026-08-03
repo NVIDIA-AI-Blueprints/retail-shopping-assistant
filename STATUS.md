@@ -345,6 +345,19 @@ The newest focused gate is recorded first. Older implementation gates remain
 below as comparison points; generated quality and timing
 artifacts stay in the required local archive rather than versioned source.
 
+- Committed-mutation receipt gate (2026-08-03): a cart change that committed
+  before a turn failed could be concealed. `_execute_turn` handled
+  `agent_timeout` correctly but every other exception — recursion limit, skill
+  activation failure, generic agent error — fell through to a bare catalog
+  product list with no cart mention, inviting a duplicate add. Cart mutations
+  now record a typed committed effect on the tool artifact, which survives into
+  the graph snapshot the error path already captures. The error path consults
+  those effects before any read-only fallback and emits a receipt naming the
+  operation, the affected item, the quantity, and the authoritative cart. When
+  the snapshot cannot be read a mutation cannot be ruled out, so that case warns
+  about the cart rather than falling through. The offline suite moved from 935
+  to 939 passed with 1 xfailed.
+
 - Message-shape extraction gate (2026-08-03): eight pure message readers
   (`_current_turn_messages`, `_prior_turn_messages`, `_tool_results_by_call_id`,
   `_message_type`, `_extract_final_text`, `_result_messages`, `_value`,

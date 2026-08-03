@@ -2182,6 +2182,7 @@ class DeepAgentsRuntime:
                 if isinstance(constraint_payload, dict)
                 else []
             )
+            suppress_requirement_disclosure = False
             duplicated_product_type = bool(
                 shopper_stated_scope
                 and _duplicates_unavailable_product_type(
@@ -2196,12 +2197,18 @@ class DeepAgentsRuntime:
                 # becomes a filter. Rejecting here discarded a search whose
                 # outbound catalog payload was identical to one that succeeds,
                 # so correct the annotation and let retrieval run.
-                # This guard is true only when the list is exactly the
-                # requested product type, so clearing it drops nothing else.
-                raw_unadvertised_requirements = []
-                if isinstance(constraint_payload, dict):
-                    constraint_payload = dict(constraint_payload)
-                    constraint_payload["unadvertised_requirements"] = []
+                # Deliberately no rewrite: deterministic code does not repair
+                # model arguments. The field is popped before hard filters are
+                # built and never reaches the catalog, so leaving it untouched
+                # changes nothing except that the model keeps ownership of what
+                # it declared. Only the veto is removed.
+                #
+                # It is still not disclosed as an unconfirmable *attribute*: the
+                # value is the product type, and telling a shopper that
+                # "sneakers is not an advertised hard filter" describes the
+                # schema rather than their request. Choosing what to say is not
+                # rewriting what the model sent.
+                suppress_requirement_disclosure = True
             stated_unadvertised_requirements = (
                 [
                     requirement
@@ -2219,7 +2226,8 @@ class DeepAgentsRuntime:
             # nothing to show and turned a valid request into a refusal.
             unconfirmable_requirements = (
                 list(raw_unadvertised_requirements)
-                if isinstance(raw_unadvertised_requirements, list)
+                if not suppress_requirement_disclosure
+                and isinstance(raw_unadvertised_requirements, list)
                 and raw_unadvertised_requirements
                 and (shopper_stated_scope or stated_unadvertised_requirements)
                 else []
@@ -2384,7 +2392,11 @@ class DeepAgentsRuntime:
                     candidate_scope_key,
                 )
             )
-            if unadvertised_requirements and shopper_stated_scope:
+            if (
+                unadvertised_requirements
+                and shopper_stated_scope
+                and not suppress_requirement_disclosure
+            ):
                 # Rank on it, disclose it, do not abandon the search.
                 unconfirmable_requirements = list(unadvertised_requirements)
 
@@ -2562,14 +2574,21 @@ class DeepAgentsRuntime:
                         candidate_scope_key,
                     )
                 )
-                if stated_requirements or shopper_stated_scope:
+                if (
+                    stated_requirements or shopper_stated_scope
+                ) and not suppress_requirement_disclosure:
                     # Rank on it, disclose it, do not abandon the search.
                     unconfirmable_requirements = list(unadvertised_requirements)
-                if not unconfirmable_requirements:
+                if (
+                    not unconfirmable_requirements
+                    and not suppress_requirement_disclosure
+                ):
                     # Provenance could not be established from this turn, so the
                     # model may have inferred the requirement. That still earns
                     # one review. A requirement the shopper actually stated does
-                    # not: it ranks the search and is disclosed instead.
+                    # not: it ranks the search and is disclosed instead. Nor does
+                    # a value that is simply the product type -- there is no
+                    # invented attribute there to establish provenance for.
                     review_scope = candidate_scope_key or "__unknown__"
                     if review_scope in scope.repair.constraint_reviewed_scopes:
                         return (

@@ -75,3 +75,9 @@ tests/evaluation/results/*
 .env
 .env.*
 !.env.example
+
+# Gym adapter generated outputs
+tests/evaluation/gym/build/
+tests/evaluation/gym/results/
+# local venv symlinks created by setup_gym.sh
+tests/evaluation/gym/**/.venv

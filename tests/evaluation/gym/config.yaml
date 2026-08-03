@@ -1,0 +1,76 @@
+# NeMo Gym environment for the Retail Shopping Assistant evaluation.
+#
+#   responses_api_models/challenger_model  -> the shopper-simulator LLM (Gym model server)
+#   responses_api_models/judge_model       -> the judge LLM (Gym model server; Phase 2)
+#   responses_api_agents/challenger_agent   -> generates shopper turns, drives the assistant
+#   resources_servers/challenger_judge      -> scores with judge_rules.md (reward + criteria)
+#
+# Model API keys live under NVIDIA_API_KEY (CHALLENGER/JUDGE_MODEL_API_KEY are empty).
+
+# --- Challenger LLM as a Gym model server ---
+challenger_model:
+  responses_api_models:
+    inference_provider:
+      entrypoint: app.py
+      base_url: ${oc.env:CHALLENGER_MODEL_BASE_URL}
+      api_key: ${oc.env:NVIDIA_API_KEY}
+      model: ${oc.env:CHALLENGER_MODEL_NAME}
+
+# --- Judge LLM as a Gym model server (used when judging is enabled) ---
+judge_model:
+  responses_api_models:
+    inference_provider:
+      entrypoint: app.py
+      base_url: ${oc.env:JUDGE_MODEL_BASE_URL}
+      api_key: ${oc.env:NVIDIA_API_KEY}
+      model: ${oc.env:JUDGE_MODEL_NAME}
+
+# --- Verifier: the Judge (rubric in judge_rules.md) ---
+challenger_judge:
+  resources_servers:
+    challenger_judge:
+      entrypoint: app.py
+      domain: agent
+      verified: false
+      description: Judge verifier (judge_rules.md rubric -> reward + criteria)
+      judge_model_server:
+        type: responses_api_models
+        name: judge_model
+      judge_enabled: ${oc.env:JUDGE_ENABLED,false}
+
+# --- Agent harness: the Challenger (native loop, uses the challenger_model server) ---
+challenger_agent:
+  responses_api_agents:
+    challenger_agent:
+      entrypoint: app.py
+      model_server:
+        type: responses_api_models
+        name: challenger_model
+      resources_server:
+        type: resources_servers
+        name: challenger_judge
+      target_agent_url: ${oc.env:RETAIL_ASSISTANT_URL,http://localhost:8009}
+      guardrails: false
+      default_turns: 8
+      min_turns: 6
+      max_turns: 10
+      # Per-turn diagnostics recorded from the assistant's `agent_diagnostics`
+      # (mirrors ../eval_config.yaml run.recorded_diagnostics, #140). The target
+      # must run with EXPOSE_AGENT_DIAGNOSTICS=true or these come back absent.
+      recorded_diagnostics:
+        - product_evidence
+        - product_evidence_truncated
+        - catalog_scope_outcomes
+        - tool_calls
+        - skill_files_read
+        - rejected_tool_calls
+        - duplicate_tool_calls
+        - final_termination_reason
+      datasets:
+        - name: eval_dataset
+          type: validation
+          license: Apache 2.0
+          # run_eval.sh copies the selected dataset (DATASET) to this fixed path.
+          # __ADAPTER_DIR__ is substituted with this adapter's absolute path by
+          # setup_gym.sh when it generates the config into the Gym checkout.
+          jsonl_fpath: __ADAPTER_DIR__/build/active.jsonl

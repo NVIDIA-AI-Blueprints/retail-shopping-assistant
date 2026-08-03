@@ -1,0 +1,51 @@
+version: 1
+# "Shop this look" scenarios driven by uploaded image/video assets.
+# image_id -> assets/<id>.(jpg|mp4); the Challenger sends the media on turn 1.
+# Sidecar `contains` descriptions stay in evaluation metadata (not sent to the agent).
+scenarios:
+  - id: image_shop_this_look_menswear
+    target_turns: 8
+    image_id: male_look
+    brief: "Shopper uploads a menswear look photo and asks to shop it."
+    shopper_goal: "Recreate the smart-casual menswear look from the image using catalog items."
+    constraints:
+      - "Use the attached image as the main reference."
+      - "Do not send the sidecar description to the shopping agent."
+    shopper_behavior:
+      type: image_reference
+      notes: "Uses the image as the target. The store is women's fashion, so this tests honest out-of-catalog handling (no hallucinated menswear)."
+    language_cues:
+      - "Shop this look for me."
+      - "Do you have anything like this?"
+      - "If you don't carry menswear, just say so plainly."
+
+  - id: video_shop_this_look_evening_gown
+    target_turns: 8
+    image_id: lady_black_dress
+    brief: "Shopper uploads a video of a formal black gown and asks for something like it."
+    shopper_goal: "Find a formal, dark, floor-length evening gown similar to the one in the video."
+    constraints:
+      - "Use the attached video as the main reference."
+      - "Keep recommendations grounded in returned catalog items."
+    shopper_behavior:
+      type: occasion_focused
+      notes: "Cares about formal, elegant eveningwear appropriateness over price."
+    language_cues:
+      - "Shop this look for me."
+      - "I want something formal and elegant like this for an evening event."
+      - "Does the store have a gown in this style?"
+
+  - id: video_shop_this_look_casual_autumn
+    target_turns: 8
+    image_id: lady_jeans_brown_boots
+    brief: "Shopper uploads a casual autumn clip and asks to recreate the look."
+    shopper_goal: "Recreate the casual autumn look (knit sweater + jeans + ankle boots) from catalog items."
+    constraints:
+      - "Use the attached video as the main reference."
+    shopper_behavior:
+      type: casual_practical
+      notes: "Wants cozy casual pieces; expects honesty about any missing category (e.g. jeans)."
+    language_cues:
+      - "Shop this look for me."
+      - "Something cozy like this for fall."
+      - "If you don't have jeans, tell me and suggest the closest pieces you do have."

@@ -345,6 +345,19 @@ The newest focused gate is recorded first. Older implementation gates remain
 below as comparison points; generated quality and timing
 artifacts stay in the required local archive rather than versioned source.
 
+- Typed control-signal gate (2026-08-03): tool-loop control outcomes now travel
+  as LangChain tool artifacts beside the model-visible text instead of being
+  recovered by prefix-matching that text. The three signal-emitting tools use
+  `response_format="content_and_artifact"` via thin wrappers, so the ~32
+  non-control returns are untouched and only control returns become typed.
+  `ToolLoopControlMiddleware` reads `message.artifact`, falling back to text only
+  for results the framework produces before our code runs. The artifact rides on
+  the `ToolMessage`, so it is checkpointed with the message it describes and
+  needs no correlation key. Model-visible strings are byte-identical (12/12
+  control literals unchanged); the offline suite moved from 932 to 935 passed
+  with 1 xfailed, adding three tests that drive control state from an artifact
+  whose text carries no recognisable prefix.
+
 - Shared control-prefix gate (2026-08-02): the tool-loop control prefixes
   (`STOP_TOOL_USE:` and the two "cannot be enforced" forms) were written as
   independent string literals in both `tool_loop_control.py` and

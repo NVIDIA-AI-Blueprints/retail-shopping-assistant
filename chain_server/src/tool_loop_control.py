@@ -12,6 +12,7 @@ from threading import Lock
 from typing import Any
 import unicodedata
 
+from .control_signals import ControlSignal, signals_of
 from langchain.agents.middleware.types import AgentMiddleware, ModelRequest, ModelResponse
 from langchain_core.messages import (
     ContentBlock,
@@ -213,14 +214,27 @@ class ToolLoopControlMiddleware(AgentMiddleware):
             if not isinstance(content, str):
                 continue
             content = content.strip()
-            if SEARCH_BUDGET_EXHAUSTED_PREFIX in content:
+            # Typed outcomes recorded by the tool. Text matching remains only
+            # for results the framework produces before our code runs.
+            signals = signals_of(result)
+            if (
+                ControlSignal.BUDGET_EXHAUSTED in signals
+                or SEARCH_BUDGET_EXHAUSTED_PREFIX in content
+            ):
                 self._search_budget_exhausted = True
-            if content.startswith(STOP_TOOL_USE_PREFIX):
+            if (
+                ControlSignal.STOP_TOOL_USE in signals
+                or content.startswith(STOP_TOOL_USE_PREFIX)
+            ):
                 self._clear_in_flight_repair()
                 self._synthesis_required = True
                 continue
-            if content.startswith(
-                (UNSUPPORTED_TAXONOMY_PREFIX, UNSUPPORTED_CONSTRAINT_PREFIX)
+            if (
+                ControlSignal.UNSUPPORTED_TAXONOMY in signals
+                or ControlSignal.UNSUPPORTED_CONSTRAINT in signals
+                or content.startswith(
+                    (UNSUPPORTED_TAXONOMY_PREFIX, UNSUPPORTED_CONSTRAINT_PREFIX)
+                )
             ):
                 self._clear_in_flight_repair()
                 self._synthesis_required = True

@@ -21,9 +21,11 @@ from chain_server.src.tool_loop_control import (
     SERVER_CATALOG_CLARIFICATION,
     UNSUPPORTED_CONSTRAINT_PREFIX,
     UNSUPPORTED_TAXONOMY_PREFIX,
+    SEARCH_TOOL_NAME,
     STOP_TOOL_USE_PREFIX,
     ToolLoopControlMiddleware,
     _normalize_scope,
+    _tool_name,
     _shopper_stated_scope,
 )
 from chain_server.src.skill_activation import ShopperSkillActivationMiddleware
@@ -1985,3 +1987,57 @@ def test_every_stop_signal_renders_the_shared_prefix() -> None:
         assert stripped.startswith(f'"{STOP_TOOL_USE_PREFIX} '), (
             f"stop signal does not render the shared prefix: {stripped[:60]}"
         )
+
+
+def test_stop_signal_closes_the_loop_from_the_artifact_not_the_text() -> None:
+    """Control state must come from the typed signal, not the rendered text.
+
+    The message content here carries no recognisable prefix, so a middleware
+    still parsing text would miss it entirely.
+    """
+
+    middleware = ToolLoopControlMiddleware()
+    result = ToolMessage(
+        content="opaque text a text-matching middleware would ignore",
+        tool_call_id="call-a",
+        artifact={"control_signals": ["stop_tool_use"]},
+    )
+    captured = _capture_model_request(
+        middleware,
+        [HumanMessage(content="show me boots"), result],
+    )
+
+    assert captured.tool_choice == "none"
+    assert captured.tools == []
+
+
+def test_budget_signal_removes_the_search_tool_from_the_artifact() -> None:
+    middleware = ToolLoopControlMiddleware()
+    result = ToolMessage(
+        content="no prefix here either",
+        tool_call_id="call-b",
+        artifact={"control_signals": ["budget_exhausted"]},
+    )
+    captured = _capture_model_request(
+        middleware,
+        [HumanMessage(content="more bags"), result],
+    )
+
+    assert all(_tool_name(t) != SEARCH_TOOL_NAME for t in captured.tools)
+
+
+def test_absent_or_malformed_artifact_falls_back_to_text() -> None:
+    """Framework-generated results have no artifact and must still be seen."""
+
+    middleware = ToolLoopControlMiddleware()
+    result = ToolMessage(
+        content=f"{STOP_TOOL_USE_PREFIX} limit reached",
+        tool_call_id="call-c",
+        artifact=None,
+    )
+    captured = _capture_model_request(
+        middleware,
+        [HumanMessage(content="more"), result],
+    )
+
+    assert captured.tool_choice == "none"

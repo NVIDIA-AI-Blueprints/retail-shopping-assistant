@@ -345,6 +345,21 @@ The newest focused gate is recorded first. Older implementation gates remain
 below as comparison points; generated quality and timing
 artifacts stay in the required local archive rather than versioned source.
 
+- Grounding-gate hydration fix (2026-08-03): every turn hydrates memory lanes
+  before the model runs, but the gate deciding whether to run the grounding
+  editor counted only current-turn *tool* evidence — and prior-turn evidence is
+  structurally always empty, since the graph is invoked with one human message
+  per turn. A follow-up or styling turn grounded in the historical product index
+  or the authoritative cart therefore skipped grounding entirely and returned the
+  model draft unchecked. The gate now counts every hydrated authority lane:
+  current tool evidence, historical product identity, and cart contents.
+  Dialogue is deliberately excluded — it establishes shopper intent, never
+  product fact, so a product claim cannot be checked against it. The historical
+  product index is now carried typed on `State` rather than only rendered.
+  Verified by mutation: restoring the old gate fails the two tests that cover
+  index-only and cart-only turns. The offline suite moved from 941 to 946
+  passed with 1 xfailed.
+
 - Committed-mutation receipt gate (2026-08-03): a cart change that committed
   before a turn failed could be concealed. `_execute_turn` handled
   `agent_timeout` correctly but every other exception — recursion limit, skill

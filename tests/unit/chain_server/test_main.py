@@ -8002,3 +8002,60 @@ class TestCommittedMutationSurvivesTurnFailure:
         assert "review your cart" in receipt.lower()
         # must not look like the read-only catalog fallback
         assert "grounded catalog options" not in receipt
+
+
+class TestGroundingGateCountsHydratedLanes:
+    """Every turn hydrates memory lanes; the gate must not discard them."""
+
+    def _gate(self):
+        from chain_server.src import deepagents_runtime as runtime_mod
+        return runtime_mod._has_grounding_authority
+
+    def _state(self, **kw):
+        from chain_server.src.agenttypes import State
+        return State(user_id=1, query="q", **kw)
+
+    def test_tool_evidence_alone_still_grounds(self) -> None:
+        assert self._gate()(self._state(), "SEARCH_RESULT...", "") is True
+
+    def test_historical_product_index_grounds_without_a_tool_call(self) -> None:
+        """The regression this slice closes.
+
+        A follow-up turn about an earlier product runs no tool, but the
+        historical index hydrated real product identity. Previously the gate
+        saw no tool evidence and returned the draft unchecked.
+        """
+
+        state = self._state(
+            historical_product_sets=[
+                {"candidate_set_id": "s1", "turn_seq": 2, "products": [{"ref": "p1"}]}
+            ]
+        )
+
+        assert self._gate()(state, "", "") is True
+
+    def test_authoritative_cart_grounds_without_a_tool_call(self) -> None:
+        from chain_server.src.agenttypes import Cart
+
+        state = self._state(cart=Cart(contents=[{"item": "Work Bag", "amount": 1}]))
+
+        assert self._gate()(state, "", "") is True
+
+    def test_dialogue_alone_does_not_ground(self) -> None:
+        """Dialogue carries intent, never product fact — it cannot verify a claim."""
+
+        from chain_server.src.agenttypes import DialogueTurn
+
+        state = self._state(
+            dialogue=[
+                DialogueTurn(sequence=1, shopper_text="I like beige", assistant_text="noted")
+            ],
+            context="RECENT CONVERSATION:\n[turn 1]\nUser: I like beige",
+        )
+
+        assert self._gate()(state, "", "") is False
+
+    def test_a_genuinely_empty_turn_still_skips(self) -> None:
+        """No tool, no history, no cart: nothing to check, so no model call."""
+
+        assert self._gate()(self._state(), "", "") is False

@@ -114,6 +114,13 @@ class State(BaseModel):
         default_factory=list,
         description="Typed prior turns; authoritative for shopper intent context"
     )
+    historical_product_sets: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description=(
+            "Typed historical product reference sets; identity authority only, "
+            "never current product-fact authority"
+        )
+    )
     context: str = Field(
         default="",
         description="Rendered prompt text only; never parsed back into state"

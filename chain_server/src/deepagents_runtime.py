@@ -64,6 +64,7 @@ from .conversation_memory import (
     TurnStartResult,
     build_dialogue_context,
 )
+from .control_signals import ControlSignal, control, normalize_tool_result
 from .conversation_products import (
     ConversationProductsClient,
     ConversationProductsError,
@@ -2013,8 +2014,7 @@ class DeepAgentsRuntime:
                 request.required_constraints.model_dump(exclude_none=True),
             )
 
-        @tool(args_schema=search_tool_arguments_model, return_direct=False)
-        def search_catalog_tool(
+        def _search_catalog_impl(
             semantic_query: str,
             requested_product_type: str | None,
             taxonomy: BaseModel | dict[str, Any],
@@ -2022,15 +2022,8 @@ class DeepAgentsRuntime:
             shopper_guidance: str,
             scope_complete: bool = True,
             search_mode: str | None = None,
-        ) -> str:
-            """Find products by description, advertised taxonomy, or constraints.
-
-            Use for browse, search, and recommendation requests after product
-            discovery or outfit styling is active. Select exact values from the
-            current Catalog capabilities. Do not use for a product already
-            established in this conversation, and do not repeat a completed hard-
-            filter scope with different semantic wording.
-            """
+        ):
+            """Execute one catalog search; may return control signals."""
 
             taxonomy = taxonomy or {"category": [], "subcategory": []}
             required_constraints = required_constraints or {}
@@ -2641,12 +2634,13 @@ class DeepAgentsRuntime:
                         shopper_scope_key is not None
                         and shopper_scope_key in scope.searched_shopper_scopes
                     ):
-                        return (
+                        return control(
                             "STOP_TOOL_USE: This shopper-requested product scope "
                             "was already searched in this turn. Do not search an "
                             "adjacent taxonomy or report the requested scope as "
                             "unavailable. Use the result already returned.\n\n"
-                            + _SEARCH_SCOPE_COMPLETE_NOTE
+                            + _SEARCH_SCOPE_COMPLETE_NOTE,
+                            ControlSignal.STOP_TOOL_USE,
                         )
                 lines = [
                     "STOP_TOOL_USE: No faithful advertised catalog taxonomy "
@@ -2752,25 +2746,28 @@ class DeepAgentsRuntime:
                     shopper_scope_key is not None
                     and shopper_scope_key in scope.searched_shopper_scopes
                 ):
-                    return (
+                    return control(
                         "STOP_TOOL_USE: This shopper-requested product scope "
                         "was already searched in this turn. Do not search an "
                         "adjacent taxonomy. Use the result already returned.\n\n"
-                        + _SEARCH_SCOPE_COMPLETE_NOTE
+                        + _SEARCH_SCOPE_COMPLETE_NOTE,
+                        ControlSignal.STOP_TOOL_USE,
                     )
                 if search_scope in scope.searched_catalog_scopes:
-                    return (
+                    return control(
                         "STOP_TOOL_USE: This catalog taxonomy and constraint scope was already "
                         "searched in this turn. Do not retry it "
                         "with a paraphrase or query expansion. Use the products "
-                        "already returned, or ask one concise clarifying question."
+                        "already returned, or ask one concise clarifying question.",
+                        ControlSignal.STOP_TOOL_USE,
                     )
                 if scope.catalog_searches >= self.config.max_catalog_searches_per_turn:
-                    return (
+                    return control(
                         "STOP_TOOL_USE: Catalog search limit reached for this turn. "
                         "Do not call more tools this turn. Use the products already "
                         "returned in this turn to answer concisely, or ask one concise "
-                        "clarifying question if the available products are not enough."
+                        "clarifying question if the available products are not enough.",
+                        ControlSignal.STOP_TOOL_USE,
                     )
                 scope.searched_catalog_scopes.append(search_scope)
                 if shopper_scope_key is not None:
@@ -2886,6 +2883,23 @@ class DeepAgentsRuntime:
             )
             return prefix + "\n\n".join(lines)
 
+        @tool(
+            args_schema=search_tool_arguments_model,
+            return_direct=False,
+            response_format="content_and_artifact",
+        )
+        def search_catalog_tool(**kwargs):
+            """Find products by description, advertised taxonomy, or constraints.
+
+            Use for browse, search, and recommendation requests after product
+            discovery or outfit styling is active. Select exact values from the
+            current Catalog capabilities. Do not use for a product already
+            established in this conversation, and do not repeat a completed hard-
+            filter scope with different semantic wording.
+            """
+
+            return normalize_tool_result(_search_catalog_impl(**kwargs))
+
         @tool(return_direct=False)
         def get_cart_tool() -> str:
             """Read the current cart. Use before cart mutations to get
@@ -2903,8 +2917,7 @@ class DeepAgentsRuntime:
             )
             return _format_cart(cart)
 
-        @tool(return_direct=False)
-        def get_product_details_tool(product_ref: str) -> str:
+        def _get_product_details_impl(product_ref: str):
             """Get detailed facts (material, care, dimensions, closures) for a
             product established in this turn by search or historical-product
             resolution. Requires a PRODUCT_REF — not a product name. Do NOT call
@@ -2916,11 +2929,12 @@ class DeepAgentsRuntime:
                 scope.product_detail_reads
                 >= self.config.max_product_detail_reads_per_turn
             ):
-                return (
+                return control(
                     "STOP_TOOL_USE: Product-detail read limit reached for this "
                     "turn. Do not call more tools this turn. Answer now from the "
                     "details already read and keep any other products to names, "
-                    "prices, categories, image availability, and styling role."
+                    "prices, categories, image availability, and styling role.",
+                    ControlSignal.STOP_TOOL_USE,
                 )
             scope.product_detail_reads += 1
 
@@ -2953,10 +2967,20 @@ class DeepAgentsRuntime:
                 scope.retrieved[product.display_name] = product.image_url
             return _format_product_details(product)
 
-        @tool(args_schema=ResolveConversationProductsRequest, return_direct=False)
-        def resolve_conversation_products_tool(
+        @tool(return_direct=False, response_format="content_and_artifact")
+        def get_product_details_tool(product_ref: str):
+            """Get detailed facts (material, care, dimensions, closures) for a
+            product established in this turn by search or historical-product
+            resolution. Requires a PRODUCT_REF — not a product name. Do NOT call
+            for initial recommendations. Stop immediately if STOP_TOOL_USE is
+            returned.
+            """
+
+            return normalize_tool_result(_get_product_details_impl(product_ref))
+
+        def _resolve_conversation_products_impl(
             references: list[ProductReferenceDescriptor],
-        ) -> str:
+        ):
             """Resolve products the shopper refers to from earlier in this
             conversation. Use only when a needed product was not established
             in the current turn. Submit exact descriptors from the historical
@@ -2966,10 +2990,11 @@ class DeepAgentsRuntime:
 
             with scope.resolution_lock:
                 if scope.product_resolution_used:
-                    return (
+                    return control(
                         "STOP_TOOL_USE: Historical product resolution limit "
                         "reached for this turn. Use the first resolution result "
-                        "and ask one concise clarification if needed."
+                        "and ask one concise clarification if needed.",
+                        ControlSignal.STOP_TOOL_USE,
                     )
                 scope.product_resolution_used = True
 
@@ -2991,6 +3016,25 @@ class DeepAgentsRuntime:
                 if product.image_url:
                     scope.retrieved[product.display_name] = product.image_url
             return format_product_resolution(result)
+
+        @tool(
+            args_schema=ResolveConversationProductsRequest,
+            return_direct=False,
+            response_format="content_and_artifact",
+        )
+        def resolve_conversation_products_tool(
+            references: list[ProductReferenceDescriptor],
+        ):
+            """Resolve products the shopper refers to from earlier in this
+            conversation. Use only when a needed product was not established
+            in the current turn. Submit exact descriptors from the historical
+            product index. If a reference is missing or ambiguous, ask one
+            concise clarification; do not guess or search for a substitute.
+            """
+
+            return normalize_tool_result(
+                _resolve_conversation_products_impl(references)
+            )
 
         @tool(args_schema=AddCartItemsToolInput, return_direct=False)
         def add_cart_items_tool(items: list[AddCartItemsToolItemInput]) -> str:

@@ -55,6 +55,7 @@ Top-level orchestration is via `docker-compose.yaml`; optional local NIM model c
 - Dormant, directly constructible weather wrapper:
   `chain_server/src/weather_tool.py`
 - Shared request/state models: `chain_server/src/agenttypes.py`
+- Tool-loop control outcomes are typed: tools return `(text, artifact)` via `chain_server/src/control_signals.py`, and the middleware reads the artifact. Never recover control state by parsing tool text.
 - Tool-loop control prefixes are defined once in `chain_server/src/tool_loop_control.py`. Never re-declare one as a literal elsewhere; producers render from the constant and matchers key off it.
 - Request-local turn state: `chain_server/src/turn_scope.py`. Search budgets, catalog-repair bookkeeping, product evidence, and retrieved images live on one `TurnScope` per turn, not as closure variables. New per-turn mutable state belongs there.
 - Prior turns are carried typed on `State.dialogue`. `State.context` is rendered prompt text only and must never be parsed back into state or authority. Dialogue establishes shopper intent, never product, policy, inventory, or cart facts.

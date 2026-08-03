@@ -3607,7 +3607,7 @@ class DeepAgentsRuntime:
                 result,
                 request_id=request_id,
             )
-        if not current_evidence and not prior_evidence:
+        if not _has_grounding_authority(state, current_evidence, prior_evidence):
             return _scrub_internal_shopper_language(draft_response)
 
         start = time.monotonic()
@@ -4183,6 +4183,7 @@ Rules:
         except (ConversationMemoryError, ValidationError) as exc:
             logger.error("Failed to start durable conversation turn: %s", exc)
             state.dialogue = []
+            state.historical_product_sets = []
             state.context = ""
             state.cart = Cart()
             state.shopper_context = None
@@ -4240,6 +4241,11 @@ Rules:
             turn.previous_selected_skill_names
         )
         state.shopper_context = turn.shopper_context
+        state.historical_product_sets = [
+            entry
+            for entry in (turn.projection.product_reference_index or [])
+            if isinstance(entry, dict)
+        ]
         historical_products = format_historical_product_index(
             turn.projection.product_reference_index
         )
@@ -5083,6 +5089,32 @@ def _committed_effect_receipt(
         "twice."
     )
     return "\n".join(lines)
+
+
+def _has_grounding_authority(
+    state: State,
+    current_evidence: str,
+    prior_evidence: str,
+) -> bool:
+    """Return whether this turn has any authority to check a draft against.
+
+    Every turn hydrates memory lanes before the model runs. Gating the grounding
+    editor on current-turn *tool* evidence alone discards that hydrated context:
+    a follow-up or styling turn grounded in the historical product index or the
+    authoritative cart would skip grounding entirely, leaving the draft free to
+    assert product facts nothing supports.
+
+    Dialogue is deliberately excluded. It establishes shopper intent, never
+    product, policy, inventory, or cart fact, so it is not something a product
+    claim can be checked against.
+    """
+
+    return bool(
+        current_evidence
+        or prior_evidence
+        or state.historical_product_sets
+        or state.cart.contents
+    )
 
 
 def _partial_product_results_response(state: State) -> str:

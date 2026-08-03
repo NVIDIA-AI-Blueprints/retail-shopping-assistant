@@ -3693,8 +3693,24 @@ class DeepAgentsRuntime:
                 result,
                 request_id=request_id,
             )
-        if not _has_grounding_authority(state, current_evidence):
-            return _scrub_internal_shopper_language(draft_response)
+        # No evidence is a reason to run the editor, not to skip it. A turn with
+        # nothing to ground against is exactly the turn where the model
+        # improvises about its own machinery -- the leak that reached a shopper
+        # was "I don't have access to a catalog search tool (only cart tools)"
+        # on a turn with no evidence, no cart, and no history. Skipping here left
+        # a fixed list of literal replacements as the only guard, and a list can
+        # never cover what a model might say. These turns also run no tools, so
+        # the editor has the most deadline available, not the least.
+
+        # Fail-closed exists to stop a draft asserting product facts that the
+        # turn's evidence cannot support. A turn with no authority has no such
+        # facts, so an editor failure there must not cost the shopper the whole
+        # reply -- it degrades to the unedited draft, which is what shipped
+        # before the editor ran on these turns at all.
+        has_grounding_authority = _has_grounding_authority(state, current_evidence)
+        termination_reason_before_editor = state.agent_diagnostics.get(
+            "final_termination_reason"
+        )
 
         start = time.monotonic()
         # Separated authority lanes. Each is labelled with what it may be used
@@ -3754,6 +3770,17 @@ class DeepAgentsRuntime:
                     result,
                     request_id=request_id,
                 )
+            if not has_grounding_authority:
+                # The turn itself completed; only the optional tidy-up failed,
+                # and that is already recorded in model usage. Leaving an error
+                # termination reason here would mark a good turn as failed.
+                if termination_reason_before_editor is None:
+                    state.agent_diagnostics.pop("final_termination_reason", None)
+                else:
+                    state.agent_diagnostics["final_termination_reason"] = (
+                        termination_reason_before_editor
+                    )
+                return _scrub_internal_shopper_language(draft_response)
             return _GROUNDING_FAILURE_RESPONSE
         except Exception:  # noqa: BLE001 - response editor has a safe fallback.
             logger.exception("Grounding response editor failed")
@@ -3772,6 +3799,17 @@ class DeepAgentsRuntime:
                     result,
                     request_id=request_id,
                 )
+            if not has_grounding_authority:
+                # The turn itself completed; only the optional tidy-up failed,
+                # and that is already recorded in model usage. Leaving an error
+                # termination reason here would mark a good turn as failed.
+                if termination_reason_before_editor is None:
+                    state.agent_diagnostics.pop("final_termination_reason", None)
+                else:
+                    state.agent_diagnostics["final_termination_reason"] = (
+                        termination_reason_before_editor
+                    )
+                return _scrub_internal_shopper_language(draft_response)
             return _GROUNDING_FAILURE_RESPONSE
 
         state.timings["grounding_rewrite"] = time.monotonic() - start
@@ -3798,6 +3836,17 @@ class DeepAgentsRuntime:
                     result,
                     request_id=request_id,
                 )
+            if not has_grounding_authority:
+                # The turn itself completed; only the optional tidy-up failed,
+                # and that is already recorded in model usage. Leaving an error
+                # termination reason here would mark a good turn as failed.
+                if termination_reason_before_editor is None:
+                    state.agent_diagnostics.pop("final_termination_reason", None)
+                else:
+                    state.agent_diagnostics["final_termination_reason"] = (
+                        termination_reason_before_editor
+                    )
+                return _scrub_internal_shopper_language(draft_response)
             return _GROUNDING_FAILURE_RESPONSE
         _add_model_usage(
             state,

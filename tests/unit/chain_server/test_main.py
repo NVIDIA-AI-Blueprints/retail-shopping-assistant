@@ -8025,6 +8025,83 @@ class TestCommittedMutationSurvivesTurnFailure:
         assert "grounded catalog options" not in receipt
 
 
+class TestEvidenceFreeTurnsStillGetEdited:
+    """A turn with nothing to ground against is still edited.
+
+    The observed leak reached a shopper on exactly such a turn: no tool
+    evidence, empty cart, no history. The editor was skipped, leaving a fixed
+    list of literal string replacements as the only guard -- and a list cannot
+    cover what a model might say about its own machinery.
+    """
+
+    @pytest.mark.asyncio
+    async def test_editor_runs_when_no_lane_has_authority(
+        self,
+        base_config,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+        seen: dict[str, object] = {}
+
+        class RecordingEditor:
+            async def ainvoke(self, messages):
+                seen["called"] = True
+                return SimpleNamespace(content="I can help you shop.")
+
+        monkeypatch.setattr(runtime, "_create_chat_model", lambda: RecordingEditor())
+        state = State(user_id=111, query="what can you do?")
+        assert runtime_mod._has_grounding_authority(state, "") is False
+
+        response = await runtime._rewrite_response_for_grounding(
+            state,
+            {"messages": [{"role": "user", "content": "REQUEST ID: r1"}]},
+            "I only have cart tools in this chat.",
+            request_id="r1",
+        )
+
+        assert seen.get("called") is True
+        assert response == "I can help you shop."
+
+    @pytest.mark.asyncio
+    async def test_editor_failure_does_not_cost_the_shopper_the_reply(
+        self,
+        base_config,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Fail-closed guards unsupported product claims; there are none here.
+
+        Dropping the whole reply because an optional tidy-up failed would trade
+        a rare leak for a common hard failure.
+        """
+
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+
+        class FailingEditor:
+            async def ainvoke(self, messages):
+                raise RuntimeError("editor unavailable")
+
+        monkeypatch.setattr(runtime, "_create_chat_model", lambda: FailingEditor())
+        state = State(user_id=111, query="hello")
+        state.agent_diagnostics = {"final_termination_reason": "completed"}
+
+        response = await runtime._rewrite_response_for_grounding(
+            state,
+            {"messages": [{"role": "user", "content": "REQUEST ID: r1"}]},
+            "Happy to help you shop today.",
+            request_id="r1",
+        )
+
+        assert response == "Happy to help you shop today."
+        assert response != runtime_mod._GROUNDING_FAILURE_RESPONSE
+        # The turn completed; only the optional edit failed.
+        assert state.agent_diagnostics["final_termination_reason"] == "completed"
+        assert state.model_usage["app_llm_grounding_editor"]["status"] == "failed"
+
+
 class TestGroundingGateCountsHydratedLanes:
     """Every turn hydrates memory lanes; the gate must not discard them."""
 

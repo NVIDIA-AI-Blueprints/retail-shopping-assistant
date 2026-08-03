@@ -121,6 +121,10 @@ class State(BaseModel):
             "never current product-fact authority"
         )
     )
+    dialogue_context: str = Field(
+        default="",
+        description="Rendered dialogue only, excluding the product index"
+    )
     context: str = Field(
         default="",
         description="Rendered prompt text only; never parsed back into state"

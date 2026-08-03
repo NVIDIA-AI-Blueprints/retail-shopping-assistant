@@ -2191,17 +2191,17 @@ class DeepAgentsRuntime:
                 )
             )
             if duplicated_product_type:
-                scope.repair.failed_repair_scope_key = candidate_scope_key
-                scope.repair.failed_agent_selected_scope = False
-                return (
-                    SEARCH_VALIDATION_ERROR_PREFIX
-                    + "Product types never belong in "
-                    "unadvertised_requirements. Preserve the shopper-stated "
-                    "requested_product_type, remove it from requirements, and "
-                    "preserve the selected advertised parent category when it is "
-                    "a faithful broader scope. Otherwise ask one concise "
-                    "clarification."
-                )
+                # The product type is already carried by requested_product_type
+                # and by the semantic query, and unadvertised_requirements never
+                # becomes a filter. Rejecting here discarded a search whose
+                # outbound catalog payload was identical to one that succeeds,
+                # so correct the annotation and let retrieval run.
+                # This guard is true only when the list is exactly the
+                # requested product type, so clearing it drops nothing else.
+                raw_unadvertised_requirements = []
+                if isinstance(constraint_payload, dict):
+                    constraint_payload = dict(constraint_payload)
+                    constraint_payload["unadvertised_requirements"] = []
             stated_unadvertised_requirements = (
                 [
                     requirement
@@ -2212,14 +2212,18 @@ class DeepAgentsRuntime:
                 if isinstance(raw_unadvertised_requirements, list)
                 else []
             )
-            if (
-                isinstance(raw_unadvertised_requirements, list)
+            # An unenforceable requirement is a ranking preference, not a veto.
+            # It is already carried by the semantic query and is stripped before
+            # hard filters are built, so the search that would have run here is
+            # the same search either way. Abandoning it left the composer with
+            # nothing to show and turned a valid request into a refusal.
+            unconfirmable_requirements = (
+                list(raw_unadvertised_requirements)
+                if isinstance(raw_unadvertised_requirements, list)
                 and raw_unadvertised_requirements
                 and (shopper_stated_scope or stated_unadvertised_requirements)
-            ):
-                return _unsupported_requirement_message(
-                    raw_unadvertised_requirements
-                )
+                else []
+            )
             try:
                 request = search_input_model.model_validate(
                     {
@@ -2381,9 +2385,8 @@ class DeepAgentsRuntime:
                 )
             )
             if unadvertised_requirements and shopper_stated_scope:
-                return _unsupported_requirement_message(
-                    unadvertised_requirements
-                )
+                # Rank on it, disclose it, do not abandon the search.
+                unconfirmable_requirements = list(unadvertised_requirements)
 
             advertised_taxonomy_issue = _advertised_taxonomy_scope_issue(
                 request.requested_product_type,
@@ -2560,50 +2563,54 @@ class DeepAgentsRuntime:
                     )
                 )
                 if stated_requirements or shopper_stated_scope:
-                    return _unsupported_requirement_message(
-                        unadvertised_requirements
-                    )
-                review_scope = candidate_scope_key or "__unknown__"
-                if review_scope in scope.repair.constraint_reviewed_scopes:
+                    # Rank on it, disclose it, do not abandon the search.
+                    unconfirmable_requirements = list(unadvertised_requirements)
+                if not unconfirmable_requirements:
+                    # Provenance could not be established from this turn, so the
+                    # model may have inferred the requirement. That still earns
+                    # one review. A requirement the shopper actually stated does
+                    # not: it ranks the search and is disclosed instead.
+                    review_scope = candidate_scope_key or "__unknown__"
+                    if review_scope in scope.repair.constraint_reviewed_scopes:
+                        return (
+                            "The requested catalog requirement cannot be enforced: "
+                            "its current-turn provenance could not be established. "
+                            "Ask the shopper to state the exact required attribute "
+                            "or allow it to be treated as a preference."
+                        )
+                    scope.repair.constraint_reviewed_scopes.add(review_scope)
+                    scope.repair.pending_constraint_reviews[review_scope] = {
+                        "requirements": list(unadvertised_requirements),
+                        "taxonomy": request.taxonomy.model_dump(),
+                        "scope_complete": request.scope_complete,
+                        "search_mode": request.search_mode,
+                        "required_constraints": dict(normalized_constraints),
+                    }
+                    scope.repair.failed_constraint_scope_key = review_scope
                     return (
-                        "The requested catalog requirement cannot be enforced: "
-                        "its current-turn provenance could not be established. "
-                        "Ask the shopper to state the exact required attribute "
-                        "or allow it to be treated as a preference."
+                        CONSTRAINT_REVIEW_PREFIX
+                        + "These proposed unadvertised requirements do not match "
+                        "the current shopper turn's normalized wording: "
+                        + json.dumps(unadvertised_requirements, ensure_ascii=False)
+                        + ". Preserve requested_product_type "
+                        + json.dumps(request.requested_product_type)
+                        + ", taxonomy "
+                        + json.dumps(request.taxonomy.model_dump(), sort_keys=True)
+                        + ", and scope_complete "
+                        + json.dumps(request.scope_complete)
+                        + ", search_mode "
+                        + json.dumps(request.search_mode)
+                        + ", and advertised required constraints "
+                        + json.dumps(normalized_constraints, sort_keys=True)
+                        + ". Keep semantic_query within that same product scope; "
+                        "you may remove inferred attribute wording from it"
+                        + ". If the shopper explicitly stated the same objective "
+                        "requirement using different words, replace each value with "
+                        "the shopper's shortest exact wording. Otherwise the model "
+                        "inferred it: remove it from required_constraints and remove "
+                        "the attribute claim from shopper_guidance. Implied weather, "
+                        "occasion, or style goals are not explicit requirements."
                     )
-                scope.repair.constraint_reviewed_scopes.add(review_scope)
-                scope.repair.pending_constraint_reviews[review_scope] = {
-                    "requirements": list(unadvertised_requirements),
-                    "taxonomy": request.taxonomy.model_dump(),
-                    "scope_complete": request.scope_complete,
-                    "search_mode": request.search_mode,
-                    "required_constraints": dict(normalized_constraints),
-                }
-                scope.repair.failed_constraint_scope_key = review_scope
-                return (
-                    CONSTRAINT_REVIEW_PREFIX
-                    + "These proposed unadvertised requirements do not match "
-                    "the current shopper turn's normalized wording: "
-                    + json.dumps(unadvertised_requirements, ensure_ascii=False)
-                    + ". Preserve requested_product_type "
-                    + json.dumps(request.requested_product_type)
-                    + ", taxonomy "
-                    + json.dumps(request.taxonomy.model_dump(), sort_keys=True)
-                    + ", and scope_complete "
-                    + json.dumps(request.scope_complete)
-                    + ", search_mode "
-                    + json.dumps(request.search_mode)
-                    + ", and advertised required constraints "
-                    + json.dumps(normalized_constraints, sort_keys=True)
-                    + ". Keep semantic_query within that same product scope; "
-                    "you may remove inferred attribute wording from it"
-                    + ". If the shopper explicitly stated the same objective "
-                    "requirement using different words, replace each value with "
-                    "the shopper's shortest exact wording. Otherwise the model "
-                    "inferred it: remove it from required_constraints and remove "
-                    "the attribute claim from shopper_guidance. Implied weather, "
-                    "occasion, or style goals are not explicit requirements."
-                )
 
             reviewed_constraint = scope.repair.pending_constraint_reviews.pop(
                 candidate_scope_key,
@@ -2919,6 +2926,7 @@ class DeepAgentsRuntime:
                     advertised_category=advertised_category,
                     scope_complete=bool(request.scope_complete),
                     budget_exhausted=bool(search_budget_exhausted),
+                    unconfirmed_requirements=unconfirmable_requirements,
                     scope_outcome={
                         "outcome": "zero_results",
                         "requested_product_type": request.requested_product_type,
@@ -2937,6 +2945,12 @@ class DeepAgentsRuntime:
                         _format_search_filter_evidence(evidence.confirmed_filters)
                     )
                 lines.append(_format_catalog_scope_outcome(evidence.scope_outcome))
+                if evidence.unconfirmed_requirements:
+                    lines.append(
+                        _unsupported_requirement_message(
+                            evidence.unconfirmed_requirements
+                        )
+                    )
                 if evidence.scope_complete:
                     lines.append(_SEARCH_SCOPE_COMPLETE_NOTE)
                 elif evidence.budget_exhausted:
@@ -2956,6 +2970,7 @@ class DeepAgentsRuntime:
                 advertised_category=advertised_category,
                 scope_complete=bool(request.scope_complete),
                 budget_exhausted=bool(search_budget_exhausted),
+                unconfirmed_requirements=unconfirmable_requirements,
                 products=[
                     _search_product_record(product) for product in result.products
                 ],
@@ -2971,6 +2986,12 @@ class DeepAgentsRuntime:
             if evidence.confirmed_filters:
                 lines.append(
                     _format_search_filter_evidence(evidence.confirmed_filters)
+                )
+            if evidence.unconfirmed_requirements:
+                lines.append(
+                    _unsupported_requirement_message(
+                        evidence.unconfirmed_requirements
+                    )
                 )
             if evidence.scope_complete:
                 lines.append(_SEARCH_SCOPE_COMPLETE_NOTE)
@@ -5923,9 +5944,22 @@ def _customer_safe_search_evidence(payload: dict[str, Any]) -> str:
             lines.append(relation)
         return "\n".join(lines)
 
-    summary = _summarize_typed_product_evidence(payload)
+    lines = [_summarize_typed_product_evidence(payload)]
+    unconfirmed = payload.get("unconfirmed_requirements") or []
+    if unconfirmed:
+        # Retrieval ranked on these; no filter enforced them. Saying so is what
+        # makes running the search safe instead of a licence to claim a match.
+        lines.append(
+            "UNCONFIRMED_REQUIREMENTS: The catalog cannot filter on "
+            + ", ".join(str(item) for item in unconfirmed)
+            + ". These products were ranked for it but none is confirmed to "
+            "meet it. Present them as candidates and say plainly that it is "
+            "unconfirmed. Do not refuse the request."
+        )
     relation = _scope_relation_line(payload, has_products=True)
-    return f"{summary}\n{relation}" if relation else summary
+    if relation:
+        lines.append(relation)
+    return "\n".join(lines)
 
 
 def _scope_relation_payload(payload: dict[str, Any]) -> dict[str, Any]:

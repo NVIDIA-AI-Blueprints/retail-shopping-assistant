@@ -64,7 +64,13 @@ from .conversation_memory import (
     TurnStartResult,
     build_dialogue_context,
 )
-from .control_signals import ControlSignal, control, normalize_tool_result
+from .control_signals import (
+    EFFECTS_KEY,
+    ControlSignal,
+    committed_effects_in,
+    control,
+    normalize_tool_result,
+)
 from .conversation_products import (
     ConversationProductsClient,
     ConversationProductsError,
@@ -1891,12 +1897,33 @@ class DeepAgentsRuntime:
             if capture_error:
                 state.agent_diagnostics["partial_graph_capture_error"] = capture_error
             logger.exception("DeepAgentsRuntime failed")
+            # A committed cart change must never be concealed by a read-only
+            # fallback. When the graph snapshot could not be read we cannot rule
+            # a mutation out, so that case is treated as uncertain rather than
+            # as "no mutation".
+            effects = committed_effects_in(partial_messages)
+            effects_unknown = bool(capture_error)
             if termination_reason == "agent_timeout":
                 state.product_results = []
                 state.retrieved = {}
                 state.response = (
                     "This request took too long to complete. Please retry. If it "
                     "involved a cart change, check your cart first."
+                )
+            elif effects:
+                state.product_results = []
+                state.retrieved = {}
+                state.response = _committed_effect_receipt(
+                    effects,
+                    self._safe_read_cart(identity.cart_user_id),
+                )
+            elif effects_unknown:
+                state.product_results = []
+                state.retrieved = {}
+                state.response = (
+                    "Something went wrong before I could confirm this request. "
+                    "Please check your cart before retrying, in case a change "
+                    "was already applied."
                 )
             else:
                 fallback_response = _partial_product_results_response(state)
@@ -3046,8 +3073,7 @@ class DeepAgentsRuntime:
                 _resolve_conversation_products_impl(references)
             )
 
-        @tool(args_schema=AddCartItemsToolInput, return_direct=False)
-        def add_cart_items_tool(items: list[AddCartItemsToolItemInput]) -> str:
+        def _add_cart_items_impl(items: list[AddCartItemsToolItemInput]):
             """Add products to the cart. Use ONLY on explicit shopper intent to
             add, buy, or put items in the cart. Requires PRODUCT_REF values from
             current-turn search or historical-product resolution — not names.
@@ -3129,6 +3155,7 @@ class DeepAgentsRuntime:
                 return _format_cart_add_result([], failed + blocked, state.cart)
 
             added: list[str] = []
+            committed: list[dict[str, Any]] = []
             for product_ref, product, quantity in resolved:
                 result = add_cart_item(
                     AddCartItemInput(
@@ -3145,6 +3172,17 @@ class DeepAgentsRuntime:
                     self.config.memory_port,
                 )
                 if result.ok:
+                    committed.append(
+                        {
+                            "operation": "added to cart",
+                            "idempotency_key": (
+                                f"{identity.request_id}:add:"
+                                f"{product.product_id}:{quantity}"
+                            ),
+                            "product_id": product.display_name,
+                            "quantity": quantity,
+                        }
+                    )
                     added.append(
                         f"- {quantity} x {product.display_name} "
                         f"(PRODUCT_REF: {product.product_id})"
@@ -3161,7 +3199,24 @@ class DeepAgentsRuntime:
                 state.cart,
                 scope.product_evidence.values(),
             )
-            return _format_cart_add_result(added, failed, state.cart)
+            rendered = _format_cart_add_result(added, failed, state.cart)
+            if not committed:
+                return rendered
+            return rendered, {EFFECTS_KEY: committed}
+
+        @tool(
+            args_schema=AddCartItemsToolInput,
+            return_direct=False,
+            response_format="content_and_artifact",
+        )
+        def add_cart_items_tool(items: list[AddCartItemsToolItemInput]):
+            """Add products to the cart. Use ONLY on explicit shopper intent to
+            add, buy, or put items in the cart. Requires PRODUCT_REF values from
+            current-turn search or historical-product resolution — not names.
+            Call once with all items, not once per item.
+            """
+
+            return normalize_tool_result(_add_cart_items_impl(items))
 
         @tool(return_direct=False)
         def remove_cart_item_tool(cart_line_id: str, quantity: int = 1) -> str:
@@ -4021,6 +4076,15 @@ Rules:
                 product = products_by_key.get(str(item.get("item") or ""))
             if product is not None and product.image_url:
                 retrieved[product.display_name] = product.image_url
+
+    def _safe_read_cart(self, user_id: int) -> Cart | None:
+        """Read the cart for a failure receipt without raising again."""
+
+        try:
+            return self._read_cart(user_id)
+        except Exception:  # noqa: BLE001 - a receipt must not fail closed twice.
+            logger.exception("Could not read cart for mutation receipt")
+            return None
 
     def _read_cart(self, user_id: int) -> Cart:
         result = get_cart(GetCartInput(user_id=str(user_id)), self.config.memory_port)
@@ -4939,6 +5003,36 @@ def _append_product_results(state: State, products: list[ProductSummary]) -> Non
         state.product_results.append(payload)
         if product_id:
             existing_ids.add(product_id)
+
+
+def _committed_effect_receipt(
+    effects: list[dict[str, Any]],
+    cart: Cart | None,
+) -> str:
+    """Tell the shopper exactly what was committed before the turn failed."""
+
+    lines = [
+        "Something went wrong finishing that request, but a cart change was "
+        "already applied:",
+        "",
+    ]
+    for effect in effects:
+        operation = str(effect.get("operation") or "changed")
+        target = str(
+            effect.get("product_id") or effect.get("cart_line_id") or "an item"
+        )
+        quantity = effect.get("quantity")
+        detail = f" (quantity {quantity})" if isinstance(quantity, int) else ""
+        lines.append(f"- {operation}: {target}{detail}")
+    lines.append("")
+    if cart is not None:
+        lines.append(_format_cart(cart))
+        lines.append("")
+    lines.append(
+        "Please review your cart before retrying so the change is not applied "
+        "twice."
+    )
+    return "\n".join(lines)
 
 
 def _partial_product_results_response(state: State) -> str:

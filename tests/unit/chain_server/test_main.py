@@ -3253,8 +3253,10 @@ class TestDeepAgentsRuntimeRefs:
             raise AssertionError("ambiguous resolution cannot authorize a product")
 
         monkeypatch.setattr(runtime_mod, "get_product_details", fail_product_read)
-        blocked_add = tools_by_name["add_cart_items_tool"](
-            items=[{"product_ref": "bag-a", "quantity": 1}]
+        blocked_add = tool_text(
+            tools_by_name["add_cart_items_tool"](
+                items=[{"product_ref": "bag-a", "quantity": 1}]
+            )
         )
         assert "resolve the earlier product first" in blocked_add
 
@@ -7342,7 +7344,9 @@ class TestDeepAgentsRuntimeRefs:
         tools_by_name = {fn.__name__: fn for fn in captured["tools"]}
         add_tool = tools_by_name["add_cart_items_tool"]
 
-        missing = add_tool(items=[{"product_ref": "missing", "quantity": 1}])
+        missing = tool_text(
+            add_tool(items=[{"product_ref": "missing", "quantity": 1}])
+        )
         assert "resolve the earlier product first" in missing
         assert added == []
 
@@ -7352,21 +7356,23 @@ class TestDeepAgentsRuntimeRefs:
                 {"reference_id": "prod_bag", "product_ref": "prod_bag"},
             ]
         )
-        added_response = add_tool(
-            items=[
-                {
-                    "product_ref": "prod_flats",
-                    "quantity": 2,
-                    "expected_display_name": "Felicity Flats",
-                },
-                {"product_ref": "missing", "quantity": 1},
-                {
-                    "product_ref": "prod_bag",
-                    "quantity": 1,
-                    "expected_display_name": "Work Bag",
-                },
-                {"product_ref": "prod_flats", "quantity": 1},
-            ]
+        added_response = tool_text(
+            add_tool(
+                items=[
+                    {
+                        "product_ref": "prod_flats",
+                        "quantity": 2,
+                        "expected_display_name": "Felicity Flats",
+                    },
+                    {"product_ref": "missing", "quantity": 1},
+                    {
+                        "product_ref": "prod_bag",
+                        "quantity": 1,
+                        "expected_display_name": "Work Bag",
+                    },
+                    {"product_ref": "prod_flats", "quantity": 1},
+                ]
+            )
         )
 
         assert "CART_ADD_RESULT" in added_response
@@ -7384,14 +7390,16 @@ class TestDeepAgentsRuntimeRefs:
 
         added.clear()
         del active_products["prod_bag"]
-        stale_response = add_tool(
-            items=[
-                {
-                    "product_ref": "prod_bag",
-                    "quantity": 1,
-                    "expected_display_name": "Work Bag",
-                }
-            ]
+        stale_response = tool_text(
+            add_tool(
+                items=[
+                    {
+                        "product_ref": "prod_bag",
+                        "quantity": 1,
+                        "expected_display_name": "Work Bag",
+                    }
+                ]
+            )
         )
         assert "no longer present in the active catalog" in stale_response
         assert added == []
@@ -7400,14 +7408,16 @@ class TestDeepAgentsRuntimeRefs:
             product_id="prod_bag",
             display_name="Different Product",
         )
-        reused_id_response = add_tool(
-            items=[
-                {
-                    "product_ref": "prod_bag",
-                    "quantity": 1,
-                    "expected_display_name": "Work Bag",
-                }
-            ]
+        reused_id_response = tool_text(
+            add_tool(
+                items=[
+                    {
+                        "product_ref": "prod_bag",
+                        "quantity": 1,
+                        "expected_display_name": "Work Bag",
+                    }
+                ]
+            )
         )
         assert "resolves to a different product" in reused_id_response
         assert added == []
@@ -7424,14 +7434,16 @@ class TestDeepAgentsRuntimeRefs:
                 ),
             ),
         )
-        transient_response = add_tool(
-            items=[
-                {
-                    "product_ref": "prod_flats",
-                    "quantity": 1,
-                    "expected_display_name": "Felicity Flats",
-                }
-            ]
+        transient_response = tool_text(
+            add_tool(
+                items=[
+                    {
+                        "product_ref": "prod_flats",
+                        "quantity": 1,
+                        "expected_display_name": "Felicity Flats",
+                    }
+                ]
+            )
         )
         assert "temporarily unavailable" in transient_response
         assert "no longer present" not in transient_response
@@ -7472,19 +7484,21 @@ class TestDeepAgentsRuntimeRefs:
                 {"reference_id": "prod_green", "product_ref": "prod_green"},
             ]
         )
-        blocked_response = add_tool(
-            items=[
-                {
-                    "product_ref": "prod_flats",
-                    "quantity": 1,
-                    "expected_display_name": "Felicity Flats",
-                },
-                {
-                    "product_ref": "prod_green",
-                    "quantity": 1,
-                    "expected_display_name": "Green Meadow Sweater Top",
-                },
-            ]
+        blocked_response = tool_text(
+            add_tool(
+                items=[
+                    {
+                        "product_ref": "prod_flats",
+                        "quantity": 1,
+                        "expected_display_name": "Felicity Flats",
+                    },
+                    {
+                        "product_ref": "prod_green",
+                        "quantity": 1,
+                        "expected_display_name": "Green Meadow Sweater Top",
+                    },
+                ]
+            )
         )
 
         assert added == []
@@ -7492,14 +7506,16 @@ class TestDeepAgentsRuntimeRefs:
         assert "Luminous Lace Blouse Sweater" in blocked_response
         assert "Green Meadow Sweater Top" in blocked_response
 
-        mismatch_response = add_tool(
-            items=[
-                {
-                    "product_ref": "prod_green",
-                    "quantity": 1,
-                    "expected_display_name": "Luminous Lace Blouse Sweater",
-                }
-            ]
+        mismatch_response = tool_text(
+            add_tool(
+                items=[
+                    {
+                        "product_ref": "prod_green",
+                        "quantity": 1,
+                        "expected_display_name": "Luminous Lace Blouse Sweater",
+                    }
+                ]
+            )
         )
         assert added == []
         assert "expected 'Luminous Lace Blouse Sweater'" in mismatch_response
@@ -7853,3 +7869,70 @@ class TestValidation:
             json={"user_id": "not-an-int", "query": "hi"},
         )
         assert response.status_code == 422
+
+
+class TestCommittedMutationReceipt:
+    """A committed cart change must never be concealed by a failed turn."""
+
+    def test_receipt_replaces_product_fallback_when_a_mutation_committed(self) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        cart = runtime_mod.Cart(contents=[{"item": "Work Bag", "amount": 1}])
+        receipt = runtime_mod._committed_effect_receipt(
+            [
+                {
+                    "operation": "added to cart",
+                    "idempotency_key": "req-1:add:prod_1:2",
+                    "product_id": "Work Bag",
+                    "quantity": 2,
+                }
+            ],
+            cart,
+        )
+
+        assert "already applied" in receipt
+        assert "Work Bag" in receipt
+        assert "quantity 2" in receipt
+        assert "not applied twice" in receipt
+
+    def test_receipt_survives_an_unreadable_cart(self) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        receipt = runtime_mod._committed_effect_receipt(
+            [{"operation": "removed from cart", "idempotency_key": "k", "cart_line_id": "line-9"}],
+            None,
+        )
+
+        assert "already applied" in receipt
+        assert "line-9" in receipt
+
+    def test_effects_are_read_from_tool_artifacts(self) -> None:
+        from langchain_core.messages import ToolMessage
+
+        from chain_server.src.control_signals import committed_effects_in
+
+        messages = [
+            ToolMessage(content="unrelated", tool_call_id="a"),
+            ToolMessage(
+                content="CART_ADD_RESULT ...",
+                tool_call_id="b",
+                artifact={
+                    "committed_effects": [
+                        {"operation": "added to cart", "idempotency_key": "k"}
+                    ]
+                },
+            ),
+        ]
+
+        effects = committed_effects_in(messages)
+
+        assert len(effects) == 1
+        assert effects[0]["operation"] == "added to cart"
+
+    def test_no_effects_when_nothing_was_committed(self) -> None:
+        from langchain_core.messages import ToolMessage
+
+        from chain_server.src.control_signals import committed_effects_in
+
+        assert committed_effects_in([ToolMessage(content="x", tool_call_id="a")]) == []
+        assert committed_effects_in([]) == []

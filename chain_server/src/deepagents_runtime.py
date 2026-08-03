@@ -543,7 +543,10 @@ def _unsupported_requirement_message(requirements: list[str]) -> str:
             f"'{requirement}' is not an advertised hard filter"
             for requirement in requirements
         )
-        + ". Ask the shopper whether to treat it as a preference."
+        + ". Decide from what the shopper has already told you: if they have "
+        "said what to do when it cannot be confirmed, follow that; otherwise "
+        "treat it as a ranking preference and say plainly it is unconfirmed, "
+        "or ask them. Do not refuse the request."
     )
 
 
@@ -1841,15 +1844,13 @@ class DeepAgentsRuntime:
                 request_id=identity.request_id,
                 final_termination_reason="completed",
             )
-            state.response = (
-                _no_direct_taxonomy_response(
-                    result,
-                    request_id=identity.request_id,
-                )
-                or _unsupported_requirement_response(
-                    result,
-                    request_id=identity.request_id,
-                )
+            # An unenforceable requirement is a fact for the model to speak to,
+            # not a reason for the runtime to seize the turn. Deterministic code
+            # establishes that the filter is not advertised; the model decides
+            # what to say about it, constrained by the grounding editor.
+            state.response = _no_direct_taxonomy_response(
+                result,
+                request_id=identity.request_id,
             )
             if not state.response:
                 remaining_seconds = max(
@@ -4681,26 +4682,6 @@ def _catalog_repair_clarification_response(
     return ""
 
 
-def _unsupported_requirement_response(
-    result: Any,
-    *,
-    request_id: str,
-) -> str | None:
-    """Return the fixed shopper response for an unenforceable must-have."""
-
-    outcomes = _business_tool_result_contents(
-        _current_turn_messages(_result_messages(result), request_id)
-    )
-    unsupported_outcomes = [
-        content
-        for content in outcomes
-        if content.startswith(
-            UNSUPPORTED_CONSTRAINT_PREFIX
-        )
-    ]
-    if unsupported_outcomes and len(unsupported_outcomes) == len(outcomes):
-        return _UNSUPPORTED_REQUIREMENT_RESPONSE
-    return None
 
 
 def _business_tool_result_contents(messages: list[Any]) -> list[str]:

@@ -55,6 +55,7 @@ Top-level orchestration is via `docker-compose.yaml`; optional local NIM model c
 - Dormant, directly constructible weather wrapper:
   `chain_server/src/weather_tool.py`
 - Shared request/state models: `chain_server/src/agenttypes.py`
+- Deterministic code may establish that a catalog filter is unadvertised; it must not decide the conversational move. Never substitute a fixed refusal for the model's composed answer.
 - The grounding editor must run whenever any hydrated authority lane exists — tool evidence, historical product identity, or cart. Dialogue is intent only and never grounds a product claim.
 - Committed commerce effects ride on the tool artifact and must be consulted before any read-only failure fallback. If the graph snapshot cannot be read, warn about the cart: absence of evidence is not evidence of absence.
 - Tool-loop control outcomes are typed: tools return `(text, artifact)` via `chain_server/src/control_signals.py`, and the middleware reads the artifact. Never recover control state by parsing tool text.

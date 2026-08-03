@@ -17,6 +17,7 @@ that silently drops out of one of them becomes an unsupported claim.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -33,9 +34,9 @@ from chain_server.src.tool_evidence import (
 from shared.commerce_contracts import Money, ProductDetail, ProductSummary
 
 _SEARCH_DETAILS_LINE = (
-    "DETAILS: Call get_product_details_tool with this PRODUCT_REF before "
-    "stating materials, dimensions, pockets, closures, care, comfort, or "
-    "outdoor-practicality claims."
+    "DETAILS: Any attribute not listed above is not carried by this search "
+    "result. Read it with get_product_details_tool and this PRODUCT_REF "
+    "before stating it; absence here is not evidence that it is unknown."
 )
 
 
@@ -229,14 +230,15 @@ def test_composer_summary_for_search_results() -> None:
     )
 
     assert summary == (
-        "CUSTOMER_SAFE_SEARCH_EVIDENCE: Search results support only product "
-        "names, prices, categories, image availability, confirmed search "
-        "filters, and a modest styling role. Beyond an exact confirmed filter, "
-        "they do not support length, color, print, materials, care, "
-        "construction, fit, comfort, weather, grass, gravel, heat, or "
-        "best-in-category claims. Treat names as display names, not attribute "
-        "evidence; group claims require product-detail evidence for every "
-        "item.\n"
+        "CUSTOMER_SAFE_SEARCH_EVIDENCE: Search results support product names, "
+        "prices, categories, image availability, confirmed search filters, any "
+        "attribute listed as confirmed for that specific product, and a modest "
+        "styling role. An attribute confirmed for one product is not evidence "
+        "about another. They do not support care, construction, fit, comfort, "
+        "weather, grass, gravel, heat, or best-in-category claims, nor any "
+        "attribute not listed for that product. Treat names as display names, "
+        "not attribute evidence; group claims require the attribute confirmed "
+        "on every item.\n"
         "CONFIRMED_SEARCH_FILTERS: Every product below passed each filter "
         "predicate. A one-value list confirms that value; a multi-value list "
         "confirms only membership in the set, not which value matched: "
@@ -257,6 +259,63 @@ def test_composer_summary_for_search_results() -> None:
     assert "black work bag" not in summary
     assert "PRODUCT_REF" not in summary
     assert "prod_1" not in summary
+
+
+def test_search_results_carry_the_attributes_the_catalog_confirmed() -> None:
+    """The catalog sends these with every result; dropping them cost a read.
+
+    Before this, the runtime discarded the structured attributes and told the
+    model they were available only from a product-detail read -- one of two per
+    turn. When that budget ran out the assistant reported a confirmed attribute
+    as unknown.
+    """
+
+    product = SimpleNamespace(
+        product_id="prod_9",
+        display_name="Black Satin Lace-Up Dress",
+        category="dresses",
+        price=Money(amount=69.99),
+        image_url="/images/d.jpg",
+        attributes={
+            "composition": "100% satin",
+            "garment_length": "maxi",
+            "neckline": "off shoulder",
+            # not attributes: retrieval bookkeeping and the prose serialisation
+            "similarity": 0.67,
+            "taxonomy": {"category": "apparel"},
+            "catalog_text": "name: ...\nsummary: An elegant black satin gown",
+        },
+    )
+
+    record = runtime_mod._search_product_record(product)
+
+    assert record["attributes"] == {
+        "composition": "100% satin",
+        "garment_length": "maxi",
+        "neckline": "off shoulder",
+    }
+    text = runtime_mod._format_product_record(record)
+    assert "CONFIRMED_ATTRIBUTES:" in text
+    assert "- composition: 100% satin" in text
+    assert "- garment length: maxi" in text
+    # The marketing summary is never forwarded.
+    assert "elegant" not in text
+    assert "catalog_text" not in text
+    assert "similarity" not in text
+
+
+def test_composer_may_state_a_confirmed_attribute() -> None:
+    """Widening what search carries is useless if the editor still strips it."""
+
+    evidence = _results_evidence()
+    evidence.products[0]["attributes"] = {"composition": "100% satin"}
+
+    summary = runtime_mod._customer_safe_tool_evidence("", _StubToolMessage(evidence))
+
+    assert "confirmed: composition: 100% satin" in summary
+    assert "any attribute listed as confirmed for that specific product" in summary
+    # And it must not become licence to claim it for the others.
+    assert "not evidence about another" in summary
 
 
 def test_composer_summary_for_zero_results() -> None:

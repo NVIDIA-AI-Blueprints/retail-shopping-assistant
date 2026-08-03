@@ -58,6 +58,7 @@ class RetrieverConfig(BaseModel):
     image_field: str
     price_field: str
     taxonomy_fields: List[str]
+    detail_fields: List[str] = Field(default_factory=list)
 
 
 class CatalogFilterError(ValueError):
@@ -347,6 +348,7 @@ class Retriever:
         self.image_field = config.image_field
         self.price_field = config.price_field
         self.taxonomy_fields = config.taxonomy_fields
+        self.detail_fields = list(config.detail_fields)
 
         text_key = os.environ.get(self.text_api_key_env, "") if self.text_api_key_env else ""
         image_key = os.environ.get(self.image_api_key_env, "") if self.image_api_key_env else ""
@@ -654,6 +656,7 @@ class Retriever:
         self.image_field = record.image
         self.price_field = record.price
         self.taxonomy_fields = snapshot.schema.taxonomy.fields
+        self.detail_fields = list(snapshot.schema.detail_fields)
         self.filter_capabilities = snapshot.capabilities.filters
         text_ready = self.text_db.matches_catalog(
             snapshot.fingerprint, snapshot.product_count
@@ -1300,6 +1303,17 @@ class Retriever:
             "category": str(category),
             "image_url": str(metadata.get(self.image_field) or ""),
             "attributes": {
+                # The catalog already declares which fields are product detail,
+                # and the same metadata is read to evaluate hard filters. Sending
+                # them only inside catalog_text left every consumer a choice
+                # between parsing prose and spending a product-detail read to
+                # re-fetch what this response already carried.
+                **{
+                    field: metadata[field]
+                    for field in self.detail_fields
+                    if field != self.price_field
+                    and metadata.get(field) not in (None, "")
+                },
                 "catalog_text": (
                     doc.page_content + f"\nPRICE: {metadata.get(self.price_field)}"
                 ),

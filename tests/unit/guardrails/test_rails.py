@@ -17,11 +17,10 @@ testable as a library we:
 
 from __future__ import annotations
 
-import asyncio
 import os
 import sys
 from pathlib import Path
-from types import ModuleType, SimpleNamespace
+from types import ModuleType
 from typing import Any, Dict, List
 
 import pytest

@@ -23,6 +23,7 @@ from langchain_core.tools import BaseTool, tool
 from langgraph.prebuilt.tool_node import ToolCallRequest
 from pydantic import Field, PrivateAttr
 
+from chain_server.src import catalog_search
 from chain_server.src.agenttypes import Cart, State
 from chain_server.src.catalog_execution import CatalogSearchExecution
 from chain_server.src.deepagents_runtime import (
@@ -947,7 +948,6 @@ async def test_compiled_agent_answers_promotions_without_catalog_search(
 ) -> None:
     """A promotions lookup uses its granted stub instead of catalog retrieval."""
 
-    from chain_server.src import deepagents_runtime as runtime_mod
 
     model_name = "compiled-promotions-test"
     base_config.llm_name = model_name
@@ -989,7 +989,7 @@ async def test_compiled_agent_answers_promotions_without_catalog_search(
         raise AssertionError("promotions lookup must not execute catalog search")
 
     monkeypatch.setattr(
-        runtime_mod,
+        catalog_search,
         "execute_catalog_search",
         fail_catalog_search,
     )
@@ -1179,7 +1179,6 @@ async def test_compiled_agent_executes_capability_valid_repair(
 ) -> None:
     """A repair may replace unvalidated catalog fields before execution."""
 
-    from chain_server.src import deepagents_runtime as runtime_mod
 
     model_name = "compiled-capability-repair-test"
     base_config.llm_name = model_name
@@ -1254,7 +1253,7 @@ async def test_compiled_agent_executes_capability_valid_repair(
         )
 
     monkeypatch.setattr(
-        runtime_mod,
+        catalog_search,
         "execute_catalog_search",
         execute_catalog_search,
     )

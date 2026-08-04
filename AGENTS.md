@@ -36,8 +36,10 @@ Top-level orchestration is via `docker-compose.yaml`; optional local NIM model c
 
 ## 3) Source Map (Where to Change What)
 
-- Serving agent orchestration, registered tools, and capability-derived
-  model-visible search schema: `chain_server/src/deepagents_runtime.py`
+- Serving agent orchestration and registered tools:
+  `chain_server/src/deepagents_runtime.py`
+- Capability-derived model-visible tool schemas, and the stateless helpers the
+  runtime calls: `chain_server/src/turn_support.py`
 - Reusable model-visible catalog search rules: `chain_server/src/catalog_scope.py`
 - Shopper-skill registry, frontmatter validation, and immutable tool policy: `chain_server/src/tool_policy.py`
 - Per-turn skill activation, model-visible tool binding, and dispatch grant gate: `chain_server/src/skill_activation.py`

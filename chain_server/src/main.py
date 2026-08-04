@@ -23,7 +23,8 @@ import re
 
 from .agenttypes import SHOPPER_PROFILE_ID_PATTERN, State, Cart
 from .config import load_config
-from .deepagents_runtime import DeepAgentsRuntime, create_request_identity
+from .deepagents_runtime import DeepAgentsRuntime
+from .turn_support import create_request_identity
 from .media_perception import MEDIA_ONLY_QUERY
 from .shopper_profiles import (
     ShopperProfile,

@@ -27,6 +27,8 @@ from chain_server.src.agenttypes import Cart, State
 from chain_server.src.catalog_execution import CatalogSearchExecution
 from chain_server.src.deepagents_runtime import (
     DeepAgentsRuntime,
+)
+from chain_server.src.turn_support import (
     RequestIdentity,
     _skill_activation_input_model,
 )

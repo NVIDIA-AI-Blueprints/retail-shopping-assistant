@@ -5,7 +5,7 @@
 
 
 def test_model_catalog_search_has_no_semantic_relation_label() -> None:
-    from chain_server.src.deepagents_runtime import SearchCatalogToolArguments
+    from chain_server.src.turn_support import SearchCatalogToolArguments
 
     assert "taxonomy_status" not in SearchCatalogToolArguments.model_fields
 

@@ -23,6 +23,7 @@ from typing import Any
 import pytest
 
 from chain_server.src import deepagents_runtime as runtime_mod
+from chain_server.src import turn_support as runtime_mod_support
 from chain_server.src import response_format
 from chain_server.src.tool_evidence import (
     DETAIL_EVIDENCE_KEY,
@@ -117,7 +118,7 @@ class _StubToolMessage:
 def test_search_result_text_the_model_reads(
     product: ProductSummary, expected: str
 ) -> None:
-    assert runtime_mod._format_product(product) == expected
+    assert runtime_mod_support._format_product(product) == expected
 
 
 @pytest.mark.parametrize(
@@ -187,7 +188,7 @@ def test_product_detail_text_the_model_reads(
 ) -> None:
     expected = f"{response_format._PRODUCT_DETAIL_GROUNDING_NOTE}\n{expected_body}"
 
-    assert runtime_mod._format_product_details(detail) == expected
+    assert runtime_mod_support._format_product_details(detail) == expected
 
 
 # --------------------------------------------------------------------------
@@ -226,7 +227,7 @@ def _results_evidence() -> SearchEvidence:
 def test_composer_summary_for_search_results() -> None:
     """Every fact the composer may repeat, and the limits placed on it."""
 
-    summary = runtime_mod._customer_safe_tool_evidence(
+    summary = runtime_mod_support._customer_safe_tool_evidence(
         "", _StubToolMessage(_results_evidence())
     )
 
@@ -288,7 +289,7 @@ def test_search_results_carry_the_attributes_the_catalog_confirmed() -> None:
         },
     )
 
-    record = runtime_mod._search_product_record(product)
+    record = runtime_mod_support._search_product_record(product)
 
     assert record["attributes"] == {
         "composition": "100% satin",
@@ -311,7 +312,7 @@ def test_composer_may_state_a_confirmed_attribute() -> None:
     evidence = _results_evidence()
     evidence.products[0]["attributes"] = {"composition": "100% satin"}
 
-    summary = runtime_mod._customer_safe_tool_evidence("", _StubToolMessage(evidence))
+    summary = runtime_mod_support._customer_safe_tool_evidence("", _StubToolMessage(evidence))
 
     assert "confirmed: composition: 100% satin" in summary
     assert "any attribute listed as confirmed for that specific product" in summary
@@ -330,7 +331,7 @@ def test_composer_summary_for_zero_results() -> None:
         advertised_category="Bags",
     )
 
-    summary = runtime_mod._customer_safe_tool_evidence("", _StubToolMessage(evidence))
+    summary = runtime_mod_support._customer_safe_tool_evidence("", _StubToolMessage(evidence))
 
     assert summary == (
         "CUSTOMER_SAFE_SCOPED_NO_MATCH_EVIDENCE: Zero products matched only "
@@ -359,7 +360,7 @@ def test_composer_summary_for_product_detail() -> None:
         "details": ["care: Machine wash cold.", "composition: 100% linen"],
     }
 
-    summary = runtime_mod._customer_safe_tool_evidence(
+    summary = runtime_mod_support._customer_safe_tool_evidence(
         "",
         _StubToolMessage(
             artifact=ProductDetailEvidence(products=[record]).as_artifact()
@@ -390,7 +391,7 @@ def test_no_direct_catalog_match_is_a_refusal_not_an_empty_search() -> None:
         requested_product_type="casual sneakers",
     )
 
-    summary = runtime_mod._customer_safe_tool_evidence("", _StubToolMessage(evidence))
+    summary = runtime_mod_support._customer_safe_tool_evidence("", _StubToolMessage(evidence))
 
     assert summary.startswith("CUSTOMER_SAFE_NO_MATCH_EVIDENCE:")
     assert "No retrieval ran" in summary
@@ -406,7 +407,7 @@ def test_scope_relation_is_absent_when_no_parent_was_substituted() -> None:
     evidence = _results_evidence()
     evidence.advertised_category = None
 
-    summary = runtime_mod._customer_safe_tool_evidence("", _StubToolMessage(evidence))
+    summary = runtime_mod_support._customer_safe_tool_evidence("", _StubToolMessage(evidence))
 
     assert "REQUESTED_SCOPE_RELATION" not in summary
 
@@ -417,7 +418,7 @@ def test_empty_results_do_not_append_a_blank_line() -> None:
     evidence = _results_evidence()
     evidence.products = []
 
-    summary = runtime_mod._customer_safe_tool_evidence("", _StubToolMessage(evidence))
+    summary = runtime_mod_support._customer_safe_tool_evidence("", _StubToolMessage(evidence))
 
     assert not summary.endswith("\n")
 

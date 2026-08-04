@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import asyncio
 import json
 import os
@@ -110,7 +112,6 @@ from .turn_support import (
     _text_mentions_product_type,
     _tool_search_mode,
     _unsupported_requirement_message,
-    logger,
 )
 from .catalog_capabilities import (
     CatalogCapabilitiesClient,
@@ -195,6 +196,8 @@ from shared.commerce_contracts import (
     RemoveCartItemInput,
     UpdateCartItemInput,
 )
+
+logger = logging.getLogger(__name__)
 
 
 _SHOPPER_SKILLS_ENV = "SHOPPER_SKILLS_ROOT"

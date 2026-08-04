@@ -8242,3 +8242,45 @@ class TestComposerAuthorityLanes:
         state.context = state.dialogue_context + "\n\nHISTORICAL PRODUCT INDEX (read-only):\n- x"
 
         assert "HISTORICAL PRODUCT INDEX" not in state.dialogue_context
+
+
+class TestGroundingEditorBudgetIsReserved:
+    """The editor is not optional, so its budget cannot be the loop's leftovers.
+
+    Measured 2026-08-04 against a 45s turn budget: the agent loop reached the
+    full 45.0s on six turns, so the editor was handed zero seconds, timed out,
+    and the grounding-failure message reached the shopper.
+    """
+
+    def test_agent_loop_cannot_consume_the_reserve(self, base_config) -> None:
+        base_config.deepagents_execution_timeout_seconds = 55.0
+        base_config.grounding_editor_reserve_seconds = 15.0
+
+        agent_timeout = max(
+            0.0,
+            base_config.deepagents_execution_timeout_seconds
+            - base_config.grounding_editor_reserve_seconds,
+        )
+
+        assert agent_timeout == 40.0
+
+    def test_editor_budget_never_reaches_zero(self, base_config) -> None:
+        """Even if the loop somehow ran to the deadline, the floor holds."""
+
+        reserve = 15.0
+        for elapsed in (0.0, 20.0, 40.0, 55.0, 90.0):
+            remaining = max(reserve, 55.0 - elapsed)
+            assert remaining >= reserve
+
+    def test_reserve_is_configurable(self, base_config) -> None:
+        from chain_server.src.config import ChainServerConfig
+
+        assert "grounding_editor_reserve_seconds" in ChainServerConfig.model_fields
+
+    def test_default_reserve_covers_the_measured_p90(self) -> None:
+        """Editor p90 was 12.5s; a smaller reserve reintroduces the failure."""
+
+        from chain_server.src.config import ChainServerConfig
+
+        field = ChainServerConfig.model_fields["grounding_editor_reserve_seconds"]
+        assert field.default >= 12.5

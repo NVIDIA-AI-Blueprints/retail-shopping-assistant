@@ -5144,6 +5144,19 @@ def _diagnostic_product_facts(product: dict[str, Any]) -> dict[str, Any]:
             facts[key] = _bounded_product_evidence_value(value)
     facts["image_available"] = bool(product.get("image_url"))
 
+    # Attributes the catalog confirmed on a search result. The composer is
+    # allowed to state these, so the evidence trace has to carry them: a fact an
+    # observer cannot see the support for is indistinguishable from an invented
+    # one, and gets judged as invention however accurate it is.
+    attributes = product.get("attributes")
+    if isinstance(attributes, dict):
+        for name, value in attributes.items():
+            if len(facts) >= _MAX_DIAGNOSTIC_PRODUCT_FACTS:
+                break
+            bounded_name = str(_bounded_product_evidence_value(name))
+            if bounded_name and bounded_name not in facts:
+                facts[bounded_name] = _bounded_product_evidence_value(value)
+
     for raw_detail in product.get("details") or []:
         if len(facts) >= _MAX_DIAGNOSTIC_PRODUCT_FACTS:
             break

@@ -114,7 +114,7 @@ The detailed contracts and implementation live in:
 - [Capability publisher](../catalog_retriever/src/capabilities.py)
 - [Catalog retriever](../catalog_retriever/src/retriever.py)
 - [Chain capability cache](../chain_server/src/catalog_capabilities.py)
-- [Model-visible catalog search schema and tool construction](../chain_server/src/deepagents_runtime.py)
+- [Model-visible catalog search schema](../chain_server/src/turn_support.py)
 - [Reusable model-visible catalog search rules](../chain_server/src/catalog_scope.py)
 
 ## 2. One Shopper Turn

@@ -315,8 +315,12 @@ Key env vars:
   its process lifetime. It uses the full contract for deterministic validation
   and a compact projection for the LLM prompt. After a catalog change, wait for
   catalog health and then restart the chain server.
-- Search results use source `record_id` values. Product facts are read from
-  `/products/{product_id}`; current generated IDs are safe only within the
+- Search results use source `record_id` values. A search result carries the
+  catalog-declared detail fields present on that product, so an attribute it
+  lists is confirmed for that product and needs no further read; an attribute it
+  omits is absent from the result, not evidence that the product lacks it, and
+  is read from `/products/{product_id}`. That endpoint remains the source for
+  fields a search does not carry. Current generated IDs are safe only within the
   active snapshot, so stale refs require a fresh search.
 - Current-request product evidence is process-local. Finalized product cards
   also create a bounded durable same-conversation reference index; one unique

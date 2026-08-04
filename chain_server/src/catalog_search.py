@@ -18,7 +18,7 @@ what to preserve and what to change, or the repair loops.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import json
 import time
@@ -95,6 +95,12 @@ from .response_format import (
 )
 
 
+#: What a search step hands back: nothing, meaning the search continues, or the
+#: text the model reads -- paired with the evidence artifact behind it when the
+#: step produced one.
+StepResult = str | tuple[str, dict[str, Any]] | None
+
+
 @dataclass(frozen=True)
 class SearchContext:
     """What one catalog search needs from the turn that created it.
@@ -168,17 +174,58 @@ def _lock_taxonomy_constraints(
     )
 
 
-def search_catalog(
-    ctx: SearchContext,
-    semantic_query: str,
-    requested_product_type: str | None,
-    taxonomy: BaseModel | dict[str, Any],
-    required_constraints: BaseModel | dict[str, Any],
-    shopper_guidance: str,
-    scope_complete: bool = True,
-    search_mode: str | None = None,
-):
-    """Execute one catalog search; may return control signals."""
+@dataclass
+class _Attempt:
+    """What one catalog search accumulates as it moves through the steps below.
+
+    Each step reads what earlier steps worked out and leaves its own findings
+    here. Keeping it in one object is what lets the steps stay separate
+    functions without threading a dozen arguments through each of them.
+    """
+
+    semantic_query: str
+    requested_product_type: str | None
+    taxonomy: BaseModel | dict[str, Any]
+    required_constraints: BaseModel | dict[str, Any]
+    shopper_guidance: str
+    scope_complete: bool = True
+    search_mode: str | None = None
+    advertised_choices: Any = None
+    candidate_scope_key: Any = None
+    capabilities: Any = None
+    constraint_payload: Any = None
+    evidence: Any = None
+    execution: Any = None
+    lines: Any = None
+    normalized_constraints: Any = field(default_factory=dict)
+    plan: Any = None
+    request: Any = None
+    result: Any = None
+    search_budget_exhausted: Any = None
+    selected_subcategories: Any = None
+    shopper_scope_key: Any = None
+    shopper_stated_scope: Any = None
+    suppress_requirement_disclosure: Any = None
+    taxonomy_constraints: Any = field(default_factory=dict)
+    taxonomy_fields: Any = field(default_factory=set)
+    taxonomy_payload: Any = None
+    taxonomy_status: Any = None
+    unconfirmable_requirements: Any = field(default_factory=list)
+
+
+def _admit_search(ctx: SearchContext, attempt: _Attempt) -> StepResult:
+    """Decide whether this call may run at all, before anything is parsed.
+
+    Two of these are repair locks rather than validation. Once a call has been
+    turned back, the model may retry -- but a retry that quietly moves to a
+    different product scope is not a repair, it is a second search wearing the
+    first one's budget. Both gates below refuse that.
+    """
+
+    requested_product_type = attempt.requested_product_type
+    required_constraints = attempt.required_constraints
+    semantic_query = attempt.semantic_query
+    taxonomy = attempt.taxonomy
 
     taxonomy = taxonomy or {"category": [], "subcategory": []}
     required_constraints = required_constraints or {}
@@ -246,6 +293,30 @@ def search_catalog(
             + "This open-role repair must choose exactly one advertised "
             "subcategory for the role."
         )
+
+    attempt.candidate_scope_key = candidate_scope_key
+    attempt.capabilities = capabilities
+    attempt.requested_product_type = requested_product_type
+    attempt.required_constraints = required_constraints
+    attempt.taxonomy = taxonomy
+    attempt.taxonomy_status = taxonomy_status
+    return None
+
+
+def _classify_requirements(ctx: SearchContext, attempt: _Attempt) -> StepResult:
+    """Work out where each stated requirement came from.
+
+    A requirement the shopper actually said is ranked on and disclosed. One the
+    model inferred earns a single review. One that merely repeats the product
+    type is neither -- there is no invented attribute in it to account for. This
+    step only classifies; the gates that act on the classification come later.
+    """
+
+    candidate_scope_key = attempt.candidate_scope_key
+    capabilities = attempt.capabilities
+    requested_product_type = attempt.requested_product_type
+    required_constraints = attempt.required_constraints
+    taxonomy = attempt.taxonomy
 
     taxonomy_payload = (
         taxonomy.model_dump()
@@ -320,6 +391,40 @@ def search_catalog(
         and (shopper_stated_scope or stated_unadvertised_requirements)
         else []
     )
+
+    attempt.constraint_payload = constraint_payload
+    attempt.shopper_stated_scope = shopper_stated_scope
+    attempt.suppress_requirement_disclosure = suppress_requirement_disclosure
+    attempt.taxonomy_payload = taxonomy_payload
+    attempt.unconfirmable_requirements = unconfirmable_requirements
+    return None
+
+
+def _validated_request(ctx: SearchContext, attempt: _Attempt) -> StepResult:
+    """Validate the arguments against what this catalog currently advertises.
+
+    Most of the length is the rejection path. A bare schema error tells the model
+    nothing it can act on, so the failure carries the advertised values it may
+    choose from and the exact constraints it must preserve -- otherwise the
+    repair drifts and each attempt spends another search from the turn's budget.
+    """
+
+    advertised_choices = attempt.advertised_choices
+    candidate_scope_key = attempt.candidate_scope_key
+    capabilities = attempt.capabilities
+    constraint_payload = attempt.constraint_payload
+    request = attempt.request
+    requested_product_type = attempt.requested_product_type
+    required_constraints = attempt.required_constraints
+    scope_complete = attempt.scope_complete
+    search_mode = attempt.search_mode
+    semantic_query = attempt.semantic_query
+    shopper_guidance = attempt.shopper_guidance
+    shopper_stated_scope = attempt.shopper_stated_scope
+    taxonomy = attempt.taxonomy
+    taxonomy_payload = attempt.taxonomy_payload
+    taxonomy_status = attempt.taxonomy_status
+
     try:
         request = ctx.search_input_model.model_validate(
             {
@@ -438,6 +543,28 @@ def search_catalog(
             + repair_guidance
             + constraint_lock
         )
+
+    attempt.advertised_choices = advertised_choices
+    attempt.request = request
+    return None
+
+
+def _reviewed_provenance(ctx: SearchContext, attempt: _Attempt) -> StepResult:
+    """Hold the repair to the request it is repairing.
+
+    This is the longest step because every way out of it has to tell the model
+    precisely what to keep and what to change. Each gate turns the call back for
+    one reason: a repair that altered constraints it was supposed to preserve, a
+    taxonomy the catalog does not advertise, an open-role search that never chose
+    a role, or a requirement whose provenance in this turn cannot be established.
+    """
+
+    advertised_choices = attempt.advertised_choices
+    candidate_scope_key = attempt.candidate_scope_key
+    capabilities = attempt.capabilities
+    request = attempt.request
+    suppress_requirement_disclosure = attempt.suppress_requirement_disclosure
+    unconfirmable_requirements = attempt.unconfirmable_requirements
 
     all_constraints = request.required_constraints.model_dump(
         exclude_none=True,
@@ -800,6 +927,25 @@ def search_catalog(
     ctx.scope.repair.failed_constraint_scope_key = None
     ctx.scope.repair.failed_agent_selected_scope = False
 
+    attempt.normalized_constraints = normalized_constraints
+    attempt.request = request
+    attempt.unconfirmable_requirements = unconfirmable_requirements
+    return None
+
+
+def _no_direct_match_outcome(ctx: SearchContext, attempt: _Attempt) -> StepResult:
+    """Report an unadvertised product type as a gap rather than searching around it.
+
+    Substituting an adjacent taxonomy here is what makes an assistant appear to
+    answer while showing something the shopper did not ask for, so this returns
+    the gap and stops the tool loop instead.
+    """
+
+    candidate_scope_key = attempt.candidate_scope_key
+    evidence = attempt.evidence
+    lines = attempt.lines
+    request = attempt.request
+
     shopper_scope_key = (
         (_normalize_product_text(ctx.state.query), candidate_scope_key)
         if candidate_scope_key
@@ -845,6 +991,25 @@ def search_catalog(
         if evidence.scope_complete:
             lines.append(_SEARCH_SCOPE_COMPLETE_NOTE)
         return "\n\n".join(lines), evidence.as_artifact()
+
+    attempt.evidence = evidence
+    attempt.lines = lines
+    attempt.shopper_scope_key = shopper_scope_key
+    return None
+
+
+def _planned_search(ctx: SearchContext, attempt: _Attempt) -> StepResult:
+    """Turn the validated request into a retrieval plan.
+
+    Taxonomy is a selection, not a filter: if the same field arrives in both
+    places the request is ambiguous and is refused rather than resolved by
+    precedence, which would silently drop one of the two.
+    """
+
+    capabilities = attempt.capabilities
+    normalized_constraints = attempt.normalized_constraints
+    request = attempt.request
+    taxonomy_constraints = attempt.taxonomy_constraints
 
     taxonomy_constraints, taxonomy_issues = _taxonomy_hard_constraints(
         request.taxonomy,
@@ -923,6 +1088,26 @@ def search_catalog(
             )
         return "Catalog search requires a query or image."
 
+    attempt.plan = plan
+    attempt.selected_subcategories = selected_subcategories
+    attempt.taxonomy_constraints = taxonomy_constraints
+    attempt.taxonomy_fields = taxonomy_fields
+    return None
+
+
+def _reserved_search_slot(ctx: SearchContext, attempt: _Attempt) -> StepResult:
+    """Claim this turn's budget for the search, under the turn lock.
+
+    Reserving before executing is what makes the per-turn cap hold when tool
+    calls overlap; checking and incrementing separately would let two searches
+    both observe the last remaining slot.
+    """
+
+    normalized_constraints = attempt.normalized_constraints
+    search_budget_exhausted = attempt.search_budget_exhausted
+    shopper_scope_key = attempt.shopper_scope_key
+    taxonomy_constraints = attempt.taxonomy_constraints
+
     with ctx.scope.catalog_lock:
         search_scope = _catalog_search_scope(
             taxonomy_constraints,
@@ -964,6 +1149,16 @@ def search_catalog(
             >= ctx.config.max_catalog_searches_per_turn
         )
 
+    attempt.search_budget_exhausted = search_budget_exhausted
+    return None
+
+
+def _executed_search(ctx: SearchContext, attempt: _Attempt) -> StepResult:
+    """Run the retrieval and record what it cost and returned."""
+
+    plan = attempt.plan
+    selected_subcategories = attempt.selected_subcategories
+
     search_start = time.monotonic()
     execution = execute_catalog_search(
         plan,
@@ -1002,6 +1197,29 @@ def search_catalog(
                     ctx.scope.retrieved[product.display_name] = product.image_url
     if not result.ok:
         return result.error.message if result.error else "Catalog search failed."
+
+    attempt.execution = execution
+    attempt.result = result
+    return None
+
+
+def _rendered_evidence(ctx: SearchContext, attempt: _Attempt) -> StepResult:
+    """Render what was found as the evidence the model is allowed to speak from.
+
+    The payload is built first and every line is rendered from it, so the text
+    the model reads and the artifact a later turn recovers cannot disagree.
+    """
+
+    evidence = attempt.evidence
+    execution = attempt.execution
+    lines = attempt.lines
+    plan = attempt.plan
+    request = attempt.request
+    result = attempt.result
+    search_budget_exhausted = attempt.search_budget_exhausted
+    taxonomy_constraints = attempt.taxonomy_constraints
+    taxonomy_fields = attempt.taxonomy_fields
+    unconfirmable_requirements = attempt.unconfirmable_requirements
 
     confirmed_filters = {
         name: value
@@ -1113,3 +1331,48 @@ def search_catalog(
         else ""
     )
     return prefix + "\n\n".join(lines), evidence.as_artifact()
+
+
+#: One catalog search, in order. Each step either ends the search -- by
+#: returning the text the model reads, with the evidence artifact behind it
+#: where there is one -- or returns None and leaves what it worked out on the
+#: attempt for the next step. The last step always returns.
+_SEARCH_STEPS = (
+    _admit_search,
+    _classify_requirements,
+    _validated_request,
+    _reviewed_provenance,
+    _no_direct_match_outcome,
+    _planned_search,
+    _reserved_search_slot,
+    _executed_search,
+    _rendered_evidence,
+)
+
+
+def search_catalog(
+    ctx: SearchContext,
+    semantic_query: str,
+    requested_product_type: str | None,
+    taxonomy: BaseModel | dict[str, Any],
+    required_constraints: BaseModel | dict[str, Any],
+    shopper_guidance: str,
+    scope_complete: bool = True,
+    search_mode: str | None = None,
+):
+    """Execute one catalog search; may return control signals."""
+
+    attempt = _Attempt(
+        semantic_query=semantic_query,
+        requested_product_type=requested_product_type,
+        taxonomy=taxonomy,
+        required_constraints=required_constraints,
+        shopper_guidance=shopper_guidance,
+        scope_complete=scope_complete,
+        search_mode=search_mode,
+    )
+    for step in _SEARCH_STEPS:
+        outcome = step(ctx, attempt)
+        if outcome is not None:
+            return outcome
+    raise AssertionError("the last search step must return an outcome")

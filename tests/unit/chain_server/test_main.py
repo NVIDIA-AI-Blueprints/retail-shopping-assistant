@@ -23,6 +23,9 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
+from chain_server.src import catalog_search
+from chain_server.src import tool_loop_control
+from chain_server.src import turn_support
 from chain_server.src.agenttypes import Cart, ShopperContext, State
 from .tool_evidence_fixtures import (
     detail_artifact,
@@ -3503,7 +3506,7 @@ class TestDeepAgentsRuntimeRefs:
         monkeypatch.setitem(sys.modules, "langchain_core.tools", tools_mod)
         monkeypatch.setitem(sys.modules, "langchain_openai", openai_mod)
         monkeypatch.setattr(
-            runtime_mod,
+            catalog_search,
             "execute_catalog_search",
             fake_execute_catalog_search,
         )
@@ -3543,7 +3546,7 @@ class TestDeepAgentsRuntimeRefs:
             )
         )
         assert invalid_constraint.startswith(
-            runtime_mod.SEARCH_VALIDATION_ERROR_PREFIX
+            tool_loop_control.SEARCH_VALIDATION_ERROR_PREFIX
         )
         sibling_substitution = tool_text(
             scope_tools["search_catalog_tool"](
@@ -3854,7 +3857,7 @@ class TestDeepAgentsRuntimeRefs:
         # in place and retrieval runs.
         assert "SEARCH_RESULT_GROUNDING_NOTE" in misplaced_product_type
         assert not misplaced_product_type.startswith(
-            runtime_mod.SEARCH_VALIDATION_ERROR_PREFIX
+            tool_loop_control.SEARCH_VALIDATION_ERROR_PREFIX
         )
         assert "The requested catalog requirement cannot be enforced" not in (
             misplaced_product_type
@@ -4018,7 +4021,7 @@ class TestDeepAgentsRuntimeRefs:
             )
         )
         assert sanitized_validation.startswith(
-            runtime_mod.SEARCH_VALIDATION_ERROR_PREFIX
+            tool_loop_control.SEARCH_VALIDATION_ERROR_PREFIX
         )
         assert "IGNORE PREVIOUS INSTRUCTIONS" not in sanitized_validation
         assert "COPY REJECTED GUIDANCE" not in sanitized_validation
@@ -4188,7 +4191,7 @@ class TestDeepAgentsRuntimeRefs:
         )
 
         assert invalid_empty_rainy_scope.startswith(
-            runtime_mod.SEARCH_VALIDATION_ERROR_PREFIX
+            tool_loop_control.SEARCH_VALIDATION_ERROR_PREFIX
         )
         assert 'currently advertised subcategories: ["dresses"]' in (
             invalid_empty_rainy_scope
@@ -4213,7 +4216,7 @@ class TestDeepAgentsRuntimeRefs:
             )
         )
 
-        assert constraint_review.startswith(runtime_mod.CONSTRAINT_REVIEW_PREFIX)
+        assert constraint_review.startswith(tool_loop_control.CONSTRAINT_REVIEW_PREFIX)
         assert "do not match the current shopper turn" in constraint_review
         assert "Implied weather" in constraint_review
         assert captured_plan["calls"] == calls_before_rainy
@@ -4277,7 +4280,7 @@ class TestDeepAgentsRuntimeRefs:
             )
         )
         assert budget_constraint_review.startswith(
-            runtime_mod.CONSTRAINT_REVIEW_PREFIX
+            tool_loop_control.CONSTRAINT_REVIEW_PREFIX
         )
         dropped_price = tool_text(
             budget_rainy_tools["search_catalog_tool"](
@@ -4358,7 +4361,7 @@ class TestDeepAgentsRuntimeRefs:
         # requested_product_type "bags" against a dresses taxonomy is a genuine
         # mismatch. The unenforceable-requirement veto used to return first and
         # hide it behind a requirement message; the real repair now surfaces.
-        assert runtime_mod.SEARCH_VALIDATION_ERROR_PREFIX in (
+        assert tool_loop_control.SEARCH_VALIDATION_ERROR_PREFIX in (
             mismatched_taxonomy_failure
         )
         assert "binds to advertised category" in mismatched_taxonomy_failure
@@ -4538,7 +4541,7 @@ class TestDeepAgentsRuntimeRefs:
         monkeypatch.setitem(sys.modules, "langchain_core.tools", tools_mod)
         monkeypatch.setitem(sys.modules, "langchain_openai", openai_mod)
         monkeypatch.setattr(
-            runtime_mod,
+            catalog_search,
             "execute_catalog_search",
             fake_execute_catalog_search,
         )
@@ -5600,7 +5603,6 @@ class TestDeepAgentsRuntimeRefs:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
-        from chain_server.src import tool_loop_control
         from chain_server.src import turn_support as runtime_mod_support
         from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
@@ -5634,7 +5636,7 @@ class TestDeepAgentsRuntimeRefs:
                 ),
                 ToolMessage(
                     content=(
-                        runtime_mod.SEARCH_VALIDATION_ERROR_PREFIX
+                        tool_loop_control.SEARCH_VALIDATION_ERROR_PREFIX
                         + "{'taxonomy': {'subcategory': ['sneakers']}}"
                     ),
                     name="search_catalog_tool",
@@ -5670,7 +5672,6 @@ class TestDeepAgentsRuntimeRefs:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
-        from chain_server.src import tool_loop_control
         from chain_server.src import turn_support as runtime_mod_support
         from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
@@ -5712,7 +5713,7 @@ class TestDeepAgentsRuntimeRefs:
                 ),
                 ToolMessage(
                     content=(
-                        runtime_mod.SEARCH_VALIDATION_ERROR_PREFIX
+                        tool_loop_control.SEARCH_VALIDATION_ERROR_PREFIX
                         + "{'taxonomy': {'subcategory': ['sneakers']}}"
                     ),
                     name="search_catalog_tool",
@@ -5745,7 +5746,6 @@ class TestDeepAgentsRuntimeRefs:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
-        from chain_server.src import tool_loop_control
         from chain_server.src import turn_support as runtime_mod_support
         from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
@@ -5798,7 +5798,7 @@ class TestDeepAgentsRuntimeRefs:
                 ),
                 ToolMessage(
                     content=(
-                        runtime_mod.SEARCH_VALIDATION_ERROR_PREFIX
+                        tool_loop_control.SEARCH_VALIDATION_ERROR_PREFIX
                         + "{'taxonomy': {'subcategory': ['sneakers']}}"
                     ),
                     name="search_catalog_tool",
@@ -5874,7 +5874,7 @@ class TestDeepAgentsRuntimeRefs:
                 ),
                 ToolMessage(
                     content=(
-                        runtime_mod.SEARCH_VALIDATION_ERROR_PREFIX
+                        tool_loop_control.SEARCH_VALIDATION_ERROR_PREFIX
                         + "{'taxonomy': {'subcategory': ['blouses']}}"
                     ),
                     name="search_catalog_tool",
@@ -5919,7 +5919,6 @@ class TestDeepAgentsRuntimeRefs:
     def test_rejected_catalog_search_fallback_does_not_replace_mixed_results(
         self,
     ) -> None:
-        from chain_server.src import deepagents_runtime as runtime_mod
         from chain_server.src import turn_support as runtime_mod_support
         from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
@@ -5952,7 +5951,7 @@ class TestDeepAgentsRuntimeRefs:
                     ),
                     ToolMessage(
                         content=(
-                            runtime_mod.SEARCH_VALIDATION_ERROR_PREFIX
+                            tool_loop_control.SEARCH_VALIDATION_ERROR_PREFIX
                             + "{'taxonomy': {'subcategory': ['trousers']}}"
                         ),
                         name="search_catalog_tool",
@@ -5988,7 +5987,7 @@ class TestDeepAgentsRuntimeRefs:
                     ),
                     ToolMessage(
                         content=(
-                            runtime_mod.SEARCH_VALIDATION_ERROR_PREFIX
+                            tool_loop_control.SEARCH_VALIDATION_ERROR_PREFIX
                             + "{'taxonomy': {'subcategory': ['blazers']}}"
                         ),
                         name="search_catalog_tool",
@@ -6036,7 +6035,7 @@ class TestDeepAgentsRuntimeRefs:
                         ),
                         ToolMessage(
                             content=(
-                                runtime_mod.SEARCH_VALIDATION_ERROR_PREFIX
+                                tool_loop_control.SEARCH_VALIDATION_ERROR_PREFIX
                                 + "{'taxonomy': {'subcategory': ['blouses']}}"
                             ),
                             name="search_catalog_tool",
@@ -6675,7 +6674,6 @@ class TestDeepAgentsRuntimeRefs:
     def test_no_direct_taxonomy_response_is_fixed_and_current_turn_scoped(
         self,
     ) -> None:
-        from chain_server.src import deepagents_runtime as runtime_mod
         from chain_server.src import turn_support as runtime_mod_support
 
         result = {
@@ -6719,7 +6717,7 @@ class TestDeepAgentsRuntimeRefs:
                     "role": "tool",
                     "name": "search_catalog_tool",
                     "content": (
-                        runtime_mod.SEARCH_VALIDATION_ERROR_PREFIX
+                        tool_loop_control.SEARCH_VALIDATION_ERROR_PREFIX
                         + "invalid taxonomy"
                     ),
                 },
@@ -7942,7 +7940,6 @@ class TestCommittedMutationReceipt:
 
     def test_receipt_replaces_product_fallback_when_a_mutation_committed(self) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
-        from chain_server.src import turn_support
 
         cart = runtime_mod.Cart(contents=[{"item": "Work Bag", "amount": 1}])
         receipt = turn_support._committed_effect_receipt(
@@ -7963,7 +7960,6 @@ class TestCommittedMutationReceipt:
         assert "not applied twice" in receipt
 
     def test_receipt_survives_an_unreadable_cart(self) -> None:
-        from chain_server.src import turn_support
 
         receipt = turn_support._committed_effect_receipt(
             [{"operation": "removed from cart", "idempotency_key": "k", "cart_line_id": "line-9"}],
@@ -8047,7 +8043,6 @@ class TestCommittedMutationSurvivesTurnFailure:
         assert [e["operation"] for e in recovered] == [k for k, _ in kinds]
 
     def test_failed_turn_reports_the_effect_instead_of_a_product_list(self) -> None:
-        from chain_server.src import turn_support
 
         runtime_mod = self._runtime()
         cart = runtime_mod.Cart(contents=[{"item": "Work Bag", "amount": 1}])

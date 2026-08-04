@@ -84,6 +84,7 @@ from .skill_activation import (
     SKILL_TOOL_NOT_GRANTED,
 )
 from .tool_loop_control import (
+    SEARCH_BUDGET_EXHAUSTED_PREFIX,
     CONSTRAINT_REVIEW_PREFIX,
     STOP_TOOL_USE_PREFIX,
     SEARCH_SCOPE_COMPLETE_PREFIX,
@@ -3390,3 +3391,36 @@ def _cart_line_by_id(cart_line_id: str, cart: Cart) -> dict[str, Any] | None:
         if str(item.get("cart_line_id") or "").strip() == target:
             return item
     return None
+
+
+_SEARCH_RESULT_GROUNDING_NOTE = (
+    "SEARCH_RESULT_GROUNDING_NOTE: Use search results for candidate names, prices, "
+    "categories, image availability, confirmed filters listed in "
+    "SEARCH_FILTER_EVIDENCE, advertised taxonomy listed in "
+    "SEARCH_TAXONOMY_EVIDENCE, and modest styling fit only. Treat product names as "
+    "display names, not attribute evidence. Do not infer or group-claim "
+    "length, color, print, material, care, construction, fit, comfort, weather, "
+    "grass, gravel, or best-in-category performance from names or search snippets. "
+    "Do not override a confirmed filter based on words in a display name."
+)
+
+_SEARCH_NO_MATCH_GROUNDING_NOTE = (
+    "SEARCH_NO_MATCH_GROUNDING_NOTE: Zero products matched this exact "
+    "advertised taxonomy and filter scope. This result does not establish "
+    "whether products exist in a different, unsearched, or unadvertised "
+    "product type."
+)
+
+_SEARCH_SCOPE_COMPLETE_NOTE = (
+    "SEARCH_SCOPE_COMPLETE: The shopper's current request can now be answered "
+    "from this search and existing turn evidence. Answer now. Do not search an "
+    "adjacent category or substitute merely because search budget remains. Use "
+    "the direct antecedent from recent discussion as the styling anchor; an item "
+    "does not need to be in the cart to receive styling advice."
+)
+
+_SEARCH_BUDGET_EXHAUSTED_NOTE = (
+    f"{SEARCH_BUDGET_EXHAUSTED_PREFIX} No additional catalog searches are "
+    "available this turn. Continue with any requested non-search action, or "
+    "answer honestly from the grounded products already returned."
+)

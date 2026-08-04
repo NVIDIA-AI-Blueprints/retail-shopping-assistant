@@ -20,11 +20,10 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
+from chain_server.src import response_format
 import pytest
 
-from chain_server.src import deepagents_runtime as runtime_mod
 from chain_server.src import turn_support as runtime_mod_support
-from chain_server.src import response_format
 from chain_server.src.tool_evidence import (
     DETAIL_EVIDENCE_KEY,
     EVIDENCE_KEY,
@@ -296,7 +295,7 @@ def test_search_results_carry_the_attributes_the_catalog_confirmed() -> None:
         "garment_length": "maxi",
         "neckline": "off shoulder",
     }
-    text = runtime_mod._format_product_record(record)
+    text = response_format._format_product_record(record)
     assert "CONFIRMED_ATTRIBUTES:" in text
     assert "- composition: 100% satin" in text
     assert "- garment length: maxi" in text

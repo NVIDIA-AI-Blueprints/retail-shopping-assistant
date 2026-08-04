@@ -115,6 +115,7 @@ The detailed contracts and implementation live in:
 - [Catalog retriever](../catalog_retriever/src/retriever.py)
 - [Chain capability cache](../chain_server/src/catalog_capabilities.py)
 - [Model-visible catalog search schema](../chain_server/src/turn_support.py)
+- [One catalog search, admission to rendered evidence](../chain_server/src/catalog_search.py)
 - [Reusable model-visible catalog search rules](../chain_server/src/catalog_scope.py)
 
 ## 2. One Shopper Turn

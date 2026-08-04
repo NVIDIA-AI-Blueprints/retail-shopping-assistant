@@ -1202,6 +1202,7 @@ async def test_compiled_agent_executes_capability_valid_repair(
                         "id": "invalid-search",
                         "name": "search_catalog_tool",
                         "args": {
+                            "scopes": [{
                             "semantic_query": "black shoes",
                             "shopper_guidance": "Finding black shoes.",
                             "requested_product_type": "shoes",
@@ -1211,7 +1212,7 @@ async def test_compiled_agent_executes_capability_valid_repair(
                             },
                             "required_constraints": {"color": ["black"]},
                             "scope_complete": True,
-                            "search_mode": "typo-mode",
+                            "search_mode": "typo-mode",}],
                         },
                     }
                 ],
@@ -1223,6 +1224,7 @@ async def test_compiled_agent_executes_capability_valid_repair(
                         "id": "valid-repair",
                         "name": "search_catalog_tool",
                         "args": {
+                            "scopes": [{
                             "semantic_query": "black shoes",
                             "shopper_guidance": "Finding black shoes.",
                             "requested_product_type": "shoes",
@@ -1234,7 +1236,7 @@ async def test_compiled_agent_executes_capability_valid_repair(
                                 "primary_color": ["black"]
                             },
                             "scope_complete": True,
-                            "search_mode": "text",
+                            "search_mode": "text",}],
                         },
                     }
                 ],

@@ -1115,6 +1115,51 @@ def _search_catalog_tool_input_model(
     )
 
 
+def _search_catalog_scopes_input_model(
+    capabilities: CatalogCapabilities,
+    *,
+    max_scopes: int = 1,
+) -> type[BaseModel]:
+    """Wrap the catalog search arguments in a list of scopes.
+
+    Stage one of the scoped-search contract, and deliberately nothing more: the
+    scope object is exactly today's argument object, so the only thing that
+    changes for the model is one level of nesting.
+
+    That isolation is the point. Argument malformation scales sharply with
+    nesting -- measured across the run archive, a flat `product_ref` argument was
+    wrapped in stray punctuation 1-10% of the time and the same value inside a
+    nested list of objects 43% of the time. If the model fumbles a nested list of
+    fields it already emits correctly, the cause is depth itself and the rest of
+    the contract has to be shaped around that. If it does not, the 43% was about
+    mixing authored and transcribed fields in one object, which is a different
+    and more tractable problem.
+
+    `max_scopes` stays at one until that question is answered.
+    """
+
+    scope_model = _search_catalog_tool_input_model(
+        capabilities,
+        validate_scope=False,
+    )
+    return create_model(
+        "CatalogSearchScopes",
+        scopes=(
+            list[scope_model],
+            Field(
+                ...,
+                min_length=1,
+                max_length=max_scopes,
+                description=(
+                    "One search scope per product role. Each scope owns its own "
+                    "taxonomy and constraints, so a filter for one role can never "
+                    "exclude another role's products."
+                ),
+            ),
+        ),
+    )
+
+
 def _taxonomy_list_field(
     values: list[str],
     *,

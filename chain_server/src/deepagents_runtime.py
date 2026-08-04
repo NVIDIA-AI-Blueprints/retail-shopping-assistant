@@ -39,6 +39,7 @@ from .response_format import (
     _format_update_cart_result,
 )
 from .turn_support import (
+    _search_catalog_scopes_input_model,
     AddCartItemsToolItemInput,
     RequestIdentity,
     _add_model_usage,
@@ -825,9 +826,8 @@ class DeepAgentsRuntime:
         scope = TurnScope()
         state.retrieved = scope.retrieved
         search_input_model = _search_catalog_tool_input_model(turn_capabilities)
-        search_tool_arguments_model = _search_catalog_tool_input_model(
+        search_tool_arguments_model = _search_catalog_scopes_input_model(
             turn_capabilities,
-            validate_scope=False,
         )
         constraint_input_model = search_input_model.model_fields[
             "required_constraints"
@@ -870,7 +870,7 @@ class DeepAgentsRuntime:
             return_direct=False,
             response_format="content_and_artifact",
         )
-        def search_catalog_tool(**kwargs):
+        def search_catalog_tool(scopes):
             """Find products by description, advertised taxonomy, or constraints.
 
             Use for browse, search, and recommendation requests after product
@@ -880,7 +880,25 @@ class DeepAgentsRuntime:
             filter scope with different semantic wording.
             """
 
-            return normalize_tool_result(_search_catalog_impl(**kwargs))
+            # One scope for now. The list is the contract; N > 1 is enabled only
+            # once the model is shown to emit the nested shape reliably.
+            scope = scopes[0]
+            fields = (
+                scope
+                if isinstance(scope, dict)
+                else scope.model_dump(exclude_none=False)
+            )
+            return normalize_tool_result(
+                _search_catalog_impl(
+                    semantic_query=fields["semantic_query"],
+                    requested_product_type=fields.get("requested_product_type"),
+                    taxonomy=fields["taxonomy"],
+                    required_constraints=fields["required_constraints"],
+                    shopper_guidance=fields["shopper_guidance"],
+                    scope_complete=fields.get("scope_complete", True),
+                    search_mode=fields.get("search_mode"),
+                )
+            )
 
         @tool(return_direct=False)
         def get_cart_tool() -> str:

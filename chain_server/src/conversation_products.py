@@ -112,6 +112,8 @@ class ProductReferenceResolution(_ConversationProductModel):
     status: Literal["resolved", "ambiguous", "not_found"]
     matches: list[ConversationProductMatch] = Field(default_factory=list)
     match_count: int = Field(..., ge=0)
+    #: Which supplied field stopped the match, when exactly one is responsible.
+    blocking_field: str | None = Field(default=None, max_length=64)
 
     @model_validator(mode="after")
     def _status_matches_result(self):
@@ -280,6 +282,19 @@ def format_product_resolution(result: ResolveConversationProductsResult) -> str:
             lines.append(
                 f"REFERENCE {resolution.reference_id}: CLARIFICATION REQUIRED "
                 f"({names}). Do not guess."
+            )
+            continue
+        if resolution.blocking_field:
+            # Naming the field is what lets the model correct the call. Reporting
+            # only NOT FOUND told it the product was gone when it had in fact
+            # identified it correctly by every other field, so it repeated the
+            # same call and kept telling the shopper the listing was unavailable.
+            lines.append(
+                f"REFERENCE {resolution.reference_id}: NOT FOUND. Every other "
+                f"field you supplied matched one earlier product; "
+                f"'{resolution.blocking_field}' did not. Correct that field and "
+                "retry, or ask which earlier product the shopper means. Do not "
+                "guess."
             )
             continue
         lines.append(

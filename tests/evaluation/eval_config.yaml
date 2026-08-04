@@ -33,7 +33,9 @@ judge_model:
 target_agent:
   base_url: "http://localhost:8009"
   endpoint: "/query/timing"
-  timeout_seconds: 60
+  # Must exceed the target's turn budget with room for transport, or the client
+  # aborts turns the assistant would have completed.
+  timeout_seconds: 120
   guardrails: false
 
 run:

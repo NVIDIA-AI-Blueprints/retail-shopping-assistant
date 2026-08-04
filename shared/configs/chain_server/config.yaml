@@ -4,7 +4,13 @@ rails_port: "http://rails:8012"
 memory_length: 16384
 top_k_retrieve: 4
 deepagents_recursion_limit: 24
-deepagents_execution_timeout_seconds: 55.0
+# TEMPORARY, raised 2026-08-04 to unblock feature work. Every tool call costs a
+# full model round trip (~8s measured; the tool itself is ~1s), and the caps
+# below permit seven round trips -- about 56s -- so the previous 45s budget
+# could not accommodate its own allowance. 90s affords roughly seven tool calls,
+# leaving headroom for new tools. Bring this back down once L1 removes the
+# per-tool round trip; it is latency the shopper pays.
+deepagents_execution_timeout_seconds: 90.0
 # Reserved for the grounding editor. The agent loop gets the remainder, so it
 # cannot spend the whole turn and leave the editor zero seconds. Measured
 # 2026-08-04: editor p90 12.5s, agent loop p90 39.8s against a 45s total, with

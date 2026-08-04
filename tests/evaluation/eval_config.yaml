@@ -37,6 +37,19 @@ target_agent:
   guardrails: false
 
 run:
+  # Diagnostic fields recorded on every turn. Named explicitly: the recorded
+  # turn is the contract a judge adjudicates against, so a field belongs here
+  # when a judge needs it to verify a claim or an operator needs it to explain
+  # a failure. Requires EXPOSE_AGENT_DIAGNOSTICS=true on the target.
+  recorded_diagnostics:
+    - product_evidence
+    - product_evidence_truncated
+    - catalog_scope_outcomes
+    - tool_calls
+    - skill_files_read
+    - rejected_tool_calls
+    - duplicate_tool_calls
+    - final_termination_reason
   datasets:
     - text_shopping
     - style_guide

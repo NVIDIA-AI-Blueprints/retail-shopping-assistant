@@ -57,9 +57,36 @@ class TargetAgentConfig:
     guardrails: bool
 
 
+#: Recorded unless the config overrides it. Each earns its place because a
+#: judge needs it to verify a claim, or an operator needs it to explain a
+#: failure that already happened:
+#:   product_evidence        - the facts a product claim must be checked against
+#:   catalog_scope_outcomes  - what a zero-result search actually covered
+#:   tool_calls              - which tools ran, and with what arguments
+#:   skill_files_read        - which shopper skill was active
+#:   rejected_tool_calls     - calls the runtime refused
+#:   duplicate_tool_calls    - repeated retrieval within one turn
+#:   final_termination_reason- how the turn ended
+_DEFAULT_RECORDED_DIAGNOSTICS = (
+    "product_evidence",
+    "product_evidence_truncated",
+    "catalog_scope_outcomes",
+    "tool_calls",
+    "skill_files_read",
+    "rejected_tool_calls",
+    "duplicate_tool_calls",
+    "final_termination_reason",
+)
+
+
 @dataclass(frozen=True)
 class RunConfig:
     datasets: list[str]
+    #: Diagnostic fields recorded per turn. Named explicitly rather than
+    #: capturing the whole object: the recorded turn is the contract a judge
+    #: adjudicates against, and it stops being one if it becomes a dump of
+    #: whatever the runtime happens to emit.
+    recorded_diagnostics: list[str]
     scenario_limit_per_dataset: int
     random_seed: int
     save_returned_images: bool
@@ -249,8 +276,16 @@ def _load_run_config(raw: Mapping[str, Any]) -> RunConfig:
     datasets = data.get("datasets")
     if not isinstance(datasets, list) or not all(isinstance(item, str) for item in datasets):
         raise ConfigError("run.datasets must be a list of dataset names.")
+    recorded = data.get("recorded_diagnostics")
+    if recorded is None:
+        recorded = list(_DEFAULT_RECORDED_DIAGNOSTICS)
+    elif not isinstance(recorded, list) or not all(
+        isinstance(name, str) and name.strip() for name in recorded
+    ):
+        raise ConfigError("run.recorded_diagnostics must be a list of field names")
     return RunConfig(
         datasets=datasets,
+        recorded_diagnostics=[str(name).strip() for name in recorded],
         scenario_limit_per_dataset=_as_int(
             data.get("scenario_limit_per_dataset"), "run.scenario_limit_per_dataset"
         ),

@@ -892,3 +892,80 @@ def test_extract_product_evidence_rejects_oversized_aggregate():
 
     assert _extract_product_evidence(data) == []
     assert _extract_product_evidence_truncated(data) is False
+
+
+class TestRecordedDiagnostics:
+    """What a turn records is the contract a judge adjudicates against.
+
+    Recording three fields meant a failing turn could not be explained
+    afterwards -- which skill was active, how many searches it spent, whether a
+    call was rejected -- so every diagnosis reproduced the conversation live.
+    """
+
+    def _response(self, **diagnostics):
+        return {
+            "response": "here are some dresses",
+            "agent_diagnostics": {
+                "product_evidence": [{"product_ref": "p1"}],
+                "tool_calls": [
+                    {"sequence": 1, "tool_name": "search_catalog_tool"}
+                ],
+                "skill_files_read": ["/shopper/product-discovery/SKILL.md"],
+                "final_termination_reason": "completed",
+                **diagnostics,
+            },
+        }
+
+    def test_configured_fields_are_recorded(self) -> None:
+        from src.challenger import _recorded_diagnostics
+
+        recorded = _recorded_diagnostics(
+            self._response(),
+            ["product_evidence", "tool_calls", "skill_files_read"],
+        )
+
+        assert recorded["tool_calls"][0]["tool_name"] == "search_catalog_tool"
+        assert recorded["skill_files_read"] == [
+            "/shopper/product-discovery/SKILL.md"
+        ]
+        assert recorded["product_evidence"] == [{"product_ref": "p1"}]
+
+    def test_unconfigured_fields_are_not_recorded(self) -> None:
+        """The turn stays a contract, not a dump of whatever was emitted."""
+
+        from src.challenger import _recorded_diagnostics
+
+        recorded = _recorded_diagnostics(self._response(), ["product_evidence"])
+
+        assert set(recorded) == {"product_evidence"}
+        assert "tool_calls" not in recorded
+
+    def test_absent_field_is_absent_not_empty(self) -> None:
+        """"the runtime sent nothing" must stay distinct from "never asked"."""
+
+        from src.challenger import _recorded_diagnostics
+
+        recorded = _recorded_diagnostics(
+            self._response(), ["product_evidence", "catalog_scope_outcomes"]
+        )
+
+        assert "catalog_scope_outcomes" not in recorded
+
+    def test_diagnostics_disabled_on_the_target_records_nothing(self) -> None:
+        """EXPOSE_AGENT_DIAGNOSTICS=false yields an empty object, not a crash.
+
+        A whole run was once scored against an empty trace, so this path is
+        asserted rather than assumed.
+        """
+
+        from src.challenger import _recorded_diagnostics
+
+        assert _recorded_diagnostics({"agent_diagnostics": {}}, ["tool_calls"]) == {}
+        assert _recorded_diagnostics({}, ["tool_calls"]) == {}
+
+    def test_default_field_list_covers_skills_and_tools(self) -> None:
+        from src.config import _DEFAULT_RECORDED_DIAGNOSTICS
+
+        assert "tool_calls" in _DEFAULT_RECORDED_DIAGNOSTICS
+        assert "skill_files_read" in _DEFAULT_RECORDED_DIAGNOSTICS
+        assert "product_evidence" in _DEFAULT_RECORDED_DIAGNOSTICS

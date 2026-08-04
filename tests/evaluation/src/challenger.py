@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping, Optional, Protocol
+from typing import Any, Mapping, Optional, Protocol, Sequence
 from urllib.parse import urlparse
 import argparse
 import base64
@@ -207,6 +207,7 @@ class TargetAgentClient:
         self._url = _join_url(config.target_agent.base_url, config.target_agent.endpoint)
         self._timeout = config.target_agent.timeout_seconds
         self._guardrails = config.target_agent.guardrails
+        self._recorded_diagnostics = tuple(config.run.recorded_diagnostics)
 
     def send_turn(self, *, user_id: int, query: str, image: str) -> dict[str, Any]:
         payload = {
@@ -219,18 +220,37 @@ class TargetAgentClient:
         response = requests.post(self._url, json=payload, timeout=self._timeout)
         response.raise_for_status()
         data = response.json()
-        return {
+        record: dict[str, Any] = {
             "status_code": response.status_code,
             "response": data.get("response", ""),
             "images": data.get("images", {}) or {},
             "cart": data.get("cart", {}) or {},
             "timings": data.get("timings", {}) or {},
-            "product_evidence": _extract_product_evidence(data),
-            "product_evidence_truncated": (
-                _extract_product_evidence_truncated(data)
-            ),
-            "catalog_scope_outcomes": _extract_catalog_scope_outcomes(data),
         }
+        record.update(_recorded_diagnostics(data, self._recorded_diagnostics))
+        return record
+
+
+def _recorded_diagnostics(
+    data: Mapping[str, Any],
+    fields: Sequence[str],
+) -> dict[str, Any]:
+    """Record the configured diagnostic fields from one target response.
+
+    The runtime emits far more than was previously kept. Recording three fields
+    meant a failing turn could not be explained afterwards: which skill was
+    active, how many searches it spent, whether a call was rejected. Every
+    diagnosis was reconstructed by reproducing the conversation live.
+
+    A field the target did not send is recorded as absent rather than as an
+    empty value, so "the runtime returned nothing" stays distinguishable from
+    "the runtime was never asked".
+    """
+
+    diagnostics = data.get("agent_diagnostics")
+    if not isinstance(diagnostics, Mapping):
+        return {}
+    return {name: diagnostics[name] for name in fields if name in diagnostics}
 
 
 def _extract_product_evidence(data: Mapping[str, Any]) -> list[dict[str, Any]]:

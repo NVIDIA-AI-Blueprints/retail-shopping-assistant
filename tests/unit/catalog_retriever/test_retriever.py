@@ -878,6 +878,7 @@ class TestSyncSnapshot:
             schema=SimpleNamespace(
                 record=record,
                 taxonomy=SimpleNamespace(fields=["category", "subcategory"]),
+                detail_fields=["composition", "pattern"],
             ),
             capabilities=SimpleNamespace(
                 filters={

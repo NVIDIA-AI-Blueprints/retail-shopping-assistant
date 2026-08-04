@@ -130,6 +130,7 @@ config = RetrieverConfig(
     image_field=snapshot.schema.record.image,
     price_field=snapshot.schema.record.price,
     taxonomy_fields=snapshot.schema.taxonomy.fields,
+    detail_fields=snapshot.schema.detail_fields,
 )
 
 logging.info("CATALOG RETRIEVER | startup | config.yaml ingested.")

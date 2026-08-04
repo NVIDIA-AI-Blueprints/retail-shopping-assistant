@@ -5144,6 +5144,19 @@ def _diagnostic_product_facts(product: dict[str, Any]) -> dict[str, Any]:
             facts[key] = _bounded_product_evidence_value(value)
     facts["image_available"] = bool(product.get("image_url"))
 
+    # Attributes the catalog confirmed on a search result. The composer is
+    # allowed to state these, so the evidence trace has to carry them: a fact an
+    # observer cannot see the support for is indistinguishable from an invented
+    # one, and gets judged as invention however accurate it is.
+    attributes = product.get("attributes")
+    if isinstance(attributes, dict):
+        for name, value in attributes.items():
+            if len(facts) >= _MAX_DIAGNOSTIC_PRODUCT_FACTS:
+                break
+            bounded_name = str(_bounded_product_evidence_value(name))
+            if bounded_name and bounded_name not in facts:
+                facts[bounded_name] = _bounded_product_evidence_value(value)
+
     for raw_detail in product.get("details") or []:
         if len(facts) >= _MAX_DIAGNOSTIC_PRODUCT_FACTS:
             break
@@ -6149,6 +6162,15 @@ def _render_product_evidence_summary(
             summary_parts.append(f"price: {product['price']}")
         if product.get("image_url"):
             summary_parts.append("image: available")
+        attributes = product.get("attributes")
+        if isinstance(attributes, dict) and attributes:
+            summary_parts.append(
+                "confirmed: "
+                + "; ".join(
+                    f"{name.replace('_', ' ')}: {value}"
+                    for name, value in attributes.items()
+                )
+            )
         if product.get("details"):
             summary_parts.append("details: " + "; ".join(product["details"]))
         lines.append("- " + " | ".join(summary_parts))
@@ -6163,13 +6185,15 @@ def _summarize_typed_product_evidence(payload: dict[str, Any]) -> str:
         products if isinstance(products, list) else [],
         heading="CUSTOMER_SAFE_SEARCH_EVIDENCE",
             note=(
-                "Search results support only product names, prices, categories, "
-                "image availability, confirmed search filters, and a modest "
-                "styling role. Beyond an exact confirmed filter, they do not "
-                "support length, color, print, materials, care, construction, "
-                "fit, comfort, weather, grass, gravel, heat, or best-in-category "
-                "claims. Treat names as display names, not attribute evidence; "
-                "group claims require product-detail evidence for every item."
+                "Search results support product names, prices, categories, "
+                "image availability, confirmed search filters, any attribute "
+                "listed as confirmed for that specific product, and a modest "
+                "styling role. An attribute confirmed for one product is not "
+                "evidence about another. They do not support care, "
+                "construction, fit, comfort, weather, grass, gravel, heat, or "
+                "best-in-category claims, nor any attribute not listed for that "
+                "product. Treat names as display names, not attribute evidence; "
+                "group claims require the attribute confirmed on every item."
             ),
         confirmed_filters=payload.get("confirmed_filters") or {},
         taxonomy_scope=payload.get("taxonomy") or {},
@@ -6355,6 +6379,37 @@ def _format_catalog_scope_outcome(outcome: dict[str, Any]) -> str:
     )
 
 
+#: Keys the catalog returns alongside the declared detail fields that are not
+#: product attributes: retrieval bookkeeping, and taxonomy which has its own
+#: lane. catalog_text is the prose serialisation of the same attributes and is
+#: deliberately not forwarded -- it carries a marketing summary, and separating
+#: the two would mean parsing prose.
+_NON_ATTRIBUTE_SEARCH_KEYS = frozenset({"catalog_text", "similarity", "taxonomy"})
+
+
+def _search_attribute_facts(product: Any) -> dict[str, str]:
+    """Structured attributes the catalog confirmed for one search hit.
+
+    The catalog declares which fields are product detail and returns them with
+    every search result. They were dropped here, so the model was told to spend
+    one of its two product-detail reads to fetch what the response already
+    carried -- and when that budget ran out it reported a confirmed attribute as
+    unknown.
+    """
+
+    attributes = getattr(product, "attributes", None)
+    if not isinstance(attributes, dict):
+        return {}
+    facts: dict[str, str] = {}
+    for name, value in sorted(attributes.items()):
+        if name in _NON_ATTRIBUTE_SEARCH_KEYS:
+            continue
+        text = _format_detail_value(value).strip()
+        if text:
+            facts[str(name)] = text
+    return facts
+
+
 def _search_product_record(product: Any) -> dict[str, Any]:
     """Project one search hit into the record both the model text and the
     composer summary are rendered from.
@@ -6374,6 +6429,7 @@ def _search_product_record(product: Any) -> dict[str, Any]:
             else ""
         ),
         "image_url": str(product.image_url or ""),
+        "attributes": _search_attribute_facts(product),
     }
 
 
@@ -6392,10 +6448,17 @@ def _format_product_record(record: dict[str, Any]) -> str:
         lines.append(f"PRICE: {record['price']}")
     if record.get("image_url"):
         lines.append(f"IMAGE_URL: {record['image_url']}")
+    attributes = record.get("attributes") or {}
+    if attributes:
+        lines.append("CONFIRMED_ATTRIBUTES:")
+        lines.extend(
+            f"- {name.replace('_', ' ')}: {value}"
+            for name, value in attributes.items()
+        )
     lines.append(
-        "DETAILS: Call get_product_details_tool with this PRODUCT_REF before "
-        "stating materials, dimensions, pockets, closures, care, comfort, or "
-        "outdoor-practicality claims."
+        "DETAILS: Any attribute not listed above is not carried by this search "
+        "result. Read it with get_product_details_tool and this PRODUCT_REF "
+        "before stating it; absence here is not evidence that it is unknown."
     )
     return "\n".join(lines)
 

@@ -4066,7 +4066,7 @@ class TestDeepAgentsRuntimeRefs:
         )
         assert '"department"' not in result.split("SEARCH_FILTER_EVIDENCE:", 1)[1].splitlines()[0]
         assert '"product_type"' not in result.split("SEARCH_FILTER_EVIDENCE:", 1)[1].splitlines()[0]
-        assert "Call get_product_details_tool" in result
+        assert "get_product_details_tool and this PRODUCT_REF" in result
         assert "PRODUCT_REF: prod_1" in result
         assert state.retrieved == {"Work Bag": "bag.jpg"}
         assert [product["product_id"] for product in state.product_results] == ["prod_1"]
@@ -6937,7 +6937,9 @@ class TestDeepAgentsRuntimeRefs:
 
         assert "CUSTOMER_SAFE_SEARCH_EVIDENCE" in evidence
         assert "Treat names as display names, not attribute evidence" in evidence
-        assert "group claims require product-detail evidence for every item" in evidence
+        assert "group claims require the attribute confirmed on every item" in (
+            evidence
+        )
         assert "Every product below passed each filter predicate" in evidence
         assert '"primary_color": ["black"]' in evidence
         assert '"heel_type": ["flat", "kitten", "block"]' in evidence
@@ -7785,7 +7787,9 @@ class TestDeepAgentsRuntimeRefs:
         assert "PRODUCT_REF: prod_456" in formatted
         assert "Leather Bag" in formatted
         assert "structured tote" not in formatted
-        assert "Call get_product_details_tool" in formatted
+        assert "get_product_details_tool and this PRODUCT_REF" in formatted
+        # Absence from a search result is not evidence the attribute is unknown.
+        assert "absence here is not evidence" in formatted
 
     def test_format_product_details_warns_against_performance_overclaims(self) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod

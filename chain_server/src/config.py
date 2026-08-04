@@ -92,6 +92,14 @@ class ChainServerConfig(BaseModel):
         default=24,
         description="Maximum Deep Agents graph steps allowed for one assistant turn",
     )
+    grounding_editor_reserve_seconds: float = Field(
+        default=15.0,
+        description=(
+            "Seconds reserved for the grounding editor out of the turn budget. "
+            "The agent loop is capped at the remainder so it cannot consume the "
+            "whole turn and leave the editor nothing."
+        ),
+    )
     deepagents_execution_timeout_seconds: float = Field(
         default=45.0,
         description="Maximum Deep Agents execution time allowed for one assistant turn",
@@ -242,6 +250,9 @@ def load_config(config_path: Optional[str] = None) -> ChainServerConfig:
         "rails_port": os.environ.get("RAILS_URL"),
         "catalog_search_timeout_seconds": os.environ.get("CATALOG_SEARCH_TIMEOUT_SECONDS"),
         "deepagents_recursion_limit": os.environ.get("DEEPAGENTS_RECURSION_LIMIT"),
+        "grounding_editor_reserve_seconds": os.environ.get(
+            "GROUNDING_EDITOR_RESERVE_SECONDS"
+        ),
         "deepagents_execution_timeout_seconds": os.environ.get(
             "DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS"
         ),

@@ -4,7 +4,12 @@ rails_port: "http://rails:8012"
 memory_length: 16384
 top_k_retrieve: 4
 deepagents_recursion_limit: 24
-deepagents_execution_timeout_seconds: 45.0
+deepagents_execution_timeout_seconds: 55.0
+# Reserved for the grounding editor. The agent loop gets the remainder, so it
+# cannot spend the whole turn and leave the editor zero seconds. Measured
+# 2026-08-04: editor p90 12.5s, agent loop p90 39.8s against a 45s total, with
+# six turns consuming the entire budget.
+grounding_editor_reserve_seconds: 15.0
 max_catalog_searches_per_turn: 3
 max_product_detail_reads_per_turn: 2
 expose_agent_diagnostics: false

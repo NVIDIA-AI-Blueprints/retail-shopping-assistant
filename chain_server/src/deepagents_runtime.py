@@ -1848,7 +1848,29 @@ class DeepAgentsRuntime:
                 turn_capabilities,
             )
             input_message = self._build_user_message(state, identity)
-            agent_timeout = max(0.0, execution_deadline - time.monotonic())
+            # The grounding editor is not optional, so its budget is reserved
+            # before the agent loop runs rather than taken from what the loop
+            # leaves. Measured 2026-08-04: the loop reached the full 45s turn
+            # budget on six turns, leaving the editor zero seconds and sending
+            # the grounding-failure message to the shopper.
+            # Never take more than half the turn: a deployment with a short
+            # budget must still get an agent loop, and a reserve larger than the
+            # budget would fail every turn before any work happened.
+            grounding_reserve = min(
+                max(
+                    0.0,
+                    float(
+                        getattr(
+                            self.config, "grounding_editor_reserve_seconds", 0.0
+                        )
+                    ),
+                ),
+                max(0.0, float(self.config.deepagents_execution_timeout_seconds)) / 2,
+            )
+            agent_timeout = max(
+                0.0,
+                execution_deadline - time.monotonic() - grounding_reserve,
+            )
             if agent_timeout <= 0:
                 raise TimeoutError
             result = await asyncio.wait_for(
@@ -1881,8 +1903,9 @@ class DeepAgentsRuntime:
                 request_id=identity.request_id,
             )
             if not state.response:
+                # Never below the reserve, however long the loop actually ran.
                 remaining_seconds = max(
-                    0.0,
+                    grounding_reserve,
                     execution_deadline - time.monotonic(),
                 )
                 state.response = await self._rewrite_response_for_grounding(

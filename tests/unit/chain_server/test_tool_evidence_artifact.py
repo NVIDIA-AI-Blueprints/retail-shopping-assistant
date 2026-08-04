@@ -23,6 +23,7 @@ from typing import Any
 import pytest
 
 from chain_server.src import deepagents_runtime as runtime_mod
+from chain_server.src import response_format
 from chain_server.src.tool_evidence import (
     DETAIL_EVIDENCE_KEY,
     EVIDENCE_KEY,
@@ -184,7 +185,7 @@ def test_search_result_text_the_model_reads(
 def test_product_detail_text_the_model_reads(
     detail: ProductDetail, expected_body: str
 ) -> None:
-    expected = f"{runtime_mod._PRODUCT_DETAIL_GROUNDING_NOTE}\n{expected_body}"
+    expected = f"{response_format._PRODUCT_DETAIL_GROUNDING_NOTE}\n{expected_body}"
 
     assert runtime_mod._format_product_details(detail) == expected
 

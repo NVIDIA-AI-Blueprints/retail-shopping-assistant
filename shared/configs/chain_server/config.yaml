@@ -17,7 +17,7 @@ deepagents_execution_timeout_seconds: 90.0
 # six turns consuming the entire budget.
 grounding_editor_reserve_seconds: 15.0
 max_catalog_searches_per_turn: 3
-max_product_detail_reads_per_turn: 2
+max_product_detail_reads_per_turn: 10
 expose_agent_diagnostics: false
 catalog_search_timeout_seconds: null
 weather:

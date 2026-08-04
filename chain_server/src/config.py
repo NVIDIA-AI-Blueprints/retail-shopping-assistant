@@ -109,7 +109,7 @@ class ChainServerConfig(BaseModel):
         description="Maximum distinct catalog taxonomy scopes allowed per turn",
     )
     max_product_detail_reads_per_turn: int = Field(
-        default=2,
+        default=10,
         description="Maximum product-detail tool calls allowed for one assistant turn",
     )
     grounding_rewrite_enabled: bool = Field(

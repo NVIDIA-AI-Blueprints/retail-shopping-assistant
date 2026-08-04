@@ -814,6 +814,7 @@ def test_product_resolution_batches_unique_ambiguous_and_missing_results(
             }
         ],
         "match_count": 1,
+        "blocking_field": None,
     }
     assert results["ambiguous"]["status"] == "ambiguous"
     assert results["ambiguous"]["match_count"] == 2
@@ -826,6 +827,7 @@ def test_product_resolution_batches_unique_ambiguous_and_missing_results(
         "status": "not_found",
         "matches": [],
         "match_count": 0,
+        "blocking_field": None,
     }
 
 
@@ -938,6 +940,7 @@ def test_product_resolution_is_conversation_scoped(
             "status": "not_found",
             "matches": [],
             "match_count": 0,
+            "blocking_field": None,
         }
     ]
 
@@ -1590,3 +1593,102 @@ def test_file_database_reopens_with_sqlite_safety_settings(
             == 6
         )
     reopened_engine.dispose()
+
+
+class TestProductReferenceResolutionIsForgivingButNeverGuesses:
+    """A reference the model quoted is still the reference it named.
+
+    Reproduces a live failure: the assistant showed three bags, then for four
+    consecutive turns told the shopper their listings were "not available to
+    me". It had sent `<generated:add69d96c548b4a3>` -- the correct id, wrapped
+    in angle brackets -- and the exact comparison missed.
+    """
+
+    def _occurrence(self):
+        from memory_retriever.src.product_references import ProductReferenceMatch
+
+        return ProductReferenceMatch(
+            product={
+                "product_id": "generated:add69d96c548b4a3",
+                "display_name": "Ravenna Crossbody Bag",
+                "category": "crossbody_bags",
+                "price": {"amount": 49.99, "currency": "USD"},
+            },
+            turn_sequence=1,
+            position=3,
+            candidate_set_id="f088dc105e0f4bd896ca9eaa018329f3",
+        )
+
+    def _descriptor(self, **overrides):
+        from memory_retriever.src.product_references import ProductReferenceDescriptor
+
+        fields = {
+            "reference_id": "bag1",
+            "product_ref": "generated:add69d96c548b4a3",
+            "display_name": "Ravenna Crossbody Bag",
+            "category": "crossbody_bags",
+            "turn_sequence": 1,
+            "candidate_set_id": "f088dc105e0f4bd896ca9eaa018329f3",
+            "ordinal": 3,
+        }
+        fields.update(overrides)
+        return ProductReferenceDescriptor(**fields)
+
+    def test_a_wrapped_reference_still_resolves(self) -> None:
+        from memory_retriever.src.product_references import _matches_descriptor
+
+        for wrapped in (
+            "<generated:add69d96c548b4a3>",
+            "`generated:add69d96c548b4a3`",
+            '"generated:add69d96c548b4a3"',
+            "  generated:add69d96c548b4a3  ",
+        ):
+            assert _matches_descriptor(
+                self._occurrence(), self._descriptor(product_ref=wrapped)
+            ), wrapped
+
+    def test_a_different_reference_still_does_not_resolve(self) -> None:
+        """Normalising punctuation must not make unrelated ids match."""
+
+        from memory_retriever.src.product_references import _matches_descriptor
+
+        assert not _matches_descriptor(
+            self._occurrence(), self._descriptor(product_ref="generated:0000000000")
+        )
+
+    def test_the_one_wrong_field_is_named(self) -> None:
+        from memory_retriever.src.product_references import _blocking_field
+
+        assert (
+            _blocking_field(
+                self._descriptor(product_ref="generated:0000000000"),
+                [self._occurrence()],
+            )
+            == "product_ref"
+        )
+
+    def test_two_wrong_fields_name_nothing(self) -> None:
+        """Naming one of several wrong fields would send the model the wrong way."""
+
+        from memory_retriever.src.product_references import _blocking_field
+
+        assert (
+            _blocking_field(
+                self._descriptor(
+                    product_ref="generated:0000000000", category="satchels"
+                ),
+                [self._occurrence()],
+            )
+            is None
+        )
+
+    def test_diagnosis_never_resolves_the_product_it_found(self) -> None:
+        from memory_retriever.src.product_references import _resolve_descriptor
+
+        result = _resolve_descriptor(
+            self._descriptor(product_ref="generated:0000000000"),
+            [self._occurrence()],
+        )
+        assert result.status == "not_found"
+        assert result.matches == []
+        assert result.blocking_field == "product_ref"

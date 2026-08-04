@@ -77,6 +77,9 @@ class ProductResolutionResult(_ReferenceModel):
     status: Literal["resolved", "ambiguous", "not_found"]
     matches: list[ProductReferenceMatch]
     match_count: int
+    #: The one supplied field that stopped an otherwise clear match, when
+    #: exactly one is responsible. Diagnosis only; it names no product.
+    blocking_field: str | None = None
 
 
 class ProductResolutionResponse(_ReferenceModel):
@@ -163,10 +166,56 @@ def resolve_product_references(
     )
 
 
+#: Descriptor fields that narrow a match, in the order a reader would check them.
+_DESCRIPTOR_FIELDS = (
+    "product_ref",
+    "display_name",
+    "category",
+    "turn_sequence",
+    "candidate_set_id",
+    "ordinal",
+)
+
+
+def _blocking_field(
+    descriptor: ProductReferenceDescriptor,
+    occurrences: list[ProductReferenceMatch],
+) -> str | None:
+    """Return the one supplied field that stopped an otherwise clear match.
+
+    Matching is conjunctive, so a descriptor carrying five correct identifiers
+    and one wrong one resolves nothing and reports not_found -- which tells the
+    model only that the product is missing, when in fact it named it correctly
+    five ways. Naming the field lets the model correct the call instead of
+    repeating it, which is what it did for four turns.
+
+    This only diagnoses. It never resolves to the product it found, because a
+    descriptor the shopper's assistant got wrong is not authority to pick one.
+    """
+
+    supplied = [
+        name
+        for name in _DESCRIPTOR_FIELDS
+        if getattr(descriptor, name, None) is not None
+    ]
+    if len(supplied) < 2:
+        return None
+    blocking: str | None = None
+    for name in supplied:
+        relaxed = descriptor.model_copy(update={name: None})
+        if any(_matches_descriptor(o, relaxed) for o in occurrences):
+            if blocking is not None:
+                # More than one field is wrong; naming one would mislead.
+                return None
+            blocking = name
+    return blocking
+
+
 def _resolve_descriptor(
     descriptor: ProductReferenceDescriptor,
     occurrences: list[ProductReferenceMatch],
 ) -> ProductResolutionResult:
+    blocking_field: str | None = None
     matches_by_ref: dict[str, ProductReferenceMatch] = {}
     for occurrence in occurrences:
         if not _matches_descriptor(occurrence, descriptor):
@@ -178,6 +227,7 @@ def _resolve_descriptor(
     matches = list(matches_by_ref.values())
     if not matches:
         status = "not_found"
+        blocking_field = _blocking_field(descriptor, occurrences)
     elif len(matches) == 1:
         status = "resolved"
     else:
@@ -187,6 +237,7 @@ def _resolve_descriptor(
         status=status,
         matches=matches[-_MAX_CLARIFICATION_MATCHES:],
         match_count=len(matches),
+        blocking_field=blocking_field,
     )
 
 
@@ -338,5 +389,20 @@ def _normalized(value: str) -> str:
     return " ".join(value.casefold().split())
 
 
+#: Characters a model may wrap an opaque identifier in. Nothing in the tool
+#: schema or the rendered index shows a quoted ref, so a model that quotes one
+#: is following a convention, not disobeying an instruction.
+_REFERENCE_WRAPPERS = "<>[]{}\"'`"
+
+
 def _identifier(value: str) -> str:
-    return value.strip()
+    """Compare the identifier, not the punctuation around it.
+
+    A model sent `<generated:add69d96c548b4a3>` for a product it had displayed
+    one turn earlier. The exact comparison missed, resolution returned
+    not_found, and four turns in a row told the shopper the listing was
+    unavailable. Stripping the wrapper compares what the index stored; it does
+    not change which product is named, so nothing is guessed by doing it.
+    """
+
+    return value.strip().strip(_REFERENCE_WRAPPERS).strip()

@@ -1151,9 +1151,23 @@ def _search_catalog_scopes_input_model(
                 min_length=1,
                 max_length=max_scopes,
                 description=(
-                    "One search scope per product role. Each scope owns its own "
-                    "taxonomy and constraints, so a filter for one role can never "
-                    "exclude another role's products."
+                    "One search scope per advertised category. Each scope owns "
+                    "its own taxonomy and constraints, so a filter for one role "
+                    "can never exclude another role's products."
+                ),
+            ),
+        ),
+        not_covered=(
+            list[str] | None,
+            Field(
+                default=None,
+                max_length=10,
+                description=(
+                    "Product types the shopper asked for that no advertised "
+                    "category covers, in the shopper's own words. Do not search "
+                    "for these -- naming them here is what records the request so "
+                    "it can be answered. A shopper asking for 'a pan, a shoe and "
+                    "a bag' gets scopes for the shoe and the bag, and 'pan' here."
                 ),
             ),
         ),

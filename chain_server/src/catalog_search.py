@@ -1377,6 +1377,7 @@ def search_catalog(
     scopes: list[dict[str, Any]],
     scope_complete: bool = True,
     search_mode: str | None = None,
+    not_covered: list[str] | None = None,
 ):
     """Execute one catalog search per product role, concurrently.
 
@@ -1470,6 +1471,16 @@ def search_catalog(
                 outcomes[index] = outcome
 
     rendered: list[str] = []
+    if not_covered:
+        # The shopper asked for something no advertised category covers. It
+        # costs no retrieval, but recording it is what stops the request being
+        # silently dropped: without this the tool sees two scopes and cannot
+        # know a third thing was asked for.
+        rendered.append(
+            "NOT_COVERED: this catalog carries nothing of these kinds, so they "
+            "were not searched. Tell the shopper plainly rather than omitting "
+            "them: " + ", ".join(str(item) for item in not_covered)
+        )
     artifacts: list[dict[str, Any]] = []
     for index, attempt in enumerate(attempts):
         outcome = outcomes[index]

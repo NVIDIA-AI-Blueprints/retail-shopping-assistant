@@ -20,6 +20,16 @@ CATALOG_SEARCH_RULES = """- Call search_catalog_tool when exact advertised
 - Different wording is not a reason to ask. When the shopper names a true
   umbrella, search every advertised value that is genuinely a kind of that
   umbrella. For example, skirts can satisfy bottoms; dresses cannot.
+- The advertised categories in Catalog capabilities are the whole store. If what
+  the shopper asks for is not a kind of any advertised category, do not search
+  for it and do not substitute a neighbour. When the same turn also asks for
+  things the catalog does carry, send scopes for those and name the uncovered
+  ones in `not_covered`: "a pan, a shoe and a bag" is scopes for the shoe and
+  the bag, plus `not_covered: ["pan"]`. When nothing in the turn is covered, do
+  not call the tool at all -- say so plainly and name what this catalog does
+  cover. Either way that is a fact stated by the capability contract above, not
+  a guess about stock. Absence *within* an advertised category is different: it
+  is unknown until searched.
 - A catalog search carries a list of scopes. **One scope carries exactly one
   advertised category.** A product role the shopper names may need more than one
   scope: when a role spans categories, send one scope per category in the same

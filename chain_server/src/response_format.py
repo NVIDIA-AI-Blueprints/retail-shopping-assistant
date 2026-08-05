@@ -397,6 +397,28 @@ def _format_shopper_context(context: ShopperContext | None) -> str:
     )
 
 
+def _format_wearer_audience(audience: list[str] | None) -> str:
+    """Give the person being shopped for standing the dialogue cannot.
+
+    A shopper who said "for my husband" two turns ago is still shopping for
+    him, but by contract dialogue establishes intent rather than fact, so the
+    model re-reads it as history and drops it. Rendered as a value it is
+    something the turn can act on.
+    """
+
+    if not audience:
+        return ""
+    values = ", ".join(sorted(str(value) for value in audience))
+    return (
+        "SHOPPING FOR (carried from an earlier turn; the current turn wins):\n"
+        f"audience: {values}\n"
+        "Keep filtering to this audience while it still applies. If the shopper "
+        "says who an item is for, follow them instead. Say once that you are "
+        "still shopping for the same person, so they can redirect you.\n"
+        "END SHOPPING FOR"
+    )
+
+
 def _format_retrieved_images(retrieved: dict[str, str] | None) -> str:
     if not retrieved:
         return "(none)"

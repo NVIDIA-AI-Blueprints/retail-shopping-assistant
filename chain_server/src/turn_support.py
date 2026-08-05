@@ -61,6 +61,7 @@ from .catalog_request import (
     CatalogSearchPlan,
 )
 from .conversation_memory import (
+    ConversationEvent,
     FinalTurnStatus,
 )
 from .control_signals import (
@@ -2122,6 +2123,59 @@ def _diagnostic_catalog_scope_outcomes(
         if len(outcomes) >= 8:
             break
     return outcomes
+
+
+def _wearer_audience_events(
+    state: Any,
+    identity: Any,
+    *,
+    field_name: str,
+) -> list[ConversationEvent]:
+    """Record an audience this turn declared, so the next turn inherits it.
+
+    Read from the turn's own diagnostics rather than the graph messages: the
+    per-product scope stamp already carries the filters each role was searched
+    with, and zero-result scopes carry theirs too, so nothing new has to be
+    threaded through finalize.
+
+    The server records what the model declared and never reads the shopper's
+    prose to work out who an item is for, which it is forbidden to do. A turn
+    that filtered on nothing declares nothing and leaves an earlier declaration
+    standing -- silence is how the model forgets, not how a shopper changes
+    their mind.
+    """
+
+    if not field_name:
+        return []
+    diagnostics = getattr(state, "agent_diagnostics", None) or {}
+    scopes: list[Any] = [
+        (record or {}).get("search_scope")
+        for record in (diagnostics.get("product_evidence") or [])
+    ]
+    scopes.extend(diagnostics.get("catalog_scope_outcomes") or [])
+    declared: list[str] = []
+    for scope in scopes:
+        if not isinstance(scope, dict):
+            continue
+        values = (scope.get("confirmed_filters") or {}).get(field_name)
+        if isinstance(values, str):
+            values = [values]
+        if not isinstance(values, list):
+            continue
+        for value in values:
+            text = str(value)
+            if text and text not in declared:
+                declared.append(text)
+    if not declared:
+        return []
+    return [
+        ConversationEvent(
+            event_key=f"wearer-audience:{identity.request_id}",
+            event_type="wearer_audience_declared",
+            source_kind="runtime",
+            payload={"audience": declared[:8]},
+        )
+    ]
 
 
 def _product_search_scope(product: Any) -> dict[str, Any] | None:

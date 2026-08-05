@@ -106,6 +106,10 @@ class State(BaseModel):
         pattern=SHOPPER_PROFILE_ID_PATTERN,
         description="Selected immutable representative-shopper key",
     )
+    #: Audience most recently declared for who is being shopped for, carried
+    #: from earlier turns. Dialogue establishes intent, never fact, so a wearer
+    #: named a turn ago has no standing until it arrives as a value.
+    wearer_audience: List[str] = Field(default_factory=list)
     shopper_context: ShopperContext | None = Field(
         default=None,
         description="Server-resolved current-turn shopper guidance",

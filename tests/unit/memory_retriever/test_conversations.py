@@ -163,6 +163,8 @@ def test_start_returns_recent_turns_projection_and_authoritative_cart(
         "replayed": False,
         "status": "started",
         "recent_turns": [],
+        # No wearer has been declared, so nothing is carried forward.
+        "wearer_audience": [],
         "previous_selected_skill_names": [],
         "projection": {
             "version": 0,
@@ -1692,3 +1694,65 @@ class TestProductReferenceResolutionIsForgivingButNeverGuesses:
         assert result.status == "not_found"
         assert result.matches == []
         assert result.blocking_field == "product_ref"
+
+
+def test_start_carries_forward_the_most_recently_declared_wearer(
+    conversation_db: TestClient,
+) -> None:
+    """A wearer named one turn ago must still have standing on the next.
+
+    Live: turn 3 bought sunglasses for a husband and returned four
+    adult_all_genders products; turn 4 asked for a suit and returned four
+    womens ones. The dialogue was carried in full and simply had no standing,
+    because dialogue establishes intent and never fact.
+    """
+
+    conversation_id = "conversation-wearer"
+    first = _start_turn(
+        conversation_db,
+        conversation_id,
+        request_id="request-wearer-1",
+        shopper_text="Sunglasses for my husband.",
+    ).json()
+    _finalize_turn(
+        conversation_db,
+        conversation_id,
+        first["turn_id"],
+        request_id="request-wearer-1",
+        attempt_id=first["attempt_id"],
+        events=[
+            {
+                "event_key": "wearer-audience:request-wearer-1",
+                "event_type": "wearer_audience_declared",
+                "source_kind": "runtime",
+                "payload": {"audience": ["adult_all_genders"]},
+            }
+        ],
+    )
+
+    second = _start_turn(
+        conversation_db,
+        conversation_id,
+        request_id="request-wearer-2",
+        shopper_text="Do you have a suit as well?",
+    ).json()
+
+    assert second["wearer_audience"] == ["adult_all_genders"]
+
+    # A turn that declares nothing leaves it standing: silence is how the
+    # model forgets, not how a shopper changes their mind.
+    _finalize_turn(
+        conversation_db,
+        conversation_id,
+        second["turn_id"],
+        request_id="request-wearer-2",
+        attempt_id=second["attempt_id"],
+    )
+    third = _start_turn(
+        conversation_db,
+        conversation_id,
+        request_id="request-wearer-3",
+        shopper_text="And shoes for him?",
+    ).json()
+
+    assert third["wearer_audience"] == ["adult_all_genders"]

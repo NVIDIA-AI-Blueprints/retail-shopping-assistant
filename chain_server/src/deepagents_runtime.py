@@ -38,11 +38,13 @@ from .response_format import (
     _format_promotions_result,
     _format_retrieved_images,
     _format_shopper_context,
+    _format_wearer_audience,
     _format_update_cart_result,
 )
 from .turn_support import (
     _detail_fields_already_held,
     _search_catalog_scopes_input_model,
+    _wearer_audience_events,
     AddCartItemsToolItemInput,
     RequestIdentity,
     _add_model_usage,
@@ -538,6 +540,7 @@ class DeepAgentsRuntime:
         state.selected_skill_names = []
         state.shopper_profile_id = identity.shopper_profile_id
         state.shopper_context = None
+        state.wearer_audience = []
         turn = self._start_conversation_turn(state, identity)
         if turn is not None and turn.replayed:
             await self._delete_turn_checkpoint(identity)
@@ -2137,8 +2140,11 @@ Rules:
             )
         ]
         shopper_context = _format_shopper_context(state.shopper_context)
+        wearer = _format_wearer_audience(state.wearer_audience)
         if shopper_context:
             sections.append(shopper_context)
+        if wearer:
+            sections.append(wearer)
         sections.extend(
             [
                 (
@@ -2290,6 +2296,7 @@ Rules:
             turn.previous_selected_skill_names
         )
         state.shopper_context = turn.shopper_context
+        state.wearer_audience = list(turn.wearer_audience)
         state.historical_product_sets = [
             entry
             for entry in (turn.projection.product_reference_index or [])
@@ -2367,6 +2374,13 @@ Rules:
                 assistant_text=state.response,
                 status=final_status,
                 termination_reason=reason,
+                events=_wearer_audience_events(
+                    state,
+                    identity,
+                    field_name=getattr(
+                        self.config, "wearer_audience_field", ""
+                    ),
+                ),
                 output=output,
             )
             finalized = True

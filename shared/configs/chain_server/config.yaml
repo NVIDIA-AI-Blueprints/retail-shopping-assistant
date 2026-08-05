@@ -30,6 +30,10 @@ grounding_editor_reserve_seconds: 15.0
 # whole-look request. Aligned with the per-call scope limit below: ten
 # concurrent retrievals measured 1.58s against 0.61s for one, and evidence size
 # is bounded separately by search_products_per_call.
+# Catalog filter naming who a product is for. Only the field name lives here;
+# its values come from the catalog and reach the model through /capabilities,
+# so a catalog serving new audiences needs no change on this side.
+wearer_audience_field: "target_audience"
 max_catalog_searches_per_turn: 10
 # One catalog search call may carry several product roles. They retrieve
 # concurrently, so N roles cost one model round trip rather than N.

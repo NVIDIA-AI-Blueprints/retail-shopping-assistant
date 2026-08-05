@@ -103,6 +103,7 @@ EventType = Literal[
     "preference_added",
     "preference_superseded",
     "catalog_scope_no_match",
+    "wearer_audience_declared",
 ]
 
 
@@ -222,6 +223,42 @@ def _recent_turns_limit() -> int:
     return min(MAX_RECENT_TURNS_LIMIT, max(1, configured))
 
 
+def _latest_wearer_audience(db, conversation_id: str) -> list[str]:
+    """Return the audience most recently declared for who is being shopped for.
+
+    Dialogue carries who a shopper named, but by contract it establishes intent
+    rather than fact, so a wearer stated one turn ago has no standing on the
+    next. This is the same fact recorded as data: the newest declaration wins,
+    and a turn that simply does not mention a wearer leaves it alone -- silence
+    is how the model forgets, not how a shopper changes their mind.
+    """
+
+    row = (
+        db.query(ConversationEvent)
+        .join(ConversationTurn, ConversationEvent.turn_id == ConversationTurn.turn_id)
+        .filter(
+            ConversationTurn.conversation_id == conversation_id,
+            ConversationTurn.status == "completed",
+            ConversationEvent.event_type == "wearer_audience_declared",
+        )
+        .order_by(
+            ConversationTurn.sequence.desc(),
+            ConversationEvent.logical_order.desc(),
+        )
+        .first()
+    )
+    if row is None:
+        return []
+    try:
+        payload = json.loads(row.payload_json) if row.payload_json else {}
+    except (TypeError, ValueError):
+        return []
+    values = payload.get("audience")
+    if not isinstance(values, list):
+        return []
+    return [str(value) for value in values if isinstance(value, str)][:8]
+
+
 def _recent_turns(db, conversation_id: str) -> list[dict[str, Any]]:
     """Return bounded prior turns eligible for downstream context filtering."""
 
@@ -315,6 +352,7 @@ def _start_response(
         "replayed": replayed,
         "status": turn.status,
         "recent_turns": _recent_turns(db, turn.conversation_id),
+        "wearer_audience": _latest_wearer_audience(db, turn.conversation_id),
         "previous_selected_skill_names": _previous_selected_skill_names(db, turn),
         "projection": _projection_dict(projection),
         "cart": _cart_for_user(db, turn.cart_user_id),

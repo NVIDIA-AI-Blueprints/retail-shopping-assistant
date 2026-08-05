@@ -538,3 +538,68 @@ def test_the_same_role_in_a_later_call_is_still_refused(
 
     assert (result[1] or {})[REJECTIONS_KEY] == ["duplicate_shopper_scope"]
     assert len(retrieval["filters"]) == 1
+
+
+def test_a_declared_audience_becomes_an_event_the_next_turn_inherits() -> None:
+    """A wearer named one turn ago must still have standing on the next.
+
+    Live: turn 3 bought sunglasses for a husband and returned four
+    adult_all_genders products; turn 4 asked for a suit and returned four
+    womens ones. The dialogue was carried in full -- it just had no standing,
+    because dialogue establishes intent and never fact.
+    """
+
+    state = SimpleNamespace(
+        agent_diagnostics={
+            "product_evidence": [
+                {"search_scope": {"confirmed_filters": {
+                    "target_audience": ["adult_all_genders"],
+                    "price": {"max": 150},
+                }}},
+            ],
+            "catalog_scope_outcomes": [],
+        }
+    )
+    identity = SimpleNamespace(request_id="req-1")
+
+    events = turn_support._wearer_audience_events(
+        state, identity, field_name="target_audience"
+    )
+
+    assert len(events) == 1
+    assert events[0].event_type == "wearer_audience_declared"
+    assert events[0].payload == {"audience": ["adult_all_genders"]}
+
+
+def test_a_turn_that_declared_nothing_leaves_the_wearer_alone() -> None:
+    """Silence is how the model forgets, not how a shopper changes their mind.
+
+    Turn 4 sent no audience filter. If that cleared the wearer, the mechanism
+    would fail exactly where it is needed.
+    """
+
+    state = SimpleNamespace(
+        agent_diagnostics={
+            "product_evidence": [
+                {"search_scope": {"confirmed_filters": {"price": {"max": 150}}}}
+            ],
+            "catalog_scope_outcomes": [],
+        }
+    )
+
+    events = turn_support._wearer_audience_events(
+        state, SimpleNamespace(request_id="req-2"), field_name="target_audience"
+    )
+
+    assert events == []
+
+
+def test_the_carried_wearer_is_rendered_with_the_current_turn_winning() -> None:
+    from chain_server.src.response_format import _format_wearer_audience
+
+    block = _format_wearer_audience(["adult_all_genders"])
+
+    assert "SHOPPING FOR" in block
+    assert "adult_all_genders" in block
+    assert "the current turn wins" in block
+    assert _format_wearer_audience([]) == ""

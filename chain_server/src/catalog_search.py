@@ -37,6 +37,8 @@ from .catalog_request import (
 )
 from .control_signals import (
     ControlSignal,
+    REJECTIONS_KEY,
+    SearchRejection,
     control,
 )
 from .tool_evidence import (
@@ -205,6 +207,10 @@ class _Attempt:
     lines: Any = None
     normalized_constraints: Any = field(default_factory=dict)
     plan: Any = None
+    #: Which gate turned this scope back, recorded where the decision is made.
+    #: The nine gates below all render one prefix, so the text they hand the
+    #: model cannot say which one refused; this can.
+    rejection_code: str | None = None
     request: Any = None
     result: Any = None
     search_budget_exhausted: Any = None
@@ -217,6 +223,30 @@ class _Attempt:
     taxonomy_payload: Any = None
     taxonomy_status: Any = None
     unconfirmable_requirements: Any = field(default_factory=list)
+
+
+def _rejected(
+    attempt: _Attempt,
+    code: SearchRejection,
+    result: StepResult,
+) -> StepResult:
+    """Name the gate that is turning this scope back, and return its own text.
+
+    Wrapping the return rather than assigning on the line above is deliberate:
+    a code recorded anywhere other than the return it belongs to can drift away
+    from it, which is how the single shared prefix stopped meaning anything.
+
+    Not every early return is a rejection. A catalog that is unavailable, an
+    image search the catalog does not offer, a request carrying neither query
+    nor image, and a retrieval that actually failed all hand the model an
+    instruction to keep the conversation going, and are reported as completed
+    calls today. Giving them a code would silently reclassify them as refusals
+    and replace the model's answer with the fixed refusal response, so they
+    stay uncoded until that is a decision someone makes on purpose.
+    """
+
+    attempt.rejection_code = str(code)
+    return result
 
 
 def _admit_search(ctx: SearchContext, attempt: _Attempt) -> StepResult:
@@ -283,21 +313,25 @@ def _admit_search(ctx: SearchContext, attempt: _Attempt) -> StepResult:
         and not repairing_same_scope
     ):
         expected_scope_key = locked_repair_scope
-        return (
+        return _rejected(
+            attempt,
+            SearchRejection.REPAIR_CHANGED_PRODUCT_SCOPE,
             SEARCH_VALIDATION_ERROR_PREFIX
             + "A catalog search repair cannot replace product scope "
             f"'{expected_scope_key}' "
             f"with '{candidate_scope_key or 'none'}'. Preserve the "
-            "requested_product_type and repair taxonomy instead."
+            "requested_product_type and repair taxonomy instead.",
         )
     if (
         attempt.repair.failed_agent_selected_scope
         and taxonomy_status != "agent_selected_type"
     ):
-        return (
+        return _rejected(
+            attempt,
+            SearchRejection.OPEN_ROLE_REPAIR_REQUIRED,
             SEARCH_VALIDATION_ERROR_PREFIX
             + "This open-role repair must choose exactly one advertised "
-            "subcategory for the role."
+            "subcategory for the role.",
         )
 
     attempt.candidate_scope_key = candidate_scope_key
@@ -542,12 +576,14 @@ def _validated_request(ctx: SearchContext, attempt: _Attempt) -> StepResult:
                     taxonomy_status == "no_direct_catalog_match"
                 ),
             )
-        return (
+        return _rejected(
+            attempt,
+            SearchRejection.CAPABILITIES_SCHEMA_MISMATCH,
             SEARCH_VALIDATION_ERROR_PREFIX
             + "The catalog search request does not match current "
             f"capabilities: {validation_errors}"
             + repair_guidance
-            + constraint_lock
+            + constraint_lock,
         )
 
     attempt.advertised_choices = advertised_choices
@@ -591,12 +627,14 @@ def _reviewed_provenance(ctx: SearchContext, attempt: _Attempt) -> StepResult:
         and normalized_advertised_constraints
         != attempt.repair.pending_taxonomy_constraints
     ):
-        return (
+        return _rejected(
+            attempt,
+            SearchRejection.REPAIR_CHANGED_CONSTRAINTS,
             SEARCH_VALIDATION_ERROR_PREFIX
             + "A taxonomy repair must preserve previously validated "
             "advertised required_constraints exactly. Change only "
             "taxonomy or an explicitly identified "
-            "ungrounded product scope."
+            "ungrounded product scope.",
         )
     if attempt.repair.pending_taxonomy_constraints is not None:
         attempt.repair.pending_taxonomy_constraints = None
@@ -632,7 +670,9 @@ def _reviewed_provenance(ctx: SearchContext, attempt: _Attempt) -> StepResult:
         if shopper_stated_scope:
             attempt.repair.failed_repair_scope_key = candidate_scope_key
             attempt.repair.failed_agent_selected_scope = False
-        return (
+        return _rejected(
+            attempt,
+            SearchRejection.TAXONOMY_NOT_ADVERTISED_FOR_SCOPE,
             SEARCH_VALIDATION_ERROR_PREFIX
             + advertised_taxonomy_issue
             + _lock_taxonomy_constraints(attempt.repair, candidate_scope_key, request)
@@ -642,7 +682,7 @@ def _reviewed_provenance(ctx: SearchContext, attempt: _Attempt) -> StepResult:
                 else " The rejected requested_product_type was not "
                 "shopper-stated. Re-read the current shopper request "
                 "and correct it rather than preserving this scope."
-            )
+            ),
         )
 
     if attempt.repair.pending_schema_requirements and not unadvertised_requirements:
@@ -666,7 +706,9 @@ def _reviewed_provenance(ctx: SearchContext, attempt: _Attempt) -> StepResult:
         or normalized_constraints
         != pending_constraint_review["required_constraints"]
     ):
-        return (
+        return _rejected(
+            attempt,
+            SearchRejection.CONSTRAINT_REPAIR_CHANGED_REQUEST,
             SEARCH_VALIDATION_ERROR_PREFIX
             + "A constraint-provenance repair must preserve "
             "requested_product_type, taxonomy, scope_complete, "
@@ -674,7 +716,7 @@ def _reviewed_provenance(ctx: SearchContext, attempt: _Attempt) -> StepResult:
             "advertised required constraints exactly. Change only the "
             "reviewed unadvertised requirement wording or remove an "
             "inferred requirement; the soft semantic query may be "
-            "corrected within the preserved product scope."
+            "corrected within the preserved product scope.",
         )
     agent_selected_issue: str | None = None
     agent_selected_shopper_scope = False
@@ -771,11 +813,18 @@ def _reviewed_provenance(ctx: SearchContext, attempt: _Attempt) -> StepResult:
                 "send an empty list and remove its promise from "
                 "shopper_guidance."
             )
-        return (
+        return _rejected(
+            attempt,
+            # One return, two different faults: the model narrowed a scope the
+            # shopper named, or it never chose a role for an open one. They are
+            # repaired differently, so they are counted separately.
+            SearchRejection.SHOPPER_SCOPE_TAXONOMY_MISMATCH
+            if agent_selected_shopper_scope
+            else SearchRejection.OPEN_ROLE_SELECTION_REQUIRED,
             SEARCH_VALIDATION_ERROR_PREFIX
             + agent_selected_issue
             + constraint_issue
-            + _lock_taxonomy_constraints(attempt.repair, candidate_scope_key, request)
+            + _lock_taxonomy_constraints(attempt.repair, candidate_scope_key, request),
         )
     attempt.repair.failed_agent_selected_scope = False
 
@@ -813,11 +862,13 @@ def _reviewed_provenance(ctx: SearchContext, attempt: _Attempt) -> StepResult:
             # invented attribute there to establish provenance for.
             review_scope = candidate_scope_key or "__unknown__"
             if review_scope in attempt.repair.constraint_reviewed_scopes:
-                return (
+                return _rejected(
+                    attempt,
+                    SearchRejection.REQUIREMENT_PROVENANCE_UNESTABLISHED,
                     "The requested catalog requirement cannot be enforced: "
                     "its current-turn provenance could not be established. "
                     "Ask the shopper to state the exact required attribute "
-                    "or allow it to be treated as a preference."
+                    "or allow it to be treated as a preference.",
                 )
             attempt.repair.constraint_reviewed_scopes.add(review_scope)
             attempt.repair.pending_constraint_reviews[review_scope] = {
@@ -828,7 +879,9 @@ def _reviewed_provenance(ctx: SearchContext, attempt: _Attempt) -> StepResult:
                 "required_constraints": dict(normalized_constraints),
             }
             attempt.repair.failed_constraint_scope_key = review_scope
-            return (
+            return _rejected(
+                attempt,
+                SearchRejection.CONSTRAINT_REVIEW_REQUIRED,
                 CONSTRAINT_REVIEW_PREFIX
                 + "These proposed unadvertised requirements do not match "
                 "the current shopper turn's normalized wording: "
@@ -850,7 +903,7 @@ def _reviewed_provenance(ctx: SearchContext, attempt: _Attempt) -> StepResult:
                 "the shopper's shortest exact wording. Otherwise the model "
                 "inferred it: remove it from required_constraints and remove "
                 "the attribute claim from shopper_guidance. Implied weather, "
-                "occasion, or style goals are not explicit requirements."
+                "occasion, or style goals are not explicit requirements.",
             )
 
     reviewed_constraint = attempt.repair.pending_constraint_reviews.pop(
@@ -893,7 +946,9 @@ def _reviewed_provenance(ctx: SearchContext, attempt: _Attempt) -> StepResult:
         if shopper_stated_scope:
             attempt.repair.failed_repair_scope_key = candidate_scope_key
             attempt.repair.failed_agent_selected_scope = False
-        return (
+        return _rejected(
+            attempt,
+            SearchRejection.EXACT_TAXONOMY_NOT_ADVERTISED,
             SEARCH_VALIDATION_ERROR_PREFIX
             + exact_taxonomy_issue
             + _lock_taxonomy_constraints(attempt.repair, candidate_scope_key, request)
@@ -907,7 +962,7 @@ def _reviewed_provenance(ctx: SearchContext, attempt: _Attempt) -> StepResult:
             )
             + " Choose only advertised taxonomy values that faithfully "
             "represent that scope. If none does, ask one concise "
-            "clarifying question instead of searching an adjacent type."
+            "clarifying question instead of searching an adjacent type.",
         )
 
     advertised_match = (
@@ -921,12 +976,14 @@ def _reviewed_provenance(ctx: SearchContext, attempt: _Attempt) -> StepResult:
     if advertised_match:
         attempt.repair.failed_repair_scope_key = candidate_scope_key
         attempt.repair.failed_agent_selected_scope = False
-        return (
+        return _rejected(
+            attempt,
+            SearchRejection.ADVERTISED_MATCH_REPORTED_AS_GAP,
             SEARCH_VALIDATION_ERROR_PREFIX
             + f"The requested product type '{request.requested_product_type}' "
             f"matches advertised taxonomy value '{advertised_match}'. "
             "Select that advertised value instead of reporting a gap."
-            + _lock_taxonomy_constraints(attempt.repair, candidate_scope_key, request)
+            + _lock_taxonomy_constraints(attempt.repair, candidate_scope_key, request),
         )
 
     attempt.repair.failed_repair_scope_key = None
@@ -968,13 +1025,17 @@ def _no_direct_match_outcome(ctx: SearchContext, attempt: _Attempt) -> StepResul
                 shopper_scope_key is not None
                 and shopper_scope_key in ctx.scope.searched_shopper_scopes
             ):
-                return control(
-                    "STOP_TOOL_USE: This shopper-requested product scope "
-                    "was already searched in this turn. Do not search an "
-                    "adjacent taxonomy or report the requested scope as "
-                    "unavailable. Use the result already returned.\n\n"
-                    + _SEARCH_SCOPE_COMPLETE_NOTE,
-                    ControlSignal.STOP_TOOL_USE,
+                return _rejected(
+                    attempt,
+                    SearchRejection.DUPLICATE_SHOPPER_SCOPE,
+                    control(
+                        "STOP_TOOL_USE: This shopper-requested product scope "
+                        "was already searched in this turn. Do not search an "
+                        "adjacent taxonomy or report the requested scope as "
+                        "unavailable. Use the result already returned.\n\n"
+                        + _SEARCH_SCOPE_COMPLETE_NOTE,
+                        ControlSignal.STOP_TOOL_USE,
+                    ),
                 )
         evidence = SearchEvidence(
             outcome="no_direct_catalog_match",
@@ -996,7 +1057,11 @@ def _no_direct_match_outcome(ctx: SearchContext, attempt: _Attempt) -> StepResul
         ]
         if evidence.scope_complete:
             lines.append(_SEARCH_SCOPE_COMPLETE_NOTE)
-        return "\n\n".join(lines), evidence.as_artifact()
+        return _rejected(
+            attempt,
+            SearchRejection.NO_ADVERTISED_TAXONOMY_MATCH,
+            ("\n\n".join(lines), evidence.as_artifact()),
+        )
 
     attempt.evidence = evidence
     attempt.lines = lines
@@ -1038,10 +1103,12 @@ def _planned_search(ctx: SearchContext, attempt: _Attempt) -> StepResult:
             "required_constraints: " + ", ".join(overlapping_fields)
         )
     if taxonomy_issues:
-        return (
+        return _rejected(
+            attempt,
+            SearchRejection.UNSUPPORTED_CATALOG_TAXONOMY,
             "The requested catalog taxonomy cannot be enforced: "
             + "; ".join(taxonomy_issues)
-            + ". Ask the shopper to choose an advertised product type."
+            + ". Ask the shopper to choose an advertised product type.",
         )
 
     normalized_search_mode = _tool_search_mode(request.search_mode)
@@ -1049,7 +1116,11 @@ def _planned_search(ctx: SearchContext, attempt: _Attempt) -> StepResult:
         normalized_search_mode is None
         or request.search_mode not in capabilities.retrieval_modes
     ):
-        return _UNSUPPORTED_SEARCH_MODE_MESSAGE
+        return _rejected(
+            attempt,
+            SearchRejection.UNSUPPORTED_SEARCH_MODE,
+            _UNSUPPORTED_SEARCH_MODE_MESSAGE,
+        )
 
     intent = CatalogSearchIntent(
         semantic_query=request.semantic_query,
@@ -1075,10 +1146,12 @@ def _planned_search(ctx: SearchContext, attempt: _Attempt) -> StepResult:
     )
     if not plan.should_search:
         if plan.constraint_issues:
-            return (
+            return _rejected(
+                attempt,
+                SearchRejection.UNSUPPORTED_CATALOG_CONSTRAINT,
                 "The requested catalog requirement cannot be enforced: "
                 + "; ".join(plan.constraint_issues)
-                + ". Ask the shopper to relax it or use an advertised filter."
+                + ". Ask the shopper to relax it or use an advertised filter.",
             )
         if plan.no_search_reason == "image_search_unavailable":
             return (
@@ -1086,7 +1159,11 @@ def _planned_search(ctx: SearchContext, attempt: _Attempt) -> StepResult:
                 "Ask the shopper to describe what they want to find."
             )
         if plan.no_search_reason == "unsupported_search_mode":
-            return _UNSUPPORTED_SEARCH_MODE_MESSAGE
+            return _rejected(
+                attempt,
+                SearchRejection.UNSUPPORTED_SEARCH_MODE,
+                _UNSUPPORTED_SEARCH_MODE_MESSAGE,
+            )
         if plan.no_search_reason == "missing_image_for_search_mode":
             return (
                 "That search mode requires an attached image. Ask the shopper "
@@ -1123,28 +1200,40 @@ def _reserved_search_slot(ctx: SearchContext, attempt: _Attempt) -> StepResult:
             shopper_scope_key is not None
             and shopper_scope_key in ctx.scope.searched_shopper_scopes
         ):
-            return control(
-                "STOP_TOOL_USE: This shopper-requested product scope "
-                "was already searched in this turn. Do not search an "
-                "adjacent taxonomy. Use the result already returned.\n\n"
-                + _SEARCH_SCOPE_COMPLETE_NOTE,
-                ControlSignal.STOP_TOOL_USE,
+            return _rejected(
+                attempt,
+                SearchRejection.DUPLICATE_SHOPPER_SCOPE,
+                control(
+                    "STOP_TOOL_USE: This shopper-requested product scope "
+                    "was already searched in this turn. Do not search an "
+                    "adjacent taxonomy. Use the result already returned.\n\n"
+                    + _SEARCH_SCOPE_COMPLETE_NOTE,
+                    ControlSignal.STOP_TOOL_USE,
+                ),
             )
         if search_scope in ctx.scope.searched_catalog_scopes:
-            return control(
-                "STOP_TOOL_USE: This catalog taxonomy and constraint scope was already "
-                "searched in this turn. Do not retry it "
-                "with a paraphrase or query expansion. Use the products "
-                "already returned, or ask one concise clarifying question.",
-                ControlSignal.STOP_TOOL_USE,
+            return _rejected(
+                attempt,
+                SearchRejection.DUPLICATE_CATALOG_SCOPE,
+                control(
+                    "STOP_TOOL_USE: This catalog taxonomy and constraint scope was already "
+                    "searched in this turn. Do not retry it "
+                    "with a paraphrase or query expansion. Use the products "
+                    "already returned, or ask one concise clarifying question.",
+                    ControlSignal.STOP_TOOL_USE,
+                ),
             )
         if ctx.scope.catalog_searches >= ctx.config.max_catalog_searches_per_turn:
-            return control(
-                "STOP_TOOL_USE: Catalog search limit reached for this turn. "
-                "Do not call more tools this turn. Use the products already "
-                "returned in this turn to answer concisely, or ask one concise "
-                "clarifying question if the available products are not enough.",
-                ControlSignal.STOP_TOOL_USE,
+            return _rejected(
+                attempt,
+                SearchRejection.CATALOG_SEARCH_LIMIT,
+                control(
+                    "STOP_TOOL_USE: Catalog search limit reached for this turn. "
+                    "Do not call more tools this turn. Use the products already "
+                    "returned in this turn to answer concisely, or ask one concise "
+                    "clarifying question if the available products are not enough.",
+                    ControlSignal.STOP_TOOL_USE,
+                ),
             )
         ctx.scope.searched_catalog_scopes.append(search_scope)
         if shopper_scope_key is not None:
@@ -1492,12 +1581,33 @@ def search_catalog(
         if artifact:
             artifacts.append(artifact)
 
+    codes = [attempt.rejection_code for attempt in attempts]
     if len(attempts) == 1:
         single = outcomes[0] if outcomes[0] is not None else _RENDER_STEP(ctx, attempts[0])
-        return single if single is not None else "Catalog search returned nothing."
+        if single is None:
+            single = "Catalog search returned nothing."
+        return _with_scope_rejections(single, codes)
     merged = _merged_artifacts(artifacts)
     text = "\n\n".join(rendered)
-    return (text, merged) if merged else text
+    return _with_scope_rejections((text, merged) if merged else text, codes)
+
+
+def _with_scope_rejections(
+    result: StepResult,
+    codes: list[str | None],
+) -> StepResult:
+    """Carry each scope's gate code out on the artifact, beside its own text.
+
+    One tool call can now search several roles, so the codes are a list in
+    scope order with ``None`` where a scope was not turned back. That is what
+    lets a reader tell a call that refused every role -- and is therefore a
+    refused call -- from one that refused a role and answered the rest.
+    """
+
+    if not any(codes):
+        return result
+    text, artifact = result if isinstance(result, tuple) else (result, None)
+    return text, {**(artifact or {}), REJECTIONS_KEY: codes}
 
 
 def _merged_artifacts(artifacts: list[dict[str, Any]]) -> dict[str, Any] | None:

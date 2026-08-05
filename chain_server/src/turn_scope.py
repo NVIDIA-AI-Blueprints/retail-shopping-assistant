@@ -22,7 +22,6 @@ class CatalogRepairState:
     """
 
     failed_repair_scope_key: str | None = None
-    failed_agent_selected_scope: bool = False
     failed_constraint_scope_key: str | None = None
     constraint_reviewed_scopes: set[str] = field(default_factory=set)
     pending_constraint_reviews: dict[str, dict[str, Any]] = field(

@@ -782,8 +782,10 @@ class SearchCatalogToolArguments(BaseModel):
             "Shortest product noun or umbrella phrase for this focused role, "
             "resolved from the shopper's current turn or direct antecedent. "
             "Exclude color, material, fit, occasion, weather, and style modifiers: "
-            "'formal tops' and 'relaxed-fit tops' both use 'tops'. For a genuinely "
-            "open role selected by the agent, use the chosen advertised role noun. "
+            "'formal tops' and 'relaxed-fit tops' both use 'tops'. For a role the "
+            "shopper did not name, use your own short role noun for it -- 'top', "
+            "'shoes' -- and name every advertised subcategory that role covers in "
+            "taxonomy. The reply will say the role was your suggestion. "
             "If this type is not separately advertised and you select one faithful "
             "advertised parent category, keep this shopper-named type unchanged. "
             "This is provenance, not catalog taxonomy or a ranking query. Use null "
@@ -796,8 +798,10 @@ class SearchCatalogToolArguments(BaseModel):
             "Required catalog-derived taxonomy selection. Allowed category and "
             "subcategory values come from the active catalog capabilities. Every "
             "selected value must be the requested product type or a child of an "
-            "umbrella the shopper actually named. For a genuinely open request, "
-            "select one advertised subcategory as the focused role. Never select "
+            "umbrella the shopper actually named. For a role the shopper did not "
+            "name, select every advertised subcategory that role genuinely covers "
+            "-- a proposed 'top' may select blouses and sweaters together. Do not "
+            "widen a role to types it does not cover. Never select "
             "a parent or sibling as a substitute for an advertised type. If a "
             "shopper-named type is not separately advertised but one advertised "
             "category is its faithful broader parent, select only that category "
@@ -2392,6 +2396,16 @@ def _format_search_only_response(
             and normalized not in parent_relations
         ):
             parent_relations.append(normalized)
+    composed_roles: list[str] = []
+    for group in search_groups:
+        relation = group.get("scope_relation") or {}
+        role = str(relation.get("requested_product_type") or "").strip()
+        if (
+            relation.get("relation") == "model_composed_role"
+            and role
+            and role not in composed_roles
+        ):
+            composed_roles.append(role)
     if parent_relations:
         relation_lines = [
             (
@@ -2403,6 +2417,14 @@ def _format_search_only_response(
             for relation in parent_relations
         ]
         lines = relation_lines + [""] + lines
+    if composed_roles:
+        # One line however many roles were proposed: a four-role look would
+        # otherwise open with four near-identical disclaimers.
+        named = ", ".join(f"**{role}**" for role in composed_roles)
+        lines = [
+            f"You didn't name {named} — I suggested "
+            "those pieces for this look."
+        ] + [""] + lines
 
     filter_groups = _confirmed_search_filter_groups(
         result,
@@ -2977,13 +2999,22 @@ def _scope_relation_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
     category = payload.get("advertised_category")
     requested = payload.get("requested_product_type")
-    if not category or not requested:
-        return {}
-    return {
-        "relation": "model_selected_parent_category",
-        "requested_product_type": str(requested),
-        "advertised_category": str(category),
-    }
+    if category and requested:
+        return {
+            "relation": "model_selected_parent_category",
+            "requested_product_type": str(requested),
+            "advertised_category": str(category),
+        }
+    if payload.get("composed_role") and requested:
+        return {
+            "relation": "model_composed_role",
+            "requested_product_type": str(requested),
+            "role_advertised_types": [
+                str(value)
+                for value in (payload.get("role_advertised_types") or [])
+            ],
+        }
+    return {}
 
 
 def _scope_relation_line(payload: dict[str, Any], *, has_products: bool) -> str:
@@ -2992,7 +3023,7 @@ def _scope_relation_line(payload: dict[str, Any], *, has_products: bool) -> str:
     category = payload.get("advertised_category")
     requested = payload.get("requested_product_type")
     if not category or not requested:
-        return ""
+        return _composed_role_line(payload, has_products=has_products)
     if not has_products:
         return (
             f"REQUESTED_SCOPE_RELATION: {requested} is not separately "
@@ -3005,6 +3036,38 @@ def _scope_relation_line(payload: dict[str, Any], *, has_products: bool) -> str:
         f"advertised. The search used the broader advertised category {category}. "
         "Present these as closest options and keep every returned product's "
         "actual catalog category; do not relabel them as the requested type."
+    )
+
+
+def _composed_role_line(payload: dict[str, Any], *, has_products: bool) -> str:
+    """Say that this role was the assistant's idea, not the shopper's.
+
+    With products, naming the searched types adds nothing the shopper cannot
+    read off the products themselves, and four such lines in a four-role look
+    bury the answer. With none, naming them is the whole point: a miss inside
+    two of five advertised types is not the role being unavailable, and that is
+    exactly the claim a composer will otherwise make.
+    """
+
+    requested = payload.get("requested_product_type")
+    if not payload.get("composed_role") or not requested:
+        return ""
+    types = [
+        str(value) for value in (payload.get("role_advertised_types") or [])
+    ]
+    if not has_products:
+        searched = ", ".join(sorted(types)) or "the selected advertised types"
+        return (
+            f"REQUESTED_SCOPE_RELATION: the shopper did not ask for {requested}; "
+            "this role was proposed by the assistant. The search covered "
+            f"{searched} and returned zero products, so say what was searched "
+            "and do not claim the role is unavailable."
+        )
+    return (
+        f"REQUESTED_SCOPE_RELATION: the shopper did not ask for {requested}; "
+        "this role was proposed by the assistant. Offer it as a suggestion "
+        "rather than as something they asked for, and keep every returned "
+        "product's actual catalog category."
     )
 
 

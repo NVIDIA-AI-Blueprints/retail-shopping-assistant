@@ -149,3 +149,41 @@ class TestResolutionReturnsStoredAttributes:
         )
 
         assert _presented_attribute_facts(self._product({})) == {}
+
+    def test_the_renderer_actually_emits_them(self) -> None:
+        """The unit above can pass while the renderer drops the result.
+
+        Caught by mutation: replacing the renderer's lookup with an empty dict
+        left every other test green, so nothing asserted the attributes reach
+        what the model reads.
+        """
+
+        from chain_server.src.conversation_products import (
+            ConversationProductMatch,
+            ProductReferenceResolution,
+            ResolveConversationProductsResult,
+            format_product_resolution,
+        )
+
+        product = self._product({"bag_closure": "zip", "composition": "leather"})
+        result = ResolveConversationProductsResult(
+            results=[
+                ProductReferenceResolution(
+                    reference_id="bag1",
+                    status="resolved",
+                    match_count=1,
+                    matches=[
+                        ConversationProductMatch(
+                            product=product,
+                            turn_sequence=1,
+                            position=1,
+                            candidate_set_id="set-1",
+                        )
+                    ],
+                )
+            ]
+        )
+        rendered = format_product_resolution(result)
+        assert "CONFIRMED WHEN SHOWN:" in rendered
+        assert "bag_closure: zip" in rendered
+        assert "composition: leather" in rendered

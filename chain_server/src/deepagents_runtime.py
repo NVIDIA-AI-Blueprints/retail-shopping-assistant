@@ -914,14 +914,13 @@ class DeepAgentsRuntime:
                     "prices, categories, image availability, and styling role.",
                     ControlSignal.STOP_TOOL_USE,
                 )
-            scope.product_detail_reads += 1
-
             cached_product = scope.product_evidence.get(product_ref)
             if cached_product is None:
                 return (
                     f"No product with PRODUCT_REF '{product_ref}' is available. "
                     "Search this turn or resolve the earlier product first."
                 )
+            scope.product_detail_reads += 1
             detail_result = get_product_details(
                 GetProductDetailsInput(product_id=cached_product.product_id),
                 self.config.retriever_port,
@@ -1930,6 +1929,12 @@ Rules:
   `unadvertised_requirements`.
 - When every named alternative is advertised, include all of them in one call.
   Do not narrow an explicit umbrella or alternatives to one convenient type.
+- A search result already carries every confirmed attribute the catalog holds
+  for that product -- material, composition, closure, colour, structure, care.
+  Do not read details for a product you searched this turn; the answer is
+  already in the search evidence. Read details only for a product recovered
+  from the historical index, which carries identity alone: reference, name,
+  category, price when shown.
 - Use at most {self.config.max_product_detail_reads_per_turn} product-detail
   reads per user turn. Product details are for direct product fact questions,
   cart or comparison follow-ups, or already-shortlisted items; they are not

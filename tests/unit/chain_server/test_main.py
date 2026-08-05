@@ -3031,7 +3031,7 @@ class TestDeepAgentsRuntimeRefs:
         assert search_schema is not runtime_mod_support.SearchCatalogToolArguments
         # The model-facing schema is now a list of scopes; the per-scope fields
         # are unchanged and live on the scope object.
-        assert set(search_schema.model_fields) == {"scopes"}
+        assert set(search_schema.model_fields) == {"scopes", "not_covered"}
         scope_schema = search_schema.model_fields["scopes"].annotation.__args__[0]
         assert {
             "semantic_query",

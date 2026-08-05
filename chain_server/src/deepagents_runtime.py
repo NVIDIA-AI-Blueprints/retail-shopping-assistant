@@ -856,10 +856,10 @@ class DeepAgentsRuntime:
             constraint_input_model=constraint_input_model,
         )
 
-        def _search_catalog_impl(scopes):
+        def _search_catalog_impl(scopes, not_covered=None):
             """Execute one catalog search per product role; may return signals."""
 
-            return search_catalog(search_context, scopes)
+            return search_catalog(search_context, scopes, not_covered=not_covered)
 
 
         @tool(
@@ -867,7 +867,7 @@ class DeepAgentsRuntime:
             return_direct=False,
             response_format="content_and_artifact",
         )
-        def search_catalog_tool(scopes):
+        def search_catalog_tool(scopes, not_covered=None):
             """Find products by description, advertised taxonomy, or constraints.
 
             Use for browse, search, and recommendation requests after product
@@ -877,7 +877,9 @@ class DeepAgentsRuntime:
             filter scope with different semantic wording.
             """
 
-            return normalize_tool_result(_search_catalog_impl(scopes))
+            return normalize_tool_result(
+                _search_catalog_impl(scopes, not_covered)
+            )
 
         @tool(return_direct=False)
         def get_cart_tool() -> str:

@@ -545,7 +545,12 @@ def start_ui(*, skip_install: bool) -> None:
     env = scope_service_env(UI_SERVICE, os.environ)
     env["PORT"] = "3000"
     env["BROWSER"] = "none"
-    env["REACT_APP_API_BASE_URL"] = "http://localhost:8009"
+    # Relative, and proxied to the chain server by ui/src/setupProxy.js. An
+    # absolute http://localhost:8009 is resolved by the *browser*, so it only
+    # works when the browser shares a machine with the services: reaching the
+    # app through a forwarded port forwards 3000 and not 8009, and every
+    # request dies with "Failed to fetch" before it leaves the page.
+    env["REACT_APP_API_BASE_URL"] = "/api"
     env.setdefault("CI", "true")
     start_process(UI_SERVICE, ["npm", "start"], cwd=REPO_ROOT / "ui", env=env, port=3000)
 

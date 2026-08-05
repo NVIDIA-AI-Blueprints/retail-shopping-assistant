@@ -827,7 +827,13 @@ class SearchCatalogToolArguments(BaseModel):
             "requires an objective product attribute. A defining material is a "
             "must-have: for 'Any denim skirts available?', put 'denim' in "
             "unadvertised_requirements when composition is not a hard filter. "
-            "Product types never belong in unadvertised_requirements."
+            "Product types never belong in unadvertised_requirements. "
+            "When the shopper names who an item is for, and the catalog "
+            "advertises an audience filter, include it with every advertised "
+            "value that suits that person -- a value covering all genders "
+            "suits anyone. Without it, items that person cannot use stay in "
+            "the results. Omit it entirely when the shopper has not said who "
+            "the item is for."
         ),
     )
     scope_complete: bool = Field(

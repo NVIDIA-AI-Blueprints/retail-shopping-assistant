@@ -235,6 +235,29 @@ class ProductEvidence:
         return tuple(self._products.values())
 
 
+#: Fields the catalog returns alongside attributes that are not product facts:
+#: marketing copy and retrieval scores must never reach the model as evidence.
+_NON_ATTRIBUTE_KEYS = frozenset({"catalog_text", "similarity", "taxonomy"})
+
+
+def _presented_attribute_facts(product: Any) -> dict[str, str]:
+    """Attributes the catalog confirmed when this product was shown."""
+
+    attributes = getattr(product, "attributes", None)
+    if not isinstance(attributes, dict):
+        return {}
+    facts: dict[str, str] = {}
+    for name, value in sorted(attributes.items()):
+        if name in _NON_ATTRIBUTE_KEYS:
+            continue
+        text = str(value).strip() if not isinstance(value, (list, dict)) else ", ".join(
+            str(v) for v in (value if isinstance(value, list) else value.values())
+        ).strip()
+        if text:
+            facts[str(name)] = text
+    return facts
+
+
 def format_product_resolution(result: ResolveConversationProductsResult) -> str:
     """Render resolution outcomes without authorizing a guessed product."""
 
@@ -268,11 +291,21 @@ def format_product_resolution(result: ResolveConversationProductsResult) -> str:
                 )
             if product.image_url:
                 lines.append("IMAGE_AVAILABLE: yes")
+            # The presented-product event stores the whole ProductSummary, so
+            # the attributes the catalog confirmed when this product was shown
+            # are already in hand. Withholding them told the model to spend a
+            # round trip fetching what the lane had recorded -- and the message
+            # below used to say details were required for material and care,
+            # which was never true of this data.
+            facts = _presented_attribute_facts(product)
+            if facts:
+                lines.append("CONFIRMED WHEN SHOWN:")
+                lines.extend(f"- {name}: {value}" for name, value in facts.items())
             lines.append(
-                "These are the facts presented earlier. Attributes such as "
-                "material, care, and dimensions require "
-                "get_product_details_tool. Confirm price with a fresh read "
-                "before a cart action or a budget claim."
+                "These are the facts presented earlier, including the "
+                "attributes the catalog confirmed at that time. Read details "
+                "only for a fact not listed above. Confirm price with a fresh "
+                "read before a cart action or a budget claim."
             )
             continue
         if resolution.status == "ambiguous":

@@ -92,3 +92,60 @@ class TestDetailReadRedundancy:
 
         product = self._product("cookware", {"bag_closure": "zip"})
         assert not _detail_fields_already_held(product, self._capabilities())
+
+
+class TestResolutionReturnsStoredAttributes:
+    """A product recovered from history carries the facts it was shown with.
+
+    The presented-product event stores the whole ProductSummary, attributes
+    included. Rendering only identity told the model to spend a round trip
+    fetching what the lane already held, and the old wording claimed material
+    and care *required* a detail read -- which was never true of this data.
+    """
+
+    def _product(self, attributes):
+        from shared.commerce_contracts import Money, ProductSummary
+
+        return ProductSummary(
+            product_id="generated:abc",
+            display_name="Ravenna Crossbody Bag",
+            category="crossbody_bags",
+            price=Money(amount=49.99, currency="USD"),
+            attributes=attributes,
+        )
+
+    def test_stored_attributes_are_rendered(self) -> None:
+        from chain_server.src.conversation_products import (
+            _presented_attribute_facts,
+        )
+
+        facts = _presented_attribute_facts(
+            self._product({"bag_closure": "zip", "composition": "leather"})
+        )
+        assert facts == {"bag_closure": "zip", "composition": "leather"}
+
+    def test_marketing_copy_and_scores_never_reach_the_model(self) -> None:
+        """catalog_text is marketing prose; similarity is a retrieval score."""
+
+        from chain_server.src.conversation_products import (
+            _presented_attribute_facts,
+        )
+
+        facts = _presented_attribute_facts(
+            self._product(
+                {
+                    "bag_closure": "zip",
+                    "catalog_text": "The only bag you will ever need!",
+                    "similarity": 0.83,
+                    "taxonomy": "bags > crossbody",
+                }
+            )
+        )
+        assert facts == {"bag_closure": "zip"}
+
+    def test_a_product_with_no_attributes_renders_nothing(self) -> None:
+        from chain_server.src.conversation_products import (
+            _presented_attribute_facts,
+        )
+
+        assert _presented_attribute_facts(self._product({})) == {}

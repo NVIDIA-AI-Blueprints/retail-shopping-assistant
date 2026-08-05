@@ -3,7 +3,15 @@ memory_port: "http://memory-retriever:8011"
 rails_port: "http://rails:8012"
 memory_length: 16384
 top_k_retrieve: 4
-deepagents_recursion_limit: 24
+# Graph steps per turn. This must not be the binding constraint: exceeding it is
+# a hard error the shopper sees, whereas exceeding the turn deadline degrades to
+# a partial answer with the grounding editor's reserve intact.
+#
+# Measured 2026-08-05: ~3 graph steps per tool call, and the 75s usable deadline
+# affords ~9 calls -- about 27 steps. At 24 the limit bound before the deadline
+# did, and three turns died there once batching let the agent get further into a
+# task. 48 leaves the deadline as the bound.
+deepagents_recursion_limit: 48
 # TEMPORARY, raised 2026-08-04 to unblock feature work. Every tool call costs a
 # full model round trip (~8s measured; the tool itself is ~1s), and the caps
 # below permit seven round trips -- about 56s -- so the previous 45s budget

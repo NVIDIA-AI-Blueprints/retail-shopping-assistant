@@ -75,8 +75,12 @@ const getConfig = (): AppConfig => {
     },
     features: {
       guardrails: {
+        // The toggle stays available; it just starts off. Temporary: the
+        // guardrails service is returning 500 on every check, and the chain
+        // server logs that and continues, so leaving the toggle on only buys
+        // two failed round trips per turn. Turn this back on with the service.
         enabled: true,
-        defaultState: true,
+        defaultState: false,
       },
       imageUpload: {
         enabled: true,

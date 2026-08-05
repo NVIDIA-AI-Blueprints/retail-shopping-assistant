@@ -3135,7 +3135,11 @@ def _composed_role_line(payload: dict[str, Any], *, has_products: bool) -> str:
         f"REQUESTED_SCOPE_RELATION: the shopper did not ask for {requested}; "
         "this role was proposed by the assistant. Offer it as a suggestion "
         "rather than as something they asked for, and keep every returned "
-        "product's actual catalog category."
+        "product's actual catalog category. Say once in this reply who the "
+        "catalog serves, using the audience values in Catalog capabilities: "
+        "choosing this role is a suggestion the shopper can decline, but "
+        "assuming the range suits them at all decides whether any of it "
+        "applies, and that one goes unsaid."
     )
 
 

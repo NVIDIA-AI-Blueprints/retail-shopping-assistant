@@ -234,3 +234,27 @@ def test_chain_server_docker_image_includes_skill_files() -> None:
     dockerfile = (REPO_ROOT / "chain_server" / "Dockerfile").read_text()
 
     assert "COPY ./skills ./skills" in dockerfile
+
+
+def test_role_proposing_skills_name_the_audience_without_asking() -> None:
+    """Choosing a dress is a styling call; assuming the range applies is not.
+
+    A live turn returned three dress-led outfits and disclosed only the role it
+    had picked -- "you didn't specifically ask for dresses" -- while saying
+    nothing about who the shop serves. The disclosure that went unsaid is the
+    one deciding whether any of it applies to the shopper.
+    """
+
+    root = Path(__file__).resolve().parents[3] / "chain_server/skills/shopper"
+
+    for skill in ("outfit-styling", "product-discovery"):
+        raw = (root / skill / "SKILL.md").read_text()
+        # Normalised: the guidance is wrapped, so a phrase can span a newline.
+        body = " ".join(raw.split())
+        assert "who the catalog serves" in body, skill
+        assert "audience values in Catalog capabilities" in body, skill
+        assert "never as a question" in body, skill
+        # The values live in the catalog. Naming one here would survive a
+        # catalog swap and keep being stated after it stopped being true.
+        for value in ("womens", "adult_all_genders", "womenswear", "menswear"):
+            assert value not in body, f"{skill} hardcodes {value}"

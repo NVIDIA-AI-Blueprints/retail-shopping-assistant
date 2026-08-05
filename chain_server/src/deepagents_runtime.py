@@ -1904,12 +1904,14 @@ Rules:
   be answered from MEDIA ANALYSIS. Do not call search_catalog_tool and do not
   show catalog products unless the shopper explicitly asks to find, shop,
   recommend, compare, price-check, check availability, or add an item.
-- Use at most {self.config.max_catalog_searches_per_turn} catalog search calls per
-  user turn. One normalized taxonomy-and-required-constraint scope can execute
+- Use at most {self.config.max_catalog_searches_per_turn} product roles across
+  all catalog searches in one user turn, and carry them in as few calls as
+  possible: roles in one call retrieve together and cost one round trip.
+  One normalized taxonomy-and-required-constraint scope can execute
   only once in a turn; do not retry the same hard-filter scope with different
   semantic wording. For outfit requests
-  with multiple required item types, run one focused search per distinct
-  taxonomy scope, then stop and synthesize from those results.
+  with multiple required item types, send one focused role per distinct
+  taxonomy scope in the same call, then stop and synthesize from those results.
 - An outfit request with a season, weather need, occasion, or style/vibe already
   has enough direction to begin with a grounded partial outfit. Do not answer
   only with a questionnaire; search the most useful core role first and ask at

@@ -180,17 +180,6 @@ GATE_CASES: tuple[GateCase, ...] = (
         _scope(),
     ),
     (
-        SearchRejection.OPEN_ROLE_REPAIR_REQUIRED,
-        "show me tote bags",
-        None,
-        lambda ctx: setattr(
-            ctx.scope.repair,
-            "failed_agent_selected_scope",
-            True,
-        ),
-        _scope(),
-    ),
-    (
         SearchRejection.CAPABILITIES_SCHEMA_MISMATCH,
         "show me tote bags",
         None,
@@ -244,22 +233,6 @@ GATE_CASES: tuple[GateCase, ...] = (
         _scope(
             semantic_query="handbags",
             requested_product_type="handbags",
-        ),
-    ),
-    (
-        # A genuinely open role that never resolved to one advertised
-        # subcategory, so nothing names what was actually searched.
-        SearchRejection.OPEN_ROLE_SELECTION_REQUIRED,
-        "put together an outfit for a wedding",
-        None,
-        lambda ctx: None,
-        _scope(
-            semantic_query="wedding guest look",
-            requested_product_type="wedding guest look",
-            taxonomy={
-                "category": [],
-                "subcategory": ["tote_bags", "crossbody_bags"],
-            },
         ),
     ),
     (

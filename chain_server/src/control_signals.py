@@ -46,7 +46,6 @@ class SearchRejection(StrEnum):
 
     # Admission, before anything is parsed.
     REPAIR_CHANGED_PRODUCT_SCOPE = "repair_changed_product_scope"
-    OPEN_ROLE_REPAIR_REQUIRED = "open_role_repair_required"
 
     # Argument validation against current catalog capabilities.
     CAPABILITIES_SCHEMA_MISMATCH = "capabilities_schema_mismatch"
@@ -56,7 +55,6 @@ class SearchRejection(StrEnum):
     TAXONOMY_NOT_ADVERTISED_FOR_SCOPE = "taxonomy_not_advertised_for_scope"
     CONSTRAINT_REPAIR_CHANGED_REQUEST = "constraint_repair_changed_request"
     SHOPPER_SCOPE_TAXONOMY_MISMATCH = "shopper_scope_taxonomy_mismatch"
-    OPEN_ROLE_SELECTION_REQUIRED = "open_role_selection_required"
     REQUIREMENT_PROVENANCE_UNESTABLISHED = "requirement_provenance_unestablished"
     CONSTRAINT_REVIEW_REQUIRED = "constraint_review_required"
     EXACT_TAXONOMY_NOT_ADVERTISED = "exact_taxonomy_not_advertised"

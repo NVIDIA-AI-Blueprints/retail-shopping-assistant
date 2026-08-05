@@ -782,8 +782,10 @@ class SearchCatalogToolArguments(BaseModel):
             "Shortest product noun or umbrella phrase for this focused role, "
             "resolved from the shopper's current turn or direct antecedent. "
             "Exclude color, material, fit, occasion, weather, and style modifiers: "
-            "'formal tops' and 'relaxed-fit tops' both use 'tops'. For a genuinely "
-            "open role selected by the agent, use the chosen advertised role noun. "
+            "'formal tops' and 'relaxed-fit tops' both use 'tops'. For a role the "
+            "shopper did not name, use your own short role noun for it -- 'top', "
+            "'shoes' -- and name every advertised subcategory that role covers in "
+            "taxonomy. The reply will say the role was your suggestion. "
             "If this type is not separately advertised and you select one faithful "
             "advertised parent category, keep this shopper-named type unchanged. "
             "This is provenance, not catalog taxonomy or a ranking query. Use null "
@@ -796,8 +798,10 @@ class SearchCatalogToolArguments(BaseModel):
             "Required catalog-derived taxonomy selection. Allowed category and "
             "subcategory values come from the active catalog capabilities. Every "
             "selected value must be the requested product type or a child of an "
-            "umbrella the shopper actually named. For a genuinely open request, "
-            "select one advertised subcategory as the focused role. Never select "
+            "umbrella the shopper actually named. For a role the shopper did not "
+            "name, select every advertised subcategory that role genuinely covers "
+            "-- a proposed 'top' may select blouses and sweaters together. Do not "
+            "widen a role to types it does not cover. Never select "
             "a parent or sibling as a substitute for an advertised type. If a "
             "shopper-named type is not separately advertised but one advertised "
             "category is its faithful broader parent, select only that category "
@@ -2030,6 +2034,7 @@ def _diagnostic_product_evidence(
                 "confirmed_filters": _bounded_product_evidence_value(
                     payload.get("confirmed_filters") or {}
                 ),
+                "composed_role": bool(payload.get("composed_role")),
             }
             records = payload.get("products") or []
         elif source_tool == "get_product_details_tool":
@@ -2054,7 +2059,14 @@ def _diagnostic_product_evidence(
                 "evidence_type": evidence_type,
                 "facts": _diagnostic_product_facts(product),
             }
-            if search_scope is not None:
+            # A multi-role call's payload carries the union of every role's
+            # taxonomy and filters. The product knows which role retrieved it;
+            # prefer that over the union, or the trace records a product as
+            # confirmed under a filter it was never searched with.
+            product_scope = _product_search_scope(product)
+            if product_scope is not None:
+                record["search_scope"] = product_scope
+            elif search_scope is not None:
                 record["search_scope"] = search_scope
             if (
                 len(evidence) >= _MAX_DIAGNOSTIC_PRODUCT_EVIDENCE
@@ -2084,6 +2096,7 @@ def _diagnostic_catalog_scope_outcomes(
         "requested_product_type",
         "taxonomy",
         "confirmed_filters",
+        "composed_role",
     }
     for message in messages:
         if _message_type(message) != "tool":
@@ -2103,6 +2116,59 @@ def _diagnostic_catalog_scope_outcomes(
         if len(outcomes) >= 8:
             break
     return outcomes
+
+
+def _product_search_scope(product: Any) -> dict[str, Any] | None:
+    """Return the scope that actually retrieved one product, if it carries one.
+
+    Only a multi-role call stamps this, because only then is the call-level
+    scope a union of several roles rather than a description of this product.
+    """
+
+    if not isinstance(product, dict):
+        return None
+    scope = product.get("search_scope")
+    if not isinstance(scope, dict):
+        return None
+    return {
+        "taxonomy": _bounded_product_evidence_value(scope.get("taxonomy") or {}),
+        "confirmed_filters": _bounded_product_evidence_value(
+            scope.get("confirmed_filters") or {}
+        ),
+        "composed_role": bool(scope.get("composed_role")),
+    }
+
+
+def _products_by_confirmed_filters(
+    payload: dict[str, Any],
+) -> list[tuple[dict[str, Any], list[dict[str, Any]]]]:
+    """Split one search result into the filter sets actually applied to it.
+
+    A call carrying several roles merges into one payload whose
+    ``confirmed_filters`` is the union across those roles. Stating that union
+    against every product is what let a $179.99 sweater be presented as
+    confirmed under a $59.99 cap belonging to the shoes.
+    """
+
+    call_filters = payload.get("confirmed_filters") or {}
+    grouped: list[dict[str, Any]] = []
+    for product in payload.get("products") or []:
+        scope = product.get("search_scope") if isinstance(product, dict) else None
+        filters = (
+            scope.get("confirmed_filters") or {}
+            if isinstance(scope, dict)
+            else call_filters
+        )
+        key = json.dumps(filters, sort_keys=True, default=str)
+        for entry in grouped:
+            if entry["key"] == key:
+                entry["products"].append(product)
+                break
+        else:
+            grouped.append({"key": key, "filters": filters, "products": [product]})
+    if not grouped:
+        return [(call_filters, [])]
+    return [(entry["filters"], entry["products"]) for entry in grouped]
 
 
 def _diagnostic_product_facts(product: dict[str, Any]) -> dict[str, Any]:
@@ -2392,6 +2458,16 @@ def _format_search_only_response(
             and normalized not in parent_relations
         ):
             parent_relations.append(normalized)
+    composed_roles: list[str] = []
+    for group in search_groups:
+        relation = group.get("scope_relation") or {}
+        role = str(relation.get("requested_product_type") or "").strip()
+        if (
+            relation.get("relation") == "model_composed_role"
+            and role
+            and role not in composed_roles
+        ):
+            composed_roles.append(role)
     if parent_relations:
         relation_lines = [
             (
@@ -2403,6 +2479,14 @@ def _format_search_only_response(
             for relation in parent_relations
         ]
         lines = relation_lines + [""] + lines
+    if composed_roles:
+        # One line however many roles were proposed: a four-role look would
+        # otherwise open with four near-identical disclaimers.
+        named = ", ".join(f"**{role}**" for role in composed_roles)
+        lines = [
+            f"You didn't name {named} — I suggested "
+            "those pieces for this look."
+        ] + [""] + lines
 
     filter_groups = _confirmed_search_filter_groups(
         result,
@@ -2579,28 +2663,28 @@ def _confirmed_search_filter_groups(
         payload = evidence_of(message)
         if not payload or payload.get("outcome") != "results":
             continue
-        filters = payload.get("confirmed_filters") or {}
-        statements: list[str] = []
-        for name, value in filters.items():
-            statement = _format_filter_statement(name, value)
-            if statement:
-                statements.append(statement)
-        if not statements:
-            continue
-        product_names = [
-            product["name"]
-            for product in (payload.get("products") or [])
-            if product.get("name")
-        ]
-        if displayed_names is not None:
-            product_names = [
-                name for name in product_names if name in displayed_names
-            ]
-            if not product_names:
+        for filters, products in _products_by_confirmed_filters(payload):
+            statements: list[str] = []
+            for name, value in filters.items():
+                statement = _format_filter_statement(name, value)
+                if statement:
+                    statements.append(statement)
+            if not statements:
                 continue
-        groups.append(
-            {"product_names": product_names, "statements": statements}
-        )
+            product_names = [
+                product["name"]
+                for product in products
+                if product.get("name")
+            ]
+            if displayed_names is not None:
+                product_names = [
+                    name for name in product_names if name in displayed_names
+                ]
+                if not product_names:
+                    continue
+            groups.append(
+                {"product_names": product_names, "statements": statements}
+            )
     return groups
 
 
@@ -2977,13 +3061,22 @@ def _scope_relation_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
     category = payload.get("advertised_category")
     requested = payload.get("requested_product_type")
-    if not category or not requested:
-        return {}
-    return {
-        "relation": "model_selected_parent_category",
-        "requested_product_type": str(requested),
-        "advertised_category": str(category),
-    }
+    if category and requested:
+        return {
+            "relation": "model_selected_parent_category",
+            "requested_product_type": str(requested),
+            "advertised_category": str(category),
+        }
+    if payload.get("composed_role") and requested:
+        return {
+            "relation": "model_composed_role",
+            "requested_product_type": str(requested),
+            "role_advertised_types": [
+                str(value)
+                for value in (payload.get("role_advertised_types") or [])
+            ],
+        }
+    return {}
 
 
 def _scope_relation_line(payload: dict[str, Any], *, has_products: bool) -> str:
@@ -2992,7 +3085,7 @@ def _scope_relation_line(payload: dict[str, Any], *, has_products: bool) -> str:
     category = payload.get("advertised_category")
     requested = payload.get("requested_product_type")
     if not category or not requested:
-        return ""
+        return _composed_role_line(payload, has_products=has_products)
     if not has_products:
         return (
             f"REQUESTED_SCOPE_RELATION: {requested} is not separately "
@@ -3005,6 +3098,38 @@ def _scope_relation_line(payload: dict[str, Any], *, has_products: bool) -> str:
         f"advertised. The search used the broader advertised category {category}. "
         "Present these as closest options and keep every returned product's "
         "actual catalog category; do not relabel them as the requested type."
+    )
+
+
+def _composed_role_line(payload: dict[str, Any], *, has_products: bool) -> str:
+    """Say that this role was the assistant's idea, not the shopper's.
+
+    With products, naming the searched types adds nothing the shopper cannot
+    read off the products themselves, and four such lines in a four-role look
+    bury the answer. With none, naming them is the whole point: a miss inside
+    two of five advertised types is not the role being unavailable, and that is
+    exactly the claim a composer will otherwise make.
+    """
+
+    requested = payload.get("requested_product_type")
+    if not payload.get("composed_role") or not requested:
+        return ""
+    types = [
+        str(value) for value in (payload.get("role_advertised_types") or [])
+    ]
+    if not has_products:
+        searched = ", ".join(sorted(types)) or "the selected advertised types"
+        return (
+            f"REQUESTED_SCOPE_RELATION: the shopper did not ask for {requested}; "
+            "this role was proposed by the assistant. The search covered "
+            f"{searched} and returned zero products, so say what was searched "
+            "and do not claim the role is unavailable."
+        )
+    return (
+        f"REQUESTED_SCOPE_RELATION: the shopper did not ask for {requested}; "
+        "this role was proposed by the assistant. Offer it as a suggestion "
+        "rather than as something they asked for, and keep every returned "
+        "product's actual catalog category."
     )
 
 

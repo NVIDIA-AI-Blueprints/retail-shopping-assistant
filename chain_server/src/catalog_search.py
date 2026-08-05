@@ -95,6 +95,7 @@ from .response_format import (
     _format_search_direction_evidence,
     _format_search_filter_evidence,
     _format_search_guidance_evidence,
+    _format_search_composed_role_evidence,
     _format_search_scope_relation_evidence,
     _format_search_taxonomy_evidence,
 )
@@ -201,8 +202,16 @@ class _Attempt:
     advertised_choices: Any = None
     candidate_scope_key: Any = None
     capabilities: Any = None
+    #: True when the shopper never named this role and the model composed it.
+    #: Recorded rather than refused: the reply has to present it as proposed,
+    #: and must not read a miss inside the searched types as the role being
+    #: unavailable.
+    composed_role: bool = False
     constraint_payload: Any = None
     evidence: Any = None
+    #: Shopper scopes searched by *earlier calls*, snapshotted at the start
+    #: of this one. A role must not collide with its own siblings.
+    prior_shopper_scopes: Any = None
     execution: Any = None
     lines: Any = None
     normalized_constraints: Any = field(default_factory=dict)
@@ -322,18 +331,6 @@ def _admit_search(ctx: SearchContext, attempt: _Attempt) -> StepResult:
             f"with '{candidate_scope_key or 'none'}'. Preserve the "
             "requested_product_type and repair taxonomy instead.",
         )
-    if (
-        attempt.repair.failed_agent_selected_scope
-        and taxonomy_status != "agent_selected_type"
-    ):
-        return _rejected(
-            attempt,
-            SearchRejection.OPEN_ROLE_REPAIR_REQUIRED,
-            SEARCH_VALIDATION_ERROR_PREFIX
-            + "This open-role repair must choose exactly one advertised "
-            "subcategory for the role.",
-        )
-
     attempt.candidate_scope_key = candidate_scope_key
     attempt.capabilities = capabilities
     attempt.requested_product_type = requested_product_type
@@ -506,6 +503,10 @@ def _validated_request(ctx: SearchContext, attempt: _Attempt) -> StepResult:
             for error in validation_errors
         )
         repair_guidance = ""
+        # A composed role that has already settled on an advertised type is a
+        # committed scope and may not drift on repair. One that has not is
+        # still the model's own wording, with nothing of the shopper's in it to
+        # preserve, so it stays free to be re-composed.
         canonical_agent_selected_scope = bool(
             candidate_scope_key
             and taxonomy_status == "agent_selected_type"
@@ -516,9 +517,6 @@ def _validated_request(ctx: SearchContext, attempt: _Attempt) -> StepResult:
         )
         if shopper_stated_scope or canonical_agent_selected_scope:
             attempt.repair.failed_repair_scope_key = candidate_scope_key
-            attempt.repair.failed_agent_selected_scope = False
-        elif taxonomy_error and taxonomy_status == "agent_selected_type":
-            attempt.repair.failed_agent_selected_scope = True
         if candidate_scope_key and taxonomy_error:
             if (
                 taxonomy_status == "agent_selected_type"
@@ -529,10 +527,10 @@ def _validated_request(ctx: SearchContext, attempt: _Attempt) -> StepResult:
                     capabilities,
                 )
                 repair_guidance = (
-                    " For an open-role search, choose "
-                    "exactly one advertised subcategory and copy it into "
-                    "requested_product_type. Choose exactly one of these "
-                    "currently advertised subcategories: "
+                    " For a role the shopper did not name, keep your role "
+                    "noun in requested_product_type and select every "
+                    "advertised subcategory that role covers. Choose from "
+                    "these currently advertised subcategories: "
                     + json.dumps(advertised_choices, ensure_ascii=False)
                     + "."
                 )
@@ -669,7 +667,6 @@ def _reviewed_provenance(ctx: SearchContext, attempt: _Attempt) -> StepResult:
     if advertised_taxonomy_issue:
         if shopper_stated_scope:
             attempt.repair.failed_repair_scope_key = candidate_scope_key
-            attempt.repair.failed_agent_selected_scope = False
         return _rejected(
             attempt,
             SearchRejection.TAXONOMY_NOT_ADVERTISED_FOR_SCOPE,
@@ -718,86 +715,70 @@ def _reviewed_provenance(ctx: SearchContext, attempt: _Attempt) -> StepResult:
             "inferred requirement; the soft semantic query may be "
             "corrected within the preserved product scope.",
         )
+    # A role the shopper never named is the model's own composition -- "a top"
+    # for someone who asked for an outfit, covering blouses and sweaters
+    # because the catalog has no "tops". That is not a fault to turn back. It
+    # is a fact to record: the reply must present the role as proposed rather
+    # than as something the shopper asked for, and must not read a miss within
+    # the searched types as the role being unavailable.
+    #
+    # Refusing it cost a round trip and a worse answer every time it fired. In
+    # one whole-look turn the shoes role was forced from [flats, sandals] down
+    # to flats, and the shopper had to ask for sandals back two turns later.
     agent_selected_issue: str | None = None
-    agent_selected_shopper_scope = False
+    agent_selected_shopper_scope = bool(
+        candidate_scope_key
+        and _shopper_stated_product_scope(
+            ctx.state.query,
+            ctx.state.dialogue,
+            candidate_scope_key,
+        )
+    )
+    attempt.composed_role = (
+        request.taxonomy_status == "agent_selected_type"
+        and not agent_selected_shopper_scope
+    )
     if (
         request.taxonomy_status == "agent_selected_type"
-        and (
-            _shopper_stated_product_scope(
-                ctx.state.query,
-                ctx.state.dialogue,
-                candidate_scope_key,
-            )
-            or not _agent_selected_scope_is_advertised(
-                request.requested_product_type,
-                request.taxonomy,
-            )
-        )
+        and agent_selected_shopper_scope
     ):
-        agent_selected_shopper_scope = bool(
-            candidate_scope_key
-            and _shopper_stated_product_scope(
-                ctx.state.query,
-                ctx.state.dialogue,
-                candidate_scope_key,
+        # The shopper did name this scope, so the model may not quietly answer
+        # it as an open role: that narrows what they asked for.
+        payload = request.taxonomy.model_dump()
+        selected_values = (
+            payload.get("subcategory")
+            or payload.get("category")
+            or []
+        )
+        advertised_match = _advertised_scope_match(
+            request.requested_product_type,
+            capabilities,
+        )
+        exact_selected_scope = bool(
+            advertised_match
+            and len(selected_values) == 1
+            and _normalize_product_text(selected_values[0])
+            == _normalize_product_text(advertised_match[1])
+        )
+        repair_status = (
+            "Keep that exact advertised taxonomy selection."
+            if exact_selected_scope
+            else (
+                "Select only advertised values that are kinds of the "
+                "named scope; do not narrow to one convenient child."
             )
         )
-        if agent_selected_shopper_scope:
-            payload = request.taxonomy.model_dump()
-            selected_values = (
-                payload.get("subcategory")
-                or payload.get("category")
-                or []
-            )
-            advertised_match = _advertised_scope_match(
-                request.requested_product_type,
-                capabilities,
-            )
-            exact_selected_scope = bool(
-                advertised_match
-                and len(selected_values) == 1
-                and _normalize_product_text(selected_values[0])
-                == _normalize_product_text(advertised_match[1])
-            )
-            repair_status = (
-                "Keep that exact advertised taxonomy selection."
-                if exact_selected_scope
-                else (
-                    "Select only advertised values that are kinds of the "
-                    "named scope; do not narrow to one convenient child."
-                )
-            )
-            agent_selected_issue = (
-                "The shopper named requested_product_type "
-                f"'{request.requested_product_type}', so "
-                "preserve that requested_product_type and these advertised "
-                "values on repair: "
-                + json.dumps(selected_values, sort_keys=True)
-                + ". "
-                + repair_status
-            )
-        else:
-            advertised_choices = _advertised_subcategories_for_selection(
-                request.taxonomy,
-                capabilities,
-            )
-            agent_selected_issue = (
-                "An open-role search must select exactly one advertised "
-                "subcategory and copy that exact "
-                "subcategory into requested_product_type. Do not use a "
-                "parent category or an unadvertised role. Choose exactly "
-                "one of these currently advertised subcategories: "
-                + json.dumps(advertised_choices, ensure_ascii=False)
-                + ". Rewrite "
-                "shopper_guidance for that selected role without "
-                "asserting an inferred product attribute."
-            )
+        agent_selected_issue = (
+            "The shopper named requested_product_type "
+            f"'{request.requested_product_type}', so "
+            "preserve that requested_product_type and these advertised "
+            "values on repair: "
+            + json.dumps(selected_values, sort_keys=True)
+            + ". "
+            + repair_status
+        )
     if agent_selected_issue:
-        if agent_selected_shopper_scope:
-            attempt.repair.failed_repair_scope_key = candidate_scope_key
-            attempt.repair.failed_agent_selected_scope = False
-        elif candidate_scope_key:
-            attempt.repair.failed_agent_selected_scope = True
+        attempt.repair.failed_repair_scope_key = candidate_scope_key
         constraint_issue = ""
         if unadvertised_requirements:
             constraint_issue = (
@@ -815,18 +796,12 @@ def _reviewed_provenance(ctx: SearchContext, attempt: _Attempt) -> StepResult:
             )
         return _rejected(
             attempt,
-            # One return, two different faults: the model narrowed a scope the
-            # shopper named, or it never chose a role for an open one. They are
-            # repaired differently, so they are counted separately.
-            SearchRejection.SHOPPER_SCOPE_TAXONOMY_MISMATCH
-            if agent_selected_shopper_scope
-            else SearchRejection.OPEN_ROLE_SELECTION_REQUIRED,
+            SearchRejection.SHOPPER_SCOPE_TAXONOMY_MISMATCH,
             SEARCH_VALIDATION_ERROR_PREFIX
             + agent_selected_issue
             + constraint_issue
             + _lock_taxonomy_constraints(attempt.repair, candidate_scope_key, request),
         )
-    attempt.repair.failed_agent_selected_scope = False
 
     if (
         request.taxonomy_status != "no_direct_catalog_match"
@@ -945,7 +920,6 @@ def _reviewed_provenance(ctx: SearchContext, attempt: _Attempt) -> StepResult:
         )
         if shopper_stated_scope:
             attempt.repair.failed_repair_scope_key = candidate_scope_key
-            attempt.repair.failed_agent_selected_scope = False
         return _rejected(
             attempt,
             SearchRejection.EXACT_TAXONOMY_NOT_ADVERTISED,
@@ -975,7 +949,6 @@ def _reviewed_provenance(ctx: SearchContext, attempt: _Attempt) -> StepResult:
     )
     if advertised_match:
         attempt.repair.failed_repair_scope_key = candidate_scope_key
-        attempt.repair.failed_agent_selected_scope = False
         return _rejected(
             attempt,
             SearchRejection.ADVERTISED_MATCH_REPORTED_AS_GAP,
@@ -988,7 +961,6 @@ def _reviewed_provenance(ctx: SearchContext, attempt: _Attempt) -> StepResult:
 
     attempt.repair.failed_repair_scope_key = None
     attempt.repair.failed_constraint_scope_key = None
-    attempt.repair.failed_agent_selected_scope = False
 
     attempt.normalized_constraints = normalized_constraints
     attempt.request = request
@@ -1196,9 +1168,21 @@ def _reserved_search_slot(ctx: SearchContext, attempt: _Attempt) -> StepResult:
             taxonomy_constraints,
             normalized_constraints,
         )
+        # Judged against the scopes earlier calls searched, never against a
+        # sibling in this one. The rule exists to stop a retry paraphrasing an
+        # answered search; two roles of one call are not retries of each other,
+        # and refusing the second killed half a request that was correctly
+        # formed -- "black crew neck, or any black one under $60" lost its
+        # fallback to its own first half. An identical sibling is still caught
+        # below, by taxonomy and constraints, where the comparison is exact.
+        already_searched = (
+            attempt.prior_shopper_scopes
+            if attempt.prior_shopper_scopes is not None
+            else ctx.scope.searched_shopper_scopes
+        )
         if (
             shopper_scope_key is not None
-            and shopper_scope_key in ctx.scope.searched_shopper_scopes
+            and shopper_scope_key in already_searched
         ):
             return _rejected(
                 attempt,
@@ -1329,13 +1313,25 @@ def _rendered_evidence(ctx: SearchContext, attempt: _Attempt) -> StepResult:
         and request.taxonomy.category
         else None
     )
+    role_advertised_types = (
+        list(request.taxonomy.subcategory or [])
+        if attempt.composed_role
+        else []
+    )
     scope_relation_evidence = (
         _format_search_scope_relation_evidence(
             requested_product_type=request.requested_product_type or "",
             advertised_category=advertised_category,
         )
         if advertised_category
-        else ""
+        else (
+            _format_search_composed_role_evidence(
+                requested_product_type=request.requested_product_type or "",
+                role_advertised_types=role_advertised_types,
+            )
+            if attempt.composed_role
+            else ""
+        )
     )
     if not result.products:
         # Build the payload first; every line below renders from it.
@@ -1345,6 +1341,8 @@ def _rendered_evidence(ctx: SearchContext, attempt: _Attempt) -> StepResult:
             confirmed_filters=confirmed_filters,
             requested_product_type=request.requested_product_type,
             advertised_category=advertised_category,
+            composed_role=attempt.composed_role,
+            role_advertised_types=role_advertised_types,
             scope_complete=bool(request.scope_complete),
             budget_exhausted=bool(search_budget_exhausted),
             unconfirmed_requirements=unconfirmable_requirements,
@@ -1353,6 +1351,11 @@ def _rendered_evidence(ctx: SearchContext, attempt: _Attempt) -> StepResult:
                 "requested_product_type": request.requested_product_type,
                 "taxonomy": taxonomy_constraints,
                 "confirmed_filters": confirmed_filters,
+                # A role nobody named that found nothing is the case the
+                # disclosure exists for, and the one an operator most needs to
+                # see: without it a zero-result composed role is indistinguishable
+                # from a shopper asking for something the catalog lacks.
+                "composed_role": attempt.composed_role,
             },
         )
         lines = [
@@ -1389,6 +1392,8 @@ def _rendered_evidence(ctx: SearchContext, attempt: _Attempt) -> StepResult:
         ),
         requested_product_type=request.requested_product_type,
         advertised_category=advertised_category,
+        composed_role=attempt.composed_role,
+        role_advertised_types=role_advertised_types,
         scope_complete=bool(request.scope_complete),
         budget_exhausted=bool(search_budget_exhausted),
         unconfirmed_requirements=unconfirmable_requirements,
@@ -1543,7 +1548,9 @@ def search_catalog(
                 )
 
     # Reserving is sequential and lock-guarded; only retrieval fans out.
+    prior_shopper_scopes = frozenset(ctx.scope.searched_shopper_scopes)
     for index in list(runnable):
+        attempts[index].prior_shopper_scopes = prior_shopper_scopes
         outcome = _RESERVE_STEP(ctx, attempts[index])
         if outcome is not None:
             outcomes[index] = outcome
@@ -1634,7 +1641,23 @@ def _merged_artifacts(artifacts: list[dict[str, Any]]) -> dict[str, Any] | None:
     filters: dict[str, Any] = {}
     unconfirmed: list[Any] = []
     for payload in payloads:
-        products.extend(payload.get("products") or [])
+        # The call-level taxonomy and filters below are the union across roles,
+        # which is right for "what did this call cover" and wrong for any claim
+        # about one product. Reading the union as though it applied to every
+        # product reported a $179.99 sweater as confirmed under a $59.99 cap
+        # that belonged to the shoes. Each product carries the scope that
+        # actually retrieved it, so a reader never has to guess.
+        scope_stamp = {
+            "taxonomy": payload.get("taxonomy") or {},
+            "confirmed_filters": payload.get("confirmed_filters") or {},
+            "composed_role": bool(payload.get("composed_role")),
+        }
+        for product in payload.get("products") or []:
+            products.append(
+                {**product, "search_scope": scope_stamp}
+                if isinstance(product, dict)
+                else product
+            )
         for name, value in (payload.get("taxonomy") or {}).items():
             existing = taxonomy.get(name)
             if isinstance(existing, list) and isinstance(value, list):
@@ -1681,9 +1704,6 @@ def _merge_repair(target: Any, source: Any) -> None:
     ):
         if getattr(target, name) is None and getattr(source, name) is not None:
             setattr(target, name, getattr(source, name))
-    target.failed_agent_selected_scope = (
-        target.failed_agent_selected_scope or source.failed_agent_selected_scope
-    )
     target.pending_no_direct_constraint_clear = (
         target.pending_no_direct_constraint_clear
         or source.pending_no_direct_constraint_clear

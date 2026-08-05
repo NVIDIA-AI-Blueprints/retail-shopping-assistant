@@ -24,7 +24,13 @@ deepagents_execution_timeout_seconds: 90.0
 # 2026-08-04: editor p90 12.5s, agent loop p90 39.8s against a 45s total, with
 # six turns consuming the entire budget.
 grounding_editor_reserve_seconds: 15.0
-max_catalog_searches_per_turn: 3
+# Counts product roles, not calls. It was 3 when one call was one search; #146
+# made several roles share a call and reservation started running per role, so
+# 3 silently became "three roles per turn" and refused the fourth role of a
+# whole-look request. Aligned with the per-call scope limit below: ten
+# concurrent retrievals measured 1.58s against 0.61s for one, and evidence size
+# is bounded separately by search_products_per_call.
+max_catalog_searches_per_turn: 10
 # One catalog search call may carry several product roles. They retrieve
 # concurrently, so N roles cost one model round trip rather than N.
 max_search_scopes_per_call: 10

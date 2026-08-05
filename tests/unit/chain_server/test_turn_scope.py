@@ -47,7 +47,6 @@ def test_repair_state_starts_with_nothing_in_flight() -> None:
 
     assert repair.failed_repair_scope_key is None
     assert repair.failed_constraint_scope_key is None
-    assert repair.failed_agent_selected_scope is False
     assert repair.pending_taxonomy_constraints is None
     assert repair.pending_no_direct_constraint_clear is False
 

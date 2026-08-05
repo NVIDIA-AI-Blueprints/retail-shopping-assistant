@@ -105,7 +105,7 @@ class ChainServerConfig(BaseModel):
         description="Maximum Deep Agents execution time allowed for one assistant turn",
     )
     max_catalog_searches_per_turn: int = Field(
-        default=3,
+        default=10,
         description="Maximum distinct catalog taxonomy scopes allowed per turn",
     )
     max_search_scopes_per_call: int = Field(

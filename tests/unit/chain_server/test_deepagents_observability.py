@@ -723,6 +723,7 @@ def test_product_evidence_contains_only_successful_current_turn_product_tools() 
                     "color": ["beige"],
                     "price": {"max": 100},
                 },
+                "composed_role": False,
             },
         },
         {
@@ -744,6 +745,7 @@ def test_product_evidence_contains_only_successful_current_turn_product_tools() 
                     "color": ["beige"],
                     "price": {"max": 100},
                 },
+                "composed_role": False,
             },
         },
         {
@@ -831,10 +833,12 @@ def test_product_evidence_keeps_each_search_scope_with_its_products() -> None:
     assert evidence[0]["search_scope"] == {
         "taxonomy": {"category": ["apparel"], "subcategory": ["tops"]},
         "confirmed_filters": {"color": ["red"]},
+        "composed_role": False,
     }
     assert evidence[1]["search_scope"] == {
         "taxonomy": {"category": ["footwear"], "subcategory": ["shoes"]},
         "confirmed_filters": {"color": ["black"]},
+        "composed_role": False,
     }
     assert diagnostics["product_evidence_truncated"] is False
 
@@ -1056,3 +1060,138 @@ async def test_trusted_query_responses_can_expose_agent_diagnostics(
 
     assert chunks[-1]["payload"]["agent_diagnostics"] == state.agent_diagnostics
     assert result["agent_diagnostics"] == state.agent_diagnostics
+
+
+def test_the_trace_scopes_each_product_to_the_role_that_retrieved_it() -> None:
+    """A multi-role call's union of filters is not a claim about one product.
+
+    Reproduces a real turn: the shoes carried a $59.99 cap, the layer carried
+    none, and the merged payload stated the union against every product -- so a
+    $179.99 sweater was traced as confirmed under the shoes' cap, and the reply
+    repeated it back to the shopper.
+    """
+
+    layer_scope = {"taxonomy": {"product_type": ["sweaters"]}, "confirmed_filters": {}}
+    shoe_scope = {
+        "taxonomy": {"product_type": ["flats"]},
+        "confirmed_filters": {"price": {"max": 59.99}},
+    }
+    evidence = search_evidence(
+        confirmed_filters={"price": {"max": 59.99}},
+        taxonomy={"product_type": ["sweaters", "flats"]},
+        products=[
+            {**product("Jade Serenity Sweater", price="$179.99 USD",
+                       category="sweaters"), "search_scope": layer_scope},
+            {**product("Navy Flats", price="$59.99 USD", category="flats"),
+             "search_scope": shoe_scope},
+        ],
+    )
+    messages = [
+        HumanMessage(content="REQUEST ID: request-scoped"),
+        _search_call("scoped-search"),
+        ToolMessage(
+            content="SEARCH_RESULT_GROUNDING_NOTE: grounded.",
+            name="search_catalog_tool",
+            tool_call_id="scoped-search",
+            artifact=evidence.as_artifact(),
+        ),
+    ]
+
+    diagnostics = _collect_agent_diagnostics(
+        messages,
+        request_id="request-scoped",
+        final_termination_reason="completed",
+    )
+
+    scopes = {
+        record["product_name"]: record["search_scope"]
+        for record in diagnostics["product_evidence"]
+    }
+    assert scopes["Jade Serenity Sweater"]["confirmed_filters"] == {}
+    assert scopes["Navy Flats"]["confirmed_filters"] == {"price": {"max": 59.99}}
+
+
+def test_a_proposed_role_that_found_nothing_reaches_operator_diagnostics() -> None:
+    """Otherwise a zero-result role nobody asked for is invisible in the trace."""
+
+    evidence = search_evidence(
+        outcome="zero_results",
+        requested_product_type="top",
+        scope_outcome={
+            "outcome": "zero_results",
+            "requested_product_type": "top",
+            "taxonomy": {"product_type": ["blouses", "sweaters"]},
+            "confirmed_filters": {},
+            "composed_role": True,
+        },
+    )
+    messages = [
+        HumanMessage(content="REQUEST ID: request-empty"),
+        _search_call("empty-search"),
+        ToolMessage(
+            content="SEARCH_NO_MATCH_GROUNDING_NOTE: nothing matched.",
+            name="search_catalog_tool",
+            tool_call_id="empty-search",
+            artifact=evidence.as_artifact(),
+        ),
+    ]
+
+    diagnostics = _collect_agent_diagnostics(
+        messages,
+        request_id="request-empty",
+        final_termination_reason="completed",
+    )
+
+    assert diagnostics["catalog_scope_outcomes"] == [
+        {
+            "outcome": "zero_results",
+            "requested_product_type": "top",
+            "taxonomy": {"product_type": ["blouses", "sweaters"]},
+            "confirmed_filters": {},
+            "composed_role": True,
+        }
+    ]
+
+
+def test_the_trace_says_which_products_came_from_a_proposed_role() -> None:
+    evidence = search_evidence(
+        products=[
+            {
+                **product("Meadow Sweater", price="$49.99 USD", category="sweaters"),
+                "search_scope": {
+                    "taxonomy": {"product_type": ["sweaters"]},
+                    "confirmed_filters": {},
+                    "composed_role": True,
+                },
+            },
+            {
+                **product("Navy Flats", price="$59.99 USD", category="flats"),
+                "search_scope": {
+                    "taxonomy": {"product_type": ["flats"]},
+                    "confirmed_filters": {},
+                    "composed_role": False,
+                },
+            },
+        ],
+    )
+    messages = [
+        HumanMessage(content="REQUEST ID: request-mixed"),
+        _search_call("mixed-search"),
+        ToolMessage(
+            content="SEARCH_RESULT_GROUNDING_NOTE: grounded.",
+            name="search_catalog_tool",
+            tool_call_id="mixed-search",
+            artifact=evidence.as_artifact(),
+        ),
+    ]
+
+    diagnostics = _collect_agent_diagnostics(
+        messages,
+        request_id="request-mixed",
+        final_termination_reason="completed",
+    )
+
+    assert {
+        record["product_name"]: record["search_scope"]["composed_role"]
+        for record in diagnostics["product_evidence"]
+    } == {"Meadow Sweater": True, "Navy Flats": False}

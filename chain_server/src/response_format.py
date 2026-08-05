@@ -150,6 +150,31 @@ def _format_search_scope_relation_evidence(
     )
 
 
+def _format_search_composed_role_evidence(
+    *,
+    requested_product_type: str,
+    role_advertised_types: list[str],
+) -> str:
+    """Record that the model, not the shopper, proposed this role.
+
+    Same envelope as the parent-category relation above, because both answer
+    the same question for the composer: how does the noun in the evidence
+    relate to what the shopper actually said?
+    """
+
+    return (
+        f"{_SEARCH_SCOPE_RELATION_EVIDENCE_PREFIX} "
+        + json.dumps(
+            {
+                "relation": "model_composed_role",
+                "requested_product_type": requested_product_type,
+                "role_advertised_types": sorted(role_advertised_types),
+            },
+            sort_keys=True,
+        )
+    )
+
+
 def _format_catalog_scope_outcome(outcome: dict[str, Any]) -> str:
     """Format one bounded non-product catalog outcome for diagnostics."""
 

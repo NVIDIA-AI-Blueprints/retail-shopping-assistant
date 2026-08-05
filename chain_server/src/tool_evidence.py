@@ -43,6 +43,14 @@ class SearchEvidence:
     shopper_guidance: str = ""
     requested_product_type: str | None = None
     advertised_category: str | None = None
+    #: True when the shopper named no product for this role and the model
+    #: composed it -- "a top" for someone who asked for an outfit. The role is
+    #: a suggestion, so the reply may not present it as something the shopper
+    #: asked for, and a miss inside ``role_advertised_types`` is not the role
+    #: being unavailable.
+    composed_role: bool = False
+    #: The advertised subcategories that composed role actually covered.
+    role_advertised_types: list[str] = field(default_factory=list)
     scope_complete: bool = False
     budget_exhausted: bool = False
     products: list[dict[str, Any]] = field(default_factory=list)
@@ -63,6 +71,8 @@ class SearchEvidence:
                 "shopper_guidance": self.shopper_guidance,
                 "requested_product_type": self.requested_product_type,
                 "advertised_category": self.advertised_category,
+                "composed_role": self.composed_role,
+                "role_advertised_types": self.role_advertised_types,
                 "scope_complete": self.scope_complete,
                 "budget_exhausted": self.budget_exhausted,
                 "products": self.products,

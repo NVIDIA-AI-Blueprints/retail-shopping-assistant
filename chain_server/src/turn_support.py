@@ -3469,3 +3469,41 @@ _SEARCH_BUDGET_EXHAUSTED_NOTE = (
     "available this turn. Continue with any requested non-search action, or "
     "answer honestly from the grounded products already returned."
 )
+
+
+def _detail_fields_already_held(
+    product: Any,
+    capabilities: CatalogCapabilities,
+) -> bool:
+    """Return whether evidence already holds every advertised detail field.
+
+    A search returns the same attributes a detail read does -- measured across
+    all five advertised categories and 20 products, the detail-only set was
+    empty -- so re-reading spends a model round trip to learn what is already in
+    hand.
+
+    But "empty on this catalog" is not "empty on every catalog", and silently
+    dropping a field is worse than a redundant call. So this asks the capability
+    contract rather than assuming: only when evidence covers every field the
+    product's own category advertises as a detail field is the read redundant.
+    Any gap, any unknown category, and the fetch goes ahead.
+    """
+
+    held = getattr(product, "attributes", None)
+    if not held:
+        return False
+    category = getattr(product, "category", None)
+    taxonomy = capabilities.taxonomy
+    advertised: set[str] = set()
+    for name, entry in taxonomy.categories.items():
+        subcategories = getattr(entry, "subcategories", {}) or {}
+        if category not in (name, *subcategories):
+            continue
+        advertised |= {
+            field
+            for field, capability in entry.filters.items()
+            if getattr(capability, "detail", False)
+        }
+    if not advertised:
+        return False
+    return advertised <= set(held)

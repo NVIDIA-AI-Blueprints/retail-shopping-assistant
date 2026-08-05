@@ -41,6 +41,7 @@ from .response_format import (
     _format_update_cart_result,
 )
 from .turn_support import (
+    _detail_fields_already_held,
     _search_catalog_scopes_input_model,
     AddCartItemsToolItemInput,
     RequestIdentity,
@@ -919,6 +920,18 @@ class DeepAgentsRuntime:
                 return (
                     f"No product with PRODUCT_REF '{product_ref}' is available. "
                     "Search this turn or resolve the earlier product first."
+                )
+            if _detail_fields_already_held(cached_product, turn_capabilities):
+                # The search that produced this product already returned every
+                # detail field its category advertises. Answering from that
+                # evidence is not a guess; it is the same data, without an ~8.7s
+                # round trip. A product recovered from the historical index
+                # carries identity only, so it fails this check and still reads.
+                record = _product_detail_record(cached_product)
+                evidence = ProductDetailEvidence(products=[record])
+                return (
+                    _format_product_detail_record(record),
+                    evidence.as_artifact(),
                 )
             scope.product_detail_reads += 1
             detail_result = get_product_details(

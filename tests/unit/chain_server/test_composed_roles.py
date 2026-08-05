@@ -374,3 +374,81 @@ def test_the_composer_never_states_one_role_s_filter_about_another_s(
         (["Jade Serenity Sweater"], {}),
         (["Navy Flats"], {"price": {"max": 59.99}}),
     ]
+
+
+def test_a_proposed_role_that_found_nothing_is_visible_to_an_operator(
+    retrieval: dict[str, Any],
+) -> None:
+    """The case the disclosure exists for must be countable, not just handled.
+
+    A role nobody named that returned nothing is indistinguishable, in a trace,
+    from a shopper asking for something the catalog lacks -- unless the outcome
+    says which it was. Every zero-result scope observed in evaluation so far has
+    been shopper-named, so this path has never run outside a test.
+    """
+
+    retrieval["products"] = False
+    ctx = _context("make the outfit more casual, keep the jeans")
+
+    payload = _evidence(
+        search_catalog(ctx, [_role("top", ["blouses", "sweaters"])])
+    )
+
+    assert payload["scope_outcome"]["outcome"] == "zero_results"
+    assert payload["scope_outcome"]["composed_role"] is True
+    assert payload["scope_outcome"]["requested_product_type"] == "top"
+
+
+def test_a_shopper_named_role_that_found_nothing_is_not_marked_proposed(
+    retrieval: dict[str, Any],
+) -> None:
+    retrieval["products"] = False
+    ctx = _context("show me some blouses")
+
+    payload = _evidence(search_catalog(ctx, [_role("blouses", ["blouses"])]))
+
+    assert payload["scope_outcome"]["composed_role"] is False
+
+
+def test_the_composer_summary_carries_the_proposed_role_disclosure(
+    retrieval: dict[str, Any],
+) -> None:
+    """The line has to survive the hop from evidence into the composer's brief.
+
+    The equivalent parent-category disclosure is observed reaching shoppers in
+    real runs, so this channel works; what was untested is that a composed role
+    reaches it too.
+    """
+
+    retrieval["products"] = False
+    ctx = _context("make the outfit more casual, keep the jeans")
+    result = search_catalog(ctx, [_role("top", ["blouses", "sweaters"])])
+    message = SimpleNamespace(artifact=result[1], content=result[0])
+
+    summary = turn_support._customer_safe_tool_evidence(result[0], message)
+
+    assert "did not ask for top" in summary
+    assert "blouses, sweaters" in summary
+    assert "do not claim the role is unavailable" in summary
+
+
+def test_each_role_in_one_call_keeps_its_own_proposed_flag(
+    retrieval: dict[str, Any],
+) -> None:
+    """One call can mix a role the shopper named with one the model added."""
+
+    ctx = _context("show me some blouses")
+
+    result = search_catalog(
+        ctx,
+        [_role("blouses", ["blouses"]), _role("shoes", ["flats", "sandals"])],
+    )
+
+    # Products are appended in scope order, so the named role's results come
+    # first. They are keyed by position rather than name because the fake
+    # retrieval returns the same names for every role.
+    stamps = [
+        product["search_scope"]["composed_role"]
+        for product in _evidence(result)["products"]
+    ]
+    assert stamps == [False, False, False, True, True, True]

@@ -2034,6 +2034,7 @@ def _diagnostic_product_evidence(
                 "confirmed_filters": _bounded_product_evidence_value(
                     payload.get("confirmed_filters") or {}
                 ),
+                "composed_role": bool(payload.get("composed_role")),
             }
             records = payload.get("products") or []
         elif source_tool == "get_product_details_tool":
@@ -2095,6 +2096,7 @@ def _diagnostic_catalog_scope_outcomes(
         "requested_product_type",
         "taxonomy",
         "confirmed_filters",
+        "composed_role",
     }
     for message in messages:
         if _message_type(message) != "tool":
@@ -2133,6 +2135,7 @@ def _product_search_scope(product: Any) -> dict[str, Any] | None:
         "confirmed_filters": _bounded_product_evidence_value(
             scope.get("confirmed_filters") or {}
         ),
+        "composed_role": bool(scope.get("composed_role")),
     }
 
 

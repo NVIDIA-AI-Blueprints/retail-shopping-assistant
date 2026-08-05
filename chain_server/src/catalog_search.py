@@ -1336,6 +1336,11 @@ def _rendered_evidence(ctx: SearchContext, attempt: _Attempt) -> StepResult:
                 "requested_product_type": request.requested_product_type,
                 "taxonomy": taxonomy_constraints,
                 "confirmed_filters": confirmed_filters,
+                # A role nobody named that found nothing is the case the
+                # disclosure exists for, and the one an operator most needs to
+                # see: without it a zero-result composed role is indistinguishable
+                # from a shopper asking for something the catalog lacks.
+                "composed_role": attempt.composed_role,
             },
         )
         lines = [
@@ -1628,6 +1633,7 @@ def _merged_artifacts(artifacts: list[dict[str, Any]]) -> dict[str, Any] | None:
         scope_stamp = {
             "taxonomy": payload.get("taxonomy") or {},
             "confirmed_filters": payload.get("confirmed_filters") or {},
+            "composed_role": bool(payload.get("composed_role")),
         }
         for product in payload.get("products") or []:
             products.append(

@@ -40,6 +40,7 @@ from .control_signals import (
     control,
 )
 from .tool_evidence import (
+    EVIDENCE_KEY,
     SearchEvidence,
 )
 from .turn_scope import CatalogRepairState, TurnScope
@@ -1489,22 +1490,54 @@ def search_catalog(
 
 
 def _merged_artifacts(artifacts: list[dict[str, Any]]) -> dict[str, Any] | None:
-    """Carry every scope's evidence, keeping each scope's provenance separate."""
+    """Combine several scopes' evidence into one payload of the same shape.
 
-    if not artifacts:
-        return None
-    if len(artifacts) == 1:
-        return artifacts[0]
-    merged: dict[str, Any] = {}
+    Every consumer -- turn diagnostics, the grounding editor, and the durable
+    presented-product record a later turn resolves against -- reads one evidence
+    dict and checks `outcome`. An earlier version merged by key and produced a
+    list of dicts, so those readers silently skipped it: a four-scope search
+    completed, returned products, and recorded none of them. The shape is the
+    contract, so merging must preserve it.
+    """
+
+    payloads = [a[EVIDENCE_KEY] for a in artifacts if a and EVIDENCE_KEY in a]
+    if not payloads:
+        return artifacts[0] if artifacts else None
+    if len(payloads) == 1:
+        return {EVIDENCE_KEY: payloads[0]}
+
+    with_results = [p for p in payloads if p.get("outcome") == "results"]
+    base = dict((with_results or payloads)[0])
+    products: list[Any] = []
+    taxonomy: dict[str, Any] = {}
+    filters: dict[str, Any] = {}
+    unconfirmed: list[Any] = []
+    for payload in payloads:
+        products.extend(payload.get("products") or [])
+        for name, value in (payload.get("taxonomy") or {}).items():
+            existing = taxonomy.get(name)
+            if isinstance(existing, list) and isinstance(value, list):
+                taxonomy[name] = existing + [v for v in value if v not in existing]
+            elif existing is None:
+                taxonomy[name] = value
+        for name, value in (payload.get("confirmed_filters") or {}).items():
+            filters.setdefault(name, value)
+        for item in payload.get("unconfirmed_requirements") or []:
+            if item not in unconfirmed:
+                unconfirmed.append(item)
+    base["outcome"] = "results" if with_results else base.get("outcome")
+    base["products"] = products
+    base["taxonomy"] = taxonomy
+    base["confirmed_filters"] = filters
+    base["unconfirmed_requirements"] = unconfirmed
+    base["result_set_complete"] = all(
+        p.get("result_set_complete") for p in payloads
+    )
+    merged: dict[str, Any] = {EVIDENCE_KEY: base}
     for artifact in artifacts:
-        for key, value in artifact.items():
-            existing = merged.get(key)
-            if existing is None:
-                merged[key] = value
-            elif isinstance(existing, list) and isinstance(value, list):
-                merged[key] = existing + value
-            else:
-                merged[key] = [existing, value] if not isinstance(existing, list) else existing + [value]
+        for key, value in (artifact or {}).items():
+            if key != EVIDENCE_KEY:
+                merged.setdefault(key, value)
     return merged
 
 

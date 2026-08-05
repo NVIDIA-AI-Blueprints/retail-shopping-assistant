@@ -452,3 +452,83 @@ def test_each_role_in_one_call_keeps_its_own_proposed_flag(
         for product in _evidence(result)["products"]
     ]
     assert stamps == [False, False, False, True, True, True]
+
+
+def _sweater_scope(**constraints: Any) -> dict[str, Any]:
+    return {
+        "semantic_query": "black sweater under $60",
+        "shopper_guidance": "Finding a sweater for this request.",
+        "requested_product_type": "sweater",
+        "taxonomy": {"category": [], "subcategory": ["sweaters"]},
+        "required_constraints": constraints,
+    }
+
+
+def test_two_looks_at_one_role_in_one_call_both_retrieve(
+    retrieval: dict[str, Any],
+) -> None:
+    """A request and its fallback are not retries of each other.
+
+    "black crew neck, or if not, any black one under $60" is one call with two
+    differently filtered roles. The first used to reserve the shopper scope and
+    the second was then refused as a duplicate of its own sibling, so half a
+    correctly formed request never left the building and the answer arrived a
+    turn late.
+    """
+
+    ctx = _context(
+        "show me sweaters between $40 and $60; if nothing matches show me "
+        "anything under $60"
+    )
+
+    result = search_catalog(
+        ctx,
+        [
+            _sweater_scope(price={"min": 40, "max": 60}),
+            _sweater_scope(price={"max": 60}),
+        ],
+    )
+
+    assert (result[1] or {}).get(REJECTIONS_KEY) is None
+    assert len(retrieval["filters"]) == 2
+    assert retrieval["filters"][0]["price"] == {"min": 40.0, "max": 60.0}
+    assert retrieval["filters"][1]["price"] == {"max": 60.0}
+
+
+def test_an_identical_sibling_in_one_call_still_retrieves_once(
+    retrieval: dict[str, Any],
+) -> None:
+    """Relaxing the sibling rule must not let the same retrieval run twice."""
+
+    ctx = _context("show me black sweaters under $60")
+
+    result = search_catalog(
+        ctx,
+        [
+            _sweater_scope(price={"max": 60}),
+            _sweater_scope(price={"max": 60}),
+        ],
+    )
+
+    assert (result[1] or {})[REJECTIONS_KEY] == [
+        None,
+        "duplicate_catalog_scope",
+    ]
+    assert len(retrieval["filters"]) == 1
+
+
+def test_the_same_role_in_a_later_call_is_still_refused(
+    retrieval: dict[str, Any],
+) -> None:
+    """The rule still does its real job: stopping a paraphrased retry."""
+
+    ctx = _context("show me black sweaters under $60")
+
+    search_catalog(ctx, [_sweater_scope(price={"max": 60})])
+    result = search_catalog(
+        ctx,
+        [{**_sweater_scope(price={"max": 60}), "semantic_query": "dark knitwear"}],
+    )
+
+    assert (result[1] or {})[REJECTIONS_KEY] == ["duplicate_shopper_scope"]
+    assert len(retrieval["filters"]) == 1

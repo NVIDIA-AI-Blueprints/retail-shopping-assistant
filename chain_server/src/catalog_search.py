@@ -209,6 +209,9 @@ class _Attempt:
     composed_role: bool = False
     constraint_payload: Any = None
     evidence: Any = None
+    #: Shopper scopes searched by *earlier calls*, snapshotted at the start
+    #: of this one. A role must not collide with its own siblings.
+    prior_shopper_scopes: Any = None
     execution: Any = None
     lines: Any = None
     normalized_constraints: Any = field(default_factory=dict)
@@ -1165,9 +1168,21 @@ def _reserved_search_slot(ctx: SearchContext, attempt: _Attempt) -> StepResult:
             taxonomy_constraints,
             normalized_constraints,
         )
+        # Judged against the scopes earlier calls searched, never against a
+        # sibling in this one. The rule exists to stop a retry paraphrasing an
+        # answered search; two roles of one call are not retries of each other,
+        # and refusing the second killed half a request that was correctly
+        # formed -- "black crew neck, or any black one under $60" lost its
+        # fallback to its own first half. An identical sibling is still caught
+        # below, by taxonomy and constraints, where the comparison is exact.
+        already_searched = (
+            attempt.prior_shopper_scopes
+            if attempt.prior_shopper_scopes is not None
+            else ctx.scope.searched_shopper_scopes
+        )
         if (
             shopper_scope_key is not None
-            and shopper_scope_key in ctx.scope.searched_shopper_scopes
+            and shopper_scope_key in already_searched
         ):
             return _rejected(
                 attempt,
@@ -1533,7 +1548,9 @@ def search_catalog(
                 )
 
     # Reserving is sequential and lock-guarded; only retrieval fans out.
+    prior_shopper_scopes = frozenset(ctx.scope.searched_shopper_scopes)
     for index in list(runnable):
+        attempts[index].prior_shopper_scopes = prior_shopper_scopes
         outcome = _RESERVE_STEP(ctx, attempts[index])
         if outcome is not None:
             outcomes[index] = outcome

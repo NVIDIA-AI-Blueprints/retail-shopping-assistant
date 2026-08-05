@@ -195,9 +195,8 @@ _SHOPPER_CONTEXT_SYSTEM_RULES = """Representative-shopper precedence and safety:
   grants a shopper skill or tool. Never expose the internal type label to the
   shopper.
 - Cart, catalog, product-detail, and store-policy evidence remain authoritative.
-- A saved ZIP code is background location data only. It is not proof of current
-  location, event location, weather, or a product requirement. Perform no
-  weather lookup or weather inference from it."""
+- Never infer a shopper's location, the weather, or a seasonal need. Nothing in
+  this context establishes any of them, and naming one is an invented fact."""
 _GROUNDING_EDITOR_SYSTEM_PROMPT = """You are a final response editor for a retail shopping assistant.
 
 Rewrite the draft response only as needed so every factual claim is supported

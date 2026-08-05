@@ -850,8 +850,14 @@ class TestSystemPrompt:
             "Cart, catalog, product-detail, and store-policy evidence"
             in normalized
         )
-        assert "not proof of current location, event location, weather" in normalized
-        assert "Perform no weather lookup or weather inference" in normalized
+        # The saved ZIP is no longer in the block, so the rule no longer names
+        # it. What must survive is the ban on concluding a location, the
+        # weather, or a season from anything in this context.
+        assert "saved_zipcode" not in normalized
+        assert (
+            "Never infer a shopper's location, the weather, or a seasonal need"
+            in normalized
+        )
         assert "strict_budget_style_mixer" not in normalized
 
     def test_budget_oriented_profile_remains_non_authoritative(
@@ -1078,7 +1084,6 @@ class TestDeepAgentsRuntimeScopes:
             "shopper_type: skeptical_researcher\n"
             "behavior: Probes for material, care burden, and repeated-wear "
             "practicality before choosing.\n"
-            "saved_zipcode: 60601\n"
             "END SHOPPER CONTEXT"
         )
 
@@ -1092,6 +1097,10 @@ class TestDeepAgentsRuntimeScopes:
         assert f"\n\n{expected_block}\n\nUSER QUERY:" in user_message
         assert "shopper_morgan" not in user_message
         assert "Morgan" not in user_message
+        # Held deliberately: the ZIP is on the profile record and the picker,
+        # and must not reach the model until weather tooling defines what may
+        # be concluded from it.
+        assert "60601" not in user_message
         assert expected_block not in state.context
         assert shopper_context.behavior not in state.context
         assert memory.start_calls == [

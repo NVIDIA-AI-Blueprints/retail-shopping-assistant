@@ -53,7 +53,7 @@ services:
       start_period: 60s
 
   embedqa:
-    image: nvcr.io/nim/nvidia/nv-embedqa-e5-v5:1.6
+    image: nvcr.io/nim/nvidia/nemotron-3-embed-1b:2.2.0
     ports:
       - "8001:8000"
     environment:

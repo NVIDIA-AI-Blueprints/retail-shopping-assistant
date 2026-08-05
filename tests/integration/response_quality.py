@@ -10,7 +10,7 @@ import yaml
 # Configuration
 LLM_NAME = "nvdev/meta/llama-3.1-70b-instruct"
 #LLM_NAME = "nvdev/nv-mistralai/mistral-nemo-12b-instruct"
-EMBED_NAME = "nvdev/nvidia/nv-embedqa-e5-v5"
+EMBED_NAME = "nvdev/nvidia/nemotron-3-embed-1b"
 LLM_CLIENT = OpenAI(
     base_url= "https://integrate.api.nvidia.com/v1", #"http://pdx-tme-018:8000/v1", #"https://integrate.api.nvidia.com/v1",
     api_key=os.environ["NVIDIA_API_KEY"]

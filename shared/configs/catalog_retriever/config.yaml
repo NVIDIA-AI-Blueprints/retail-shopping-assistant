@@ -1,5 +1,5 @@
 text_embed_port: "http://embedqa:8000/v1"
-text_model_name: "nvidia/nv-embedqa-e5-v5" 
+text_model_name: "nvidia/nemotron-3-embed-1b" 
 image_embed_port: "http://nvclip:8000/v1"
 image_model_name: "nvidia/nvclip"
 db_port: "http://milvus:19530" 

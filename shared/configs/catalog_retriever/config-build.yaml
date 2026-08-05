@@ -3,7 +3,7 @@
 
 # Text embedding endpoint for build.nvidia.com
 text_embed_port: "https://integrate.api.nvidia.com/v1"
-text_model_name: "nvidia/nv-embedqa-e5-v5"
+text_model_name: "nvidia/nemotron-3-embed-1b"
 
 # Image embedding endpoint for build.nvidia.com
 image_embed_port: "https://integrate.api.nvidia.com/v1"

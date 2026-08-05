@@ -3226,12 +3226,12 @@ class TestDeepAgentsRuntimeRefs:
         assert "REFERENCE dress: RESOLVED" in resolution_response
         availability_response = tools_by_name[
             "check_product_availability_tool"
-        ](product_ref="prod_123", variant_hint="size medium")
+        ](items=[dict(product_ref="prod_123", variant_hint="size medium")])
         assert availability_response.startswith("AVAILABILITY (prod_123):")
         assert "Silk Dress is available in size medium" in availability_response
         missing_availability_response = tools_by_name[
             "check_product_availability_tool"
-        ](product_ref="missing_ref")
+        ](items=[dict(product_ref="missing_ref")])
         assert "PRODUCT_REF 'missing_ref' is unknown in this conversation" in (
             missing_availability_response
         )

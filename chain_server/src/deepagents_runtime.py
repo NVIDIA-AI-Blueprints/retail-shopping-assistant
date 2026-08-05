@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+
 import logging
 
 import asyncio
@@ -423,7 +425,7 @@ class _GetStorePolicyInput(BaseModel):
     ] = Field(description="Policy topic to look up.")
 
 
-class _CheckAvailabilityInput(BaseModel):
+class _AvailabilityItemInput(BaseModel):
     product_ref: str = Field(
         description=(
             "PRODUCT_REF established by current-turn search or historical-product "
@@ -436,8 +438,16 @@ class _CheckAvailabilityInput(BaseModel):
     )
 
 
-
-
+class _CheckAvailabilityInput(BaseModel):
+    items: list[_AvailabilityItemInput] = Field(
+        ...,
+        min_length=1,
+        max_length=20,
+        description=(
+            "Every product the shopper asked about, in one call. They are "
+            "checked together, so four products cost one round trip, not four."
+        ),
+    )
 
 
 class DeepAgentsRuntime:
@@ -828,6 +838,9 @@ class DeepAgentsRuntime:
         search_input_model = _search_catalog_tool_input_model(turn_capabilities)
         search_tool_arguments_model = _search_catalog_scopes_input_model(
             turn_capabilities,
+            max_scopes=max(
+                1, int(getattr(self.config, "max_search_scopes_per_call", 1) or 1)
+            ),
         )
         constraint_input_model = search_input_model.model_fields[
             "required_constraints"
@@ -842,27 +855,10 @@ class DeepAgentsRuntime:
             constraint_input_model=constraint_input_model,
         )
 
-        def _search_catalog_impl(
-            semantic_query: str,
-            requested_product_type: str | None,
-            taxonomy: BaseModel | dict[str, Any],
-            required_constraints: BaseModel | dict[str, Any],
-            shopper_guidance: str,
-            scope_complete: bool = True,
-            search_mode: str | None = None,
-        ):
-            """Execute one catalog search; may return control signals."""
+        def _search_catalog_impl(scopes):
+            """Execute one catalog search per product role; may return signals."""
 
-            return search_catalog(
-                search_context,
-                semantic_query,
-                requested_product_type,
-                taxonomy,
-                required_constraints,
-                shopper_guidance,
-                scope_complete,
-                search_mode,
-            )
+            return search_catalog(search_context, scopes)
 
 
         @tool(
@@ -880,25 +876,7 @@ class DeepAgentsRuntime:
             filter scope with different semantic wording.
             """
 
-            # One scope for now. The list is the contract; N > 1 is enabled only
-            # once the model is shown to emit the nested shape reliably.
-            scope = scopes[0]
-            fields = (
-                scope
-                if isinstance(scope, dict)
-                else scope.model_dump(exclude_none=False)
-            )
-            return normalize_tool_result(
-                _search_catalog_impl(
-                    semantic_query=fields["semantic_query"],
-                    requested_product_type=fields.get("requested_product_type"),
-                    taxonomy=fields["taxonomy"],
-                    required_constraints=fields["required_constraints"],
-                    shopper_guidance=fields["shopper_guidance"],
-                    scope_complete=fields.get("scope_complete", True),
-                    search_mode=fields.get("search_mode"),
-                )
-            )
+            return normalize_tool_result(_search_catalog_impl(scopes))
 
         @tool(return_direct=False)
         def get_cart_tool() -> str:
@@ -1324,33 +1302,48 @@ class DeepAgentsRuntime:
             return _format_policy_result(result)
 
         @tool(args_schema=_CheckAvailabilityInput, return_direct=False)
-        def check_product_availability_tool(
-            product_ref: str,
-            variant_hint: str | None = None,
-        ) -> str:
-            """Check whether a specific product is available or in stock. Use
-            ONLY when the shopper explicitly asks about availability, stock,
-            or a specific size. Requires a PRODUCT_REF established by search or
-            historical-product resolution. Do NOT use for browsing. The
-            deterministic stub reports general availability, sized availability
-            for apparel and footwear, and one-size availability for other
-            product categories.
+        def check_product_availability_tool(items) -> str:
+            """Check whether products are available or in stock. Use ONLY when
+            the shopper explicitly asks about availability, stock, or a specific
+            size. Requires a PRODUCT_REF established by search or
+            historical-product resolution. Do NOT use for browsing. Pass every
+            product being asked about in one call. The deterministic stub
+            reports general availability, sized availability for apparel and
+            footwear, and one-size availability for other product categories.
             """
 
-            product = scope.product_evidence.get(product_ref)
-            if product is None:
-                return (
-                    f"PRODUCT_REF '{product_ref}' is unknown in this conversation. "
-                    "Search this turn or resolve the earlier product first."
+            requests = [
+                item if isinstance(item, dict) else item.model_dump()
+                for item in items
+            ]
+
+            def _one(entry: dict[str, Any]) -> str:
+                product_ref = entry.get("product_ref") or ""
+                product = scope.product_evidence.get(product_ref)
+                if product is None:
+                    return (
+                        f"PRODUCT_REF '{product_ref}' is unknown in this "
+                        "conversation. Search this turn or resolve the earlier "
+                        "product first."
+                    )
+                return _format_availability_result(
+                    check_product_availability(
+                        CheckProductAvailabilityInput(
+                            product_ref=product_ref,
+                            variant_hint=entry.get("variant_hint"),
+                        ),
+                        product,
+                    )
                 )
-            result = check_product_availability(
-                CheckProductAvailabilityInput(
-                    product_ref=product_ref,
-                    variant_hint=variant_hint,
-                ),
-                product,
-            )
-            return _format_availability_result(result)
+
+            # Each check stands in for an inventory-system lookup, so they go out
+            # together. Asking about four products cost four model round trips at
+            # roughly 8.7s each -- enough to exhaust a turn's step budget before
+            # the shopper got an answer.
+            if len(requests) == 1:
+                return _one(requests[0])
+            with ThreadPoolExecutor(max_workers=len(requests)) as pool:
+                return "\n\n".join(pool.map(_one, requests))
 
         @tool(return_direct=False)
         def check_active_promotions_tool() -> str:
@@ -2070,7 +2063,9 @@ Rules:
   matching, or gift cards require get_store_policy_tool. Never substitute model
   knowledge for policy content that the tool does not return.
 - Explicit stock, inventory, or size availability questions
-  require check_product_availability_tool with a PRODUCT_REF from a prior
+  require check_product_availability_tool. Pass every product being asked about
+  in one call: they are checked together, so four products cost one round trip
+  rather than four. Use a PRODUCT_REF from a prior
   search. Relay its deterministic result rather than guessing from catalog
   presence.
 - Explicit sale, discount, or promotion questions require

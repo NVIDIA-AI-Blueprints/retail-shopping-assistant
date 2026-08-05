@@ -2058,7 +2058,14 @@ def _diagnostic_product_evidence(
                 "evidence_type": evidence_type,
                 "facts": _diagnostic_product_facts(product),
             }
-            if search_scope is not None:
+            # A multi-role call's payload carries the union of every role's
+            # taxonomy and filters. The product knows which role retrieved it;
+            # prefer that over the union, or the trace records a product as
+            # confirmed under a filter it was never searched with.
+            product_scope = _product_search_scope(product)
+            if product_scope is not None:
+                record["search_scope"] = product_scope
+            elif search_scope is not None:
                 record["search_scope"] = search_scope
             if (
                 len(evidence) >= _MAX_DIAGNOSTIC_PRODUCT_EVIDENCE
@@ -2107,6 +2114,58 @@ def _diagnostic_catalog_scope_outcomes(
         if len(outcomes) >= 8:
             break
     return outcomes
+
+
+def _product_search_scope(product: Any) -> dict[str, Any] | None:
+    """Return the scope that actually retrieved one product, if it carries one.
+
+    Only a multi-role call stamps this, because only then is the call-level
+    scope a union of several roles rather than a description of this product.
+    """
+
+    if not isinstance(product, dict):
+        return None
+    scope = product.get("search_scope")
+    if not isinstance(scope, dict):
+        return None
+    return {
+        "taxonomy": _bounded_product_evidence_value(scope.get("taxonomy") or {}),
+        "confirmed_filters": _bounded_product_evidence_value(
+            scope.get("confirmed_filters") or {}
+        ),
+    }
+
+
+def _products_by_confirmed_filters(
+    payload: dict[str, Any],
+) -> list[tuple[dict[str, Any], list[dict[str, Any]]]]:
+    """Split one search result into the filter sets actually applied to it.
+
+    A call carrying several roles merges into one payload whose
+    ``confirmed_filters`` is the union across those roles. Stating that union
+    against every product is what let a $179.99 sweater be presented as
+    confirmed under a $59.99 cap belonging to the shoes.
+    """
+
+    call_filters = payload.get("confirmed_filters") or {}
+    grouped: list[dict[str, Any]] = []
+    for product in payload.get("products") or []:
+        scope = product.get("search_scope") if isinstance(product, dict) else None
+        filters = (
+            scope.get("confirmed_filters") or {}
+            if isinstance(scope, dict)
+            else call_filters
+        )
+        key = json.dumps(filters, sort_keys=True, default=str)
+        for entry in grouped:
+            if entry["key"] == key:
+                entry["products"].append(product)
+                break
+        else:
+            grouped.append({"key": key, "filters": filters, "products": [product]})
+    if not grouped:
+        return [(call_filters, [])]
+    return [(entry["filters"], entry["products"]) for entry in grouped]
 
 
 def _diagnostic_product_facts(product: dict[str, Any]) -> dict[str, Any]:
@@ -2601,28 +2660,28 @@ def _confirmed_search_filter_groups(
         payload = evidence_of(message)
         if not payload or payload.get("outcome") != "results":
             continue
-        filters = payload.get("confirmed_filters") or {}
-        statements: list[str] = []
-        for name, value in filters.items():
-            statement = _format_filter_statement(name, value)
-            if statement:
-                statements.append(statement)
-        if not statements:
-            continue
-        product_names = [
-            product["name"]
-            for product in (payload.get("products") or [])
-            if product.get("name")
-        ]
-        if displayed_names is not None:
-            product_names = [
-                name for name in product_names if name in displayed_names
-            ]
-            if not product_names:
+        for filters, products in _products_by_confirmed_filters(payload):
+            statements: list[str] = []
+            for name, value in filters.items():
+                statement = _format_filter_statement(name, value)
+                if statement:
+                    statements.append(statement)
+            if not statements:
                 continue
-        groups.append(
-            {"product_names": product_names, "statements": statements}
-        )
+            product_names = [
+                product["name"]
+                for product in products
+                if product.get("name")
+            ]
+            if displayed_names is not None:
+                product_names = [
+                    name for name in product_names if name in displayed_names
+                ]
+                if not product_names:
+                    continue
+            groups.append(
+                {"product_names": product_names, "statements": statements}
+            )
     return groups
 
 

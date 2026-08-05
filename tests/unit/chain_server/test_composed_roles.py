@@ -26,6 +26,7 @@ from chain_server.src.catalog_search import SearchContext, search_catalog
 from chain_server.src.control_signals import REJECTIONS_KEY
 from chain_server.src.tool_evidence import EVIDENCE_KEY
 from chain_server.src.turn_scope import TurnScope
+from chain_server.src import turn_support
 from chain_server.src.turn_support import (
     _scope_relation_line,
     _scope_relation_payload,
@@ -278,3 +279,98 @@ def test_the_model_visible_text_carries_the_relation(
 
     assert "SEARCH_SCOPE_RELATION_EVIDENCE:" in text
     assert "model_composed_role" in text
+
+
+def _priced(name: str, amount: float, category: str) -> ProductSummary:
+    return ProductSummary(
+        product_id=f"ref-{name}",
+        display_name=name,
+        price=Money(amount=amount),
+        category=category,
+    )
+
+
+def test_each_product_carries_the_filters_its_own_role_was_searched_with(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A filter belonging to one role must never be stated about another's.
+
+    Reproduces a real turn: the model capped the shoes at $59.99 and left the
+    layer uncapped. The merged evidence stated the union against every product,
+    so a $179.99 sweater was recorded as confirmed under the shoes' cap -- and
+    the reply repeated it, listing a $149.99 item under a "$59.99 max" heading.
+    """
+
+    def execute(plan, *_args, **_kwargs):
+        shoes = "flats" in str(plan.hard_filters.get("product_type") or [])
+        products = (
+            [_priced("Navy Flats", 59.99, "flats")]
+            if shoes
+            else [
+                _priced("Gentle Meadow Sweater", 49.99, "sweaters"),
+                _priced("Jade Serenity Sweater", 179.99, "sweaters"),
+            ]
+        )
+        return SimpleNamespace(
+            result=SearchCatalogResult(ok=True, products=products),
+            fallback_attempted=False,
+            fallback_used=False,
+        )
+
+    monkeypatch.setattr(catalog_search_mod, "execute_catalog_search", execute)
+    ctx = _context("brighten the layer and swap to a cheaper black flat")
+
+    result = search_catalog(
+        ctx,
+        [
+            _role("layer", ["sweaters"]),
+            _role(
+                "flats",
+                ["flats"],
+                required_constraints={"price": {"max": 59.99}},
+            ),
+        ],
+    )
+
+    by_name = {
+        product["name"]: product for product in _evidence(result)["products"]
+    }
+    layer_scope = by_name["Jade Serenity Sweater"]["search_scope"]
+    shoe_scope = by_name["Navy Flats"]["search_scope"]
+
+    assert layer_scope["confirmed_filters"] == {}
+    assert shoe_scope["confirmed_filters"] == {"price": {"max": 59.99}}
+    assert layer_scope["taxonomy"] != shoe_scope["taxonomy"]
+
+
+def test_the_composer_never_states_one_role_s_filter_about_another_s(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The filter statements the shopper reads are grouped by the real scope."""
+
+    payload = {
+        "outcome": "results",
+        "confirmed_filters": {"price": {"max": 59.99}},
+        "products": [
+            {
+                "name": "Jade Serenity Sweater",
+                "search_scope": {"taxonomy": {}, "confirmed_filters": {}},
+            },
+            {
+                "name": "Navy Flats",
+                "search_scope": {
+                    "taxonomy": {},
+                    "confirmed_filters": {"price": {"max": 59.99}},
+                },
+            },
+        ],
+    }
+
+    groups = turn_support._products_by_confirmed_filters(payload)
+
+    assert [
+        ([p["name"] for p in products], filters) for filters, products in groups
+    ] == [
+        (["Jade Serenity Sweater"], {}),
+        (["Navy Flats"], {"price": {"max": 59.99}}),
+    ]

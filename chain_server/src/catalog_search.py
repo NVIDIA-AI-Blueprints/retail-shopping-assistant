@@ -1619,7 +1619,22 @@ def _merged_artifacts(artifacts: list[dict[str, Any]]) -> dict[str, Any] | None:
     filters: dict[str, Any] = {}
     unconfirmed: list[Any] = []
     for payload in payloads:
-        products.extend(payload.get("products") or [])
+        # The call-level taxonomy and filters below are the union across roles,
+        # which is right for "what did this call cover" and wrong for any claim
+        # about one product. Reading the union as though it applied to every
+        # product reported a $179.99 sweater as confirmed under a $59.99 cap
+        # that belonged to the shoes. Each product carries the scope that
+        # actually retrieved it, so a reader never has to guess.
+        scope_stamp = {
+            "taxonomy": payload.get("taxonomy") or {},
+            "confirmed_filters": payload.get("confirmed_filters") or {},
+        }
+        for product in payload.get("products") or []:
+            products.append(
+                {**product, "search_scope": scope_stamp}
+                if isinstance(product, dict)
+                else product
+            )
         for name, value in (payload.get("taxonomy") or {}).items():
             existing = taxonomy.get(name)
             if isinstance(existing, list) and isinstance(value, list):

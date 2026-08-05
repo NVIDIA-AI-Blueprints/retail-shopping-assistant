@@ -1056,3 +1056,52 @@ async def test_trusted_query_responses_can_expose_agent_diagnostics(
 
     assert chunks[-1]["payload"]["agent_diagnostics"] == state.agent_diagnostics
     assert result["agent_diagnostics"] == state.agent_diagnostics
+
+
+def test_the_trace_scopes_each_product_to_the_role_that_retrieved_it() -> None:
+    """A multi-role call's union of filters is not a claim about one product.
+
+    Reproduces a real turn: the shoes carried a $59.99 cap, the layer carried
+    none, and the merged payload stated the union against every product -- so a
+    $179.99 sweater was traced as confirmed under the shoes' cap, and the reply
+    repeated it back to the shopper.
+    """
+
+    layer_scope = {"taxonomy": {"product_type": ["sweaters"]}, "confirmed_filters": {}}
+    shoe_scope = {
+        "taxonomy": {"product_type": ["flats"]},
+        "confirmed_filters": {"price": {"max": 59.99}},
+    }
+    evidence = search_evidence(
+        confirmed_filters={"price": {"max": 59.99}},
+        taxonomy={"product_type": ["sweaters", "flats"]},
+        products=[
+            {**product("Jade Serenity Sweater", price="$179.99 USD",
+                       category="sweaters"), "search_scope": layer_scope},
+            {**product("Navy Flats", price="$59.99 USD", category="flats"),
+             "search_scope": shoe_scope},
+        ],
+    )
+    messages = [
+        HumanMessage(content="REQUEST ID: request-scoped"),
+        _search_call("scoped-search"),
+        ToolMessage(
+            content="SEARCH_RESULT_GROUNDING_NOTE: grounded.",
+            name="search_catalog_tool",
+            tool_call_id="scoped-search",
+            artifact=evidence.as_artifact(),
+        ),
+    ]
+
+    diagnostics = _collect_agent_diagnostics(
+        messages,
+        request_id="request-scoped",
+        final_termination_reason="completed",
+    )
+
+    scopes = {
+        record["product_name"]: record["search_scope"]
+        for record in diagnostics["product_evidence"]
+    }
+    assert scopes["Jade Serenity Sweater"]["confirmed_filters"] == {}
+    assert scopes["Navy Flats"]["confirmed_filters"] == {"price": {"max": 59.99}}

@@ -440,6 +440,108 @@ def test_tool_trace_classifies_search_schema_errors_as_rejected() -> None:
     assert diagnostics["rejected_tool_calls"] == [1]
 
 
+def _search_call(call_id: str, name: str = "search_catalog_tool") -> AIMessage:
+    return AIMessage(
+        content="",
+        tool_calls=[{"id": call_id, "name": name, "args": {}}],
+    )
+
+
+def test_a_recorded_gate_code_names_the_gate_the_prefix_cannot() -> None:
+    """The same text nine gates render, attributed to the one that wrote it."""
+
+    messages = [
+        HumanMessage(content="REQUEST ID: request-gate"),
+        _search_call("gated-search"),
+        ToolMessage(
+            content=SEARCH_VALIDATION_ERROR_PREFIX + "{} with error: invalid",
+            name="search_catalog_tool",
+            tool_call_id="gated-search",
+            artifact={"scope_rejections": ["exact_taxonomy_not_advertised"]},
+        ),
+    ]
+
+    diagnostics = _collect_agent_diagnostics(
+        messages,
+        request_id="request-gate",
+        final_termination_reason="completed",
+    )
+
+    assert diagnostics["tool_calls"][0]["status"] == "rejected"
+    assert diagnostics["tool_calls"][0]["rejection_reason"] == (
+        "exact_taxonomy_not_advertised"
+    )
+    assert "scope_rejections" not in diagnostics["tool_calls"][0]
+    assert diagnostics["rejected_tool_calls"] == [1]
+
+
+def test_a_call_whose_every_role_was_refused_is_a_refused_call() -> None:
+    """Multi-role text starts with a scope banner no prefix can classify."""
+
+    messages = [
+        HumanMessage(content="REQUEST ID: request-scopes"),
+        _search_call("multi-search"),
+        ToolMessage(
+            content="SCOPE 1 (tote bags):\nrefused\n\nSCOPE 2 (dress):\nrefused",
+            name="search_catalog_tool",
+            tool_call_id="multi-search",
+            artifact={
+                "scope_rejections": [
+                    "capabilities_schema_mismatch",
+                    "duplicate_catalog_scope",
+                ]
+            },
+        ),
+    ]
+
+    diagnostics = _collect_agent_diagnostics(
+        messages,
+        request_id="request-scopes",
+        final_termination_reason="completed",
+    )
+
+    assert diagnostics["tool_calls"][0]["status"] == "rejected"
+    assert diagnostics["tool_calls"][0]["rejection_reason"] == (
+        "capabilities_schema_mismatch"
+    )
+    assert diagnostics["tool_calls"][0]["scope_rejections"] == [
+        "capabilities_schema_mismatch",
+        "duplicate_catalog_scope",
+    ]
+    assert diagnostics["rejected_tool_calls"] == [1]
+
+
+def test_a_call_that_answered_one_role_is_not_a_refused_call() -> None:
+    """A refused role still has to be countable, without losing the answer."""
+
+    messages = [
+        HumanMessage(content="REQUEST ID: request-partial"),
+        _search_call("partial-search"),
+        ToolMessage(
+            content="SCOPE 1 (tote bags):\nrefused\n\nSCOPE 2 (dress):\nresults",
+            name="search_catalog_tool",
+            tool_call_id="partial-search",
+            artifact={
+                "scope_rejections": ["capabilities_schema_mismatch", None]
+            },
+        ),
+    ]
+
+    diagnostics = _collect_agent_diagnostics(
+        messages,
+        request_id="request-partial",
+        final_termination_reason="completed",
+    )
+
+    assert diagnostics["tool_calls"][0]["status"] == "completed"
+    assert "rejection_reason" not in diagnostics["tool_calls"][0]
+    assert diagnostics["tool_calls"][0]["scope_rejections"] == [
+        "capabilities_schema_mismatch",
+        None,
+    ]
+    assert diagnostics["rejected_tool_calls"] == []
+
+
 def test_product_evidence_contains_only_successful_current_turn_product_tools() -> None:
     messages = [
         HumanMessage(content="REQUEST ID: old-request"),

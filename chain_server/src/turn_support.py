@@ -63,6 +63,9 @@ from .catalog_request import (
 from .conversation_memory import (
     FinalTurnStatus,
 )
+from .control_signals import (
+    rejections_of,
+)
 from .tool_evidence import (
     detail_evidence_of,
     evidence_of,
@@ -1616,6 +1619,12 @@ def _collect_agent_diagnostics(
             }
             if rejection_reason:
                 entry["rejection_reason"] = rejection_reason
+            scope_rejections = rejections_of(result_message)
+            if len(scope_rejections) > 1 and any(scope_rejections):
+                # A call that searched several roles and was refused only some
+                # of them is not a rejected call, so its refusals would
+                # otherwise be counted nowhere at all.
+                entry["scope_rejections"] = scope_rejections
             restored_fields = restored_fields_by_call.get(call["tool_call_id"])
             if restored_fields:
                 entry["restored_fields"] = restored_fields
@@ -1852,7 +1861,10 @@ def _tool_call_status(
     if result_message is None:
         return "pending", None
     content = _content_to_text(_value(result_message, "content"))
-    rejection_reason = _tool_rejection_reason(content)
+    rejection_reason = _tool_rejection_reason(
+        content,
+        rejections_of(result_message),
+    )
     if rejection_reason:
         return "rejected", rejection_reason
     if _value(result_message, "status") == "error":
@@ -1864,7 +1876,25 @@ def _tool_call_status(
     return "completed", None
 
 
-def _tool_rejection_reason(content: str) -> str | None:
+def _tool_rejection_reason(
+    content: str,
+    scope_rejections: list[Any] | None = None,
+) -> str | None:
+    """Name what refused this call, preferring what the gate itself recorded.
+
+    Nine catalog-search gates render one model-visible prefix, so the text can
+    only ever say ``invalid_catalog_request``; a gate that recorded its own code
+    names itself instead. The code is believed only when every searched scope
+    carries one, because a call that refused one role and answered another is
+    not a refused call. A result carrying no codes -- an older checkpoint, or
+    one of the paths that deliberately records none -- falls back to matching
+    the text, so a missed path degrades to today's answer rather than losing
+    its reason.
+    """
+
+    codes = list(scope_rejections or ())
+    if codes and all(codes):
+        return str(codes[0])
     markers = (
         (SKILL_ACTIVATION_REQUIRED, "skill_activation_required"),
         (SKILL_TOOL_NOT_GRANTED, "skill_tool_not_granted"),

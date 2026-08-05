@@ -33,11 +33,60 @@ class ControlSignal(StrEnum):
     SEARCH_SUCCEEDED = "search_succeeded"
 
 
+class SearchRejection(StrEnum):
+    """The gate that turned one catalog search scope back.
+
+    Nine gates in ``catalog_search`` render the same model-visible prefix, so a
+    refusal reached diagnostics as one undifferentiated reason: in one full
+    evaluation run that left 21 of 48 refusals impossible to attribute to a
+    gate. The gate that makes the decision records it here. Nothing the model
+    reads changes -- this is the same move as typed tool evidence, applied to
+    the rejection path.
+    """
+
+    # Admission, before anything is parsed.
+    REPAIR_CHANGED_PRODUCT_SCOPE = "repair_changed_product_scope"
+    OPEN_ROLE_REPAIR_REQUIRED = "open_role_repair_required"
+
+    # Argument validation against current catalog capabilities.
+    CAPABILITIES_SCHEMA_MISMATCH = "capabilities_schema_mismatch"
+
+    # Provenance review: what the repair had to preserve, and what it changed.
+    REPAIR_CHANGED_CONSTRAINTS = "repair_changed_constraints"
+    TAXONOMY_NOT_ADVERTISED_FOR_SCOPE = "taxonomy_not_advertised_for_scope"
+    CONSTRAINT_REPAIR_CHANGED_REQUEST = "constraint_repair_changed_request"
+    SHOPPER_SCOPE_TAXONOMY_MISMATCH = "shopper_scope_taxonomy_mismatch"
+    OPEN_ROLE_SELECTION_REQUIRED = "open_role_selection_required"
+    REQUIREMENT_PROVENANCE_UNESTABLISHED = "requirement_provenance_unestablished"
+    CONSTRAINT_REVIEW_REQUIRED = "constraint_review_required"
+    EXACT_TAXONOMY_NOT_ADVERTISED = "exact_taxonomy_not_advertised"
+    ADVERTISED_MATCH_REPORTED_AS_GAP = "advertised_match_reported_as_gap"
+
+    # Outcome for a product type no advertised taxonomy faithfully covers.
+    NO_ADVERTISED_TAXONOMY_MATCH = "no_advertised_taxonomy_match"
+
+    # Planning against the capability contract.
+    UNSUPPORTED_CATALOG_TAXONOMY = "unsupported_catalog_taxonomy"
+    UNSUPPORTED_CATALOG_CONSTRAINT = "unsupported_catalog_constraint"
+    UNSUPPORTED_SEARCH_MODE = "unsupported_search_mode"
+
+    # Claiming this turn's search budget.
+    DUPLICATE_SHOPPER_SCOPE = "duplicate_shopper_scope"
+    #: Diagnostics counts duplicates by this exact value; do not rename it
+    #: without updating the reader that sets ``duplicate`` on a tool call.
+    DUPLICATE_CATALOG_SCOPE = "duplicate_catalog_scope"
+    CATALOG_SEARCH_LIMIT = "catalog_search_limit"
+
+
 #: Artifact key holding the recorded signals for one tool call.
 SIGNALS_KEY = "control_signals"
 
 #: Artifact key holding committed commerce effects for one tool call.
 EFFECTS_KEY = "committed_effects"
+
+#: Artifact key holding, per searched scope and in scope order, the gate that
+#: turned that scope back -- ``None`` for a scope that was not turned back.
+REJECTIONS_KEY = "scope_rejections"
 
 
 def control(text: str, *signals: ControlSignal) -> tuple[str, dict[str, Any]]:
@@ -59,6 +108,26 @@ def signals_of(message: Any) -> frozenset[str]:
     if not isinstance(recorded, list):
         return frozenset()
     return frozenset(str(signal) for signal in recorded)
+
+
+def rejections_of(message: Any) -> list[Any]:
+    """Read the per-scope gate codes recorded on one tool message.
+
+    Returns one entry per searched scope, in scope order, so a call that
+    refused two of three roles stays distinguishable from one that refused all
+    three. A message that carries no codes returns an empty list, which every
+    reader must treat as "unknown", not as "nothing was refused".
+    """
+
+    artifact = (
+        message.get("artifact")
+        if isinstance(message, dict)
+        else getattr(message, "artifact", None)
+    )
+    if not isinstance(artifact, dict):
+        return []
+    recorded = artifact.get(REJECTIONS_KEY)
+    return list(recorded) if isinstance(recorded, list) else []
 
 
 def normalize_tool_result(result: Any) -> tuple[str, dict[str, Any] | None]:

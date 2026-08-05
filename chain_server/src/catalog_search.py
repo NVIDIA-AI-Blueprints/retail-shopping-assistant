@@ -18,6 +18,8 @@ what to preserve and what to change, or the repair loops.
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
 from dataclasses import dataclass, field
 
 import json
@@ -38,9 +40,10 @@ from .control_signals import (
     control,
 )
 from .tool_evidence import (
+    EVIDENCE_KEY,
     SearchEvidence,
 )
-from .turn_scope import TurnScope
+from .turn_scope import CatalogRepairState, TurnScope
 from .tool_loop_control import (
     CONSTRAINT_REVIEW_PREFIX,
     SEARCH_VALIDATION_ERROR_PREFIX,
@@ -121,7 +124,7 @@ class SearchContext:
 
 
 def _lock_taxonomy_constraint_values(
-    ctx: SearchContext,
+    repair: CatalogRepairState,
     scope_key: str | None,
     constraints: dict[str, Any],
     *,
@@ -131,8 +134,8 @@ def _lock_taxonomy_constraint_values(
 
     constraints = _normalized_scope_value(constraints)
     constraints.pop("unadvertised_requirements", None)
-    ctx.scope.repair.pending_taxonomy_constraints = constraints
-    ctx.scope.repair.pending_no_direct_constraint_clear = allow_no_direct_clear
+    repair.pending_taxonomy_constraints = constraints
+    repair.pending_no_direct_constraint_clear = allow_no_direct_clear
     serialized_constraints = json.dumps(
         constraints,
         ensure_ascii=False,
@@ -161,14 +164,14 @@ def _lock_taxonomy_constraint_values(
 
 
 def _lock_taxonomy_constraints(
-    ctx: SearchContext,
+    repair: CatalogRepairState,
     scope_key: str | None,
     request: SearchCatalogToolArguments,
 ) -> str:
     """Preserve validated hard constraints across one taxonomy repair."""
 
     return _lock_taxonomy_constraint_values(
-        ctx,
+        repair,
         scope_key,
         request.required_constraints.model_dump(exclude_none=True),
     )
@@ -188,6 +191,9 @@ class _Attempt:
     taxonomy: BaseModel | dict[str, Any]
     required_constraints: BaseModel | dict[str, Any]
     shopper_guidance: str
+    #: Repair bookkeeping for this scope alone. Sharing one across scopes made a
+    #: rejection of the shoes lock out the bag for the rest of the turn.
+    repair: Any = None
     scope_complete: bool = True
     search_mode: str | None = None
     advertised_choices: Any = None
@@ -258,13 +264,13 @@ def _admit_search(ctx: SearchContext, attempt: _Attempt) -> StepResult:
     )
     candidate_scope_key = _product_scope_key(requested_product_type)
     locked_repair_scope = (
-        ctx.scope.repair.failed_constraint_scope_key or ctx.scope.repair.failed_repair_scope_key
+        attempt.repair.failed_constraint_scope_key or attempt.repair.failed_repair_scope_key
     )
     repairing_same_scope = bool(
         locked_repair_scope
         and (
-            candidate_scope_key == ctx.scope.repair.failed_constraint_scope_key
-            if ctx.scope.repair.failed_constraint_scope_key
+            candidate_scope_key == attempt.repair.failed_constraint_scope_key
+            if attempt.repair.failed_constraint_scope_key
             else _same_product_scope(
                 locked_repair_scope,
                 candidate_scope_key,
@@ -285,7 +291,7 @@ def _admit_search(ctx: SearchContext, attempt: _Attempt) -> StepResult:
             "requested_product_type and repair taxonomy instead."
         )
     if (
-        ctx.scope.repair.failed_agent_selected_scope
+        attempt.repair.failed_agent_selected_scope
         and taxonomy_status != "agent_selected_type"
     ):
         return (
@@ -475,10 +481,10 @@ def _validated_request(ctx: SearchContext, attempt: _Attempt) -> StepResult:
             )
         )
         if shopper_stated_scope or canonical_agent_selected_scope:
-            ctx.scope.repair.failed_repair_scope_key = candidate_scope_key
-            ctx.scope.repair.failed_agent_selected_scope = False
+            attempt.repair.failed_repair_scope_key = candidate_scope_key
+            attempt.repair.failed_agent_selected_scope = False
         elif taxonomy_error and taxonomy_status == "agent_selected_type":
-            ctx.scope.repair.failed_agent_selected_scope = True
+            attempt.repair.failed_agent_selected_scope = True
         if candidate_scope_key and taxonomy_error:
             if (
                 taxonomy_status == "agent_selected_type"
@@ -506,7 +512,7 @@ def _validated_request(ctx: SearchContext, attempt: _Attempt) -> StepResult:
                     [],
                 )
                 if proposed_requirements:
-                    ctx.scope.repair.pending_schema_requirements = list(
+                    attempt.repair.pending_schema_requirements = list(
                         proposed_requirements
                     )
                     repair_guidance += (
@@ -529,7 +535,7 @@ def _validated_request(ctx: SearchContext, attempt: _Attempt) -> StepResult:
             pass
         else:
             constraint_lock = _lock_taxonomy_constraint_values(
-                ctx,
+                attempt.repair,
                 candidate_scope_key,
                 validated_constraints.model_dump(exclude_none=True),
                 allow_no_direct_clear=(
@@ -577,13 +583,13 @@ def _reviewed_provenance(ctx: SearchContext, attempt: _Attempt) -> StepResult:
         None,
     )
     if (
-        ctx.scope.repair.pending_taxonomy_constraints is not None
+        attempt.repair.pending_taxonomy_constraints is not None
         and not (
-            ctx.scope.repair.pending_no_direct_constraint_clear
+            attempt.repair.pending_no_direct_constraint_clear
             and request.taxonomy_status == "no_direct_catalog_match"
         )
         and normalized_advertised_constraints
-        != ctx.scope.repair.pending_taxonomy_constraints
+        != attempt.repair.pending_taxonomy_constraints
     ):
         return (
             SEARCH_VALIDATION_ERROR_PREFIX
@@ -592,9 +598,9 @@ def _reviewed_provenance(ctx: SearchContext, attempt: _Attempt) -> StepResult:
             "taxonomy or an explicitly identified "
             "ungrounded product scope."
         )
-    if ctx.scope.repair.pending_taxonomy_constraints is not None:
-        ctx.scope.repair.pending_taxonomy_constraints = None
-        ctx.scope.repair.pending_no_direct_constraint_clear = False
+    if attempt.repair.pending_taxonomy_constraints is not None:
+        attempt.repair.pending_taxonomy_constraints = None
+        attempt.repair.pending_no_direct_constraint_clear = False
     normalized_constraints = dict(all_constraints)
     unadvertised_requirements = normalized_constraints.pop(
         "unadvertised_requirements",
@@ -624,12 +630,12 @@ def _reviewed_provenance(ctx: SearchContext, attempt: _Attempt) -> StepResult:
     )
     if advertised_taxonomy_issue:
         if shopper_stated_scope:
-            ctx.scope.repair.failed_repair_scope_key = candidate_scope_key
-            ctx.scope.repair.failed_agent_selected_scope = False
+            attempt.repair.failed_repair_scope_key = candidate_scope_key
+            attempt.repair.failed_agent_selected_scope = False
         return (
             SEARCH_VALIDATION_ERROR_PREFIX
             + advertised_taxonomy_issue
-            + _lock_taxonomy_constraints(ctx, candidate_scope_key, request)
+            + _lock_taxonomy_constraints(attempt.repair, candidate_scope_key, request)
             + (
                 " Preserve the shopper-stated requested_product_type."
                 if shopper_stated_scope
@@ -639,7 +645,7 @@ def _reviewed_provenance(ctx: SearchContext, attempt: _Attempt) -> StepResult:
             )
         )
 
-    if ctx.scope.repair.pending_schema_requirements and not unadvertised_requirements:
+    if attempt.repair.pending_schema_requirements and not unadvertised_requirements:
         request = request.model_copy(
             update={
                 "shopper_guidance": _generic_shopper_guidance(
@@ -647,8 +653,8 @@ def _reviewed_provenance(ctx: SearchContext, attempt: _Attempt) -> StepResult:
                 )
             }
         )
-        ctx.scope.repair.pending_schema_requirements = []
-    pending_constraint_review = ctx.scope.repair.pending_constraint_reviews.get(
+        attempt.repair.pending_schema_requirements = []
+    pending_constraint_review = attempt.repair.pending_constraint_reviews.get(
         candidate_scope_key
     )
     if pending_constraint_review and (
@@ -746,10 +752,10 @@ def _reviewed_provenance(ctx: SearchContext, attempt: _Attempt) -> StepResult:
             )
     if agent_selected_issue:
         if agent_selected_shopper_scope:
-            ctx.scope.repair.failed_repair_scope_key = candidate_scope_key
-            ctx.scope.repair.failed_agent_selected_scope = False
+            attempt.repair.failed_repair_scope_key = candidate_scope_key
+            attempt.repair.failed_agent_selected_scope = False
         elif candidate_scope_key:
-            ctx.scope.repair.failed_agent_selected_scope = True
+            attempt.repair.failed_agent_selected_scope = True
         constraint_issue = ""
         if unadvertised_requirements:
             constraint_issue = (
@@ -769,9 +775,9 @@ def _reviewed_provenance(ctx: SearchContext, attempt: _Attempt) -> StepResult:
             SEARCH_VALIDATION_ERROR_PREFIX
             + agent_selected_issue
             + constraint_issue
-            + _lock_taxonomy_constraints(ctx, candidate_scope_key, request)
+            + _lock_taxonomy_constraints(attempt.repair, candidate_scope_key, request)
         )
-    ctx.scope.repair.failed_agent_selected_scope = False
+    attempt.repair.failed_agent_selected_scope = False
 
     if (
         request.taxonomy_status != "no_direct_catalog_match"
@@ -806,22 +812,22 @@ def _reviewed_provenance(ctx: SearchContext, attempt: _Attempt) -> StepResult:
             # a value that is simply the product type -- there is no
             # invented attribute there to establish provenance for.
             review_scope = candidate_scope_key or "__unknown__"
-            if review_scope in ctx.scope.repair.constraint_reviewed_scopes:
+            if review_scope in attempt.repair.constraint_reviewed_scopes:
                 return (
                     "The requested catalog requirement cannot be enforced: "
                     "its current-turn provenance could not be established. "
                     "Ask the shopper to state the exact required attribute "
                     "or allow it to be treated as a preference."
                 )
-            ctx.scope.repair.constraint_reviewed_scopes.add(review_scope)
-            ctx.scope.repair.pending_constraint_reviews[review_scope] = {
+            attempt.repair.constraint_reviewed_scopes.add(review_scope)
+            attempt.repair.pending_constraint_reviews[review_scope] = {
                 "requirements": list(unadvertised_requirements),
                 "taxonomy": request.taxonomy.model_dump(),
                 "scope_complete": request.scope_complete,
                 "search_mode": request.search_mode,
                 "required_constraints": dict(normalized_constraints),
             }
-            ctx.scope.repair.failed_constraint_scope_key = review_scope
+            attempt.repair.failed_constraint_scope_key = review_scope
             return (
                 CONSTRAINT_REVIEW_PREFIX
                 + "These proposed unadvertised requirements do not match "
@@ -847,7 +853,7 @@ def _reviewed_provenance(ctx: SearchContext, attempt: _Attempt) -> StepResult:
                 "occasion, or style goals are not explicit requirements."
             )
 
-    reviewed_constraint = ctx.scope.repair.pending_constraint_reviews.pop(
+    reviewed_constraint = attempt.repair.pending_constraint_reviews.pop(
         candidate_scope_key,
         None,
     )
@@ -885,12 +891,12 @@ def _reviewed_provenance(ctx: SearchContext, attempt: _Attempt) -> StepResult:
             )
         )
         if shopper_stated_scope:
-            ctx.scope.repair.failed_repair_scope_key = candidate_scope_key
-            ctx.scope.repair.failed_agent_selected_scope = False
+            attempt.repair.failed_repair_scope_key = candidate_scope_key
+            attempt.repair.failed_agent_selected_scope = False
         return (
             SEARCH_VALIDATION_ERROR_PREFIX
             + exact_taxonomy_issue
-            + _lock_taxonomy_constraints(ctx, candidate_scope_key, request)
+            + _lock_taxonomy_constraints(attempt.repair, candidate_scope_key, request)
             + (
                 ". Preserve the shopper-stated requested_product_type "
                 f"{json.dumps(request.requested_product_type)}."
@@ -913,19 +919,19 @@ def _reviewed_provenance(ctx: SearchContext, attempt: _Attempt) -> StepResult:
         else None
     )
     if advertised_match:
-        ctx.scope.repair.failed_repair_scope_key = candidate_scope_key
-        ctx.scope.repair.failed_agent_selected_scope = False
+        attempt.repair.failed_repair_scope_key = candidate_scope_key
+        attempt.repair.failed_agent_selected_scope = False
         return (
             SEARCH_VALIDATION_ERROR_PREFIX
             + f"The requested product type '{request.requested_product_type}' "
             f"matches advertised taxonomy value '{advertised_match}'. "
             "Select that advertised value instead of reporting a gap."
-            + _lock_taxonomy_constraints(ctx, candidate_scope_key, request)
+            + _lock_taxonomy_constraints(attempt.repair, candidate_scope_key, request)
         )
 
-    ctx.scope.repair.failed_repair_scope_key = None
-    ctx.scope.repair.failed_constraint_scope_key = None
-    ctx.scope.repair.failed_agent_selected_scope = False
+    attempt.repair.failed_repair_scope_key = None
+    attempt.repair.failed_constraint_scope_key = None
+    attempt.repair.failed_agent_selected_scope = False
 
     attempt.normalized_constraints = normalized_constraints
     attempt.request = request
@@ -1333,46 +1339,233 @@ def _rendered_evidence(ctx: SearchContext, attempt: _Attempt) -> StepResult:
     return prefix + "\n\n".join(lines), evidence.as_artifact()
 
 
-#: One catalog search, in order. Each step either ends the search -- by
-#: returning the text the model reads, with the evidence artifact behind it
-#: where there is one -- or returns None and leaves what it worked out on the
-#: attempt for the next step. The last step always returns.
-_SEARCH_STEPS = (
+#: Everything a scope decides before it touches the network. Each step either
+#: ends that scope -- returning the text the model reads -- or leaves what it
+#: worked out on the attempt for the next one.
+_PLAN_STEPS = (
     _admit_search,
     _classify_requirements,
     _validated_request,
     _reviewed_provenance,
     _no_direct_match_outcome,
     _planned_search,
-    _reserved_search_slot,
-    _executed_search,
-    _rendered_evidence,
 )
+
+#: Claiming the turn's budget, then the one step that does I/O.
+_RESERVE_STEP = _reserved_search_slot
+_EXECUTE_STEP = _executed_search
+_RENDER_STEP = _rendered_evidence
+
+
+def _planned_scope(ctx: SearchContext, attempt: _Attempt) -> StepResult:
+    """Run one scope up to the point of retrieval, touching no network.
+
+    Returning early here costs nothing: no budget is spent and no request is
+    sent, so a scope that cannot run never takes anything from the scopes that
+    can.
+    """
+
+    for step in _PLAN_STEPS:
+        outcome = step(ctx, attempt)
+        if outcome is not None:
+            return outcome
+    return None
 
 
 def search_catalog(
     ctx: SearchContext,
-    semantic_query: str,
-    requested_product_type: str | None,
-    taxonomy: BaseModel | dict[str, Any],
-    required_constraints: BaseModel | dict[str, Any],
-    shopper_guidance: str,
+    scopes: list[dict[str, Any]],
     scope_complete: bool = True,
     search_mode: str | None = None,
 ):
-    """Execute one catalog search; may return control signals."""
+    """Execute one catalog search per product role, concurrently.
 
-    attempt = _Attempt(
-        semantic_query=semantic_query,
-        requested_product_type=requested_product_type,
-        taxonomy=taxonomy,
-        required_constraints=required_constraints,
-        shopper_guidance=shopper_guidance,
-        scope_complete=scope_complete,
-        search_mode=search_mode,
-    )
-    for step in _SEARCH_STEPS:
-        outcome = step(ctx, attempt)
+    A shopper asking for "a dress, shoes and a bag" is asking three questions.
+    Answering them one call at a time cost three model round trips at roughly
+    8.7s each while the retrievals themselves take under a second -- measured
+    across one conversation, retrieval was 3.1% of the elapsed time and round
+    trips were the rest.
+
+    So the scopes are planned first, with no I/O, and only the ones that survive
+    planning retrieve. Those go out together: ten concurrent retrievals measured
+    1.58s against 0.61s for one.
+
+    Each scope keeps its own filters, so a `heel_type` chosen for the shoes
+    cannot delete the bags -- which is what a shared filter did, returning eight
+    heels and no clutches for a two-category search.
+    """
+
+    attempts: list[_Attempt] = []
+    for index, raw in enumerate(scopes):
+        fields = raw if isinstance(raw, dict) else raw.model_dump()
+        attempt = _Attempt(
+            semantic_query=fields.get("semantic_query", ""),
+            requested_product_type=fields.get("requested_product_type"),
+            taxonomy=fields.get("taxonomy") or {},
+            required_constraints=fields.get("required_constraints") or {},
+            shopper_guidance=fields.get("shopper_guidance", ""),
+            scope_complete=bool(fields.get("scope_complete", scope_complete)),
+            search_mode=fields.get("search_mode", search_mode),
+        )
+        # Repair bookkeeping belongs to the product scope, not to the call, so a
+        # repair still spans tool calls while one rejected role cannot lock out
+        # another.
+        # One scope sees the turn's repair state exactly as it always has, so a
+        # single-scope call behaves identically to before. Several scopes each
+        # plan against a snapshot of it, so one rejected role cannot lock out
+        # another, and their mutations are merged once planning is done.
+        attempt.repair = ctx.scope.repair
+        attempts.append(attempt)
+
+    if len(attempts) > 1:
+        # Per-scope purity: each scope is judged against the repair state as it
+        # stood at the start of the call, never against what a sibling scope
+        # just wrote. Otherwise the same call would give different answers
+        # depending on the order the model happened to list the roles.
+        baseline = deepcopy(ctx.scope.repair)
+        for attempt in attempts:
+            attempt.repair = deepcopy(baseline)
+
+    outcomes: list[StepResult] = [_planned_scope(ctx, a) for a in attempts]
+    if len(attempts) > 1:
+        for attempt in attempts:
+            _merge_repair(ctx.scope.repair, attempt.repair)
+            attempt.repair = ctx.scope.repair
+
+    runnable = [i for i, outcome in enumerate(outcomes) if outcome is None]
+
+    # The product budget is shared, so more roles mean fewer products each
+    # rather than a larger reply.
+    if runnable:
+        share = max(
+            3,
+            min(
+                int(getattr(ctx.config, "top_k_retrieve_broad", 12) or 12),
+                int(getattr(ctx.config, "search_products_per_call", 36) or 36)
+                // len(runnable),
+            ),
+        )
+        for index in runnable:
+            plan = attempts[index].plan
+            if plan is not None and getattr(plan, "top_k", None):
+                attempts[index].plan = plan.model_copy(
+                    update={"top_k": min(plan.top_k, share)}
+                )
+
+    # Reserving is sequential and lock-guarded; only retrieval fans out.
+    for index in list(runnable):
+        outcome = _RESERVE_STEP(ctx, attempts[index])
         if outcome is not None:
-            return outcome
-    raise AssertionError("the last search step must return an outcome")
+            outcomes[index] = outcome
+            runnable.remove(index)
+
+    if len(runnable) == 1:
+        outcomes[runnable[0]] = _EXECUTE_STEP(ctx, attempts[runnable[0]])
+    elif runnable:
+        with ThreadPoolExecutor(max_workers=len(runnable)) as pool:
+            for index, outcome in zip(
+                runnable,
+                pool.map(lambda i: _EXECUTE_STEP(ctx, attempts[i]), runnable),
+            ):
+                outcomes[index] = outcome
+
+    rendered: list[str] = []
+    artifacts: list[dict[str, Any]] = []
+    for index, attempt in enumerate(attempts):
+        outcome = outcomes[index]
+        if outcome is None:
+            outcome = _RENDER_STEP(ctx, attempt)
+        text, artifact = outcome if isinstance(outcome, tuple) else (outcome, None)
+        role = attempt.requested_product_type or f"scope {index + 1}"
+        rendered.append(f"SCOPE {index + 1} ({role}):\n{text}")
+        if artifact:
+            artifacts.append(artifact)
+
+    if len(attempts) == 1:
+        single = outcomes[0] if outcomes[0] is not None else _RENDER_STEP(ctx, attempts[0])
+        return single if single is not None else "Catalog search returned nothing."
+    merged = _merged_artifacts(artifacts)
+    text = "\n\n".join(rendered)
+    return (text, merged) if merged else text
+
+
+def _merged_artifacts(artifacts: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Combine several scopes' evidence into one payload of the same shape.
+
+    Every consumer -- turn diagnostics, the grounding editor, and the durable
+    presented-product record a later turn resolves against -- reads one evidence
+    dict and checks `outcome`. An earlier version merged by key and produced a
+    list of dicts, so those readers silently skipped it: a four-scope search
+    completed, returned products, and recorded none of them. The shape is the
+    contract, so merging must preserve it.
+    """
+
+    payloads = [a[EVIDENCE_KEY] for a in artifacts if a and EVIDENCE_KEY in a]
+    if not payloads:
+        return artifacts[0] if artifacts else None
+    if len(payloads) == 1:
+        return {EVIDENCE_KEY: payloads[0]}
+
+    with_results = [p for p in payloads if p.get("outcome") == "results"]
+    base = dict((with_results or payloads)[0])
+    products: list[Any] = []
+    taxonomy: dict[str, Any] = {}
+    filters: dict[str, Any] = {}
+    unconfirmed: list[Any] = []
+    for payload in payloads:
+        products.extend(payload.get("products") or [])
+        for name, value in (payload.get("taxonomy") or {}).items():
+            existing = taxonomy.get(name)
+            if isinstance(existing, list) and isinstance(value, list):
+                taxonomy[name] = existing + [v for v in value if v not in existing]
+            elif existing is None:
+                taxonomy[name] = value
+        for name, value in (payload.get("confirmed_filters") or {}).items():
+            filters.setdefault(name, value)
+        for item in payload.get("unconfirmed_requirements") or []:
+            if item not in unconfirmed:
+                unconfirmed.append(item)
+    base["outcome"] = "results" if with_results else base.get("outcome")
+    base["products"] = products
+    base["taxonomy"] = taxonomy
+    base["confirmed_filters"] = filters
+    base["unconfirmed_requirements"] = unconfirmed
+    base["result_set_complete"] = all(
+        p.get("result_set_complete") for p in payloads
+    )
+    merged: dict[str, Any] = {EVIDENCE_KEY: base}
+    for artifact in artifacts:
+        for key, value in (artifact or {}).items():
+            if key != EVIDENCE_KEY:
+                merged.setdefault(key, value)
+    return merged
+
+
+def _merge_repair(target: Any, source: Any) -> None:
+    """Fold one scope's repair bookkeeping back onto the turn's.
+
+    Sets and dicts union, because they are already keyed by scope. The
+    single-slot fields take the first scope that claimed them: a repair is
+    answered by the scope it belongs to, and a later scope must not overwrite
+    what an earlier rejection recorded.
+    """
+
+    target.constraint_reviewed_scopes |= source.constraint_reviewed_scopes
+    for key, value in source.pending_constraint_reviews.items():
+        target.pending_constraint_reviews.setdefault(key, value)
+    for name in (
+        "failed_repair_scope_key",
+        "failed_constraint_scope_key",
+        "pending_taxonomy_constraints",
+    ):
+        if getattr(target, name) is None and getattr(source, name) is not None:
+            setattr(target, name, getattr(source, name))
+    target.failed_agent_selected_scope = (
+        target.failed_agent_selected_scope or source.failed_agent_selected_scope
+    )
+    target.pending_no_direct_constraint_clear = (
+        target.pending_no_direct_constraint_clear
+        or source.pending_no_direct_constraint_clear
+    )
+    if not target.pending_schema_requirements:
+        target.pending_schema_requirements = list(source.pending_schema_requirements)

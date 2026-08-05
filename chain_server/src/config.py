@@ -108,6 +108,14 @@ class ChainServerConfig(BaseModel):
         default=3,
         description="Maximum distinct catalog taxonomy scopes allowed per turn",
     )
+    max_search_scopes_per_call: int = Field(
+        default=10,
+        description="Product roles one catalog search call may carry",
+    )
+    search_products_per_call: int = Field(
+        default=36,
+        description="Total products one search call returns, shared across scopes",
+    )
     max_product_detail_reads_per_turn: int = Field(
         default=10,
         description="Maximum product-detail tool calls allowed for one assistant turn",

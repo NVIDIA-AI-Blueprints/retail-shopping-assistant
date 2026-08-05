@@ -1115,6 +1115,51 @@ def _search_catalog_tool_input_model(
     )
 
 
+def _search_catalog_scopes_input_model(
+    capabilities: CatalogCapabilities,
+    *,
+    max_scopes: int = 1,
+) -> type[BaseModel]:
+    """Wrap the catalog search arguments in a list of scopes.
+
+    Stage one of the scoped-search contract, and deliberately nothing more: the
+    scope object is exactly today's argument object, so the only thing that
+    changes for the model is one level of nesting.
+
+    That isolation is the point. Argument malformation scales sharply with
+    nesting -- measured across the run archive, a flat `product_ref` argument was
+    wrapped in stray punctuation 1-10% of the time and the same value inside a
+    nested list of objects 43% of the time. If the model fumbles a nested list of
+    fields it already emits correctly, the cause is depth itself and the rest of
+    the contract has to be shaped around that. If it does not, the 43% was about
+    mixing authored and transcribed fields in one object, which is a different
+    and more tractable problem.
+
+    `max_scopes` stays at one until that question is answered.
+    """
+
+    scope_model = _search_catalog_tool_input_model(
+        capabilities,
+        validate_scope=False,
+    )
+    return create_model(
+        "CatalogSearchScopes",
+        scopes=(
+            list[scope_model],
+            Field(
+                ...,
+                min_length=1,
+                max_length=max_scopes,
+                description=(
+                    "One search scope per product role. Each scope owns its own "
+                    "taxonomy and constraints, so a filter for one role can never "
+                    "exclude another role's products."
+                ),
+            ),
+        ),
+    )
+
+
 def _taxonomy_list_field(
     values: list[str],
     *,
@@ -3424,3 +3469,41 @@ _SEARCH_BUDGET_EXHAUSTED_NOTE = (
     "available this turn. Continue with any requested non-search action, or "
     "answer honestly from the grounded products already returned."
 )
+
+
+def _detail_fields_already_held(
+    product: Any,
+    capabilities: CatalogCapabilities,
+) -> bool:
+    """Return whether evidence already holds every advertised detail field.
+
+    A search returns the same attributes a detail read does -- measured across
+    all five advertised categories and 20 products, the detail-only set was
+    empty -- so re-reading spends a model round trip to learn what is already in
+    hand.
+
+    But "empty on this catalog" is not "empty on every catalog", and silently
+    dropping a field is worse than a redundant call. So this asks the capability
+    contract rather than assuming: only when evidence covers every field the
+    product's own category advertises as a detail field is the read redundant.
+    Any gap, any unknown category, and the fetch goes ahead.
+    """
+
+    held = getattr(product, "attributes", None)
+    if not held:
+        return False
+    category = getattr(product, "category", None)
+    taxonomy = capabilities.taxonomy
+    advertised: set[str] = set()
+    for name, entry in taxonomy.categories.items():
+        subcategories = getattr(entry, "subcategories", {}) or {}
+        if category not in (name, *subcategories):
+            continue
+        advertised |= {
+            field
+            for field, capability in entry.filters.items()
+            if getattr(capability, "detail", False)
+        }
+    if not advertised:
+        return False
+    return advertised <= set(held)

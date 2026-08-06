@@ -1357,12 +1357,22 @@ class DeepAgentsRuntime:
             start_date: CalendarDate | None = None,
             end_date: CalendarDate | None = None,
         ) -> str:
-            """Live daily forecast for one place the shopper named. Resolve any
-            relative date against TODAY before calling: no date for today, one
-            exact ISO date, or a complete inclusive ISO start/end range. Never
-            invent a place and never send a relative date. Forecasts reach
-            about 15 days; beyond that, or if the place cannot be resolved,
-            this returns a failure -- say so plainly and style the occasion
+            """Live daily forecast for one place the shopper named.
+
+            Call this without being asked whenever the shopper names a place
+            AND a date or timeframe for something they are dressing for: a
+            destination wedding, a trip, an outdoor event. Conditions change
+            what to wear more than anything else about a destination, and a
+            shopper who says "a wedding in Cancun on August 15" has told you
+            everything the call needs. Do not call it when no place was named,
+            when no occasion or date is attached, or for a question the
+            weather cannot affect.
+
+            Resolve any relative date against TODAY before calling: no date
+            for today, one exact ISO date, or a complete inclusive ISO
+            start/end range. Never invent a place and never send a relative
+            date. Forecasts reach about 15 days; beyond that, or if the place
+            cannot be resolved, this returns a failure -- style the occasion
             instead of guessing the weather.
             """
 
@@ -1462,8 +1472,15 @@ class DeepAgentsRuntime:
             get_store_policy_tool,
             check_product_availability_tool,
             check_active_promotions_tool,
-            get_weather_forecast_tool,
         ]
+        # Off means absent, not present-and-failing. An unregistered tool
+        # cannot be called, so a shop without weather simply styles the
+        # occasion instead of explaining a capability nobody asked about.
+        weather_off = not getattr(
+            getattr(self.config, "weather", None), "enabled", False
+        )
+        if not weather_off:
+            shopping_tools.append(get_weather_forecast_tool)
         validate_registered_tool_names(
             {
                 str(
@@ -1471,7 +1488,8 @@ class DeepAgentsRuntime:
                     or getattr(candidate, "__name__", "")
                 )
                 for candidate in shopping_tools
-            }
+            },
+            disabled=("get_weather_forecast_tool",) if weather_off else (),
         )
         skill_gate = ShopperSkillActivationMiddleware(
             request_id=identity.request_id,

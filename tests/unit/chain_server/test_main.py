@@ -3026,7 +3026,6 @@ class TestDeepAgentsRuntimeRefs:
             "view_cart_total_tool",
             "get_store_policy_tool",
             "check_active_promotions_tool",
-            "get_weather_forecast_tool",
             "check_product_availability_tool",
         }
         activation_schema = tools_by_name[

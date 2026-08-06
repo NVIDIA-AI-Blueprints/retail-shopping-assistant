@@ -174,3 +174,51 @@ def test_the_rewriter_may_not_strip_the_attribution() -> None:
     assert "Keep the\n  provider attribution and its link" in prompt
     assert "removing it as clutter is not an option" in prompt
     assert "A\n  forecast never confirms a product property." in prompt
+
+
+def test_a_disabled_forecast_is_not_registered_at_all() -> None:
+    """Off means absent, not present-and-failing.
+
+    While the tool merely returned a failure, the model still called it every
+    time, and 2 of 5 replies opened by apologising for a forecast the shopper
+    had never asked about. An unregistered tool cannot be called, so there is
+    nothing to explain away and no latency spent. Weather ships off, so this
+    is the shipped behaviour.
+
+    The policy registry still describes the capability -- only registration is
+    conditional -- which is what keeps policy and skill frontmatter honest.
+    """
+
+    from chain_server.src.tool_policy import (
+        SHOPPING_TOOL_POLICIES,
+        validate_registered_tool_names,
+    )
+
+    assert "get_weather_forecast_tool" in SHOPPING_TOOL_POLICIES
+
+    registered = set(SHOPPING_TOOL_POLICIES) - {"get_weather_forecast_tool"}
+    validate_registered_tool_names(
+        registered, disabled=("get_weather_forecast_tool",)
+    )
+
+
+def test_switching_one_tool_off_does_not_switch_the_guard_off() -> None:
+    """The exact-match guard is what forces policy, runtime and frontmatter to
+    be activated together. Making one tool optional must not weaken it."""
+
+    import pytest
+
+    from chain_server.src.tool_policy import (
+        SHOPPING_TOOL_POLICIES,
+        validate_registered_tool_names,
+    )
+
+    with pytest.raises(ValueError, match="missing="):
+        validate_registered_tool_names(
+            set(), disabled=("get_weather_forecast_tool",)
+        )
+
+    with pytest.raises(ValueError, match="unexpected="):
+        validate_registered_tool_names(
+            set(SHOPPING_TOOL_POLICIES) | {"invented_tool"},
+        )

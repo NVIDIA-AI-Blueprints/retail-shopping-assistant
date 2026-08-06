@@ -206,11 +206,23 @@ def _metadata_text(metadata: dict, name: str) -> str:
     return value.strip() if isinstance(value, str) else ""
 
 
-def validate_registered_tool_names(tool_names: Collection[str]) -> None:
-    """Require the runtime and policy registry to name the same tools."""
+def validate_registered_tool_names(
+    tool_names: Collection[str],
+    *,
+    disabled: Collection[str] = (),
+) -> None:
+    """Require the runtime and policy registry to name the same tools.
+
+    `disabled` names tools a deployment has switched off, which are then
+    expected to be absent rather than present. A switched-off tool is not
+    registered at all, so the model cannot call it and there is no failure for
+    a reply to explain away. Weather ships off, and while it was merely
+    failing, 2 of 5 replies opened by apologising for a forecast the shopper
+    never asked for.
+    """
 
     registered = frozenset(tool_names)
-    managed = frozenset(SHOPPING_TOOL_POLICIES)
+    managed = frozenset(SHOPPING_TOOL_POLICIES) - frozenset(disabled)
     if registered != managed:
         missing = sorted(managed - registered)
         unexpected = sorted(registered - managed)

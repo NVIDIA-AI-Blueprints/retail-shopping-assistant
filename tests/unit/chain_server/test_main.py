@@ -3214,6 +3214,25 @@ class TestDeepAgentsRuntimeRefs:
             captured["system_prompt"]
         )
         assert "stable on grass or gravel" in captured["system_prompt"]
+        # Every outdoor rule above is a prohibition, and a prompt of nothing but
+        # prohibitions made the model avoid the subject: asked "what do I wear
+        # this weekend?" it offered a sleeveless cotton maxi dress and reasoned
+        # about the occasion not at all. The permission has to sit beside the
+        # ban, with the line between them drawn by example.
+        assert "a stiletto heel sinks" in captured["system_prompt"]
+        assert (
+            '"A stiletto will sink into grass" is\njudgement and is welcome'
+            in captured["system_prompt"]
+        )
+        assert '"these are stable on grass" is a claim' in (
+            captured["system_prompt"]
+        )
+        # Naming a gap is advice, not a refusal: keep showing what was found.
+        assert "we don't\ncarry outerwear" in captured["system_prompt"]
+        assert "Never offer the nearest item as though it served" in (
+            captured["system_prompt"]
+        )
+        assert "never invent a need" in captured["system_prompt"]
         assert "will stay comfortable all evening" in captured["system_prompt"]
         assert "Rubber sole means" in captured["system_prompt"]
         assert "maximum breathability" in captured["system_prompt"]
@@ -6996,6 +7015,16 @@ class TestDeepAgentsRuntimeRefs:
         assert '"subcategory": ["flats", "sandals"]' in evidence
         assert "Do not describe an unlisted product type as advertised" in evidence
         assert "Do not omit or override a confirmed filter" in (
+            runtime_mod._GROUNDING_EDITOR_SYSTEM_PROMPT
+        )
+        # The rewriter runs after the agent and can delete what it wrote. If
+        # only the agent were told that occasion judgement is allowed, this
+        # stage would strip it back out as an unsupported functional claim, and
+        # the feature would look like it had never been built.
+        assert "Styling judgement about an occasion is not a product claim" in (
+            runtime_mod._GROUNDING_EDITOR_SYSTEM_PROMPT
+        )
+        assert "Remove the second, keep the first" in (
             runtime_mod._GROUNDING_EDITOR_SYSTEM_PROMPT
         )
         assert "requested type is not separately advertised" in (

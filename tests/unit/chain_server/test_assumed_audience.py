@@ -33,6 +33,7 @@ from chain_server.src.tool_evidence import EVIDENCE_KEY
 from chain_server.src.turn_scope import TurnScope
 from chain_server.src.turn_support import (
     _assumed_audience_line,
+    _required_constraints_input_model,
     _audience_assumption_events,
     _turn_audience_events,
     _customer_safe_search_evidence,
@@ -68,6 +69,12 @@ def _capabilities() -> CatalogCapabilities:
                 operators=["in"],
                 source_fields=["product_type"],
                 values=["blouses", "sweaters", "skirts"],
+            ),
+            "pattern": CatalogFilterCapability(
+                type="enum",
+                operators=["in"],
+                source_fields=["pattern"],
+                values=["solid", "striped"],
             ),
             AUDIENCE_FIELD: CatalogFilterCapability(
                 type="enum",
@@ -391,3 +398,55 @@ def test_a_turn_that_only_assumed_records_the_assumption() -> None:
     assert [event.event_type for event in events] == [
         "audience_assumption_disclosed"
     ]
+
+
+def test_the_audience_filter_carries_the_rule_the_model_needs() -> None:
+    """The generic description was the whole bug.
+
+    Every advertised filter got "Advertised hard filter '<name>'.", so the
+    model had nothing to read but the enum value names. "sunglasses for men"
+    and "my husband" landed on the right value 3/3; "shades for hubby" sent no
+    filter at all and returned women's sunglasses. The rule below already
+    existed in the system prompt, which is the channel that gets ignored.
+    """
+
+    model = _required_constraints_input_model(
+        _capabilities(),
+        wearer_audience_field=AUDIENCE_FIELD,
+    )
+    described = model.model_fields[AUDIENCE_FIELD].description or ""
+
+    # The rule, which is what makes it portable to a catalog with more values.
+    assert "every advertised value that suits them" in described
+    assert "covering all genders always suits anyone" in described
+    # The vocabulary, which is what "for men" had and "hubby" did not.
+    assert "hubby" in described
+    # The clause protecting the case a required field broke: answering
+    # "nobody named" with a covers-everyone value returned no clothing and no
+    # shoes at all, only bags.
+    assert "When nobody is named, omit this filter entirely" in described
+    # A child in an adult catalog gets nothing, not adult substitutes.
+    assert "never substitute what does not suit them" in described
+
+
+def test_every_other_filter_keeps_the_generic_description() -> None:
+    """Only the configured audience field is special-cased."""
+
+    model = _required_constraints_input_model(
+        _capabilities(),
+        wearer_audience_field=AUDIENCE_FIELD,
+    )
+
+    assert model.model_fields["pattern"].description == (
+        "Advertised hard filter 'pattern'."
+    )
+
+
+def test_a_catalog_with_no_configured_audience_field_is_untouched() -> None:
+    """A deployment that never set the field name sees no change at all."""
+
+    model = _required_constraints_input_model(_capabilities())
+
+    assert model.model_fields[AUDIENCE_FIELD].description == (
+        f"Advertised hard filter '{AUDIENCE_FIELD}'."
+    )

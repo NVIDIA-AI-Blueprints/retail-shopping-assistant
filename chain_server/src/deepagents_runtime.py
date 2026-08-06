@@ -840,12 +840,19 @@ class DeepAgentsRuntime:
         )
         scope = TurnScope()
         state.retrieved = scope.retrieved
-        search_input_model = _search_catalog_tool_input_model(turn_capabilities)
+        wearer_audience_field = str(
+            getattr(self.config, "wearer_audience_field", "") or ""
+        )
+        search_input_model = _search_catalog_tool_input_model(
+            turn_capabilities,
+            wearer_audience_field=wearer_audience_field,
+        )
         search_tool_arguments_model = _search_catalog_scopes_input_model(
             turn_capabilities,
             max_scopes=max(
                 1, int(getattr(self.config, "max_search_scopes_per_call", 1) or 1)
             ),
+            wearer_audience_field=wearer_audience_field,
         )
         constraint_input_model = search_input_model.model_fields[
             "required_constraints"

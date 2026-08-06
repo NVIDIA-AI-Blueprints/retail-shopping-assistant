@@ -77,6 +77,10 @@ def test_the_forecast_itself_is_rendered() -> None:
     evidence = _format_weather_result(_result())
 
     assert "2026-08-15: rain" in evidence
+    # A forecast turn skipped the catalog entirely 3/3: weather plus generic
+    # advice and nothing to buy.
+    assert "STILL_SHOW_THE_CLOTHES" in evidence
+    assert "not an answer on its own" in evidence
     assert "78-89F" in evidence
     assert "precipitation 70%" in evidence
 
@@ -92,6 +96,15 @@ def test_the_resolved_place_is_named_so_it_can_be_corrected() -> None:
 
     assert "Cancun, Quintana Roo, Mexico" in evidence
     assert "correct you" in evidence
+    # A country resolves as readily as a city and there is no signal to tell
+    # them apart: the provider returns "Italia" for Italy and plain "Cancun"
+    # for Cancun, while the region Tuscany comes back better qualified than
+    # either, as "Toscana, Italia". Three attempts to stop the model calling
+    # for a country failed (0/15), so the failure is made safe instead --
+    # the reply says the numbers cover a whole area and asks which city.
+    assert "broader than a town" in evidence
+    assert "nowhere in particular" in evidence
+    assert "ask which city they will be in" in evidence
 
 
 def test_attribution_travels_with_the_data() -> None:
@@ -335,7 +348,9 @@ def test_the_tool_says_when_not_to_call_it() -> None:
     # The four refusals, each measured or reasoned in the contract.
     assert "Today is not what they are dressing for" in source
     assert "further out than about 15 days" in source
-    assert "a city yes, a country no" in source
+    assert "named a CITY, town or postal code" in source
+    assert "prefer asking which city over" in source
+    assert "never present them as the weather where the shopper will be" in source
     assert "No place, or nothing they are dressing for" in source
     # Travel date is not the dressing date.
     assert "not the one they travel on" in source
@@ -354,3 +369,22 @@ def test_the_no_date_guard_is_actually_enforced() -> None:
     assert not weather_call_needs_a_date(
         None, date(2026, 8, 15), date(2026, 8, 16)
     )
+
+
+def test_the_argument_is_a_city_not_a_location() -> None:
+    """The rule moved from prose into the parameter name.
+
+    Twice the prose form was ignored: "going to Italy tomorrow" called the
+    tool 5/5 and forecast "Italia" at 74-101F as though a country had one
+    temperature. A rule the model reads is weaker than a field it has to fill,
+    and `location` invites any place while `city` does not.
+    """
+
+    from chain_server.src.response_format import WeatherForecastInput
+
+    assert "city" in WeatherForecastInput.model_fields
+    assert "location" not in WeatherForecastInput.model_fields
+
+    described = WeatherForecastInput.model_fields["city"].description or ""
+    assert "Never a country, region or coastline" in described
+    assert "ask the shopper which city instead of calling" in described

@@ -16,7 +16,9 @@ move; the runtime imports these names back, so behaviour is unchanged.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date as CalendarDate, datetime, timezone
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from typing import Any
 import json
@@ -393,6 +395,39 @@ WEATHER_NO_DATE = (
     "grounded starting point in the same reply."
 )
 
+class WeatherForecastInput(BaseModel):
+    """The agent-facing shape of a forecast request.
+
+    Separate from `WeatherRequest` for one reason: the field is called `city`.
+    Twice the prose form of this rule was ignored -- "going to Italy tomorrow"
+    called the tool 5/5 and forecast "Italia" at 74-101F as though a country
+    had one temperature -- and a rule the model reads is weaker than a
+    parameter it has to fill. `location` invites any place; `city` does not.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    city: str = Field(
+        ...,
+        min_length=1,
+        max_length=120,
+        description=(
+            "One city, town or postal code -- Cancun, Napa CA, 94558. Never a "
+            "country, region or coastline: they have no single weather, so ask "
+            "the shopper which city instead of calling."
+        ),
+    )
+    date: CalendarDate | None = Field(
+        default=None, description="One exact ISO date, resolved against TODAY."
+    )
+    start_date: CalendarDate | None = Field(
+        default=None, description="Inclusive ISO range start; use with end_date."
+    )
+    end_date: CalendarDate | None = Field(
+        default=None, description="Inclusive ISO range end; use with start_date."
+    )
+
+
 def weather_call_needs_a_date(
     date: Any, start_date: Any, end_date: Any
 ) -> bool:
@@ -453,6 +488,11 @@ def _format_weather_result(result: Any) -> str:
         "supports what the conditions will be, and nothing about any product. "
         "It never makes an item warm, waterproof or suitable -- say what the "
         "weather is, then reason about the outfit as styling judgement.",
+        "STILL_SHOW_THE_CLOTHES: a forecast is not an answer on its own. "
+        "Search and show real pieces in the same reply. Live, a forecast turn "
+        "returned weather and generic advice with nothing to buy, three times "
+        "out of three -- a shop that talked about the weather and forgot to "
+        "sell anything.",
         f"PLACE_RESOLVED_BY_PROVIDER: {getattr(result, 'resolved_location', '')}",
     ]
     for day in getattr(result, "days", []) or []:
@@ -467,7 +507,11 @@ def _format_weather_result(result: Any) -> str:
         lines.append("  " + "; ".join(parts))
     lines.append(
         "SAY_WHICH_PLACE: name the place the provider resolved, so a shopper "
-        "who meant a different one can correct you."
+        "who meant a different one can correct you. If what came back is "
+        "broader than a town -- a country or a region, like Italia or "
+        "Toscana -- then these numbers describe that whole area and nowhere "
+        "in particular: say so plainly, and ask which city they will be in "
+        "before dressing them for the weather."
     )
     # The provider's own label and link travel with the data, so the terms are
     # met by whatever provider answered rather than by a constant here.

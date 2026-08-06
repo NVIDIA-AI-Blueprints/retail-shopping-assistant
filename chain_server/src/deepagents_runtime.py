@@ -43,6 +43,7 @@ from .response_format import (
     _format_weather_result,
     WEATHER_BUDGET_EXHAUSTED,
     WEATHER_NO_DATE,
+    WeatherForecastInput as _WeatherForecastInput,
     weather_call_needs_a_date,
     claim_weather_call,
     _format_wearer_audience,
@@ -1352,9 +1353,9 @@ class DeepAgentsRuntime:
             )
             return _format_policy_result(result)
 
-        @tool(args_schema=WeatherRequest, return_direct=False)
+        @tool(args_schema=_WeatherForecastInput, return_direct=False)
         def get_weather_forecast_tool(
-            location: str,
+            city: str,
             date: CalendarDate | None = None,
             start_date: CalendarDate | None = None,
             end_date: CalendarDate | None = None,
@@ -1363,18 +1364,22 @@ class DeepAgentsRuntime:
             for.
 
             Call it, without being asked, when all three hold: the shopper
-            named a place, they named a date or window, and that window is
-            within about 15 days of TODAY. A destination wedding, a trip, an
-            outdoor event. Conditions change what to wear more than anything
-            else about a destination.
+            named a CITY, town or postal code; they named a date or window;
+            and that window is within about 15 days of TODAY. A destination
+            wedding, a trip, an outdoor event. Conditions change what to wear
+            more than anything else about a destination.
+
+            The `city` argument takes a city, town or postal code. A country
+            or region has no single weather, so prefer asking which city over
+            calling with one. If you do call with something broad, the reply
+            must say the numbers cover that whole area and ask which city --
+            never present them as the weather where the shopper will be.
 
             Do not call it otherwise. Specifically:
             - No date. Today is not what they are dressing for; ask instead.
             - A date further out than about 15 days. There is no forecast that
               far ahead, so a call cannot produce anything true.
-            - A place too broad to be true of: a city yes, a country no.
-              "Italy" spans the Alps and Sicily, and precise numbers for
-              somewhere they may not be going are worse than none.
+            - Anything broader than a city, per above. Ask which city.
             - No place, or nothing they are dressing for.
 
             Dress the date they are dressing for, not the one they travel on:
@@ -1395,7 +1400,7 @@ class DeepAgentsRuntime:
             return _format_weather_result(
                 self._weather_client.get_forecast(
                     WeatherRequest(
-                        location=location,
+                        location=city,
                         date=date,
                         start_date=start_date,
                         end_date=end_date,

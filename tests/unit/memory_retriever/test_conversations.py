@@ -165,6 +165,7 @@ def test_start_returns_recent_turns_projection_and_authoritative_cart(
         "recent_turns": [],
         # No wearer has been declared, so nothing is carried forward.
         "wearer_audience": [],
+        "assumed_audience": [],
         "previous_selected_skill_names": [],
         "projection": {
             "version": 0,

@@ -2178,6 +2178,35 @@ def _wearer_audience_events(
     ]
 
 
+def _audience_assumption_events(
+    state: Any,
+    identity: Any,
+) -> list[ConversationEvent]:
+    """Record that this conversation has now been told what was assumed.
+
+    Catalog search wrote it while the turn ran, so this reads the turn's own
+    state rather than re-deriving anything. Nothing is recorded on a turn that
+    disclosed nothing, which leaves an earlier disclosure standing: the shopper
+    is owed the sentence once, not once per search.
+
+    Deliberately not a `wearer_audience_declared`. That event is a fact the
+    model established and may narrow later searches with; this one is only the
+    shop admitting a guess, and must never scope anything.
+    """
+
+    disclosed = [str(value) for value in (getattr(state, "disclosed_audience", None) or [])]
+    if not disclosed:
+        return []
+    return [
+        ConversationEvent(
+            event_key=f"audience-assumption:{identity.request_id}",
+            event_type="audience_assumption_disclosed",
+            source_kind="runtime",
+            payload={"audience": disclosed[:8]},
+        )
+    ]
+
+
 def _product_search_scope(product: Any) -> dict[str, Any] | None:
     """Return the scope that actually retrieved one product, if it carries one.
 

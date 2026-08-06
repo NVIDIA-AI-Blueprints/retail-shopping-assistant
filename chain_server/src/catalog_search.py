@@ -1405,7 +1405,11 @@ def _rendered_evidence(ctx: SearchContext, attempt: _Attempt) -> StepResult:
         str(getattr(ctx.config, "wearer_audience_field", "") or ""),
         confirmed_filters,
         evidence.products,
+        already_disclosed=list(getattr(ctx.state, "assumed_audience", None) or []),
     )
+    for value in evidence.assumed_audience:
+        if value not in ctx.state.disclosed_audience:
+            ctx.state.disclosed_audience.append(value)
     lines = [
         _SEARCH_RESULT_GROUNDING_NOTE,
         _format_search_direction_evidence(evidence.semantic_query),
@@ -1442,6 +1446,8 @@ def _assumed_audience(
     field_name: str,
     confirmed_filters: dict[str, Any],
     products: list[dict[str, Any]],
+    *,
+    already_disclosed: list[str] | None = None,
 ) -> list[str]:
     """Who the returned pieces are for, on a search that never asked.
 
@@ -1455,8 +1461,15 @@ def _assumed_audience(
     that came back are the ones the reply is about, and a catalog with a
     different range therefore discloses a different audience without a code
     change.
+
+    A conversation already told stays told. The trigger is true on nearly every
+    turn, so without this three consecutive replies opened "assuming you're
+    looking for women's clothes" -- which stops being a disclosure and becomes
+    a tic the shopper has to read past.
     """
 
+    if already_disclosed:
+        return []
     if not field_name or field_name in (confirmed_filters or {}):
         return []
     values: list[str] = []

@@ -32,6 +32,7 @@ EventType = Literal[
     "preference_superseded",
     "catalog_scope_no_match",
     "wearer_audience_declared",
+    "audience_assumption_disclosed",
 ]
 
 _DEFAULT_TIMEOUT_SECONDS = 10.0
@@ -131,6 +132,7 @@ class TurnStartResult(_MemoryModel):
     #: The audience most recently declared for who is being shopped for,
     #: carried forward so a wearer named one turn ago still has standing.
     wearer_audience: list[str] = Field(default_factory=list, max_length=8)
+    assumed_audience: list[str] = Field(default_factory=list, max_length=8)
     recent_turns: list[RecentConversationTurn] = Field(
         default_factory=list,
         max_length=100,

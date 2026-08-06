@@ -44,6 +44,7 @@ from .response_format import (
 from .turn_support import (
     _detail_fields_already_held,
     _search_catalog_scopes_input_model,
+    _audience_assumption_events,
     _wearer_audience_events,
     AddCartItemsToolItemInput,
     RequestIdentity,
@@ -541,6 +542,8 @@ class DeepAgentsRuntime:
         state.shopper_profile_id = identity.shopper_profile_id
         state.shopper_context = None
         state.wearer_audience = []
+        state.assumed_audience = []
+        state.disclosed_audience = []
         turn = self._start_conversation_turn(state, identity)
         if turn is not None and turn.replayed:
             await self._delete_turn_checkpoint(identity)
@@ -2297,6 +2300,7 @@ Rules:
         )
         state.shopper_context = turn.shopper_context
         state.wearer_audience = list(turn.wearer_audience)
+        state.assumed_audience = list(turn.assumed_audience)
         state.historical_product_sets = [
             entry
             for entry in (turn.projection.product_reference_index or [])
@@ -2374,12 +2378,15 @@ Rules:
                 assistant_text=state.response,
                 status=final_status,
                 termination_reason=reason,
-                events=_wearer_audience_events(
-                    state,
-                    identity,
-                    field_name=getattr(
-                        self.config, "wearer_audience_field", ""
-                    ),
+                events=(
+                    _wearer_audience_events(
+                        state,
+                        identity,
+                        field_name=getattr(
+                            self.config, "wearer_audience_field", ""
+                        ),
+                    )
+                    + _audience_assumption_events(state, identity)
                 ),
                 output=output,
             )

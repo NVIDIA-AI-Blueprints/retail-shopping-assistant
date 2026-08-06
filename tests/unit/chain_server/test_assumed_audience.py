@@ -33,6 +33,7 @@ from chain_server.src.tool_evidence import EVIDENCE_KEY
 from chain_server.src.turn_scope import TurnScope
 from chain_server.src.turn_support import (
     _assumed_audience_line,
+    _audience_assumption_events,
     _customer_safe_search_evidence,
     _search_catalog_tool_input_model,
 )
@@ -91,7 +92,7 @@ def _capabilities() -> CatalogCapabilities:
     )
 
 
-def _context(query: str) -> SearchContext:
+def _context(query: str, *, already_disclosed: list[str] | None = None) -> SearchContext:
     capabilities = _capabilities()
     model = _search_catalog_tool_input_model(capabilities)
     return SearchContext(
@@ -103,7 +104,11 @@ def _context(query: str) -> SearchContext:
             catalog_search_timeout_seconds=5,
             wearer_audience_field=AUDIENCE_FIELD,
         ),
-        state=State(user_id=1, query=query),
+        state=State(
+            user_id=1,
+            query=query,
+            assumed_audience=list(already_disclosed or []),
+        ),
         scope=TurnScope(),
         capabilities=capabilities,
         search_input_model=model,
@@ -275,3 +280,63 @@ def test_the_disclosure_is_an_assumption_about_the_shopper() -> None:
     # filter adult all-genders, and that search returned zero results".
     assert "never a catalog label" in line
     assert "pieces anyone can wear" in line
+
+
+def test_a_conversation_already_told_is_not_told_again(
+    retrieval: dict[str, Any],
+) -> None:
+    """Three live replies in one conversation all opened with the assumption.
+
+    "I need a work outfit", then "something in navy instead", then "what shoes
+    would go with that" -- every one of them began "Assuming you're looking for
+    women's ...". The trigger is true on nearly every turn, so a disclosure
+    that does not remember having been made turns into a verbal tic.
+    """
+
+    ctx = _context("show me something in navy instead", already_disclosed=["womens"])
+
+    payload = _evidence(search_catalog(ctx, [_role("blouses", ["blouses"])]))
+
+    assert payload["assumed_audience"] == []
+    assert "ASSUMED_AUDIENCE" not in _customer_safe_search_evidence(payload)
+
+
+def test_the_turn_that_discloses_records_it_for_the_next_one(
+    retrieval: dict[str, Any],
+) -> None:
+    """Suppression is only honest if the first turn writes down what it said."""
+
+    ctx = _context("a work casual outfit")
+
+    search_catalog(ctx, [_role("work casual outfit", ["blouses", "skirts"])])
+
+    assert ctx.state.disclosed_audience == ["womens"]
+    events = _audience_assumption_events(
+        ctx.state, SimpleNamespace(request_id="req-1")
+    )
+    assert [event.event_type for event in events] == [
+        "audience_assumption_disclosed"
+    ]
+    assert events[0].payload == {"audience": ["womens"]}
+
+
+def test_a_turn_that_disclosed_nothing_records_nothing(
+    retrieval: dict[str, Any],
+) -> None:
+    """Silence must leave an earlier disclosure standing, not overwrite it.
+
+    Recording an empty audience every quiet turn would clear the memory and
+    bring the sentence straight back on the turn after.
+    """
+
+    ctx = _context("show me navy", already_disclosed=["womens"])
+
+    search_catalog(ctx, [_role("blouses", ["blouses"])])
+
+    assert ctx.state.disclosed_audience == []
+    assert (
+        _audience_assumption_events(
+            ctx.state, SimpleNamespace(request_id="req-2")
+        )
+        == []
+    )

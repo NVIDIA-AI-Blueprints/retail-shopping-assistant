@@ -104,6 +104,7 @@ EventType = Literal[
     "preference_superseded",
     "catalog_scope_no_match",
     "wearer_audience_declared",
+    "audience_assumption_disclosed",
 ]
 
 
@@ -223,15 +224,8 @@ def _recent_turns_limit() -> int:
     return min(MAX_RECENT_TURNS_LIMIT, max(1, configured))
 
 
-def _latest_wearer_audience(db, conversation_id: str) -> list[str]:
-    """Return the audience most recently declared for who is being shopped for.
-
-    Dialogue carries who a shopper named, but by contract it establishes intent
-    rather than fact, so a wearer stated one turn ago has no standing on the
-    next. This is the same fact recorded as data: the newest declaration wins,
-    and a turn that simply does not mention a wearer leaves it alone -- silence
-    is how the model forgets, not how a shopper changes their mind.
-    """
+def _latest_audience(db, conversation_id: str, event_type: str) -> list[str]:
+    """Return the audience carried by the newest event of one type."""
 
     row = (
         db.query(ConversationEvent)
@@ -239,7 +233,7 @@ def _latest_wearer_audience(db, conversation_id: str) -> list[str]:
         .filter(
             ConversationTurn.conversation_id == conversation_id,
             ConversationTurn.status == "completed",
-            ConversationEvent.event_type == "wearer_audience_declared",
+            ConversationEvent.event_type == event_type,
         )
         .order_by(
             ConversationTurn.sequence.desc(),
@@ -257,6 +251,32 @@ def _latest_wearer_audience(db, conversation_id: str) -> list[str]:
     if not isinstance(values, list):
         return []
     return [str(value) for value in values if isinstance(value, str)][:8]
+
+
+def _latest_wearer_audience(db, conversation_id: str) -> list[str]:
+    """Return the audience most recently declared for who is being shopped for.
+
+    Dialogue carries who a shopper named, but by contract it establishes intent
+    rather than fact, so a wearer stated one turn ago has no standing on the
+    next. This is the same fact recorded as data: the newest declaration wins,
+    and a turn that simply does not mention a wearer leaves it alone -- silence
+    is how the model forgets, not how a shopper changes their mind.
+    """
+
+    return _latest_audience(db, conversation_id, "wearer_audience_declared")
+
+
+def _latest_assumed_audience(db, conversation_id: str) -> list[str]:
+    """Return an audience this conversation already owned up to assuming.
+
+    Unlike a declaration, this is not a fact about the shopper and never
+    narrows a search. It exists so the shop states its assumption once. A
+    conversation that has already been told does not need telling again, and
+    three consecutive replies opening "assuming you're looking for women's
+    clothes" is a tic rather than a disclosure.
+    """
+
+    return _latest_audience(db, conversation_id, "audience_assumption_disclosed")
 
 
 def _recent_turns(db, conversation_id: str) -> list[dict[str, Any]]:
@@ -353,6 +373,7 @@ def _start_response(
         "status": turn.status,
         "recent_turns": _recent_turns(db, turn.conversation_id),
         "wearer_audience": _latest_wearer_audience(db, turn.conversation_id),
+        "assumed_audience": _latest_assumed_audience(db, turn.conversation_id),
         "previous_selected_skill_names": _previous_selected_skill_names(db, turn),
         "projection": _projection_dict(projection),
         "cart": _cart_for_user(db, turn.cart_user_id),

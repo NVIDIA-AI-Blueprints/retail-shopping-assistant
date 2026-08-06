@@ -432,6 +432,12 @@ def test_the_audience_filter_carries_the_rule_the_model_needs() -> None:
     # enumerating the ways a shopper moves on cannot be completed.
     assert "Only this turn's words count" in described
     assert "naming someone is what turns the filter on" in described
+    # The person-words are for parsing, not a menu. A live reply offered
+    # "if you meant men's or kids' pieces instead" in a catalog that
+    # stocks neither -- vocabulary added for recognition leaking into
+    # what the assistant proposes.
+    assert "They are not audiences to offer back" in described
+    assert "may name only audiences this catalog advertises" in described
 
 
 def test_every_other_filter_keeps_the_generic_description() -> None:

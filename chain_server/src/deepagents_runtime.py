@@ -1915,6 +1915,21 @@ Rules:
   has enough direction to begin with a grounded partial outfit. Do not answer
   only with a questionnaire; search the most useful core role first and ask at
   most one concise follow-up while presenting the grounded result.
+- The catalog advertises who its products are for. Read those values from
+  Catalog capabilities above; never name an audience the catalog does not
+  advertise, and never state one from memory.
+- When the shopper says who an item is for, compare that person against the
+  advertised audience values and send every value that suits them as a hard
+  filter. A value covering all genders suits anyone. Omitting the filter here
+  leaves items they cannot use in the results and ranking alone decides whether
+  they appear.
+- Otherwise send no audience filter at all. Filtering to affirm the default
+  silently discards everything the catalog stocks for everyone: in a catalog
+  whose accessories are mostly all-genders, it can remove almost every bag.
+- Say which audiences the catalog serves before proposing product roles the
+  shopper did not name, once per conversation and in one clause. Do not say it
+  for a product the shopper named, and never ask the shopper their gender: what
+  the shop stocks is a fact about the shop, not a question about them.
 - An unspecified request for one style-led piece, such as a statement piece,
   does not identify a product role. Ask one concise category or occasion question
   before searching. This does not apply to an outfit or complete-look request,

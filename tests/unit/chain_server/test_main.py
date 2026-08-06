@@ -8340,3 +8340,54 @@ class TestGroundingEditorBudgetIsReserved:
 
         field = ChainServerConfig.model_fields["grounding_editor_reserve_seconds"]
         assert field.default >= 12.5
+
+
+
+class TestAudienceAwareSearch:
+    """Who the catalog is for is read from capabilities, never from memory."""
+
+    def test_prompt_never_names_an_audience_value(self, base_config) -> None:
+        """A hardcoded audience is a lie waiting for the next catalog upload.
+
+        The values belong to the catalog and reach the model through the
+        capability projection. One written into the prompt would survive a
+        catalog swap and keep being stated confidently after it stopped being
+        true, with no test to catch it -- so this is that test.
+        """
+
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+
+        prompt = runtime._system_prompt(CatalogCapabilities(catalog_id="test"))
+
+        for value in ("womens", "adult_all_genders", "menswear", "womenswear"):
+            assert value not in prompt
+
+    def test_audience_rules_state_both_the_exclusion_and_the_default(
+        self,
+        base_config,
+    ) -> None:
+        """Filtering to affirm the default discards what suits everyone.
+
+        With a womens value and an all-genders value, filtering to womens drops
+        29 of 30 bags -- items that suit the shopper perfectly. The rule has to
+        carry both halves: exclude only what they cannot use, and otherwise send
+        no filter at all.
+        """
+
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+
+        normalized = " ".join(
+            runtime._system_prompt(CatalogCapabilities(catalog_id="test")).split()
+        )
+
+        assert "Read those values from Catalog capabilities" in normalized
+        assert (
+            "never name an audience the catalog does not advertise" in normalized
+        )
+        assert "send every value that suits them as a hard filter" in normalized
+        assert "Otherwise send no audience filter at all" in normalized
+        assert "never ask the shopper their gender" in normalized

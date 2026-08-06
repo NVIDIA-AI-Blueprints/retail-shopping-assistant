@@ -23,6 +23,9 @@ fields:
   price:
     type: number
     uses: [filter, detail]
+  target_audience:
+    type: enum
+    uses: [filter, semantic, detail]
   primary_color:
     type: enum
     uses: [filter, semantic, detail]

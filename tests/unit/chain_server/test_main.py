@@ -3026,6 +3026,7 @@ class TestDeepAgentsRuntimeRefs:
             "view_cart_total_tool",
             "get_store_policy_tool",
             "check_active_promotions_tool",
+            "get_weather_forecast_tool",
             "check_product_availability_tool",
         }
         activation_schema = tools_by_name[
@@ -3120,6 +3121,7 @@ class TestDeepAgentsRuntimeRefs:
             "get_product_details_tool",
             "check_product_availability_tool",
             "check_active_promotions_tool",
+            "get_weather_forecast_tool",
             "resolve_conversation_products_tool",
         }
         assert skill_gate._skill_tool_grants["cart-management"] == {
@@ -3145,6 +3147,7 @@ class TestDeepAgentsRuntimeRefs:
             "get_product_details_tool",
             "check_product_availability_tool",
             "check_active_promotions_tool",
+            "get_weather_forecast_tool",
             "resolve_conversation_products_tool",
         }
         selected = runtime_mod._shopper_skill_registry(
@@ -3389,6 +3392,7 @@ class TestDeepAgentsRuntimeRefs:
             "update_cart_items_tool",
             "get_store_policy_tool",
             "check_active_promotions_tool",
+            "get_weather_forecast_tool",
             "check_product_availability_tool",
         }
         assert "| `load_customer_persona_tool` |" in registry

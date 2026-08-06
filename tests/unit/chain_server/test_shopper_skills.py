@@ -49,6 +49,7 @@ EXPECTED_SKILL_POLICY = {
             "check_product_availability_tool",
             "check_active_promotions_tool",
             "resolve_conversation_products_tool",
+            "get_weather_forecast_tool",
         ],
     },
     "product-discovery": {
@@ -60,6 +61,7 @@ EXPECTED_SKILL_POLICY = {
             "check_product_availability_tool",
             "check_active_promotions_tool",
             "resolve_conversation_products_tool",
+            "get_weather_forecast_tool",
         ],
     },
     "store-policy-answers": {

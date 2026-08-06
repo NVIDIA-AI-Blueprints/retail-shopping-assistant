@@ -69,6 +69,7 @@ SKILL_TOOL_GRANTS = {
     "outfit-styling": frozenset(
         {
             "check_active_promotions_tool",
+            "get_weather_forecast_tool",
             "check_product_availability_tool",
             "get_product_details_tool",
             "resolve_conversation_products_tool",
@@ -78,6 +79,7 @@ SKILL_TOOL_GRANTS = {
     "product-discovery": frozenset(
         {
             "check_active_promotions_tool",
+            "get_weather_forecast_tool",
             "check_product_availability_tool",
             "get_product_details_tool",
             "resolve_conversation_products_tool",

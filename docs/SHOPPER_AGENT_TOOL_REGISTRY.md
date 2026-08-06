@@ -260,6 +260,7 @@ termination reason to `incomplete_agent_response`.
 | `get_store_policy_tool` | `read_only_policy` | Operator-managed static policy file | Registered |
 | `check_product_availability_tool` | `read_only_catalog` | Application availability contract; no live inventory source | Registered |
 | `check_active_promotions_tool` | `read_only_promotions` | Application promotions contract; no live promotions source | Registered |
+| `get_weather_forecast_tool` | `read_only_weather` | Visual Crossing Timeline; returns a typed failure when disabled, unconfigured, or outside the ~15-day forecast horizon | Registered |
 
 ## Risk Classes
 

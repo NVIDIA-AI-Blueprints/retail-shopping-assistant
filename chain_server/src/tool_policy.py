@@ -107,6 +107,16 @@ SHOPPING_TOOL_POLICIES: Mapping[str, ToolPolicy] = MappingProxyType(
             allowed_skills_any_of=frozenset({"store-policy-answers"}),
             risk="read",
         ),
+        # Granted to the styling skills only. A forecast is styling input --
+        # it never establishes a product fact, so nothing else has a use for
+        # it, and a shopper asking about returns should not be able to reach a
+        # paid external service.
+        "get_weather_forecast_tool": ToolPolicy(
+            allowed_skills_any_of=frozenset(
+                {"outfit-styling", "product-discovery"}
+            ),
+            risk="read",
+        ),
     }
 )
 

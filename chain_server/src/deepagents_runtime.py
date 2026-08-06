@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import date as CalendarDate, datetime, timezone
 
 import logging
 
@@ -40,6 +40,9 @@ from .response_format import (
     _format_retrieved_images,
     _format_shopper_context,
     _format_store_date,
+    _format_weather_result,
+    WEATHER_BUDGET_EXHAUSTED,
+    claim_weather_call,
     _format_wearer_audience,
     _format_update_cart_result,
 )
@@ -141,6 +144,7 @@ from .skill_activation import (
     selected_skill_names_for_turn,
 )
 from .turn_scope import TurnScope
+from .weather import WeatherConfig, WeatherRequest, build_weather_client
 from .tool_policy import (
     load_shopper_skill_registry as _shopper_skill_registry,
     validate_registered_tool_names,
@@ -293,6 +297,11 @@ Rules:
   the closest catalog or styling direction, not as complete, suitable, ready,
   or proven for that outcome. Keep any missing functional element explicit
   without inventing a product.
+- A live forecast in TOOL EVIDENCE supports what the weather will be. Keep the
+  provider attribution and its link whenever any of it survives into the reply:
+  the provider's terms require it wherever weather or anything derived from it
+  is shown, so removing it as clutter is not an option available to you. A
+  forecast never confirms a product property.
 - Styling judgement about an occasion is not a product claim, and must be kept
   rather than removed. "A stiletto will sink into grass" reasons from a
   confirmed heel type about the setting; "these are stable on grass" asserts a
@@ -479,6 +488,13 @@ class DeepAgentsRuntime:
         )
         self._conversation_memory = ConversationMemoryClient(config.memory_port)
         self._conversation_products = ConversationProductsClient(config.memory_port)
+        # Fails closed when weather is disabled or unconfigured: every call
+        # returns a typed failure, which the reply degrades into occasion
+        # styling. So an operator who never sets a key sees a shop that styles
+        # without weather, not a shop that breaks.
+        self._weather_client = build_weather_client(
+            getattr(config, "weather", None) or WeatherConfig()
+        )
 
     def catalog_capabilities(self) -> CatalogCapabilities:
         """Return the process-lifecycle catalog capability contract."""
@@ -1334,6 +1350,35 @@ class DeepAgentsRuntime:
             )
             return _format_policy_result(result)
 
+        @tool(args_schema=WeatherRequest, return_direct=False)
+        def get_weather_forecast_tool(
+            location: str,
+            date: CalendarDate | None = None,
+            start_date: CalendarDate | None = None,
+            end_date: CalendarDate | None = None,
+        ) -> str:
+            """Live daily forecast for one place the shopper named. Resolve any
+            relative date against TODAY before calling: no date for today, one
+            exact ISO date, or a complete inclusive ISO start/end range. Never
+            invent a place and never send a relative date. Forecasts reach
+            about 15 days; beyond that, or if the place cannot be resolved,
+            this returns a failure -- say so plainly and style the occasion
+            instead of guessing the weather.
+            """
+
+            if not claim_weather_call(scope):
+                return WEATHER_BUDGET_EXHAUSTED
+            return _format_weather_result(
+                self._weather_client.get_forecast(
+                    WeatherRequest(
+                        location=location,
+                        date=date,
+                        start_date=start_date,
+                        end_date=end_date,
+                    )
+                )
+            )
+
         @tool(args_schema=_CheckAvailabilityInput, return_direct=False)
         def check_product_availability_tool(items) -> str:
             """Check whether products are available or in stock. Use ONLY when
@@ -1417,6 +1462,7 @@ class DeepAgentsRuntime:
             get_store_policy_tool,
             check_product_availability_tool,
             check_active_promotions_tool,
+            get_weather_forecast_tool,
         ]
         validate_registered_tool_names(
             {

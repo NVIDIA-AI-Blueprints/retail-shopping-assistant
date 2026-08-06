@@ -382,6 +382,83 @@ def _format_cart_total(cart: Cart) -> str:
     return "\n".join(lines + [total])
 
 
+#: One event, one date: a turn never needs many forecasts, and each is a paid
+#: external call.
+WEATHER_CALLS_PER_TURN = 2
+
+WEATHER_BUDGET_EXHAUSTED = (
+    "WEATHER_UNAVAILABLE: this turn has already looked up the forecast it is "
+    "allowed to. Use what you have and style the occasion; do not guess the "
+    "weather."
+)
+
+def claim_weather_call(scope: Any) -> bool:
+    """Take one of this turn's forecast calls, or report that none are left.
+
+    Extracted from the tool closure so the budget can be tested. It could not
+    be before, and deleting the check entirely left all 1081 tests passing --
+    a paid external call with no enforced ceiling and nothing to notice.
+    """
+
+    with scope.weather_lock:
+        if scope.weather_calls >= WEATHER_CALLS_PER_TURN:
+            return False
+        scope.weather_calls += 1
+        return True
+
+
+def _format_weather_result(result: Any) -> str:
+    """Render a forecast, or an honest failure, as evidence for the reply.
+
+    Failures are the common case, not the edge: most event shopping happens
+    more than fifteen days ahead, and the horizon is fifteen days. So every
+    failure says the same thing -- say plainly that the forecast is not
+    available, then style the occasion -- because a turn that cannot see the
+    weather is still a turn that can dress someone.
+    """
+
+    if not getattr(result, "ok", False):
+        return (
+            "WEATHER_UNAVAILABLE: "
+            + str(getattr(result, "message", "No forecast is available."))
+            + " Say that plainly in your own words, do not repeat this code, "
+            "and do not guess or infer the weather from the date, the place "
+            "or the season. Style the occasion instead, and say what the "
+            "shopper will need that this shop does not stock."
+        )
+    lines = [
+        "WEATHER_EVIDENCE: a live forecast for the place and dates below. It "
+        "supports what the conditions will be, and nothing about any product. "
+        "It never makes an item warm, waterproof or suitable -- say what the "
+        "weather is, then reason about the outfit as styling judgement.",
+        f"PLACE_RESOLVED_BY_PROVIDER: {getattr(result, 'resolved_location', '')}",
+    ]
+    for day in getattr(result, "days", []) or []:
+        parts = [f"{day.date.isoformat()}: {day.condition}"]
+        if day.temperature_low_f is not None and day.temperature_high_f is not None:
+            parts.append(
+                f"{day.temperature_low_f:.0f}-{day.temperature_high_f:.0f}F"
+            )
+        parts.append(f"precipitation {day.precipitation_probability_pct:.0f}%")
+        if day.precipitation_types:
+            parts.append("as " + ", ".join(day.precipitation_types))
+        lines.append("  " + "; ".join(parts))
+    lines.append(
+        "SAY_WHICH_PLACE: name the place the provider resolved, so a shopper "
+        "who meant a different one can correct you."
+    )
+    # The provider's own label and link travel with the data, so the terms are
+    # met by whatever provider answered rather than by a constant here.
+    attribution = getattr(result, "attribution", None)
+    if attribution is not None:
+        lines.append(
+            f"REQUIRED_ATTRIBUTION: include \"{attribution.label}\" and the "
+            f"link {attribution.url} wherever you use this. A forecast is an "
+            "estimate, not a guarantee, and never a safety warning."
+        )
+    return "\n".join(lines)
+
+
 def _format_store_date(now: datetime | None = None) -> str:
     """Give the turn a date, because the model does not reliably have one.
 

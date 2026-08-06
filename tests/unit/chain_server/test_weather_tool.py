@@ -74,19 +74,35 @@ def test_tool_validation_returns_only_the_sanitized_typed_failure() -> None:
     assert "next week" not in result
 
 
-def test_weather_tool_remains_absent_from_every_serving_registration_surface() -> None:
-    assert "get_weather_forecast_tool" not in SHOPPING_TOOL_POLICIES
+def test_weather_tool_is_registered_on_every_serving_surface() -> None:
+    """The inverse of the guard this replaces.
+
+    The tool was built complete and deliberately unregistered, with this test
+    holding it dormant across policy, runtime and every skill. Activation has
+    to happen on all of those surfaces at once -- the runtime validates that
+    registered tool names exactly equal the policy, and skill frontmatter must
+    match it -- so the check is kept and turned around rather than deleted.
+    """
+
+    assert "get_weather_forecast_tool" in SHOPPING_TOOL_POLICIES
 
     runtime = (REPO_ROOT / "chain_server/src/deepagents_runtime.py").read_text()
     policy = (REPO_ROOT / "chain_server/src/tool_policy.py").read_text()
-    skill_files = list(
-        (REPO_ROOT / "chain_server/skills/shopper").glob("*/SKILL.md")
-    )
 
-    assert "get_weather_forecast_tool" not in runtime
-    assert "get_weather_forecast_tool" not in policy
-    assert skill_files
-    assert all(
-        "get_weather_forecast_tool" not in path.read_text()
-        for path in skill_files
-    )
+    assert "get_weather_forecast_tool" in runtime
+    assert "get_weather_forecast_tool" in policy
+
+
+def test_only_the_styling_skills_may_reach_a_paid_external_service() -> None:
+    """A forecast is styling input and establishes no product fact, so nothing
+    else has a use for it. A shopper asking about returns must not be able to
+    spend a provider call."""
+
+    granted = {
+        path.parent.name
+        for path in (REPO_ROOT / "chain_server/skills/shopper").glob("*/SKILL.md")
+        if "get_weather_forecast_tool" in path.read_text()
+    }
+
+    assert granted == {"outfit-styling", "product-discovery"}
+    assert SHOPPING_TOOL_POLICIES["get_weather_forecast_tool"].risk == "read"

@@ -246,12 +246,18 @@ def test_the_composer_is_told_the_role_was_proposed(
     assert relation["requested_product_type"] == "top"
     assert "did not ask for top" in line
     assert "proposed by the assistant" in line
-    # Naming the range alone is an inventory note. It lists what is on the
+    # Naming the range alone is an inventory note: it lists what is on the
     # shelves and still hands the shopper an outfit built on an assumption
-    # nobody stated, which is what a live guest turn actually did.
-    assert "who the shop's range is for" in line
-    assert "assumed the pieces are for the shopper" in line
-    assert "Never ask who they are" in line
+    # nobody stated, which is what a live guest turn actually did. What the
+    # shopper needs is the assumption itself, in their own words. Two live
+    # replies missed it in opposite directions -- "I'm currently seeing
+    # women's dress options" described one search, and "this is a
+    # workwear-friendly shop" described the style and dropped the audience.
+    assert "assumed the shopper is looking for" in line
+    assert "assuming you're looking for" in line
+    assert "not a note about the shop's style" in line
+    assert "not a question about who they are" in line
+    assert "invite them to correct it" in line
     # The shopper stands in a shop, not in front of a query planner. A live
     # reply read "I tried the closest available search in apparel with the
     # filter adult all-genders, and that search returned zero results" --

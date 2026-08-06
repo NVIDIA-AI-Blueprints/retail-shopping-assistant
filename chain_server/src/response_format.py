@@ -421,10 +421,15 @@ def _format_weather_result(result: Any) -> str:
         return (
             "WEATHER_UNAVAILABLE: "
             + str(getattr(result, "message", "No forecast is available."))
-            + " Say that plainly in your own words, do not repeat this code, "
-            "and do not guess or infer the weather from the date, the place "
-            "or the season. Style the occasion instead, and say what the "
-            "shopper will need that this shop does not stock."
+            + " Do not open the reply with this and do not apologise for it. "
+            "The shopper asked to be dressed, not for a forecast, and a reply "
+            "that leads with a missing capability answers a question nobody "
+            "asked. Mention it in one short clause only if they asked about "
+            "the weather or the answer turns on it, and never repeat this "
+            "code. Otherwise say nothing about it and style the occasion, "
+            "including what the shopper will need that this shop does not "
+            "stock. Never guess or infer the weather from the date, the place "
+            "or the season."
         )
     lines = [
         "WEATHER_EVIDENCE: a live forecast for the place and dates below. It "

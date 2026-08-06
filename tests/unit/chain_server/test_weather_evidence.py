@@ -119,10 +119,19 @@ def test_every_failure_degrades_to_styling_the_occasion() -> None:
         evidence = _format_weather_result(weather_failure(code))
 
         assert evidence.startswith("WEATHER_UNAVAILABLE")
-        assert "Style the occasion instead" in evidence
-        assert "do not guess or infer the weather" in evidence
+        assert "style the occasion" in evidence
+        assert "Never guess or infer the weather" in evidence
+        # Weather ships disabled, so this is the ordinary path, and 2 of 5
+        # live replies opened by apologising for a forecast the shopper had
+        # not asked for. Answering with what you cannot do is its own quality
+        # failure, separate from guessing.
+        assert "Do not open the reply with this" in evidence
+        assert "do not apologise for it" in evidence
+        assert "answers a question nobody" in evidence
         # The shopper hears a sentence, not an error code.
-        assert "do not repeat this code" in evidence
+        assert "never repeat this\n            code" in evidence or (
+            "never repeat this " in evidence and "code" in evidence
+        )
         # And the gap is still named: losing the forecast must not also lose
         # the honest "you will want a coat we don't stock".
         assert "does not stock" in evidence

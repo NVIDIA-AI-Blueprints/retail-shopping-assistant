@@ -171,6 +171,10 @@ class TurnFinalizeRequest(_MemoryModel):
     output: TurnReplayOutput | None = None
 
 
+#: Must match the memory service's own bound on `events` per finalize.
+MAX_FINALIZE_EVENTS = 128
+
+
 class TurnFinalizeResult(_MemoryModel):
     """Durable completion receipt for one conversation turn."""
 
@@ -184,7 +188,13 @@ class TurnFinalizeResult(_MemoryModel):
     #: Event types the memory service did not recognise and did not store.
     #: Normally empty. Non-empty means either a genuine typo or a peer running
     #: an older build, and either way the turn itself finalized.
-    dropped_event_types: list[str] = Field(default_factory=list, max_length=32)
+    #: Bounded by the events a finalize may carry, not by a number picked
+    #: here: a smaller cap would reject a legitimate receipt, and this
+    #: field exists precisely so a receipt is never rejected.
+    dropped_event_types: list[str] = Field(
+        default_factory=list,
+        max_length=MAX_FINALIZE_EVENTS,
+    )
 
 
 class ConversationMemoryError(RuntimeError):

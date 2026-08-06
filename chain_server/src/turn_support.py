@@ -1239,7 +1239,10 @@ _WEARER_AUDIENCE_FILTER_DESCRIPTION = (
     "to mean unspecified, which would discard everything stocked for one "
     "audience. If nothing advertised suits the named person, such as a child "
     "in an adult-only catalog, search for them anyway and let it return "
-    "nothing; never substitute what does not suit them."
+    "nothing; never substitute what does not suit them. A shopper asking for "
+    "themselves has named nobody: \"now something for me\" ends any audience "
+    "carried from an earlier turn and takes no filter of its own, because "
+    "nothing establishes the shopper's own audience."
 )
 
 

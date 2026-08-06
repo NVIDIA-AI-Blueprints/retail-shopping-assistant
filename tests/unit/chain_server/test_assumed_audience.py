@@ -427,6 +427,9 @@ def test_the_audience_filter_carries_the_rule_the_model_needs() -> None:
     assert "When nobody is named, omit this filter entirely" in described
     # A child in an adult catalog gets nothing, not adult substitutes.
     assert "never substitute what does not suit them" in described
+    # Reinforces the carried-audience rule in the channel that measured
+    # strongest: the SHOPPING FOR block alone fixed 4/5 of the leak.
+    assert "A shopper asking for themselves has named nobody" in described
 
 
 def test_every_other_filter_keeps_the_generic_description() -> None:
@@ -450,3 +453,48 @@ def test_a_catalog_with_no_configured_audience_field_is_untouched() -> None:
     assert model.model_fields[AUDIENCE_FIELD].description == (
         f"Advertised hard filter '{AUDIENCE_FIELD}'."
     )
+
+
+def test_the_dropped_event_cap_matches_what_a_finalize_can_carry() -> None:
+    """A receipt must never be rejected by the field that exists to prevent it.
+
+    The cap was written as 32 while the memory service accepts up to 128 events
+    and can therefore report up to 128 dropped types. Exceeding a pydantic
+    max_length raises rather than truncates, chain-server reads that as a
+    failed finalize, and the turn stays `started` -- the exact dead-conversation
+    bug the dropped-event mechanism was added to remove, reachable through it.
+    """
+
+    from chain_server.src.conversation_memory import (
+        MAX_FINALIZE_EVENTS,
+        TurnFinalizeResult,
+    )
+
+    # Read the other side's bound rather than restating it. A test that used
+    # MAX_FINALIZE_EVENTS for both the cap and the sample passes for any value
+    # and proves nothing; this one fails if either service moves.
+    from memory_retriever.src.conversations import TurnFinalizeRequest
+
+    server_bound = next(
+        rule.max_length
+        for rule in TurnFinalizeRequest.model_fields["events"].metadata
+        if getattr(rule, "max_length", None) is not None
+    )
+    assert MAX_FINALIZE_EVENTS == server_bound
+
+    receipt = TurnFinalizeResult.model_validate(
+        {
+            "turn_id": "t1",
+            "attempt_id": "a1",
+            "sequence": 1,
+            "replayed": False,
+            "status": "completed",
+            "assistant_text": "ok",
+            "termination_reason": None,
+            "dropped_event_types": [
+                f"unknown_{index}" for index in range(MAX_FINALIZE_EVENTS)
+            ],
+        }
+    )
+
+    assert len(receipt.dropped_event_types) == MAX_FINALIZE_EVENTS

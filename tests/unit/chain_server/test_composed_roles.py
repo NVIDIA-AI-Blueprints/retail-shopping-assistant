@@ -602,3 +602,28 @@ def test_the_carried_wearer_is_rendered_with_the_current_turn_winning() -> None:
     assert "adult_all_genders" in block
     assert "the current turn wins" in block
     assert _format_wearer_audience([]) == ""
+
+
+def test_a_shopper_asking_for_themselves_ends_the_carried_audience() -> None:
+    """Retention must not outlive the person it was about.
+
+    Live: "looking for shades for hubby" scoped to adult_all_genders, and the
+    next turn -- "now something for me .. do you have some embroidered skirts"
+    -- kept that scope. Skirts are all womens, so it found nothing and offered
+    to "check again in women's skirts", proposing the correction it should have
+    made itself.
+
+    The block already said to follow the shopper when they say who an item is
+    for. "For me" is exactly that, but it names no audience value, so it never
+    read as a redirect. Being asked for is not a licence to guess the shopper's
+    own audience, so the answer is to stop filtering, not to switch values.
+    """
+
+    from chain_server.src.response_format import _format_wearer_audience
+
+    block = _format_wearer_audience(["adult_all_genders"])
+
+    assert "now something for me" in block
+    assert "Stop filtering by audience altogether" in block
+    # Not "switch to the shopper's audience": nothing establishes it.
+    assert "guessing it is forbidden" in block

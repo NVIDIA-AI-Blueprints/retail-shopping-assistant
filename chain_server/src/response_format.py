@@ -415,6 +415,12 @@ def _format_wearer_audience(audience: list[str] | None) -> str:
         "Keep filtering to this audience while it still applies. If the shopper "
         "says who an item is for, follow them instead. Say once that you are "
         "still shopping for the same person, so they can redirect you.\n"
+        "A shopper asking for themselves -- \"now something for me\", \"for "
+        "myself\", \"I need\" -- has redirected you just as plainly as naming "
+        "another person. Stop filtering by audience altogether for that "
+        "request: nothing establishes the shopper's own audience and guessing "
+        "it is forbidden. Carrying this audience into it hands them an empty "
+        "shelf in a shop full of things for them.\n"
         "END SHOPPING FOR"
     )
 

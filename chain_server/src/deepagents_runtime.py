@@ -44,8 +44,7 @@ from .response_format import (
 from .turn_support import (
     _detail_fields_already_held,
     _search_catalog_scopes_input_model,
-    _audience_assumption_events,
-    _wearer_audience_events,
+    _turn_audience_events,
     AddCartItemsToolItemInput,
     RequestIdentity,
     _add_model_usage,
@@ -2378,15 +2377,12 @@ Rules:
                 assistant_text=state.response,
                 status=final_status,
                 termination_reason=reason,
-                events=(
-                    _wearer_audience_events(
-                        state,
-                        identity,
-                        field_name=getattr(
-                            self.config, "wearer_audience_field", ""
-                        ),
-                    )
-                    + _audience_assumption_events(state, identity)
+                events=_turn_audience_events(
+                    state,
+                    identity,
+                    field_name=getattr(
+                        self.config, "wearer_audience_field", ""
+                    ),
                 ),
                 output=output,
             )

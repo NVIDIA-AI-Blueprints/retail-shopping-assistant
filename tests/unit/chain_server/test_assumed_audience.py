@@ -34,6 +34,7 @@ from chain_server.src.turn_scope import TurnScope
 from chain_server.src.turn_support import (
     _assumed_audience_line,
     _audience_assumption_events,
+    _turn_audience_events,
     _customer_safe_search_evidence,
     _search_catalog_tool_input_model,
 )
@@ -340,3 +341,53 @@ def test_a_turn_that_disclosed_nothing_records_nothing(
         )
         == []
     )
+
+
+def test_a_declaration_outranks_an_assumption_from_the_same_turn(
+    retrieval: dict[str, Any],
+) -> None:
+    """The self-correcting turn must not record the guess it overturned.
+
+    Unscoped search returns womenswear, the evidence says so, the model
+    recognises a husband was named and searches again with the values that
+    suit him. Recording both would leave the conversation carrying an
+    assumption the turn had already corrected.
+    """
+
+    state = SimpleNamespace(
+        disclosed_audience=["womens"],
+        agent_diagnostics={
+            "product_evidence": [
+                {
+                    "search_scope": {
+                        "confirmed_filters": {
+                            AUDIENCE_FIELD: ["adult_all_genders"]
+                        }
+                    }
+                }
+            ]
+        },
+    )
+
+    events = _turn_audience_events(
+        state, SimpleNamespace(request_id="req-3"), field_name=AUDIENCE_FIELD
+    )
+
+    assert [event.event_type for event in events] == ["wearer_audience_declared"]
+    assert events[0].payload == {"audience": ["adult_all_genders"]}
+
+
+def test_a_turn_that_only_assumed_records_the_assumption() -> None:
+    """The other half: no declaration means the assumption is what stands."""
+
+    state = SimpleNamespace(
+        disclosed_audience=["womens"], agent_diagnostics={"product_evidence": []}
+    )
+
+    events = _turn_audience_events(
+        state, SimpleNamespace(request_id="req-4"), field_name=AUDIENCE_FIELD
+    )
+
+    assert [event.event_type for event in events] == [
+        "audience_assumption_disclosed"
+    ]

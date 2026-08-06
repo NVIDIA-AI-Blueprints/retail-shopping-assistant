@@ -2207,6 +2207,27 @@ def _audience_assumption_events(
     ]
 
 
+def _turn_audience_events(
+    state: Any,
+    identity: Any,
+    *,
+    field_name: str,
+) -> list[ConversationEvent]:
+    """Record what this turn settled about who is being shopped for.
+
+    A declaration outranks an assumption made earlier in the same turn. That
+    is the self-correcting case: an unscoped search returns womenswear, the
+    evidence says so, the model recognises the shopper named a husband and
+    searches again with the values that suit him. Recording both would leave
+    the conversation carrying a guess the turn had already overturned.
+    """
+
+    declared = _wearer_audience_events(state, identity, field_name=field_name)
+    if declared:
+        return declared
+    return _audience_assumption_events(state, identity)
+
+
 def _product_search_scope(product: Any) -> dict[str, Any] | None:
     """Return the scope that actually retrieved one product, if it carries one.
 

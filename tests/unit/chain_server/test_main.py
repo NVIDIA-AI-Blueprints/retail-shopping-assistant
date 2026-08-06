@@ -900,6 +900,10 @@ class TestSystemPrompt:
         )
 
         assert "USER QUERY: Show me a dress." in user_message
+        # Wiring, not formatting. The formatter had its own tests and every one
+        # of them passed with the block deleted from the turn entirely.
+        assert "TODAY (store's current date, server-resolved):" in user_message
+        assert "END TODAY" in user_message
         assert "strict_budget_style_mixer" in user_message
         assert "Treats budget and style as equally important" in user_message
         assert (

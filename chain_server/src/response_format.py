@@ -16,6 +16,8 @@ move; the runtime imports these names back, so behaviour is unchanged.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from typing import Any
 import json
 
@@ -378,6 +380,35 @@ def _format_cart_total(cart: Cart) -> str:
     if missing:
         total += f" excluding items without cached prices: {', '.join(missing)}"
     return "\n".join(lines + [total])
+
+
+def _format_store_date(now: datetime | None = None) -> str:
+    """Give the turn a date, because the model does not reliably have one.
+
+    Measured three identical asks: one answered "Today is August 6, 2026",
+    two answered "I don't have access to your local date/time". A date that
+    arrives one turn in three is worse than none, because the shopper gets a
+    different assistant each time.
+
+    Deliberately narrow. A date says when the shop is, and nothing else: not
+    where the shopper is, not the weather, not a season -- August is winter in
+    half the world and irrelevant indoors. Without that clause a date becomes
+    the licence to invent exactly the facts the shopper-context rules forbid.
+    """
+
+    stamp = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    return (
+        "TODAY (store's current date, server-resolved):\n"
+        f"{stamp:%Y-%m-%d}, a {stamp:%A}, UTC\n"
+        "Resolve relative dates the shopper mentions against this -- next "
+        "week, this weekend, in two weeks. Say the calendar dates you worked "
+        "out so they can correct you. The shopper's own date may differ if "
+        "they are far from UTC.\n"
+        "This establishes nothing else. Not the shopper's location, not the "
+        "weather, not a season, and not what anyone wears at this time of "
+        "year.\n"
+        "END TODAY"
+    )
 
 
 def _format_shopper_context(context: ShopperContext | None) -> str:

@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 
 import logging
 
@@ -38,6 +39,7 @@ from .response_format import (
     _format_promotions_result,
     _format_retrieved_images,
     _format_shopper_context,
+    _format_store_date,
     _format_wearer_audience,
     _format_update_cart_result,
 )
@@ -2167,6 +2169,7 @@ Rules:
                 f"CART ID: {identity.cart_id}"
             )
         ]
+        sections.append(_format_store_date())
         shopper_context = _format_shopper_context(state.shopper_context)
         wearer = _format_wearer_audience(state.wearer_audience)
         if shopper_context:

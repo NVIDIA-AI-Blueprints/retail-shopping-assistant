@@ -386,6 +386,27 @@ def _format_cart_total(cart: Cart) -> str:
 #: external call.
 WEATHER_CALLS_PER_TURN = 2
 
+WEATHER_NO_DATE = (
+    "WEATHER_NEEDS_A_DATE: no forecast was fetched, because no date was given "
+    "and today is not what the shopper is dressing for. Ask them, as part of a "
+    "styling question rather than as a request for a parameter, and show a "
+    "grounded starting point in the same reply."
+)
+
+def weather_call_needs_a_date(
+    date: Any, start_date: Any, end_date: Any
+) -> bool:
+    """Whether this call would silently forecast today instead of the event.
+
+    Extracted from the tool closure so it can be tested. Left inside, deleting
+    it entirely kept all 1089 tests passing -- the third time today that a
+    constant was asserted while the enforcement sat somewhere nothing could
+    reach.
+    """
+
+    return date is None and start_date is None and end_date is None
+
+
 WEATHER_BUDGET_EXHAUSTED = (
     "WEATHER_UNAVAILABLE: this turn has already looked up the forecast it is "
     "allowed to. Use what you have and style the occasion; do not guess the "
@@ -418,18 +439,14 @@ def _format_weather_result(result: Any) -> str:
     """
 
     if not getattr(result, "ok", False):
+        # One sentence, because no forecast is the ordinary state rather than
+        # an event. Everything about how to behave without one already lives
+        # in the agent prompt, where it applies whether or not this tool
+        # exists at all.
         return (
             "WEATHER_UNAVAILABLE: "
             + str(getattr(result, "message", "No forecast is available."))
-            + " Do not open the reply with this and do not apologise for it. "
-            "The shopper asked to be dressed, not for a forecast, and a reply "
-            "that leads with a missing capability answers a question nobody "
-            "asked. Mention it in one short clause only if they asked about "
-            "the weather or the answer turns on it, and never repeat this "
-            "code. Otherwise say nothing about it and style the occasion, "
-            "including what the shopper will need that this shop does not "
-            "stock. Never guess or infer the weather from the date, the place "
-            "or the season."
+            + " Do not repeat this code. Style the occasion."
         )
     lines = [
         "WEATHER_EVIDENCE: a live forecast for the place and dates below. It "
@@ -486,9 +503,8 @@ def _format_store_date(now: datetime | None = None) -> str:
         "week, this weekend, in two weeks. Say the calendar dates you worked "
         "out so they can correct you. The shopper's own date may differ if "
         "they are far from UTC.\n"
-        "This establishes nothing else. Not the shopper's location, not the "
-        "weather, not a season, and not what anyone wears at this time of "
-        "year.\n"
+        "This says when the shop is. It does not say where the shopper is, "
+        "and their location, weather and season never follow from it.\n"
         "END TODAY"
     )
 

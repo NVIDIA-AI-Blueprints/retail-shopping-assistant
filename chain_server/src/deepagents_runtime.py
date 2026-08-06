@@ -42,6 +42,8 @@ from .response_format import (
     _format_store_date,
     _format_weather_result,
     WEATHER_BUDGET_EXHAUSTED,
+    WEATHER_NO_DATE,
+    weather_call_needs_a_date,
     claim_weather_call,
     _format_wearer_audience,
     _format_update_cart_result,
@@ -1357,25 +1359,37 @@ class DeepAgentsRuntime:
             start_date: CalendarDate | None = None,
             end_date: CalendarDate | None = None,
         ) -> str:
-            """Live daily forecast for one place the shopper named.
+            """Live daily forecast for one place, for the dates being dressed
+            for.
 
-            Call this without being asked whenever the shopper names a place
-            AND a date or timeframe for something they are dressing for: a
-            destination wedding, a trip, an outdoor event. Conditions change
-            what to wear more than anything else about a destination, and a
-            shopper who says "a wedding in Cancun on August 15" has told you
-            everything the call needs. Do not call it when no place was named,
-            when no occasion or date is attached, or for a question the
-            weather cannot affect.
+            Call it, without being asked, when all three hold: the shopper
+            named a place, they named a date or window, and that window is
+            within about 15 days of TODAY. A destination wedding, a trip, an
+            outdoor event. Conditions change what to wear more than anything
+            else about a destination.
 
-            Resolve any relative date against TODAY before calling: no date
-            for today, one exact ISO date, or a complete inclusive ISO
-            start/end range. Never invent a place and never send a relative
-            date. Forecasts reach about 15 days; beyond that, or if the place
-            cannot be resolved, this returns a failure -- style the occasion
-            instead of guessing the weather.
+            Do not call it otherwise. Specifically:
+            - No date. Today is not what they are dressing for; ask instead.
+            - A date further out than about 15 days. There is no forecast that
+              far ahead, so a call cannot produce anything true.
+            - A place too broad to be true of: a city yes, a country no.
+              "Italy" spans the Alps and Sicily, and precise numbers for
+              somewhere they may not be going are worse than none.
+            - No place, or nothing they are dressing for.
+
+            Dress the date they are dressing for, not the one they travel on:
+            "flying to Rome tomorrow, what do I wear at the weekend" is a
+            forecast for the weekend. Resolve relative dates against TODAY
+            first -- one exact ISO date, or a complete inclusive ISO start/end
+            range -- and never send a relative date or invent a place.
             """
 
+            if weather_call_needs_a_date(date, start_date, end_date):
+                # The library treats a missing date as local today, which is
+                # right for "what is it like there now" and wrong for the only
+                # thing a shopper asks: "a wedding in Cancun" would silently
+                # get today's weather for an event months away. Ask instead.
+                return WEATHER_NO_DATE
             if not claim_weather_call(scope):
                 return WEATHER_BUDGET_EXHAUSTED
             return _format_weather_result(
@@ -1938,6 +1952,20 @@ for a beach, an open toe is cold in November. Say it as a judgement about the
 occasion, never as a property of the item. "A stiletto will sink into grass" is
 judgement and is welcome; "these are stable on grass" is a claim and stays
 forbidden.
+Ask when something material is missing, and ask it as a shopper would. The
+occasion is usually what is missing: brunch, a wedding and errands need
+different answers whatever else is true. The place is worth asking for once the
+answer depends on it -- an outdoor event, a trip, or a question about the
+weather -- but never ask where someone lives as a matter of course. Give the
+styling reason first: "is it on the beach or indoors? sand and a lawn need
+different shoes". Show a grounded starting point in the same reply; never
+answer with only questions.
+If the shopper asks you directly about the weather and you have no forecast,
+say so and answer from what you know, as typical rather than predicted:
+"I don't have a live forecast for Cancun, but August there is usually hot and
+humid." Do not volunteer this when they did not ask, never give a temperature
+or a condition for a specific date without a forecast in TOOL EVIDENCE, and
+never conclude anything about the weather where the shopper is.
 When the occasion needs something this catalog does not stock, say so as advice
 and keep showing what was found: "you'll want a proper coat over this; we don't
 carry outerwear." Never offer the nearest item as though it served the purpose,

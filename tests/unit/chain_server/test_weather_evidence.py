@@ -15,6 +15,8 @@ degrade into styling the occasion, never into failing the turn.
 
 from __future__ import annotations
 
+import pathlib
+
 from datetime import date, datetime, timezone
 
 from chain_server.src.response_format import (
@@ -105,10 +107,15 @@ def test_attribution_travels_with_the_data() -> None:
     assert "never a safety warning" in evidence
 
 
-def test_every_failure_degrades_to_styling_the_occasion() -> None:
+def test_every_failure_says_one_sentence_and_gets_out_of_the_way() -> None:
     """Beyond the horizon, place not found, provider down, weather disabled --
-    all four end the same way, because a turn that cannot see the weather is
-    still a turn that can dress someone."""
+    all four end the same way, and briefly.
+
+    No forecast is the ordinary state, not an event. How to behave without one
+    lives in the agent prompt, where it applies whether or not this tool exists
+    at all; repeating it here is what produced three differently-worded copies
+    of one idea.
+    """
 
     for code in (
         "weather_outside_forecast_horizon",
@@ -119,22 +126,11 @@ def test_every_failure_degrades_to_styling_the_occasion() -> None:
         evidence = _format_weather_result(weather_failure(code))
 
         assert evidence.startswith("WEATHER_UNAVAILABLE")
-        assert "style the occasion" in evidence
-        assert "Never guess or infer the weather" in evidence
-        # Weather ships disabled, so this is the ordinary path, and 2 of 5
-        # live replies opened by apologising for a forecast the shopper had
-        # not asked for. Answering with what you cannot do is its own quality
-        # failure, separate from guessing.
-        assert "Do not open the reply with this" in evidence
-        assert "do not apologise for it" in evidence
-        assert "answers a question nobody" in evidence
+        assert "Style the occasion." in evidence
         # The shopper hears a sentence, not an error code.
-        assert "never repeat this\n            code" in evidence or (
-            "never repeat this " in evidence and "code" in evidence
-        )
-        # And the gap is still named: losing the forecast must not also lose
-        # the honest "you will want a coat we don't stock".
-        assert "does not stock" in evidence
+        assert "Do not repeat this code" in evidence
+        # Short enough that it cannot take over the reply.
+        assert len(evidence.splitlines()) == 1
 
 
 def test_the_turn_has_a_forecast_budget() -> None:
@@ -222,3 +218,139 @@ def test_switching_one_tool_off_does_not_switch_the_guard_off() -> None:
         validate_registered_tool_names(
             set(SHOPPING_TOOL_POLICIES) | {"invented_tool"},
         )
+
+
+def test_a_plainly_out_of_range_date_costs_no_provider_call() -> None:
+    """Out of horizon is the common case, not the edge.
+
+    Most event shopping happens more than fifteen days ahead, so "a wedding in
+    Cancun in November" was the single most-wasted call in the feature: it
+    fetched, was billed, and only then failed the horizon check.
+
+    The authoritative check stays after the response, because only the
+    provider knows the location's local today. This one uses UTC with a day of
+    slack either side, so it can only reject windows no timezone could bring
+    into range.
+    """
+
+    from datetime import timedelta
+
+    from chain_server.src.weather import (
+        VisualCrossingWeatherClient,
+        WeatherConfig,
+        WeatherRequest,
+    )
+
+    calls: list[str] = []
+
+    class _Session:
+        def get(self, url, **kwargs):  # pragma: no cover - must not run
+            calls.append(url)
+            raise AssertionError("a provider call was made for an impossible date")
+
+    now = datetime(2026, 8, 6, 12, tzinfo=timezone.utc)
+    client = VisualCrossingWeatherClient(
+        WeatherConfig(enabled=True),
+        "key",
+        session=_Session(),
+        clock=lambda: now,
+    )
+
+    far_future = (now.date() + timedelta(days=90)).isoformat()
+    outcome = client.get_forecast(
+        WeatherRequest(location="Cancun", date=far_future)
+    )
+
+    assert not outcome.ok
+    assert outcome.code == "weather_outside_forecast_horizon"
+    assert calls == []
+
+
+def test_a_date_inside_the_horizon_still_reaches_the_provider() -> None:
+    """The cheap pre-check must not start rejecting real work."""
+
+    from datetime import timedelta
+
+    from chain_server.src.weather import (
+        VisualCrossingWeatherClient,
+        WeatherConfig,
+        WeatherRequest,
+    )
+
+    reached: list[str] = []
+
+    class _Session:
+        def get(self, url, **kwargs):
+            reached.append(url)
+            raise RuntimeError("stop here; reaching the provider is the assertion")
+
+    now = datetime(2026, 8, 6, 12, tzinfo=timezone.utc)
+    client = VisualCrossingWeatherClient(
+        WeatherConfig(enabled=True),
+        "key",
+        session=_Session(),
+        clock=lambda: now,
+    )
+
+    soon = (now.date() + timedelta(days=5)).isoformat()
+    try:
+        client.get_forecast(WeatherRequest(location="Cancun", date=soon))
+    except RuntimeError:
+        pass
+
+    assert len(reached) == 1
+
+
+def test_no_date_asks_rather_than_forecasting_today() -> None:
+    """"A wedding in Cancun" must not become today's weather.
+
+    The library treats a missing date as local today, which is right for "what
+    is it like there now" and wrong for the only thing a shopper asks. Enforced
+    at the tool boundary rather than in the request model, because the library
+    has other callers and its today-mode is a documented contract.
+    """
+
+    from chain_server.src.response_format import WEATHER_NO_DATE
+
+    assert "no date was given" in WEATHER_NO_DATE
+    assert "today is not what the shopper is dressing for" in WEATHER_NO_DATE
+    # A styling question, not a request for a parameter, and never on its own.
+    assert "rather than as a request for a parameter" in WEATHER_NO_DATE
+    assert "grounded starting point in the same reply" in WEATHER_NO_DATE
+
+
+def test_the_tool_says_when_not_to_call_it() -> None:
+    """A description that says only what a tool does gets called whenever it
+    might vaguely apply. "Wedding in Cancun in November" called it, because
+    nothing said a forecast horizon exists.
+
+    This lives on the tool because the decision point is the call itself.
+    """
+
+    from chain_server.src import deepagents_runtime as runtime_mod
+
+    source = pathlib.Path(runtime_mod.__file__).read_text()
+
+    assert "Do not call it otherwise" in source
+    # The four refusals, each measured or reasoned in the contract.
+    assert "Today is not what they are dressing for" in source
+    assert "further out than about 15 days" in source
+    assert "a city yes, a country no" in source
+    assert "No place, or nothing they are dressing for" in source
+    # Travel date is not the dressing date.
+    assert "not the one they travel on" in source
+
+
+
+def test_the_no_date_guard_is_actually_enforced() -> None:
+    """Not just declared. Deleting the guard from the tool left every test
+    passing, because the message was asserted and the check sat in a closure
+    nothing could reach."""
+
+    from chain_server.src.response_format import weather_call_needs_a_date
+
+    assert weather_call_needs_a_date(None, None, None)
+    assert not weather_call_needs_a_date(date(2026, 8, 15), None, None)
+    assert not weather_call_needs_a_date(
+        None, date(2026, 8, 15), date(2026, 8, 16)
+    )

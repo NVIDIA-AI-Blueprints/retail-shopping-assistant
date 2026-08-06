@@ -366,6 +366,10 @@ class VisualCrossingWeatherClient:
         ):
             return weather_failure("weather_request_invalid")
 
+        obvious_failure = self._obvious_horizon_failure(request)
+        if obvious_failure is not None:
+            return obvious_failure
+
         url = self._request_url(request)
         response: _Response | None = None
         try:
@@ -405,6 +409,30 @@ class VisualCrossingWeatherClient:
             return weather_failure("weather_unavailable")
         finally:
             _close_response(response)
+
+    def _obvious_horizon_failure(
+        self, request: WeatherRequest
+    ) -> WeatherFailure | None:
+        """Reject a plainly out-of-range window before paying for a call.
+
+        The authoritative check stays after the response, because only the
+        provider knows the location's timezone and therefore its local today.
+        This one uses UTC and a day of slack either side, so it can only
+        reject windows no timezone on earth could bring into range. Out of
+        horizon is the common case -- most event shopping happens more than
+        fifteen days out -- so it was the most-wasted call in the feature.
+        """
+
+        window = request.explicit_window()
+        if window is None:
+            return None
+        utc_today = self._clock().astimezone(timezone.utc).date()
+        horizon = self._config.max_forecast_horizon_days
+        if window[1] < utc_today - timedelta(days=1):
+            return weather_failure("weather_outside_forecast_horizon")
+        if window[0] > utc_today + timedelta(days=horizon):
+            return weather_failure("weather_outside_forecast_horizon")
+        return None
 
     def _request_url(self, request: WeatherRequest) -> str:
         suffix: list[str] = [quote(request.location, safe="")]

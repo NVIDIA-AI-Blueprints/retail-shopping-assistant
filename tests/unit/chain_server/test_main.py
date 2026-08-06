@@ -3239,6 +3239,24 @@ class TestDeepAgentsRuntimeRefs:
             captured["system_prompt"]
         )
         assert "never invent a need" in captured["system_prompt"]
+        # Asking is part of styling, so it belongs here rather than on any
+        # tool: it applies whether or not a forecast tool exists.
+        assert "Ask when something material is missing" in (
+            captured["system_prompt"]
+        )
+        assert "never ask where someone lives as a matter of course" in (
+            captured["system_prompt"]
+        )
+        assert "never\nanswer with only questions" in captured["system_prompt"]
+        # No forecast plus a direct question is the one time weather is
+        # spoken about without a tool, and it is typical, never predicted.
+        assert "as typical rather than predicted" in captured["system_prompt"]
+        assert "Do not volunteer this when they did not ask" in (
+            captured["system_prompt"]
+        )
+        assert "never conclude anything about the weather where the shopper is" in (
+            captured["system_prompt"]
+        )
         assert "will stay comfortable all evening" in captured["system_prompt"]
         assert "Rubber sole means" in captured["system_prompt"]
         assert "maximum breathability" in captured["system_prompt"]

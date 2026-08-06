@@ -38,19 +38,22 @@ def test_relative_dates_resolve_against_it_and_are_said_out_loud() -> None:
     assert "Say the calendar dates you worked" in block
 
 
-def test_a_date_establishes_nothing_but_the_date() -> None:
-    """The guard that keeps this from becoming licence to invent.
+def test_a_date_says_nothing_about_where_the_shopper_is() -> None:
+    """The guard that matters, and the freedom that does not threaten it.
 
-    A date implies a season only if you also assume a hemisphere and an
-    outdoor event. August is winter in half the world. Without this clause the
-    date becomes exactly the inference `_SHOPPER_CONTEXT_SYSTEM_RULES` forbids.
+    Knowing the date must never become "so it is cold where you are" -- that
+    is the inference `_SHOPPER_CONTEXT_SYSTEM_RULES` forbids, and August is
+    winter in half the world anyway.
+
+    The date block says only this. What the assistant may say about a place
+    the shopper named lives in the agent prompt, where it applies whether or
+    not a forecast tool exists -- one rule, one channel.
     """
 
     block = _block()
 
-    assert "This establishes nothing else" in block
-    assert "not the weather, not a season" in block
-    assert "what anyone wears at this time of" in block
+    assert "does not say where the shopper is" in block
+    assert "location, weather and season never follow from it" in block
 
 
 def test_the_shoppers_own_date_may_differ() -> None:

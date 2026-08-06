@@ -15,6 +15,7 @@ from typing import Any, Callable, Literal, Mapping, Protocol
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import requests
+from urllib.parse import quote
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -60,14 +61,13 @@ WeatherFailureCode = Literal[
     "weather_response_invalid",
 ]
 
-_ASCII_ZIP_RE = re.compile(r"^[0-9]{5}$", flags=re.ASCII)
 _ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$", flags=re.ASCII)
 _ISO_DATE_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$", flags=re.ASCII)
 _FAILURE_DETAILS: dict[WeatherFailureCode, tuple[str, bool]] = {
     "weather_disabled": ("Weather lookup is disabled.", False),
     "weather_config_invalid": ("Weather configuration is incomplete or invalid.", False),
     "weather_request_invalid": ("The weather request is invalid.", False),
-    "weather_location_not_found": ("The ZIP code could not be resolved.", False),
+    "weather_location_not_found": ("The place could not be resolved.", False),
     "weather_outside_forecast_horizon": (
         "The requested date is outside the live forecast horizon.",
         False,
@@ -154,21 +154,43 @@ class WeatherConfig(BaseModel):
 
 
 class WeatherRequest(BaseModel):
-    """Closed ZIP and date input accepted by the dormant tool."""
+    """Closed place and date input accepted by the tool.
+
+    `location` was a five-digit US ZIP, which rejected "Napa" and "Cancun"
+    before any call and made the tool unusable for the destinations shoppers
+    actually travel to. The provider's Timeline endpoint resolves place strings
+    natively and returns the timezone it resolved, which the forecast-horizon
+    check already depends on, so a place takes exactly the path a ZIP took.
+
+    A ZIP is still a valid place string, which matters: the profile fallback
+    supplies one.
+    """
 
     model_config = ConfigDict(extra="forbid", strict=True)
 
-    zipcode: str
+    location: str
     date: CalendarDate | None = None
     start_date: CalendarDate | None = None
     end_date: CalendarDate | None = None
 
-    @field_validator("zipcode", mode="before")
+    @field_validator("location", mode="before")
     @classmethod
-    def validate_zipcode(cls, value: Any) -> str:
-        if not isinstance(value, str) or not _ASCII_ZIP_RE.fullmatch(value):
-            raise ValueError("zipcode must be exactly five ASCII digits")
-        return value
+    def validate_location(cls, value: Any) -> str:
+        """Accept a place a shopper would say, and nothing that is not one.
+
+        Bounded and single-line so a prose paragraph or an injected newline
+        cannot travel into a provider URL. Resolving what the place *is* stays
+        with the provider; the server never geocodes and never guesses.
+        """
+
+        if not isinstance(value, str):
+            raise ValueError("location must be a place name or postal code")
+        cleaned = " ".join(value.split())
+        if not 1 <= len(cleaned) <= 120:
+            raise ValueError("location must be 1 to 120 characters")
+        if any(ord(character) < 32 for character in cleaned):
+            raise ValueError("location must be a single line")
+        return cleaned
 
     @field_validator("date", "start_date", "end_date", mode="before")
     @classmethod
@@ -385,7 +407,7 @@ class VisualCrossingWeatherClient:
             _close_response(response)
 
     def _request_url(self, request: WeatherRequest) -> str:
-        suffix: list[str] = [request.zipcode]
+        suffix: list[str] = [quote(request.location, safe="")]
         explicit_window = request.explicit_window()
         if explicit_window is None:
             suffix.append("today")

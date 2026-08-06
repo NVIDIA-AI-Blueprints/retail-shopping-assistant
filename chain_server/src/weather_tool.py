@@ -17,13 +17,13 @@ def get_weather_forecast_tool(client: WeatherClient) -> BaseTool:
     """Build the directly testable tool without registering it with an agent."""
 
     def get_weather_forecast(
-        zipcode: str,
+        location: str,
         date: CalendarDate | None = None,
         start_date: CalendarDate | None = None,
         end_date: CalendarDate | None = None,
     ) -> dict[str, Any]:
         request = WeatherRequest(
-            zipcode=zipcode,
+            location=location,
             date=date,
             start_date=start_date,
             end_date=end_date,
@@ -34,10 +34,16 @@ def get_weather_forecast_tool(client: WeatherClient) -> BaseTool:
         func=get_weather_forecast,
         name="get_weather_forecast_tool",
         description=(
-            "Get normalized daily live-forecast evidence for exactly one "
-            "five-digit US ZIP. Supply no date for local today, one exact ISO "
-            "date, or a complete inclusive ISO start/end range. Never supply "
-            "relative dates, prose locations, coordinates, or shopper data."
+            "Live daily forecast for one place. Call it only when the "
+            "shopper named a place, or a saved location was disclosed to "
+            "them. Pass the place in their own words -- \"Cancun\", \"Napa, "
+            "CA\", a postal code -- and resolve any relative date against "
+            "TODAY before calling: supply no date for today, one exact ISO "
+            "date, or a complete inclusive ISO start/end range. Never invent "
+            "a place, never send coordinates or shopper data, and never send "
+            "a relative date. Forecasts reach about 15 days; beyond that this "
+            "returns a failure rather than a guess, and you should style the "
+            "occasion instead."
         ),
         args_schema=WeatherRequest,
         return_direct=False,

@@ -31,7 +31,7 @@ def test_tool_has_the_closed_name_schema_and_direct_result() -> None:
 
     result = tool.invoke(
         {
-            "zipcode": "98101",
+            "location": "98101",
             "start_date": "2026-07-28",
             "end_date": "2026-07-29",
         }
@@ -39,11 +39,11 @@ def test_tool_has_the_closed_name_schema_and_direct_result() -> None:
 
     assert tool.name == "get_weather_forecast_tool"
     assert tool.return_direct is False
-    assert set(tool.args) == {"zipcode", "date", "start_date", "end_date"}
+    assert set(tool.args) == {"location", "date", "start_date", "end_date"}
     assert result["code"] == "weather_disabled"
     assert client.requests == [
         WeatherRequest(
-            zipcode="98101",
+            location="98101",
             start_date="2026-07-28",
             end_date="2026-07-29",
         )
@@ -56,7 +56,7 @@ def test_tool_validation_returns_only_the_sanitized_typed_failure() -> None:
 
     result = tool.invoke(
         {
-            "zipcode": "Seattle 98101",
+            "location": "Seattle 98101",
             "date": "next week",
             "extra": "must not enter the contract",
         }

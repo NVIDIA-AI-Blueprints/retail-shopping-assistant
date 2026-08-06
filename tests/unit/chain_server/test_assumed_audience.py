@@ -1,0 +1,277 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+"""A search nobody scoped by audience still comes back with one; say so.
+
+A catalog that is almost entirely womenswear answers "I need a work outfit"
+with womenswear no matter who asked. The shopper is the only party in the
+exchange who cannot see that nobody chose that, so the reply owes them the
+sentence.
+
+This started life bolted onto the composed-role disclosure, which was wrong in
+a way that took a live turn to expose: a shopper who says "work casual outfit"
+in their own words has named the role, so nothing is composed, so the sentence
+never fired -- on exactly the turn that needed it. The trigger is the search
+not filtering on audience, and nothing else.
+"""
+
+from __future__ import annotations
+
+from types import SimpleNamespace
+from typing import Any
+
+import pytest
+
+from chain_server.src import catalog_search as catalog_search_mod
+from chain_server.src.agenttypes import State
+from chain_server.src.catalog_search import (
+    SearchContext,
+    _assumed_audience,
+    search_catalog,
+)
+from chain_server.src.tool_evidence import EVIDENCE_KEY
+from chain_server.src.turn_scope import TurnScope
+from chain_server.src.turn_support import (
+    _assumed_audience_line,
+    _customer_safe_search_evidence,
+    _search_catalog_tool_input_model,
+)
+from shared.commerce_contracts import (
+    CatalogCapabilities,
+    CatalogFilterCapability,
+    CatalogTaxonomyCapabilities,
+    CatalogTaxonomyCategory,
+    CatalogTaxonomySubcategory,
+    Money,
+    ProductSummary,
+    SearchCatalogResult,
+)
+
+AUDIENCE_FIELD = "target_audience"
+
+
+def _capabilities() -> CatalogCapabilities:
+    return CatalogCapabilities(
+        catalog_id="fashion",
+        retrieval_modes=["text"],
+        filters={
+            "department": CatalogFilterCapability(
+                type="enum",
+                operators=["in"],
+                source_fields=["department"],
+                values=["apparel"],
+            ),
+            "product_type": CatalogFilterCapability(
+                type="enum",
+                operators=["in"],
+                source_fields=["product_type"],
+                values=["blouses", "sweaters", "skirts"],
+            ),
+            AUDIENCE_FIELD: CatalogFilterCapability(
+                type="enum",
+                operators=["in"],
+                source_fields=[AUDIENCE_FIELD],
+                values=["womens", "adult_all_genders"],
+            ),
+        },
+        taxonomy=CatalogTaxonomyCapabilities(
+            category_field="department",
+            subcategory_field="product_type",
+            categories={
+                "apparel": CatalogTaxonomyCategory(
+                    product_count=9,
+                    subcategories={
+                        "blouses": CatalogTaxonomySubcategory(product_count=3),
+                        "sweaters": CatalogTaxonomySubcategory(product_count=3),
+                        "skirts": CatalogTaxonomySubcategory(product_count=3),
+                    },
+                ),
+            },
+        ),
+    )
+
+
+def _context(query: str) -> SearchContext:
+    capabilities = _capabilities()
+    model = _search_catalog_tool_input_model(capabilities)
+    return SearchContext(
+        config=SimpleNamespace(
+            top_k_retrieve=4,
+            search_products_per_call=36,
+            max_catalog_searches_per_turn=3,
+            retriever_port="http://catalog-retriever:8010",
+            catalog_search_timeout_seconds=5,
+            wearer_audience_field=AUDIENCE_FIELD,
+        ),
+        state=State(user_id=1, query=query),
+        scope=TurnScope(),
+        capabilities=capabilities,
+        search_input_model=model,
+        constraint_input_model=model.model_fields[
+            "required_constraints"
+        ].annotation,
+    )
+
+
+def _role(rpt: str, subcategories: list[str], **overrides: Any) -> dict[str, Any]:
+    scope = {
+        "semantic_query": f"work casual {rpt}",
+        "shopper_guidance": f"Finding a {rpt} for this look.",
+        "requested_product_type": rpt,
+        "taxonomy": {"category": [], "subcategory": subcategories},
+        "required_constraints": {},
+    }
+    scope.update(overrides)
+    return scope
+
+
+@pytest.fixture
+def retrieval(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    """Return products carrying the audience the catalog tagged them with."""
+
+    seen: dict[str, Any] = {"audiences": ["womens"]}
+
+    def execute(plan, *_args, **_kwargs):
+        products = [
+            ProductSummary(
+                product_id=f"p{index}",
+                display_name=f"Product {index}",
+                price=Money(amount=20.0),
+                category="sweaters",
+                attributes={AUDIENCE_FIELD: audience},
+            )
+            for index, audience in enumerate(seen["audiences"])
+        ]
+        return SimpleNamespace(
+            result=SearchCatalogResult(ok=True, products=products),
+            fallback_attempted=False,
+            fallback_used=False,
+        )
+
+    monkeypatch.setattr(catalog_search_mod, "execute_catalog_search", execute)
+    return seen
+
+
+def _evidence(result: Any) -> dict[str, Any]:
+    return (result[1] or {})[EVIDENCE_KEY]
+
+
+def test_a_role_the_shopper_named_still_discloses_the_audience(
+    retrieval: dict[str, Any],
+) -> None:
+    """The live regression, in one test.
+
+    "I have a conference next week and am looking for a work casual outfit for
+    less than $40" produced a single role the shopper had named, so no role was
+    composed -- and the reply opened "Here are work-casual conference pieces
+    I'm seeing that stay under $40", having silently decided the shopper wanted
+    womenswear.
+    """
+
+    ctx = _context("looking for a work casual outfit for less than $40")
+
+    payload = _evidence(
+        search_catalog(ctx, [_role("work casual outfit", ["blouses", "skirts"])])
+    )
+
+    assert payload["composed_role"] is False
+    assert payload["assumed_audience"] == ["womens"]
+    assert "ASSUMED_AUDIENCE" in _customer_safe_search_evidence(payload)
+
+
+def test_a_stated_audience_is_not_an_assumption(
+    retrieval: dict[str, Any],
+) -> None:
+    """Filtering on it makes it the shopper's constraint, not the shop's guess.
+
+    Disclosing it anyway would tell shoppers who asked for menswear that we
+    have assumed they want menswear, which reads as not having listened.
+    """
+
+    ctx = _context("something for my husband")
+
+    payload = _evidence(
+        search_catalog(
+            ctx,
+            [
+                _role(
+                    "sweaters",
+                    ["sweaters"],
+                    required_constraints={
+                        AUDIENCE_FIELD: ["adult_all_genders"]
+                    },
+                )
+            ],
+        )
+    )
+
+    assert payload["confirmed_filters"].get(AUDIENCE_FIELD)
+    assert payload["assumed_audience"] == []
+    assert "ASSUMED_AUDIENCE" not in _customer_safe_search_evidence(payload)
+
+
+def test_every_audience_that_came_back_is_named(
+    retrieval: dict[str, Any],
+) -> None:
+    """A mixed result set is a mixed disclosure, not the majority value."""
+
+    retrieval["audiences"] = ["womens", "adult_all_genders", "womens"]
+    ctx = _context("a work casual outfit")
+
+    payload = _evidence(
+        search_catalog(ctx, [_role("work casual outfit", ["blouses"])])
+    )
+
+    assert sorted(payload["assumed_audience"]) == ["adult_all_genders", "womens"]
+
+
+def test_the_whole_look_is_disclosed_once(retrieval: dict[str, Any]) -> None:
+    """Several roles, one sentence -- not one apology per role."""
+
+    ctx = _context("build me a work outfit")
+
+    payload = _evidence(
+        search_catalog(
+            ctx,
+            [_role("top", ["blouses"]), _role("bottom", ["skirts"])],
+        )
+    )
+
+    assert payload["assumed_audience"] == ["womens"]
+    assert _customer_safe_search_evidence(payload).count("ASSUMED_AUDIENCE") == 1
+
+
+def test_a_catalog_without_the_field_discloses_nothing() -> None:
+    """The field is configured, so a catalog that lacks it must stay silent.
+
+    Not every catalog tags an audience. Inventing the sentence from an absent
+    field would have the assistant assume out loud on no evidence at all.
+    """
+
+    products = [{"attributes": {"primary_color": "navy"}}]
+
+    assert _assumed_audience(AUDIENCE_FIELD, {}, products) == []
+    assert _assumed_audience("", {}, products) == []
+
+
+def test_the_disclosure_is_an_assumption_about_the_shopper() -> None:
+    """The wording took four live attempts; hold the one that worked.
+
+    Aimed at the range it produced an inventory note. Aimed at the result set:
+    "I'm currently seeing women's dress options" -- the limit of one search.
+    Aimed at the shop: "this is a workwear-friendly shop", which named the
+    style and dropped the audience entirely. Only the assumption about the
+    shopper reads as something they can correct.
+    """
+
+    line = _assumed_audience_line({"assumed_audience": ["womens"]})
+
+    assert "assuming you're looking for" in line
+    assert "invite them to correct it" in line
+    assert "not a note about the shop's style" in line
+    assert "not a question about who they are" in line
+    # The shopper stands in a shop, not in front of a query planner. A live
+    # reply read "I tried the closest available search in apparel with the
+    # filter adult all-genders, and that search returned zero results".
+    assert "never a catalog label" in line
+    assert "pieces anyone can wear" in line

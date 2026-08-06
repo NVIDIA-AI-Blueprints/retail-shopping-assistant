@@ -3109,6 +3109,9 @@ def _customer_safe_search_evidence(payload: dict[str, Any]) -> str:
     relation = _scope_relation_line(payload, has_products=True)
     if relation:
         lines.append(relation)
+    audience = _assumed_audience_line(payload)
+    if audience:
+        lines.append(audience)
     return "\n".join(lines)
 
 
@@ -3191,16 +3194,34 @@ def _composed_role_line(payload: dict[str, Any], *, has_products: bool) -> str:
         f"REQUESTED_SCOPE_RELATION: the shopper did not ask for {requested}; "
         "this role was proposed by the assistant. Offer it as a suggestion "
         "rather than as something they asked for, and keep every returned "
-        "product's actual catalog category. Open by naming what you have "
-        "assumed the shopper is looking for: the audience the catalog's "
-        "clothing is made for, which Catalog capabilities advertises per "
-        "product. Say it in that shape -- \"assuming you're looking for ... "
-        "clothes\" -- and invite them to correct it. It is an assumption about "
-        "what they want, not a note about the shop's style or about what this "
-        "reply happened to return, and not a question about who they are. Say "
-        "which parts of the range suit a wider audience if any do. Put it in a "
-        "shopper's words, never a catalog label: a value such as "
-        "adult_all_genders is said as pieces anyone can wear."
+        "product's actual catalog category."
+    )
+
+
+def _assumed_audience_line(payload: dict[str, Any]) -> str:
+    """Tell the shopper who these pieces are for, since nobody said.
+
+    This does not belong to composed roles, though it was attached to them
+    first. A shopper who asks in their own words for a "work casual outfit"
+    names the role themselves, so nothing is composed -- and a catalog that is
+    almost entirely womenswear hands them womenswear anyway, silently. That
+    turn is exactly the one that needs the sentence.
+    """
+
+    audience = [str(value) for value in (payload.get("assumed_audience") or [])]
+    if not audience:
+        return ""
+    return (
+        "ASSUMED_AUDIENCE: nobody said who these pieces are for; every one "
+        "that came back is for " + ", ".join(sorted(audience)) + ". Open by "
+        "naming that as what you have assumed the shopper is looking for -- "
+        "\"assuming you're looking for ... clothes\" -- and invite them to "
+        "correct it. It is an assumption about what they want, not a note "
+        "about the shop's style or about what this reply happened to return, "
+        "and not a question about who they are. Say which of these suit a "
+        "wider audience if any do. Put it in a shopper's words, never a "
+        "catalog label: a value such as adult_all_genders is said as pieces "
+        "anyone can wear."
     )
 
 

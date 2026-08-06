@@ -104,6 +104,10 @@ class ChainServerConfig(BaseModel):
         default=45.0,
         description="Maximum Deep Agents execution time allowed for one assistant turn",
     )
+    wearer_audience_field: str = Field(
+        default="target_audience",
+        description="Catalog filter naming who a product is for",
+    )
     max_catalog_searches_per_turn: int = Field(
         default=10,
         description="Maximum distinct catalog taxonomy scopes allowed per turn",

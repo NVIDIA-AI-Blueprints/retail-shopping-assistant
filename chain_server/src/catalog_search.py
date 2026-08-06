@@ -1401,6 +1401,15 @@ def _rendered_evidence(ctx: SearchContext, attempt: _Attempt) -> StepResult:
             _search_product_record(product) for product in result.products
         ],
     )
+    evidence.assumed_audience = _assumed_audience(
+        str(getattr(ctx.config, "wearer_audience_field", "") or ""),
+        confirmed_filters,
+        evidence.products,
+        already_disclosed=list(getattr(ctx.state, "assumed_audience", None) or []),
+    )
+    for value in evidence.assumed_audience:
+        if value not in ctx.state.disclosed_audience:
+            ctx.state.disclosed_audience.append(value)
     lines = [
         _SEARCH_RESULT_GROUNDING_NOTE,
         _format_search_direction_evidence(evidence.semantic_query),
@@ -1431,6 +1440,47 @@ def _rendered_evidence(ctx: SearchContext, attempt: _Attempt) -> StepResult:
         else ""
     )
     return prefix + "\n\n".join(lines), evidence.as_artifact()
+
+
+def _assumed_audience(
+    field_name: str,
+    confirmed_filters: dict[str, Any],
+    products: list[dict[str, Any]],
+    *,
+    already_disclosed: list[str] | None = None,
+) -> list[str]:
+    """Who the returned pieces are for, on a search that never asked.
+
+    An unfiltered search still comes back with an audience -- a catalog that is
+    mostly womenswear returns womenswear whatever the shopper said -- and the
+    shopper is the one party who cannot see that nobody chose it. Once the
+    audience is a confirmed filter it is the shopper's own constraint, so there
+    is nothing assumed and this returns nothing.
+
+    Read off the products rather than the catalog's capabilities: the values
+    that came back are the ones the reply is about, and a catalog with a
+    different range therefore discloses a different audience without a code
+    change.
+
+    A conversation already told stays told. The trigger is true on nearly every
+    turn, so without this three consecutive replies opened "assuming you're
+    looking for women's clothes" -- which stops being a disclosure and becomes
+    a tic the shopper has to read past.
+    """
+
+    if already_disclosed:
+        return []
+    if not field_name or field_name in (confirmed_filters or {}):
+        return []
+    values: list[str] = []
+    for record in products:
+        attributes = record.get("attributes")
+        if not isinstance(attributes, dict):
+            continue
+        text = str(attributes.get(field_name) or "").strip()
+        if text and text not in values:
+            values.append(text)
+    return values[:8]
 
 
 #: Everything a scope decides before it touches the network. Each step either
@@ -1640,6 +1690,7 @@ def _merged_artifacts(artifacts: list[dict[str, Any]]) -> dict[str, Any] | None:
     taxonomy: dict[str, Any] = {}
     filters: dict[str, Any] = {}
     unconfirmed: list[Any] = []
+    audience: list[Any] = []
     for payload in payloads:
         # The call-level taxonomy and filters below are the union across roles,
         # which is right for "what did this call cover" and wrong for any claim
@@ -1669,11 +1720,18 @@ def _merged_artifacts(artifacts: list[dict[str, Any]]) -> dict[str, Any] | None:
         for item in payload.get("unconfirmed_requirements") or []:
             if item not in unconfirmed:
                 unconfirmed.append(item)
+        # A look is disclosed once, for the whole look. One role naming an
+        # audience the shopper did not is enough to owe them the sentence,
+        # and a role searched under a stated audience contributes nothing.
+        for item in payload.get("assumed_audience") or []:
+            if item not in audience:
+                audience.append(item)
     base["outcome"] = "results" if with_results else base.get("outcome")
     base["products"] = products
     base["taxonomy"] = taxonomy
     base["confirmed_filters"] = filters
     base["unconfirmed_requirements"] = unconfirmed
+    base["assumed_audience"] = audience[:8]
     base["result_set_complete"] = all(
         p.get("result_set_complete") for p in payloads
     )

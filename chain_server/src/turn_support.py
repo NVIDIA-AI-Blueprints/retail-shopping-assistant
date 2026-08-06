@@ -61,6 +61,7 @@ from .catalog_request import (
     CatalogSearchPlan,
 )
 from .conversation_memory import (
+    ConversationEvent,
     FinalTurnStatus,
 )
 from .control_signals import (
@@ -1015,6 +1016,7 @@ def _search_catalog_tool_input_model(
     capabilities: CatalogCapabilities,
     *,
     validate_scope: bool = True,
+    wearer_audience_field: str = "",
 ) -> type[SearchCatalogToolArguments]:
     """Create one tool schema whose enums come from the active catalog."""
 
@@ -1061,6 +1063,7 @@ def _search_catalog_tool_input_model(
     )
     required_constraints_model = _required_constraints_input_model(
         capabilities,
+        wearer_audience_field=wearer_audience_field,
     )
     return create_model(
         "CatalogSearchInput" if validate_scope else "CatalogSearchToolArguments",
@@ -1132,6 +1135,7 @@ def _search_catalog_scopes_input_model(
     capabilities: CatalogCapabilities,
     *,
     max_scopes: int = 1,
+    wearer_audience_field: str = "",
 ) -> type[BaseModel]:
     """Wrap the catalog search arguments in a list of scopes.
 
@@ -1154,6 +1158,7 @@ def _search_catalog_scopes_input_model(
     scope_model = _search_catalog_tool_input_model(
         capabilities,
         validate_scope=False,
+        wearer_audience_field=wearer_audience_field,
     )
     return create_model(
         "CatalogSearchScopes",
@@ -1213,8 +1218,44 @@ def _taxonomy_list_field(
     )
 
 
+#: Every advertised filter otherwise gets "Advertised hard filter '<name>'."
+#: For the audience field that generic line is the whole bug: the model was
+#: reading the enum value names and nothing else, so "sunglasses for men" and
+#: "my husband" scoped correctly while "shades for hubby" sent no filter and
+#: returned women's sunglasses. The rule below is not new -- it is the one
+#: already written in the system prompt, moved to the channel the model reads.
+_WEARER_AUDIENCE_FILTER_DESCRIPTION = (
+    "Who the products are for. When the shopper names the person this is for, "
+    "send every advertised value that suits them, and a value covering all "
+    "genders always suits anyone, so include it alongside the value for their "
+    "gender. Shoppers name people casually and every one of these counts the "
+    "same as a formal word: hubby, my guy, my man, my other half, my brother, "
+    "my dad, my son, my wife, my girlfriend, my mum, my sister, my daughter, "
+    "the kids. Buying for a woman means the women's value and the all-genders "
+    "value together, because both suit her; buying for a man in a catalog "
+    "that advertises no men's value means the all-genders value alone, "
+    "because the women's pieces genuinely do not suit him. When nobody is "
+    "named, omit this filter entirely -- do not send a covers-everyone value "
+    "to mean unspecified, which would discard everything stocked for one "
+    "audience. If nothing advertised suits the named person, such as a child "
+    "in an adult-only catalog, search for them anyway and let it return "
+    "nothing; never substitute what does not suit them. The person-words "
+    "listed above are for reading what the shopper said. They are not "
+    "audiences to offer back: a reply may name only audiences this catalog "
+    "advertises, and must never suggest looking for one it does not stock. "
+    "Only this turn's "
+    "words count. An audience established earlier in the conversation never "
+    "carries into a request that does not name that person again, however "
+    "obviously they are still around: send no filter and let the shopper "
+    "redirect you. Enumerating the ways a shopper moves on is hopeless, so "
+    "the rule is the reverse -- naming someone is what turns the filter on."
+)
+
+
 def _required_constraints_input_model(
     capabilities: CatalogCapabilities,
+    *,
+    wearer_audience_field: str = "",
 ) -> type[BaseModel]:
     """Create a hard-constraint schema from advertised catalog filters."""
 
@@ -1241,7 +1282,11 @@ def _required_constraints_input_model(
             field_type,
             Field(
                 default=None,
-                description=f"Advertised hard filter '{name}'.",
+                description=(
+                    _WEARER_AUDIENCE_FILTER_DESCRIPTION
+                    if name and name == wearer_audience_field
+                    else f"Advertised hard filter '{name}'."
+                ),
             ),
         )
     fields["unadvertised_requirements"] = (
@@ -2122,6 +2167,109 @@ def _diagnostic_catalog_scope_outcomes(
         if len(outcomes) >= 8:
             break
     return outcomes
+
+
+def _wearer_audience_events(
+    state: Any,
+    identity: Any,
+    *,
+    field_name: str,
+) -> list[ConversationEvent]:
+    """Record an audience this turn declared, so the next turn inherits it.
+
+    Read from the turn's own diagnostics rather than the graph messages: the
+    per-product scope stamp already carries the filters each role was searched
+    with, and zero-result scopes carry theirs too, so nothing new has to be
+    threaded through finalize.
+
+    The server records what the model declared and never reads the shopper's
+    prose to work out who an item is for, which it is forbidden to do. A turn
+    that filtered on nothing declares nothing and leaves an earlier declaration
+    standing -- silence is how the model forgets, not how a shopper changes
+    their mind.
+    """
+
+    if not field_name:
+        return []
+    diagnostics = getattr(state, "agent_diagnostics", None) or {}
+    scopes: list[Any] = [
+        (record or {}).get("search_scope")
+        for record in (diagnostics.get("product_evidence") or [])
+    ]
+    scopes.extend(diagnostics.get("catalog_scope_outcomes") or [])
+    declared: list[str] = []
+    for scope in scopes:
+        if not isinstance(scope, dict):
+            continue
+        values = (scope.get("confirmed_filters") or {}).get(field_name)
+        if isinstance(values, str):
+            values = [values]
+        if not isinstance(values, list):
+            continue
+        for value in values:
+            text = str(value)
+            if text and text not in declared:
+                declared.append(text)
+    if not declared:
+        return []
+    return [
+        ConversationEvent(
+            event_key=f"wearer-audience:{identity.request_id}",
+            event_type="wearer_audience_declared",
+            source_kind="runtime",
+            payload={"audience": declared[:8]},
+        )
+    ]
+
+
+def _audience_assumption_events(
+    state: Any,
+    identity: Any,
+) -> list[ConversationEvent]:
+    """Record that this conversation has now been told what was assumed.
+
+    Catalog search wrote it while the turn ran, so this reads the turn's own
+    state rather than re-deriving anything. Nothing is recorded on a turn that
+    disclosed nothing, which leaves an earlier disclosure standing: the shopper
+    is owed the sentence once, not once per search.
+
+    Deliberately not a `wearer_audience_declared`. That event is a fact the
+    model established and may narrow later searches with; this one is only the
+    shop admitting a guess, and must never scope anything.
+    """
+
+    disclosed = [str(value) for value in (getattr(state, "disclosed_audience", None) or [])]
+    if not disclosed:
+        return []
+    return [
+        ConversationEvent(
+            event_key=f"audience-assumption:{identity.request_id}",
+            event_type="audience_assumption_disclosed",
+            source_kind="runtime",
+            payload={"audience": disclosed[:8]},
+        )
+    ]
+
+
+def _turn_audience_events(
+    state: Any,
+    identity: Any,
+    *,
+    field_name: str,
+) -> list[ConversationEvent]:
+    """Record what this turn settled about who is being shopped for.
+
+    A declaration outranks an assumption made earlier in the same turn. That
+    is the self-correcting case: an unscoped search returns womenswear, the
+    evidence says so, the model recognises the shopper named a husband and
+    searches again with the values that suit him. Recording both would leave
+    the conversation carrying a guess the turn had already overturned.
+    """
+
+    declared = _wearer_audience_events(state, identity, field_name=field_name)
+    if declared:
+        return declared
+    return _audience_assumption_events(state, identity)
 
 
 def _product_search_scope(product: Any) -> dict[str, Any] | None:
@@ -3055,6 +3203,9 @@ def _customer_safe_search_evidence(payload: dict[str, Any]) -> str:
     relation = _scope_relation_line(payload, has_products=True)
     if relation:
         lines.append(relation)
+    audience = _assumed_audience_line(payload)
+    if audience:
+        lines.append(audience)
     return "\n".join(lines)
 
 
@@ -3124,25 +3275,65 @@ def _composed_role_line(payload: dict[str, Any], *, has_products: bool) -> str:
         str(value) for value in (payload.get("role_advertised_types") or [])
     ]
     if not has_products:
-        searched = ", ".join(sorted(types)) or "the selected advertised types"
+        searched = ", ".join(sorted(types)) or "the pieces looked at"
         return (
             f"REQUESTED_SCOPE_RELATION: the shopper did not ask for {requested}; "
-            "this role was proposed by the assistant. The search covered "
-            f"{searched} and returned zero products, so say what was searched "
-            "and do not claim the role is unavailable."
+            "this role was proposed by the assistant. Nothing came back for "
+            f"{searched}. Name those pieces the way a shopper would and do not "
+            "claim the role is unavailable, because only those were looked at. "
+            "Speak as someone standing in the shop: never say search, filter, "
+            "scope, results, catalog, or a catalog's internal label."
         )
     return (
         f"REQUESTED_SCOPE_RELATION: the shopper did not ask for {requested}; "
         "this role was proposed by the assistant. Offer it as a suggestion "
         "rather than as something they asked for, and keep every returned "
-        "product's actual catalog category. Say once in this reply who the "
-        "catalog serves, using the audience values in Catalog capabilities, "
-        "and that you have assumed the pieces are for the shopper -- invite "
-        "them to say so if they are shopping for someone else. Naming the "
-        "range alone is an inventory note: it lists what is on the shelves "
-        "and still hands them an outfit built on an assumption nobody "
-        "stated. Never ask who they are."
+        "product's actual catalog category."
     )
+
+
+def _assumed_audience_line(payload: dict[str, Any]) -> str:
+    """Tell the shopper who these pieces are for, since nobody said.
+
+    This does not belong to composed roles, though it was attached to them
+    first. A shopper who asks in their own words for a "work casual outfit"
+    names the role themselves, so nothing is composed -- and a catalog that is
+    almost entirely womenswear hands them womenswear anyway, silently. That
+    turn is exactly the one that needs the sentence.
+    """
+
+    audience = [str(value) for value in (payload.get("assumed_audience") or [])]
+    if not audience:
+        return ""
+    return (
+        "ASSUMED_AUDIENCE: nobody said who these pieces are for; every one "
+        "that came back is for " + ", ".join(sorted(audience)) + ". Open by "
+        "naming that as what you have assumed the shopper is looking for -- "
+        "\"assuming you're looking for ... clothes\" -- and invite them to "
+        "correct it. It is an assumption about what they want, not a note "
+        "about the shop's style or about what this reply happened to return, "
+        "and not a question about who they are. Say which of these suit a "
+        "wider audience if any do. Put it in a shopper's words, never a "
+        "catalog label: a value such as adult_all_genders is said as pieces "
+        "anyone can wear."
+    )
+
+
+#: Appended to every catalog evidence summary the composer reads. The labels
+#: above it are internal -- taxonomy, confirmed filters, scope outcomes -- and a
+#: model handed them will paraphrase them straight back. One live reply read "I
+#: checked the broader apparel category with the adult all-genders filter, and
+#: that search returned no matches under that scope", which is the evidence
+#: block read aloud. A shopper is standing in a shop, not in front of a query
+#: planner.
+_SHOPPER_VOICE_NOTE = (
+    "SPEAK AS A SHOP ASSISTANT: everything above is internal bookkeeping. Say "
+    "what you looked at and what you found in the shopper's own words. Never "
+    "say search, filter, scope, taxonomy, query, results, or catalog, and "
+    "never repeat an internal label such as adult_all_genders -- say pieces "
+    "anyone can wear. Name product types and prices plainly; those are the "
+    "shopper's language already."
+)
 
 
 def _customer_safe_tool_evidence(content: str, message: Any = None) -> str:
@@ -3157,7 +3348,11 @@ def _customer_safe_tool_evidence(content: str, message: Any = None) -> str:
     if message is not None:
         payload = evidence_of(message)
         if payload is not None:
-            return _customer_safe_search_evidence(payload)
+            return (
+                _customer_safe_search_evidence(payload)
+                + "\n\n"
+                + _SHOPPER_VOICE_NOTE
+            )
         detail = detail_evidence_of(message)
         if detail is not None:
             return _render_product_evidence_summary(

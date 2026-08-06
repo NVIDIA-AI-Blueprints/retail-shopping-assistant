@@ -60,6 +60,12 @@ class SearchEvidence:
     #: the search but were never applied, so no product below is confirmed to
     #: meet them.
     unconfirmed_requirements: list[str] = field(default_factory=list)
+    #: Who every returned piece turns out to be for, when nobody said. A search
+    #: that does not filter on the audience field still comes back with an
+    #: audience, and the shopper is the only party who cannot see that it was
+    #: assumed. Empty once the audience is a stated constraint, because then
+    #: there is no assumption left to disclose.
+    assumed_audience: list[str] = field(default_factory=list)
 
     def as_artifact(self) -> dict[str, Any]:
         return {
@@ -78,6 +84,7 @@ class SearchEvidence:
                 "products": self.products,
                 "scope_outcome": self.scope_outcome,
                 "unconfirmed_requirements": self.unconfirmed_requirements,
+                "assumed_audience": self.assumed_audience,
             }
         }
 

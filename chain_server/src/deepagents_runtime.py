@@ -38,11 +38,13 @@ from .response_format import (
     _format_promotions_result,
     _format_retrieved_images,
     _format_shopper_context,
+    _format_wearer_audience,
     _format_update_cart_result,
 )
 from .turn_support import (
     _detail_fields_already_held,
     _search_catalog_scopes_input_model,
+    _turn_audience_events,
     AddCartItemsToolItemInput,
     RequestIdentity,
     _add_model_usage,
@@ -538,6 +540,9 @@ class DeepAgentsRuntime:
         state.selected_skill_names = []
         state.shopper_profile_id = identity.shopper_profile_id
         state.shopper_context = None
+        state.wearer_audience = []
+        state.assumed_audience = []
+        state.disclosed_audience = []
         turn = self._start_conversation_turn(state, identity)
         if turn is not None and turn.replayed:
             await self._delete_turn_checkpoint(identity)
@@ -835,12 +840,19 @@ class DeepAgentsRuntime:
         )
         scope = TurnScope()
         state.retrieved = scope.retrieved
-        search_input_model = _search_catalog_tool_input_model(turn_capabilities)
+        wearer_audience_field = str(
+            getattr(self.config, "wearer_audience_field", "") or ""
+        )
+        search_input_model = _search_catalog_tool_input_model(
+            turn_capabilities,
+            wearer_audience_field=wearer_audience_field,
+        )
         search_tool_arguments_model = _search_catalog_scopes_input_model(
             turn_capabilities,
             max_scopes=max(
                 1, int(getattr(self.config, "max_search_scopes_per_call", 1) or 1)
             ),
+            wearer_audience_field=wearer_audience_field,
         )
         constraint_input_model = search_input_model.model_fields[
             "required_constraints"
@@ -2137,8 +2149,11 @@ Rules:
             )
         ]
         shopper_context = _format_shopper_context(state.shopper_context)
+        wearer = _format_wearer_audience(state.wearer_audience)
         if shopper_context:
             sections.append(shopper_context)
+        if wearer:
+            sections.append(wearer)
         sections.extend(
             [
                 (
@@ -2290,6 +2305,8 @@ Rules:
             turn.previous_selected_skill_names
         )
         state.shopper_context = turn.shopper_context
+        state.wearer_audience = list(turn.wearer_audience)
+        state.assumed_audience = list(turn.assumed_audience)
         state.historical_product_sets = [
             entry
             for entry in (turn.projection.product_reference_index or [])
@@ -2359,7 +2376,7 @@ Rules:
                 agent_diagnostics=state.agent_diagnostics,
                 selected_skill_names=state.selected_skill_names,
             )
-            self._conversation_memory.finalize_turn(
+            receipt = self._conversation_memory.finalize_turn(
                 identity.conversation_id,
                 turn.turn_id,
                 request_id=identity.request_id,
@@ -2367,9 +2384,27 @@ Rules:
                 assistant_text=state.response,
                 status=final_status,
                 termination_reason=reason,
+                events=_turn_audience_events(
+                    state,
+                    identity,
+                    field_name=getattr(
+                        self.config, "wearer_audience_field", ""
+                    ),
+                ),
                 output=output,
             )
             finalized = True
+            if receipt.dropped_event_types:
+                # The turn is safe; only the enrichment was lost. Surfaced
+                # rather than swallowed, because the same signal means a typo
+                # here and an older memory service in a rolling deploy.
+                logger.warning(
+                    "Conversation memory dropped unknown event types: %s",
+                    ", ".join(receipt.dropped_event_types),
+                )
+                state.agent_diagnostics["memory_dropped_event_types"] = list(
+                    receipt.dropped_event_types
+                )
         except (ConversationMemoryError, ValidationError) as exc:
             logger.error("Failed to finalize durable conversation turn: %s", exc)
             error_code = getattr(

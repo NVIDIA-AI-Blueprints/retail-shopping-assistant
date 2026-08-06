@@ -397,6 +397,38 @@ def _format_shopper_context(context: ShopperContext | None) -> str:
     )
 
 
+def _format_wearer_audience(audience: list[str] | None) -> str:
+    """Say who the last named item was for, without scoping anything.
+
+    This used to read "keep filtering to this audience while it still
+    applies", which made a wearer a property of the conversation rather than
+    of the item they were named for. "Shades for hubby" then scoped every
+    later search: "show me some heels" came back empty in a shop full of
+    heels, because they are all womens and the carried audience was not.
+
+    The two errors are not the same size. Carrying it wrongly costs the
+    shopper the whole result set, silently, with no way to see why. Forgetting
+    it costs one question. So the value is reported and the turn decides:
+    audience scopes a search only when the turn itself names the person.
+    """
+
+    if not audience:
+        return ""
+    values = ", ".join(sorted(str(value) for value in audience))
+    return (
+        "SHOPPING FOR (context for reading this turn; not a scope by itself):\n"
+        f"audience: {values}\n"
+        "The last item the shopper named a person for was for this audience. "
+        "Decide this turn's audience from this turn's own words. If they "
+        "refer to that person again, including by pronoun -- \"he also needs "
+        "a bag\", \"something for her\" -- filter to the values that suit "
+        "them. If this turn refers to nobody, send no audience filter at all, "
+        "however obviously the person is still around. You may ask whether "
+        "they are still shopping for the same person.\n"
+        "END SHOPPING FOR"
+    )
+
+
 def _format_retrieved_images(retrieved: dict[str, str] | None) -> str:
     if not retrieved:
         return "(none)"

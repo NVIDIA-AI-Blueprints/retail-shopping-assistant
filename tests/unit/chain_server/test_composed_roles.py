@@ -246,12 +246,10 @@ def test_the_composer_is_told_the_role_was_proposed(
     assert relation["requested_product_type"] == "top"
     assert "did not ask for top" in line
     assert "proposed by the assistant" in line
-    # Naming the range alone is an inventory note. It lists what is on the
-    # shelves and still hands the shopper an outfit built on an assumption
-    # nobody stated, which is what a live guest turn actually did.
-    assert "who the catalog serves" in line
-    assert "assumed the pieces are for the shopper" in line
-    assert "Never ask who they are" in line
+    # The assumed-audience disclosure used to hang off this line, which meant
+    # it never fired for a role the shopper had named. It has its own trigger
+    # now; see tests/unit/chain_server/test_assumed_audience.py.
+    assert "assuming you're looking for" not in line
 
 
 def test_a_composed_role_with_no_matches_names_what_was_searched(
@@ -274,6 +272,7 @@ def test_a_composed_role_with_no_matches_names_what_was_searched(
     assert payload["outcome"] == "zero_results"
     assert "blouses, sweaters" in line
     assert "do not claim the role is unavailable" in line
+    assert "never say search, filter, scope, results" in line
 
 
 def test_the_model_visible_text_carries_the_relation(
@@ -538,3 +537,88 @@ def test_the_same_role_in_a_later_call_is_still_refused(
 
     assert (result[1] or {})[REJECTIONS_KEY] == ["duplicate_shopper_scope"]
     assert len(retrieval["filters"]) == 1
+
+
+def test_a_declared_audience_becomes_an_event_the_next_turn_inherits() -> None:
+    """A wearer named one turn ago must still have standing on the next.
+
+    Live: turn 3 bought sunglasses for a husband and returned four
+    adult_all_genders products; turn 4 asked for a suit and returned four
+    womens ones. The dialogue was carried in full -- it just had no standing,
+    because dialogue establishes intent and never fact.
+    """
+
+    state = SimpleNamespace(
+        agent_diagnostics={
+            "product_evidence": [
+                {"search_scope": {"confirmed_filters": {
+                    "target_audience": ["adult_all_genders"],
+                    "price": {"max": 150},
+                }}},
+            ],
+            "catalog_scope_outcomes": [],
+        }
+    )
+    identity = SimpleNamespace(request_id="req-1")
+
+    events = turn_support._wearer_audience_events(
+        state, identity, field_name="target_audience"
+    )
+
+    assert len(events) == 1
+    assert events[0].event_type == "wearer_audience_declared"
+    assert events[0].payload == {"audience": ["adult_all_genders"]}
+
+
+def test_a_turn_that_declared_nothing_leaves_the_wearer_alone() -> None:
+    """Silence is how the model forgets, not how a shopper changes their mind.
+
+    Turn 4 sent no audience filter. If that cleared the wearer, the mechanism
+    would fail exactly where it is needed.
+    """
+
+    state = SimpleNamespace(
+        agent_diagnostics={
+            "product_evidence": [
+                {"search_scope": {"confirmed_filters": {"price": {"max": 150}}}}
+            ],
+            "catalog_scope_outcomes": [],
+        }
+    )
+
+    events = turn_support._wearer_audience_events(
+        state, SimpleNamespace(request_id="req-2"), field_name="target_audience"
+    )
+
+    assert events == []
+
+
+def test_the_carried_wearer_is_reported_but_never_scopes_a_search() -> None:
+    """A wearer belongs to the item they were named for, not the conversation.
+
+    The block used to say "keep filtering to this audience while it still
+    applies". Live, "looking for shades for hubby" then scoped everything
+    after it: "now something for me .. embroidered skirts" found nothing, and
+    so did "show me some heels" -- in a shop whose heels are all womens.
+
+    Both failures came from one cause, and patching the phrasings was
+    hopeless: "for me", "show me heels", "what about a dress" have nothing in
+    common to match on. Reversing it needs no list -- naming someone is what
+    turns the filter on.
+    """
+
+    from chain_server.src.response_format import _format_wearer_audience
+
+    block = _format_wearer_audience(["adult_all_genders"])
+
+    assert "SHOPPING FOR" in block
+    assert "adult_all_genders" in block
+    assert "not a scope by itself" in block
+    # Both halves, because stating only the ban broke the other side: "he
+    # also needs a bag for travel" stopped scoping to him in 5/5 runs.
+    assert "including by pronoun" in block
+    assert "send no audience filter at all" in block
+    # It may ask, because asking costs a sentence and carrying it wrongly
+    # costs the shopper every result.
+    assert "still shopping for the same person" in block
+    assert _format_wearer_audience([]) == ""

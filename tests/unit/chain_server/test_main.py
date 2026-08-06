@@ -142,7 +142,7 @@ class _ConversationMemoryStub:
         self.finalize_calls.append(
             {"conversation_id": conversation_id, "turn_id": turn_id, **kwargs}
         )
-        return SimpleNamespace(replayed=False)
+        return SimpleNamespace(replayed=False, dropped_event_types=[])
 
 
 def _install_conversation_memory_stub(runtime) -> _ConversationMemoryStub:

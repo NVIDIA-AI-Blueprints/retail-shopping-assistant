@@ -103,12 +103,22 @@ EventType = Literal[
     "preference_added",
     "preference_superseded",
     "catalog_scope_no_match",
+    "wearer_audience_declared",
+    "audience_assumption_disclosed",
 ]
 
 
+#: Deliberately `str`, not `EventType`. A Literal here fails validation of the
+#: whole finalize request, so one event type this build has never heard of
+#: discarded the entire turn: it stayed `started`, and the next turn was
+#: refused with "conversation is still processing another request". A turn
+#: record is authoritative and events enrich it, so an unrecognised event is
+#: dropped and named in the response while the turn finalizes normally. That
+#: also makes the deploy order of the two services irrelevant in both
+#: directions, which a Literal never can be.
 class ConversationEventInput(BaseModel):
     event_key: str = Field(..., min_length=1, max_length=256)
-    event_type: EventType
+    event_type: str = Field(..., min_length=1, max_length=128)
     source_kind: Literal["shopper", "compiler", "catalog", "cart", "runtime"]
     source_ref: str | None = Field(default=None, max_length=512)
     payload: dict[str, Any] = Field(default_factory=dict)
@@ -222,6 +232,61 @@ def _recent_turns_limit() -> int:
     return min(MAX_RECENT_TURNS_LIMIT, max(1, configured))
 
 
+def _latest_audience(db, conversation_id: str, event_type: str) -> list[str]:
+    """Return the audience carried by the newest event of one type."""
+
+    row = (
+        db.query(ConversationEvent)
+        .join(ConversationTurn, ConversationEvent.turn_id == ConversationTurn.turn_id)
+        .filter(
+            ConversationTurn.conversation_id == conversation_id,
+            ConversationTurn.status == "completed",
+            ConversationEvent.event_type == event_type,
+        )
+        .order_by(
+            ConversationTurn.sequence.desc(),
+            ConversationEvent.logical_order.desc(),
+        )
+        .first()
+    )
+    if row is None:
+        return []
+    try:
+        payload = json.loads(row.payload_json) if row.payload_json else {}
+    except (TypeError, ValueError):
+        return []
+    values = payload.get("audience")
+    if not isinstance(values, list):
+        return []
+    return [str(value) for value in values if isinstance(value, str)][:8]
+
+
+def _latest_wearer_audience(db, conversation_id: str) -> list[str]:
+    """Return the audience most recently declared for who is being shopped for.
+
+    Dialogue carries who a shopper named, but by contract it establishes intent
+    rather than fact, so a wearer stated one turn ago has no standing on the
+    next. This is the same fact recorded as data: the newest declaration wins,
+    and a turn that simply does not mention a wearer leaves it alone -- silence
+    is how the model forgets, not how a shopper changes their mind.
+    """
+
+    return _latest_audience(db, conversation_id, "wearer_audience_declared")
+
+
+def _latest_assumed_audience(db, conversation_id: str) -> list[str]:
+    """Return an audience this conversation already owned up to assuming.
+
+    Unlike a declaration, this is not a fact about the shopper and never
+    narrows a search. It exists so the shop states its assumption once. A
+    conversation that has already been told does not need telling again, and
+    three consecutive replies opening "assuming you're looking for women's
+    clothes" is a tic rather than a disclosure.
+    """
+
+    return _latest_audience(db, conversation_id, "audience_assumption_disclosed")
+
+
 def _recent_turns(db, conversation_id: str) -> list[dict[str, Any]]:
     """Return bounded prior turns eligible for downstream context filtering."""
 
@@ -315,6 +380,8 @@ def _start_response(
         "replayed": replayed,
         "status": turn.status,
         "recent_turns": _recent_turns(db, turn.conversation_id),
+        "wearer_audience": _latest_wearer_audience(db, turn.conversation_id),
+        "assumed_audience": _latest_assumed_audience(db, turn.conversation_id),
         "previous_selected_skill_names": _previous_selected_skill_names(db, turn),
         "projection": _projection_dict(projection),
         "cart": _cart_for_user(db, turn.cart_user_id),
@@ -329,8 +396,11 @@ def _finalize_response(
     turn: ConversationTurn,
     *,
     replayed: bool,
+    dropped_event_types: list[str] | None = None,
 ) -> dict[str, Any]:
     return {
+        # Always present, so a replay and a first finalize have one shape.
+        "dropped_event_types": list(dropped_event_types or []),
         "turn_id": turn.turn_id,
         "attempt_id": turn.attempt_id,
         "sequence": turn.sequence,
@@ -563,7 +633,14 @@ def _append_events(
     turn: ConversationTurn,
     events: list[ConversationEventInput],
     now: float,
-) -> None:
+) -> list[str]:
+    """Store the events this build understands; return the types it does not.
+
+    Dropping is not silent: the caller reports the dropped types back to the
+    writer, so a genuine typo is as visible as it was before while a newer
+    peer's event costs nothing but the enrichment it carried.
+    """
+
     next_order = (
         db.query(func.max(ConversationEvent.logical_order))
         .filter(ConversationEvent.turn_id == turn.turn_id)
@@ -578,6 +655,11 @@ def _append_events(
     }
     if existing_keys.intersection(event.event_key for event in events):
         raise HTTPException(status_code=409, detail="event_key already exists")
+    known = set(EventType.__args__)
+    dropped = [
+        event.event_type for event in events if event.event_type not in known
+    ]
+    events = [event for event in events if event.event_type in known]
     for offset, event in enumerate(events):
         db.add(
             ConversationEvent(
@@ -592,6 +674,7 @@ def _append_events(
                 created_at=now,
             )
         )
+    return list(dict.fromkeys(dropped))
 
 
 def _finalize_turn(
@@ -636,7 +719,7 @@ def _finalize_turn(
         )
 
     now = time.time()
-    _append_events(db, turn, request.events, now)
+    dropped_event_types = _append_events(db, turn, request.events, now)
     db.flush()
     append_presented_products_event(
         db,
@@ -660,7 +743,11 @@ def _finalize_turn(
     turn.finalize_digest = digest
     turn.completed_at = now
     db.flush()
-    response = _finalize_response(turn, replayed=False)
+    response = _finalize_response(
+        turn,
+        replayed=False,
+        dropped_event_types=dropped_event_types,
+    )
     db.commit()
     return response
 

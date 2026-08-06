@@ -31,6 +31,8 @@ EventType = Literal[
     "preference_added",
     "preference_superseded",
     "catalog_scope_no_match",
+    "wearer_audience_declared",
+    "audience_assumption_disclosed",
 ]
 
 _DEFAULT_TIMEOUT_SECONDS = 10.0
@@ -127,6 +129,10 @@ class TurnStartResult(_MemoryModel):
     sequence: int = Field(..., ge=1)
     replayed: bool = False
     status: TurnStatus = "started"
+    #: The audience most recently declared for who is being shopped for,
+    #: carried forward so a wearer named one turn ago still has standing.
+    wearer_audience: list[str] = Field(default_factory=list, max_length=8)
+    assumed_audience: list[str] = Field(default_factory=list, max_length=8)
     recent_turns: list[RecentConversationTurn] = Field(
         default_factory=list,
         max_length=100,
@@ -165,6 +171,10 @@ class TurnFinalizeRequest(_MemoryModel):
     output: TurnReplayOutput | None = None
 
 
+#: Must match the memory service's own bound on `events` per finalize.
+MAX_FINALIZE_EVENTS = 128
+
+
 class TurnFinalizeResult(_MemoryModel):
     """Durable completion receipt for one conversation turn."""
 
@@ -175,6 +185,16 @@ class TurnFinalizeResult(_MemoryModel):
     status: FinalTurnStatus
     assistant_text: str = Field(..., max_length=100_000)
     termination_reason: str | None = Field(default=None, max_length=1_024)
+    #: Event types the memory service did not recognise and did not store.
+    #: Normally empty. Non-empty means either a genuine typo or a peer running
+    #: an older build, and either way the turn itself finalized.
+    #: Bounded by the events a finalize may carry, not by a number picked
+    #: here: a smaller cap would reject a legitimate receipt, and this
+    #: field exists precisely so a receipt is never rejected.
+    dropped_event_types: list[str] = Field(
+        default_factory=list,
+        max_length=MAX_FINALIZE_EVENTS,
+    )
 
 
 class ConversationMemoryError(RuntimeError):

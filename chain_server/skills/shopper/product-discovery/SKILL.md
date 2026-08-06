@@ -66,7 +66,8 @@ Use for search, browse, and filter requests. Do not expose skill names or tool n
 
 - When you choose the product roles yourself rather than searching a type the
   shopper named, say in one clause who the catalog serves, using the audience
-  values in Catalog capabilities. Say it once in a conversation and never as a
+  values in Catalog capabilities. Say it on any turn where you choose the roles
+  yourself, and never as a
   question: what the shop stocks is a fact about the shop.
 - Product names are display names, not attribute evidence. Do not infer material, fit, length, or construction from a name such as "Canvas Tote", "Linen Dress", or "Sport Sneaker" unless product details confirm the attribute.
 - Search results support: name, price, category, and image availability. Nothing else.

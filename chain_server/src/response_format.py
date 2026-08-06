@@ -16,6 +16,10 @@ move; the runtime imports these names back, so behaviour is unchanged.
 
 from __future__ import annotations
 
+from datetime import date as CalendarDate, datetime, timezone
+
+from pydantic import BaseModel, ConfigDict, Field
+
 from typing import Any
 import json
 
@@ -378,6 +382,175 @@ def _format_cart_total(cart: Cart) -> str:
     if missing:
         total += f" excluding items without cached prices: {', '.join(missing)}"
     return "\n".join(lines + [total])
+
+
+#: One event, one date: a turn never needs many forecasts, and each is a paid
+#: external call.
+WEATHER_CALLS_PER_TURN = 2
+
+WEATHER_NO_DATE = (
+    "WEATHER_NEEDS_A_DATE: no forecast was fetched, because no date was given "
+    "and today is not what the shopper is dressing for. Ask them, as part of a "
+    "styling question rather than as a request for a parameter, and show a "
+    "grounded starting point in the same reply."
+)
+
+class WeatherForecastInput(BaseModel):
+    """The agent-facing shape of a forecast request.
+
+    Separate from `WeatherRequest` for one reason: the field is called `city`.
+    Twice the prose form of this rule was ignored -- "going to Italy tomorrow"
+    called the tool 5/5 and forecast "Italia" at 74-101F as though a country
+    had one temperature -- and a rule the model reads is weaker than a
+    parameter it has to fill. `location` invites any place; `city` does not.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    city: str = Field(
+        ...,
+        min_length=1,
+        max_length=120,
+        description=(
+            "One city, town or postal code -- Cancun, Napa CA, 94558. Never a "
+            "country, region or coastline: they have no single weather, so ask "
+            "the shopper which city instead of calling."
+        ),
+    )
+    date: CalendarDate | None = Field(
+        default=None, description="One exact ISO date, resolved against TODAY."
+    )
+    start_date: CalendarDate | None = Field(
+        default=None, description="Inclusive ISO range start; use with end_date."
+    )
+    end_date: CalendarDate | None = Field(
+        default=None, description="Inclusive ISO range end; use with start_date."
+    )
+
+
+def weather_call_needs_a_date(
+    date: Any, start_date: Any, end_date: Any
+) -> bool:
+    """Whether this call would silently forecast today instead of the event.
+
+    Extracted from the tool closure so it can be tested. Left inside, deleting
+    it entirely kept all 1089 tests passing -- the third time today that a
+    constant was asserted while the enforcement sat somewhere nothing could
+    reach.
+    """
+
+    return date is None and start_date is None and end_date is None
+
+
+WEATHER_BUDGET_EXHAUSTED = (
+    "WEATHER_UNAVAILABLE: this turn has already looked up the forecast it is "
+    "allowed to. Use what you have and style the occasion; do not guess the "
+    "weather."
+)
+
+def claim_weather_call(scope: Any) -> bool:
+    """Take one of this turn's forecast calls, or report that none are left.
+
+    Extracted from the tool closure so the budget can be tested. It could not
+    be before, and deleting the check entirely left all 1081 tests passing --
+    a paid external call with no enforced ceiling and nothing to notice.
+    """
+
+    with scope.weather_lock:
+        if scope.weather_calls >= WEATHER_CALLS_PER_TURN:
+            return False
+        scope.weather_calls += 1
+        return True
+
+
+def _format_weather_result(result: Any) -> str:
+    """Render a forecast, or an honest failure, as evidence for the reply.
+
+    Failures are the common case, not the edge: most event shopping happens
+    more than fifteen days ahead, and the horizon is fifteen days. So every
+    failure says the same thing -- say plainly that the forecast is not
+    available, then style the occasion -- because a turn that cannot see the
+    weather is still a turn that can dress someone.
+    """
+
+    if not getattr(result, "ok", False):
+        # One sentence, because no forecast is the ordinary state rather than
+        # an event. Everything about how to behave without one already lives
+        # in the agent prompt, where it applies whether or not this tool
+        # exists at all.
+        return (
+            "WEATHER_UNAVAILABLE: "
+            + str(getattr(result, "message", "No forecast is available."))
+            + " Do not repeat this code. Style the occasion."
+        )
+    lines = [
+        "WEATHER_EVIDENCE: a live forecast for the place and dates below. It "
+        "supports what the conditions will be, and nothing about any product. "
+        "It never makes an item warm, waterproof or suitable -- say what the "
+        "weather is, then reason about the outfit as styling judgement.",
+        "STILL_SHOW_THE_CLOTHES: a forecast is not an answer on its own. "
+        "Search and show real pieces in the same reply. Live, a forecast turn "
+        "returned weather and generic advice with nothing to buy, three times "
+        "out of three -- a shop that talked about the weather and forgot to "
+        "sell anything.",
+        f"PLACE_RESOLVED_BY_PROVIDER: {getattr(result, 'resolved_location', '')}",
+    ]
+    for day in getattr(result, "days", []) or []:
+        parts = [f"{day.date.isoformat()}: {day.condition}"]
+        if day.temperature_low_f is not None and day.temperature_high_f is not None:
+            parts.append(
+                f"{day.temperature_low_f:.0f}-{day.temperature_high_f:.0f}F"
+            )
+        parts.append(f"precipitation {day.precipitation_probability_pct:.0f}%")
+        if day.precipitation_types:
+            parts.append("as " + ", ".join(day.precipitation_types))
+        lines.append("  " + "; ".join(parts))
+    lines.append(
+        "SAY_WHICH_PLACE: name the place the provider resolved, so a shopper "
+        "who meant a different one can correct you. If what came back is "
+        "broader than a town -- a country or a region, like Italia or "
+        "Toscana -- then these numbers describe that whole area and nowhere "
+        "in particular: say so plainly, and ask which city they will be in "
+        "before dressing them for the weather."
+    )
+    # The provider's own label and link travel with the data, so the terms are
+    # met by whatever provider answered rather than by a constant here.
+    attribution = getattr(result, "attribution", None)
+    if attribution is not None:
+        lines.append(
+            f"REQUIRED_ATTRIBUTION: include \"{attribution.label}\" and the "
+            f"link {attribution.url} wherever you use this. A forecast is an "
+            "estimate, not a guarantee, and never a safety warning."
+        )
+    return "\n".join(lines)
+
+
+def _format_store_date(now: datetime | None = None) -> str:
+    """Give the turn a date, because the model does not reliably have one.
+
+    Measured three identical asks: one answered "Today is August 6, 2026",
+    two answered "I don't have access to your local date/time". A date that
+    arrives one turn in three is worse than none, because the shopper gets a
+    different assistant each time.
+
+    Deliberately narrow. A date says when the shop is, and nothing else: not
+    where the shopper is, not the weather, not a season -- August is winter in
+    half the world and irrelevant indoors. Without that clause a date becomes
+    the licence to invent exactly the facts the shopper-context rules forbid.
+    """
+
+    stamp = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    return (
+        "TODAY (store's current date, server-resolved):\n"
+        f"{stamp:%Y-%m-%d}, a {stamp:%A}, UTC\n"
+        "Resolve relative dates the shopper mentions against this -- next "
+        "week, this weekend, in two weeks. Say the calendar dates you worked "
+        "out so they can correct you. The shopper's own date may differ if "
+        "they are far from UTC.\n"
+        "This says when the shop is. It does not say where the shopper is, "
+        "and their location, weather and season never follow from it.\n"
+        "END TODAY"
+    )
 
 
 def _format_shopper_context(context: ShopperContext | None) -> str:

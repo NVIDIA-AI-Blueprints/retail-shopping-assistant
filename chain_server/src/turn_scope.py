@@ -53,6 +53,12 @@ class TurnScope:
     searched_catalog_scopes: list[dict[str, Any]] = field(default_factory=list)
     searched_shopper_scopes: set[tuple[str, str]] = field(default_factory=set)
 
+    # Forecast budget. A paid external call, and one turn never needs many:
+    # a shopper is at one event, on one date. Guarded because roles can run
+    # concurrently.
+    weather_lock: Lock = field(default_factory=Lock)
+    weather_calls: int = 0
+
     # Product-detail budget. Deliberately not lock-guarded, preserving existing
     # behavior; the search counter above is guarded and this one never was.
     product_detail_reads: int = 0

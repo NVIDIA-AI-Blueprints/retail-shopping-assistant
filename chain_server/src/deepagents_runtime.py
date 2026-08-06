@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from datetime import date as CalendarDate, datetime, timezone
 
 import logging
 
@@ -38,6 +39,13 @@ from .response_format import (
     _format_promotions_result,
     _format_retrieved_images,
     _format_shopper_context,
+    _format_store_date,
+    _format_weather_result,
+    WEATHER_BUDGET_EXHAUSTED,
+    WEATHER_NO_DATE,
+    WeatherForecastInput as _WeatherForecastInput,
+    weather_call_needs_a_date,
+    claim_weather_call,
     _format_wearer_audience,
     _format_update_cart_result,
 )
@@ -139,6 +147,7 @@ from .skill_activation import (
     selected_skill_names_for_turn,
 )
 from .turn_scope import TurnScope
+from .weather import WeatherConfig, WeatherRequest, build_weather_client
 from .tool_policy import (
     load_shopper_skill_registry as _shopper_skill_registry,
     validate_registered_tool_names,
@@ -291,6 +300,17 @@ Rules:
   the closest catalog or styling direction, not as complete, suitable, ready,
   or proven for that outcome. Keep any missing functional element explicit
   without inventing a product.
+- A live forecast in TOOL EVIDENCE supports what the weather will be. Keep the
+  provider attribution and its link whenever any of it survives into the reply:
+  the provider's terms require it wherever weather or anything derived from it
+  is shown, so removing it as clutter is not an option available to you. A
+  forecast never confirms a product property.
+- Styling judgement about an occasion is not a product claim, and must be kept
+  rather than removed. "A stiletto will sink into grass" reasons from a
+  confirmed heel type about the setting; "these are stable on grass" asserts a
+  property of the shoe. Remove the second, keep the first. Advice that the
+  shopper will need something the catalog does not stock is also judgement, not
+  a claim, and stays.
 - Group claims such as "all are maxi length", "both are cotton", "the lightest",
   "most polished", or "best for heat" require product-detail evidence for every
   item included in that claim. Remove the claim if any item lacks that support.
@@ -471,6 +491,13 @@ class DeepAgentsRuntime:
         )
         self._conversation_memory = ConversationMemoryClient(config.memory_port)
         self._conversation_products = ConversationProductsClient(config.memory_port)
+        # Fails closed when weather is disabled or unconfigured: every call
+        # returns a typed failure, which the reply degrades into occasion
+        # styling. So an operator who never sets a key sees a shop that styles
+        # without weather, not a shop that breaks.
+        self._weather_client = build_weather_client(
+            getattr(config, "weather", None) or WeatherConfig()
+        )
 
     def catalog_capabilities(self) -> CatalogCapabilities:
         """Return the process-lifecycle catalog capability contract."""
@@ -1326,6 +1353,61 @@ class DeepAgentsRuntime:
             )
             return _format_policy_result(result)
 
+        @tool(args_schema=_WeatherForecastInput, return_direct=False)
+        def get_weather_forecast_tool(
+            city: str,
+            date: CalendarDate | None = None,
+            start_date: CalendarDate | None = None,
+            end_date: CalendarDate | None = None,
+        ) -> str:
+            """Live daily forecast for one place, for the dates being dressed
+            for.
+
+            Call it, without being asked, when all three hold: the shopper
+            named a CITY, town or postal code; they named a date or window;
+            and that window is within about 15 days of TODAY. A destination
+            wedding, a trip, an outdoor event. Conditions change what to wear
+            more than anything else about a destination.
+
+            The `city` argument takes a city, town or postal code. A country
+            or region has no single weather, so prefer asking which city over
+            calling with one. If you do call with something broad, the reply
+            must say the numbers cover that whole area and ask which city --
+            never present them as the weather where the shopper will be.
+
+            Do not call it otherwise. Specifically:
+            - No date. Today is not what they are dressing for; ask instead.
+            - A date further out than about 15 days. There is no forecast that
+              far ahead, so a call cannot produce anything true.
+            - Anything broader than a city, per above. Ask which city.
+            - No place, or nothing they are dressing for.
+
+            Dress the date they are dressing for, not the one they travel on:
+            "flying to Rome tomorrow, what do I wear at the weekend" is a
+            forecast for the weekend. Resolve relative dates against TODAY
+            first -- one exact ISO date, or a complete inclusive ISO start/end
+            range -- and never send a relative date or invent a place.
+            """
+
+            if weather_call_needs_a_date(date, start_date, end_date):
+                # The library treats a missing date as local today, which is
+                # right for "what is it like there now" and wrong for the only
+                # thing a shopper asks: "a wedding in Cancun" would silently
+                # get today's weather for an event months away. Ask instead.
+                return WEATHER_NO_DATE
+            if not claim_weather_call(scope):
+                return WEATHER_BUDGET_EXHAUSTED
+            return _format_weather_result(
+                self._weather_client.get_forecast(
+                    WeatherRequest(
+                        location=city,
+                        date=date,
+                        start_date=start_date,
+                        end_date=end_date,
+                    )
+                )
+            )
+
         @tool(args_schema=_CheckAvailabilityInput, return_direct=False)
         def check_product_availability_tool(items) -> str:
             """Check whether products are available or in stock. Use ONLY when
@@ -1410,6 +1492,14 @@ class DeepAgentsRuntime:
             check_product_availability_tool,
             check_active_promotions_tool,
         ]
+        # Off means absent, not present-and-failing. An unregistered tool
+        # cannot be called, so a shop without weather simply styles the
+        # occasion instead of explaining a capability nobody asked about.
+        weather_off = not getattr(
+            getattr(self.config, "weather", None), "enabled", False
+        )
+        if not weather_off:
+            shopping_tools.append(get_weather_forecast_tool)
         validate_registered_tool_names(
             {
                 str(
@@ -1417,7 +1507,8 @@ class DeepAgentsRuntime:
                     or getattr(candidate, "__name__", "")
                 )
                 for candidate in shopping_tools
-            }
+            },
+            disabled=("get_weather_forecast_tool",) if weather_off else (),
         )
         skill_gate = ShopperSkillActivationMiddleware(
             request_id=identity.request_id,
@@ -1858,6 +1949,33 @@ stable on grass or gravel, water-resistant, all-day comfortable, weather-safe,
 secure for a full event, or good for outdoor surfaces unless the catalog says
 so. With indirect evidence, state only the confirmed construction detail and
 keep the styling judgment separate.
+Every rule above bans a claim about a product. None of them bans thinking about
+the occasion, and a shopper dressing for one is owed that thinking. Reason from
+a confirmed attribute to a judgement about the situation: a stiletto heel sinks
+into grass and sand, a floor-length hem drags on a lawn, a suede upper is wrong
+for a beach, an open toe is cold in November. Say it as a judgement about the
+occasion, never as a property of the item. "A stiletto will sink into grass" is
+judgement and is welcome; "these are stable on grass" is a claim and stays
+forbidden.
+Ask when something material is missing, and ask it as a shopper would. The
+occasion is usually what is missing: brunch, a wedding and errands need
+different answers whatever else is true. The place is worth asking for once the
+answer depends on it -- an outdoor event, a trip, or a question about the
+weather -- but never ask where someone lives as a matter of course. Give the
+styling reason first: "is it on the beach or indoors? sand and a lawn need
+different shoes". Show a grounded starting point in the same reply; never
+answer with only questions.
+If the shopper asks you directly about the weather and you have no forecast,
+say so and answer from what you know, as typical rather than predicted:
+"I don't have a live forecast for Cancun, but August there is usually hot and
+humid." Do not volunteer this when they did not ask, never give a temperature
+or a condition for a specific date without a forecast in TOOL EVIDENCE, and
+never conclude anything about the weather where the shopper is.
+When the occasion needs something this catalog does not stock, say so as advice
+and keep showing what was found: "you'll want a proper coat over this; we don't
+carry outerwear." Never offer the nearest item as though it served the purpose,
+and never invent a need the shopper's own words or the conditions they stated do
+not support.
 Do not convert sole or strap facts into surface guarantees. Rubber sole means
 rubber sole; ankle strap means ankle strap. Do not add grass, gravel, weather,
 outdoor-surface performance, all-day comfort, maximum breathability, or
@@ -1927,6 +2045,13 @@ Rules:
   has enough direction to begin with a grounded partial outfit. Do not answer
   only with a questionnaire; search the most useful core role first and ask at
   most one concise follow-up while presenting the grounded result.
+- Advice is not an answer on its own either. A layering formula, a packing list
+  or a list of what to look for, with no pieces from this shop beside it, is a
+  wardrobe lecture rather than shopping. Search and show real items in every
+  styling reply, including when conditions are hard, the date is unknown, or
+  the shop cannot cover the whole need -- show what it does have and say what
+  is missing. Measured: "it's going to snow this weekend" and "a wedding in
+  Cancun, date not fixed yet" both returned formulas and nothing to buy.
 - The catalog advertises who its products are for. Read those values from
   Catalog capabilities above; never name an audience the catalog does not
   advertise, and never state one from memory.
@@ -2148,6 +2273,7 @@ Rules:
                 f"CART ID: {identity.cart_id}"
             )
         ]
+        sections.append(_format_store_date())
         shopper_context = _format_shopper_context(state.shopper_context)
         wearer = _format_wearer_audience(state.wearer_audience)
         if shopper_context:

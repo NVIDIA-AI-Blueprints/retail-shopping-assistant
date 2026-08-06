@@ -900,6 +900,10 @@ class TestSystemPrompt:
         )
 
         assert "USER QUERY: Show me a dress." in user_message
+        # Wiring, not formatting. The formatter had its own tests and every one
+        # of them passed with the block deleted from the turn entirely.
+        assert "TODAY (store's current date, server-resolved):" in user_message
+        assert "END TODAY" in user_message
         assert "strict_budget_style_mixer" in user_message
         assert "Treats budget and style as equally important" in user_message
         assert (
@@ -3116,6 +3120,7 @@ class TestDeepAgentsRuntimeRefs:
             "get_product_details_tool",
             "check_product_availability_tool",
             "check_active_promotions_tool",
+            "get_weather_forecast_tool",
             "resolve_conversation_products_tool",
         }
         assert skill_gate._skill_tool_grants["cart-management"] == {
@@ -3141,6 +3146,7 @@ class TestDeepAgentsRuntimeRefs:
             "get_product_details_tool",
             "check_product_availability_tool",
             "check_active_promotions_tool",
+            "get_weather_forecast_tool",
             "resolve_conversation_products_tool",
         }
         selected = runtime_mod._shopper_skill_registry(
@@ -3214,6 +3220,52 @@ class TestDeepAgentsRuntimeRefs:
             captured["system_prompt"]
         )
         assert "stable on grass or gravel" in captured["system_prompt"]
+        # Every outdoor rule above is a prohibition, and a prompt of nothing but
+        # prohibitions made the model avoid the subject: asked "what do I wear
+        # this weekend?" it offered a sleeveless cotton maxi dress and reasoned
+        # about the occasion not at all. The permission has to sit beside the
+        # ban, with the line between them drawn by example.
+        assert "a stiletto heel sinks" in captured["system_prompt"]
+        assert (
+            '"A stiletto will sink into grass" is\njudgement and is welcome'
+            in captured["system_prompt"]
+        )
+        assert '"these are stable on grass" is a claim' in (
+            captured["system_prompt"]
+        )
+        # Naming a gap is advice, not a refusal: keep showing what was found.
+        assert "we don't\ncarry outerwear" in captured["system_prompt"]
+        assert "Never offer the nearest item as though it served" in (
+            captured["system_prompt"]
+        )
+        assert "never invent a need" in captured["system_prompt"]
+        # Asking is part of styling, so it belongs here rather than on any
+        # tool: it applies whether or not a forecast tool exists.
+        # The neighbouring rule bans a questionnaire, so a reply that gave
+        # advice instead slipped past it: "it's going to snow this weekend"
+        # and "a wedding in Cancun, date not fixed yet" both returned a
+        # layering formula with nothing to buy.
+        assert "Advice is not an answer on its own either" in (
+            captured["system_prompt"]
+        )
+        assert "wardrobe lecture rather than shopping" in captured["system_prompt"]
+        assert "show what it does have and say what" in captured["system_prompt"]
+        assert "Ask when something material is missing" in (
+            captured["system_prompt"]
+        )
+        assert "never ask where someone lives as a matter of course" in (
+            captured["system_prompt"]
+        )
+        assert "never\nanswer with only questions" in captured["system_prompt"]
+        # No forecast plus a direct question is the one time weather is
+        # spoken about without a tool, and it is typical, never predicted.
+        assert "as typical rather than predicted" in captured["system_prompt"]
+        assert "Do not volunteer this when they did not ask" in (
+            captured["system_prompt"]
+        )
+        assert "never conclude anything about the weather where the shopper is" in (
+            captured["system_prompt"]
+        )
         assert "will stay comfortable all evening" in captured["system_prompt"]
         assert "Rubber sole means" in captured["system_prompt"]
         assert "maximum breathability" in captured["system_prompt"]
@@ -3366,6 +3418,7 @@ class TestDeepAgentsRuntimeRefs:
             "update_cart_items_tool",
             "get_store_policy_tool",
             "check_active_promotions_tool",
+            "get_weather_forecast_tool",
             "check_product_availability_tool",
         }
         assert "| `load_customer_persona_tool` |" in registry
@@ -6996,6 +7049,16 @@ class TestDeepAgentsRuntimeRefs:
         assert '"subcategory": ["flats", "sandals"]' in evidence
         assert "Do not describe an unlisted product type as advertised" in evidence
         assert "Do not omit or override a confirmed filter" in (
+            runtime_mod._GROUNDING_EDITOR_SYSTEM_PROMPT
+        )
+        # The rewriter runs after the agent and can delete what it wrote. If
+        # only the agent were told that occasion judgement is allowed, this
+        # stage would strip it back out as an unsupported functional claim, and
+        # the feature would look like it had never been built.
+        assert "Styling judgement about an occasion is not a product claim" in (
+            runtime_mod._GROUNDING_EDITOR_SYSTEM_PROMPT
+        )
+        assert "Remove the second, keep the first" in (
             runtime_mod._GROUNDING_EDITOR_SYSTEM_PROMPT
         )
         assert "requested type is not separately advertised" in (

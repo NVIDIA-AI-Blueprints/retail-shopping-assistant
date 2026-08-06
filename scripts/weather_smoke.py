@@ -51,7 +51,7 @@ def _weather_config() -> WeatherConfig:
 
 def _weather_request() -> WeatherRequest:
     return WeatherRequest(
-        zipcode=os.environ.get("WEATHER_SMOKE_ZIP", ""),
+        location=os.environ.get("WEATHER_SMOKE_ZIP", ""),
         date=os.environ.get("WEATHER_SMOKE_DATE") or None,
         start_date=os.environ.get("WEATHER_SMOKE_START_DATE") or None,
         end_date=os.environ.get("WEATHER_SMOKE_END_DATE") or None,

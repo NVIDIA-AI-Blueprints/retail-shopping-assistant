@@ -398,29 +398,33 @@ def _format_shopper_context(context: ShopperContext | None) -> str:
 
 
 def _format_wearer_audience(audience: list[str] | None) -> str:
-    """Give the person being shopped for standing the dialogue cannot.
+    """Say who the last named item was for, without scoping anything.
 
-    A shopper who said "for my husband" two turns ago is still shopping for
-    him, but by contract dialogue establishes intent rather than fact, so the
-    model re-reads it as history and drops it. Rendered as a value it is
-    something the turn can act on.
+    This used to read "keep filtering to this audience while it still
+    applies", which made a wearer a property of the conversation rather than
+    of the item they were named for. "Shades for hubby" then scoped every
+    later search: "show me some heels" came back empty in a shop full of
+    heels, because they are all womens and the carried audience was not.
+
+    The two errors are not the same size. Carrying it wrongly costs the
+    shopper the whole result set, silently, with no way to see why. Forgetting
+    it costs one question. So the value is reported and the turn decides:
+    audience scopes a search only when the turn itself names the person.
     """
 
     if not audience:
         return ""
     values = ", ".join(sorted(str(value) for value in audience))
     return (
-        "SHOPPING FOR (carried from an earlier turn; the current turn wins):\n"
+        "SHOPPING FOR (context for reading this turn; not a scope by itself):\n"
         f"audience: {values}\n"
-        "Keep filtering to this audience while it still applies. If the shopper "
-        "says who an item is for, follow them instead. Say once that you are "
-        "still shopping for the same person, so they can redirect you.\n"
-        "A shopper asking for themselves -- \"now something for me\", \"for "
-        "myself\", \"I need\" -- has redirected you just as plainly as naming "
-        "another person. Stop filtering by audience altogether for that "
-        "request: nothing establishes the shopper's own audience and guessing "
-        "it is forbidden. Carrying this audience into it hands them an empty "
-        "shelf in a shop full of things for them.\n"
+        "The last item the shopper named a person for was for this audience. "
+        "Decide this turn's audience from this turn's own words. If they "
+        "refer to that person again, including by pronoun -- \"he also needs "
+        "a bag\", \"something for her\" -- filter to the values that suit "
+        "them. If this turn refers to nobody, send no audience filter at all, "
+        "however obviously the person is still around. You may ask whether "
+        "they are still shopping for the same person.\n"
         "END SHOPPING FOR"
     )
 

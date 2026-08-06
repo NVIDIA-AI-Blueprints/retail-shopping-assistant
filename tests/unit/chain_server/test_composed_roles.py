@@ -593,37 +593,32 @@ def test_a_turn_that_declared_nothing_leaves_the_wearer_alone() -> None:
     assert events == []
 
 
-def test_the_carried_wearer_is_rendered_with_the_current_turn_winning() -> None:
-    from chain_server.src.response_format import _format_wearer_audience
+def test_the_carried_wearer_is_reported_but_never_scopes_a_search() -> None:
+    """A wearer belongs to the item they were named for, not the conversation.
 
-    block = _format_wearer_audience(["adult_all_genders"])
+    The block used to say "keep filtering to this audience while it still
+    applies". Live, "looking for shades for hubby" then scoped everything
+    after it: "now something for me .. embroidered skirts" found nothing, and
+    so did "show me some heels" -- in a shop whose heels are all womens.
 
-    assert "SHOPPING FOR" in block
-    assert "adult_all_genders" in block
-    assert "the current turn wins" in block
-    assert _format_wearer_audience([]) == ""
-
-
-def test_a_shopper_asking_for_themselves_ends_the_carried_audience() -> None:
-    """Retention must not outlive the person it was about.
-
-    Live: "looking for shades for hubby" scoped to adult_all_genders, and the
-    next turn -- "now something for me .. do you have some embroidered skirts"
-    -- kept that scope. Skirts are all womens, so it found nothing and offered
-    to "check again in women's skirts", proposing the correction it should have
-    made itself.
-
-    The block already said to follow the shopper when they say who an item is
-    for. "For me" is exactly that, but it names no audience value, so it never
-    read as a redirect. Being asked for is not a licence to guess the shopper's
-    own audience, so the answer is to stop filtering, not to switch values.
+    Both failures came from one cause, and patching the phrasings was
+    hopeless: "for me", "show me heels", "what about a dress" have nothing in
+    common to match on. Reversing it needs no list -- naming someone is what
+    turns the filter on.
     """
 
     from chain_server.src.response_format import _format_wearer_audience
 
     block = _format_wearer_audience(["adult_all_genders"])
 
-    assert "now something for me" in block
-    assert "Stop filtering by audience altogether" in block
-    # Not "switch to the shopper's audience": nothing establishes it.
-    assert "guessing it is forbidden" in block
+    assert "SHOPPING FOR" in block
+    assert "adult_all_genders" in block
+    assert "not a scope by itself" in block
+    # Both halves, because stating only the ban broke the other side: "he
+    # also needs a bag for travel" stopped scoping to him in 5/5 runs.
+    assert "including by pronoun" in block
+    assert "send no audience filter at all" in block
+    # It may ask, because asking costs a sentence and carrying it wrongly
+    # costs the shopper every result.
+    assert "still shopping for the same person" in block
+    assert _format_wearer_audience([]) == ""

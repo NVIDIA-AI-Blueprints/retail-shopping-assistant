@@ -427,9 +427,11 @@ def test_the_audience_filter_carries_the_rule_the_model_needs() -> None:
     assert "When nobody is named, omit this filter entirely" in described
     # A child in an adult catalog gets nothing, not adult substitutes.
     assert "never substitute what does not suit them" in described
-    # Reinforces the carried-audience rule in the channel that measured
-    # strongest: the SHOPPING FOR block alone fixed 4/5 of the leak.
-    assert "A shopper asking for themselves has named nobody" in described
+    # The decision point owns the rule about carried audiences; the SHOPPING
+    # FOR block only reports the value. Stated as a positive trigger, because
+    # enumerating the ways a shopper moves on cannot be completed.
+    assert "Only this turn's words count" in described
+    assert "naming someone is what turns the filter on" in described
 
 
 def test_every_other_filter_keeps_the_generic_description() -> None:

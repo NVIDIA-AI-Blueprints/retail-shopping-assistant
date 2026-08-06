@@ -1239,10 +1239,12 @@ _WEARER_AUDIENCE_FILTER_DESCRIPTION = (
     "to mean unspecified, which would discard everything stocked for one "
     "audience. If nothing advertised suits the named person, such as a child "
     "in an adult-only catalog, search for them anyway and let it return "
-    "nothing; never substitute what does not suit them. A shopper asking for "
-    "themselves has named nobody: \"now something for me\" ends any audience "
-    "carried from an earlier turn and takes no filter of its own, because "
-    "nothing establishes the shopper's own audience."
+    "nothing; never substitute what does not suit them. Only this turn's "
+    "words count. An audience established earlier in the conversation never "
+    "carries into a request that does not name that person again, however "
+    "obviously they are still around: send no filter and let the shopper "
+    "redirect you. Enumerating the ways a shopper moves on is hopeless, so "
+    "the rule is the reverse -- naming someone is what turns the filter on."
 )
 
 

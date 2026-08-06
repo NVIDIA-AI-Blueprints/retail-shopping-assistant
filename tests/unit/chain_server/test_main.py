@@ -3241,6 +3241,15 @@ class TestDeepAgentsRuntimeRefs:
         assert "never invent a need" in captured["system_prompt"]
         # Asking is part of styling, so it belongs here rather than on any
         # tool: it applies whether or not a forecast tool exists.
+        # The neighbouring rule bans a questionnaire, so a reply that gave
+        # advice instead slipped past it: "it's going to snow this weekend"
+        # and "a wedding in Cancun, date not fixed yet" both returned a
+        # layering formula with nothing to buy.
+        assert "Advice is not an answer on its own either" in (
+            captured["system_prompt"]
+        )
+        assert "wardrobe lecture rather than shopping" in captured["system_prompt"]
+        assert "show what it does have and say what" in captured["system_prompt"]
         assert "Ask when something material is missing" in (
             captured["system_prompt"]
         )

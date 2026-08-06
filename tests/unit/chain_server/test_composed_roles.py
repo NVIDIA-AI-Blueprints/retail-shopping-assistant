@@ -249,9 +249,15 @@ def test_the_composer_is_told_the_role_was_proposed(
     # Naming the range alone is an inventory note. It lists what is on the
     # shelves and still hands the shopper an outfit built on an assumption
     # nobody stated, which is what a live guest turn actually did.
-    assert "who the catalog serves" in line
+    assert "who the shop's range is for" in line
     assert "assumed the pieces are for the shopper" in line
     assert "Never ask who they are" in line
+    # The shopper stands in a shop, not in front of a query planner. A live
+    # reply read "I tried the closest available search in apparel with the
+    # filter adult all-genders, and that search returned zero results" --
+    # every one of those words came from an instruction telling it to recite.
+    assert "never a catalog label" in line
+    assert "pieces anyone can wear" in line
 
 
 def test_a_composed_role_with_no_matches_names_what_was_searched(
@@ -274,6 +280,7 @@ def test_a_composed_role_with_no_matches_names_what_was_searched(
     assert payload["outcome"] == "zero_results"
     assert "blouses, sweaters" in line
     assert "do not claim the role is unavailable" in line
+    assert "never say search, filter, scope, results" in line
 
 
 def test_the_model_visible_text_carries_the_relation(

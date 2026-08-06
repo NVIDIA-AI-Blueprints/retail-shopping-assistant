@@ -3178,25 +3178,45 @@ def _composed_role_line(payload: dict[str, Any], *, has_products: bool) -> str:
         str(value) for value in (payload.get("role_advertised_types") or [])
     ]
     if not has_products:
-        searched = ", ".join(sorted(types)) or "the selected advertised types"
+        searched = ", ".join(sorted(types)) or "the pieces looked at"
         return (
             f"REQUESTED_SCOPE_RELATION: the shopper did not ask for {requested}; "
-            "this role was proposed by the assistant. The search covered "
-            f"{searched} and returned zero products, so say what was searched "
-            "and do not claim the role is unavailable."
+            "this role was proposed by the assistant. Nothing came back for "
+            f"{searched}. Name those pieces the way a shopper would and do not "
+            "claim the role is unavailable, because only those were looked at. "
+            "Speak as someone standing in the shop: never say search, filter, "
+            "scope, results, catalog, or a catalog's internal label."
         )
     return (
         f"REQUESTED_SCOPE_RELATION: the shopper did not ask for {requested}; "
         "this role was proposed by the assistant. Offer it as a suggestion "
         "rather than as something they asked for, and keep every returned "
         "product's actual catalog category. Say once in this reply who the "
-        "catalog serves, using the audience values in Catalog capabilities, "
-        "and that you have assumed the pieces are for the shopper -- invite "
-        "them to say so if they are shopping for someone else. Naming the "
-        "range alone is an inventory note: it lists what is on the shelves "
-        "and still hands them an outfit built on an assumption nobody "
-        "stated. Never ask who they are."
+        "shop's range is for and that you have assumed the pieces are for the "
+        "shopper -- invite them to say so if they are shopping for someone "
+        "else. Naming the range alone is an inventory note: it lists what is "
+        "on the shelves and still hands them an outfit built on an assumption "
+        "nobody stated. Never ask who they are. Put the range in a shopper's "
+        "words, never a catalog label: a value such as adult_all_genders is "
+        "said as pieces anyone can wear."
     )
+
+
+#: Appended to every catalog evidence summary the composer reads. The labels
+#: above it are internal -- taxonomy, confirmed filters, scope outcomes -- and a
+#: model handed them will paraphrase them straight back. One live reply read "I
+#: checked the broader apparel category with the adult all-genders filter, and
+#: that search returned no matches under that scope", which is the evidence
+#: block read aloud. A shopper is standing in a shop, not in front of a query
+#: planner.
+_SHOPPER_VOICE_NOTE = (
+    "SPEAK AS A SHOP ASSISTANT: everything above is internal bookkeeping. Say "
+    "what you looked at and what you found in the shopper's own words. Never "
+    "say search, filter, scope, taxonomy, query, results, or catalog, and "
+    "never repeat an internal label such as adult_all_genders -- say pieces "
+    "anyone can wear. Name product types and prices plainly; those are the "
+    "shopper's language already."
+)
 
 
 def _customer_safe_tool_evidence(content: str, message: Any = None) -> str:
@@ -3211,7 +3231,11 @@ def _customer_safe_tool_evidence(content: str, message: Any = None) -> str:
     if message is not None:
         payload = evidence_of(message)
         if payload is not None:
-            return _customer_safe_search_evidence(payload)
+            return (
+                _customer_safe_search_evidence(payload)
+                + "\n\n"
+                + _SHOPPER_VOICE_NOTE
+            )
         detail = detail_evidence_of(message)
         if detail is not None:
             return _render_product_evidence_summary(

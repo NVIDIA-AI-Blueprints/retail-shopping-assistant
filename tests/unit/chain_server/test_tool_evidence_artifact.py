@@ -230,7 +230,7 @@ def test_composer_summary_for_search_results() -> None:
         "", _StubToolMessage(_results_evidence())
     )
 
-    assert summary == (
+    assert summary.split('SPEAK AS A SHOP ASSISTANT')[0].rstrip() == (
         "CUSTOMER_SAFE_SEARCH_EVIDENCE: Search results support product names, "
         "prices, categories, image availability, confirmed search filters, any "
         "attribute listed as confirmed for that specific product, and a modest "
@@ -332,7 +332,7 @@ def test_composer_summary_for_zero_results() -> None:
 
     summary = runtime_mod_support._customer_safe_tool_evidence("", _StubToolMessage(evidence))
 
-    assert summary == (
+    assert summary.split('SPEAK AS A SHOP ASSISTANT')[0].rstrip() == (
         "CUSTOMER_SAFE_SCOPED_NO_MATCH_EVIDENCE: Zero products matched only "
         "the exact advertised search scope below. This does not establish that "
         "a different, unsearched, or unadvertised product type is absent, and "
@@ -366,7 +366,7 @@ def test_composer_summary_for_product_detail() -> None:
         ),
     )
 
-    assert summary == (
+    assert summary.split('SPEAK AS A SHOP ASSISTANT')[0].rstrip() == (
         "CUSTOMER_SAFE_PRODUCT_DETAIL_EVIDENCE: Product details were read for "
         "these products, but the available detail data contains only the "
         "listed facts. Do not state material, care, dimensions, closures, fit, "
@@ -463,3 +463,24 @@ def test_artifact_is_json_round_trippable() -> None:
     artifact = _results_evidence().as_artifact()
 
     assert json.loads(json.dumps(artifact)) == artifact
+
+
+def test_every_search_summary_tells_the_composer_to_drop_the_jargon() -> None:
+    """The evidence is internal bookkeeping and a model will read it aloud.
+
+    A live reply came back as "I checked the broader apparel category with the
+    adult all-genders filter, and that search returned no matches under that
+    scope" -- which is the evidence block paraphrased. The shopper is standing
+    in a shop, not in front of a query planner.
+    """
+
+    evidence = SearchEvidence(outcome="zero_results")
+    message = SimpleNamespace(artifact=evidence.as_artifact())
+
+    summary = runtime_mod_support._customer_safe_tool_evidence("", message)
+
+    assert "SPEAK AS A SHOP ASSISTANT" in summary
+    for banned in ("search", "filter", "scope", "taxonomy", "query", "results"):
+        assert banned in summary.split("SPEAK AS A SHOP ASSISTANT")[1]
+    assert "adult_all_genders" in summary
+    assert "pieces anyone can wear" in summary

@@ -181,6 +181,10 @@ class TurnFinalizeResult(_MemoryModel):
     status: FinalTurnStatus
     assistant_text: str = Field(..., max_length=100_000)
     termination_reason: str | None = Field(default=None, max_length=1_024)
+    #: Event types the memory service did not recognise and did not store.
+    #: Normally empty. Non-empty means either a genuine typo or a peer running
+    #: an older build, and either way the turn itself finalized.
+    dropped_event_types: list[str] = Field(default_factory=list, max_length=32)
 
 
 class ConversationMemoryError(RuntimeError):

@@ -2376,7 +2376,7 @@ Rules:
                 agent_diagnostics=state.agent_diagnostics,
                 selected_skill_names=state.selected_skill_names,
             )
-            self._conversation_memory.finalize_turn(
+            receipt = self._conversation_memory.finalize_turn(
                 identity.conversation_id,
                 turn.turn_id,
                 request_id=identity.request_id,
@@ -2394,6 +2394,17 @@ Rules:
                 output=output,
             )
             finalized = True
+            if receipt.dropped_event_types:
+                # The turn is safe; only the enrichment was lost. Surfaced
+                # rather than swallowed, because the same signal means a typo
+                # here and an older memory service in a rolling deploy.
+                logger.warning(
+                    "Conversation memory dropped unknown event types: %s",
+                    ", ".join(receipt.dropped_event_types),
+                )
+                state.agent_diagnostics["memory_dropped_event_types"] = list(
+                    receipt.dropped_event_types
+                )
         except (ConversationMemoryError, ValidationError) as exc:
             logger.error("Failed to finalize durable conversation turn: %s", exc)
             error_code = getattr(

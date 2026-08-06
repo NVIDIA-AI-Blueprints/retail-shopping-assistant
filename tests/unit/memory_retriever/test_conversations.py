@@ -1123,20 +1123,6 @@ def test_finalize_rejects_extra_output_and_unlinked_cart_events(
             },
         },
     )
-    unlinked_cart_event = conversation_db.post(
-        path,
-        json={
-            **base_payload,
-            "events": [
-                {
-                    "event_key": "cart-1",
-                    "event_type": "cart_mutation_committed",
-                    "source_kind": "cart",
-                    "payload": {},
-                }
-            ],
-        },
-    )
     forged_presented_products = conversation_db.post(
         path,
         json={
@@ -1160,11 +1146,72 @@ def test_finalize_rejects_extra_output_and_unlinked_cart_events(
     )
 
     assert extra_output.status_code == 422
-    assert unlinked_cart_event.status_code == 422
     assert forged_presented_products.status_code == 422
     with memory_main.SessionLocal() as db:
         assert db.query(memory_main.ConversationTurn).one().status == "started"
         assert db.query(memory_main.ConversationEvent).count() == 0
+
+
+def test_an_unknown_event_type_is_dropped_and_the_turn_still_finalizes(
+    conversation_db,
+) -> None:
+    """A turn is authoritative; its events only enrich it.
+
+    `event_type` used to be a Literal, so one type this build had never heard
+    of failed validation of the whole finalize request. The turn stayed
+    `started` and the next turn was refused with "conversation is still
+    processing another request" -- a dead conversation, caused by an event
+    nobody needed. It also made the two services' deploy order load-bearing in
+    a way no amount of documentation makes safe.
+
+    The unknown event is dropped and named in the receipt, which is what keeps
+    a genuine typo as visible as a rejection was.
+    """
+
+    started = _start_turn(
+        conversation_db,
+        "conversation-unknown-event",
+        request_id="request-unknown-event",
+    ).json()
+
+    response = conversation_db.post(
+        (
+            "/conversations/conversation-unknown-event/turns/"
+            f"{started['turn_id']}/finalize"
+        ),
+        json={
+            "request_id": "request-unknown-event",
+            "attempt_id": started["attempt_id"],
+            "assistant_text": "Done.",
+            "status": "completed",
+            "termination_reason": "completed",
+            "events": [
+                {
+                    "event_key": "known-1",
+                    "event_type": "product_selected",
+                    "source_kind": "shopper",
+                    "payload": {},
+                },
+                {
+                    "event_key": "unknown-1",
+                    "event_type": "invented_by_a_newer_peer",
+                    "source_kind": "runtime",
+                    "payload": {"anything": True},
+                },
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["dropped_event_types"] == ["invented_by_a_newer_peer"]
+    with memory_main.SessionLocal() as db:
+        assert db.query(memory_main.ConversationTurn).one().status == "completed"
+        stored = [
+            row.event_type
+            for row in db.query(memory_main.ConversationEvent).all()
+            if row.event_key != "runtime-presented-products"
+        ]
+        assert stored == ["product_selected"]
 
 
 def test_start_reopens_exact_abandoned_request_in_place(

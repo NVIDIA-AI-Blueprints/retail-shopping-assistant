@@ -108,9 +108,17 @@ EventType = Literal[
 ]
 
 
+#: Deliberately `str`, not `EventType`. A Literal here fails validation of the
+#: whole finalize request, so one event type this build has never heard of
+#: discarded the entire turn: it stayed `started`, and the next turn was
+#: refused with "conversation is still processing another request". A turn
+#: record is authoritative and events enrich it, so an unrecognised event is
+#: dropped and named in the response while the turn finalizes normally. That
+#: also makes the deploy order of the two services irrelevant in both
+#: directions, which a Literal never can be.
 class ConversationEventInput(BaseModel):
     event_key: str = Field(..., min_length=1, max_length=256)
-    event_type: EventType
+    event_type: str = Field(..., min_length=1, max_length=128)
     source_kind: Literal["shopper", "compiler", "catalog", "cart", "runtime"]
     source_ref: str | None = Field(default=None, max_length=512)
     payload: dict[str, Any] = Field(default_factory=dict)
@@ -388,8 +396,11 @@ def _finalize_response(
     turn: ConversationTurn,
     *,
     replayed: bool,
+    dropped_event_types: list[str] | None = None,
 ) -> dict[str, Any]:
     return {
+        # Always present, so a replay and a first finalize have one shape.
+        "dropped_event_types": list(dropped_event_types or []),
         "turn_id": turn.turn_id,
         "attempt_id": turn.attempt_id,
         "sequence": turn.sequence,
@@ -622,7 +633,14 @@ def _append_events(
     turn: ConversationTurn,
     events: list[ConversationEventInput],
     now: float,
-) -> None:
+) -> list[str]:
+    """Store the events this build understands; return the types it does not.
+
+    Dropping is not silent: the caller reports the dropped types back to the
+    writer, so a genuine typo is as visible as it was before while a newer
+    peer's event costs nothing but the enrichment it carried.
+    """
+
     next_order = (
         db.query(func.max(ConversationEvent.logical_order))
         .filter(ConversationEvent.turn_id == turn.turn_id)
@@ -637,6 +655,11 @@ def _append_events(
     }
     if existing_keys.intersection(event.event_key for event in events):
         raise HTTPException(status_code=409, detail="event_key already exists")
+    known = set(EventType.__args__)
+    dropped = [
+        event.event_type for event in events if event.event_type not in known
+    ]
+    events = [event for event in events if event.event_type in known]
     for offset, event in enumerate(events):
         db.add(
             ConversationEvent(
@@ -651,6 +674,7 @@ def _append_events(
                 created_at=now,
             )
         )
+    return list(dict.fromkeys(dropped))
 
 
 def _finalize_turn(
@@ -695,7 +719,7 @@ def _finalize_turn(
         )
 
     now = time.time()
-    _append_events(db, turn, request.events, now)
+    dropped_event_types = _append_events(db, turn, request.events, now)
     db.flush()
     append_presented_products_event(
         db,
@@ -719,7 +743,11 @@ def _finalize_turn(
     turn.finalize_digest = digest
     turn.completed_at = now
     db.flush()
-    response = _finalize_response(turn, replayed=False)
+    response = _finalize_response(
+        turn,
+        replayed=False,
+        dropped_event_types=dropped_event_types,
+    )
     db.commit()
     return response
 

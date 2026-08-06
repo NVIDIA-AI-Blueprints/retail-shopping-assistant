@@ -383,11 +383,16 @@ def _format_cart_total(cart: Cart) -> str:
 def _format_shopper_context(context: ShopperContext | None) -> str:
     if context is None:
         return ""
+    # The saved ZIP is deliberately absent. Every use of it is forbidden --
+    # it is not proof of location, weather, or a product requirement, and the
+    # weather slice that would give it a use is dormant. Showing the model a
+    # fact and then forbidding every use of it is an invitation, not a
+    # safeguard. It stays on the profile record and the picker; it returns
+    # here when weather tooling defines what may be concluded from it.
     return (
         "SHOPPER CONTEXT (server-resolved; soft guidance only):\n"
         f"shopper_type: {context.shopper_type}\n"
         f"behavior: {context.behavior}\n"
-        f"saved_zipcode: {context.zipcode}\n"
         "END SHOPPER CONTEXT"
     )
 

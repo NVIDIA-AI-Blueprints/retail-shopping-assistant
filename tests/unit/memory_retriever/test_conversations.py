@@ -1565,7 +1565,7 @@ def test_versioned_migrations_upgrade_legacy_schema_once_without_data_loss(
             ).scalars()
         )
 
-    assert versions == [1, 2, 3, 4, 5, 6]
+    assert versions == [1, 2, 3, 4, 5, 6, 7]
     assert row[0] == "Legacy Bag"
     assert len(row[1]) == 32
     assert row[2:] == (None, None)
@@ -1640,7 +1640,7 @@ def test_file_database_reopens_with_sqlite_safety_settings(
             connection.execute(
                 text("SELECT COUNT(*) FROM schema_migrations")
             ).scalar_one()
-            == 6
+            == 7
         )
     reopened_engine.dispose()
 
@@ -1804,3 +1804,117 @@ def test_start_carries_forward_the_most_recently_declared_wearer(
     ).json()
 
     assert third["wearer_audience"] == ["adult_all_genders"]
+
+
+def test_two_sizes_of_one_product_are_two_cart_lines(conversation_db) -> None:
+    """The merge key and the idempotency digest both have to know the size.
+
+    Without the merge key, a 6 and an 8 collapse into one line of quantity two.
+    Without the digest, the second add replays as the first and vanishes
+    entirely -- silently, since a replay is a success.
+    """
+
+    for size in ("6", "8"):
+        added = conversation_db.post(
+            "/user/9911/cart/add",
+            json={
+                "item": "The Office A-line Dress",
+                "amount": 1,
+                "price": 179.99,
+                "product_id": "dress-1",
+                "idempotency_key": f"key-{size}",
+                "size": size,
+            },
+        )
+        assert added.status_code == 200, added.text
+
+    cart = conversation_db.get("/user/9911/cart").json()["cart"]
+
+    assert len(cart) == 2
+    assert sorted(line["size"] for line in cart) == ["6", "8"]
+    assert all(line["amount"] == 1 for line in cart)
+
+
+def test_the_same_size_added_twice_merges_into_one_line(conversation_db) -> None:
+    """Quantity, not a second line."""
+
+    for key in ("a", "b"):
+        conversation_db.post(
+            "/user/9912/cart/add",
+            json={
+                "item": "The Office A-line Dress",
+                "amount": 1,
+                "price": 179.99,
+                "product_id": "dress-1",
+                "idempotency_key": f"key-{key}",
+                "size": "8",
+            },
+        )
+
+    cart = conversation_db.get("/user/9912/cart").json()["cart"]
+
+    assert len(cart) == 1
+    assert cart[0]["amount"] == 2
+    assert cart[0]["size"] == "8"
+
+
+def test_a_one_size_product_records_no_size(conversation_db) -> None:
+    conversation_db.post(
+        "/user/9913/cart/add",
+        json={
+            "item": "Classic Black Patent Leather Purse",
+            "amount": 1,
+            "price": 49.90,
+            "product_id": "bag-1",
+            "idempotency_key": "bag-key",
+        },
+    )
+
+    cart = conversation_db.get("/user/9913/cart").json()["cart"]
+
+    assert len(cart) == 1
+    assert "size" not in cart[0]
+
+
+def test_one_key_reused_with_a_different_size_is_not_a_replay(
+    conversation_db,
+) -> None:
+    """The digest is what stops a second size disappearing into a replay.
+
+    Replay detection matches on the idempotency key; the digest is what proves
+    the request behind that key is the same request. Leave the size out of it
+    and "add an 8" under a reused key returns the 6 that was added before --
+    reported as success, with nothing added.
+    """
+
+    first = conversation_db.post(
+        "/user/9914/cart/add",
+        json={
+            "item": "The Office A-line Dress",
+            "amount": 1,
+            "price": 179.99,
+            "product_id": "dress-1",
+            "idempotency_key": "same-key",
+            "size": "6",
+        },
+    )
+    assert first.status_code == 200
+
+    second = conversation_db.post(
+        "/user/9914/cart/add",
+        json={
+            "item": "The Office A-line Dress",
+            "amount": 1,
+            "price": 179.99,
+            "product_id": "dress-1",
+            "idempotency_key": "same-key",
+            "size": "8",
+        },
+    )
+
+    # Whatever the service decides to do here, it must not quietly report the
+    # size-6 line as though the size-8 request had been honoured.
+    if second.status_code == 200:
+        assert second.json()["cart_line"].get("size") != "6"
+    else:
+        assert second.status_code == 409

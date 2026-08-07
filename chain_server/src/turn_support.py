@@ -1495,6 +1495,17 @@ class AddCartItemsToolItemInput(BaseModel):
             "shopper explicitly names the product, copy that exact product name."
         ),
     )
+    size: str | None = Field(
+        default=None,
+        max_length=32,
+        description=(
+            "The size to add, exactly as the product lists it. Required when "
+            "the product carries real sizes, and omitted when its only size "
+            "is 'onesize' -- asking what size handbag someone wants is worse "
+            "than not asking. Use only a size that product actually comes in; "
+            "the sizes differ per product and are in its details."
+        ),
+    )
 
 
 @dataclass(frozen=True)
@@ -3637,8 +3648,8 @@ def _format_product_details(product: ProductDetail) -> str:
 
 def _normalize_cart_add_tool_items(
     items: list[AddCartItemsToolItemInput] | list[dict[str, Any]],
-) -> dict[str, dict[str, Any]]:
-    normalized: dict[str, dict[str, Any]] = {}
+) -> dict[tuple[str, str | None], dict[str, Any]]:
+    normalized: dict[tuple[str, str | None], dict[str, Any]] = {}
     for item in items or []:
         try:
             parsed = (
@@ -3649,10 +3660,14 @@ def _normalize_cart_add_tool_items(
             quantity = max(1, int(parsed.quantity or 1))
         except (TypeError, ValueError, ValidationError) as exc:
             raise ValueError("each item must include a PRODUCT_REF and quantity") from exc
+        # Keyed on size as well as reference: asking for a 6 and an 8 of one
+        # dress is two lines, and merging them would quietly halve the order.
+        size = (parsed.size or "").strip() or None
         entry = normalized.setdefault(
-            parsed.product_ref,
+            (parsed.product_ref, size),
             {
                 "quantity": 0,
+                "size": size,
                 "expected_display_name": (
                     parsed.expected_display_name.strip()
                     if parsed.expected_display_name
@@ -3829,7 +3844,24 @@ _SEARCH_NO_MATCH_GROUNDING_NOTE = (
     "SEARCH_NO_MATCH_GROUNDING_NOTE: Zero products matched this exact "
     "advertised taxonomy and filter scope. This result does not establish "
     "whether products exist in a different, unsearched, or unadvertised "
-    "product type."
+    "product type.\n"
+    "When a filter can be given up, search again without it and show what "
+    "that finds, saying plainly which one you dropped: \"no black dress runs "
+    "to a 2 -- here are dresses in a 2 in other colours\". Offering the "
+    "shopper a numbered menu of things you could look for is not an answer; "
+    "you have the budget to look, so look, and never quietly drop a filter "
+    "and present the results as though they met it.\n"
+    "A size is never the filter you give up. Colour, pattern and style are "
+    "preferences; a size is a fact about a body, and a garment in the wrong "
+    "one is not an alternative, it is something the shopper cannot wear. "
+    "Keep the size and relax a preference. If nothing in the shop runs to "
+    "that size, say so and name the nearest one, but do not lay out garments "
+    "in it as though they were options -- offer to show them and let the "
+    "shopper decide.\n"
+    "If the shopper asked for only that thing, or asked you not to show "
+    "alternatives, relax nothing. Say plainly that there is none and stop. "
+    "Their instruction outranks your helpfulness, and showing alternatives "
+    "anyway tells them you were not listening."
 )
 
 _SEARCH_SCOPE_COMPLETE_NOTE = (

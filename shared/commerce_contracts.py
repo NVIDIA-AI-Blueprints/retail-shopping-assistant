@@ -80,6 +80,8 @@ class CartLine(CommerceModel):
     display_name: str = Field(..., min_length=1)
     quantity: int = Field(..., ge=1)
     variant_id: str | None = None
+    #: The size on this line, or None for one-size goods.
+    size: str | None = Field(default=None, max_length=32)
     unit_price: Money | None = None
     image_url: str | None = None
     attributes: dict[str, Any] = Field(default_factory=dict)
@@ -255,6 +257,10 @@ class AddCartItemInput(CommerceModel):
     quantity: int = Field(..., ge=1)
     idempotency_key: str = Field(..., min_length=1)
     variant_id: str | None = None
+    #: The size the shopper chose, or None for one-size goods. Distinct from
+    #: `variant_id`, which would be a catalog variant: the catalog lists which
+    #: sizes a product comes in, this records which one was picked.
+    size: str | None = Field(default=None, max_length=32)
     display_name: str | None = None
     unit_price: Money | None = None
     image_url: str | None = None

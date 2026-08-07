@@ -50,6 +50,10 @@ class CartItem(Base):
     user_id = Column(Integer, index=True)
     product_id = Column(String, nullable=True, index=True)
     item = Column(String)
+    # Null for one-size goods. The size a shopper chose, not a product
+    # attribute -- the catalog says which sizes exist, this says which was
+    # picked.
+    size = Column(String, nullable=True)
     amount = Column(Integer)
     price = Column(Float, nullable=True)
 

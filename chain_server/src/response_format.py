@@ -274,6 +274,7 @@ def _format_cart_lines(cart: Cart | CommerceCart) -> str:
             return "  (cart is empty)"
         lines = [
             f"  {line.cart_line_id} | {line.display_name} | qty {line.quantity}"
+            + (f" | size {line.size}" if line.size else "")
             + (
                 f" | {line.unit_price.currency} {line.unit_price.amount:.2f}"
                 if line.unit_price
@@ -299,9 +300,13 @@ def _format_cart_lines(cart: Cart | CommerceCart) -> str:
             except (TypeError, ValueError):
                 suffix = ""
         cart_line_id = item.get("cart_line_id") or item.get("item", "")
+        # The size is what makes two lines of one dress make sense to a
+        # shopper reading their own cart back.
+        size = item.get("size")
+        size_text = f" (size {size})" if size else ""
         lines.append(
             f"- CART_LINE_ID: {cart_line_id} | "
-            f"{item.get('amount', 1)} x {item.get('item', '')}{suffix}"
+            f"{item.get('amount', 1)} x {item.get('item', '')}{size_text}{suffix}"
         )
     return "\n".join(lines)
 

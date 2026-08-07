@@ -1221,6 +1221,11 @@ def _reserved_search_slot(ctx: SearchContext, attempt: _Attempt) -> StepResult:
             )
         ctx.scope.searched_catalog_scopes.append(search_scope)
         if shopper_scope_key is not None:
+            # Recorded now so siblings and retries see it, and withdrawn later
+            # if the search found nothing. The duplicate rule exists to stop a
+            # retry paraphrasing an *answered* search; a scope that returned
+            # zero has not been answered, and refusing the relaxed retry left
+            # "no green dress in a 2" with nothing to show but a menu.
             ctx.scope.searched_shopper_scopes.add(shopper_scope_key)
         ctx.scope.catalog_searches += 1
         search_budget_exhausted = (
@@ -1334,6 +1339,14 @@ def _rendered_evidence(ctx: SearchContext, attempt: _Attempt) -> StepResult:
         )
     )
     if not result.products:
+        # An empty scope is not an answered one: let a relaxed retry through,
+        # while the exact taxonomy-and-filters check below still refuses a
+        # literal repeat.
+        if attempt.shopper_scope_key is not None:
+            with ctx.scope.catalog_lock:
+                ctx.scope.searched_shopper_scopes.discard(
+                    attempt.shopper_scope_key
+                )
         # Build the payload first; every line below renders from it.
         evidence = SearchEvidence(
             outcome="zero_results",
@@ -1375,7 +1388,20 @@ def _rendered_evidence(ctx: SearchContext, attempt: _Attempt) -> StepResult:
                     evidence.unconfirmed_requirements
                 )
             )
-        if evidence.scope_complete:
+        # Scope-complete says "you have what you need, answer now". That is
+        # false when nothing came back and two filters were combined: the
+        # honest next move is to relax one and look again. Emitting both left
+        # the model with "search again" and "do not search again" in one
+        # message, and the older, blunter rule won -- three runs answered with
+        # a numbered menu and showed nothing.
+        # Any filter at all can be relaxed and looked at again. Requiring two
+        # left the single-filter cases stranded: "a tote bag in a size 8" is
+        # unanswerable as asked -- bags are one size -- and returned a
+        # clarifying question with nothing to look at. Dropping a filter
+        # silently is still forbidden; the evidence requires saying which one
+        # went.
+        relaxable = bool(evidence.confirmed_filters)
+        if evidence.scope_complete and not relaxable:
             lines.append(_SEARCH_SCOPE_COMPLETE_NOTE)
         elif evidence.budget_exhausted:
             lines.append(_SEARCH_BUDGET_EXHAUSTED_NOTE)

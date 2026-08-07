@@ -112,7 +112,7 @@ def test_startup_migrates_bootstraps_and_lists_exact_profiles(
     with memory_main.engine.connect() as connection:
         assert connection.exec_driver_sql(
             "SELECT version FROM schema_migrations ORDER BY version"
-        ).scalars().all() == [1, 2, 3, 4, 5, 6]
+        ).scalars().all() == [1, 2, 3, 4, 5, 6, 7]
 
 
 def test_get_profile_is_typed_and_unknown_or_malformed_ids_fail(

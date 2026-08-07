@@ -3245,6 +3245,39 @@ class TestDeepAgentsRuntimeRefs:
         # advice instead slipped past it: "it's going to snow this weekend"
         # and "a wedding in Cancun, date not fixed yet" both returned a
         # layering formula with nothing to buy.
+        # Turn 14 of the fifteen-turn script asked "what size should I add?"
+        # and then added nothing, because no size could be recorded anywhere.
+        # The question is real now, so the rules for it live here.
+        assert "ask which size, offering that product's own run" in (
+            captured["system_prompt"]
+        )
+        assert "worse than not\n  asking at all" in captured["system_prompt"]
+        assert "never add a size the product does not list" in (
+            captured["system_prompt"]
+        )
+        # A size guess is invisible until the parcel arrives, so it is
+        # disclosed where it cannot be missed and names its neighbours.
+        assert "say which in the line that confirms the\n  add" in (
+            captured["system_prompt"]
+        )
+        assert "cannot see a size until it arrives" in captured["system_prompt"]
+        assert "offer pieces\n  that do come in it" in captured["system_prompt"]
+        # Live: "add it in a 10 too" raised the size-8 line to quantity 2 and
+        # then asked whether the second should be a 10 -- the wrong garment
+        # twice, presented as agreement.
+        # A "size 8 tote" filtered to zero and then asked a sensible
+        # question -- the question was right, the wasted filter was not.
+        # "Stop and synthesize" fired before the forecast was ever considered:
+        # the same sentence fetched weather alone and skipped it once it read
+        # as an outfit request mid-conversation.
+        assert "look the weather\n  up BEFORE that fan-out" in (
+            captured["system_prompt"]
+        )
+        assert "the forecast never gets asked for" in captured["system_prompt"]
+        assert "a size 8 tote is not a thing" in captured["system_prompt"]
+        assert "those come in one size" in captured["system_prompt"]
+        assert "another line, not more of" in captured["system_prompt"]
+        assert "adds\n  the wrong garment twice" in captured["system_prompt"]
         assert "Advice is not an answer on its own either" in (
             captured["system_prompt"]
         )
@@ -4477,7 +4510,12 @@ class TestDeepAgentsRuntimeRefs:
             '"product_type": ["satchels"]}' in no_result
         )
         assert 'SEARCH_FILTER_EVIDENCE: {"color": ["black"]}' in no_result
-        assert "SEARCH_SCOPE_COMPLETE" in no_result
+        # A filtered search that found nothing is not a completed scope: the
+        # honest next move is to drop the filter and look again, saying which
+        # one went. Telling it to answer now instead produced a numbered menu
+        # of things it could have searched for, showing nothing.
+        assert "SEARCH_SCOPE_COMPLETE" not in no_result
+        assert "search again without it" in no_result
         assert "PRODUCT_REF:" not in no_result
         assert captured_plan["calls"] == 7
 

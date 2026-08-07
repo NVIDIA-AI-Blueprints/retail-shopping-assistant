@@ -4508,7 +4508,7 @@ class TestDeepAgentsRuntimeRefs:
         # one went. Telling it to answer now instead produced a numbered menu
         # of things it could have searched for, showing nothing.
         assert "SEARCH_SCOPE_COMPLETE" not in no_result
-        assert "search again with the least" in no_result
+        assert "search again without it" in no_result
         assert "PRODUCT_REF:" not in no_result
         assert captured_plan["calls"] == 7
 

@@ -128,12 +128,23 @@ def test_a_zero_result_search_is_told_to_relax_and_show() -> None:
 
     note = _SEARCH_NO_MATCH_GROUNDING_NOTE
 
-    assert "search again with the least" in note
+    assert "search again without it" in note
+    assert "which\n    one you dropped" in note or "one you dropped" in note
     assert "saying plainly which" in note
+    # A 4 is not an alternative to a 2. Live, one reply answered "no green
+    # dress in a 2" by listing green dresses starting at a 4 -- garments the
+    # shopper cannot wear, offered as though they helped.
+    assert "A size is never the filter you give up" in note
+    assert "a fact about a body" in note
+    assert "cannot wear" in note
+    # "Only green dresses in a 2, don't upsell" was answered 1 in 3 by
+    # showing other things anyway.
+    assert "relax nothing" in note
+    assert "outranks your helpfulness" in note
     # The failure mode being replaced, named so it is not reintroduced.
     assert "numbered menu of things you could look for is not an answer" in note
     # And the opposite failure: relaxing silently would be a substitution.
-    assert "Never quietly drop a filter" in note
+    assert "never quietly drop a filter" in note
 
 
 def test_a_relaxable_zero_result_is_not_told_to_stop_looking() -> None:

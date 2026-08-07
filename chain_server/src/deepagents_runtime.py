@@ -234,7 +234,7 @@ def _record_turn_diagnostics(span: Any, state: State) -> None:
     """Attach the settled diagnostics to the turn span as metadata.
 
     Everything rides the one supported ``metadata`` channel rather than a
-    private attribute namespace, including the scalar counts -- Phoenix filters
+    private attribute namespace, including the scalar counts -- viewers filter
     on metadata subkeys, so the countables stay filterable without inventing
     names nothing else understands.
 

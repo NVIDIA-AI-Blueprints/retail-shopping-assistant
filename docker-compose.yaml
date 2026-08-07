@@ -233,7 +233,7 @@ services:
   # holds conversation content, following memory-retriever's precedent rather
   # than the all-interfaces default.
   phoenix:
-    image: arizephoenix/phoenix:version-12.9.0
+    image: arizephoenix/phoenix:version-19.19.0
     container_name: phoenix
     ports:
       - "127.0.0.1:6006:6006"

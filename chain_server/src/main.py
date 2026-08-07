@@ -31,6 +31,8 @@ from .shopper_profiles import (
     ShopperProfilesClient,
     ShopperProfilesError,
 )
+from .commerce_tools import get_cart, update_cart_item
+from shared.commerce_contracts import GetCartInput, UpdateCartItemInput
 from shared.model_config import resolve_model_config
 
 # Configure logging
@@ -299,6 +301,141 @@ async def list_shopper_profiles() -> list[ShopperProfile]:
             status_code=_shopper_profiles_status(exc),
             detail=str(exc),
         ) from exc
+
+
+class CartLineResponse(BaseModel):
+    """One cart line, as a shopper's browser needs to see it."""
+
+    cart_line_id: str
+    product_id: str
+    display_name: str
+    quantity: int
+    size: Optional[str] = None
+    unit_price: Optional[float] = None
+
+
+class CartReadResponse(BaseModel):
+    lines: List[CartLineResponse] = Field(default_factory=list)
+    subtotal: Optional[float] = None
+
+
+class CartQuantityRequest(BaseModel):
+    """An absolute quantity for one line. Zero removes it.
+
+    Absolute rather than a delta, and one verb rather than separate update and
+    delete routes, because that is exactly `update_cart_items_tool`'s contract.
+    The shopper and the assistant then cannot hold different ideas of what a
+    cart mutation is.
+    """
+
+    quantity: int = Field(ge=0)
+    #: Minted by the caller per intent, and reused only to retry that same
+    #: request. Deriving it from the target quantity is tempting and wrong:
+    #: a replay returns the stored response without mutating, so 2 -> 3 -> 2
+    #: would report success and leave the cart at 3.
+    idempotency_key: str = Field(min_length=1, max_length=128)
+
+
+def _cart_identity(cart_id: str):
+    """Resolve the opaque cart handle the browser holds.
+
+    The memory service keys carts on an integer derived from this string. The
+    derivation stays on the server: an endpoint taking that integer directly
+    would let any caller read or mutate any cart, since the memory service has
+    no authentication at all.
+    """
+
+    if not cart_id or not cart_id.strip():
+        raise HTTPException(status_code=422, detail="cart_id is required")
+    return create_request_identity(legacy_user_id=0, cart_id=cart_id.strip())
+
+
+def _cart_response(cart) -> CartReadResponse:
+    return CartReadResponse(
+        lines=[
+            CartLineResponse(
+                cart_line_id=line.cart_line_id,
+                product_id=line.product_id,
+                display_name=line.display_name,
+                quantity=line.quantity,
+                size=line.size,
+                unit_price=line.unit_price.amount if line.unit_price else None,
+            )
+            for line in (cart.lines if cart else [])
+        ],
+        subtotal=cart.subtotal.amount if cart and cart.subtotal else None,
+    )
+
+
+@app.get("/cart", response_model=CartReadResponse)
+async def read_cart(cart_id: str) -> CartReadResponse:
+    """Read the authoritative cart for a browser-held cart handle."""
+
+    identity = _cart_identity(cart_id)
+    result = await asyncio.to_thread(
+        get_cart,
+        GetCartInput(user_id=str(identity.cart_user_id)),
+        config.memory_port,
+    )
+    if not result.ok:
+        raise HTTPException(
+            status_code=502,
+            detail=result.error.message if result.error else "Could not read cart",
+        )
+    return _cart_response(result.cart)
+
+
+@app.patch("/cart/lines/{cart_line_id}", response_model=CartReadResponse)
+async def set_cart_line_quantity(
+    cart_line_id: str,
+    request: CartQuantityRequest,
+    cart_id: str,
+) -> CartReadResponse:
+    """Set one line to an absolute quantity. Zero removes the line."""
+
+    identity = _cart_identity(cart_id)
+    result = await asyncio.to_thread(
+        update_cart_item,
+        UpdateCartItemInput(
+            user_id=str(identity.cart_user_id),
+            cart_line_id=cart_line_id,
+            quantity=request.quantity,
+            idempotency_key=request.idempotency_key,
+        ),
+        config.memory_port,
+    )
+    if not result.ok:
+        code = result.error.code if result.error else ""
+        message = result.error.message if result.error else "Cart update failed"
+        details = (result.error.details if result.error else None) or {}
+        upstream = details.get("status_code")
+        if code == "cart_line_not_found":
+            # A line the shopper no longer has is their answer, not a fault.
+            status = 404
+        elif isinstance(upstream, int) and 400 <= upstream < 500:
+            # Pass a client error through as one. Reusing an idempotency key
+            # for a different quantity is a 409, and a caller that sees 502
+            # will retry a request that can only fail the same way.
+            status = upstream
+            if upstream == 409:
+                message = (
+                    "That idempotency key was already used for a different "
+                    "cart change. Use a new key for a new change."
+                )
+        else:
+            status = 502
+        raise HTTPException(status_code=status, detail=message)
+
+    # The mutation returns only the changed line; the panel needs the whole
+    # cart, and reading it back is also what proves the change landed.
+    read_back = await asyncio.to_thread(
+        get_cart,
+        GetCartInput(user_id=str(identity.cart_user_id)),
+        config.memory_port,
+    )
+    if not read_back.ok:
+        raise HTTPException(status_code=502, detail="Cart updated but could not be read")
+    return _cart_response(read_back.cart)
 
 
 @app.get("/")

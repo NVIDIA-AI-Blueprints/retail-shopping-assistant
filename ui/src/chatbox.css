@@ -60,8 +60,18 @@ body {
   background: var(--surface);
 }
 
+/* Everything below sizes in rem, so this one line lifts the whole scale.
+   The old base read at ~13px, which is fine on a laptop and disappears on a
+   projector. */
+html {
+  font-size: 17px;
+}
+
 .shopping-app {
-  background: var(--surface);
+  background:
+    radial-gradient(1200px 600px at 12% -10%, rgba(118, 185, 0, 0.07), transparent 60%),
+    radial-gradient(900px 500px at 100% 0%, rgba(53, 117, 211, 0.05), transparent 55%),
+    var(--surface);
   color: var(--ink);
   display: flex;
   flex-direction: column;
@@ -333,18 +343,21 @@ body {
 .assistant-workspace {
   display: grid;
   flex: 1 1 auto;
-  gap: 16px;
-  grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
+  gap: 20px;
+  grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
   min-height: 0;
-  padding: 16px;
+  padding: 20px;
 }
 
 .product-detail-panel,
-.chatbox__support,
-.inference-panel {
+.chatbox__support {
   background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  border: 1px solid rgba(23, 23, 23, 0.04);
+  border-radius: 18px;
+  box-shadow:
+    0 1px 2px rgba(23, 23, 23, 0.03),
+    0 12px 32px rgba(23, 23, 23, 0.07),
+    0 32px 64px rgba(23, 23, 23, 0.04);
   min-height: 0;
 }
 
@@ -375,8 +388,7 @@ body {
   padding: 18px;
 }
 
-.product-detail-panel__eyebrow,
-.inference-panel__eyebrow {
+.product-detail-panel__eyebrow {
   color: var(--muted);
   font-size: 0.72rem;
   font-weight: 700;
@@ -384,8 +396,7 @@ body {
   text-transform: uppercase;
 }
 
-.product-detail-panel h2,
-.inference-panel h2 {
+.product-detail-panel h2 {
   color: var(--ink);
   font-size: 1.15rem;
   font-weight: 700;
@@ -487,7 +498,7 @@ body {
 .chatbox {
   display: grid;
   gap: 16px;
-  grid-template-columns: minmax(420px, 1fr) minmax(260px, 300px);
+  grid-template-columns: minmax(420px, 1fr);
   min-height: 0;
   min-width: 0;
 }
@@ -505,7 +516,7 @@ body {
 }
 
 .chatbox__header {
-  align-items: center;
+  align-items: flex-start;
   border-bottom: 1px solid var(--line);
   display: flex;
   justify-content: space-between;
@@ -515,15 +526,16 @@ body {
 
 .chatbox__heading--header {
   color: var(--ink);
-  font-size: 1rem;
+  font-size: 1.3rem;
   font-weight: 700;
+  letter-spacing: -0.01em;
   margin: 0;
 }
 
 .chatbox__subheading--header {
   color: var(--muted);
-  font-size: 0.82rem;
-  margin: 4px 0 0;
+  font-size: 0.88rem;
+  margin: 5px 0 0;
 }
 
 .chatbox__brand {
@@ -554,12 +566,12 @@ body {
 
 .messages__item {
   background: transparent;
-  font-size: 0.95rem;
-  line-height: 1.5;
-  margin-top: 10px;
+  font-size: 1rem;
+  line-height: 1.6;
+  margin-top: 14px;
   max-width: 78%;
   overflow-wrap: anywhere;
-  padding: 8px 10px;
+  padding: 12px 16px;
   width: fit-content;
 }
 
@@ -646,26 +658,33 @@ body {
 .product-result-grid {
   align-self: stretch;
   display: grid;
-  gap: 10px;
-  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
-  margin: 12px 0;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(196px, 1fr));
+  margin: 18px 0;
   width: 100%;
 }
 
 .product-result-card {
   background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  border: 1px solid rgba(23, 23, 23, 0.06);
+  border-radius: 12px;
+  box-shadow: 0 1px 2px rgba(23, 23, 23, 0.04);
   color: var(--ink);
   cursor: pointer;
   display: flex;
   flex-direction: column;
   font: inherit;
-  min-height: 188px;
+  min-height: 268px;
   overflow: hidden;
   padding: 0;
   text-align: left;
+  transition: box-shadow 160ms ease, transform 160ms ease;
   width: 100%;
+}
+
+.product-result-card:hover {
+  box-shadow: 0 4px 8px rgba(23, 23, 23, 0.06), 0 12px 28px rgba(23, 23, 23, 0.1);
+  transform: translateY(-2px);
 }
 
 .product-result-card:hover,
@@ -683,12 +702,20 @@ body {
 
 .product-result-card__name {
   color: var(--ink);
-  font-size: 0.82rem;
-  font-weight: 500;
-  line-height: 1.25;
-  min-height: 44px;
+  font-size: 0.92rem;
+  font-weight: 600;
+  line-height: 1.3;
   overflow-wrap: anywhere;
-  padding: 8px;
+  padding: 10px 10px 2px;
+}
+
+/* The price is on the product object and was never rendered. On a shop, a
+   card without a price is a card you cannot decide from. */
+.product-result-card__price {
+  color: var(--ink);
+  font-size: 0.9rem;
+  font-weight: 600;
+  padding: 0 10px 10px;
 }
 
 .chatbox__footer {
@@ -799,161 +826,13 @@ body {
   min-height: 28px;
 }
 
-.inference-panel {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  overflow-y: auto;
-}
-
-.inference-panel__header {
-  align-items: center;
-  border-bottom: 1px solid var(--line);
-  display: flex;
-  justify-content: space-between;
-  min-height: 72px;
-  padding: 14px;
-}
-
-.inference-panel__total {
-  background: var(--panel-soft);
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  color: var(--ink);
-  font-size: 0.78rem;
-  font-weight: 700;
-  padding: 5px 8px;
-}
-
-.inference-panel__summary {
-  border-bottom: 1px solid var(--line);
-  display: grid;
-  gap: 8px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  padding: 12px;
-}
-
-.inference-panel__metric {
-  background: var(--panel-soft);
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  min-height: 58px;
-  padding: 8px;
-}
-
-.inference-panel__metric span {
-  color: var(--ink);
-  display: block;
-  font-size: 1rem;
-  font-weight: 700;
-}
-
-.inference-panel__metric p {
-  color: var(--muted);
-  font-size: 0.72rem;
-  margin: 3px 0 0;
-}
-
-.inference-panel__usage {
-  border-bottom: 1px solid var(--line);
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 12px;
-}
-
-.inference-panel__usage-grid {
-  display: grid;
-  gap: 8px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.inference-panel__models {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 12px;
-}
-
-.inference-panel__section-title {
-  color: var(--muted);
-  font-size: 0.76rem;
-  font-weight: 700;
-}
-
-.inference-panel__model {
-  background: var(--panel-soft);
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 8px;
-}
-
-.inference-panel__model-topline {
-  align-items: center;
-  display: flex;
-  gap: 8px;
-  justify-content: space-between;
-  margin-bottom: 3px;
-}
-
-.inference-panel__model span {
-  color: var(--muted);
-  font-size: 0.72rem;
-  font-weight: 700;
-}
-
-.inference-panel__model p {
-  color: var(--ink);
-  font-size: 0.74rem;
-  line-height: 1.3;
-  margin: 0;
-  overflow-wrap: anywhere;
-}
-
-.inference-panel__model small {
-  color: var(--muted);
-  display: block;
-  font-size: 0.68rem;
-  line-height: 1.3;
-  margin-top: 4px;
-}
-
-.inference-panel__status {
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  color: var(--muted);
-  flex: 0 0 auto;
-  font-size: 0.62rem;
-  line-height: 1;
-  padding: 3px 6px;
-}
-
-.inference-panel__status--used {
-  background: rgba(118, 185, 0, 0.12);
-  border-color: rgba(118, 185, 0, 0.28);
-  color: #416900;
-}
-
-.inference-panel__status--failed {
-  background: rgba(181, 71, 44, 0.1);
-  border-color: rgba(181, 71, 44, 0.25);
-  color: #9f341f;
-}
-
-.inference-panel__status--running,
-.inference-panel__status--queued {
-  background: rgba(35, 116, 225, 0.1);
-  border-color: rgba(35, 116, 225, 0.22);
-  color: #1d5ca8;
-}
-
 @media (max-width: 1260px) {
   .assistant-workspace {
     grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
   }
 
   .chatbox {
-    grid-template-columns: minmax(360px, 1fr) 250px;
+    grid-template-columns: minmax(360px, 1fr);
   }
 }
 
@@ -980,10 +859,6 @@ body {
 
   .chatbox__support {
     min-height: 620px;
-  }
-
-  .inference-panel {
-    min-height: 340px;
   }
 }
 
@@ -1015,8 +890,7 @@ body {
     padding: 10px;
   }
 
-  .chatbox__header,
-  .inference-panel__header {
+.chatbox__header {
     align-items: flex-start;
     flex-direction: column;
     gap: 8px;
@@ -1042,5 +916,416 @@ body {
 
   .chatbox__composer {
     grid-template-columns: minmax(0, 1fr) 36px 36px 36px;
+  }
+}
+
+/* Session chrome: what is running,
+what it has cost,
+and how to start over.
+   Sits at the right of the category strip -- it describes the session,
+not the
+   message being composed {
+  align-items: center;
+  display: flex;
+  gap: 14px;
+  margin-left: auto;
+}
+
+/* Openers. Previously bullet points inside the welcome text, so unclickable. */
+.chatbox__starters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 18px 12px;
+}
+
+.chatbox__starter {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  box-shadow: 0 1px 2px rgba(23, 23, 23, 0.04);
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 500;
+  padding: 10px 18px;
+  text-align: left;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.chatbox__starter:hover:not(:disabled) {
+  border-color: var(--primary);
+  box-shadow: 0 4px 12px rgba(118, 185, 0, 0.18);
+  transform: translateY(-1px);
+}
+
+.chatbox__starter:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+@media (max-width: 640px) {
+
+  .chatbox__starters {
+    padding: 0 12px 10px;
+  }
+}
+
+/* The cart. Structure and dismissal follow .shopper-picker__dialog, the only
+   overlay precedent in this app. */
+.cart-panel {
+  position: relative;
+}
+
+.cart-panel__trigger {
+  align-items: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  color: #5e5e5e;
+  cursor: pointer;
+  display: flex;
+  height: 34px;
+  justify-content: center;
+  position: relative;
+  width: 34px;
+}
+
+.cart-panel__trigger:hover,
+.cart-panel__trigger[aria-expanded="true"] {
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
+
+.cart-panel__count {
+  background: var(--primary);
+  border-radius: 999px;
+  color: #162000;
+  font-size: 0.62rem;
+  font-weight: 700;
+  line-height: 1;
+  min-width: 16px;
+  padding: 2px 4px;
+  position: absolute;
+  right: -2px;
+  top: -2px;
+}
+
+.cart-panel__dialog {
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  box-shadow: 0 16px 40px rgba(23, 23, 23, 0.18);
+  color: var(--ink);
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  width: min(420px, calc(100vw - 24px));
+  z-index: 40;
+}
+
+.cart-panel__header {
+  align-items: flex-start;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  justify-content: space-between;
+  padding: 12px 14px;
+}
+
+.cart-panel__header h2 {
+  font-size: 0.98rem;
+  margin: 2px 0 0;
+}
+
+.cart-panel__eyebrow {
+  color: var(--muted);
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.cart-panel__close {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 2px;
+}
+
+.cart-panel__close:hover {
+  color: var(--ink);
+}
+
+.cart-panel__body {
+  max-height: min(420px, 60vh);
+  overflow-y: auto;
+  padding: 6px 0;
+}
+
+.cart-panel__empty,
+.cart-panel__error {
+  color: var(--muted);
+  font-size: 0.82rem;
+  margin: 0;
+  padding: 16px 14px;
+}
+
+.cart-panel__error {
+  color: var(--danger);
+}
+
+.cart-panel__footer {
+  align-items: center;
+  border-top: 1px solid var(--line);
+  display: flex;
+  font-size: 0.86rem;
+  justify-content: space-between;
+  padding: 11px 14px;
+}
+
+.cart-line {
+  align-items: center;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  padding: 9px 14px;
+}
+
+.cart-line + .cart-line {
+  border-top: 1px solid var(--line);
+}
+
+.cart-line__detail {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.cart-line__name {
+  font-size: 0.84rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cart-line__meta {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.cart-line__quantity {
+  align-items: center;
+  display: flex;
+  gap: 2px;
+}
+
+.cart-line__step {
+  align-items: center;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--primary);
+  cursor: pointer;
+  display: flex;
+  font-size: 0.9rem;
+  height: 26px;
+  justify-content: center;
+  line-height: 1;
+  width: 26px;
+}
+
+.cart-line__step:hover:not(:disabled) {
+  border-color: var(--primary);
+}
+
+.cart-line__step:disabled {
+  color: #aeb7ad;
+  cursor: not-allowed;
+}
+
+.cart-line__count {
+  font-size: 0.82rem;
+  font-weight: 600;
+  min-width: 20px;
+  text-align: center;
+}
+
+.cart-line__remove {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 2px;
+}
+
+.cart-line__remove:hover:not(:disabled) {
+  color: var(--danger);
+}
+
+.cart-line__remove:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+/* Models and session cost, directly under the NVIDIA mark. Larger than the
+   old navbar strip: this is the thing people are here to look at. */
+.chatbox__brand {
+  align-items: flex-end;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Reset is a session control, so it sits with the other session controls. */
+.shopper-nav__reset {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--ink);
+  cursor: pointer;
+  display: flex;
+  font-size: 0.74rem;
+  font-weight: 600;
+  gap: 4px;
+  margin-left: auto;
+  padding: 6px 10px;
+}
+
+.shopper-nav__reset:hover:not(:disabled) {
+  border-color: var(--primary);
+  color: #3f6400;
+}
+
+.shopper-nav__reset:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+/* Models and what each has cost,
+stacked under the NVIDIA mark. A row per
+   model rather than a row of pills: the numbers are the point {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 210px;
+}
+
+/* Telemetry along the bottom edge of the chat,
+below the composer.
+   Ambient rather than competing: in a demo the audience should be watching the
+   conversation and the products {
+  align-items: center;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  justify-content: space-between;
+  padding: 9px 18px;
+}
+
+/* Telemetry along the bottom edge, below the composer: a column per model with
+   its cost stacked underneath. Ambient rather than competing -- in a demo the
+   audience should be watching the conversation and the products, and catch the
+   numbers moving at the edge of vision. */
+.model-strip {
+  align-items: flex-end;
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 24px;
+  justify-content: space-between;
+  padding: 11px 18px 12px;
+}
+
+.model-strip__models {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 26px;
+}
+
+.model-strip__model {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.model-strip__name {
+  align-items: center;
+  color: var(--muted);
+  display: flex;
+  font-size: 0.8rem;
+  font-weight: 600;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.model-strip__model.is-active .model-strip__name {
+  color: var(--ink);
+}
+
+.model-strip__dot {
+  background: var(--line-strong);
+  border-radius: 999px;
+  flex: none;
+  height: 7px;
+  transition: background 200ms ease, box-shadow 200ms ease;
+  width: 7px;
+}
+
+/* A dot lighting up as its model fires is the "it is running" beat. */
+.model-strip__model.is-active .model-strip__dot {
+  background: var(--primary);
+  box-shadow: 0 0 0 3px rgba(118, 185, 0, 0.18);
+}
+
+.model-strip__stat {
+  color: var(--ink);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  padding-left: 13px;
+  white-space: nowrap;
+}
+
+.model-strip__idle {
+  color: #aeb7ad;
+  font-weight: 500;
+}
+
+.model-strip__total {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-left: auto;
+  text-align: right;
+}
+
+.model-strip__total-label {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.model-strip__total-value {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.model-strip__total-value strong {
+  color: var(--ink);
+  font-weight: 700;
+}
+
+@media (max-width: 980px) {
+  .model-strip__models {
+    gap: 8px 18px;
   }
 }

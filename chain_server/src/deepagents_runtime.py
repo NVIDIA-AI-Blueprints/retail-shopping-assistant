@@ -710,6 +710,18 @@ class DeepAgentsRuntime:
             )
             draft_response = _extract_final_text(result)
             state.token_usage = _collect_token_usage(result)
+            # Attribute the agent loop to app_llm. Without this the shopper-
+            # facing model list shows embeddings and guardrails with call
+            # counts and the LLM with none, which reads as the LLM not running.
+            if state.token_usage.get("model_calls"):
+                _add_model_usage(
+                    state,
+                    "app_llm",
+                    status="used",
+                    calls=int(state.token_usage.get("model_calls") or 0),
+                    detail="Planning, tool use, and response generation",
+                    tokens=int(state.token_usage.get("total_tokens") or 0),
+                )
             state.agent_diagnostics = _safe_collect_agent_diagnostics(
                 result_messages,
                 request_id=identity.request_id,
@@ -1808,10 +1820,9 @@ class DeepAgentsRuntime:
             return _GROUNDING_FAILURE_RESPONSE
 
         state.timings["grounding_rewrite"] = time.monotonic() - start
-        state.token_usage = _merge_token_usage(
-            state.token_usage,
-            _collect_token_usage(rewrite_result),
-        )
+        rewrite_usage = _collect_token_usage(rewrite_result)
+        state.token_usage = _merge_token_usage(state.token_usage, rewrite_usage)
+        rewrite_tokens = int(rewrite_usage.get("total_tokens") or 0)
 
         rewritten = _content_to_text(_value(rewrite_result, "content"))
         if not rewritten:
@@ -1824,6 +1835,7 @@ class DeepAgentsRuntime:
                 status="failed",
                 calls=1,
                 detail="Final response grounding rewrite returned empty output",
+                tokens=rewrite_tokens,
             )
             if search_only:
                 return self._rewrite_search_only_response(
@@ -1849,6 +1861,7 @@ class DeepAgentsRuntime:
             status="used",
             calls=1,
             detail="Final response grounding rewrite",
+            tokens=rewrite_tokens,
         )
         return _scrub_internal_shopper_language(rewritten)
 

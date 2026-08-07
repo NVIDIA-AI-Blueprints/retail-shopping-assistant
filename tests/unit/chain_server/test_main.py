@@ -1668,7 +1668,7 @@ class TestDeepAgentsRuntimeScopes:
         assert memory.finalize_calls[0]["output"].product_results == []
         assert memory.finalize_calls[0]["output"].retrieved == {}
 
-        async def complete_turn(state, identity):
+        async def complete_turn(state, identity, **_kwargs):
             state.response = "The next turn completed."
             state.agent_diagnostics = runtime_mod_support._empty_agent_diagnostics("completed")
             return state
@@ -1766,7 +1766,7 @@ class TestDeepAgentsRuntimeScopes:
             request_id="request-a",
         )
 
-        async def complete_turn(state, _identity):
+        async def complete_turn(state, _identity, **_kwargs):
             state.response = "Grounded response."
             state.agent_diagnostics = runtime_mod_support._empty_agent_diagnostics("completed")
             return state

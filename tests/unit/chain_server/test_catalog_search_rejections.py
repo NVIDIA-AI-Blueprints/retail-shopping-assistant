@@ -15,6 +15,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any, Callable
 
+import json
 import pytest
 
 from chain_server.src import catalog_search as catalog_search_mod
@@ -467,3 +468,46 @@ def test_recording_a_gate_code_leaves_the_control_signal_intact() -> None:
     assert text.startswith("STOP_TOOL_USE: Catalog search limit reached")
     assert artifact["control_signals"] == ["stop_tool_use"]
     assert artifact[REJECTIONS_KEY] == [SearchRejection.CATALOG_SEARCH_LIMIT]
+
+
+def test_a_shopper_who_shows_you_a_garment_has_stated_its_colour() -> None:
+    """Provenance was computed from the typed query alone.
+
+    A shopper who attaches a photo and says "I like the top" never types
+    "cream", so every attribute the camera conveyed read as model-invented and
+    was refused -- returning nothing for a request the catalog could answer.
+    """
+
+    from chain_server.src.turn_support import stated_media_terms
+
+    analysis = json.dumps(
+        {
+            "fashion_items": ["cable-knit sweater", "blue jeans"],
+            "colors": ["cream", "beige"],
+            "materials_or_textures": ["cable knit"],
+            "style_terms": ["boho-chic"],
+            "occasion": "casual fall outing",
+            "search_queries": ["cable knit sweater women"],
+        }
+    )
+
+    terms = stated_media_terms(analysis)
+
+    assert "cream" in terms
+    assert "cable-knit sweater" in terms
+    # The model's reading of the image is not the shopper speaking.
+    assert "boho-chic" not in terms
+    assert "casual fall outing" not in terms
+    assert "cable knit sweater women" not in terms
+
+
+def test_stated_media_terms_survives_the_vlm_changing_shape() -> None:
+    """The same key comes back as a string one turn and a list the next."""
+
+    from chain_server.src.turn_support import stated_media_terms
+
+    assert "cream" in stated_media_terms(json.dumps({"colors": "cream"}))
+    assert "cream" in stated_media_terms(json.dumps({"colors": ["cream"]}))
+    assert stated_media_terms(json.dumps({"colors": {"x": 1}})) == ""
+    assert stated_media_terms("not json at all") == ""
+    assert stated_media_terms("") == ""

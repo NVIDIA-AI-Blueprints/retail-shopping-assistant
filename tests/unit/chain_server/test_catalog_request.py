@@ -83,6 +83,49 @@ def test_enum_values_are_canonicalized_without_alias_rules() -> None:
     assert plan.hard_filters == {"color": ["blue"]}
 
 
+def test_a_partly_advertised_enum_searches_on_what_it_can_and_discloses_the_rest() -> None:
+    """A colour word the catalog does not carry must not veto the whole search.
+
+    Vision analysis produces open vocabulary -- "cream", "off-white", "ivory" --
+    and the catalog carries sixteen colours. Refusing the call returned zero
+    products for a request the catalog could largely answer, and the repair
+    round trip came back with the same unadvertised words.
+
+    This is not the weakening the neighbouring tests guard against: the
+    advertised value still filters, and what could not be honoured is disclosed.
+    """
+
+    plan = build_catalog_search_plan(
+        CatalogSearchIntent(
+            semantic_query="cable knit sweater",
+            required_constraints={"color": ["cream", "black", "off-white"]},
+        ),
+        _capabilities(),
+    )
+
+    assert plan.should_search is True
+    assert plan.hard_filters["color"] == ["black"]
+    assert plan.constraint_issues == []
+    assert plan.partial_constraints == [
+        "'color' also had values this catalog does not carry"
+    ]
+
+
+def test_an_enum_with_no_advertised_value_still_stops() -> None:
+    """Nothing survives to filter on, so this is the weakening case again."""
+
+    plan = build_catalog_search_plan(
+        CatalogSearchIntent(
+            semantic_query="cable knit sweater",
+            required_constraints={"color": ["cream", "ivory"]},
+        ),
+        _capabilities(),
+    )
+
+    assert plan.should_search is False
+    assert plan.partial_constraints == []
+
+
 def test_unsupported_required_constraint_stops_instead_of_weakening_search() -> None:
     plan = build_catalog_search_plan(
         CatalogSearchIntent(

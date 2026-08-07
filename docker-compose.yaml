@@ -241,7 +241,10 @@ services:
     image: arizephoenix/phoenix:version-19.19.0
     container_name: phoenix
     ports:
-      - "127.0.0.1:6006:6006"
+      # All interfaces, matching the UI, so a tunnel can reach it. Phoenix holds
+      # conversation content, so on anything but a dev box this wants to go back
+      # to loopback with access through the tunnel only.
+      - "6006:6006"
     volumes:
       - phoenix-data:/mnt/data
     environment:

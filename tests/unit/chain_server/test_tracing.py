@@ -112,9 +112,35 @@ def test_partial_graph_messages_are_not_attached() -> None:
 
     _record_turn_diagnostics(span, _state_with_diagnostics())
 
+    diagnostics = json.loads(_metadata(span)["diagnostics_json"])
+    assert "partial_graph_messages" not in diagnostics
+    assert "skill_files_read" in diagnostics
+
+
+def test_the_full_blob_is_one_attribute_not_a_hundred() -> None:
+    """A viewer flattens nested metadata into one attribute per leaf.
+
+    Left nested, the diagnostics explode into roughly 120 keys and the few
+    fields worth reading sort to the bottom of a wall of them.
+    """
+
+    span = _RecordingSpan()
+
+    _record_turn_diagnostics(span, _state_with_diagnostics())
+
     metadata = _metadata(span)
-    assert "partial_graph_messages" not in metadata["diagnostics"]
-    assert "skill_files_read" in metadata["diagnostics"]
+    assert isinstance(metadata["diagnostics_json"], str)
+    # The summary stays flat and readable; only the blob is serialised.
+    assert set(metadata) == {
+        "termination_reason",
+        "tool_calls",
+        "tool_calls_rejected",
+        "products_shown",
+        "zero_result_scopes",
+        "skills",
+        "tools",
+        "diagnostics_json",
+    }
 
 
 def test_a_raising_span_does_not_reach_the_turn() -> None:

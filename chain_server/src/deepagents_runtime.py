@@ -258,7 +258,13 @@ def _record_turn_diagnostics(span: Any, state: State) -> None:
             ),
             "skills": diagnostics.get("skill_files_read") or [],
             "tools": [call.get("tool_name") for call in tool_calls],
-            "diagnostics": diagnostics,
+            # Serialised, not nested. A viewer flattens nested metadata into one
+            # attribute per leaf, and the full blob explodes into ~120 keys --
+            # `product_evidence.0.facts.heel_type` and the like -- which sorts
+            # the handful of fields worth reading to the bottom of a wall. The
+            # per-tool detail is already on the tool spans; this is the derived
+            # view, kept whole and out of the way.
+            "diagnostics_json": json.dumps(diagnostics, default=str),
         }
         span.set_attribute("metadata", json.dumps(payload, default=str))
     except Exception as exc:  # noqa: BLE001 - diagnostics never break a turn.

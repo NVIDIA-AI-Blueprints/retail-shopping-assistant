@@ -242,6 +242,7 @@ const Chatbox: React.FC<ChatboxProps> = ({
     totalTokens: 0,
   });
   const mediaInputRef = useRef<HTMLInputElement | null>(null);
+  const [conversationId, setConversationId] = useState<string>("");
   const [modelCapabilities, setModelCapabilities] = useState<ModelCapabilities>({});
   const [modelUsage, setModelUsage] = useState<ModelUsage>({});
   const [sessionUsage, setSessionUsage] = useState<SessionUsage>({
@@ -527,6 +528,7 @@ const Chatbox: React.FC<ChatboxProps> = ({
     if (!outgoing && !image && !video) return;
 
     const userSession = getOrCreateUserSession();
+    setConversationId(userSession.conversationId);
     setIsLoading(true);
     currentTurnHasMedia.current = Boolean(image || video);
     currentTurnGuardrails.current = isGuardrailsOn;
@@ -782,6 +784,10 @@ const Chatbox: React.FC<ChatboxProps> = ({
     if (clearIdentity) {
       clearUserSession();
     }
+    // Cleared, not reissued. Reading it back here would mint an identity just
+    // to display one, and reset is meant to leave storage empty until the
+    // shopper says something. It fills in on the first turn.
+    setConversationId("");
 
     // Add welcome messages
     addMessage(
@@ -972,6 +978,7 @@ const Chatbox: React.FC<ChatboxProps> = ({
           models={modelCapabilities}
           modelUsage={modelUsage}
           sessionUsage={sessionUsage}
+          conversationId={conversationId}
         />
       </div>
 

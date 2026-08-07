@@ -9,7 +9,7 @@
  * unrelated bits of chrome.
  */
 
-import React from "react";
+import React, { useState } from "react";
 
 import { ModelCapabilities, ModelUsage, SessionUsage } from "../../types";
 
@@ -17,6 +17,8 @@ interface ModelStripProps {
   models: ModelCapabilities;
   modelUsage: ModelUsage;
   sessionUsage: SessionUsage;
+  /** The conversation id sent to the server, and the trace session's name. */
+  conversationId: string;
 }
 
 /**
@@ -43,7 +45,27 @@ const ModelStrip: React.FC<ModelStripProps> = ({
   models,
   modelUsage,
   sessionUsage,
+  conversationId,
 }) => {
+  const [copied, setCopied] = useState(false);
+
+  /**
+   * The conversation id is the trace session's name, so copying it is how a
+   * conversation on screen is found in the trace viewer. Reading it out of
+   * sessionStorage in devtools was the alternative.
+   */
+  const copyConversationId = () => {
+    const done = () => {
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1400);
+    };
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(conversationId).then(done).catch(() => done());
+      return;
+    }
+    done();
+  };
+
   const shown = SHOWN_MODELS.filter((entry) =>
     entry.roles.some((role) => isConfigured(models[role]))
   );
@@ -90,6 +112,22 @@ const ModelStrip: React.FC<ModelStripProps> = ({
         })}
       </div>
 
+      <button
+        type="button"
+        className="model-strip__session"
+        onClick={copyConversationId}
+        disabled={!conversationId}
+        title={`Trace session: ${conversationId}\nClick to copy`}
+        aria-label={`Copy conversation id ${conversationId}`}
+      >
+        <span className="model-strip__session-label">session</span>
+        <span className="model-strip__session-id">
+          {/* Empty until the first turn: a reset clears the identity and the
+              next one is minted when the shopper speaks. */}
+          {!conversationId ? "—" : copied ? "copied" : shortId(conversationId)}
+        </span>
+      </button>
+
       <div className="model-strip__total">
         <span className="model-strip__total-label">This session</span>
         <span className="model-strip__total-value">
@@ -105,6 +143,12 @@ const sum = (
   roles: string[],
   pick: (role: string) => number | undefined
 ): number => roles.reduce((total, role) => total + (pick(role) ?? 0), 0);
+
+/** `conversation-3b0285ce-…` -> `3b0285ce`. Enough to recognise, short enough to sit in a bar. */
+const shortId = (value: string): string => {
+  const bare = value.replace(/^conversation-/, "");
+  return bare.slice(0, 8) || value;
+};
 
 const isConfigured = (model: ModelCapabilities[string]): boolean =>
   Boolean(model?.enabled && model?.model);

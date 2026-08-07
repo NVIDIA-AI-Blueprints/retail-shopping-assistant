@@ -1329,3 +1329,42 @@ below the composer.
     gap: 8px 18px;
   }
 }
+
+/* The conversation id is the trace session's name, so it sits in the bar and
+   copies on click. Reading it out of sessionStorage in devtools was the
+   alternative. */
+.model-strip__session {
+  align-items: baseline;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  cursor: pointer;
+  display: flex;
+  font: inherit;
+  font-size: 0.76rem;
+  gap: 6px;
+  padding: 3px 10px;
+  white-space: nowrap;
+}
+
+.model-strip__session:hover:not(:disabled) {
+  border-color: var(--primary);
+  color: var(--ink);
+}
+
+.model-strip__session:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.model-strip__session-label {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.model-strip__session-id {
+  color: var(--ink);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-weight: 600;
+}

@@ -20,17 +20,15 @@ import { toast } from "react-toastify";
 import SendIcon from "@mui/icons-material/Send";
 import AttachFileIcon from "@mui/icons-material/AttachFile";
 import CloseIcon from "@mui/icons-material/Close";
-import RestartAltIcon from "@mui/icons-material/RestartAlt";
 import Switch from '@mui/material/Switch';
 import { styled } from '@mui/material/styles';
 
 import ChatMessage from "./ChatMessage";
-import InferenceActivityPanel from "./InferenceActivityPanel";
+import ModelStrip from "./ModelStrip";
 import {
   CapabilitiesResponse,
   ChatboxProps,
   ImageContent,
-  InferenceActivity,
   InferenceMetricsPayload,
   MediaAttachment,
   MediaCapabilities,
@@ -40,14 +38,13 @@ import {
   ModelUsage,
   ProductPrice,
   ProductSummary,
-  TokenUsage,
+  SessionUsage,
 } from "../../types";
 import { config } from "../../config/config";
 import {
   clearUserSession,
   createApiRequest,
   getOrCreateUserSession,
-  showCartNotification,
 } from "../../utils";
 import logo from "../../assets/nvidia-logo.png";
 
@@ -109,6 +106,27 @@ const stringValue = (value: unknown): string => {
 
 const productKey = (name: string): string => name.trim().toLowerCase();
 
+/** Add a turn's model usage to the session's running totals. */
+const mergeModelUsage = (session: ModelUsage, turn: ModelUsage): ModelUsage => {
+  const merged: ModelUsage = { ...session };
+  Object.entries(turn).forEach(([role, entry]) => {
+    if (!entry) return;
+    const prior = merged[role];
+    const tokens = (prior?.tokens ?? 0) + (entry.tokens ?? 0);
+    merged[role] = {
+      // The latest turn's status: a role that failed just now is worth seeing
+      // even if earlier turns were fine.
+      status: entry.status,
+      calls: (prior?.calls ?? 0) + (entry.calls ?? 0),
+      detail: entry.detail || prior?.detail,
+      // Left undefined rather than zero, so roles that report no tokens show
+      // nothing instead of claiming they used none.
+      ...(tokens > 0 ? { tokens } : {}),
+    };
+  });
+  return merged;
+};
+
 const mimeForFile = (file: File, allowedMimeTypes: string[]): string => {
   if (file.type && allowedMimeTypes.includes(file.type)) return file.type;
   const lowerName = file.name.toLowerCase();
@@ -156,130 +174,38 @@ const supportedVideoLabel = (capabilities: MediaCapabilities): string => {
   return `Supported video format: ${formats.join(", ")}. Max ${(capabilities.max_video_bytes / (1024 * 1024)).toFixed(0)}MB.`;
 };
 
-const modelName = (models: ModelCapabilities, role: string): string | undefined => {
-  const model = models[role];
-  return model?.enabled && model.model ? model.model : undefined;
-};
+/**
+ * The four openers a shopper is offered.
+ *
+ * They were previously bullet points inside the welcome text, so nothing could
+ * be clicked -- and two of them could not even be typed usefully: one carried a
+ * literal "[product name]" placeholder, the other said "add the first item"
+ * before any search had happened.
+ *
+ * Each of these exercises a different skill and every one is answerable from
+ * the catalogue as it stands.
+ */
+const STARTER_PROMPTS: Array<{
+  label: string;
+  text: string;
+  attachesMedia?: boolean;
+}> = [
+  {
+    label: "Shop this look (give me a video or an image)",
+    text: "Shop this look",
+    attachesMedia: true,
+  },
+  {
+    label: "A work conference outfit under $400",
+    text: "A work conference outfit under $400",
+  },
+  {
+    label: "Cancun wedding next week, I need a dress in size 2 and shoes",
+    text:
+      "Cancun wedding next week, I need a dress in size 2 and shoes",
+  },
+];
 
-const joinedModelNames = (models: ModelCapabilities, roles: string[]): string | undefined => {
-  const names = roles
-    .map((role) => modelName(models, role))
-    .filter((name): name is string => Boolean(name));
-  return names.length > 0 ? names.join(" / ") : undefined;
-};
-
-const createPendingActivities = (
-  hasMedia: boolean,
-  guardrailsEnabled: boolean,
-  models: ModelCapabilities
-): InferenceActivity[] => {
-  const events: InferenceActivity[] = [
-    {
-      id: "memory-pending",
-      category: "memory",
-      label: "Conversation memory",
-      detail: "Session and cart context",
-      status: "running",
-    },
-    {
-      id: "language-pending",
-      category: "language",
-      label: "Language reasoning",
-      detail: "Planning, tool use, and response generation",
-      modelName: modelName(models, "app_llm"),
-      status: "running",
-    },
-  ];
-
-  if (hasMedia) {
-    events.splice(1, 0, {
-      id: "vision-pending",
-      category: "vision",
-      label: "Vision-language inference",
-      detail: "Attached media understanding",
-      modelName: modelName(models, "vlm"),
-      status: "running",
-    });
-  }
-
-  if (guardrailsEnabled) {
-    events.push({
-      id: "safety-pending",
-      category: "safety",
-      label: "Safety inference",
-      detail: "Input and output checks",
-      modelName: joinedModelNames(models, ["content_safety", "topic_control"]),
-      status: "queued",
-    });
-  }
-
-  return events;
-};
-
-const activitiesFromMetrics = (
-  metrics: InferenceMetricsPayload,
-  hasMedia: boolean,
-  guardrailsEnabled: boolean,
-  models: ModelCapabilities
-): InferenceActivity[] => {
-  const timings = metrics.timings || {};
-  const activities: InferenceActivity[] = [];
-  const addTiming = (
-    key: string,
-    category: InferenceActivity["category"],
-    label: string,
-    detail: string,
-    modelName?: string,
-    status: InferenceActivity["status"] = "complete"
-  ) => {
-    const seconds = Number(timings[key]);
-    if (!Number.isFinite(seconds)) return;
-    activities.push({
-      id: key,
-      category,
-      label,
-      detail,
-      modelName,
-      status,
-      durationMs: Math.max(0, seconds * 1000),
-    });
-  };
-
-  addTiming("media_perception", "vision", "Vision-language inference", "Attached media understanding", modelName(models, "vlm"));
-  addTiming("catalog_search", "embedding", "Embeddings and vector search", "Catalog retrieval workload", joinedModelNames(models, ["text_embedding", "image_embedding"]));
-  addTiming("deepagents", "language", "Language reasoning", "Planning, tool use, and response generation", modelName(models, "app_llm"));
-  addTiming("deepagents_error", "language", "Language reasoning", "Planning, tool use, and response generation", modelName(models, "app_llm"), "failed");
-  addTiming("memory", "memory", "Conversation memory", "Session and cart context");
-  addTiming("safety_input", "safety", "Input safety", "Guardrails check", joinedModelNames(models, ["content_safety", "topic_control"]));
-  addTiming("safety_output", "safety", "Output safety", "Guardrails check", joinedModelNames(models, ["content_safety", "topic_control"]));
-
-  if (activities.length === 0) {
-    return createPendingActivities(hasMedia, guardrailsEnabled, models).map((event) => ({
-      ...event,
-      status: "complete",
-    }));
-  }
-
-  return activities;
-};
-
-const failedActivities = (events: InferenceActivity[]): InferenceActivity[] => {
-  if (events.length === 0) {
-    return [
-      {
-        id: "request-failed",
-        category: "system",
-        label: "Assistant request",
-        detail: "The turn did not complete",
-        status: "failed",
-      },
-    ];
-  }
-  return events.map((event) => ({
-    ...event,
-    status: event.status === "complete" ? event.status : "failed",
-  }));
-};
 
 const Chatbox: React.FC<ChatboxProps> = ({
   selectedProduct,
@@ -301,6 +227,29 @@ const Chatbox: React.FC<ChatboxProps> = ({
     max_video_duration_seconds: 120,
     vlm_enabled: true,
   };
+  // Per-turn usage is replaced on every metrics event; this accumulates so the
+  // chrome can answer "what has this conversation cost" rather than "what did
+  // that one question cost".
+  // Per-model usage arrives per turn and is replaced wholesale. Accumulating
+  // it here keeps every figure in the bar on the same footing: without this
+  // the per-model counts are this turn's while the total beside them is the
+  // session's, which is two different meanings sitting next to each other.
+  const sessionModelUsageRef = useRef<ModelUsage>({});
+  const sessionUsageRef = useRef<SessionUsage>({
+    modelCalls: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+  });
+  const mediaInputRef = useRef<HTMLInputElement | null>(null);
+  const [modelCapabilities, setModelCapabilities] = useState<ModelCapabilities>({});
+  const [modelUsage, setModelUsage] = useState<ModelUsage>({});
+  const [sessionUsage, setSessionUsage] = useState<SessionUsage>({
+    modelCalls: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+  });
   const [isOpen] = useState<boolean>(true);
   const [hasBeenOpened, setHasBeenOpened] = useState<boolean>(false);
   const [newMessage, setNewMessage] = useState<string>("");
@@ -312,16 +261,11 @@ const Chatbox: React.FC<ChatboxProps> = ({
   const [videoMimeType, setVideoMimeType] = useState("");
   const [videoFilename, setVideoFilename] = useState("");
   const [mediaCapabilities, setMediaCapabilities] = useState<MediaCapabilities>(defaultMediaCapabilities);
-  const [modelCapabilities, setModelCapabilities] = useState<ModelCapabilities>({});
-  const [modelUsage, setModelUsage] = useState<ModelUsage>({});
   const [messages, setMessages] = useState<MessageData[]>([]);
-  const [inferenceEvents, setInferenceEvents] = useState<InferenceActivity[]>([]);
-  const [tokenUsage, setTokenUsage] = useState<TokenUsage | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const messageRefs = useRef<React.RefObject<HTMLDivElement>[]>([]);
   const [lastAssistantIndex, setLastAssistantIndex] = useState<number | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const shownCartOperations = useRef<Set<string>>(new Set());
   const productsByNameRef = useRef<Map<string, ProductSummary>>(new Map());
   const currentTurnHasMedia = useRef(false);
   const currentTurnGuardrails = useRef(isGuardrailsOn);
@@ -575,21 +519,17 @@ const Chatbox: React.FC<ChatboxProps> = ({
     );
   };
 
-  const handleSendMessage = async () => {
-    if (!newMessage.trim() && !image && !video) return;
+  const showStarters =
+    !isLoading && !messages.some((message) => message.role === "user");
 
-    // Clear previous cart operation notifications for new message
-    shownCartOperations.current.clear();
+  const handleSendMessage = async (overrideText?: string) => {
+    const outgoing = (overrideText ?? newMessage).trim();
+    if (!outgoing && !image && !video) return;
 
     const userSession = getOrCreateUserSession();
     setIsLoading(true);
     currentTurnHasMedia.current = Boolean(image || video);
     currentTurnGuardrails.current = isGuardrailsOn;
-    setInferenceEvents(
-      createPendingActivities(currentTurnHasMedia.current, isGuardrailsOn, modelCapabilities)
-    );
-    setTokenUsage(null);
-    setModelUsage({});
 
     // Will be used to enable submit shortly after the last token
     let enableSubmitTimer: number | undefined;
@@ -607,8 +547,8 @@ const Chatbox: React.FC<ChatboxProps> = ({
       };
 
       // Add user message
-      if (newMessage) {
-        addMessage("user", newMessage, "");
+      if (outgoing) {
+        addMessage("user", outgoing, "");
       }
       if (image) {
         addMessage("user_image", previewImage, "");
@@ -632,7 +572,7 @@ const Chatbox: React.FC<ChatboxProps> = ({
         : [];
       const payload = createApiRequest(
         userSession,
-        newMessage,
+        outgoing,
         image || "",
         isGuardrailsOn,
         media,
@@ -713,21 +653,27 @@ const Chatbox: React.FC<ChatboxProps> = ({
 
             if (type === "metrics" && payload && typeof payload === "object") {
               const metricsPayload = payload as InferenceMetricsPayload;
-              setTokenUsage(metricsPayload.token_usage ?? null);
-              setModelUsage(metricsPayload.model_usage ?? {});
-              setInferenceEvents(
-                activitiesFromMetrics(
-                  metricsPayload,
-                  currentTurnHasMedia.current,
-                  currentTurnGuardrails.current,
-                  modelCapabilities
-                )
+              const turnTokens = metricsPayload.token_usage ?? null;
+              const turnModelUsage = metricsPayload.model_usage ?? {};
+              if (turnTokens) {
+                const totals = sessionUsageRef.current;
+                sessionUsageRef.current = {
+                  modelCalls: totals.modelCalls + (turnTokens.model_calls || 0),
+                  inputTokens: totals.inputTokens + (turnTokens.input_tokens || 0),
+                  outputTokens: totals.outputTokens + (turnTokens.output_tokens || 0),
+                  totalTokens: totals.totalTokens + (turnTokens.total_tokens || 0),
+                };
+              }
+              sessionModelUsageRef.current = mergeModelUsage(
+                sessionModelUsageRef.current,
+                turnModelUsage
               );
+              setModelUsage(sessionModelUsageRef.current);
+              setSessionUsage(sessionUsageRef.current);
               continue;
             }
 
             if (type === "error") {
-              setInferenceEvents((prev) => failedActivities(prev));
               toast.error(String(payload || "Assistant stream failed."));
               setMessages(prev => prev.filter(msg => msg.content !== "loader"));
               continue;
@@ -760,8 +706,6 @@ const Chatbox: React.FC<ChatboxProps> = ({
               fullResponse += String(payload || "");
               const responseSnapshot = fullResponse;
 
-              // Check for cart operations and show notifications
-              showCartNotification(responseSnapshot, shownCartOperations.current, toast);
 
               // Tokens are flowing; schedule enable when they stop
               scheduleEnableSubmit();
@@ -823,9 +767,15 @@ const Chatbox: React.FC<ChatboxProps> = ({
     setPreviewVideo("");
     setVideoMimeType("");
     setVideoFilename("");
-    setInferenceEvents([]);
-    setTokenUsage(null);
+    sessionUsageRef.current = {
+      modelCalls: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+    };
+    sessionModelUsageRef.current = {};
     setModelUsage({});
+    setSessionUsage(sessionUsageRef.current);
     productsByNameRef.current.clear();
     onProductSelect(null);
     onProductsUpdate([]);
@@ -840,23 +790,22 @@ const Chatbox: React.FC<ChatboxProps> = ({
       ""
     );
     
-    await sleep(1000);
+    await sleep(200);
     addMessage("assistant", "", "");
-    
-    await sleep(1000);
-    const introduction = "Hello! 👋 I'm your dedicated Shopping Assistant created by NVIDIA. You can ask me anything—from finding the perfect item to learning more about product care.\n\nHere are some questions you could ask me:\n\n• Show me items under $100\n• Does the [product name] require dry cleaning?\n• Do you have anything like this? (upload an image)\n• Add the first item to my cart";
-    
+
+    const introduction =
+      "Hello! \ud83d\udc4b I'm your shopping assistant. Ask me for an outfit, " +
+      "a specific piece, or what is in your cart \u2014 or start with one of these.";
+
+    // Fast enough to read as alive, not slow enough to wait through. This runs
+    // on every reset as well as every new session.
     const words = introduction.split(" ");
     for (const word of words) {
-      await sleep(40);
+      await sleep(12);
       updateLastMessage(word + " ");
     }
   };
   handleResetRef.current = resetChat;
-
-  const handleReset = () => {
-    void resetChat(true);
-  };
 
   // Effects
   useEffect(() => {
@@ -886,9 +835,7 @@ const Chatbox: React.FC<ChatboxProps> = ({
         if (data.media_input) {
           setMediaCapabilities(data.media_input);
         }
-        if (data.models) {
-          setModelCapabilities(data.models);
-        }
+        setModelCapabilities(data.models ?? {});
       } catch (error) {
         console.warn("Failed to load media capabilities", error);
       }
@@ -931,6 +878,32 @@ const Chatbox: React.FC<ChatboxProps> = ({
           ))}
         </div>
 
+        {showStarters && (
+          <div className="chatbox__starters" aria-label="Suggested openers">
+            {STARTER_PROMPTS.map((prompt) => (
+              <button
+                key={prompt.label}
+                type="button"
+                className="chatbox__starter"
+                disabled={isLoading}
+                onClick={() => {
+                  if (prompt.attachesMedia) {
+                    // Needs a picture before it means anything, so fill the
+                    // composer and open the picker rather than submitting.
+                    setNewMessage(prompt.text);
+                    mediaInputRef.current?.click();
+                    return;
+                  }
+                  setNewMessage("");
+                  void handleSendMessage(prompt.text);
+                }}
+              >
+                {prompt.label}
+              </button>
+            ))}
+          </div>
+        )}
+
         <div className="chatbox__footer">
           {(previewImage || previewVideo) && (
             <div className="chatbox__preview-strip">
@@ -968,7 +941,7 @@ const Chatbox: React.FC<ChatboxProps> = ({
             <button
               type="button"
               className="chatbox__icon-button"
-              onClick={isLoading ? undefined : handleSendMessage}
+              onClick={isLoading ? undefined : () => void handleSendMessage()}
               disabled={isLoading}
               aria-label="Send message"
             >
@@ -978,6 +951,7 @@ const Chatbox: React.FC<ChatboxProps> = ({
             <label className="chatbox__icon-button" aria-label="Attach media">
               <AttachFileIcon fontSize="small" />
               <input
+                ref={mediaInputRef}
                 className="chatbox__file-input"
                 type="file"
                 accept={acceptedMediaTypes(mediaCapabilities)}
@@ -986,14 +960,6 @@ const Chatbox: React.FC<ChatboxProps> = ({
               />
             </label>
 
-            <button
-              type="button"
-              className="chatbox__icon-button"
-              onClick={handleReset}
-              aria-label="Reset conversation"
-            >
-              <RestartAltIcon fontSize="small" />
-            </button>
           </div>
 
           <div className="chatbox__guardrail">
@@ -1001,14 +967,14 @@ const Chatbox: React.FC<ChatboxProps> = ({
             <CustomSwitch checked={isGuardrailsOn} onChange={toggleGuardrails} size="small" />
           </div>
         </div>
+
+        <ModelStrip
+          models={modelCapabilities}
+          modelUsage={modelUsage}
+          sessionUsage={sessionUsage}
+        />
       </div>
 
-      <InferenceActivityPanel
-        events={inferenceEvents}
-        models={modelCapabilities}
-        tokenUsage={tokenUsage}
-        modelUsage={modelUsage}
-      />
     </section>
   );
 };

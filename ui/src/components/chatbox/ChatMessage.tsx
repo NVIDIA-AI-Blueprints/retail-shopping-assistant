@@ -153,6 +153,11 @@ const ChatMessage = React.forwardRef<HTMLDivElement, ChatMessageProps>(
                 >
                   {image.productName}
                 </span>
+                {image.price && (
+                  <span className="product-result-card__price">
+                    {formatCardPrice(image.price)}
+                  </span>
+                )}
               </button>
             </div>
           ))}
@@ -192,5 +197,16 @@ const ChatMessage = React.forwardRef<HTMLDivElement, ChatMessageProps>(
 );
 
 ChatMessage.displayName = "ChatMessage";
+
+const formatCardPrice = (price: { amount: number; currency?: string }): string => {
+  try {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: price.currency || "USD",
+    }).format(price.amount);
+  } catch {
+    return `$${price.amount.toFixed(2)}`;
+  }
+};
 
 export default ChatMessage;

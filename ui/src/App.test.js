@@ -12,6 +12,8 @@ jest.mock("@mui/icons-material/Send", () => () => null);
 jest.mock("@mui/icons-material/AttachFile", () => () => null);
 jest.mock("@mui/icons-material/Close", () => () => null);
 jest.mock("@mui/icons-material/RestartAlt", () => () => null);
+jest.mock("@mui/icons-material/ShoppingCart", () => () => null);
+jest.mock("@mui/icons-material/DeleteOutline", () => () => null);
 jest.mock("@mui/material/Switch", () => () => null);
 jest.mock("@mui/material/styles", () => ({
   styled: (Component) => () => Component,
@@ -116,6 +118,12 @@ describe("App shopper identity lifecycle", () => {
         return Promise.resolve({
           ok: true,
           json: () => Promise.resolve(profiles),
+        });
+      }
+      if (url.includes("/cart")) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ lines: [], subtotal: null }),
         });
       }
       if (url.endsWith("/capabilities")) {

@@ -91,7 +91,6 @@ export interface ApiRequest {
   cart_id?: string;
   shopper_profile_id?: string;
   context?: string;
-  cart?: CartData;
   retrieved?: Record<string, string>;
 }
 
@@ -200,13 +199,25 @@ export interface ApiResponse {
   agent_diagnostics?: AgentDiagnostics;
 }
 
-export interface CartData {
-  contents: CartItem[];
+/**
+ * A cart line as the server actually returns it.
+ *
+ * The previous `CartItem` carried only `item` and `amount`, was referenced by
+ * nothing, and could not address a line for mutation -- it had no line id.
+ */
+export interface CartLine {
+  cart_line_id: string;
+  product_id: string;
+  display_name: string;
+  quantity: number;
+  /** Absent for one-size goods rather than null, so test presence not truth. */
+  size?: string | null;
+  unit_price?: number | null;
 }
 
-export interface CartItem {
-  item: string;
-  amount: number;
+export interface CartSnapshot {
+  lines: CartLine[];
+  subtotal: number | null;
 }
 
 export interface StreamingChunk {
@@ -291,9 +302,25 @@ export interface ModelUsageEntry {
   status: ModelUsageStatus;
   calls: number;
   detail?: string;
+  /** Present only for roles that report token usage: the chat models. */
+  tokens?: number;
 }
 
 export type ModelUsage = Record<string, ModelUsageEntry | undefined>;
+
+/**
+ * Totals across the whole session rather than the last turn.
+ *
+ * `TokenUsage` is replaced wholesale on every metrics event, so it answers
+ * "what did that question cost". This answers "what has this conversation
+ * cost", which is the number worth watching during a demo.
+ */
+export interface SessionUsage {
+  modelCalls: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+}
 
 export type InferenceCategory = 'vision' | 'language' | 'embedding' | 'safety' | 'memory' | 'system';
 export type InferenceStatus = 'queued' | 'running' | 'complete' | 'failed';

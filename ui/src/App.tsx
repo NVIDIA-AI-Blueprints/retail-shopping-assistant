@@ -13,6 +13,7 @@ import Navbar from "./components/Navbar";
 import ProductDetailPanel from "./components/ProductDetailPanel";
 import Chatbox from "./components/chatbox/chatbox";
 import Footer from "./components/Footer";
+import { useCart } from "./hooks/useCart";
 import { ShopperProfilesStatus } from "./components/ShopperPicker";
 import { config } from "./config/config";
 import { ProductSummary, ShopperProfile } from "./types";
@@ -38,10 +39,26 @@ const App: React.FC = () => {
     getSelectedShopperProfileId
   );
   const [isChatBusy, setIsChatBusy] = useState(false);
+  const cart = useCart();
+  const { refresh: cartRefresh, reset: cartReset } = cart;
   const [chatMount, setChatMount] = useState<ChatMount>({
     instance: 0,
     preserveIdentityOnMount: false,
   });
+
+  /**
+   * Must be stable. Chatbox holds this in an effect's dependency list, so an
+   * inline arrow re-runs that effect on every render -- and since this one
+   * re-reads the cart, that is an unbounded fetch loop.
+   */
+  const handleBusyChange = useCallback(
+    (busy: boolean) => {
+      setIsChatBusy(busy);
+      // A turn that just ended may have added or removed a line.
+      if (!busy) cartRefresh();
+    },
+    [cartRefresh]
+  );
 
   const startShopperSession = useCallback((shopperProfileId: string | null) => {
     setSelectedShopperProfileId(shopperProfileId);
@@ -49,11 +66,32 @@ const App: React.FC = () => {
     setSelectedProfileId(shopperProfileId);
     setSelectedProduct(null);
     setProducts([]);
+    cartReset();
     setChatMount(({ instance }) => ({
       instance: instance + 1,
       preserveIdentityOnMount: true,
     }));
-  }, []);
+  }, [cartReset]);
+
+  /**
+   * Start a fresh session.
+   *
+   * Remounting with `preserveIdentityOnMount: false` runs Chatbox's own reset
+   * with identity clearing, which is the existing path -- so a new user, cart
+   * and conversation are minted on the next request. Reimplementing that here
+   * would be a second definition of what "reset" means.
+   */
+  const resetSession = useCallback(() => {
+    setSelectedProduct(null);
+    setProducts([]);
+    // A reset mints a new cart_id, so the old snapshot on screen would be a
+    // cart the shopper no longer has.
+    cartReset();
+    setChatMount(({ instance }) => ({
+      instance: instance + 1,
+      preserveIdentityOnMount: false,
+    }));
+  }, [cartReset]);
 
   useEffect(() => {
     const abortController = new AbortController();
@@ -112,6 +150,16 @@ const App: React.FC = () => {
         selectedShopperProfileId={selectedProfileId}
         isShopperSwitchDisabled={isChatBusy}
         onShopperChange={handleShopperChange}
+        onReset={resetSession}
+        cart={{
+          cart: cart.cart,
+          isLoading: cart.isLoading,
+          error: cart.error,
+          isAgentBusy: isChatBusy,
+          pendingLineId: cart.pendingLineId,
+          onOpen: cart.refresh,
+          onSetQuantity: cart.setQuantity,
+        }}
       />
       <main className="assistant-workspace">
         <ProductDetailPanel
@@ -125,7 +173,7 @@ const App: React.FC = () => {
           selectedShopperProfileId={selectedProfileId}
           onProductSelect={setSelectedProduct}
           onProductsUpdate={setProducts}
-          onBusyChange={setIsChatBusy}
+          onBusyChange={handleBusyChange}
           preserveIdentityOnMount={chatMount.preserveIdentityOnMount}
         />
       </main>

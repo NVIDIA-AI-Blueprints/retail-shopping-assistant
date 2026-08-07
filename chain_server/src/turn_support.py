@@ -2900,13 +2900,16 @@ def _record_catalog_model_usage(
 ) -> None:
     status = "used" if ok else "failed"
     uses_image_endpoint = bool(state.image) and plan.search_mode in {"image", "hybrid"}
-    text_embedding_calls = 1 if plan.semantic_queries else 0
+    # One embed_query call per semantic query, not one per search. A
+    # multi-scope search carries several roles in one round trip and embeds
+    # each of them, so counting the search under-reports the work.
+    text_embedding_calls = len(plan.semantic_queries)
     if uses_image_endpoint and text_embedding_calls == 0:
         # Image retrieval currently includes one deterministic text-side query
         # alongside the image embedding, even when the shopper supplied no text.
         text_embedding_calls = 1
     if fallback_attempted:
-        text_embedding_calls += 1 if plan.semantic_queries else 0
+        text_embedding_calls += len(plan.semantic_queries)
 
     if text_embedding_calls:
         _add_model_usage(
@@ -2972,6 +2975,7 @@ def _add_model_usage(
     status: str,
     calls: int,
     detail: str = "",
+    tokens: int = 0,
 ) -> None:
     existing = state.model_usage.get(role, {})
     existing_calls = _safe_int(existing.get("calls"))
@@ -2983,11 +2987,19 @@ def _add_model_usage(
         if existing_status == merged_status and existing_detail
         else detail or existing_detail
     )
-    state.model_usage[role] = {
+    entry: dict[str, Any] = {
         "status": merged_status,
         "calls": existing_calls + max(0, calls),
         "detail": next_detail,
     }
+    # Tokens are additive across calls, and only chat models report them:
+    # embeddings and the guardrails checks have none to report, and showing a
+    # zero there would read as "this model used no tokens" rather than "tokens
+    # are not a thing this model has".
+    merged_tokens = _safe_int(existing.get("tokens")) + max(0, tokens)
+    if merged_tokens > 0:
+        entry["tokens"] = merged_tokens
+    state.model_usage[role] = entry
 
 
 def _merged_model_usage_status(existing: str, current: str) -> str:

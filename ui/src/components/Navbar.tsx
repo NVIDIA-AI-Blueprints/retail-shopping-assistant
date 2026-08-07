@@ -21,8 +21,10 @@
 
 import React from "react";
 import MenuIcon from "@mui/icons-material/Menu";
+import RestartAltIcon from "@mui/icons-material/RestartAlt";
 import { config } from "../config/config";
 import { ShopperProfile } from "../types";
+import CartPanel from "./CartPanel";
 import ShopperPicker, { ShopperProfilesStatus } from "./ShopperPicker";
 
 interface NavbarProps {
@@ -31,6 +33,8 @@ interface NavbarProps {
   selectedShopperProfileId: string | null;
   isShopperSwitchDisabled: boolean;
   onShopperChange: (shopperProfileId: string | null) => void;
+  onReset: () => void;
+  cart: React.ComponentProps<typeof CartPanel>;
 }
 
 const Navbar: React.FC<NavbarProps> = ({
@@ -39,6 +43,8 @@ const Navbar: React.FC<NavbarProps> = ({
   selectedShopperProfileId,
   isShopperSwitchDisabled,
   onShopperChange,
+  onReset,
+  cart,
 }) => {
   const categories = config.ui.categories;
 
@@ -56,6 +62,7 @@ const Navbar: React.FC<NavbarProps> = ({
         
         {/* Right side - Representative shopper selector */}
         <div className="flex items-center gap-x-2">
+          <CartPanel {...cart} />
           <ShopperPicker
             profiles={shopperProfiles}
             profilesStatus={shopperProfilesStatus}
@@ -129,6 +136,18 @@ const Navbar: React.FC<NavbarProps> = ({
             {categories.lastCall}
           </p>
         </div>
+
+        <button
+          type="button"
+          className="shopper-nav__reset"
+          onClick={onReset}
+          disabled={isShopperSwitchDisabled}
+          aria-label="Reset conversation"
+          title="Clear this conversation and start a new session"
+        >
+          <RestartAltIcon fontSize="small" />
+          <span>Reset</span>
+        </button>
       </div>
     </div>
   );

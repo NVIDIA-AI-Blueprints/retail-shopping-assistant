@@ -29,6 +29,8 @@ from shared.commerce_contracts import (
     CatalogTaxonomyCapabilities,
     CatalogTaxonomyCategory,
     CatalogTaxonomySubcategory,
+    Money,
+    ProductSummary,
     SearchCatalogResult,
 )
 
@@ -314,7 +316,37 @@ def test_each_gate_records_which_gate_refused_the_scope(
     assert _rejection_codes(result) == [expected_code]
 
 
-def test_repeated_shopper_scope_is_attributed_to_the_shopper_scope_gate() -> None:
+def test_repeated_shopper_scope_is_attributed_to_the_shopper_scope_gate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A paraphrase of a search that already found something is refused.
+
+    The first search has to return products. The rule exists to stop a retry
+    rewording an *answered* search, and a scope that came back empty has not
+    been answered -- relaxing a filter and looking again is the honest next
+    move there, so that case is deliberately allowed.
+    """
+
+    def _with_products(plan, *_args, **_kwargs):
+        return SimpleNamespace(
+            result=SearchCatalogResult(
+                ok=True,
+                products=[
+                    ProductSummary(
+                        product_id="p1",
+                        display_name="A Tote",
+                        price=Money(amount=49.0),
+                        category="tote_bags",
+                    )
+                ],
+            ),
+            fallback_attempted=False,
+            fallback_used=False,
+        )
+
+    monkeypatch.setattr(
+        catalog_search_mod, "execute_catalog_search", _with_products
+    )
     ctx = _context("show me tote bags")
 
     first = search_catalog(ctx, [_scope()])
@@ -324,6 +356,23 @@ def test_repeated_shopper_scope_is_attributed_to_the_shopper_scope_gate() -> Non
     assert _rejection_codes(second) == [
         SearchRejection.DUPLICATE_SHOPPER_SCOPE
     ]
+
+
+def test_an_empty_scope_may_be_searched_again_with_a_filter_relaxed() -> None:
+    """"No green dress in a 2" must be able to look again without the size.
+
+    The duplicate gate keyed on the shopper's words and the product type,
+    ignoring filters, so the relaxed retry was refused and three live runs
+    answered with a numbered menu of things they could have searched for.
+    """
+
+    ctx = _context("show me tote bags")
+
+    first = search_catalog(ctx, [_scope()])
+    second = search_catalog(ctx, [_scope(semantic_query="roomy tote bags")])
+
+    assert _rejection_codes(first) == []
+    assert SearchRejection.DUPLICATE_SHOPPER_SCOPE not in _rejection_codes(second)
 
 
 def test_repeated_catalog_scope_is_attributed_to_the_catalog_scope_gate() -> None:

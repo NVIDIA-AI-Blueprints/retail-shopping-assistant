@@ -3265,6 +3265,10 @@ class TestDeepAgentsRuntimeRefs:
         # Live: "add it in a 10 too" raised the size-8 line to quantity 2 and
         # then asked whether the second should be a 10 -- the wrong garment
         # twice, presented as agreement.
+        # A "size 8 tote" filtered to zero and then asked a sensible
+        # question -- the question was right, the wasted filter was not.
+        assert "a size 8 tote is not a thing" in captured["system_prompt"]
+        assert "those come in one size" in captured["system_prompt"]
         assert "another line, not more of" in captured["system_prompt"]
         assert "adds\n  the wrong garment twice" in captured["system_prompt"]
         assert "Advice is not an answer on its own either" in (
@@ -4499,7 +4503,12 @@ class TestDeepAgentsRuntimeRefs:
             '"product_type": ["satchels"]}' in no_result
         )
         assert 'SEARCH_FILTER_EVIDENCE: {"color": ["black"]}' in no_result
-        assert "SEARCH_SCOPE_COMPLETE" in no_result
+        # A filtered search that found nothing is not a completed scope: the
+        # honest next move is to drop the filter and look again, saying which
+        # one went. Telling it to answer now instead produced a numbered menu
+        # of things it could have searched for, showing nothing.
+        assert "SEARCH_SCOPE_COMPLETE" not in no_result
+        assert "search again with the least" in no_result
         assert "PRODUCT_REF:" not in no_result
         assert captured_plan["calls"] == 7
 

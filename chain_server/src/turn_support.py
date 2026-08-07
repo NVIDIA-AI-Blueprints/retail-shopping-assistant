@@ -3844,7 +3844,14 @@ _SEARCH_NO_MATCH_GROUNDING_NOTE = (
     "SEARCH_NO_MATCH_GROUNDING_NOTE: Zero products matched this exact "
     "advertised taxonomy and filter scope. This result does not establish "
     "whether products exist in a different, unsearched, or unadvertised "
-    "product type."
+    "product type.\n"
+    "When two or more filters were combined, search again with the least "
+    "important one relaxed and show what that finds, saying plainly which "
+    "one you dropped: \"no green dress runs to a 2 -- here are green dresses "
+    "from a 4, and size 2 dresses in other colours\". Offering the shopper a "
+    "numbered menu of things you could look for is not an answer; you have "
+    "the budget to look, so look. Never quietly drop a filter and present "
+    "the results as though they met it."
 )
 
 _SEARCH_SCOPE_COMPLETE_NOTE = (

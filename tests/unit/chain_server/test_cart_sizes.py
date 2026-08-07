@@ -14,6 +14,8 @@ wrong once it is.
 
 from __future__ import annotations
 
+import pathlib
+
 from chain_server.src.turn_support import _normalize_cart_add_tool_items
 
 
@@ -111,3 +113,44 @@ def test_the_size_survives_reading_the_cart_back() -> None:
         {"cart_line_id": "b", "product_id": "p2", "item": "A bag", "amount": 1}
     )
     assert one_size is not None and one_size.size is None
+
+
+def test_a_zero_result_search_is_told_to_relax_and_show() -> None:
+    """"No green dress in a 2" offered a numbered menu and showed nothing.
+
+    Two live runs answered with "would you prefer 1) a nearby size, 2) another
+    colour, 3) green apparel?" -- three things it could have searched for,
+    using none of the budget it had. A shopper asked to be shown dresses and
+    got a form to fill in.
+    """
+
+    from chain_server.src.turn_support import _SEARCH_NO_MATCH_GROUNDING_NOTE
+
+    note = _SEARCH_NO_MATCH_GROUNDING_NOTE
+
+    assert "search again with the least" in note
+    assert "saying plainly which" in note
+    # The failure mode being replaced, named so it is not reintroduced.
+    assert "numbered menu of things you could look for is not an answer" in note
+    # And the opposite failure: relaxing silently would be a substitution.
+    assert "Never quietly drop a filter" in note
+
+
+def test_a_relaxable_zero_result_is_not_told_to_stop_looking() -> None:
+    """Two rules in one message, and the blunter one won.
+
+    A zero-result search emitted both "search again with a filter relaxed" and
+    SEARCH_SCOPE_COMPLETE's "Answer now. Do not search ... merely because
+    search budget remains." Three live runs obeyed the second and answered
+    with a menu of things they could have searched for.
+
+    Scope-complete asserts the turn can be answered from what it has. With
+    nothing returned and two filters to choose between, that is simply untrue.
+    """
+
+    from chain_server.src import catalog_search as mod
+
+    source = pathlib.Path(mod.__file__).read_text()
+
+    assert "relaxable = bool(evidence.confirmed_filters)" in source
+    assert "if evidence.scope_complete and not relaxable:" in source

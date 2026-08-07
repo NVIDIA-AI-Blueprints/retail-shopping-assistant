@@ -215,13 +215,30 @@ export interface CartLine {
   unit_price?: number | null;
 }
 
+/** What the vision model saw, as the server projects it for display. */
+export interface MediaAnalysisItem {
+  label: string;
+  /** How many of the model's own searches chase this item. 0 = seen, not searched. */
+  pursued: number;
+}
+
+export interface MediaAnalysis {
+  summary: string;
+  items: MediaAnalysisItem[];
+  colors: string[];
+  materials: string[];
+  style: string[];
+  occasion: string[];
+  queries: string[];
+}
+
 export interface CartSnapshot {
   lines: CartLine[];
   subtotal: number | null;
 }
 
 export interface StreamingChunk {
-  type: 'content' | 'images' | 'products' | 'metrics' | 'error';
+  type: 'content' | 'images' | 'products' | 'metrics' | 'media_analysis' | 'error';
   payload: string | Record<string, string> | ProductSummary[] | InferenceMetricsPayload;
   timestamp: number;
 }

@@ -1368,3 +1368,108 @@ below the composer.
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-weight: 600;
 }
+
+/* What the vision model saw. Arrives while the turn is still running, so it
+   sits above the composer where the shopper is already looking. */
+.chatbox__media-analysis {
+  padding: 0 18px 12px;
+}
+
+.media-analysis {
+  background: linear-gradient(
+    180deg,
+    rgba(118, 185, 0, 0.06) 0%,
+    var(--panel) 60%
+  );
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: 0 1px 2px rgba(23, 23, 23, 0.04);
+  padding: 14px 16px;
+}
+
+.media-analysis__header {
+  align-items: baseline;
+  display: flex;
+  gap: 7px;
+  margin-bottom: 8px;
+}
+
+.media-analysis__eyebrow {
+  color: #3f6400;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.media-analysis__title {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.media-analysis__summary {
+  color: var(--ink);
+  font-size: 0.94rem;
+  line-height: 1.5;
+  margin: 0 0 10px;
+}
+
+.media-analysis__items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.media-analysis__item {
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  padding: 4px 12px;
+}
+
+/* The ones the assistant is actually searching for. The rest were seen and
+   are shown anyway -- that contrast is the point. */
+.media-analysis__item.is-pursued {
+  background: rgba(118, 185, 0, 0.14);
+  border-color: var(--primary);
+  color: #2f4b00;
+  font-weight: 600;
+}
+
+.media-analysis__focus-note {
+  color: var(--muted);
+  font-size: 0.78rem;
+  margin: -4px 0 10px;
+}
+
+.media-analysis__row {
+  display: flex;
+  font-size: 0.82rem;
+  gap: 10px;
+  padding: 2px 0;
+}
+
+.media-analysis__label {
+  color: var(--muted);
+  flex: none;
+  font-weight: 600;
+  width: 74px;
+}
+
+.media-analysis__values {
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.media-analysis__query {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.media-analysis__query:not(:last-child)::after {
+  content: " · ";
+  font-style: normal;
+}

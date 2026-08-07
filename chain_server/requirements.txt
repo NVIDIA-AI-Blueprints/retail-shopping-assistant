@@ -31,6 +31,9 @@ langgraph-sdk==0.4.2
 langsmith==0.9.3
 multidict==6.7.1
 openai==2.44.0
+openinference-instrumentation-langchain==0.1.69
+opentelemetry-exporter-otlp-proto-http==1.44.0
+opentelemetry-sdk==1.44.0
 orjson==3.11.5
 ormsgpack==1.12.2
 packaging==26.2

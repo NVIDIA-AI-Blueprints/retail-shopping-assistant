@@ -11,6 +11,7 @@ from datetime import date as CalendarDate, datetime, timezone
 import logging
 
 import asyncio
+import contextlib
 import json
 import os
 from pathlib import Path
@@ -168,6 +169,106 @@ from shared.commerce_contracts import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _turn_trace_session(identity: RequestIdentity):
+    """Bind this turn's spans to its conversation, not to its graph thread.
+
+    The LangChain instrumentor derives a session from LangGraph's ``thread_id``,
+    which is ``[conversation_id, request_id]`` -- unique per turn. Left alone,
+    a twenty-turn conversation becomes twenty single-turn sessions and the whole
+    point of a session view is lost. Binding ``conversation_id`` explicitly is
+    what makes a trace session and a durable conversation the same set of turns.
+
+    Returns a null context when tracing is not installed, so this costs nothing
+    in a deployment that never exports a span.
+    """
+
+    try:
+        from openinference.instrumentation import using_attributes
+    except Exception:  # noqa: BLE001 - tracing must never break a turn.
+        return contextlib.nullcontext()
+
+    try:
+        return using_attributes(
+            session_id=identity.conversation_id,
+            user_id=str(identity.context_user_id),
+        )
+    except Exception as exc:  # noqa: BLE001 - same.
+        logger.warning("Could not bind trace session: %s", type(exc).__name__)
+        return contextlib.nullcontext()
+
+
+@contextlib.contextmanager
+def _turn_span(identity: RequestIdentity):
+    """Open one span per turn, parenting the graph and the grounding editor.
+
+    The graph and the grounding editor are two separate top-level invocations,
+    so without this a turn arrives as two unrelated traces. This also gives the
+    finished diagnostics somewhere to hang: every span the instrumentor raises
+    has closed by the time the blob settles.
+    """
+
+    try:
+        from opentelemetry import trace
+    except Exception:  # noqa: BLE001 - tracing must never break a turn.
+        yield None
+        return
+
+    tracer = trace.get_tracer(__name__)
+    with tracer.start_as_current_span("turn") as span:
+        try:
+            # The instrumentor's context attributes reach the spans it raises,
+            # not one opened by hand, so the root states its own kind and
+            # session or it renders as UNKNOWN and sits outside the session.
+            span.set_attribute("openinference.span.kind", "CHAIN")
+            span.set_attribute("session.id", identity.conversation_id)
+            span.set_attribute("conversation.id", identity.conversation_id)
+            span.set_attribute("request.id", identity.request_id)
+        except Exception:  # noqa: BLE001 - same.
+            pass
+        yield span
+
+
+def _record_turn_diagnostics(span: Any, state: State) -> None:
+    """Attach the settled diagnostics to the turn span as metadata.
+
+    Everything rides the one supported ``metadata`` channel rather than a
+    private attribute namespace, including the scalar counts -- viewers filter
+    on metadata subkeys, so the countables stay filterable without inventing
+    names nothing else understands.
+
+    ``partial_graph_messages`` is excluded: it is the largest field by far and
+    the span tree already holds what it would say.
+    """
+
+    if span is None:
+        return
+    try:
+        diagnostics = dict(getattr(state, "agent_diagnostics", None) or {})
+        diagnostics.pop("partial_graph_messages", None)
+        tool_calls = diagnostics.get("tool_calls") or []
+        payload = {
+            "termination_reason": diagnostics.get("final_termination_reason"),
+            "tool_calls": len(tool_calls),
+            "tool_calls_rejected": len(diagnostics.get("rejected_tool_calls") or []),
+            "products_shown": len(diagnostics.get("product_evidence") or []),
+            "zero_result_scopes": len(
+                diagnostics.get("catalog_scope_outcomes") or []
+            ),
+            "skills": diagnostics.get("skill_files_read") or [],
+            "tools": [call.get("tool_name") for call in tool_calls],
+            # Serialised, not nested. A viewer flattens nested metadata into one
+            # attribute per leaf, and the full blob explodes into ~120 keys --
+            # `product_evidence.0.facts.heel_type` and the like -- which sorts
+            # the handful of fields worth reading to the bottom of a wall. The
+            # per-tool detail is already on the tool spans; this is the derived
+            # view, kept whole and out of the way.
+            "diagnostics_json": json.dumps(diagnostics, default=str),
+        }
+        span.set_attribute("metadata", json.dumps(payload, default=str))
+    except Exception as exc:  # noqa: BLE001 - diagnostics never break a turn.
+        logger.warning("Could not record turn diagnostics: %s", type(exc).__name__)
 
 
 _SHOPPER_SKILLS_ENV = "SHOPPER_SKILLS_ROOT"
@@ -561,6 +662,21 @@ class DeepAgentsRuntime:
         state: State,
         identity: RequestIdentity,
     ) -> State:
+        """Run one turn inside its conversation's trace session."""
+
+        with _turn_trace_session(identity), _turn_span(identity) as span:
+            try:
+                return await self._run_turn_inner(state, identity)
+            finally:
+                # In a finally, not on the success path: a failed turn is
+                # exactly when the trace is worth having.
+                _record_turn_diagnostics(span, state)
+
+    async def _run_turn_inner(
+        self,
+        state: State,
+        identity: RequestIdentity,
+    ) -> State:
         state.user_id = identity.context_user_id
         state.agent_diagnostics = _empty_agent_diagnostics("not_started")
         state.previous_selected_skill_names = []
@@ -656,6 +772,11 @@ class DeepAgentsRuntime:
         invoke_config = {
             "configurable": {"thread_id": identity.checkpoint_thread_id},
             "recursion_limit": self.config.deepagents_recursion_limit,
+            # Trace-only. The checkpoint thread is deliberately request-scoped,
+            # so a tracer left to infer a session from it files every turn as
+            # its own conversation. This names the conversation for spans raised
+            # inside the graph; it is read by tracing and by nothing else.
+            "metadata": {"session_id": identity.conversation_id},
         }
         agent = None
         try:

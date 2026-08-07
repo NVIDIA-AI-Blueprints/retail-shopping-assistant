@@ -24,6 +24,10 @@ services:
       - EXPOSE_AGENT_DIAGNOSTICS=${EXPOSE_AGENT_DIAGNOSTICS:-false}
       - WEATHER_ENABLED=${WEATHER_ENABLED:-false}
       - WEATHER_API_KEY=${WEATHER_API_KEY:-}
+      # Unset by default: no endpoint means no exporter and no instrumentation.
+      # Set it to http://otel-collector:4318 to trace.
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      - OTEL_SERVICE_NAME=${OTEL_SERVICE_NAME:-chain-server}
     volumes:
       - ./shared:/app/shared
     depends_on:
@@ -211,6 +215,43 @@ services:
     networks:
       - shopping-network
 
+  # OpenTelemetry Collector - the seam between the app and any trace backend.
+  # The chain server exports OTLP here and knows nothing else; changing where
+  # traces land is a change to otel-collector-config.yaml, not to any service.
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.140.0
+    container_name: otel-collector
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    # Published on loopback so a chain server run as a local process -- which is
+    # how the local runner starts it -- can reach the collector. Inside compose
+    # the service name resolves without this.
+    ports:
+      - "127.0.0.1:4318:4318"
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml
+    depends_on:
+      - phoenix
+    networks:
+      - shopping-network
+
+  # Arize Phoenix - trace viewer. Loopback-only: it is an operator surface and
+  # holds conversation content, following memory-retriever's precedent rather
+  # than the all-interfaces default.
+  phoenix:
+    image: arizephoenix/phoenix:version-19.19.0
+    container_name: phoenix
+    ports:
+      # All interfaces, matching the UI, so a tunnel can reach it. Phoenix holds
+      # conversation content, so on anything but a dev box this wants to go back
+      # to loopback with access through the tunnel only.
+      - "6006:6006"
+    volumes:
+      - phoenix-data:/mnt/data
+    environment:
+      - PHOENIX_WORKING_DIR=/mnt/data
+    networks:
+      - shopping-network
+
 networks:
   shopping-network:
     driver: bridge
@@ -219,3 +260,4 @@ networks:
 
 volumes:
   memory-data:
+  phoenix-data:

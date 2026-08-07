@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 from typing import Optional, Dict, List, Literal, Any
 import base64
 import logging
+import os
 import sys
 import time
 import json
@@ -42,6 +43,50 @@ logging.basicConfig(
     stream=sys.stdout
 )
 logger = logging.getLogger(__name__)
+
+
+def _configure_tracing() -> None:
+    """Export OpenTelemetry spans when an OTLP endpoint is configured.
+
+    Configured entirely through the standard ``OTEL_*`` environment variables so
+    no chain-server setting has to exist for it, and so the app never names a
+    backend: spans go to a collector, and the collector decides where they land.
+
+    Absent ``OTEL_EXPORTER_OTLP_ENDPOINT`` this does nothing at all -- no
+    provider, no exporter, no instrumentation -- which is the default and the
+    same idiom as ``EXPOSE_AGENT_DIAGNOSTICS``.
+    """
+
+    if not os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT"):
+        return
+
+    try:
+        from openinference.instrumentation.langchain import LangChainInstrumentor
+        from opentelemetry import trace
+        from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
+            OTLPSpanExporter,
+        )
+        from opentelemetry.sdk.resources import Resource
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
+        provider = TracerProvider(
+            resource=Resource.create(
+                {"service.name": os.environ.get("OTEL_SERVICE_NAME", "chain-server")}
+            )
+        )
+        # Batched, never synchronous: the turn budget is 90s and the graph runs
+        # under asyncio.wait_for, so a blocking export sits on the shopper's path.
+        provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
+        trace.set_tracer_provider(provider)
+        LangChainInstrumentor().instrument(tracer_provider=provider)
+    except Exception as exc:  # noqa: BLE001 - tracing must never break startup.
+        logger.warning("Could not configure tracing: %s", type(exc).__name__)
+    else:
+        logger.info("Tracing enabled")
+
+
+_configure_tracing()
 
 # Load configuration and initialize runtime.
 try:

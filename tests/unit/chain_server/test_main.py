@@ -3267,6 +3267,13 @@ class TestDeepAgentsRuntimeRefs:
         # twice, presented as agreement.
         # A "size 8 tote" filtered to zero and then asked a sensible
         # question -- the question was right, the wasted filter was not.
+        # "Stop and synthesize" fired before the forecast was ever considered:
+        # the same sentence fetched weather alone and skipped it once it read
+        # as an outfit request mid-conversation.
+        assert "look the weather\n  up BEFORE that fan-out" in (
+            captured["system_prompt"]
+        )
+        assert "the forecast never gets asked for" in captured["system_prompt"]
         assert "a size 8 tote is not a thing" in captured["system_prompt"]
         assert "those come in one size" in captured["system_prompt"]
         assert "another line, not more of" in captured["system_prompt"]

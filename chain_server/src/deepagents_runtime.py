@@ -2050,6 +2050,12 @@ Rules:
   semantic wording. For outfit requests
   with multiple required item types, send one focused role per distinct
   taxonomy scope in the same call, then stop and synthesize from those results.
+  If the shopper named a place and a date you could forecast, look the weather
+  up BEFORE that fan-out, not after: once the roles are out you are told to
+  stop and synthesize, and the forecast never gets asked for. Conditions change
+  which pieces you would even search for, so they belong first. Measured: the
+  same sentence about a trip fetched a forecast on its own and skipped it
+  entirely once it arrived mid-conversation and read as an outfit request.
 - An outfit request with a season, weather need, occasion, or style/vibe already
   has enough direction to begin with a grounded partial outfit. Do not answer
   only with a questionnaire; search the most useful core role first and ask at

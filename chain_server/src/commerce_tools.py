@@ -274,6 +274,8 @@ def add_cart_item(
     }
     if request.unit_price is not None:
         payload["price"] = request.unit_price.amount
+    if request.size:
+        payload["size"] = request.size
 
     http = session or requests
     try:
@@ -750,6 +752,7 @@ def _cart_line_from_memory_item(item: dict[str, Any]) -> CartLine | None:
         product_id=str(item.get("product_id") or display_name),
         display_name=display_name,
         quantity=quantity,
+        size=(str(item["size"]).strip() or None) if item.get("size") else None,
         unit_price=Money(amount=price) if price is not None else None,
     )
 

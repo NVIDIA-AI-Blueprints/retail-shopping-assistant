@@ -1088,7 +1088,7 @@ class DeepAgentsRuntime:
             resolved: list[tuple[str, ProductSummary, int]] = []
             failed: list[str] = []
             blocked: list[str] = []
-            for product_ref, request in requested_items.items():
+            for (product_ref, size), request in requested_items.items():
                 product = scope.product_evidence.get(product_ref)
                 if product is None:
                     failed.append(
@@ -1133,13 +1133,18 @@ class DeepAgentsRuntime:
                     )
                     continue
                 resolved.append(
-                    (product_ref, active_detail.product, int(request["quantity"]))
+                    (
+                        product_ref,
+                        active_detail.product,
+                        int(request["quantity"]),
+                        size,
+                    )
                 )
 
             blocked.extend(
                 _cart_add_scope_failures(
                     state.query,
-                    [(product_ref, product) for product_ref, product, _ in resolved],
+                    [(product_ref, product) for product_ref, product, _, _ in resolved],
                     scope.product_evidence.values(),
                 )
             )
@@ -1154,17 +1159,21 @@ class DeepAgentsRuntime:
 
             added: list[str] = []
             committed: list[dict[str, Any]] = []
-            for product_ref, product, quantity in resolved:
+            for product_ref, product, quantity, size in resolved:
                 result = add_cart_item(
                     AddCartItemInput(
                         user_id=str(identity.cart_user_id),
                         product_id=product.product_id,
                         display_name=product.display_name,
                         quantity=quantity,
+                        size=size,
                         unit_price=product.price,
                         image_url=product.image_url,
+                        # Size is part of the key: adding a 6 and an 8 in one
+                        # turn are two mutations, not a retry of one.
                         idempotency_key=(
-                            f"{identity.request_id}:add:{product.product_id}:{quantity}"
+                            f"{identity.request_id}:add:{product.product_id}"
+                            f":{size or 'onesize'}:{quantity}"
                         ),
                     ),
                     self.config.memory_port,
@@ -2045,6 +2054,24 @@ Rules:
   has enough direction to begin with a grounded partial outfit. Do not answer
   only with a questionnaire; search the most useful core role first and ask at
   most one concise follow-up while presenting the grounded result.
+- Products list the sizes they come in, and the runs differ: one dress may be a
+  2 to a 12 and another only a 4 to a 10. Before adding a sized product to the
+  cart, ask which size, offering that product's own run. Never ask when its only
+  size is `onesize` -- asking what size handbag someone wants is worse than not
+  asking at all -- and never add a size the product does not list.
+- When the shopper answers with a word rather than a number, map it to the
+  closest size that product carries, and say which in the line that confirms the
+  add: "Added in an 8 -- the middle of what this dress comes in. Say if you'd
+  rather a 6 or a 10." The shopper can see the products you show them and judge
+  those for themselves; they cannot see a size until it arrives, so the
+  assumption belongs in the confirmation and names its neighbours.
+- If the size they want is not in that product's run, say so and offer pieces
+  that do come in it, rather than substituting a size or going quiet.
+- Another size of something already in the cart is another line, not more of
+  what is there. "Add it in a 10 too" is an add with size 10, and the cart then
+  holds one of each. Raising the quantity of the size already in the cart adds
+  the wrong garment twice and looks, to a shopper reading it back, like you
+  agreed to something you did not do.
 - Advice is not an answer on its own either. A layering formula, a packing list
   or a list of what to look for, with no pieces from this shop beside it, is a
   wardrobe lecture rather than shopping. Search and show real items in every
@@ -2336,6 +2363,7 @@ Rules:
                     "item": line.display_name,
                     "amount": line.quantity,
                     "price": line.unit_price.amount if line.unit_price else None,
+                    **({"size": line.size} if line.size else {}),
                 }
                 for line in result.cart.lines
             ]

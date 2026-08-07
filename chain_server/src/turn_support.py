@@ -1495,6 +1495,17 @@ class AddCartItemsToolItemInput(BaseModel):
             "shopper explicitly names the product, copy that exact product name."
         ),
     )
+    size: str | None = Field(
+        default=None,
+        max_length=32,
+        description=(
+            "The size to add, exactly as the product lists it. Required when "
+            "the product carries real sizes, and omitted when its only size "
+            "is 'onesize' -- asking what size handbag someone wants is worse "
+            "than not asking. Use only a size that product actually comes in; "
+            "the sizes differ per product and are in its details."
+        ),
+    )
 
 
 @dataclass(frozen=True)
@@ -3637,8 +3648,8 @@ def _format_product_details(product: ProductDetail) -> str:
 
 def _normalize_cart_add_tool_items(
     items: list[AddCartItemsToolItemInput] | list[dict[str, Any]],
-) -> dict[str, dict[str, Any]]:
-    normalized: dict[str, dict[str, Any]] = {}
+) -> dict[tuple[str, str | None], dict[str, Any]]:
+    normalized: dict[tuple[str, str | None], dict[str, Any]] = {}
     for item in items or []:
         try:
             parsed = (
@@ -3649,10 +3660,14 @@ def _normalize_cart_add_tool_items(
             quantity = max(1, int(parsed.quantity or 1))
         except (TypeError, ValueError, ValidationError) as exc:
             raise ValueError("each item must include a PRODUCT_REF and quantity") from exc
+        # Keyed on size as well as reference: asking for a 6 and an 8 of one
+        # dress is two lines, and merging them would quietly halve the order.
+        size = (parsed.size or "").strip() or None
         entry = normalized.setdefault(
-            parsed.product_ref,
+            (parsed.product_ref, size),
             {
                 "quantity": 0,
+                "size": size,
                 "expected_display_name": (
                     parsed.expected_display_name.strip()
                     if parsed.expected_display_name

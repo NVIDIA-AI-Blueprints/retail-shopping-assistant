@@ -3245,6 +3245,28 @@ class TestDeepAgentsRuntimeRefs:
         # advice instead slipped past it: "it's going to snow this weekend"
         # and "a wedding in Cancun, date not fixed yet" both returned a
         # layering formula with nothing to buy.
+        # Turn 14 of the fifteen-turn script asked "what size should I add?"
+        # and then added nothing, because no size could be recorded anywhere.
+        # The question is real now, so the rules for it live here.
+        assert "ask which size, offering that product's own run" in (
+            captured["system_prompt"]
+        )
+        assert "worse than not\n  asking at all" in captured["system_prompt"]
+        assert "never add a size the product does not list" in (
+            captured["system_prompt"]
+        )
+        # A size guess is invisible until the parcel arrives, so it is
+        # disclosed where it cannot be missed and names its neighbours.
+        assert "say which in the line that confirms the\n  add" in (
+            captured["system_prompt"]
+        )
+        assert "cannot see a size until it arrives" in captured["system_prompt"]
+        assert "offer pieces\n  that do come in it" in captured["system_prompt"]
+        # Live: "add it in a 10 too" raised the size-8 line to quantity 2 and
+        # then asked whether the second should be a 10 -- the wrong garment
+        # twice, presented as agreement.
+        assert "another line, not more of" in captured["system_prompt"]
+        assert "adds\n  the wrong garment twice" in captured["system_prompt"]
         assert "Advice is not an answer on its own either" in (
             captured["system_prompt"]
         )

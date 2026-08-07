@@ -26,6 +26,12 @@ fields:
   target_audience:
     type: enum
     uses: [filter, semantic, detail]
+  # A list per product: the sizes that product actually comes in. Deliberately
+  # not semantic -- a size adds nothing to ranking, and including it would let
+  # "medium" drift into matching prose.
+  sizes:
+    type: enum_list
+    uses: [filter, detail]
   primary_color:
     type: enum
     uses: [filter, semantic, detail]

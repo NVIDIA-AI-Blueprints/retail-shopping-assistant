@@ -122,6 +122,10 @@ class ItemUpdate(BaseModel):
     price: Optional[float] = None
     product_id: str = Field(..., min_length=1)
     idempotency_key: str = Field(..., min_length=1)
+    #: None for one-size goods. Reaches both the merge key and the idempotency
+    #: digest below, because two sizes of one product are two different things
+    #: a shopper owns and two different mutations.
+    size: Optional[str] = Field(default=None, max_length=32)
 
 class CartRemoveUpdate(BaseModel):
     amount: int = Field(gt=0)
@@ -162,6 +166,8 @@ def _cart_item_dict(item: CartItem) -> dict:
     }
     if item.product_id:
         result["product_id"] = item.product_id
+    if item.size:
+        result["size"] = item.size
     return result
 
 
@@ -229,10 +235,19 @@ def _commit_cart_mutation(
     return response
 
 
-def _cart_item_for_add(db, user_id: int, product_id: str) -> CartItem | None:
+def _cart_item_for_add(
+    db, user_id: int, product_id: str, size: str | None = None
+) -> CartItem | None:
+    """Find the line this add should merge into.
+
+    Keyed on size as well as product: a 6 and an 8 of one dress are two things
+    the shopper owns, not one line of quantity two.
+    """
+
     return db.query(CartItem).filter(
         CartItem.user_id == user_id,
         CartItem.product_id == product_id,
+        CartItem.size.is_(None) if size is None else CartItem.size == size,
     ).first()
 
 
@@ -282,10 +297,13 @@ async def add_to_cart(
     amount = item_update.amount
     price = item_update.price
     stable_target_id = item_update.product_id
+    size = item_update.size
     canonical_digest = _cart_mutation_digest(
         "add",
         stable_target_id,
-        {"amount": amount, "item": item, "price": price},
+        # Size belongs in the digest, or adding a 6 and then an 8 replays as
+        # one mutation and the second silently vanishes.
+        {"amount": amount, "item": item, "price": price, "size": size},
     )
     try:
         replay = _replay_cart_mutation(
@@ -298,7 +316,7 @@ async def add_to_cart(
         )
         if replay is not None:
             return replay
-        cart_item = _cart_item_for_add(db, user_id, item_update.product_id)
+        cart_item = _cart_item_for_add(db, user_id, item_update.product_id, size)
         if cart_item:
             cart_item.amount += amount
             if price is not None:
@@ -310,6 +328,7 @@ async def add_to_cart(
                 item=item,
                 amount=amount,
                 price=price,
+                size=size,
             )
             db.add(cart_item)
         db.flush()

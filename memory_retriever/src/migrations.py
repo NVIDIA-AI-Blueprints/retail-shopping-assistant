@@ -59,6 +59,17 @@ def ensure_price_column(connection: Connection) -> None:
         connection.execute(text("ALTER TABLE cart_items ADD COLUMN price REAL"))
 
 
+def ensure_cart_size_column(connection: Connection) -> None:
+    """Add the cart size column for databases created before sizes existed.
+
+    Existing rows stay null. They were added when nothing recorded a size, and
+    backfilling one would invent a choice the shopper never made.
+    """
+
+    if "size" not in _table_columns(connection, "cart_items"):
+        connection.execute(text("ALTER TABLE cart_items ADD COLUMN size TEXT"))
+
+
 def ensure_cart_line_id_column(connection: Connection) -> None:
     columns = _table_columns(connection, "cart_items")
     if "cart_line_id" not in columns:
@@ -189,6 +200,17 @@ def _conversation_shopper_profile(connection: Connection) -> None:
         )
 
 
+def _cart_size(connection: Connection) -> None:
+    """Give cart lines a size.
+
+    Its own version rather than a line inside `_legacy_schema`: version 1 has
+    already been applied to every existing database, so anything added there
+    now would never run.
+    """
+
+    ensure_cart_size_column(connection)
+
+
 _MIGRATIONS = (
     (1, _legacy_schema),
     (2, _conversation_schema),
@@ -196,6 +218,7 @@ _MIGRATIONS = (
     (4, _conversation_attempt_id),
     (5, _shopper_profiles_schema),
     (6, _conversation_shopper_profile),
+    (7, _cart_size),
 )
 
 

@@ -45,6 +45,9 @@ class CatalogSearchPlan(BaseModel):
     top_k: int = 4
     no_search_reason: str | None = None
     constraint_issues: list[str] = Field(default_factory=list)
+    #: Enum requirements honoured in part: the advertised values filtered,
+    #: the rest could not and are disclosed rather than silently dropped.
+    partial_constraints: list[str] = Field(default_factory=list)
 
 
 def build_catalog_search_plan(
@@ -58,7 +61,9 @@ def build_catalog_search_plan(
         [intent.semantic_query] if intent.semantic_query else []
     )
     mode = _search_mode(intent.search_mode, capabilities, has_image=has_image)
-    hard_filters, constraint_issues = _hard_filters(intent, capabilities)
+    hard_filters, constraint_issues, partial_constraints = _hard_filters(
+        intent, capabilities
+    )
 
     if constraint_issues:
         return CatalogSearchPlan(
@@ -69,6 +74,7 @@ def build_catalog_search_plan(
             hard_filters=hard_filters,
             no_search_reason="unsupported_required_constraint",
             constraint_issues=constraint_issues,
+            partial_constraints=partial_constraints,
         )
 
     mode_issue = _search_mode_issue(
@@ -94,6 +100,7 @@ def build_catalog_search_plan(
             hard_filters=hard_filters,
             no_search_reason="image_search_unavailable",
             constraint_issues=constraint_issues,
+            partial_constraints=partial_constraints,
         )
 
     if not semantic_queries and not has_image:
@@ -104,6 +111,7 @@ def build_catalog_search_plan(
             hard_filters=hard_filters,
             no_search_reason="missing_query_or_image",
             constraint_issues=constraint_issues,
+            partial_constraints=partial_constraints,
         )
 
     return CatalogSearchPlan(
@@ -113,6 +121,7 @@ def build_catalog_search_plan(
         search_mode=mode,
         top_k=top_k,
         constraint_issues=constraint_issues,
+        partial_constraints=partial_constraints,
     )
 
 
@@ -122,6 +131,7 @@ def _hard_filters(
 ) -> tuple[dict[str, Any], list[str]]:
     filters: dict[str, Any] = {}
     issues: list[str] = []
+    partial: list[str] = []
     available = effective_filter_capabilities(capabilities)
     for name, raw_value in intent.required_constraints.items():
         capability = available.get(name)
@@ -132,9 +142,25 @@ def _hard_filters(
         if value not in (None, "", [], {}):
             filters[name] = value
         if not _filter_value_is_fully_valid(raw_value, value, capability):
-            issues.append(f"'{name}' contains an unsupported value or operator")
+            # An enum that keeps at least one advertised value is honourable in
+            # part: filter on what is advertised and disclose the rest. This is
+            # not the weakening the other branches guard against -- nothing the
+            # shopper can act on is dropped, and the unadvertised words were
+            # never enforceable in the first place.
+            #
+            # Everything else still stops. A malformed numeric bound must never
+            # become "no bound": "under $300" that quietly returns $400 items is
+            # worse than refusing.
+            if capability.type == "enum" and value:
+                partial.append(
+                    f"'{name}' also had values this catalog does not carry"
+                )
+            else:
+                issues.append(
+                    f"'{name}' contains an unsupported value or operator"
+                )
 
-    return filters, issues
+    return filters, issues, partial
 
 
 def _search_mode(

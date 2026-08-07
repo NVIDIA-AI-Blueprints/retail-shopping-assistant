@@ -84,6 +84,7 @@ from .turn_support import (
     _selected_advertised_subcategories,
     _shopper_stated_product_scope,
     _shopper_stated_requirement,
+    stated_media_terms,
     _taxonomy_hard_constraints,
     _text_mentions_product_type,
     _tool_search_mode,
@@ -177,6 +178,26 @@ def _lock_taxonomy_constraints(
         repair,
         scope_key,
         request.required_constraints.model_dump(exclude_none=True),
+    )
+
+
+def _stated_shopper_text(state: Any) -> str:
+    """What the shopper said this turn, including what they showed.
+
+    Provenance was computed from the typed query alone, so every attribute a
+    shopper conveyed by attaching a photo or video read as model-invented and
+    was refused. An image is a statement; this makes the gate able to hear it.
+
+    Only the media fields that describe the media's *content* are included --
+    see `_STATED_MEDIA_FIELDS`. The model's reading of the image is still not
+    the shopper speaking.
+    """
+
+    return " ".join(
+        part for part in (
+            getattr(state, "query", "") or "",
+            stated_media_terms(getattr(state, "media_analysis", "") or ""),
+        ) if part
     )
 
 
@@ -410,7 +431,9 @@ def _classify_requirements(ctx: SearchContext, attempt: _Attempt) -> StepResult:
             requirement
             for requirement in raw_unadvertised_requirements
             if isinstance(requirement, str)
-            and _shopper_stated_requirement(ctx.state.query, requirement)
+            and _shopper_stated_requirement(
+                _stated_shopper_text(ctx.state), requirement
+            )
         ]
         if isinstance(raw_unadvertised_requirements, list)
         else []
@@ -810,7 +833,9 @@ def _reviewed_provenance(ctx: SearchContext, attempt: _Attempt) -> StepResult:
         stated_requirements = [
             requirement
             for requirement in unadvertised_requirements
-            if _shopper_stated_requirement(ctx.state.query, requirement)
+            if _shopper_stated_requirement(
+                _stated_shopper_text(ctx.state), requirement
+            )
         ]
         shopper_stated_scope = bool(
             candidate_scope_key
@@ -1116,6 +1141,15 @@ def _planned_search(ctx: SearchContext, attempt: _Attempt) -> StepResult:
             ctx.config.top_k_retrieve,
         ),
     )
+    # A partly-honoured enum joins the requirements the model already declared
+    # unconfirmable, rather than getting a disclosure channel of its own: it is
+    # exactly that -- something the catalog cannot confirm, ranked and disclosed
+    # instead of vetoing the search.
+    if plan.partial_constraints:
+        existing = list(attempt.unconfirmable_requirements or [])
+        attempt.unconfirmable_requirements = existing + [
+            item for item in plan.partial_constraints if item not in existing
+        ]
     if not plan.should_search:
         if plan.constraint_issues:
             return _rejected(

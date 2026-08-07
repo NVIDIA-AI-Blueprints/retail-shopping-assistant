@@ -313,6 +313,42 @@ def _requirement_word_stem(word: str) -> str:
     return _singularize_product_word(word)
 
 
+#: Media-analysis fields that count as the shopper speaking.
+#:
+#: A photo is a statement. When a shopper attaches one and says "I like the
+#: top", the garment, its colour and its fabric came from them via the camera --
+#: refusing those as model-invented refuses the shopper's own words.
+#:
+#: Deliberately excludes `style_terms`, `occasion`, `search_queries`,
+#: `uncertainties` and `safety_notes`. Those are the model's reading of the
+#: image, not its content, and authorising them would let "boho-chic" become a
+#: shopper-stated requirement.
+_STATED_MEDIA_FIELDS = ("fashion_items", "colors", "materials_or_textures")
+
+
+def stated_media_terms(media_analysis: str) -> str:
+    """Return the media-analysis words that count as shopper-stated."""
+
+    if not media_analysis:
+        return ""
+    try:
+        parsed = json.loads(media_analysis)
+    except (TypeError, ValueError):
+        return ""
+    if not isinstance(parsed, dict):
+        return ""
+    words: list[str] = []
+    for name in _STATED_MEDIA_FIELDS:
+        value = parsed.get(name)
+        # The VLM is not type-stable: the same key comes back as a string on one
+        # turn and a list on the next, so both are accepted rather than trusted.
+        if isinstance(value, str):
+            words.append(value)
+        elif isinstance(value, list):
+            words.extend(str(item) for item in value)
+    return " ".join(words)
+
+
 def _shopper_stated_requirement(query: str, requirement: str) -> bool:
     """Return whether a proposed requirement is grounded in the current turn."""
 

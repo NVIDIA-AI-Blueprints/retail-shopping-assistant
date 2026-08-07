@@ -1,0 +1,38 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# The seam between the application and any trace backend.
+#
+# The chain server exports OTLP here and names no vendor. Sending traces
+# somewhere else -- Jaeger, Tempo, a hosted backend, or several at once -- is a
+# change to the `exporters` and `pipelines` blocks below and to nothing in the
+# application. That is the whole reason this sits in the middle rather than
+# having the app export to Phoenix directly.
+
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+processors:
+  # Batch on the collector as well as in the SDK: it keeps export off the
+  # shopper's path even if a service is ever configured with a simple processor.
+  batch:
+    timeout: 5s
+    send_batch_size: 512
+
+exporters:
+  otlphttp/phoenix:
+    endpoint: http://phoenix:6006
+    tls:
+      insecure: true
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlphttp/phoenix]

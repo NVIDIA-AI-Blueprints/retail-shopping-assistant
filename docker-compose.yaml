@@ -222,6 +222,11 @@ services:
     image: otel/opentelemetry-collector-contrib:0.140.0
     container_name: otel-collector
     command: ["--config=/etc/otel-collector-config.yaml"]
+    # Published on loopback so a chain server run as a local process -- which is
+    # how the local runner starts it -- can reach the collector. Inside compose
+    # the service name resolves without this.
+    ports:
+      - "127.0.0.1:4318:4318"
     volumes:
       - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml
     depends_on:

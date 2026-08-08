@@ -660,11 +660,20 @@ class DeepAgentsRuntime:
                 progress.put_nowait(_FINISHED)
 
         turn = asyncio.create_task(_run())
-        while True:
-            event = await progress.get()
-            if event is _FINISHED:
-                break
-            yield event
+        try:
+            while True:
+                event = await progress.get()
+                if event is _FINISHED:
+                    break
+                yield event
+        except BaseException:
+            # A shopper who closes the tab or resets stops this generator. The
+            # turn is a task now, so it does not hear that on its own: before
+            # the queue it was awaited inline and the cancellation reached it.
+            # Measured without this: a client that hung up at 8s still cost
+            # three more LLM calls. Cancel it and let the timeout own the rest.
+            turn.cancel()
+            raise
         # Re-raises whatever the turn raised, so failure handling is unchanged.
         output = await turn
         products = output.product_results or []

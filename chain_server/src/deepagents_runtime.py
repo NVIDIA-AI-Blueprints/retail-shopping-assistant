@@ -140,6 +140,7 @@ from .message_shape import (
     _result_messages,
     _value,
 )
+from .media_summary import summarize_media_analysis
 from .media_perception import MediaPerceptionClient
 from .skill_activation import (
     SKILL_ACTIVATION_COMPLETE,
@@ -169,6 +170,33 @@ from shared.commerce_contracts import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _emit_media_analysis(on_progress: Any, state: State) -> None:
+    """Send what the vision model saw, if anything and if anyone is listening.
+
+    Failing here must never cost a turn: this is a progress message, and a turn
+    that answered correctly but could not describe its own perception step is
+    still a turn that answered correctly.
+    """
+
+    if on_progress is None or not getattr(state, "media", None):
+        return
+    try:
+        summary = summarize_media_analysis(state.media_analysis or "")
+        if not summary:
+            return
+        on_progress(
+            json.dumps(
+                {
+                    "type": "media_analysis",
+                    "payload": summary,
+                    "timestamp": time.time(),
+                }
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 - progress never breaks a turn.
+        logger.warning("Could not emit media analysis: %s", type(exc).__name__)
 
 
 def _turn_trace_session(identity: RequestIdentity):
@@ -615,7 +643,39 @@ class DeepAgentsRuntime:
         state: State,
         identity: RequestIdentity,
     ) -> AsyncIterator[str]:
-        output = await self._run_turn(state, identity)
+        # The turn runs as a task so progress can be emitted while it is still
+        # working. Everything below still waits for it: this adds events during
+        # the turn, it does not change what is sent at the end of one.
+        progress: asyncio.Queue = asyncio.Queue()
+        _FINISHED = object()
+
+        async def _run() -> State:
+            try:
+                return await self._run_turn(
+                    state, identity, on_progress=progress.put_nowait
+                )
+            finally:
+                # In a finally so a failed turn cannot leave the drain below
+                # waiting on a queue nothing will ever write to again.
+                progress.put_nowait(_FINISHED)
+
+        turn = asyncio.create_task(_run())
+        try:
+            while True:
+                event = await progress.get()
+                if event is _FINISHED:
+                    break
+                yield event
+        except BaseException:
+            # A shopper who closes the tab or resets stops this generator. The
+            # turn is a task now, so it does not hear that on its own: before
+            # the queue it was awaited inline and the cancellation reached it.
+            # Measured without this: a client that hung up at 8s still cost
+            # three more LLM calls. Cancel it and let the timeout own the rest.
+            turn.cancel()
+            raise
+        # Re-raises whatever the turn raised, so failure handling is unchanged.
+        output = await turn
         products = output.product_results or []
         if products:
             yield json.dumps(
@@ -661,12 +721,15 @@ class DeepAgentsRuntime:
         self,
         state: State,
         identity: RequestIdentity,
+        on_progress: Any = None,
     ) -> State:
         """Run one turn inside its conversation's trace session."""
 
         with _turn_trace_session(identity), _turn_span(identity) as span:
             try:
-                return await self._run_turn_inner(state, identity)
+                return await self._run_turn_inner(
+                    state, identity, on_progress=on_progress
+                )
             finally:
                 # In a finally, not on the success path: a failed turn is
                 # exactly when the trace is worth having.
@@ -676,6 +739,7 @@ class DeepAgentsRuntime:
         self,
         state: State,
         identity: RequestIdentity,
+        on_progress: Any = None,
     ) -> State:
         state.user_id = identity.context_user_id
         state.agent_diagnostics = _empty_agent_diagnostics("not_started")
@@ -694,7 +758,9 @@ class DeepAgentsRuntime:
             return state
 
         try:
-            output = await self._execute_turn(state, identity)
+            output = await self._execute_turn(
+                state, identity, on_progress=on_progress
+            )
         except asyncio.CancelledError:
             if turn is not None:
                 if not state.response:
@@ -737,6 +803,7 @@ class DeepAgentsRuntime:
         self,
         state: State,
         identity: RequestIdentity,
+        on_progress: Any = None,
     ) -> State:
         start = time.monotonic()
 
@@ -762,6 +829,10 @@ class DeepAgentsRuntime:
         if state.media:
             state.timings["media_perception"] = time.monotonic() - media_start
             _record_media_model_usage(state, self.config)
+        # Emitted here rather than with the rest of the turn: the analysis is
+        # complete and the catalog work has not started, so a shopper sees what
+        # was seen in their media seconds before the products arrive.
+        _emit_media_analysis(on_progress, state)
         if _should_short_circuit_media_failure(state):
             state.response = _media_failure_response(state.media_analysis)
             state.timings["deepagents"] = time.monotonic() - start

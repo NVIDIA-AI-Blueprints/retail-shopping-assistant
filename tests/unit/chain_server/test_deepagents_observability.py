@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
@@ -1195,3 +1196,50 @@ def test_the_trace_says_which_products_came_from_a_proposed_role() -> None:
         record["product_name"]: record["search_scope"]["composed_role"]
         for record in diagnostics["product_evidence"]
     } == {"Meadow Sweater": True, "Navy Flats": False}
+
+
+@pytest.mark.asyncio
+async def test_a_shopper_who_hangs_up_stops_the_turn_they_abandoned(
+    base_config,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Closing the tab must stop the work, not leave it billing.
+
+    The turn used to be awaited inline, so cancelling the stream cancelled it.
+    Running it as a task -- which is what lets progress be emitted mid-turn --
+    broke that silently: measured against a live server, a client that hung up
+    at 8s still cost three more LLM calls before the timeout caught it.
+    """
+
+    runtime = DeepAgentsRuntime(base_config)
+    state = State(user_id=1, query="hello", guardrails=False)
+    identity = RequestIdentity(
+        session_id="session-a",
+        conversation_id="conversation-a",
+        cart_id="cart-a",
+        context_user_id=1,
+        cart_user_id=1,
+        request_id="request-a",
+    )
+
+    steps: list[int] = []
+
+    async def slow_turn(*args, **kwargs):
+        for step in range(5):
+            await asyncio.sleep(0.05)
+            steps.append(step)
+        return state
+
+    monkeypatch.setattr(runtime, "_run_turn", slow_turn)
+
+    stream = runtime.astream(state, identity)
+    pending = asyncio.ensure_future(stream.__anext__())
+    await asyncio.sleep(0.12)
+    pending.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await pending
+
+    # Long enough that an uncancelled turn would have run to completion.
+    await asyncio.sleep(0.4)
+
+    assert len(steps) < 5, "the abandoned turn kept working after the hang-up"

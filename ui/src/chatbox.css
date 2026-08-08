@@ -1376,9 +1376,6 @@ below the composer.
 /* What the vision model saw. Led by its own sentence: it already writes the
    readable version, and four labelled rows of comma-separated values read like
    a database record rather than a description of a picture. */
-.chatbox__media-analysis {
-  padding: 0 18px 12px;
-}
 
 .media-analysis {
   background: linear-gradient(

@@ -24,7 +24,6 @@ import Switch from '@mui/material/Switch';
 import { styled } from '@mui/material/styles';
 
 import ChatMessage from "./ChatMessage";
-import MediaAnalysisCard from "./MediaAnalysisCard";
 import ModelStrip from "./ModelStrip";
 import {
   CapabilitiesResponse,
@@ -245,7 +244,6 @@ const Chatbox: React.FC<ChatboxProps> = ({
   });
   const mediaInputRef = useRef<HTMLInputElement | null>(null);
   const [conversationId, setConversationId] = useState<string>("");
-  const [mediaAnalysis, setMediaAnalysis] = useState<MediaAnalysis | null>(null);
   const [modelCapabilities, setModelCapabilities] = useState<ModelCapabilities>({});
   const [modelUsage, setModelUsage] = useState<ModelUsage>({});
   const [sessionUsage, setSessionUsage] = useState<SessionUsage>({
@@ -533,8 +531,6 @@ const Chatbox: React.FC<ChatboxProps> = ({
 
     const userSession = getOrCreateUserSession();
     setConversationId(userSession.conversationId);
-    // The previous turn's reading is not this turn's.
-    setMediaAnalysis(null);
     setIsLoading(true);
     currentTurnHasMedia.current = Boolean(image || video);
     currentTurnGuardrails.current = isGuardrailsOn;
@@ -670,8 +666,22 @@ const Chatbox: React.FC<ChatboxProps> = ({
 
             if (type === "media_analysis" && payload && typeof payload === "object") {
               // Arrives while the turn is still running, seconds before any
-              // product, so the shopper sees their image being read.
-              setMediaAnalysis(payload as MediaAnalysis);
+              // product, so the shopper sees their image being read. Inserted
+              // ahead of the loader rather than replacing it: the loader still
+              // marks the search that is running, and the results take its
+              // place when they land, below this card.
+              setMessages((prev) => {
+                const card = {
+                  role: "media_analysis" as MessageRole,
+                  content: payload as MediaAnalysis,
+                  productName: "",
+                };
+                const lastIndex = prev.length - 1;
+                if (prev[lastIndex]?.content === "loader") {
+                  return [...prev.slice(0, lastIndex), card, prev[lastIndex]];
+                }
+                return [...prev, card];
+              });
               continue;
             }
 
@@ -819,7 +829,6 @@ const Chatbox: React.FC<ChatboxProps> = ({
     // to display one, and reset is meant to leave storage empty until the
     // shopper says something. It fills in on the first turn.
     setConversationId("");
-    setMediaAnalysis(null);
 
     // Add welcome messages
     addMessage(
@@ -915,12 +924,6 @@ const Chatbox: React.FC<ChatboxProps> = ({
             />
           ))}
         </div>
-
-        {mediaAnalysis && (
-          <div className="chatbox__media-analysis">
-            <MediaAnalysisCard analysis={mediaAnalysis} />
-          </div>
-        )}
 
         {showStarters && (
           <div className="chatbox__starters" aria-label="Suggested openers">

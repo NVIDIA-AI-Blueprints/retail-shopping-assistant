@@ -7,7 +7,7 @@
 
 export interface MessageData {
   role: MessageRole;
-  content: string | ImageContent | ImageRowContent;
+  content: string | ImageContent | ImageRowContent | MediaAnalysis;
   productName: string;
 }
 
@@ -17,6 +17,7 @@ export type MessageRole =
   | 'system' 
   | 'image' 
   | 'image_row' 
+  | 'media_analysis'
   | 'user_image'
   | 'user_video';
 
@@ -73,7 +74,7 @@ export interface SafeHTMLProps {
 
 export interface ChatMessageProps {
   role: MessageRole;
-  content: string | ImageContent | ImageRowContent;
+  content: string | ImageContent | ImageRowContent | MediaAnalysis;
   productName: string;
   selectedProductName?: string;
   onProductSelect?: (product: ProductSummary) => void;

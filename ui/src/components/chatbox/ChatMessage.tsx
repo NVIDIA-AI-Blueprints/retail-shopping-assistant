@@ -23,7 +23,13 @@ import React from "react";
 import Showdown from "showdown";
 import SafeHTML from "./SafeHTML";
 import Loader from "./Loader";
-import { ChatMessageProps, ImageContent, ImageRowContent } from "../../types";
+import MediaAnalysisCard from "./MediaAnalysisCard";
+import {
+  ChatMessageProps,
+  ImageContent,
+  ImageRowContent,
+  MediaAnalysis,
+} from "../../types";
 import { isFashionMode } from "../../config/config";
 import nvinfo from "../../assets/nvinfo.jpg";
 
@@ -123,6 +129,17 @@ const ChatMessage = React.forwardRef<HTMLDivElement, ChatMessageProps>(
           </div>
         );
       }
+    }
+
+    // What the vision model saw. In the message stream rather than beside it,
+    // so it sits above the results it precedes: it arrives seconds after the
+    // upload and the products land a minute later.
+    if (role === "media_analysis") {
+      return (
+        <div className="messages__item messages__item--media-analysis" ref={ref}>
+          <MediaAnalysisCard analysis={content as MediaAnalysis} />
+        </div>
+      );
     }
 
     // Image row message (multiple products)

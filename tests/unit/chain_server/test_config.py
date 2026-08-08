@@ -305,6 +305,21 @@ class TestLoadConfig:
 
         assert config.guardrails_enabled is expected
 
+    def test_guardrails_is_off_unless_something_turns_it_on(
+        self, valid_config_dict: dict
+    ) -> None:
+        """Guardrails is opt-in, so a config that says nothing means off.
+
+        It used to default on. A rails service that is down fails open -- the
+        chain server logs the 500 and continues -- so every turn silently paid
+        an input and an output round trip for a check that never ran.
+        """
+
+        silent = dict(valid_config_dict)
+        silent.pop("guardrails_enabled")
+
+        assert ChainServerConfig(**silent).guardrails_enabled is False
+
     def test_guardrails_enabled_env_override_rejects_invalid_bool(
         self, write_yaml, valid_config_dict: dict, monkeypatch: pytest.MonkeyPatch
     ) -> None:

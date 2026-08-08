@@ -155,8 +155,12 @@ class ChainServerConfig(BaseModel):
     
     # Safety Configuration
     guardrails_enabled: bool = Field(
-        default=True,
-        description="Default guardrails setting for requests that omit it",
+        default=False,
+        description=(
+            "Default guardrails setting for requests that omit it. Off: "
+            "guardrails is opt-in, enabled per deployment via GUARDRAILS_ENABLED "
+            "or the config file, and per request via the request's own flag."
+        ),
     )
     unsafe_message: str = Field(..., description="Message to display for unsafe content")
     

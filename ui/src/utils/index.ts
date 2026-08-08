@@ -223,7 +223,9 @@ export const createApiRequest = (
   userSession: UserSession,
   query: string,
   image: string = '',
-  guardrails: boolean = true,
+  // Opt-in, matching the chain server and the UI toggle's own start state. A
+  // caller that omits it gets guardrails off rather than silently on.
+  guardrails: boolean = false,
   media: MediaAttachment[] = [],
   shopperProfileId: string | null = null
 ): ApiRequest => {

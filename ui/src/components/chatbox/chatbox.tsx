@@ -273,6 +273,7 @@ const Chatbox: React.FC<ChatboxProps> = ({
   const productsByNameRef = useRef<Map<string, ProductSummary>>(new Map());
   const currentTurnHasMedia = useRef(false);
   const currentTurnGuardrails = useRef(isGuardrailsOn);
+  const inFlightRef = useRef<AbortController | null>(null);
   const handleResetRef = useRef<((clearIdentity: boolean) => Promise<void>) | null>(null);
   const initialResetStartedRef = useRef(false);
 
@@ -596,6 +597,14 @@ const Chatbox: React.FC<ChatboxProps> = ({
 
       const url = `${config.api.baseUrl}${config.api.endpoints.stream}`;
 
+      // A turn with media runs for a minute or more, and reset used to leave it
+      // running: the request finished into a session that no longer existed,
+      // and its products, content and metrics arrived after the chat had been
+      // cleared. Reset now cancels it.
+      inFlightRef.current?.abort();
+      const controller = new AbortController();
+      inFlightRef.current = controller;
+
       // Send request
       const response = await fetch(url, {
         method: "POST",
@@ -604,6 +613,7 @@ const Chatbox: React.FC<ChatboxProps> = ({
           "Content-Type": "application/json",
         },
         body: JSON.stringify(payload),
+        signal: controller.signal,
       });
 
       if (!response.ok) {
@@ -752,12 +762,17 @@ const Chatbox: React.FC<ChatboxProps> = ({
       }
       
     } catch (error) {
+      // A reset mid-turn aborts on purpose. Toasting it would report the
+      // shopper's own action back to them as a failure.
+      if (error instanceof DOMException && error.name === "AbortError") {
+        return;
+      }
       console.error('Error sending message:', error);
       const errorMessage = error instanceof Error
         ? error.message
         : 'Failed to send message. Please try again.';
       toast.error(errorMessage);
-      
+
       // Remove loading message on error
       setMessages(prev => prev.filter(msg => msg.content !== 'loader'));
     } finally {
@@ -774,6 +789,10 @@ const Chatbox: React.FC<ChatboxProps> = ({
   };
 
   const resetChat = async (clearIdentity: boolean) => {
+    // Before anything is cleared, so a turn still in flight cannot deliver its
+    // products into the session that replaces this one.
+    inFlightRef.current?.abort();
+    inFlightRef.current = null;
     setMessages([]);
     setImage("");
     setPreviewImage("");

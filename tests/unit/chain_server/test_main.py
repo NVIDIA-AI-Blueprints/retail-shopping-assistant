@@ -3379,7 +3379,10 @@ class TestDeepAgentsRuntimeRefs:
                 items=[{"product_ref": "bag-a", "quantity": 1}]
             )
         )
-        assert "resolve the earlier product first" in blocked_add
+        # A ref that was never shown is refused, and the refusal sends the
+        # model to the catalog rather than back to the shopper for a name.
+        assert "not a product shown to this shopper" in blocked_add
+        assert "search the catalog now" in blocked_add
 
         update_requests = []
 
@@ -7468,9 +7471,17 @@ class TestDeepAgentsRuntimeRefs:
             display_name="Green Meadow Sweater Top",
             price=Money(amount=49.99),
         )
+        # Every catalog product states its sizes. The others here state none,
+        # so they exercise the unstated-size path; this one exercises the gate.
+        dress = ProductSummary(
+            product_id="prod_dress",
+            display_name="The Office A-line Dress",
+            price=Money(amount=179.99),
+            attributes={"sizes": ["2", "4", "6"]},
+        )
         active_products = {
             item.product_id: ProductDetail.model_validate(item.model_dump())
-            for item in (product, bag, luminous, green)
+            for item in (product, bag, luminous, green, dress)
         }
         def fake_product_details(request, *args, **kwargs):
             product_detail = active_products.get(request.product_id)
@@ -7513,7 +7524,7 @@ class TestDeepAgentsRuntimeRefs:
         )
 
         runtime._conversation_products = SimpleNamespace(
-            resolve=lambda *_: _resolved_conversation_products(product, bag)
+            resolve=lambda *_: _resolved_conversation_products(product, bag, dress)
         )
         runtime._create_agent(State(user_id=111, query="hello"), identity)
         tools_by_name = {fn.__name__: fn for fn in captured["tools"]}
@@ -7522,15 +7533,44 @@ class TestDeepAgentsRuntimeRefs:
         missing = tool_text(
             add_tool(items=[{"product_ref": "missing", "quantity": 1}])
         )
-        assert "resolve the earlier product first" in missing
+        assert "not a product shown to this shopper" in missing
+        assert "search the catalog now" in missing
         assert added == []
 
         tools_by_name["resolve_conversation_products_tool"](
             references=[
                 {"reference_id": "prod_flats", "product_ref": "prod_flats"},
                 {"reference_id": "prod_bag", "product_ref": "prod_bag"},
+                {"reference_id": "prod_dress", "product_ref": "prod_dress"},
             ]
         )
+        # A product sold in sizes may not reach the cart without one. Prose
+        # alone held this three times in four; the tool decides it from data.
+        sizeless = tool_text(
+            add_tool(items=[{"product_ref": "prod_dress", "quantity": 1}])
+        )
+        assert "SIZE REQUIRED" in sizeless
+        assert "2, 4, 6" in sizeless
+        assert added == []
+        wrong_size = tool_text(
+            add_tool(
+                items=[
+                    {"product_ref": "prod_dress", "quantity": 1, "size": "14"}
+                ]
+            )
+        )
+        assert "not sold" in wrong_size
+        assert added == []
+        sized = tool_text(
+            add_tool(
+                items=[
+                    {"product_ref": "prod_dress", "quantity": 1, "size": "4"}
+                ]
+            )
+        )
+        assert "SIZE REQUIRED" not in sized
+        assert len(added) == 1
+        added.clear()
         added_response = tool_text(
             add_tool(
                 items=[

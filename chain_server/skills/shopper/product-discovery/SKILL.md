@@ -51,8 +51,11 @@ Use for search, browse, and filter requests. Do not expose skill names or tool n
 
 - Use this as the single primary procedure for non-styling discovery; do not combine it with outfit-styling. Budget-shopping may accompany it only as a modifier.
 - Use `resolve_conversation_products_tool` only for an earlier product not
-  established this turn. Zero or multiple matches require one concise
-  clarification; never guess, search for a substitute, or mutate the cart.
+  established this turn. Multiple matches require one concise
+  clarification; never guess or mutate the cart. Zero matches means the
+  shopper referred to something never shown: if they named a product, search
+  the catalog and show the closest matches, then ask which to add. Never add a
+  product the shopper has not been shown.
 - When one selected taxonomy value directly represents the requested role, `requested_product_type` must name that value. When a true shopper-named umbrella spans multiple advertised children, include every selected value that is genuinely a kind of that umbrella. The semantic query may focus on soft ranking direction.
 - An objective attribute that defines the requested products is a must-have even when the shopper does not say the words "must have." For example, "Do you have water-resistant bags?" makes water resistance required. Subjective recommendation adjectives always remain semantic ranking direction.
 - Start with one focused catalog search using exact advertised values that faithfully represent the shopper's product type. If the type is not separately advertised and one advertised category is its faithful broader parent, select only that category and keep the type as semantic ranking direction. If either choice would require guessing, ask one concise clarification directly without calling the tool. For a true umbrella or explicit alternatives, include every faithful advertised child in the same search. Never substitute a sibling or arbitrary adjacent type. Do not fan out with synonym queries for the same scope.

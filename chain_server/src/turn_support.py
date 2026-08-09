@@ -3800,6 +3800,54 @@ def _same_product_display_name(expected: str, actual: str) -> bool:
     return _normalize_product_name(expected) == _normalize_product_name(actual)
 
 
+#: What the catalog carries for a product sold in exactly one size.
+_ONE_SIZE = "onesize"
+
+
+def _cart_size_issue(product: Any, size: str | None) -> str:
+    """Say why this size cannot be added, or "" if it can.
+
+    Every product in the catalog states its sizes -- 136 carry a real range and
+    79 carry `onesize`, with no gaps -- so the tool has what it needs to decide
+    rather than trusting the caller to have asked. Left to prose alone, "always
+    confirm the size" held three times in four: a dress with six sizes reached
+    the cart with no size at all.
+    """
+
+    sizes = _advertised_sizes(product)
+    chosen = (size or "").strip()
+    if not sizes:
+        # The catalog said nothing. Refusing here would block a cart on missing
+        # data rather than on a real disagreement.
+        return ""
+    if sizes == [_ONE_SIZE]:
+        return ""
+    if not chosen:
+        return (
+            f"SIZE REQUIRED. '{product.display_name}' is sold in "
+            f"{', '.join(sizes)}. Ask the shopper which size and add it then. "
+            "Nothing was added."
+        )
+    if not any(chosen.casefold() == value.casefold() for value in sizes):
+        return (
+            f"SIZE '{chosen}' is not sold for '{product.display_name}'. "
+            f"Available: {', '.join(sizes)}. Ask the shopper which of those "
+            "they want. Nothing was added."
+        )
+    return ""
+
+
+def _advertised_sizes(product: Any) -> list[str]:
+    """Read the sizes the catalog states for a product."""
+
+    raw = (getattr(product, "attributes", None) or {}).get("sizes")
+    if isinstance(raw, str):
+        raw = [part.strip() for part in raw.split(",")]
+    if not isinstance(raw, (list, tuple)):
+        return []
+    return [str(value).strip() for value in raw if str(value).strip()]
+
+
 def _product_detail_failure_message(
     error: CommerceError | None,
     *,

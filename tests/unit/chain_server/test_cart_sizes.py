@@ -17,6 +17,8 @@ from __future__ import annotations
 import pathlib
 
 from chain_server.src.turn_support import _normalize_cart_add_tool_items
+from types import SimpleNamespace
+from chain_server.src.turn_support import _cart_size_issue
 
 
 def test_two_sizes_of_one_product_are_two_lines() -> None:
@@ -165,3 +167,55 @@ def test_a_relaxable_zero_result_is_not_told_to_stop_looking() -> None:
 
     assert "relaxable = bool(evidence.confirmed_filters)" in source
     assert "if evidence.scope_complete and not relaxable:" in source
+
+
+class TestCartSizeGate:
+    """The cart tool decides on the size, rather than trusting the caller.
+
+    Every catalog product states its sizes -- 136 a real range, 79 `onesize`,
+    no gaps -- so this is a question the tool can answer from data. Left to
+    prose, it held three times in four: asked to add a dress with six sizes,
+    one run in four put it in the cart with no size at all.
+    """
+
+    def _product(self, sizes):
+        return SimpleNamespace(
+            display_name="The Office A-line Dress",
+            attributes={"sizes": sizes} if sizes is not None else {},
+        )
+
+    def test_a_sized_product_cannot_enter_the_cart_without_one(self) -> None:
+        issue = _cart_size_issue(self._product(["2", "4", "6"]), None)
+
+        assert "SIZE REQUIRED" in issue
+        assert "2, 4, 6" in issue
+        assert "Nothing was added" in issue
+
+    def test_a_size_the_product_is_not_sold_in_is_refused(self) -> None:
+        issue = _cart_size_issue(self._product(["2", "4", "6"]), "14")
+
+        assert "not sold" in issue
+        assert "2, 4, 6" in issue
+
+    def test_a_size_the_product_is_sold_in_passes(self) -> None:
+        assert _cart_size_issue(self._product(["2", "4", "6"]), "4") == ""
+
+    def test_size_matching_ignores_case(self) -> None:
+        assert _cart_size_issue(self._product(["S", "M", "L"]), "m") == ""
+
+    def test_a_onesize_product_needs_no_size(self) -> None:
+        """79 accessories are `onesize`; asking which size would be nonsense."""
+
+        assert _cart_size_issue(self._product(["onesize"]), None) == ""
+
+    def test_a_catalog_that_states_no_sizes_does_not_block_the_cart(self) -> None:
+        """Refusing here would block on missing data, not on a disagreement."""
+
+        assert _cart_size_issue(self._product(None), None) == ""
+        assert _cart_size_issue(self._product([]), None) == ""
+
+    def test_sizes_arriving_as_a_string_are_still_read(self) -> None:
+        """Search evidence renders them as "sizes: 2, 4, 6"."""
+
+        assert _cart_size_issue(self._product("2, 4, 6"), "4") == ""
+        assert "SIZE REQUIRED" in _cart_size_issue(self._product("2, 4, 6"), None)

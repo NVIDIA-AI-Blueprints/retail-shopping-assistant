@@ -330,9 +330,22 @@ def format_product_resolution(result: ResolveConversationProductsResult) -> str:
                 "guess."
             )
             continue
+        # Nothing shown in this conversation matches -- which is a different
+        # situation from an ambiguous or near-miss reference above, and used to
+        # get the same answer: stop and ask. A shopper who names a product that
+        # was never shown was making a search request, and the turn ended with a
+        # full search budget unspent, offering to accept a product link the
+        # assistant cannot read.
+        #
+        # Which recovery fits depends on whether the shopper named a product or
+        # pointed at one, and the model is the only reader that can tell.
         lines.append(
-            f"REFERENCE {resolution.reference_id}: NOT FOUND. "
-            "Ask which earlier product the shopper means; do not guess."
+            f"REFERENCE {resolution.reference_id}: NOT FOUND. Nothing shown in "
+            "this conversation matches it. If the shopper named a product, "
+            "search the catalog and show the closest matches, then ask which to "
+            "add. If they pointed at an earlier item, ask which one. Never add "
+            "a product the shopper has not been shown, and do not ask for a "
+            "product link or a price -- neither identifies a catalog product."
         )
     return "\n".join(lines)
 

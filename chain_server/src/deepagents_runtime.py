@@ -57,6 +57,7 @@ from .turn_support import (
     AddCartItemsToolItemInput,
     RequestIdentity,
     _add_model_usage,
+    _cart_size_issue,
     _build_checkpointer,
     _cart_add_scope_failures,
     _cart_line_by_id,
@@ -1223,8 +1224,9 @@ class DeepAgentsRuntime:
             """Resolve products the shopper refers to from earlier in this
             conversation. Use only when a needed product was not established
             in the current turn. Submit exact descriptors from the historical
-            product index. If a reference is missing or ambiguous, ask one
-            concise clarification; do not guess or search for a substitute.
+            product index. If a reference is ambiguous, ask one concise
+            clarification and do not guess. If nothing matches at all, the
+            result says what to do next.
             """
 
             with scope.resolution_lock:
@@ -1267,8 +1269,9 @@ class DeepAgentsRuntime:
             """Resolve products the shopper refers to from earlier in this
             conversation. Use only when a needed product was not established
             in the current turn. Submit exact descriptors from the historical
-            product index. If a reference is missing or ambiguous, ask one
-            concise clarification; do not guess or search for a substitute.
+            product index. If a reference is ambiguous, ask one concise
+            clarification and do not guess. If nothing matches at all, the
+            result says what to do next.
             """
 
             return normalize_tool_result(
@@ -1295,9 +1298,18 @@ class DeepAgentsRuntime:
             for (product_ref, size), request in requested_items.items():
                 product = scope.product_evidence.get(product_ref)
                 if product is None:
+                    # Read as a hint rather than an instruction, this ended the
+                    # turn: asked to add a product that was never shown, the
+                    # model passed the name here as a ref, saw the refusal, and
+                    # asked the shopper to supply the exact catalogue name --
+                    # which is the assistant's job, with a search budget unspent.
                     failed.append(
-                        f"- PRODUCT_REF '{product_ref}': Search this turn or "
-                        "resolve the earlier product first."
+                        f"- PRODUCT_REF '{product_ref}': not a product shown to "
+                        "this shopper, and a name is never a PRODUCT_REF. If it "
+                        "names a product, search the catalog now and show the "
+                        "closest matches, then ask which to add. Never add a "
+                        "product the shopper has not been shown, and do not ask "
+                        "them for a catalogue name, a link, or a price."
                     )
                     continue
                 expected_name = request.get("expected_display_name") or ""
@@ -1335,6 +1347,10 @@ class DeepAgentsRuntime:
                         "resolves to a different product. Search again and use "
                         "the new PRODUCT_REF before adding it."
                     )
+                    continue
+                size_issue = _cart_size_issue(active_detail.product, size)
+                if size_issue:
+                    blocked.append(f"- PRODUCT_REF '{product_ref}': {size_issue}")
                     continue
                 resolved.append(
                     (
@@ -1757,8 +1773,12 @@ class DeepAgentsRuntime:
             single-piece selection, including a statement or balancing piece,
             also uses outfit-styling. Use product-discovery for search and browse
             without styling intent. These are alternative primary procedures,
-            never a pair. Add budget-shopping only as a modifier when the shopper
-            states a budget. Keep outfit-styling as the primary skill throughout
+            never a pair. Adding a product the shopper names that no search in
+            this conversation has shown is a discovery request as well as a cart
+            one: select product-discovery with cart-management, because the cart
+            skill cannot search and the product must be found and shown before
+            it can be added. Add budget-shopping only as a modifier when the
+            shopper states a budget. Keep outfit-styling as the primary skill throughout
             an active outfit-building thread, including its single-piece follow-up
             searches.
 

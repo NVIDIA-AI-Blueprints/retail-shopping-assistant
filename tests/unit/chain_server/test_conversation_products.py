@@ -324,4 +324,10 @@ def test_result_formatter_resolves_one_and_requires_clarification_otherwise() ->
     assert "REFERENCE ambiguous: CLARIFICATION REQUIRED" in rendered
     assert "Cobalt Crossbody, Tan Shoulder Bag" in rendered
     assert "REFERENCE missing: NOT FOUND" in rendered
-    assert rendered.casefold().count("do not guess") == 2
+    # An ambiguous reference is a question; nothing found is a search. Both
+    # used to say "do not guess" and stop, which left a shopper who named a
+    # product that was never shown with no path forward at all.
+    assert "Do not guess" in rendered.split("REFERENCE missing")[0]
+    assert "search the catalog" in rendered.split("REFERENCE missing")[1]
+    # Neither may authorise adding something the shopper has not seen.
+    assert "Never add a product the shopper has not been shown" in rendered

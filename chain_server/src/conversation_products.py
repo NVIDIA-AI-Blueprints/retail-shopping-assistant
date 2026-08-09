@@ -240,6 +240,30 @@ class ProductEvidence:
 _NON_ATTRIBUTE_KEYS = frozenset({"catalog_text", "similarity", "taxonomy"})
 
 
+def _candidate_label(product: Any) -> str:
+    """Name a candidate with the sizes it is sold in, when the index has them.
+
+    The sizes are what let a stated size do the disambiguating, so they travel
+    with the name rather than waiting for a second tool call.
+    """
+
+    name = str(getattr(product, "display_name", "") or "")
+    sizes = _indexed_sizes(product)
+    return f"{name} (sizes {', '.join(sizes)})" if sizes else name
+
+
+def _indexed_sizes(product: Any) -> list[str]:
+    """Sizes recorded when this product was shown, in whatever shape."""
+
+    attributes = getattr(product, "attributes", None)
+    raw = attributes.get("sizes") if isinstance(attributes, dict) else None
+    if isinstance(raw, str):
+        raw = raw.split(",")
+    if not isinstance(raw, (list, tuple)):
+        return []
+    return [str(value).strip() for value in raw if str(value).strip()]
+
+
 def _presented_attribute_facts(product: Any) -> dict[str, str]:
     """Attributes the catalog confirmed when this product was shown."""
 
@@ -309,12 +333,24 @@ def format_product_resolution(result: ResolveConversationProductsResult) -> str:
             )
             continue
         if resolution.status == "ambiguous":
+            # Sizes are listed because the shopper has often already answered
+            # this. "Add the black one in a 2" after a turn showing black ankle
+            # boots in 5-9 and black dresses in 2-12 is not ambiguous about the
+            # category -- a 2 rules the boots out. Given only the names, the
+            # model had nothing to rule out with, so it named one candidate and
+            # asked which one was meant in the same sentence, and added nothing.
             names = ", ".join(
-                match.product.display_name for match in resolution.matches
+                _candidate_label(match.product) for match in resolution.matches
             )
             lines.append(
                 f"REFERENCE {resolution.reference_id}: CLARIFICATION REQUIRED "
-                f"({names}). Do not guess."
+                f"({names}). Do not guess. A size or other attribute the "
+                "shopper already stated rules out the candidates the catalog "
+                "cannot sell that way: say which you ruled out and why. If one "
+                "survives, name it as an assumption and invite correction -- "
+                "\"since you said a 2, I take it you mean X; tell me if not\" "
+                "-- rather than asking what they have answered. If several "
+                "survive, ask once, naming them."
             )
             continue
         if resolution.blocking_field:

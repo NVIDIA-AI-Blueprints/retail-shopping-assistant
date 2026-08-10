@@ -511,12 +511,17 @@ def _format_weather_result(result: Any) -> str:
             parts.append("as " + ", ".join(day.precipitation_types))
         lines.append("  " + "; ".join(parts))
     lines.append(
-        "SAY_WHICH_PLACE: name the place the provider resolved, so a shopper "
-        "who meant a different one can correct you. If what came back is "
-        "broader than a town -- a country or a region, like Italia or "
-        "Toscana -- then these numbers describe that whole area and nowhere "
-        "in particular: say so plainly, and ask which city they will be in "
-        "before dressing them for the weather."
+        "SAY_WHICH_PLACE: open by naming the place these numbers are for, as "
+        "the place you chose to look up rather than as settled fact, and "
+        "invite the correction in the same breath -- \"using Rome for the "
+        "forecast; say if you meant somewhere else\". Naming it is not enough "
+        "on its own: a shopper who said only \"Italy\" never chose the city "
+        "you picked, and live, one who meant Florence was given Rome's "
+        "forecast at 73-101F as though it were where they would be. If what "
+        "came back is broader than a town -- a country or a region, like "
+        "Italia or Toscana -- then these numbers describe that whole area and "
+        "nowhere in particular: say so plainly, and ask which city they will "
+        "be in before dressing them for the weather."
     )
     # The provider's own label and link travel with the data, so the terms are
     # met by whatever provider answered rather than by a constant here.

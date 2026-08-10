@@ -282,12 +282,21 @@ def test_the_disclosure_is_an_assumption_about_the_shopper() -> None:
     assert "assuming you're looking for" in line
     assert "invite them to correct it" in line
     assert "not a note about the shop's style" in line
-    assert "not a question about who they are" in line
+    assert "about who the shopper is" in line
+    # Live, one clause after the shopper said "I need something to wear", the
+    # reply asked "(I can adjust if you're shopping for someone else)".
+    assert "already said it is for them" in line
     # The shopper stands in a shop, not in front of a query planner. A live
     # reply read "I tried the closest available search in apparel with the
     # filter adult all-genders, and that search returned zero results".
     assert "never a catalog label" in line
-    assert "pieces anyone can wear" in line
+    # And says nothing about which pieces suit a wider audience. That clause
+    # produced "I also have a few bags that anyone can wear (the crossbody
+    # styles)" as the second sentence of a wedding-outfit reply -- all 38
+    # adult_all_genders products are bags and sunglasses, and sunglasses are
+    # tagged both ways, so it can only ever report the catalog's own tagging.
+    assert "Say nothing about which pieces suit a wider audience" in line
+    assert "pieces anyone can wear" not in line
 
 
 def test_a_conversation_already_told_is_not_told_again(

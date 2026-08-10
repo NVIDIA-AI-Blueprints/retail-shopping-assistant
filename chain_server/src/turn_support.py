@@ -3369,12 +3369,16 @@ def _assumed_audience_line(payload: dict[str, Any]) -> str:
         "that came back is for " + ", ".join(sorted(audience)) + ". Open by "
         "naming that as what you have assumed the shopper is looking for -- "
         "\"assuming you're looking for ... clothes\" -- and invite them to "
-        "correct it. It is an assumption about what they want, not a note "
-        "about the shop's style or about what this reply happened to return, "
-        "and not a question about who they are. Say which of these suit a "
-        "wider audience if any do. Put it in a shopper's words, never a "
-        "catalog label: a value such as adult_all_genders is said as pieces "
-        "anyone can wear."
+        "correct it. One clause, then get on with the answer. It is an "
+        "assumption about what they want, not a note about the shop's style "
+        "or about what this reply happened to return. Never turn it into a "
+        "question, or a guess, about who the shopper is or who they are "
+        "buying for: a shopper who says \"I need something to wear\" has "
+        "already said it is for them, and being asked whether they are "
+        "shopping for someone else reads as not listening. Say nothing about "
+        "which pieces suit a wider audience -- that is how the catalog tags "
+        "its bags, not something anyone asked. Put it in a shopper's words, "
+        "never a catalog label."
     )
 
 

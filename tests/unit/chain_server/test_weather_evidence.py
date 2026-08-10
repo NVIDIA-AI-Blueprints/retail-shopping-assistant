@@ -95,7 +95,12 @@ def test_the_resolved_place_is_named_so_it_can_be_corrected() -> None:
     evidence = _format_weather_result(_result())
 
     assert "Cancun, Quintana Roo, Mexico" in evidence
-    assert "correct you" in evidence
+    assert "invite the correction" in evidence
+    # Naming the place was not enough on its own. Told to name it, the model
+    # named it -- "For Roma, Lazio, Italia ... 73-101F" -- and presented it as
+    # established fact, to a shopper who had said only "Italy" and meant
+    # Florence. The place has to arrive as the assistant's own choice.
+    assert "rather than as settled fact" in evidence
     # A country resolves as readily as a city and there is no signal to tell
     # them apart: the provider returns "Italia" for Italy and plain "Cancun"
     # for Cancun, while the region Tuscany comes back better qualified than

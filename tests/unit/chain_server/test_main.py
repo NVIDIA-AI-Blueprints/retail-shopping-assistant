@@ -3381,7 +3381,11 @@ class TestDeepAgentsRuntimeRefs:
         )
         # A ref that was never shown is refused, and the refusal sends the
         # model to the catalog rather than back to the shopper for a name.
-        assert "not a product shown to this shopper" in blocked_add
+        assert "not established in this turn" in blocked_add
+        # Both recoveries are named. Naming only the search one stranded a
+        # correct ref from an earlier turn: "add it in a 10 as well" was
+        # told to go searching, and gave up.
+        assert "resolve it first" in blocked_add
         assert "search the catalog now" in blocked_add
 
         update_requests = []
@@ -7533,7 +7537,8 @@ class TestDeepAgentsRuntimeRefs:
         missing = tool_text(
             add_tool(items=[{"product_ref": "missing", "quantity": 1}])
         )
-        assert "not a product shown to this shopper" in missing
+        assert "not established in this turn" in missing
+        assert "resolve it first" in missing
         assert "search the catalog now" in missing
         assert added == []
 

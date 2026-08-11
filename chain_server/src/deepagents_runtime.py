@@ -1298,18 +1298,32 @@ class DeepAgentsRuntime:
             for (product_ref, size), request in requested_items.items():
                 product = scope.product_evidence.get(product_ref)
                 if product is None:
-                    # Read as a hint rather than an instruction, this ended the
-                    # turn: asked to add a product that was never shown, the
-                    # model passed the name here as a ref, saw the refusal, and
-                    # asked the shopper to supply the exact catalogue name --
-                    # which is the assistant's job, with a search budget unspent.
+                    # Two different situations reach here, and naming only one
+                    # of them stranded the other.
+                    #
+                    # A ref the shopper was never shown: the model passes the
+                    # product's name, and told only that a name is not a ref it
+                    # asked the shopper for the exact catalogue name -- the
+                    # assistant's own job, with a search budget unspent.
+                    #
+                    # A ref shown in an *earlier* turn: evidence is rebuilt per
+                    # turn, so a real ref from last turn is absent from this
+                    # one. "Add it in a 10 as well" carried the correct ref for
+                    # a dress added moments earlier, was told to go searching,
+                    # and gave up -- so a shopper asking for a second size got
+                    # "the add didn't go through".
                     failed.append(
-                        f"- PRODUCT_REF '{product_ref}': not a product shown to "
-                        "this shopper, and a name is never a PRODUCT_REF. If it "
-                        "names a product, search the catalog now and show the "
-                        "closest matches, then ask which to add. Never add a "
-                        "product the shopper has not been shown, and do not ask "
-                        "them for a catalogue name, a link, or a price."
+                        f"- PRODUCT_REF '{product_ref}': not established in "
+                        "this turn. If this product was shown earlier in the "
+                        "conversation, resolve it first and add the PRODUCT_REF "
+                        "that comes back -- evidence is per turn, so a "
+                        "reference from an earlier turn has to be resolved "
+                        "again. If it is a product name rather than a "
+                        "reference, or was never shown at all, search the "
+                        "catalog now and show the closest matches, then ask "
+                        "which to add. Never add a product the shopper has not "
+                        "been shown, and do not ask them for a catalogue name, "
+                        "a link, or a price."
                     )
                     continue
                 expected_name = request.get("expected_display_name") or ""

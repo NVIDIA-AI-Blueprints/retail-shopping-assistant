@@ -83,7 +83,6 @@ from .turn_support import (
     _search_product_record,
     _selected_advertised_subcategories,
     _shopper_stated_product_scope,
-    _shopper_stated_requirement,
     stated_media_terms,
     _taxonomy_hard_constraints,
     _text_mentions_product_type,
@@ -180,25 +179,6 @@ def _lock_taxonomy_constraints(
         request.required_constraints.model_dump(exclude_none=True),
     )
 
-
-def _stated_shopper_text(state: Any) -> str:
-    """What the shopper said this turn, including what they showed.
-
-    Provenance was computed from the typed query alone, so every attribute a
-    shopper conveyed by attaching a photo or video read as model-invented and
-    was refused. An image is a statement; this makes the gate able to hear it.
-
-    Only the media fields that describe the media's *content* are included --
-    see `_STATED_MEDIA_FIELDS`. The model's reading of the image is still not
-    the shopper speaking.
-    """
-
-    return " ".join(
-        part for part in (
-            getattr(state, "query", "") or "",
-            stated_media_terms(getattr(state, "media_analysis", "") or ""),
-        ) if part
-    )
 
 
 @dataclass
@@ -426,18 +406,14 @@ def _classify_requirements(ctx: SearchContext, attempt: _Attempt) -> StepResult:
         # schema rather than their request. Choosing what to say is not
         # rewriting what the model sent.
         suppress_requirement_disclosure = True
-    stated_unadvertised_requirements = (
-        [
-            requirement
-            for requirement in raw_unadvertised_requirements
-            if isinstance(requirement, str)
-            and _shopper_stated_requirement(
-                _stated_shopper_text(ctx.state), requirement
-            )
-        ]
-        if isinstance(raw_unadvertised_requirements, list)
-        else []
-    )
+    # Provenance for these is deliberately not established by matching the
+    # model's phrasing against the shopper's words. That gate refused
+    # "cable-knit texture" because the camera had said "cable knit" and the
+    # extra noun was not typed anywhere -- dropping the sweater at the centre
+    # of the shopper's own video and answering about boots instead. There is
+    # no principled stopping point for a word list, and nothing here can
+    # exclude a product: these are stripped before hard filters are built and
+    # ride the semantic query, so the search is the same either way.
     # An unenforceable requirement is a ranking preference, not a veto.
     # It is already carried by the semantic query and is stripped before
     # hard filters are built, so the search that would have run here is
@@ -448,7 +424,6 @@ def _classify_requirements(ctx: SearchContext, attempt: _Attempt) -> StepResult:
         if not suppress_requirement_disclosure
         and isinstance(raw_unadvertised_requirements, list)
         and raw_unadvertised_requirements
-        and (shopper_stated_scope or stated_unadvertised_requirements)
         else []
     )
 
@@ -830,81 +805,17 @@ def _reviewed_provenance(ctx: SearchContext, attempt: _Attempt) -> StepResult:
         request.taxonomy_status != "no_direct_catalog_match"
         and unadvertised_requirements
     ):
-        stated_requirements = [
-            requirement
-            for requirement in unadvertised_requirements
-            if _shopper_stated_requirement(
-                _stated_shopper_text(ctx.state), requirement
-            )
-        ]
-        shopper_stated_scope = bool(
-            candidate_scope_key
-            and _shopper_stated_product_scope(
-                ctx.state.query,
-                ctx.state.dialogue,
-                candidate_scope_key,
-            )
-        )
-        if (
-            stated_requirements or shopper_stated_scope
-        ) and not suppress_requirement_disclosure:
+        if not suppress_requirement_disclosure:
             # Rank on it, disclose it, do not abandon the search.
             unconfirmable_requirements = list(unadvertised_requirements)
-        if (
-            not unconfirmable_requirements
-            and not suppress_requirement_disclosure
-        ):
-            # Provenance could not be established from this turn, so the
-            # model may have inferred the requirement. That still earns
-            # one review. A requirement the shopper actually stated does
-            # not: it ranks the search and is disclosed instead. Nor does
-            # a value that is simply the product type -- there is no
-            # invented attribute there to establish provenance for.
-            review_scope = candidate_scope_key or "__unknown__"
-            if review_scope in attempt.repair.constraint_reviewed_scopes:
-                return _rejected(
-                    attempt,
-                    SearchRejection.REQUIREMENT_PROVENANCE_UNESTABLISHED,
-                    "The requested catalog requirement cannot be enforced: "
-                    "its current-turn provenance could not be established. "
-                    "Ask the shopper to state the exact required attribute "
-                    "or allow it to be treated as a preference.",
-                )
-            attempt.repair.constraint_reviewed_scopes.add(review_scope)
-            attempt.repair.pending_constraint_reviews[review_scope] = {
-                "requirements": list(unadvertised_requirements),
-                "taxonomy": request.taxonomy.model_dump(),
-                "scope_complete": request.scope_complete,
-                "search_mode": request.search_mode,
-                "required_constraints": dict(normalized_constraints),
-            }
-            attempt.repair.failed_constraint_scope_key = review_scope
-            return _rejected(
-                attempt,
-                SearchRejection.CONSTRAINT_REVIEW_REQUIRED,
-                CONSTRAINT_REVIEW_PREFIX
-                + "These proposed unadvertised requirements do not match "
-                "the current shopper turn's normalized wording: "
-                + json.dumps(unadvertised_requirements, ensure_ascii=False)
-                + ". Preserve requested_product_type "
-                + json.dumps(request.requested_product_type)
-                + ", taxonomy "
-                + json.dumps(request.taxonomy.model_dump(), sort_keys=True)
-                + ", and scope_complete "
-                + json.dumps(request.scope_complete)
-                + ", search_mode "
-                + json.dumps(request.search_mode)
-                + ", and advertised required constraints "
-                + json.dumps(normalized_constraints, sort_keys=True)
-                + ". Keep semantic_query within that same product scope; "
-                "you may remove inferred attribute wording from it"
-                + ". If the shopper explicitly stated the same objective "
-                "requirement using different words, replace each value with "
-                "the shopper's shortest exact wording. Otherwise the model "
-                "inferred it: remove it from required_constraints and remove "
-                "the attribute claim from shopper_guidance. Implied weather, "
-                "occasion, or style goals are not explicit requirements.",
-            )
+            # The review-and-refuse path that stood here is gone. It sent the
+            # model back to rewrite a requirement whenever the shopper's typed
+            # words did not contain it, and refused the scope outright on the
+            # second attempt. Nothing it guarded can change a result: these are
+            # stripped before hard filters are built and only ride the semantic
+            # query. It cost a shopper the sweater in their own video, because
+            # the camera said "cable knit" and the model wrote "cable-knit
+            # texture". Provenance that matters lives on required_constraints.
 
     reviewed_constraint = attempt.repair.pending_constraint_reviews.pop(
         candidate_scope_key,

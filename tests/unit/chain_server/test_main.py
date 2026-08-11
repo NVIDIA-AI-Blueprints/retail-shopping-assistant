@@ -2040,21 +2040,11 @@ class TestDeepAgentsRuntimeRefs:
             "boot and flat"
         )
 
-    def test_unadvertised_requirement_must_be_grounded_in_current_turn(self) -> None:
-        from chain_server.src import turn_support as runtime_mod_support
-
-        assert runtime_mod_support._shopper_stated_requirement(
-            "Do you have water-resistant bags?",
-            "water resistance",
-        )
-        assert runtime_mod_support._shopper_stated_requirement(
-            "Show me denim skirts",
-            "denim",
-        )
-        assert not runtime_mod_support._shopper_stated_requirement(
-            "Build a rainy day outfit",
-            "water resistance",
-        )
+    # test_unadvertised_requirement_must_be_grounded_in_current_turn was removed
+    # with the gate it covered. It asserted that an unadvertised requirement had
+    # to appear in the shopper's typed words -- a contract this system no longer
+    # holds, because those requirements are stripped before hard filters are
+    # built and cannot exclude a product.
 
     def test_full_product_scope_does_not_conflate_advertised_bag_types(
         self,
@@ -4319,46 +4309,26 @@ class TestDeepAgentsRuntimeRefs:
             )])
         )
 
-        assert constraint_review.startswith(tool_loop_control.CONSTRAINT_REVIEW_PREFIX)
-        assert "do not match the current shopper turn" in constraint_review
-        assert "Implied weather" in constraint_review
-        assert captured_plan["calls"] == calls_before_rainy
-
-        changed_constraint_completion = tool_text(
-            rainy_tools["search_catalog_tool"](scopes=[dict(
-                semantic_query="rainy day dresses",
-                shopper_guidance="Finding dresses for the shopper's request.",
-                requested_product_type="dresses",
-                taxonomy={"category": ["apparel"], "subcategory": ["dresses"]},
-                required_constraints={},
-                scope_complete=True,
-            )])
+        # This used to be turned back for review because "water resistance" was
+        # not in the shopper's typed words. It searches now. A requirement the
+        # catalog cannot filter on is stripped before hard filters are built and
+        # only rides the semantic query, so refusing changed nothing except
+        # costing the shopper an answer -- live, it dropped the sweater from
+        # their own video and replied about boots.
+        assert not constraint_review.startswith(
+            tool_loop_control.CONSTRAINT_REVIEW_PREFIX
         )
-        assert "constraint-provenance repair must preserve" in (
-            changed_constraint_completion
-        )
-        assert captured_plan["calls"] == calls_before_rainy
+        assert captured_plan["calls"] > calls_before_rainy
 
-        rainy_scope = tool_text(
-            rainy_tools["search_catalog_tool"](scopes=[dict(
-                semantic_query="practical rainy day dresses",
-                shopper_guidance=(
-                    "A water-resistant trench keeps the shopper dry."
-                ),
-                requested_product_type="dresses",
-                taxonomy={"category": ["apparel"], "subcategory": ["dresses"]},
-                required_constraints={},
-                scope_complete=False,
-            )])
-        )
-
-        assert "SEARCH_RESULT_GROUNDING_NOTE" in rainy_scope
-        assert "Finding dresses for the shopper's request" in rainy_scope
-        assert "water-resistant trench" not in rainy_scope
-        assert captured_plan["plan"].semantic_queries == [
-            "practical rainy day dresses"
-        ]
-        assert captured_plan["calls"] == calls_before_rainy + 1
+        # The constraint-provenance repair sequence that stood here is gone
+        # with the gate that produced it: a scope carrying an unenforceable
+        # requirement now searches instead of being turned back.
+        # The same assertions, made on the call that now searches: an
+        # unenforceable requirement must not leak into the reply as if the
+        # catalog had confirmed it.
+        assert "SEARCH_RESULT_GROUNDING_NOTE" in constraint_review
+        assert "water-resistant trench" not in constraint_review
+        assert captured_plan["plan"].semantic_queries == ["rainy day dresses"]
 
         budget_rainy_state = State(
             user_id=111,
@@ -4369,35 +4339,6 @@ class TestDeepAgentsRuntimeRefs:
         budget_rainy_tools["activate_shopper_skills_tool"](
             skill_names=["outfit-styling", "budget-shopping"],
         )
-        budget_constraint_review = tool_text(
-            budget_rainy_tools["search_catalog_tool"](scopes=[dict(
-                semantic_query="rainy day dresses under $60",
-                shopper_guidance="Finding a dress within the shopper's budget.",
-                requested_product_type="dresses",
-                taxonomy={"category": ["apparel"], "subcategory": ["dresses"]},
-                required_constraints={
-                    "price": {"max": 60},
-                    "unadvertised_requirements": ["water resistance"],
-                },
-                scope_complete=True,
-            )])
-        )
-        assert budget_constraint_review.startswith(
-            tool_loop_control.CONSTRAINT_REVIEW_PREFIX
-        )
-        dropped_price = tool_text(
-            budget_rainy_tools["search_catalog_tool"](scopes=[dict(
-                semantic_query="rainy day dresses under $60",
-                shopper_guidance="Finding a dress within the shopper's budget.",
-                requested_product_type="dresses",
-                taxonomy={"category": ["apparel"], "subcategory": ["dresses"]},
-                required_constraints={},
-                scope_complete=True,
-            )])
-        )
-        assert "must preserve" in dropped_price
-        assert "advertised required constraints" in dropped_price
-        assert captured_plan["calls"] == calls_before_rainy + 1
 
         state = State(
             user_id=111,

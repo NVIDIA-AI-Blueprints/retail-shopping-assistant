@@ -304,14 +304,6 @@ def _text_mentions_product_type(text: str, product_type: str) -> bool:
     )
 
 
-def _requirement_word_stem(word: str) -> str:
-    """Return a conservative stem for literal requirement provenance."""
-
-    for suffix in ("ance", "ence", "ancy", "ency", "ant", "ent", "ing", "ed"):
-        if word.endswith(suffix) and len(word) > len(suffix) + 3:
-            return word[: -len(suffix)]
-    return _singularize_product_word(word)
-
 
 #: Media-analysis fields that count as the shopper speaking.
 #:
@@ -348,23 +340,6 @@ def stated_media_terms(media_analysis: str) -> str:
             words.extend(str(item) for item in value)
     return " ".join(words)
 
-
-def _shopper_stated_requirement(query: str, requirement: str) -> bool:
-    """Return whether a proposed requirement is grounded in the current turn."""
-
-    normalized_query = unicodedata.normalize("NFKC", query).casefold()
-    query_words = {
-        _requirement_word_stem(word)
-        for word in re.findall(r"[^\W_]+", normalized_query)
-    }
-    requirement_words = {
-        _requirement_word_stem(word)
-        for word in re.findall(
-            r"[^\W_]+",
-            unicodedata.normalize("NFKC", requirement).casefold(),
-        )
-    }
-    return bool(requirement_words) and requirement_words.issubset(query_words)
 
 
 def _product_scope_key(value: str | None) -> str:

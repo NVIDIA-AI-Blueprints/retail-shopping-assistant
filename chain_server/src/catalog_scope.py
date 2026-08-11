@@ -49,4 +49,26 @@ CATALOG_SEARCH_RULES = """- Call search_catalog_tool when exact advertised
   second call only for a scope that depends on what the first call returned.
 - `semantic_query` supplies ranking direction only; it cannot change or repair
   the selected taxonomy.
+- **A hard filter takes advertised values only. The shopper's own word is not a
+  filter value.** What they said -- typed, or seen by the camera -- decides
+  *that* they have a constraint. It never decides which token goes in
+  `required_constraints`; that token comes from Catalog capabilities above.
+  When their word is not advertised, choose the closest advertised value or
+  values, keep their own word in `semantic_query`, and say in the reply it is
+  not an exact match. A shopper who asks for a cream sweater is searched as
+  beige, and told so.
+  An unadvertised value is rejected before the search runs, and it takes every
+  other scope in the same call down with it -- one unadvertised colour on a
+  sweater costs the shopper their jeans and their boots too.
+  Do not drop the constraint, and do not move the word into
+  `unadvertised_requirements` when an advertised value is close: that field is
+  for qualities the catalog cannot filter on at all, such as "cable-knit". If
+  nothing advertised is close, leave that filter out and say so.
+  **A shopper who ruled out alternatives is not substituted for.** "only teal",
+  "nothing else", "no substitutes" -- when their word is unadvertised and they
+  said that, do not search a neighbour and do not show one. Say plainly that the
+  catalog does not carry it, name the closest advertised values, and ask whether
+  either would do. Substituting here answers a question they explicitly did not
+  ask: live, "show me ONLY teal dresses, don't show me anything else" returned
+  blue and green ones.
 """

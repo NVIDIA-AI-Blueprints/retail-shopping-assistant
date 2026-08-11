@@ -47,7 +47,6 @@ from .tool_evidence import (
 )
 from .turn_scope import CatalogRepairState, TurnScope
 from .tool_loop_control import (
-    CONSTRAINT_REVIEW_PREFIX,
     SEARCH_VALIDATION_ERROR_PREFIX,
 )
 from shared.commerce_contracts import (

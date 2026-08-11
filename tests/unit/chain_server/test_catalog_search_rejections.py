@@ -239,28 +239,6 @@ GATE_CASES: tuple[GateCase, ...] = (
         ),
     ),
     (
-        SearchRejection.CONSTRAINT_REVIEW_REQUIRED,
-        "put together a work outfit",
-        None,
-        lambda ctx: None,
-        _scope(
-            required_constraints={
-                "unadvertised_requirements": ["waterproof lining"]
-            },
-        ),
-    ),
-    (
-        SearchRejection.REQUIREMENT_PROVENANCE_UNESTABLISHED,
-        "put together a work outfit",
-        None,
-        lambda ctx: ctx.scope.repair.constraint_reviewed_scopes.add("tote bag"),
-        _scope(
-            required_constraints={
-                "unadvertised_requirements": ["waterproof lining"]
-            },
-        ),
-    ),
-    (
         SearchRejection.UNSUPPORTED_CATALOG_TAXONOMY,
         "show me handbags",
         None,
@@ -405,6 +383,12 @@ UNREACHABLE_GATES = frozenset(
         SearchRejection.NO_ADVERTISED_TAXONOMY_MATCH,
         SearchRejection.ADVERTISED_MATCH_REPORTED_AS_GAP,
         SearchRejection.EXACT_TAXONOMY_NOT_ADVERTISED,
+        # Retired. Both refused a scope over an unenforceable preference,
+        # gated on whether the shopper's typed words contained the model's
+        # phrasing. Nothing they guarded can change a result. The codes stay
+        # in the enum so older recorded diagnostics still read.
+        SearchRejection.CONSTRAINT_REVIEW_REQUIRED,
+        SearchRejection.REQUIREMENT_PROVENANCE_UNESTABLISHED,
     }
 )
 
@@ -511,3 +495,35 @@ def test_stated_media_terms_survives_the_vlm_changing_shape() -> None:
     assert stated_media_terms(json.dumps({"colors": {"x": 1}})) == ""
     assert stated_media_terms("not json at all") == ""
     assert stated_media_terms("") == ""
+
+
+def test_an_unenforceable_requirement_never_refuses_the_search() -> None:
+    """A preference the catalog cannot filter on is disclosed, not a veto.
+
+    These are stripped before hard filters are built and ride the semantic
+    query, so they cannot exclude a product: the search that runs is the same
+    either way. They used to be gated on whether the shopper's typed words
+    contained them, which refused "cable-knit texture" because the camera had
+    said "cable knit" and the extra noun was typed nowhere -- dropping the
+    sweater at the centre of the shopper's own video and answering about boots.
+
+    Word overlap answers "did they type these letters", not "did they ask for
+    this", and a word list has no principled stopping point. The provenance
+    boundary that matters is on `required_constraints`, which does change what
+    comes back.
+    """
+
+    ctx = _context("put together a work outfit", None)
+
+    result = search_catalog(
+        ctx,
+        [
+            _scope(
+                required_constraints={
+                    "unadvertised_requirements": ["waterproof lining"]
+                },
+            )
+        ],
+    )
+
+    assert _rejection_codes(result) == []

@@ -1243,3 +1243,58 @@ async def test_a_shopper_who_hangs_up_stops_the_turn_they_abandoned(
     await asyncio.sleep(0.4)
 
     assert len(steps) < 5, "the abandoned turn kept working after the hang-up"
+
+
+def test_a_refused_search_that_named_an_uncarried_type_keeps_its_answer() -> None:
+    """The tool established the fact; the model should get to speak to it.
+
+    Every scope was refused, so the turn was seized and the model's own words
+    were replaced with "I couldn't complete a valid catalog search". Replayed
+    five times against a catalog with no aprons, one of those discarded answers
+    read: "aprons aren't a product type this store carries". Nothing about the
+    catalog differed between the runs that survived and the one that did not --
+    only whether the model happened to fill an optional argument.
+    """
+
+    messages = {
+        "messages": [
+            HumanMessage(content="REQUEST ID: current-request"),
+            _search_call("uncarried-search"),
+            ToolMessage(
+                content="NOT_CARRIED: ... apron",
+                name="search_catalog_tool",
+                tool_call_id="uncarried-search",
+                artifact={
+                    "scope_rejections": ["capabilities_schema_mismatch"],
+                    "not_carried_product_types": ["apron"],
+                },
+            ),
+        ]
+    }
+
+    assert (
+        _rejected_catalog_search_response(messages, request_id="current-request")
+        is None
+    )
+
+
+def test_a_refused_search_over_a_carried_type_still_fails_closed() -> None:
+    """Without this the guard is gone: every refusal would keep its answer."""
+
+    messages = {
+        "messages": [
+            HumanMessage(content="REQUEST ID: current-request"),
+            _search_call("carried-search"),
+            ToolMessage(
+                content=SEARCH_VALIDATION_ERROR_PREFIX + "{} with error: invalid",
+                name="search_catalog_tool",
+                tool_call_id="carried-search",
+                artifact={"scope_rejections": ["capabilities_schema_mismatch"]},
+            ),
+        ]
+    }
+
+    assert (
+        _rejected_catalog_search_response(messages, request_id="current-request")
+        == _REJECTED_CATALOG_SEARCH_RESPONSE
+    )

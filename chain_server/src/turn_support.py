@@ -65,6 +65,7 @@ from .conversation_memory import (
     FinalTurnStatus,
 )
 from .control_signals import (
+    not_carried_of,
     rejections_of,
 )
 from .tool_evidence import (
@@ -1883,6 +1884,15 @@ def _rejected_catalog_search_response(
             # model correctly sent not_covered and had its answer replaced by
             # "I couldn't complete a valid catalog search", five turns running.
             return None
+        if _search_reported_not_carried(messages):
+            # The same fact, established by the tool rather than volunteered by
+            # the model. Leaving it to the model meant leaving it to chance:
+            # replayed five times, it filled `not_covered` unprompted in four
+            # and in the fifth wrote the right answer -- "aprons aren't a
+            # product type this store carries" -- only to have it replaced by
+            # the refusal. Nothing about a catalog that carries no aprons
+            # differed between those runs.
+            return None
         return _REJECTED_CATALOG_SEARCH_RESPONSE
     return None
 
@@ -1900,6 +1910,19 @@ def _search_reported_not_covered(messages: Any) -> bool:
             args = call.get("args")
             if isinstance(args, dict) and args.get("not_covered"):
                 return True
+    return False
+
+
+def _search_reported_not_carried(messages: Any) -> bool:
+    """Whether the search tool established a product type as not carried."""
+
+    for message in messages:
+        if _message_type(message) != "tool":
+            continue
+        if (_value(message, "name") or "") != "search_catalog_tool":
+            continue
+        if not_carried_of(message):
+            return True
     return False
 
 

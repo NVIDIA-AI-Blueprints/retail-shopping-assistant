@@ -21,7 +21,11 @@ import pytest
 from chain_server.src import catalog_search as catalog_search_mod
 from chain_server.src.agenttypes import State
 from chain_server.src.catalog_search import SearchContext, search_catalog
-from chain_server.src.control_signals import REJECTIONS_KEY, SearchRejection
+from chain_server.src.control_signals import (
+    NOT_CARRIED_KEY,
+    REJECTIONS_KEY,
+    SearchRejection,
+)
 from chain_server.src.turn_scope import TurnScope
 from chain_server.src.turn_support import _search_catalog_tool_input_model
 from shared.commerce_contracts import (
@@ -511,3 +515,53 @@ def test_stated_media_terms_survives_the_vlm_changing_shape() -> None:
     assert stated_media_terms(json.dumps({"colors": {"x": 1}})) == ""
     assert stated_media_terms("not json at all") == ""
     assert stated_media_terms("") == ""
+
+
+def test_a_product_type_the_catalog_lacks_is_recorded_as_a_fact() -> None:
+    """A rejection said the arguments were wrong. It never said aprons.
+
+    Asked to compare two aprons in a catalog that carries none, the model sent
+    an empty taxonomy -- the only honest one -- and got a schema error back.
+    Whether the catalog carries aprons is not in doubt at that point: nothing it
+    advertises matches the word. So the tool states it, rather than leaving the
+    model to volunteer ``not_covered`` on a retry it does not always make.
+    """
+
+    ctx = _context("compare the Everyday Cotton Apron and the Linen Kitchen Apron")
+
+    result = search_catalog(
+        ctx,
+        [
+            _scope(
+                semantic_query="Everyday Cotton Apron",
+                requested_product_type="apron",
+                taxonomy={"category": [], "subcategory": []},
+            )
+        ],
+    )
+
+    text, artifact = result if isinstance(result, tuple) else (result, None)
+    assert (artifact or {}).get(NOT_CARRIED_KEY) == ["apron"]
+    # The model is told in the same call, not only through the artifact.
+    assert "NOT_CARRIED" in text
+    assert _rejection_codes(result) == [SearchRejection.CAPABILITIES_SCHEMA_MISMATCH]
+
+
+def test_an_advertised_type_rejected_on_its_taxonomy_is_not_called_uncarried() -> None:
+    """The catalog carries tote bags; only these arguments were wrong.
+
+    Recording every schema mismatch as "not carried" would tell shoppers a
+    catalog lacks what it sells, and would disarm the guard that stops a turn
+    whose searches were all refused.
+    """
+
+    ctx = _context("show me tote bags")
+
+    result = search_catalog(
+        ctx,
+        [_scope(taxonomy={"category": ["bags"], "subcategory": ["hatboxes"]})],
+    )
+
+    text, artifact = result if isinstance(result, tuple) else (result, None)
+    assert NOT_CARRIED_KEY not in (artifact or {})
+    assert "NOT_CARRIED" not in text

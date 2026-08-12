@@ -51,19 +51,29 @@ class _Session:
         return self.response
 
 
-def _product(product_id: str, display_name: str) -> ProductSummary:
+def _product(
+    product_id: str,
+    display_name: str,
+    sizes: list[str] | None = None,
+) -> ProductSummary:
     return ProductSummary(
         product_id=product_id,
         display_name=display_name,
         category="crossbody_bags",
         price=Money(amount=79),
         image_url=f"/images/{product_id}.png",
+        attributes={"sizes": sizes} if sizes else {},
     )
 
 
-def _match(product_id: str, display_name: str, position: int) -> dict[str, Any]:
+def _match(
+    product_id: str,
+    display_name: str,
+    position: int,
+    sizes: list[str] | None = None,
+) -> dict[str, Any]:
     return {
-        "product": _product(product_id, display_name).model_dump(mode="json"),
+        "product": _product(product_id, display_name, sizes).model_dump(mode="json"),
         "candidate_set_id": "set-2",
         "turn_sequence": 2,
         "position": position,
@@ -301,10 +311,10 @@ def test_result_formatter_resolves_one_and_requires_clarification_otherwise() ->
                 status="ambiguous",
                 matches=[
                     ConversationProductMatch.model_validate(
-                        _match("bag-2", "Cobalt Crossbody", 1)
+                        _match("bag-2", "Cobalt Crossbody", 1, ["2", "4"])
                     ),
                     ConversationProductMatch.model_validate(
-                        _match("bag-3", "Tan Shoulder Bag", 2)
+                        _match("bag-3", "Tan Shoulder Bag", 2, ["8", "10"])
                     ),
                 ],
                 match_count=2,
@@ -322,7 +332,11 @@ def test_result_formatter_resolves_one_and_requires_clarification_otherwise() ->
 
     assert "REFERENCE unique: RESOLVED\nPRODUCT_REF: bag-1" in rendered
     assert "REFERENCE ambiguous: CLARIFICATION REQUIRED" in rendered
-    assert "Cobalt Crossbody, Tan Shoulder Bag" in rendered
+    # Sizes travel with the names so a size the shopper already stated can do
+    # the disambiguating. Given names alone, the model named one candidate and
+    # asked which was meant in the same sentence, and added nothing.
+    assert "rules out the candidates the catalog cannot sell that way" in rendered
+    assert "Cobalt Crossbody (sizes 2, 4), Tan Shoulder Bag (sizes 8, 10)" in rendered
     assert "REFERENCE missing: NOT FOUND" in rendered
     # An ambiguous reference is a question; nothing found is a search. Both
     # used to say "do not guess" and stop, which left a shopper who named a

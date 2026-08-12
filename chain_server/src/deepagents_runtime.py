@@ -1292,11 +1292,39 @@ class DeepAgentsRuntime:
             if not requested_items:
                 return "Cart add failed: provide at least one PRODUCT_REF to add."
 
+            def _resolve_from_conversation_index(product_ref: str):
+                """Look one ref up in the conversation's durable product index."""
+
+                try:
+                    result = self._conversation_products.resolve(
+                        identity.conversation_id,
+                        [
+                            ProductReferenceDescriptor(
+                                reference_id="cart-add",
+                                product_ref=product_ref,
+                            )
+                        ],
+                    )
+                except (ConversationProductsError, ValidationError):
+                    return None
+                scope.product_evidence.add_resolutions(result.results)
+                return scope.product_evidence.get(product_ref)
+
             resolved: list[tuple[str, ProductSummary, int]] = []
             failed: list[str] = []
             blocked: list[str] = []
             for (product_ref, size), request in requested_items.items():
                 product = scope.product_evidence.get(product_ref)
+                if product is None:
+                    # The conversation's product index is the identity lane: it
+                    # is durable, scoped to this conversation, and printed into
+                    # the prompt every turn -- which is where the model read
+                    # this ref. Evidence is rebuilt per turn, so a ref shown two
+                    # turns ago is absent from it, and refusing on that basis
+                    # rejected a ref the shopper had genuinely been shown.
+                    # This is a lookup in the conversation's own record, not a
+                    # catalog search.
+                    product = _resolve_from_conversation_index(product_ref)
                 if product is None:
                     # Two different situations reach here, and naming only one
                     # of them stranded the other.

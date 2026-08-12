@@ -19,6 +19,7 @@ import pathlib
 from chain_server.src.turn_support import _normalize_cart_add_tool_items
 from types import SimpleNamespace
 from chain_server.src.turn_support import _cart_size_issue
+import inspect
 
 
 def test_two_sizes_of_one_product_are_two_lines() -> None:
@@ -219,3 +220,4 @@ class TestCartSizeGate:
 
         assert _cart_size_issue(self._product("2, 4, 6"), "4") == ""
         assert "SIZE REQUIRED" in _cart_size_issue(self._product("2, 4, 6"), None)
+

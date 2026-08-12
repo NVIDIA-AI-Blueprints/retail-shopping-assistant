@@ -1292,11 +1292,39 @@ class DeepAgentsRuntime:
             if not requested_items:
                 return "Cart add failed: provide at least one PRODUCT_REF to add."
 
+            def _resolve_from_conversation_index(product_ref: str):
+                """Look one ref up in the conversation's durable product index."""
+
+                try:
+                    result = self._conversation_products.resolve(
+                        identity.conversation_id,
+                        [
+                            ProductReferenceDescriptor(
+                                reference_id="cart-add",
+                                product_ref=product_ref,
+                            )
+                        ],
+                    )
+                except (ConversationProductsError, ValidationError):
+                    return None
+                scope.product_evidence.add_resolutions(result.results)
+                return scope.product_evidence.get(product_ref)
+
             resolved: list[tuple[str, ProductSummary, int]] = []
             failed: list[str] = []
             blocked: list[str] = []
             for (product_ref, size), request in requested_items.items():
                 product = scope.product_evidence.get(product_ref)
+                if product is None:
+                    # The conversation's product index is the identity lane: it
+                    # is durable, scoped to this conversation, and printed into
+                    # the prompt every turn -- which is where the model read
+                    # this ref. Evidence is rebuilt per turn, so a ref shown two
+                    # turns ago is absent from it, and refusing on that basis
+                    # rejected a ref the shopper had genuinely been shown.
+                    # This is a lookup in the conversation's own record, not a
+                    # catalog search.
+                    product = _resolve_from_conversation_index(product_ref)
                 if product is None:
                     # Two different situations reach here, and naming only one
                     # of them stranded the other.
@@ -1519,12 +1547,29 @@ class DeepAgentsRuntime:
             )
 
         def _update_cart_items_impl(cart_line_id: str, quantity: int):
-            """Change the quantity of an item already in the cart, or remove it
-            by setting quantity to 0. Use ONLY when the shopper explicitly asks
-            to change a quantity or remove by quantity. Do NOT use for initial
-            adds — use add_cart_items_tool. Do NOT guess the CART_LINE_ID; call
-            get_cart_tool first if you do not have one.
+            """Change the quantity of an item already in the cart. Use ONLY when
+            the shopper explicitly asks to change a quantity. Do NOT use for
+            initial adds — use add_cart_items_tool. Do NOT guess the
+            CART_LINE_ID; call get_cart_tool first if you do not have one.
             """
+
+            if quantity == 0:
+                # A size is a different line, not a different quantity, and the
+                # cart has no operation for changing one. Asked for a size 8
+                # against a line added as a size 2, the model reached for the
+                # only move available -- quantity 0 -- which deleted the line,
+                # and then never added the replacement. The shopper corrected
+                # their size and lost the item.
+                return (
+                    "CART_UPDATE_REFUSED: quantity 0 would delete this line, and "
+                    "this tool changes quantities. If the shopper is changing a "
+                    "SIZE, a size is a different line: add the new size with "
+                    "add_cart_items_tool FIRST, confirm it is in the cart, then "
+                    "remove the old line with remove_cart_item_tool. Never the "
+                    "other way round -- a failure between the two must leave the "
+                    "shopper with an extra line, never with nothing. If they "
+                    "simply want the line gone, use remove_cart_item_tool."
+                )
 
             result = update_cart_item(
                 UpdateCartItemInput(

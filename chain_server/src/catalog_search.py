@@ -37,6 +37,7 @@ from .catalog_request import (
 )
 from .control_signals import (
     ControlSignal,
+    NOT_CARRIED_KEY,
     REJECTIONS_KEY,
     SearchRejection,
     control,
@@ -241,6 +242,10 @@ class _Attempt:
     #: The nine gates below all render one prefix, so the text they hand the
     #: model cannot say which one refused; this can.
     rejection_code: str | None = None
+    #: The shopper's own word for a product type this catalog advertises
+    #: nothing for. A rejection says the arguments were wrong; this says the
+    #: thing does not exist here, which is an answer rather than an error.
+    not_carried: str | None = None
     request: Any = None
     result: Any = None
     search_budget_exhausted: Any = None
@@ -555,7 +560,12 @@ def _validated_request(ctx: SearchContext, attempt: _Attempt) -> StepResult:
                     "advertised subcategory that role covers. Choose from "
                     "these currently advertised subcategories: "
                     + json.dumps(advertised_choices, ensure_ascii=False)
-                    + "."
+                    + ". If the role is not a kind of any of them, do not "
+                    "choose one: name it in not_covered and tell the shopper "
+                    "this catalog does not carry it. Offering only the list "
+                    "read as an instruction to pick from it -- asked to "
+                    "compare two aprons, a catalog with no aprons produced an "
+                    "empty taxonomy five turns running rather than saying so."
                 )
                 constraints = (
                     required_constraints.model_dump(exclude_none=True)
@@ -581,6 +591,28 @@ def _validated_request(ctx: SearchContext, attempt: _Attempt) -> StepResult:
                         "directly stated for the selected role; remove one "
                         "inferred from season, weather, occasion, or style."
                     )
+            elif shopper_stated_scope and _advertised_scope_match(
+                requested_product_type,
+                capabilities,
+            ) is None:
+                # The same dead end, reached by the other door: a type the
+                # shopper names is classified exact_requested_type, never
+                # agent_selected_type, so it took none of the guidance above and
+                # heard only that its arguments failed validation.
+                #
+                # Whether it is carried is not in doubt here -- nothing this
+                # catalog advertises matches the word -- so this is recorded as
+                # a fact rather than left to the model to volunteer. The
+                # guidance stops it substituting a different product for the one
+                # the shopper asked about.
+                attempt.not_carried = str(requested_product_type)
+                repair_guidance = (
+                    " This catalog advertises nothing of that kind, so there is "
+                    "no taxonomy that would make this search valid. Do not "
+                    "substitute a product type the shopper did not ask for: "
+                    "tell them plainly it is not carried, and offer the "
+                    "advertised kinds only if they ask what there is instead."
+                )
         constraint_lock = ""
         try:
             validated_constraints = ctx.constraint_input_model.model_validate(
@@ -1676,7 +1708,21 @@ def search_catalog(
             ):
                 outcomes[index] = outcome
 
-    rendered: list[str] = []
+    notices: list[str] = []
+    # What the tool established itself, before anything the model volunteered:
+    # a scope whose product type this catalog advertises nothing for. Its call
+    # was rejected on its arguments, but "we do not carry aprons" is a current
+    # fact about the catalog and the shopper is owed it either way.
+    not_carried = [
+        attempt.not_carried for attempt in attempts if attempt.not_carried
+    ]
+    if not_carried:
+        notices.append(
+            "NOT_CARRIED: this catalog advertises nothing of these kinds, so "
+            "no search of it can succeed. Tell the shopper plainly that it is "
+            "not carried: " + ", ".join(dict.fromkeys(not_carried))
+        )
+    rendered: list[str] = list(notices)
     if not_covered:
         # The shopper asked for something no advertised category covers. It
         # costs no retrieval, but recording it is what stops the request being
@@ -1703,10 +1749,45 @@ def search_catalog(
         single = outcomes[0] if outcomes[0] is not None else _RENDER_STEP(ctx, attempts[0])
         if single is None:
             single = "Catalog search returned nothing."
-        return _with_scope_rejections(single, codes)
+        # A one-scope call took its own text and left `rendered` behind, so a
+        # notice raised for that scope never reached the model.
+        if notices:
+            text, artifact = (
+                single if isinstance(single, tuple) else (single, None)
+            )
+            single = ("\n\n".join([*notices, text]), artifact) if artifact else (
+                "\n\n".join([*notices, text])
+            )
+        return _with_not_carried(
+            _with_scope_rejections(single, codes),
+            not_carried,
+        )
     merged = _merged_artifacts(artifacts)
     text = "\n\n".join(rendered)
-    return _with_scope_rejections((text, merged) if merged else text, codes)
+    return _with_not_carried(
+        _with_scope_rejections((text, merged) if merged else text, codes),
+        not_carried,
+    )
+
+
+def _with_not_carried(
+    result: StepResult,
+    not_carried: list[str],
+) -> StepResult:
+    """Carry the not-carried product types out on the artifact.
+
+    A reader that has to tell "the arguments were wrong" from "the thing does
+    not exist here" cannot do it from the rejection codes: both are the same
+    schema mismatch. This is the distinction, recorded rather than inferred.
+    """
+
+    if not not_carried:
+        return result
+    text, artifact = result if isinstance(result, tuple) else (result, None)
+    return text, {
+        **(artifact or {}),
+        NOT_CARRIED_KEY: list(dict.fromkeys(not_carried)),
+    }
 
 
 def _with_scope_rejections(

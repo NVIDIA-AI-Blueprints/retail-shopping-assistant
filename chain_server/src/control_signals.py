@@ -86,6 +86,27 @@ EFFECTS_KEY = "committed_effects"
 #: turned that scope back -- ``None`` for a scope that was not turned back.
 REJECTIONS_KEY = "scope_rejections"
 
+#: Artifact key holding the product types this catalog advertises nothing for,
+#: as established by the search tool itself rather than volunteered by the
+#: model. "We do not carry aprons" is a current fact about the catalog, so it
+#: is recorded like any other tool evidence and survives the call being
+#: rejected on its arguments.
+NOT_CARRIED_KEY = "not_carried_product_types"
+
+
+def not_carried_of(message: Any) -> list[Any]:
+    """Read the product types one tool message reported as not carried."""
+
+    artifact = (
+        message.get("artifact")
+        if isinstance(message, dict)
+        else getattr(message, "artifact", None)
+    )
+    if not isinstance(artifact, dict):
+        return []
+    recorded = artifact.get(NOT_CARRIED_KEY)
+    return list(recorded) if isinstance(recorded, list) else []
+
 
 def control(text: str, *signals: ControlSignal) -> tuple[str, dict[str, Any]]:
     """Return one tool result whose control outcome is typed, not parsed.

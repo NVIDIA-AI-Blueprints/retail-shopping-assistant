@@ -32,12 +32,12 @@ complete", "please try again", "couldn't complete a valid catalog search",
 
 ## Results
 
-| case | 2026-08-11 baseline | 2026-08-12 `after-fixes` |
-|---|---|---|
-| `text_compare_value_between_similar_items` | 2, 3, 4, 5, 6 | **2, 3** |
-| `text_cart_pronoun_resolution` | 2, 7, 8 | **2** |
-| `text_accessory_for_existing_outfit` | 8 | **none** |
-| **total failing turns** | **9** | **3** |
+| case | 2026-08-11 baseline | `2026-08-12-pr171` | `2026-08-12-not-carried` |
+|---|---|---|---|
+| `text_compare_value_between_similar_items` | 2, 3, 4, 5, 6 | 2, 3 | **none** |
+| `text_cart_pronoun_resolution` | 2, 7, 8 | 2 | **none** |
+| `text_accessory_for_existing_outfit` | 8 | none | **none** |
+| **total failing turns** | **9** | **3** | **0** |
 
 No turn that passed at baseline fails now.
 

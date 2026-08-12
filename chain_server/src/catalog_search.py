@@ -555,7 +555,12 @@ def _validated_request(ctx: SearchContext, attempt: _Attempt) -> StepResult:
                     "advertised subcategory that role covers. Choose from "
                     "these currently advertised subcategories: "
                     + json.dumps(advertised_choices, ensure_ascii=False)
-                    + "."
+                    + ". If the role is not a kind of any of them, do not "
+                    "choose one: name it in not_covered and tell the shopper "
+                    "this catalog does not carry it. Offering only the list "
+                    "read as an instruction to pick from it -- asked to "
+                    "compare two aprons, a catalog with no aprons produced an "
+                    "empty taxonomy five turns running rather than saying so."
                 )
                 constraints = (
                     required_constraints.model_dump(exclude_none=True)

@@ -1875,8 +1875,32 @@ def _rejected_catalog_search_response(
         tool_name == "search_catalog_tool" and status == "rejected"
         for tool_name, status in business_calls
     ):
+        if _search_reported_not_covered(messages):
+            # The scopes were invalid, but the call also named what this catalog
+            # does not carry, and NOT_COVERED evidence went back to the model.
+            # That is a fact for the model to speak to, not a reason to seize
+            # the turn: asked to compare two aprons in a catalog with none, the
+            # model correctly sent not_covered and had its answer replaced by
+            # "I couldn't complete a valid catalog search", five turns running.
+            return None
         return _REJECTED_CATALOG_SEARCH_RESPONSE
     return None
+
+
+def _search_reported_not_covered(messages: Any) -> bool:
+    """Whether a search this turn named product kinds the catalog lacks."""
+
+    for message in messages:
+        if _message_type(message) != "ai":
+            continue
+        for raw_call in (_value(message, "tool_calls") or []):
+            call = raw_call if isinstance(raw_call, dict) else {}
+            if (call.get("name") or "") != "search_catalog_tool":
+                continue
+            args = call.get("args")
+            if isinstance(args, dict) and args.get("not_covered"):
+                return True
+    return False
 
 
 def _catalog_repair_clarification_response(

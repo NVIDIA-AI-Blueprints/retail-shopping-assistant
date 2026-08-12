@@ -1,0 +1,41 @@
+[
+ {
+  "id": "text_compare_value_between_similar_items",
+  "turns": [
+   "I\u2019m deciding between two similar items in your catalog and want the better long-term value for repeated use. Can you compare them on price, versatility, dimensions/material, and care instructions\u2014and tell me which one is actually the better value? Please don\u2019t just pick the cheapest; what am I giving up with each one?",
+   "Sure\u2014I'm choosing between these two catalog items: (1) \u201cEveryday Cotton Apron\u201d and (2) \u201cLinen Kitchen Apron.\u201d Can you compare them using the catalog facts (price, materials, dimensions, and care), and tell me which one is actually the better value for repeated weekly use? Don\u2019t just pick the cheapest\u2014what am I giving up with each one?",
+   "Okay, but these are literally the two item names from your catalog. Can you try again and pull the actual listing details for \u201cEveryday Cotton Apron\u201d vs \u201cLinen Kitchen Apron\u201d (price, material, dimensions, and care)? Which one is actually the better value for weekly use\u2014don\u2019t just pick the cheapest. What am I giving up with each one?",
+   "Why can\u2019t you pull the catalog details\u2014are you having a search issue? If so, tell me exactly what you need from me (SKU, category, spelling). Otherwise please look up \u201cEveryday Cotton Apron\u201d and \u201cLinen Kitchen Apron\u201d and compare using the listing facts (price/material/dimensions/care). Which one is actually the better value for weekly use? Don\u2019t just pick the cheapest\u2014what am I giving up with each one?",
+   "If your search tool is failing, what *exactly* do you need from me to look these up\u2014SKU, product URL, category path, or different spelling? I can paste whatever. But I still need a fact-based comparison of \u201cEveryday Cotton Apron\u201d vs \u201cLinen Kitchen Apron\u201d (price/material/dimensions/care). Which one is actually the better value for weekly use\u2014do not just pick the cheapest\u2014and what am I giving up with each one?",
+   "This isn\u2019t workable\u2014you keep saying you can\u2019t search but you also aren\u2019t telling me what to provide. What *specific* identifier do you need to pull the listings: a product URL, SKU, or the exact category path? If you can\u2019t access the catalog at all, say that plainly. Otherwise tell me exactly what to paste so you can compare \u201cEveryday Cotton Apron\u201d vs \u201cLinen Kitchen Apron\u201d on price/material/dimensions/care and answer: which one is actually the better value for weekly use (do not just pick the cheapest), and what am I giving up with each one?",
+   "Ok, then I\u2019ll paste the listing details myself\u2014can you do the value comparison from that? Everyday Cotton Apron: $24, 100% cotton, 28\" L x 26\" W, machine wash cold/tumble dry low. Linen Kitchen Apron: $38, 100% linen, 30\" L x 28\" W, machine wash cold/line dry. For weekly use, which one is actually the better value (don\u2019t just pick the cheapest)\u2014and what am I giving up with each one in durability, stain handling, and care hassle?",
+   "You kind of dodged durability/stain handling by saying the listings don\u2019t specify\u2014fair, but I still need a practical call for weekly messy cooking. Which one is actually the better value if I expect frequent stains and washing, and do not just pick the cheapest. What am I giving up with each one specifically (linen line-dry hassle vs cotton tumble-dry wear, shrinkage/wrinkling risk, etc.)?"
+  ]
+ },
+ {
+  "id": "text_cart_pronoun_resolution",
+  "turns": [
+   "I\u2019m deciding between the Acme stainless 20oz insulated tumbler and the Acme 32oz water bottle\u2014what are the prices and key differences?",
+   "Ugh. I don\u2019t have links\u2014can you search your catalog for those two Acme items and tell me the prices? If you can find them, add the tumbler for now.",
+   "Ok, then just show me any Acme insulated tumbler around 20oz you DO have with price, and add the closest match to my cart.",
+   "Fine\u2014add the $49.90 one to my cart.",
+   "Alright. What\u2019s in my cart right now\u2014name, qty, and total?",
+   "Add that one too\u2014the $49.99 ombre tote. Then what\u2019s my total now?",
+   "Actually remove it\u2014the ombre tote. What\u2019s my total now?",
+   "It didn\u2019t remove\u2014try again: remove the ombre tote (not the purse). Then tell me what\u2019s left in my cart and the total."
+  ]
+ },
+ {
+  "id": "text_accessory_for_existing_outfit",
+  "turns": [
+   "I\u2019ve got a weekend brunch outfit already: light-wash straight jeans, a white ribbed tank, and a tan linen blazer with white sneakers. Can you suggest one accessory to pull it together that\u2019s practical for everyday (not a one-time thing) and keep it under $80? Why does that work with what I already own?",
+   "I want something I can use again, but I\u2019m not sure about black with tan + white\u2014would a beige or tan bag work better? Keep it under $80, and can you compare the crossbody to one of those totes (capacity + closure) for everyday brunch/errands? Why does that work with what I already own?",
+   "For brunch/errands I usually carry phone, keys, wallet, sunglasses, a small water bottle, and maybe a light cardigan. I\u2019m leaning tote for space, but I don\u2019t love an open top\u2014do any of the under-$80 options have a more secure closure or at least an interior pocket? And why would you still pick that over the crossbody for everyday use with my tan blazer + white sneakers outfit?",
+   "I\u2019d prefer something that blends with the tan blazer, so beige/tan sounds best, and I really want a secure closure. Between the Elegant Embroidered Crossbody (beige flap) and any tote option, which one would you personally pick for my usual carry (including a small water bottle + cardigan) while still being practical for everyday use? Keep it under $80, and explain why that works with what I already own.",
+   "You didn\u2019t actually answer my question\u2014those totes are open-top and I said I want a secure closure. Keep it under $80: would you personally pick the Elegant Embroidered Crossbody (beige flap) even if I carry a small water bottle + cardigan, or is there any beige/tan option here with a zip/flap that has more space? I want something I can use again, so please explain why your pick works with my tan blazer + white sneakers outfit.",
+   "Small water bottle is 12oz and the cardigan is thin (tee-weight). If the Elegant Embroidered Crossbody might not fit both, what would you do\u2014stick with it for the secure flap, or switch to an open-top tote for space? Keep it under $80, and tell me why your final recommendation is still something I can use again with my tan blazer + white sneakers (not just this one brunch outfit).",
+   "Okay, I\u2019m leaning toward the Elegant Embroidered Crossbody since it\u2019s the only beige option with a secure flap under $80. Before I commit: can you confirm it\u2019s actually $79.99 and list the practical reasons it\u2019ll be an everyday repeat (not just brunch)\u2014like how it works with other basics besides the tan blazer + white sneakers?",
+   "Got it. Last thing: can you add the Elegant Embroidered Crossbody Bag to my cart and then give me a super clear final recap of why it\u2019s the best single accessory pick under $80 for my jeans + white tank + tan blazer + white sneakers\u2014and why I\u2019ll actually use it again (not just for brunch)?"
+  ]
+ }
+]

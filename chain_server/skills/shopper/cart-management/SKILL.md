@@ -38,6 +38,10 @@ Handle explicit cart operations. Do not expose tool names or internal identifier
 - Call `get_cart_tool` first to get current `CART_LINE_ID` values before calling `remove_cart_item_tool` or `update_cart_items_tool`.
 - Never guess a `CART_LINE_ID` from a product name.
 - Use `update_cart_items_tool` for quantity changes. Use `remove_cart_item_tool` for removals. Do not remove-and-re-add to change quantity.
+- A size is a different line, not a different quantity. To change a size: add the
+  new size first, confirm it is in the cart, then remove the old line. Never
+  remove first — a failure between the two must leave the shopper with an extra
+  line, never with nothing.
 
 ## Result Reporting
 

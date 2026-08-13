@@ -1279,6 +1279,103 @@ class DeepAgentsRuntime:
                 )
             return answers
 
+        def _catalog_name_lookup(result: Any, references: Any) -> str:
+            """Look the shopper's product name up in the catalog, and say so.
+
+            Nothing in this conversation matched, which means the shopper named
+            a product the assistant never showed -- and that is a search
+            request. Telling the model to search was a sentence in a tool
+            result, so it was advisory: measured across full conversations it
+            was obeyed most of the time and, when it was not, the assistant
+            offered products it had shown earlier and the shopper never got the
+            one they asked for.
+
+            So the runtime does it. A name lookup needs no taxonomy and no
+            filters -- nothing that belongs to the model -- so it can be
+            composed here without deciding anything on the model's behalf.
+
+            What comes back is labelled for what it is: found by name, not
+            shown before. Whether one of these IS the product the shopper named
+            or merely resembles it is a judgement about language, which the
+            model makes; supplying honest facts to judge from is our job.
+            """
+
+            unresolved = {
+                item.reference_id
+                for item in result.results
+                if item.status == "not_found" and not item.blocking_field
+            }
+            names: list[str] = []
+            for descriptor in references or []:
+                reference_id = _descriptor_field(descriptor, "reference_id")
+                display_name = _descriptor_field(descriptor, "display_name")
+                if reference_id in unresolved and display_name:
+                    text = str(display_name).strip()
+                    if text and text not in names:
+                        names.append(text)
+            if not names:
+                return ""
+
+            sections: list[str] = []
+            for name in names[:_MAX_NAME_LOOKUPS]:
+                try:
+                    execution = execute_catalog_search(
+                        CatalogSearchPlan(
+                            should_search=True,
+                            semantic_queries=[name],
+                            hard_filters={},
+                            search_mode="text",
+                            top_k=4,
+                        ),
+                        self.config.retriever_port,
+                        timeout_seconds=getattr(
+                            self.config, "catalog_search_timeout_seconds", None
+                        ),
+                    )
+                except Exception:  # pragma: no cover - retrieval already degrades
+                    continue
+                found = execution.result
+                if not found.ok or not found.products:
+                    sections.append(
+                        f'CATALOG NAME LOOKUP "{name}": the catalog returned '
+                        "nothing for that name. Tell the shopper it is not "
+                        "carried. Do not offer a different product as though it "
+                        "were the one they named."
+                    )
+                    continue
+                # Registered exactly as a search result is, so these are
+                # addable this turn and resolvable in the next one.
+                scope.product_evidence.add(found.products)
+                _append_product_results(state, found.products)
+                for product in found.products:
+                    if product.image_url:
+                        scope.retrieved[product.display_name] = product.image_url
+                lines = [
+                    f'CATALOG NAME LOOKUP "{name}": not shown earlier in this '
+                    "conversation. The catalog was searched by that name; these "
+                    "are the closest matches in rank order, none previously "
+                    "shown.",
+                ]
+                for rank, product in enumerate(found.products, start=1):
+                    price = (
+                        f" - ${product.price.amount:.2f} {product.price.currency}"
+                        if getattr(product, "price", None)
+                        else ""
+                    )
+                    lines.append(
+                        f"{rank}. {product.display_name}{price} "
+                        f"[PRODUCT_REF {product.product_id}]"
+                    )
+                lines.append(
+                    "Say plainly that this was not something you had shown. If "
+                    "one of these is the product the shopper named, offer it "
+                    "and ask which size before adding. If none is, say you do "
+                    "not carry that one and name the closest you do -- never "
+                    "present a different product as the one they asked for."
+                )
+                sections.append("\n".join(lines))
+            return "\n\n".join(sections)
+
         def _resolve_conversation_products_impl(
             references: list[ProductReferenceDescriptor],
         ):
@@ -1354,6 +1451,12 @@ class DeepAgentsRuntime:
             # suppresses the search: asked for a dress by name, the assistant
             # offered four it had shown before and never looked in the catalog.
             near_miss = any(item.blocking_field for item in result.results)
+            if not near_miss:
+                looked_up = _catalog_name_lookup(result, references)
+                if looked_up:
+                    return "\n\n".join(
+                        (format_product_resolution(result), looked_up)
+                    )
             return "\n\n".join(
                 value
                 for value in (

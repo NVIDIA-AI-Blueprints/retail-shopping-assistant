@@ -620,7 +620,12 @@ def test_finalize_indexes_ordered_presented_products_once(
             "display_name": "Structured Tote",
             "category": "tote_bags",
             "price": {"amount": 59.99, "currency": "USD"},
-            "attributes": {"taxonomy": {"category": "bags"}},
+            "attributes": {
+                "taxonomy": {"category": "bags"},
+                # Carried into the index because "the black one" cannot be
+                # resolved from a list of names.
+                "primary_color": "black",
+            },
         },
         {
             "product_id": "bag-2",
@@ -681,6 +686,7 @@ def test_finalize_indexes_ordered_presented_products_once(
                     "ref": "bag-1",
                     "name": "Structured Tote",
                     "category": "tote_bags",
+                    "color": "black",
                     "position": 1,
                 },
                 {

@@ -195,6 +195,50 @@ def test_transport_error_is_retryable() -> None:
     assert caught.value.retryable is True
 
 
+def test_the_index_carries_the_colour_a_reference_is_made_of() -> None:
+    """"The black one" is unanswerable from a list of names.
+
+    Four dresses were shown together and all four were black; two had "Black"
+    in the name and two did not. The model guessed by name, reached back
+    fourteen turns for a navy dress, and put it in the cart. Nothing refused it
+    -- the descriptor it sent was internally consistent and named a real
+    product.
+    """
+
+    from chain_server.src.conversation_products import (
+        format_historical_product_index,
+    )
+
+    rendered = format_historical_product_index(
+        [
+            {
+                "candidate_set_id": "set-9",
+                "turn_seq": 9,
+                "products": [
+                    {
+                        "ref": "a",
+                        "name": "Belle Noir Satin Gown",
+                        "category": "dresses",
+                        "color": "black",
+                        "position": 1,
+                    },
+                    {
+                        "ref": "b",
+                        "name": "Ivory Sheath Dress",
+                        "category": "dresses",
+                        "color": "white",
+                        "position": 2,
+                    },
+                ],
+            }
+        ]
+    )
+
+    # The one that is black does not say so in its name.
+    assert "Belle Noir Satin Gown [dresses|black]" in rendered
+    assert "Ivory Sheath Dress [dresses|white]" in rendered
+
+
 def test_the_most_recent_showing_is_listed_first() -> None:
     """"The black one" means the most recent black thing, not the oldest.
 

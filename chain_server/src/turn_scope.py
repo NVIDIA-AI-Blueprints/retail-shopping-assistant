@@ -65,6 +65,12 @@ class TurnScope:
 
     # Historical product resolution. Guarded by ``resolution_lock``.
     resolution_lock: Lock = field(default_factory=Lock)
+    #: Set when a call actually resolved something. A call that resolved
+    #: nothing used to spend the turn's only attempt, so the correction the
+    #: refusal itself asked for could never be made.
     product_resolution_used: bool = False
+    #: Attempts made, resolving or not, so a call that keeps missing still
+    #: terminates.
+    product_resolution_attempts: int = 0
 
     repair: CatalogRepairState = field(default_factory=CatalogRepairState)

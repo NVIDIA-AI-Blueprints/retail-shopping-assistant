@@ -48,7 +48,11 @@ class ProductReferenceDescriptor(_ConversationProductModel):
         default=None,
         min_length=1,
         max_length=256,
-        description="Exact category from the historical product index.",
+        description=(
+            "Optional. The value in square brackets in the historical product "
+            "index, such as 'dresses' -- not the catalog department such as "
+            "'apparel'. Omit it when sending a product_ref."
+        ),
     )
     turn_sequence: int | None = Field(
         default=None,
@@ -114,6 +118,10 @@ class ProductReferenceResolution(_ConversationProductModel):
     match_count: int = Field(..., ge=0)
     #: Which supplied field stopped the match, when exactly one is responsible.
     blocking_field: str | None = Field(default=None, max_length=64)
+    #: Corroborating fields that disagreed with the record of the product the
+    #: ref identified. The reference still resolved; this is what was odd about
+    #: it, reported rather than relaxed silently.
+    corroboration_mismatch: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _status_matches_result(self):
@@ -307,15 +315,42 @@ def format_product_resolution(result: ResolveConversationProductsResult) -> str:
                 "only for a fact not listed above. Confirm price with a fresh "
                 "read before a cart action or a budget claim."
             )
+            if resolution.corroboration_mismatch:
+                # Resolved on the ref, so the product is not in doubt. Saying
+                # which describing field disagreed is what keeps the relaxation
+                # visible instead of silent -- and the values above are the
+                # record, not what the call claimed.
+                lines.append(
+                    "NOTE: resolved by PRODUCT_REF. These fields you supplied "
+                    "do not match the record and were not used: "
+                    + ", ".join(resolution.corroboration_mismatch)
+                    + ". Use the values above."
+                )
             continue
         if resolution.status == "ambiguous":
-            names = ", ".join(
-                match.product.display_name for match in resolution.matches
-            )
+            # The candidates, with what the catalog confirmed about each when it
+            # was shown. A list of names cannot answer "the black one": four
+            # dresses shown together were all black and only two said so in
+            # their names, so the model guessed, reached back fourteen turns to
+            # a navy dress and put it in the cart.
+            #
+            # The record already holds this. Handing it back is what lets the
+            # model tell the candidates apart -- and it needs no new descriptor
+            # field to ask with, and no copy of the catalog in the index.
             lines.append(
-                f"REFERENCE {resolution.reference_id}: CLARIFICATION REQUIRED "
-                f"({names}). Do not guess."
+                f"REFERENCE {resolution.reference_id}: CLARIFICATION REQUIRED. "
+                "These were shown; tell them apart on the facts below and ask "
+                "the shopper which one. Do not guess."
             )
+            for match in resolution.matches:
+                product = match.product
+                lines.append(
+                    f"- {product.display_name} "
+                    f"(PRODUCT_REF: {product.product_id}, turn "
+                    f"{match.turn_sequence})"
+                )
+                for name, value in _presented_attribute_facts(product).items():
+                    lines.append(f"    {name}: {value}")
             continue
         if resolution.blocking_field:
             # Naming the field is what lets the model correct the call. Reporting
@@ -359,7 +394,15 @@ def format_historical_product_index(
 
     if max_chars < 256:
         raise ValueError("max_chars must be at least 256")
-    heading = "HISTORICAL PRODUCT INDEX (read-only):"
+    # Most recent first, because that is how the shopper refers to things. "The
+    # black one" means the most recent black thing they were shown, not the
+    # oldest -- and this list used to open with turn 1 and bury the latest
+    # showing at the bottom of a long prompt. Asked for "the black one in a 2"
+    # one turn after four black dresses were shown, the assistant reached back
+    # fourteen turns for a navy dress and put it in the cart.
+    heading = (
+        "HISTORICAL PRODUCT INDEX (read-only, most recently shown first):"
+    )
     formatted_sets = []
     for raw_set in reference_sets:
         line = _format_reference_set(raw_set)
@@ -384,9 +427,11 @@ def format_historical_product_index(
             removed = selected_newest_first.pop()
             remaining += len(removed) + 1
     lines = [heading]
+    lines.extend(selected_newest_first)
     if omitted:
+        # At the end now: what was dropped is the oldest, and it belongs where
+        # the oldest entries would have been.
         lines.append(marker)
-    lines.extend(reversed(selected_newest_first))
     return "\n".join(lines)
 
 

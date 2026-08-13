@@ -818,6 +818,7 @@ def test_product_resolution_batches_unique_ambiguous_and_missing_results(
         ],
         "match_count": 1,
         "blocking_field": None,
+        "corroboration_mismatch": [],
     }
     assert results["ambiguous"]["status"] == "ambiguous"
     assert results["ambiguous"]["match_count"] == 2
@@ -831,6 +832,7 @@ def test_product_resolution_batches_unique_ambiguous_and_missing_results(
         "matches": [],
         "match_count": 0,
         "blocking_field": None,
+        "corroboration_mismatch": [],
     }
 
 
@@ -944,6 +946,7 @@ def test_product_resolution_is_conversation_scoped(
             "matches": [],
             "match_count": 0,
             "blocking_field": None,
+            "corroboration_mismatch": [],
         }
     ]
 
@@ -1731,6 +1734,102 @@ class TestProductReferenceResolutionIsForgivingButNeverGuesses:
             )
             is None
         )
+
+    def test_a_correct_ref_survives_a_department_named_the_other_way(self) -> None:
+        """The exact call that lost a sale, recorded from the conversation.
+
+        The assistant asked for a dress by ref, name, set, turn and position --
+        all five correct -- and added category "apparel", the catalog's word for
+        the department where this index stores the subcategory. Matching was
+        conjunctive, so the sixth field cancelled the other five, the answer was
+        not_found, and the turn was spent asking the shopper to name a product
+        the assistant had itself named a turn earlier.
+        """
+
+        from memory_retriever.src.product_references import _resolve_descriptor
+
+        result = _resolve_descriptor(
+            self._descriptor(category="apparel"),
+            [self._occurrence()],
+        )
+
+        assert result.status == "resolved"
+        assert result.matches[0].product["display_name"] == "Ravenna Crossbody Bag"
+        # Relaxed, never silently: the odd field is named back to the model.
+        assert result.corroboration_mismatch == ["category"]
+
+    def test_a_wrong_position_or_turn_no_longer_hides_the_product(self) -> None:
+        """Where it was seen describes a product; it does not identify one."""
+
+        from memory_retriever.src.product_references import _resolve_descriptor
+
+        result = _resolve_descriptor(
+            self._descriptor(turn_sequence=9, ordinal=1),
+            [self._occurrence()],
+        )
+
+        assert result.status == "resolved"
+        assert result.corroboration_mismatch == ["turn_sequence", "ordinal"]
+
+    def test_the_showing_the_assistant_named_is_the_one_reported(self) -> None:
+        """A product shown twice has an occurrence per showing.
+
+        Relaxing then taking the newest reported four wrong fields when one was
+        wrong, and returned facts from a showing the assistant never referred
+        to. The occurrence the descriptor describes best is the one meant.
+        """
+
+        from memory_retriever.src.product_references import (
+            ProductReferenceMatch,
+            _resolve_descriptor,
+        )
+
+        later = ProductReferenceMatch(
+            product=self._occurrence().product,
+            turn_sequence=7,
+            position=2,
+            candidate_set_id="99999999999999999999999999999999",
+        )
+
+        result = _resolve_descriptor(
+            self._descriptor(category="apparel"),
+            [self._occurrence(), later],
+        )
+
+        assert result.status == "resolved"
+        assert result.matches[0].turn_sequence == 1
+        assert result.corroboration_mismatch == ["category"]
+
+    def test_a_name_that_contradicts_the_ref_still_refuses(self) -> None:
+        """The cross-check this gate exists for is kept.
+
+        A ref pointing at one product while the assistant calls it another is
+        the confusion worth failing on -- unlike a department named in the
+        wrong vocabulary, which describes the same product correctly.
+        """
+
+        from memory_retriever.src.product_references import _resolve_descriptor
+
+        result = _resolve_descriptor(
+            self._descriptor(display_name="Black Satin Lace-Up Dress"),
+            [self._occurrence()],
+        )
+
+        assert result.status == "not_found"
+        assert result.matches == []
+        assert result.corroboration_mismatch == []
+
+    def test_a_descriptor_with_no_ref_is_unchanged(self) -> None:
+        """Relaxation is earned by an identifier, not granted to every call."""
+
+        from memory_retriever.src.product_references import _resolve_descriptor
+
+        result = _resolve_descriptor(
+            self._descriptor(product_ref=None, category="apparel"),
+            [self._occurrence()],
+        )
+
+        assert result.status == "not_found"
 
     def test_diagnosis_never_resolves_the_product_it_found(self) -> None:
         from memory_retriever.src.product_references import _resolve_descriptor

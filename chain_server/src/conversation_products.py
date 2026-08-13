@@ -437,11 +437,9 @@ def _format_reference_set(value: Any) -> str:
         if not ref or not name or not isinstance(position, int):
             continue
         category = _one_line(product.get("category"))
-        colour = _one_line(product.get("color"))
-        descriptor = "|".join(part for part in (category, colour) if part)
         rendered.append(
-            f"{position}:{name} [{descriptor}] <{ref}>"
-            if descriptor
+            f"{position}:{name} [{category}] <{ref}>"
+            if category
             else f"{position}:{name} <{ref}>"
         )
     return f"- set={set_id} turn={turn}: " + "; ".join(rendered) if rendered else ""

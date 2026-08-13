@@ -436,20 +436,6 @@ def _compact_products(payload_json: str) -> list[dict[str, Any]]:
         category = product.get("category")
         if isinstance(category, str) and category.strip():
             compact["category"] = category
-        # The one attribute a reference is usually made of. "The black one"
-        # cannot be resolved against a list of names: two of four dresses shown
-        # together had "Black" in the name and all four were black, so the model
-        # guessed by name and put a navy dress in the cart. Colour is recorded
-        # when the product is shown, so carrying it costs nothing and is the
-        # difference between resolving the reference and inventing one.
-        attributes = product.get("attributes")
-        colour = (
-            attributes.get("primary_color")
-            if isinstance(attributes, dict)
-            else None
-        )
-        if isinstance(colour, str) and colour.strip():
-            compact["color"] = colour
         products.append(compact)
     return products
 

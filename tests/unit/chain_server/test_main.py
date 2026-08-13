@@ -151,6 +151,10 @@ def _install_conversation_memory_stub(runtime) -> _ConversationMemoryStub:
     return stub
 
 
+def scope_products(state) -> list:
+    return [str(item.get("product_id") or "") for item in state.product_results]
+
+
 def _resolved_conversation_products(
     *products: ProductSummary,
 ) -> ResolveConversationProductsResult:
@@ -7405,6 +7409,467 @@ class TestDeepAgentsRuntimeRefs:
         assert "tool" not in scrubbed.lower()
         assert "I don't have fabric composition" in scrubbed
         assert "because I need an exact match" in scrubbed
+
+    def test_a_resolution_that_found_nothing_does_not_spend_the_turn(
+        self,
+        base_config,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The refusal asked for a correction the budget then forbade.
+
+        A miss set the used flag before the lookup ran, so the second call --
+        the one the failure message itself asked for -- came back STOP_TOOL_USE
+        telling the model to stop and ask. The shopper was asked to name a
+        product the assistant had named a turn earlier.
+        """
+
+        from chain_server.src import deepagents_runtime as runtime_mod
+        from chain_server.src import turn_support as runtime_mod_support
+
+        captured: Dict[str, Any] = {}
+        deepagents_mod = ModuleType("deepagents")
+        tools_mod = ModuleType("langchain_core.tools")
+        openai_mod = ModuleType("langchain_openai")
+
+        class FakeProfile:
+            def __init__(self, *args, **kwargs) -> None:
+                pass
+
+        class FakeChatOpenAI:
+            def __init__(self, *args, **kwargs) -> None:
+                pass
+
+        def fake_tool(*, args_schema=None, return_direct: bool = False, **_kw):
+            def decorate(fn):
+                fn.args_schema = args_schema
+                fn.return_direct = return_direct
+                return fn
+
+            return decorate
+
+        deepagents_mod.GeneralPurposeSubagentProfile = FakeProfile
+        deepagents_mod.HarnessProfile = FakeProfile
+        deepagents_mod.create_deep_agent = lambda **kwargs: (
+            captured.update(kwargs) or SimpleNamespace()
+        )
+        deepagents_mod.register_harness_profile = lambda *args, **kwargs: None
+        tools_mod.tool = fake_tool
+        openai_mod.ChatOpenAI = FakeChatOpenAI
+        monkeypatch.setitem(sys.modules, "deepagents", deepagents_mod)
+        monkeypatch.setitem(sys.modules, "langchain_core.tools", tools_mod)
+        monkeypatch.setitem(sys.modules, "langchain_openai", openai_mod)
+
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+        runtime._catalog_capabilities = SimpleNamespace(
+            get=lambda **_: CatalogCapabilities(
+                catalog_id="fashion", retrieval_modes=["text"], filters={}
+            )
+        )
+        identity = runtime_mod_support.RequestIdentity(
+            session_id="session-a",
+            conversation_id="conversation-a",
+            cart_id="cart-a",
+            context_user_id=111,
+            cart_user_id=222,
+            request_id="request-a",
+        )
+        dress = ProductSummary(
+            product_id="prod_dress",
+            display_name="The Office A-line Dress",
+            price=Money(amount=179.99),
+        )
+        outcomes = [
+            ResolveConversationProductsResult(
+                results=[
+                    ProductReferenceResolution(
+                        reference_id="dress",
+                        status="not_found",
+                        matches=[],
+                        match_count=0,
+                        blocking_field="category",
+                    )
+                ]
+            ),
+            _resolved_conversation_products(dress),
+        ]
+        runtime._conversation_products = SimpleNamespace(
+            resolve=lambda *_: outcomes.pop(0)
+        )
+        shown = State(user_id=111, query="size 8")
+        shown.historical_product_sets = [
+            {
+                "candidate_set_id": "d42064c6",
+                "turn_seq": 5,
+                "products": [
+                    {
+                        "ref": "prod_dress",
+                        "name": "The Office A-line Dress",
+                        "category": "dresses",
+                        "position": 1,
+                    }
+                ],
+            }
+        ]
+        runtime._create_agent(shown, identity)
+        resolver = {fn.__name__: fn for fn in captured["tools"]}[
+            "resolve_conversation_products_tool"
+        ]
+
+        missed = tool_text(
+            resolver(references=[{"reference_id": "dress", "display_name": "x"}])
+        )
+        assert "STOP_TOOL_USE" not in missed
+        # A dead end is what cost the turn: for a near miss -- a call that
+        # pointed at something it had seen and got one field wrong -- the
+        # record comes back, so the next attempt is a lookup, not a guess.
+        assert "The Office A-line Dress" in missed
+        assert "prod_dress" in missed
+
+        corrected = tool_text(
+            resolver(
+                references=[
+                    {"reference_id": "dress", "product_ref": "prod_dress"}
+                ]
+            )
+        )
+        assert "STOP_TOOL_USE" not in corrected
+        assert "The Office A-line Dress" in corrected
+
+    def test_a_product_never_shown_is_a_search_request_not_a_menu(
+        self,
+        base_config,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Nothing matched at all, so the earlier products are not the answer.
+
+        A shopper naming a product the assistant never showed is asking it to
+        search. Returning the conversation's earlier products there reads as a
+        menu: asked for a dress by name, the assistant offered four it had shown
+        before and never looked in the catalog, and the cart ended the
+        conversation without the dress.
+        """
+
+        from chain_server.src import deepagents_runtime as runtime_mod
+        from chain_server.src import turn_support as runtime_mod_support
+
+        captured: Dict[str, Any] = {}
+        deepagents_mod = ModuleType("deepagents")
+        tools_mod = ModuleType("langchain_core.tools")
+        openai_mod = ModuleType("langchain_openai")
+
+        class FakeProfile:
+            def __init__(self, *args, **kwargs) -> None:
+                pass
+
+        class FakeChatOpenAI:
+            def __init__(self, *args, **kwargs) -> None:
+                pass
+
+        def fake_tool(*, args_schema=None, return_direct: bool = False, **_kw):
+            def decorate(fn):
+                fn.args_schema = args_schema
+                fn.return_direct = return_direct
+                return fn
+
+            return decorate
+
+        deepagents_mod.GeneralPurposeSubagentProfile = FakeProfile
+        deepagents_mod.HarnessProfile = FakeProfile
+        deepagents_mod.create_deep_agent = lambda **kwargs: (
+            captured.update(kwargs) or SimpleNamespace()
+        )
+        deepagents_mod.register_harness_profile = lambda *args, **kwargs: None
+        tools_mod.tool = fake_tool
+        openai_mod.ChatOpenAI = FakeChatOpenAI
+        monkeypatch.setitem(sys.modules, "deepagents", deepagents_mod)
+        monkeypatch.setitem(sys.modules, "langchain_core.tools", tools_mod)
+        monkeypatch.setitem(sys.modules, "langchain_openai", openai_mod)
+
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+        runtime._catalog_capabilities = SimpleNamespace(
+            get=lambda **_: CatalogCapabilities(
+                catalog_id="fashion", retrieval_modes=["text"], filters={}
+            )
+        )
+        identity = runtime_mod_support.RequestIdentity(
+            session_id="session-a",
+            conversation_id="conversation-a",
+            cart_id="cart-a",
+            context_user_id=111,
+            cart_user_id=222,
+            request_id="request-a",
+        )
+        runtime._conversation_products = SimpleNamespace(
+            resolve=lambda *_: ResolveConversationProductsResult(
+                results=[
+                    ProductReferenceResolution(
+                        reference_id="dress",
+                        status="not_found",
+                        matches=[],
+                        match_count=0,
+                        blocking_field=None,
+                    )
+                ]
+            )
+        )
+        shown = State(user_id=111, query="add the Office A-line Dress")
+        shown.historical_product_sets = [
+            {
+                "candidate_set_id": "c3f2cffa",
+                "turn_seq": 1,
+                "products": [
+                    {
+                        "ref": "prod_lace",
+                        "name": "Elegant Embroidered Lace Dress",
+                        "category": "dresses",
+                        "position": 1,
+                    }
+                ],
+            }
+        ]
+        runtime._create_agent(shown, identity)
+        resolver = {fn.__name__: fn for fn in captured["tools"]}[
+            "resolve_conversation_products_tool"
+        ]
+
+        missed = tool_text(
+            resolver(
+                references=[
+                    {"reference_id": "dress", "display_name": "Office A-line Dress"}
+                ]
+            )
+        )
+
+        assert "search the catalog" in missed
+        assert "Elegant Embroidered Lace Dress" not in missed
+
+    def test_a_product_already_found_this_turn_is_not_searched_again(
+        self,
+        base_config,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The turn's own evidence is the first place to look.
+
+        A product searched earlier in the same turn is not in the durable index
+        yet -- that is written when the turn finalizes -- so resolving it comes
+        back empty. Looking it up in the catalog again would spend a retrieval
+        rediscovering something already in hand, which is the same failure the
+        cart had before it learned to read its own record.
+        """
+
+        from chain_server.src import deepagents_runtime as runtime_mod
+        from chain_server.src import turn_support as runtime_mod_support
+
+        captured: Dict[str, Any] = {}
+        deepagents_mod = ModuleType("deepagents")
+        tools_mod = ModuleType("langchain_core.tools")
+        openai_mod = ModuleType("langchain_openai")
+
+        class FakeProfile:
+            def __init__(self, *args, **kwargs) -> None:
+                pass
+
+        class FakeChatOpenAI:
+            def __init__(self, *args, **kwargs) -> None:
+                pass
+
+        def fake_tool(*, args_schema=None, return_direct: bool = False, **_kw):
+            def decorate(fn):
+                fn.args_schema = args_schema
+                fn.return_direct = return_direct
+                return fn
+
+            return decorate
+
+        deepagents_mod.GeneralPurposeSubagentProfile = FakeProfile
+        deepagents_mod.HarnessProfile = FakeProfile
+        deepagents_mod.create_deep_agent = lambda **kwargs: (
+            captured.update(kwargs) or SimpleNamespace()
+        )
+        deepagents_mod.register_harness_profile = lambda *args, **kwargs: None
+        tools_mod.tool = fake_tool
+        openai_mod.ChatOpenAI = FakeChatOpenAI
+        monkeypatch.setitem(sys.modules, "deepagents", deepagents_mod)
+        monkeypatch.setitem(sys.modules, "langchain_core.tools", tools_mod)
+        monkeypatch.setitem(sys.modules, "langchain_openai", openai_mod)
+
+        searches = []
+        monkeypatch.setattr(
+            runtime_mod,
+            "execute_catalog_search",
+            lambda plan, url, **kw: searches.append(plan)
+            or SimpleNamespace(
+                result=SearchCatalogResult(ok=True, products=[]),
+                fallback_attempted=False,
+                fallback_used=False,
+            ),
+        )
+
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+        runtime._catalog_capabilities = SimpleNamespace(
+            get=lambda **_: CatalogCapabilities(
+                catalog_id="fashion", retrieval_modes=["text"], filters={}
+            )
+        )
+        identity = runtime_mod_support.RequestIdentity(
+            session_id="session-a",
+            conversation_id="conversation-a",
+            cart_id="cart-a",
+            context_user_id=111,
+            cart_user_id=222,
+            request_id="request-a",
+        )
+        runtime._conversation_products = SimpleNamespace(
+            resolve=lambda *_: ResolveConversationProductsResult(
+                results=[
+                    ProductReferenceResolution(
+                        reference_id="dress",
+                        status="not_found",
+                        matches=[],
+                        match_count=0,
+                        blocking_field=None,
+                    )
+                ]
+            )
+        )
+        # Capture the turn scope so the test can seed it exactly as a search
+        # earlier in the same turn would have.
+        scopes = []
+        real_scope = runtime_mod.TurnScope
+        monkeypatch.setattr(
+            runtime_mod,
+            "TurnScope",
+            lambda *a, **k: (scopes.append(real_scope(*a, **k)) or scopes[-1]),
+        )
+
+        state = State(user_id=111, query="add the Office A-line Dress")
+        runtime._create_agent(state, identity)
+        resolver = {fn.__name__: fn for fn in captured["tools"]}[
+            "resolve_conversation_products_tool"
+        ]
+        dress = ProductSummary(
+            product_id="prod_dress",
+            display_name="The Office A-line Dress",
+            price=Money(amount=179.99),
+        )
+        scopes[0].product_evidence.add([dress])
+
+        response = tool_text(
+            resolver(
+                references=[
+                    {
+                        "reference_id": "dress",
+                        "display_name": "The Office A-line Dress",
+                    }
+                ]
+            )
+        )
+
+        assert searches == []
+        assert "ALREADY ESTABLISHED THIS TURN" in response
+        assert "prod_dress" in response
+
+        # A batch where only some references are in hand must not be answered
+        # from the near lane alone: answering the ones it holds and dropping
+        # the rest leaves the model believing it asked about both.
+        mixed = tool_text(
+            resolver(
+                references=[
+                    {
+                        "reference_id": "dress",
+                        "display_name": "The Office A-line Dress",
+                    },
+                    {"reference_id": "bag", "display_name": "Some Other Bag"},
+                ]
+            )
+        )
+        assert "ALREADY ESTABLISHED THIS TURN" not in mixed
+
+    def test_a_resolution_that_succeeded_still_ends_the_turn_budget(
+        self,
+        base_config,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Relaxing the budget for a miss must not relax it for a hit."""
+
+        from chain_server.src import deepagents_runtime as runtime_mod
+        from chain_server.src import turn_support as runtime_mod_support
+
+        captured: Dict[str, Any] = {}
+        deepagents_mod = ModuleType("deepagents")
+        tools_mod = ModuleType("langchain_core.tools")
+        openai_mod = ModuleType("langchain_openai")
+
+        class FakeProfile:
+            def __init__(self, *args, **kwargs) -> None:
+                pass
+
+        class FakeChatOpenAI:
+            def __init__(self, *args, **kwargs) -> None:
+                pass
+
+        def fake_tool(*, args_schema=None, return_direct: bool = False, **_kw):
+            def decorate(fn):
+                fn.args_schema = args_schema
+                fn.return_direct = return_direct
+                return fn
+
+            return decorate
+
+        deepagents_mod.GeneralPurposeSubagentProfile = FakeProfile
+        deepagents_mod.HarnessProfile = FakeProfile
+        deepagents_mod.create_deep_agent = lambda **kwargs: (
+            captured.update(kwargs) or SimpleNamespace()
+        )
+        deepagents_mod.register_harness_profile = lambda *args, **kwargs: None
+        tools_mod.tool = fake_tool
+        openai_mod.ChatOpenAI = FakeChatOpenAI
+        monkeypatch.setitem(sys.modules, "deepagents", deepagents_mod)
+        monkeypatch.setitem(sys.modules, "langchain_core.tools", tools_mod)
+        monkeypatch.setitem(sys.modules, "langchain_openai", openai_mod)
+
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+        runtime._catalog_capabilities = SimpleNamespace(
+            get=lambda **_: CatalogCapabilities(
+                catalog_id="fashion", retrieval_modes=["text"], filters={}
+            )
+        )
+        identity = runtime_mod_support.RequestIdentity(
+            session_id="session-a",
+            conversation_id="conversation-a",
+            cart_id="cart-a",
+            context_user_id=111,
+            cart_user_id=222,
+            request_id="request-a",
+        )
+        dress = ProductSummary(
+            product_id="prod_dress",
+            display_name="The Office A-line Dress",
+            price=Money(amount=179.99),
+        )
+        runtime._conversation_products = SimpleNamespace(
+            resolve=lambda *_: _resolved_conversation_products(dress)
+        )
+        runtime._create_agent(State(user_id=111, query="size 8"), identity)
+        resolver = {fn.__name__: fn for fn in captured["tools"]}[
+            "resolve_conversation_products_tool"
+        ]
+
+        first = tool_text(
+            resolver(
+                references=[{"reference_id": "dress", "product_ref": "prod_dress"}]
+            )
+        )
+        assert "STOP_TOOL_USE" not in first
+
+        # A different product, so the call actually reaches history rather than
+        # being answered from what this turn already established.
+        second = tool_text(
+            resolver(
+                references=[{"reference_id": "other", "product_ref": "prod_other"}]
+            )
+        )
+        assert "STOP_TOOL_USE" in second
 
     def test_add_cart_items_tool_requires_turn_refs_and_batches_adds(
         self,

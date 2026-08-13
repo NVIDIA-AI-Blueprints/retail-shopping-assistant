@@ -50,7 +50,10 @@ from .response_format import (
     _format_wearer_audience,
     _format_update_cart_result,
 )
+from .catalog_execution import execute_catalog_search
+from .catalog_request import CatalogSearchPlan
 from .turn_support import (
+    _append_product_results,
     _detail_fields_already_held,
     _search_catalog_scopes_input_model,
     _turn_audience_events,
@@ -465,6 +468,17 @@ Rules:
 _EXCLUDED_DEEP_AGENT_TOOLS = frozenset(
     {"write_todos", "ls", "write_file", "edit_file", "glob", "grep", "execute"}
 )
+#: Historical-product resolutions allowed per turn while none has resolved. A
+#: resolution that succeeds ends the budget immediately; this only bounds the
+#: corrections a failing one may attempt.
+_MAX_PRODUCT_RESOLUTION_ATTEMPTS = 2
+#: Characters a model may wrap an opaque identifier in, matching the resolver's
+#: own tolerance so both lanes read a ref the same way.
+_REFERENCE_WRAPPERS = "<>[]{}\"'`"
+#: Names looked up in the catalog when a reference resolves to nothing. Bounded
+#: because each is a retrieval, and a turn that names more than two products the
+#: assistant never showed is a conversation to have, not a batch to satisfy.
+_MAX_NAME_LOOKUPS = 2
 
 
 
@@ -1218,6 +1232,53 @@ class DeepAgentsRuntime:
 
             return normalize_tool_result(_get_product_details_impl(product_ref))
 
+        def _descriptor_field(descriptor: Any, name: str) -> Any:
+            """Read one descriptor field whether it arrived typed or as a dict."""
+
+            if isinstance(descriptor, dict):
+                return descriptor.get(name)
+            return getattr(descriptor, name, None)
+
+        def _established_this_turn(references: Any) -> list[str]:
+            """Answer from this turn's evidence, for refs and names alike.
+
+            The shopper asked about something this turn already searched for and
+            found. Nothing needs resolving: the answer is in hand, and going to
+            history for it returns nothing because the durable index is written
+            when the turn ends.
+            """
+
+            answers: list[str] = []
+            for descriptor in references or []:
+                product_ref = _descriptor_field(descriptor, "product_ref")
+                display_name = _descriptor_field(descriptor, "display_name")
+                product = None
+                if product_ref:
+                    product = scope.product_evidence.get(
+                        str(product_ref).strip().strip(_REFERENCE_WRAPPERS)
+                    )
+                if product is None and display_name:
+                    wanted = " ".join(str(display_name).casefold().split())
+                    product = next(
+                        (
+                            item
+                            for item in scope.product_evidence.values()
+                            if " ".join(str(item.display_name).casefold().split())
+                            == wanted
+                        ),
+                        None,
+                    )
+                if product is None:
+                    return []
+                answers.append(
+                    f"REFERENCE {_descriptor_field(descriptor, 'reference_id')}: "
+                    f"ALREADY ESTABLISHED THIS TURN. "
+                    f"PRODUCT_REF: {product.product_id}. "
+                    f"NAME: {product.display_name}. "
+                    "Use it directly; it needs no resolution and no search."
+                )
+            return answers
+
         def _resolve_conversation_products_impl(
             references: list[ProductReferenceDescriptor],
         ):
@@ -1229,15 +1290,37 @@ class DeepAgentsRuntime:
             result says what to do next.
             """
 
+            # This turn's own evidence first, before the memory service is
+            # called at all. A product this turn searched for is not in the
+            # durable index yet -- that is written when the turn finalizes --
+            # so asking history about it returns nothing, and the turn spends a
+            # round trip rediscovering what it already holds. The two records
+            # disagree only inside the turn that created one of them; reading
+            # the nearer one first is what makes them agree.
+            established = _established_this_turn(references)
+            if established:
+                return "\n".join(established)
+
             with scope.resolution_lock:
-                if scope.product_resolution_used:
+                # A resolution that found something ends the budget, as before.
+                # One that found nothing no longer does: the failure itself
+                # says "correct that field and retry", and the retry used to be
+                # refused with an instruction to stop and ask -- so the turn was
+                # spent asking the shopper to name a product the assistant had
+                # named a turn earlier. Attempts are still counted, so a call
+                # that keeps missing terminates.
+                if (
+                    scope.product_resolution_used
+                    or scope.product_resolution_attempts
+                    >= _MAX_PRODUCT_RESOLUTION_ATTEMPTS
+                ):
                     return control(
                         "STOP_TOOL_USE: Historical product resolution limit "
-                        "reached for this turn. Use the first resolution result "
-                        "and ask one concise clarification if needed.",
+                        "reached for this turn. Use the resolution results you "
+                        "have and ask one concise clarification if needed.",
                         ControlSignal.STOP_TOOL_USE,
                     )
-                scope.product_resolution_used = True
+                scope.product_resolution_attempts += 1
 
             try:
                 result = self._conversation_products.resolve(
@@ -1256,7 +1339,31 @@ class DeepAgentsRuntime:
                 product = resolution.matches[0].product
                 if product.image_url:
                     scope.retrieved[product.display_name] = product.image_url
-            return format_product_resolution(result)
+            if any(item.status == "resolved" for item in result.results):
+                scope.product_resolution_used = True
+                return format_product_resolution(result)
+            # Nothing resolved. The products this conversation has shown are
+            # already recorded, so the next attempt can be a lookup in that
+            # record rather than another guess at a descriptor.
+            #
+            # Only for a near miss. A blocking field means the call pointed at
+            # something it had seen and got one field wrong, and the record is
+            # what corrects it. When nothing matches at all, the shopper named a
+            # product that was never shown -- that is a search request, and
+            # handing back a list of earlier products reads as a menu and
+            # suppresses the search: asked for a dress by name, the assistant
+            # offered four it had shown before and never looked in the catalog.
+            near_miss = any(item.blocking_field for item in result.results)
+            return "\n\n".join(
+                value
+                for value in (
+                    format_product_resolution(result),
+                    format_historical_product_index(state.historical_product_sets)
+                    if near_miss
+                    else "",
+                )
+                if value
+            )
 
         @tool(
             args_schema=ResolveConversationProductsRequest,

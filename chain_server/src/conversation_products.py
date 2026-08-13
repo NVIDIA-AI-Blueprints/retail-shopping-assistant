@@ -378,7 +378,15 @@ def format_historical_product_index(
 
     if max_chars < 256:
         raise ValueError("max_chars must be at least 256")
-    heading = "HISTORICAL PRODUCT INDEX (read-only):"
+    # Most recent first, because that is how the shopper refers to things. "The
+    # black one" means the most recent black thing they were shown, not the
+    # oldest -- and this list used to open with turn 1 and bury the latest
+    # showing at the bottom of a long prompt. Asked for "the black one in a 2"
+    # one turn after four black dresses were shown, the assistant reached back
+    # fourteen turns for a navy dress and put it in the cart.
+    heading = (
+        "HISTORICAL PRODUCT INDEX (read-only, most recently shown first):"
+    )
     formatted_sets = []
     for raw_set in reference_sets:
         line = _format_reference_set(raw_set)
@@ -403,9 +411,11 @@ def format_historical_product_index(
             removed = selected_newest_first.pop()
             remaining += len(removed) + 1
     lines = [heading]
+    lines.extend(selected_newest_first)
     if omitted:
+        # At the end now: what was dropped is the oldest, and it belongs where
+        # the oldest entries would have been.
         lines.append(marker)
-    lines.extend(reversed(selected_newest_first))
     return "\n".join(lines)
 
 

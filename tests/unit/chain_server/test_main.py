@@ -1225,7 +1225,7 @@ class TestDeepAgentsRuntimeScopes:
         assert memory.start_calls[0]["request_id"] == "request-a"
         assert "User: Show me a bag" in state.context
         assert state.previous_selected_skill_names == ["outfit-styling"]
-        assert "HISTORICAL PRODUCT INDEX (read-only)" in state.context
+        assert "HISTORICAL PRODUCT INDEX (read-only" in state.context
         assert "set=set-a turn=1: 1:Blue Bag [bags] <bag-a>" in state.context
         assert state.cart.contents[0]["cart_line_id"] == "line-a"
         assert memory.finalize_calls[0]["conversation_id"] == "conversation-a"

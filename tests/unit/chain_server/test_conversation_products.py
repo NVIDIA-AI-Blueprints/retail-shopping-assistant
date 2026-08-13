@@ -195,6 +195,46 @@ def test_transport_error_is_retryable() -> None:
     assert caught.value.retryable is True
 
 
+def test_the_most_recent_showing_is_listed_first() -> None:
+    """"The black one" means the most recent black thing, not the oldest.
+
+    The list opened with turn 1 and buried the latest showing at the bottom of
+    a long prompt. Asked for "the black one in a 2" one turn after four black
+    dresses were shown, the assistant reached back fourteen turns for a navy
+    dress and put it in the cart.
+    """
+
+    from chain_server.src.conversation_products import (
+        format_historical_product_index,
+    )
+
+    rendered = format_historical_product_index(
+        [
+            {
+                "candidate_set_id": "old",
+                "turn_seq": 1,
+                "products": [
+                    {"ref": "a", "name": "Navy Dress", "category": "dresses",
+                     "position": 1}
+                ],
+            },
+            {
+                "candidate_set_id": "new",
+                "turn_seq": 9,
+                "products": [
+                    {"ref": "b", "name": "Black Dress", "category": "dresses",
+                     "position": 1}
+                ],
+            },
+        ]
+    )
+
+    lines = [line for line in rendered.splitlines() if line.startswith("- set=")]
+    assert lines[0].startswith("- set=new turn=9")
+    assert lines[-1].startswith("- set=old turn=1")
+    assert "most recently shown first" in rendered
+
+
 def test_historical_index_formatter_is_compact_and_ignores_bad_rows() -> None:
     rendered = format_historical_product_index(
         [
@@ -221,7 +261,9 @@ def test_historical_index_formatter_is_compact_and_ignores_bad_rows() -> None:
         ]
     )
 
-    assert rendered.startswith("HISTORICAL PRODUCT INDEX (read-only):")
+    assert rendered.startswith(
+        "HISTORICAL PRODUCT INDEX (read-only, most recently shown first):"
+    )
     assert "set=set-2 turn=2" in rendered
     assert "1:Structured Tote [tote_bags] <bag-1>" in rendered
     assert "2:Cobalt Crossbody [crossbody_bags] <bag-2>" in rendered

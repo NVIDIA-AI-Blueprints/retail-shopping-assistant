@@ -80,6 +80,9 @@ class ProductResolutionResult(_ReferenceModel):
     #: The one supplied field that stopped an otherwise clear match, when
     #: exactly one is responsible. Diagnosis only; it names no product.
     blocking_field: str | None = None
+    #: Corroborating fields that disagreed with the record of the product the
+    #: ref identified. Reported so nothing is relaxed silently.
+    corroboration_mismatch: list[str] = Field(default_factory=list)
 
 
 class ProductResolutionResponse(_ReferenceModel):
@@ -211,11 +214,31 @@ def _blocking_field(
     return blocking
 
 
-def _resolve_descriptor(
+#: Fields that describe where a product was seen rather than which product it
+#: is. They stay part of the descriptor and are still checked -- but once an
+#: exact ``product_ref`` has identified a product, they can no longer overrule
+#: it, because a mismatch here is a vocabulary difference and not a different
+#: product.
+#:
+#: The assistant asked for a dress by ref, name, set, turn and position, all
+#: five correct, and added ``category: "apparel"`` -- the catalog's word for the
+#: department, where the index stores the subcategory ``"dresses"``. Matching
+#: was conjunctive, so the sixth field cancelled the other five and the answer
+#: came back not_found. Being more specific was what broke it.
+_CORROBORATING_FIELDS = (
+    "category",
+    "turn_sequence",
+    "candidate_set_id",
+    "ordinal",
+)
+
+
+def _matched_occurrences(
     descriptor: ProductReferenceDescriptor,
     occurrences: list[ProductReferenceMatch],
-) -> ProductResolutionResult:
-    blocking_field: str | None = None
+) -> list[ProductReferenceMatch]:
+    """Collapse matching occurrences to one per product, newest kept."""
+
     matches_by_ref: dict[str, ProductReferenceMatch] = {}
     for occurrence in occurrences:
         if not _matches_descriptor(occurrence, descriptor):
@@ -223,8 +246,73 @@ def _resolve_descriptor(
         product_ref = _identifier(occurrence.product["product_id"])
         matches_by_ref.pop(product_ref, None)
         matches_by_ref[product_ref] = occurrence
+    return list(matches_by_ref.values())
 
-    matches = list(matches_by_ref.values())
+
+def _corroboration_mismatch(
+    descriptor: ProductReferenceDescriptor,
+    match: ProductReferenceMatch,
+) -> list[str]:
+    """Name the supplied corroborating fields that disagree with the record."""
+
+    mismatched = []
+    if descriptor.category is not None and _normalized(
+        str(match.product.get("category") or "")
+    ) != _normalized(descriptor.category):
+        mismatched.append("category")
+    if (
+        descriptor.turn_sequence is not None
+        and match.turn_sequence != descriptor.turn_sequence
+    ):
+        mismatched.append("turn_sequence")
+    if descriptor.candidate_set_id is not None and _identifier(
+        match.candidate_set_id
+    ) != _identifier(descriptor.candidate_set_id):
+        mismatched.append("candidate_set_id")
+    if descriptor.ordinal is not None and match.position != descriptor.ordinal:
+        mismatched.append("ordinal")
+    return mismatched
+
+
+def _resolve_descriptor(
+    descriptor: ProductReferenceDescriptor,
+    occurrences: list[ProductReferenceMatch],
+) -> ProductResolutionResult:
+    blocking_field: str | None = None
+    corroboration_mismatch: list[str] = []
+    matches = _matched_occurrences(descriptor, occurrences)
+
+    if not matches and descriptor.product_ref is not None:
+        # Strictly a second chance: a descriptor that resolves today resolves
+        # identically above, and only one that resolves nothing gets here. The
+        # ref is an identifier this system minted and printed itself, so a ref
+        # that matches has identified the product; display_name is deliberately
+        # not relaxed, because a name that contradicts the ref is the confused
+        # assistant this gate was built to catch.
+        relaxed = descriptor.model_copy(
+            update={name: None for name in _CORROBORATING_FIELDS}
+        )
+        candidates = [
+            occurrence
+            for occurrence in occurrences
+            if _matches_descriptor(occurrence, relaxed)
+        ]
+        if candidates:
+            # A product shown more than once has an occurrence per showing, and
+            # they differ in exactly the fields just relaxed. Take the one the
+            # descriptor describes best, so the facts reported back belong to
+            # the showing the assistant referred to -- and so the mismatch names
+            # only what was really wrong. Taking the newest instead reported
+            # four wrong fields when one was.
+            best = min(
+                reversed(candidates),
+                key=lambda occurrence: len(
+                    _corroboration_mismatch(descriptor, occurrence)
+                ),
+            )
+            matches = [best]
+            corroboration_mismatch = _corroboration_mismatch(descriptor, best)
+
     if not matches:
         status = "not_found"
         blocking_field = _blocking_field(descriptor, occurrences)
@@ -238,6 +326,7 @@ def _resolve_descriptor(
         matches=matches[-_MAX_CLARIFICATION_MATCHES:],
         match_count=len(matches),
         blocking_field=blocking_field,
+        corroboration_mismatch=corroboration_mismatch,
     )
 
 

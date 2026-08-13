@@ -48,7 +48,11 @@ class ProductReferenceDescriptor(_ConversationProductModel):
         default=None,
         min_length=1,
         max_length=256,
-        description="Exact category from the historical product index.",
+        description=(
+            "Optional. The value in square brackets in the historical product "
+            "index, such as 'dresses' -- not the catalog department such as "
+            "'apparel'. Omit it when sending a product_ref."
+        ),
     )
     turn_sequence: int | None = Field(
         default=None,
@@ -114,6 +118,10 @@ class ProductReferenceResolution(_ConversationProductModel):
     match_count: int = Field(..., ge=0)
     #: Which supplied field stopped the match, when exactly one is responsible.
     blocking_field: str | None = Field(default=None, max_length=64)
+    #: Corroborating fields that disagreed with the record of the product the
+    #: ref identified. The reference still resolved; this is what was odd about
+    #: it, reported rather than relaxed silently.
+    corroboration_mismatch: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _status_matches_result(self):
@@ -307,6 +315,17 @@ def format_product_resolution(result: ResolveConversationProductsResult) -> str:
                 "only for a fact not listed above. Confirm price with a fresh "
                 "read before a cart action or a budget claim."
             )
+            if resolution.corroboration_mismatch:
+                # Resolved on the ref, so the product is not in doubt. Saying
+                # which describing field disagreed is what keeps the relaxation
+                # visible instead of silent -- and the values above are the
+                # record, not what the call claimed.
+                lines.append(
+                    "NOTE: resolved by PRODUCT_REF. These fields you supplied "
+                    "do not match the record and were not used: "
+                    + ", ".join(resolution.corroboration_mismatch)
+                    + ". Use the values above."
+                )
             continue
         if resolution.status == "ambiguous":
             names = ", ".join(

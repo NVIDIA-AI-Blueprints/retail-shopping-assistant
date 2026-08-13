@@ -1666,6 +1666,7 @@ class TestProductReferenceResolutionIsForgivingButNeverGuesses:
                 "display_name": "Ravenna Crossbody Bag",
                 "category": "crossbody_bags",
                 "price": {"amount": 49.99, "currency": "USD"},
+                "attributes": {"primary_color": "black", "sizes": ["2", "4"]},
             },
             turn_sequence=1,
             position=3,
@@ -1734,6 +1735,145 @@ class TestProductReferenceResolutionIsForgivingButNeverGuesses:
             )
             is None
         )
+
+    def test_a_described_product_resolves_without_being_named(self) -> None:
+        """"The black one" is a description, not a name.
+
+        Four dresses were shown together and all four were black; two had
+        "Black" in the name and two did not. With only names to go on the model
+        guessed, reached back fourteen turns for a navy dress and put it in the
+        cart. The colour was recorded when each product was shown -- so the
+        answer was already held, and the missing piece was a way to ask for it
+        rather than a second copy of the catalog in every prompt.
+        """
+
+        from memory_retriever.src.product_references import _resolve_descriptor
+
+        result = _resolve_descriptor(
+            self._descriptor(
+                product_ref=None,
+                display_name=None,
+                category=None,
+                turn_sequence=None,
+                candidate_set_id=None,
+                ordinal=None,
+                attributes={"primary_color": "black"},
+            ),
+            [self._occurrence()],
+        )
+
+        assert result.status == "resolved"
+        assert result.matches[0].product["display_name"] == "Ravenna Crossbody Bag"
+
+    def test_a_description_that_matches_nothing_shown_is_not_found(self) -> None:
+        """Describing a colour nobody was shown is a search, not a guess."""
+
+        from memory_retriever.src.product_references import _resolve_descriptor
+
+        result = _resolve_descriptor(
+            self._descriptor(
+                product_ref=None,
+                display_name=None,
+                category=None,
+                turn_sequence=None,
+                candidate_set_id=None,
+                ordinal=None,
+                attributes={"primary_color": "purple"},
+            ),
+            [self._occurrence()],
+        )
+
+        assert result.status == "not_found"
+
+    def test_a_description_matching_several_is_ambiguous(self) -> None:
+        """Two black dresses shown together stay two: ask, do not pick."""
+
+        from memory_retriever.src.product_references import (
+            ProductReferenceMatch,
+            _resolve_descriptor,
+        )
+
+        other = ProductReferenceMatch(
+            product={
+                "product_id": "generated:0000000000",
+                "display_name": "Belle Noir Satin Gown",
+                "category": "dresses",
+                "attributes": {"primary_color": "black"},
+            },
+            turn_sequence=1,
+            position=4,
+            candidate_set_id="f088dc105e0f4bd896ca9eaa018329f3",
+        )
+
+        result = _resolve_descriptor(
+            self._descriptor(
+                product_ref=None,
+                display_name=None,
+                category=None,
+                turn_sequence=None,
+                candidate_set_id=None,
+                ordinal=None,
+                attributes={"primary_color": "black"},
+            ),
+            [self._occurrence(), other],
+        )
+
+        assert result.status == "ambiguous"
+        assert result.match_count == 2
+
+    def test_a_list_valued_attribute_must_actually_contain_the_value(self) -> None:
+        """Sizes are recorded as a list; membership is the test, not presence."""
+
+        from memory_retriever.src.product_references import _resolve_descriptor
+
+        assert (
+            _resolve_descriptor(
+                self._descriptor(
+                    product_ref=None,
+                    display_name=None,
+                    category=None,
+                    turn_sequence=None,
+                    candidate_set_id=None,
+                    ordinal=None,
+                    attributes={"sizes": "4"},
+                ),
+                [self._occurrence()],
+            ).status
+            == "resolved"
+        )
+        assert (
+            _resolve_descriptor(
+                self._descriptor(
+                    product_ref=None,
+                    display_name=None,
+                    category=None,
+                    turn_sequence=None,
+                    candidate_set_id=None,
+                    ordinal=None,
+                    attributes={"sizes": "22"},
+                ),
+                [self._occurrence()],
+            ).status
+            == "not_found"
+        )
+
+    def test_a_description_never_overrules_an_identifier(self) -> None:
+        """A ref that matched has identified the product; the rest describes it.
+
+        The shopper's words are a description of what they meant, not authority
+        over which product the ref points at -- so a colour that disagrees is
+        reported and the reference still resolves.
+        """
+
+        from memory_retriever.src.product_references import _resolve_descriptor
+
+        result = _resolve_descriptor(
+            self._descriptor(attributes={"primary_color": "red"}),
+            [self._occurrence()],
+        )
+
+        assert result.status == "resolved"
+        assert "attributes" in result.corroboration_mismatch
 
     def test_a_correct_ref_survives_a_department_named_the_other_way(self) -> None:
         """The exact call that lost a sale, recorded from the conversation.

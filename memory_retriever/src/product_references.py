@@ -37,6 +37,11 @@ class ProductReferenceDescriptor(_ReferenceModel):
     turn_sequence: int | None = Field(default=None, ge=1)
     candidate_set_id: str | None = Field(default=None, min_length=1, max_length=64)
     ordinal: int | None = Field(default=None, ge=1)
+    #: Attributes the shopper's own words describe -- "the black one" is
+    #: {"primary_color": "black"}. Matched against the record captured when the
+    #: product was shown, so the index stays identity and the catalog is not
+    #: copied into every prompt to make references resolvable.
+    attributes: dict[str, str] | None = Field(default=None)
 
     @model_validator(mode="after")
     def _validate_selectors(self):
@@ -46,6 +51,7 @@ class ProductReferenceDescriptor(_ReferenceModel):
             self.category,
             self.turn_sequence,
             self.candidate_set_id,
+            self.attributes,
         )
         if not any(selector is not None for selector in selectors):
             raise ValueError("At least one product reference selector is required")
@@ -226,6 +232,7 @@ def _blocking_field(
 #: was conjunctive, so the sixth field cancelled the other five and the answer
 #: came back not_found. Being more specific was what broke it.
 _CORROBORATING_FIELDS = (
+    "attributes",
     "category",
     "turn_sequence",
     "candidate_set_id",
@@ -256,6 +263,14 @@ def _corroboration_mismatch(
     """Name the supplied corroborating fields that disagree with the record."""
 
     mismatched = []
+    if descriptor.attributes and not _matches_descriptor(
+        match,
+        ProductReferenceDescriptor(
+            reference_id=descriptor.reference_id,
+            attributes=descriptor.attributes,
+        ),
+    ):
+        mismatched.append("attributes")
     if descriptor.category is not None and _normalized(
         str(match.product.get("category") or "")
     ) != _normalized(descriptor.category):
@@ -360,6 +375,22 @@ def _matches_descriptor(
         return False
     if descriptor.ordinal is not None and match.position != descriptor.ordinal:
         return False
+    if descriptor.attributes:
+        recorded = match.product.get("attributes")
+        if not isinstance(recorded, dict):
+            return False
+        for name, value in descriptor.attributes.items():
+            held = recorded.get(name)
+            if isinstance(held, list):
+                if not any(
+                    _normalized(str(item)) == _normalized(str(value))
+                    for item in held
+                ):
+                    return False
+            elif not isinstance(held, str) or _normalized(held) != _normalized(
+                str(value)
+            ):
+                return False
     return True
 
 

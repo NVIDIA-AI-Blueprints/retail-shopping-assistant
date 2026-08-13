@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -89,6 +90,28 @@ class ProductResolutionResponse(_ReferenceModel):
     results: list[ProductResolutionResult]
 
 
+#: Attribute keys carried out of retrieval that no reader wants back.
+#: ``catalog_text`` is the prose serialisation of the very attributes stored
+#: beside it -- half of every event, and every consumer filters it out again on
+#: the way to the model. ``similarity`` is the retrieval score for the search
+#: that produced the row, which means nothing once the turn is over.
+_UNSTORED_ATTRIBUTE_KEYS = frozenset({"catalog_text", "similarity"})
+
+
+def _persistable(product: Mapping[str, Any]) -> dict[str, Any]:
+    """Copy one product for the record, without the parts nothing reads."""
+
+    stored = dict(product)
+    attributes = stored.get("attributes")
+    if isinstance(attributes, dict):
+        stored["attributes"] = {
+            name: value
+            for name, value in attributes.items()
+            if name not in _UNSTORED_ATTRIBUTE_KEYS
+        }
+    return stored
+
+
 def append_presented_products_event(
     db,
     turn: ConversationTurn,
@@ -99,7 +122,7 @@ def append_presented_products_event(
     """Append one event for the ordered products returned to the shopper."""
 
     products = [
-        dict(product)
+        _persistable(product)
         for product in product_results
         if _is_referenceable_product(product)
     ]

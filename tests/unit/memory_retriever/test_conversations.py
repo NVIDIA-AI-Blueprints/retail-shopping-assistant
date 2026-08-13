@@ -620,7 +620,13 @@ def test_finalize_indexes_ordered_presented_products_once(
             "display_name": "Structured Tote",
             "category": "tote_bags",
             "price": {"amount": 59.99, "currency": "USD"},
-            "attributes": {"taxonomy": {"category": "bags"}},
+            "attributes": {
+                "taxonomy": {"category": "bags"},
+                "primary_color": "black",
+                # What retrieval hands over and no reader wants back.
+                "catalog_text": "name: Structured Tote\ntaxonomy: bags\n…",
+                "similarity": 0.68,
+            },
         },
         {
             "product_id": "bag-2",
@@ -661,7 +667,17 @@ def test_finalize_indexes_ordered_presented_products_once(
         assert events[0].event_type == "candidate_set_presented"
         assert events[0].source_kind == "runtime"
         assert events[0].logical_order == 1
-        assert json.loads(events[0].payload_json) == {"products": products}
+        # Everything the shopper was shown, minus the two keys nothing reads
+        # back: the prose serialisation and the retrieval score.
+        stored = json.loads(events[0].payload_json)["products"]
+        assert [p["display_name"] for p in stored] == [
+            p["display_name"] for p in products
+        ]
+        assert stored[0]["attributes"] == {
+            "taxonomy": {"category": "bags"},
+            "primary_color": "black",
+        }
+        assert "catalog_text" not in stored[0]["attributes"]
         candidate_set_id = events[0].event_id
 
     next_turn = _start_turn(
@@ -733,6 +749,37 @@ def test_finalize_does_not_index_empty_or_malformed_products(
         assert db.query(memory_main.ConversationEvent).count() == 0
         projection = db.query(memory_main.ConversationProjection).one()
         assert projection.product_reference_index_json == "[]"
+
+
+def test_the_record_keeps_the_facts_and_drops_the_prose(
+    conversation_db,
+) -> None:
+    """catalog_text is the same attributes again, as prose.
+
+    It was half of every stored event and every consumer filtered it out again
+    on the way to the model, so it was written once, kept forever and read by
+    nobody. similarity is the score of the search that produced the row, which
+    means nothing once the turn is over.
+    """
+
+    from memory_retriever.src.product_references import _persistable
+
+    stored = _persistable(
+        {
+            "product_id": "bag-1",
+            "display_name": "Structured Tote",
+            "attributes": {
+                "primary_color": "black",
+                "sizes": ["2", "4"],
+                "catalog_text": "name: Structured Tote\nsummary: …",
+                "similarity": 0.68,
+            },
+        }
+    )
+
+    assert stored["attributes"] == {"primary_color": "black", "sizes": ["2", "4"]}
+    # The facts a later turn resolves against are untouched.
+    assert stored["display_name"] == "Structured Tote"
 
 
 def test_product_reference_index_keeps_newest_complete_sets_within_budget(

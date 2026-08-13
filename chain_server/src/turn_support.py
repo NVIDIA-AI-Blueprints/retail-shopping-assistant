@@ -1543,6 +1543,17 @@ class AddCartItemsToolItemInput(BaseModel):
             "the sizes differ per product and are in its details."
         ),
     )
+    size_stated_as: str | None = Field(
+        default=None,
+        max_length=200,
+        description=(
+            "The shopper's own words that gave this size, quoted from their "
+            "message -- 'size 8', 'in a 10 as well'. Required with a size "
+            "unless the same size is already on their cart line. A size they "
+            "did not ask for is not their size: when they have not said one, "
+            "leave both empty and ask."
+        ),
+    )
 
 
 @dataclass(frozen=True)
@@ -3772,6 +3783,7 @@ def _normalize_cart_add_tool_items(
                     if parsed.expected_display_name
                     else ""
                 ),
+                "size_stated_as": (parsed.size_stated_as or "").strip(),
             },
         )
         entry["quantity"] += quantity
@@ -3853,6 +3865,57 @@ def _same_product_display_name(expected: str, actual: str) -> bool:
 
 #: What the catalog carries for a product sold in exactly one size.
 _ONE_SIZE = "onesize"
+
+
+def _cart_line_size(cart: Any, product_id: str) -> str | None:
+    """The size already on this shopper's line for this product, if any."""
+
+    for line in getattr(cart, "contents", None) or []:
+        if not isinstance(line, dict):
+            continue
+        if str(line.get("product_id") or "") == product_id:
+            size = str(line.get("size") or "").strip()
+            if size:
+                return size
+    return None
+
+
+def _cart_size_provenance_issue(
+    size: str | None,
+    stated_as: str | None,
+    shopper_text: str,
+    cart_line_size: str | None,
+) -> str:
+    """Say why this size cannot be trusted, or "" if it can.
+
+    The gate below asks whether a size is present and sold. It cannot ask who
+    chose it, so a size the shopper never mentioned passed every check: "add
+    the Office A-line Dress" put a size 6 in the cart, and the shopper left the
+    conversation with three dresses and one they never asked for.
+
+    A size is a want, not a fact. The catalog says which sizes exist; only the
+    shopper says which one they want. So it comes from their words or from the
+    line already in their cart, and the model quotes them for it -- the same
+    move as expected_display_name, which states a claim the system can check
+    against its own record.
+
+    Not a search for size-like words in their message: that would match the 6
+    in $69.99. The quotation has to be theirs.
+    """
+
+    chosen = (size or "").strip()
+    if not chosen:
+        return ""
+    if cart_line_size and chosen.casefold() == cart_line_size.casefold():
+        return ""
+    quoted = " ".join((stated_as or "").split())
+    if quoted and quoted.casefold() in " ".join(shopper_text.split()).casefold():
+        return ""
+    return (
+        f"SIZE NOT ESTABLISHED: the shopper did not ask for a size {chosen}. "
+        "Ask which size they want, naming the sizes it is sold in, and add it "
+        "when they answer. Nothing was added."
+    )
 
 
 def _cart_size_issue(product: Any, size: str | None) -> str:

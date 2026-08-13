@@ -61,6 +61,8 @@ from .turn_support import (
     RequestIdentity,
     _add_model_usage,
     _cart_size_issue,
+    _cart_line_size,
+    _cart_size_provenance_issue,
     _build_checkpointer,
     _cart_add_scope_failures,
     _cart_line_by_id,
@@ -1600,7 +1602,14 @@ class DeepAgentsRuntime:
                         "the new PRODUCT_REF before adding it."
                     )
                     continue
-                size_issue = _cart_size_issue(active_detail.product, size)
+                size_issue = _cart_size_issue(
+                    active_detail.product, size
+                ) or _cart_size_provenance_issue(
+                    size,
+                    request.get("size_stated_as"),
+                    state.query,
+                    _cart_line_size(state.cart, product.product_id),
+                )
                 if size_issue:
                     blocked.append(f"- PRODUCT_REF '{product_ref}': {size_issue}")
                     continue

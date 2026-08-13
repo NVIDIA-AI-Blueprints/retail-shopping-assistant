@@ -221,3 +221,67 @@ class TestCartSizeGate:
         assert _cart_size_issue(self._product("2, 4, 6"), "4") == ""
         assert "SIZE REQUIRED" in _cart_size_issue(self._product("2, 4, 6"), None)
 
+
+
+class TestSizeProvenance:
+    """A size is a want, not a fact: only the shopper says which one."""
+
+    def _issue(self, **kw):
+        from chain_server.src.turn_support import _cart_size_provenance_issue
+
+        return _cart_size_provenance_issue(
+            kw.get("size", "8"),
+            kw.get("stated_as"),
+            kw.get("shopper_text", ""),
+            kw.get("cart_line_size"),
+        )
+
+    def test_a_size_nobody_asked_for_is_refused(self) -> None:
+        """The invented 6, recorded from a real conversation.
+
+        "add the Office A-line Dress to my cart" -- no size anywhere -- and the
+        reply was "now in your cart, 1 x size 6". Every check passed: 6 is a
+        real size for that dress, in range and in stock. The shopper left with
+        three dresses and $360 they never asked for.
+        """
+
+        issue = self._issue(size="6", shopper_text="add the Office A-line Dress")
+
+        assert "SIZE NOT ESTABLISHED" in issue
+        assert "Ask which size" in issue
+
+    def test_the_shoppers_own_words_are_enough(self) -> None:
+        assert self._issue(
+            size="8", stated_as="size 8", shopper_text="size 8"
+        ) == ""
+
+    def test_the_words_may_be_part_of_a_longer_message(self) -> None:
+        assert self._issue(
+            size="10",
+            stated_as="in a 10 as well",
+            shopper_text="actually add it in a 10 as well",
+        ) == ""
+
+    def test_a_quotation_the_shopper_never_said_is_refused(self) -> None:
+        """The only way past this is to invent a quote, and it is checked."""
+
+        assert "SIZE NOT ESTABLISHED" in self._issue(
+            size="6", stated_as="size 6", shopper_text="add the dress"
+        )
+
+    def test_the_size_already_on_their_line_needs_no_quote(self) -> None:
+        """Adding another of what they already have is not a new choice."""
+
+        assert self._issue(
+            size="8", shopper_text="add another one", cart_line_size="8"
+        ) == ""
+
+    def test_a_different_size_from_the_one_in_the_cart_still_needs_words(self) -> None:
+        assert "SIZE NOT ESTABLISHED" in self._issue(
+            size="10", shopper_text="add another one", cart_line_size="8"
+        )
+
+    def test_a_product_with_no_size_is_untouched(self) -> None:
+        """Bags, jewellery and sunglasses are onesize and ask nothing."""
+
+        assert self._issue(size=None, shopper_text="add the tote") == ""

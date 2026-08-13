@@ -8279,7 +8279,7 @@ class TestDeepAgentsRuntimeRefs:
         runtime._conversation_products = SimpleNamespace(
             resolve=lambda *_: _resolved_conversation_products(product, bag, dress)
         )
-        runtime._create_agent(State(user_id=111, query="hello"), identity)
+        runtime._create_agent(State(user_id=111, query="add the dress in a size 4"), identity)
         tools_by_name = {fn.__name__: fn for fn in captured["tools"]}
         add_tool = tools_by_name["add_cart_items_tool"]
 
@@ -8315,10 +8315,27 @@ class TestDeepAgentsRuntimeRefs:
         )
         assert "not sold" in wrong_size
         assert added == []
-        sized = tool_text(
+        # A size with nothing behind it is refused now, whether or not the
+        # catalog sells it: "add the Office A-line Dress" put a size 6 in a
+        # cart nobody asked for, and every check passed because 6 was real.
+        unasked = tool_text(
             add_tool(
                 items=[
                     {"product_ref": "prod_dress", "quantity": 1, "size": "4"}
+                ]
+            )
+        )
+        assert "SIZE NOT ESTABLISHED" in unasked
+        assert added == []
+        sized = tool_text(
+            add_tool(
+                items=[
+                    {
+                        "product_ref": "prod_dress",
+                        "quantity": 1,
+                        "size": "4",
+                        "size_stated_as": "size 4",
+                    }
                 ]
             )
         )

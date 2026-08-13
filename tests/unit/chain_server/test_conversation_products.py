@@ -195,6 +195,65 @@ def test_transport_error_is_retryable() -> None:
     assert caught.value.retryable is True
 
 
+def test_clarification_carries_the_facts_that_tell_candidates_apart() -> None:
+    """"The black one" cannot be answered from a list of names.
+
+    Four dresses shown together were all black and only two said so in their
+    names. The model guessed, reached back fourteen turns to a navy dress and
+    put it in the cart. The colour was recorded when each was shown, so the
+    answer was already held -- it just was not handed back.
+    """
+
+    from shared.commerce_contracts import Money, ProductSummary
+    from chain_server.src.conversation_products import (
+        ConversationProductMatch,
+        ProductReferenceResolution,
+        ResolveConversationProductsResult,
+        format_product_resolution,
+    )
+
+    def _dress(ref: str, name: str, colour: str) -> ProductSummary:
+        return ProductSummary(
+            product_id=ref,
+            display_name=name,
+            price=Money(amount=69.99),
+            attributes={"primary_color": colour},
+        )
+
+    rendered = format_product_resolution(
+        ResolveConversationProductsResult(
+            results=[
+                ProductReferenceResolution(
+                    reference_id="black_one",
+                    status="ambiguous",
+                    match_count=2,
+                    matches=[
+                        ConversationProductMatch(
+                            product=_dress("d1", "Belle Noir Satin Gown", "black"),
+                            candidate_set_id="set-9",
+                            turn_sequence=9,
+                            position=1,
+                        ),
+                        ConversationProductMatch(
+                            product=_dress("d2", "Ivory Sheath Dress", "white"),
+                            candidate_set_id="set-9",
+                            turn_sequence=9,
+                            position=2,
+                        ),
+                    ],
+                )
+            ]
+        )
+    )
+
+    assert "CLARIFICATION REQUIRED" in rendered
+    # The one that is black does not say so in its name.
+    assert "Belle Noir Satin Gown" in rendered
+    assert "primary_color: black" in rendered
+    assert "primary_color: white" in rendered
+    assert "PRODUCT_REF: d1" in rendered
+
+
 def test_the_most_recent_showing_is_listed_first() -> None:
     """"The black one" means the most recent black thing, not the oldest.
 
@@ -364,7 +423,11 @@ def test_result_formatter_resolves_one_and_requires_clarification_otherwise() ->
 
     assert "REFERENCE unique: RESOLVED\nPRODUCT_REF: bag-1" in rendered
     assert "REFERENCE ambiguous: CLARIFICATION REQUIRED" in rendered
-    assert "Cobalt Crossbody, Tan Shoulder Bag" in rendered
+    # The candidates are listed with their refs and the facts that tell them
+    # apart, not as a comma-separated line of names.
+    assert "Cobalt Crossbody" in rendered
+    assert "Tan Shoulder Bag" in rendered
+    assert "PRODUCT_REF: bag-2" in rendered
     assert "REFERENCE missing: NOT FOUND" in rendered
     # An ambiguous reference is a question; nothing found is a search. Both
     # used to say "do not guess" and stop, which left a shopper who named a

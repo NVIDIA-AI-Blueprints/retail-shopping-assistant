@@ -70,16 +70,6 @@ class ProductReferenceDescriptor(_ConversationProductModel):
         ge=1,
         description="One-based product position within the selected turn or set.",
     )
-    attributes: dict[str, str] | None = Field(
-        default=None,
-        description=(
-            "Attributes the shopper's words describe, in the catalog's own "
-            "filter vocabulary: 'the black one' is {\"primary_color\": "
-            "\"black\"}. Matched against what was recorded when the product "
-            "was shown. Use it when the shopper describes a product rather "
-            "than naming it."
-        ),
-    )
 
     @model_validator(mode="after")
     def _selectors_are_valid(self):

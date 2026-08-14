@@ -10,10 +10,13 @@ the cart the service holds, the products it returned, and the tools it called.
 python -m tests.evaluation.src.replay --label 2026-08-14
 
 # one script, while fixing it
-python -m tests.evaluation.src.replay --only cart_size_change
+python -m tests.evaluation.src.replay --only J06
+
+# three of them, in one run
+python -m tests.evaluation.src.replay --label three --only J01,J02,J13
 
 # a turn that fails one run in three, eight times
-python -m tests.evaluation.src.replay --only reference_ambiguous_colour --repeat 8
+python -m tests.evaluation.src.replay --only J04 --repeat 8
 
 # when wall clock matters more than comparable timings
 python -m tests.evaluation.src.replay --label nightly --concurrency 4

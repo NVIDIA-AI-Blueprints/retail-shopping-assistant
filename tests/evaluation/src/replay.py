@@ -94,9 +94,13 @@ def load_scenarios(only: str | None = None) -> list[dict[str, Any]]:
     for path in scripts:
         data = yaml.safe_load(path.read_text()) or {}
         data.setdefault("id", path.stem)
-        # By number, by name, or by either half: --only J01 is the point of
-        # numbering them.
-        if only and only.casefold() not in data["id"].casefold():
+        # By number, by name, or by either half, and several at once:
+        # --only J01,J02,J13 is the point of numbering them.
+        if only and not any(
+            want.strip().casefold() in data["id"].casefold()
+            for want in only.split(",")
+            if want.strip()
+        ):
             continue
         loaded.append(data)
     if only and not loaded:
@@ -457,7 +461,11 @@ def preflight(config: EvalConfig) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--label", default=time.strftime("%Y-%m-%d-%H%M"))
-    parser.add_argument("--only", default=None, help="one scenario id")
+    parser.add_argument(
+        "--only",
+        default=None,
+        help="scenario numbers or names, comma separated: J01,J02,J13",
+    )
     parser.add_argument("--repeat", type=int, default=1)
     parser.add_argument(
         "--concurrency",

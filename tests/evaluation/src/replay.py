@@ -81,7 +81,13 @@ def scenario_identity(label: str, scenario_id: str, repeat: int) -> dict[str, An
 
 
 def load_scenarios(only: str | None = None) -> list[dict[str, Any]]:
-    scripts = sorted((SCRIPTS_ROOT / "scripts").rglob("*.yaml"))
+    # Hidden directories only ever hold editor copies, and a copy loaded as a
+    # scenario is a second run of the same conversation reported as its own.
+    scripts = sorted(
+        path
+        for path in (SCRIPTS_ROOT / "scripts").rglob("*.yaml")
+        if not any(part.startswith(".") for part in path.parts)
+    )
     loaded = []
     for path in scripts:
         data = yaml.safe_load(path.read_text()) or {}

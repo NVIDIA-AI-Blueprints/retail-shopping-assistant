@@ -15,6 +15,7 @@ import atexit
 import contextlib
 import json
 import os
+import sys
 from pathlib import Path
 import time
 from typing import Any, AsyncIterator, Literal
@@ -701,6 +702,54 @@ def configure_relay_tracing(config: Any) -> bool:
     return True
 
 
+@contextlib.contextmanager
+def _relay_turn_scope(config: Any, conversation_id: str):
+    """Open one Relay scope around the turn, so its events have somewhere to go.
+
+    Relay does not read OpenTelemetry's context. Its events go into a runtime
+    with its own scope stack, so a session set with ``using_attributes`` reaches
+    the LangChain spans and never reaches Relay's -- and with no Relay scope
+    open, every Relay span is emitted as its own root.
+
+    Both of those are the same absence. One scope here gives Relay's spans a
+    parent to nest under and a place to carry the conversation, and it is the
+    supported way to do it: no LangGraph internals are touched.
+
+    A no-op when Relay is off or absent, and a no-op when the scope will not
+    open -- a trace must never cost a turn.
+    """
+
+    if not getattr(config, "relay_enabled", False):
+        yield
+        return
+
+    try:
+        from nemo_relay import ScopeType
+        from nemo_relay import scope as relay_scope
+
+        # Not "turn": our own OpenTelemetry span already owns that name, and two
+        # different producers emitting a span called "turn" is unreadable.
+        opened = relay_scope.scope(
+            "relay-turn",
+            ScopeType.Agent,
+            metadata={"session.id": conversation_id},
+        )
+        opened.__enter__()
+    except ImportError:
+        yield
+        return
+    except Exception as exc:  # noqa: BLE001 - never break a turn for a trace
+        _relay_warn_once("scope", "NeMo Relay could not open a turn scope: %s", exc)
+        yield
+        return
+
+    try:
+        yield
+    finally:
+        with contextlib.suppress(Exception):
+            opened.__exit__(*sys.exc_info())
+
+
 def _relay_instrumented(
     agent_kwargs: dict[str, Any],
     config: Any,
@@ -1053,13 +1102,14 @@ class DeepAgentsRuntime:
             )
             if agent_timeout <= 0:
                 raise TimeoutError
-            result = await asyncio.wait_for(
-                agent.ainvoke(
-                    {"messages": [{"role": "user", "content": input_message}]},
-                    config=invoke_config,
-                ),
-                timeout=agent_timeout,
-            )
+            with _relay_turn_scope(self.config, identity.conversation_id):
+                result = await asyncio.wait_for(
+                    agent.ainvoke(
+                        {"messages": [{"role": "user", "content": input_message}]},
+                        config=invoke_config,
+                    ),
+                    timeout=agent_timeout,
+                )
             result_messages = _result_messages(result)
             state.selected_skill_names = list(
                 selected_skill_names_for_turn(

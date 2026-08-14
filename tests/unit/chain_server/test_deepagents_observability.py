@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
@@ -1424,6 +1424,76 @@ class TestRelayInstrumentation:
         kwargs = self._kwargs()
 
         assert self._instrument(kwargs) is kwargs
+
+
+class TestRelayTurnScope:
+    """Relay does not read OpenTelemetry's context, so the turn has to say so."""
+
+    def _scope(self, monkeypatch, *, enabled=True, opened=None):
+        from types import SimpleNamespace
+        from chain_server.src.deepagents_runtime import _relay_turn_scope
+
+        return _relay_turn_scope(SimpleNamespace(relay_enabled=enabled), "convo-7")
+
+    def _stub_relay(self, monkeypatch, opened) -> None:
+        import contextlib
+
+        @contextlib.contextmanager
+        def scope(name, scope_type, **kwargs):
+            opened.append((name, kwargs.get("metadata")))
+            yield
+
+        module = ModuleType("nemo_relay")
+        module.ScopeType = SimpleNamespace(Agent="agent")
+        scope_module = ModuleType("nemo_relay.scope")
+        scope_module.scope = scope
+        module.scope = scope_module
+        monkeypatch.setitem(sys.modules, "nemo_relay", module)
+        monkeypatch.setitem(sys.modules, "nemo_relay.scope", scope_module)
+
+    def test_it_names_the_conversation_so_relay_spans_have_a_session(
+        self, monkeypatch
+    ) -> None:
+        """Without this, Relay's spans carry no conversation at all."""
+
+        opened: list = []
+        self._stub_relay(monkeypatch, opened)
+
+        with self._scope(monkeypatch):
+            pass
+
+        assert opened == [("relay-turn", {"session.id": "convo-7"})]
+
+    def test_off_by_default_opens_nothing(self, monkeypatch) -> None:
+        """Stubbed as installed, so this proves the flag and not the absence."""
+
+        opened: list = []
+        self._stub_relay(monkeypatch, opened)
+
+        with self._scope(monkeypatch, enabled=False):
+            pass
+
+        assert opened == []
+
+    def test_a_scope_that_will_not_open_still_runs_the_turn(self, monkeypatch) -> None:
+        """A trace must never cost a shopper their turn."""
+
+        def explode(*_args, **_kwargs):
+            raise RuntimeError("no runtime")
+
+        module = ModuleType("nemo_relay")
+        module.ScopeType = SimpleNamespace(Agent="agent")
+        scope_module = ModuleType("nemo_relay.scope")
+        scope_module.scope = explode
+        module.scope = scope_module
+        monkeypatch.setitem(sys.modules, "nemo_relay", module)
+        monkeypatch.setitem(sys.modules, "nemo_relay.scope", scope_module)
+
+        ran = []
+        with self._scope(monkeypatch):
+            ran.append(True)
+
+        assert ran == [True]
 
 
 class TestRelayExport:

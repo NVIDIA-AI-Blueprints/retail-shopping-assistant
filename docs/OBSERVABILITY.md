@@ -113,10 +113,11 @@ relay spans     : 6
 relay names     : ['azure/openai/gpt-5.2', 'mark:DeepAgents Skills Configured', ...]
 ```
 
-Read `relay spans` as a total for the project, not for your turn: Relay's spans
-carry no `conversation.id` to filter on, which is the limitation described
-below. Roughly six accumulate per turn, so what matters is whether the number
-**grew** — not what it equals.
+Read `relay spans` as a total for the project, not for your turn. Only the
+`relay-turn` scope carries the conversation (as `metadata.session.id`); Relay's
+model and tool spans carry none, which is the limitation described below.
+Roughly six accumulate per turn, so what matters is whether the number **grew**
+— not what it equals.
 
 **`relay spans: 0` while the `turn` span is present** is the failure that
 matters: the app is exporting and Relay is not. The subscriber did not
@@ -154,7 +155,7 @@ python3 -m pytest tests/unit/chain_server/test_deepagents_observability.py \
   -k "Relay" -q
 ```
 
-Eleven tests, covering: every argument survives, only `middleware` may change,
+Fourteen tests, covering: every argument survives, only `middleware` may change,
 our middleware stays first, and any violation falls back to the untouched
 arguments. Then the behavioural check — run a replay journey with the flag on
 and confirm the assertions still pass:
@@ -218,6 +219,39 @@ metadata.diagnostics_json        {...}
 `conversation.id` is the session key, so a Phoenix session and a durable
 conversation are the same set of turns by construction.
 
+## Reading a multi-turn session
+
+A session is a conversation: `session.id` is the `conversation_id` the client
+sent, and **one turn is one trace**. In Phoenix that is the **Sessions** tab —
+search the conversation id and the turns are listed in order.
+
+To read one at the terminal, which is what you want for comparing two runs or
+pasting a turn into a bug report:
+
+```bash
+python3 scripts/read_session.py                    # list sessions, longest first
+python3 scripts/read_session.py demo20-run11       # read one
+python3 scripts/read_session.py demo20-run11 --replies
+```
+
+```
+session-demo — 3 turns
+
+1. "show me black dresses in a size 2"
+   skill  /shopper/product-discovery/SKILL.md
+   tools  activate_shopper_skills_tool, search_catalog_tool
+   ->     4 shown, 0 rejected, completed
+
+2. "add the first one to my cart"
+   skill  /shopper/cart-management/SKILL.md
+   tools  activate_shopper_skills_tool, resolve_conversation_products_tool, add_cart_items_tool
+   ->     0 shown, 0 rejected, completed
+```
+
+It reads the `turn` span for what the agent did and the `LangGraph` span for
+what was said. **This does not need Relay** — sessions come from the
+OpenTelemetry instrumentation and worked before Relay existed.
+
 ### The limitation to know before you rely on it
 
 **Relay's spans do not join the turn's trace.** Measured on `nemo-relay 0.7.3`,
@@ -246,14 +280,45 @@ print('traces for one turn:', len({r['context']['trace_id'] for r in rows}))
 "
 ```
 
-The cause is scope propagation inside LangGraph's task execution, not our
-wiring: Relay offers `capture_propagation_context` and `propagate_scope_to_thread`
-for exactly this, but applying them means wrapping LangGraph internals we do not
-own. That is a worse trade than living with orphan spans, so this is recorded
-rather than worked around. **If a later Relay release fixes it, that count drops
-to 1 and this section goes away** — which is why the check above counts traces.
+### Why, and how far it can be fixed
 
-Until then, the turn-level story is told by our own `turn` span, and Relay's
+**Relay does not read OpenTelemetry's context.** That is the whole of it. The
+session is set with `using_attributes(session_id=…)`, which puts it in the
+Python OTel context, and the LangChain instrumentation reads that context when
+it builds a span. Relay never looks there: its events go into its own runtime
+with its own scope stack and its own exporter. Two pipelines in one process,
+sharing a collector and nothing else. So the session does not fail to reach
+Relay — there is no channel for it to travel down.
+
+Relay's own channel is a scope, and the runtime now opens one per turn:
+
+```python
+with relay_scope.scope("relay-turn", ScopeType.Agent,
+                       metadata={"session.id": conversation_id}):
+    result = await agent.ainvoke(...)
+```
+
+That is public API — no LangGraph internals are touched — and it half works,
+measured over a three-turn conversation:
+
+| | Before | After |
+|---|---|---|
+| Relay spans carrying the conversation | 0 | one `relay-turn` per turn |
+| Relay's model and tool spans nesting under it | no | **still no** |
+
+The `relay-turn` scope is created and carries `metadata.session.id`, so Relay
+finally has a per-turn record you can tie to a conversation. Its model and tool
+events still do not join it, because they are emitted where the scope stack does
+not follow — across the task and thread boundaries inside the agent's execution.
+Relay ships `propagate_scope_to_thread` and `capture_propagation_context` for
+that, but they would have to be applied at the point those events are emitted,
+which is inside Relay's own middleware rather than in code we own.
+
+So: **the session is solvable from our side and nesting is not.** If a later
+Relay release propagates its scope through the graph, the trace count drops to 1
+and this section goes away — which is why the check above counts traces.
+
+Until then the turn-level story is told by our own `turn` span, and Relay's
 value here is per-call model detail rather than a unified trace.
 
 ### What Relay does not tell you here

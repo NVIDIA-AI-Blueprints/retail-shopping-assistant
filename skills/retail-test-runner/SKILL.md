@@ -1,6 +1,6 @@
 ---
 name: retail-test-runner
-description: Run the Retail Shopping Assistant test suites and evaluation workflows under tests/, including offline pytest unit tests, live integration scripts, and tests/evaluation Challenger/Judge runs with one-scenario, all-scenario, latest-run, and report-result workflows.
+description: Run the Retail Shopping Assistant test suites and evaluation workflows under tests/, including offline pytest unit tests, live integration scripts, replaying fixed shopper conversations against the cart (tests.evaluation.src.replay, J01-J20 journeys and P01-P25 probes), and tests/evaluation Challenger/Judge runs with one-scenario, all-scenario, latest-run, and report-result workflows.
 metadata:
   short-description: Run retail unit and integration tests
 ---
@@ -130,6 +130,43 @@ intentionally do not want the ignored local quality/timing trail.
 Do not delete stable baseline archives unless the user asks for a clean run.
 The `latest` archive label is intentionally reusable and may be overwritten by
 the newest working-tree run.
+
+## Replaying Fixed Conversations
+
+**Use this before a merge.** Forty-five scripted conversations whose words never
+change, checked against the cart the service holds rather than the wording of
+the reply.
+
+```bash
+python -m tests.evaluation.src.replay --only J01             # one journey
+python -m tests.evaluation.src.replay --only J01,J02,J13     # several
+python -m tests.evaluation.src.replay --label nightly        # all, one at a time
+python -m tests.evaluation.src.replay --label nightly --parallel
+python -m tests.evaluation.src.replay --only J04 --repeat 8  # a flaky turn
+```
+
+Twenty journeys of six to twenty turns (`J01`-`J20`; `J01` and `J02` are the two
+demo conversations) and twenty-five short probes (`P01`-`P25`), in
+`tests/evaluation/datasets/val/`. Transcripts land in
+`tests/evaluation/results/val/<label>/transcripts/`, with the cart printed after
+every turn, and are the thing to read or to hand to a judge.
+
+Needs the stack up and `EXPOSE_AGENT_DIAGNOSTICS=true`.
+
+**Do not write another replay script.** Three copies of one were written into
+`/tmp` in a single week and all three were lost to cleanup, twice while a run
+was in flight. If a scenario is missing, add a YAML file to `datasets/val/`.
+
+**Which instrument answers which question:**
+
+| Question | Tool |
+|---|---|
+| Did I break a code path? | unit tests |
+| Did this build keep its promises? | replay |
+| What is broken that nobody considered? | challenger and judge |
+
+A single green replay of a turn that fails one run in three means nothing. Use
+`--repeat` when a turn is suspected.
 
 ## Evaluation Challenger and Judge
 

@@ -1,6 +1,6 @@
 # val — replaying fixed conversations, checking state
 
-Twenty-five conversations whose words never change, with assertions answered by
+Forty-five conversations whose words never change, with assertions answered by
 the cart the service holds, the products it returned, and the tools it called.
 
 ## Running
@@ -28,8 +28,11 @@ python -m tests.evaluation.src.replay --label nightly --concurrency 4
 `--sequential` is the default, so a failure is not competing with five other
 conversations for the model and the timings mean something. `--parallel` runs
 up to six at once; beyond that nothing finishes sooner, because the bottleneck
-is the model endpoint. Roughly 90 minutes for all
-twenty-five; under 30 at `--concurrency 4`.
+is the model endpoint.
+
+Forty-five scenarios -- twenty journeys and twenty-five probes, 231 turns --
+take roughly two hours one at a time, or about forty minutes with `--parallel`.
+A single journey is four to ten minutes.
 
 Needs the stack up (chain server on 8009, memory on 8011) and
 `EXPOSE_AGENT_DIAGNOSTICS=true` for the `tools_used` assertions.

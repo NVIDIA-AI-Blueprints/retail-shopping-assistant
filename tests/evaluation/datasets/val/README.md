@@ -81,28 +81,31 @@ and accumulated context is what produced most of this week's failures: a navy
 dress chosen at turn nineteen, a size carried out of a turn-one search filter
 into a turn-five purchase. Nothing shorter would have caught either.
 
-| journey | turns | covers |
-|---|---|---|
-| `abandon_and_restart` | 8 | cart-management, references, memory |
-| `beach_holiday` | 10 | weather, outfit-styling, discovery, cart-management, sizes |
-| `budget_journey` | 9 | budget-shopping, filters, cart-management, honesty |
-| `cart_manager` | 10 | cart-management, sizes, references |
-| `changing_mind` | 8 | discovery, filters, references, cart-management |
-| `colour_ambiguity` | 7 | references, cart-management, discovery |
-| `comparison_shopper` | 8 | discovery, memory, honesty, cart-management |
-| `gift_shopping` | 7 | cart-management, sizes, discovery, references |
-| `impossible_requirements` | 7 | discovery, filters, honesty |
-| `indecisive_shopper` | 11 | references, cart-management, sizes, memory |
-| `long_memory` | 10 | memory, references, cart-management, sizes |
-| `menswear_pivot` | 6 | media, honesty, discovery, cart-management |
-| `not_carried_pivot` | 7 | discovery, honesty, cart-management |
-| `one_size_conversation` | 9 | sizes, cart-management, discovery |
-| `photo_then_build` | 7 | media, discovery, outfit-styling, cart-management |
-| `policy_and_purchase` | 8 | store-policy-answers, honesty, cart-management |
-| `size_explorer` | 10 | cart-management, sizes, references |
-| `video_look_full` | 13 | media, references, sizes, cart-management, weather, budget-shopping |
-| `wedding_abroad` | 20 | weather, outfit-styling, references, cart-management, sizes, honesty |
-| `work_capsule` | 9 | outfit-styling, budget-shopping, cart-management, sizes |
+| # | journey | turns | asserted | covers |
+|---|---|---|---|---|
+| J01 | `wedding_abroad` | 20 | 13 | weather, outfit-styling, references, cart-management, sizes, honesty |
+| J02 | `video_look_full` | 13 | 10 | media, references, sizes, cart-management, weather, budget-shopping |
+| J03 | `indecisive_shopper` | 11 | 11 | references, cart-management, sizes, memory |
+| J04 | `colour_ambiguity` | 7 | 6 | references, cart-management, discovery |
+| J05 | `long_memory` | 10 | 9 | memory, references, cart-management, sizes |
+| J06 | `size_explorer` | 10 | 7 | cart-management, sizes, references |
+| J07 | `cart_manager` | 10 | 5 | cart-management, sizes, references |
+| J08 | `abandon_and_restart` | 8 | 4 | cart-management, references, memory |
+| J09 | `one_size_conversation` | 9 | 6 | sizes, cart-management, discovery |
+| J10 | `budget_journey` | 9 | 6 | budget-shopping, filters, cart-management, honesty |
+| J11 | `work_capsule` | 9 | 8 | outfit-styling, budget-shopping, cart-management, sizes |
+| J12 | `beach_holiday` | 10 | 8 | weather, outfit-styling, discovery, cart-management, sizes |
+| J13 | `comparison_shopper` | 9 | 9 | discovery, memory, honesty, cart-management |
+| J14 | `changing_mind` | 8 | 6 | discovery, filters, references, cart-management |
+| J15 | `impossible_requirements` | 7 | 2 | discovery, filters, honesty |
+| J16 | `not_carried_pivot` | 7 | 4 | discovery, honesty, cart-management |
+| J17 | `gift_shopping` | 7 | 7 | cart-management, sizes, discovery, references |
+| J18 | `policy_and_purchase` | 8 | 5 | store-policy-answers, honesty, cart-management |
+| J19 | `photo_then_build` | 7 | 6 | media, discovery, outfit-styling, cart-management |
+| J20 | `menswear_pivot` | 6 | 5 | media, honesty, discovery, cart-management |
+
+Run one by its number: `--only J13`. A prefix runs a group: `--only J1`
+runs J10 through J19.
 
 **Probes** (`scripts/probes/`) are one to four turns and check a single
 behaviour. They are for narrowing down what a journey found, and for keeping a

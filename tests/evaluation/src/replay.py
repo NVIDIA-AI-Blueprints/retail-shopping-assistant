@@ -86,7 +86,9 @@ def load_scenarios(only: str | None = None) -> list[dict[str, Any]]:
     for path in scripts:
         data = yaml.safe_load(path.read_text()) or {}
         data.setdefault("id", path.stem)
-        if only and data["id"] != only:
+        # By number, by name, or by either half: --only J01 is the point of
+        # numbering them.
+        if only and only.casefold() not in data["id"].casefold():
             continue
         loaded.append(data)
     if only and not loaded:

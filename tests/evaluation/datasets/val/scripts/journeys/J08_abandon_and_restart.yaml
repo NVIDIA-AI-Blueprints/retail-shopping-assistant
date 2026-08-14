@@ -1,0 +1,26 @@
+id: J08_abandon_and_restart
+covers: [cart-management, references, memory]
+why: >
+  A shopper who fills a cart, empties it and starts again. The record of what
+  was shown survives; the cart does not, and the two must not be confused.
+turns:
+  - say: show me some tote bags
+    expect: {products_min: 2}
+  - say: add the Jade Tone Canvas Tote Bag
+    expect:
+      cart: [{name: Jade Tone Canvas Tote Bag, qty: 1}]
+  - say: add the Ombre Canvas Tote Bag too
+    expect:
+      cart:
+        - {name: Jade Tone Canvas Tote Bag, qty: 1}
+        - {name: Ombre Canvas Tote Bag, qty: 1}
+  - say: actually remove both of those
+    expect: {}
+  - say: what's in my cart
+    expect: {}
+  - say: show me those tote bags again
+    expect: {products_min: 2}
+  - say: add the Linen Canvas Tote Bag this time
+    expect: {}
+  - say: what's in my cart
+    expect: {}

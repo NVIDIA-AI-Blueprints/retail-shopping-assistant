@@ -1,0 +1,9 @@
+id: P02_budget_under_150
+covers: [budget-shopping, filters]
+why: >
+  The catalog runs $39.90 to $269.99, so a $150 ceiling genuinely excludes
+  things. A budget that never excludes anything is not a tested budget.
+turns:
+  - say: put together a work outfit for me, nothing over $150
+    expect:
+      products_min: 1

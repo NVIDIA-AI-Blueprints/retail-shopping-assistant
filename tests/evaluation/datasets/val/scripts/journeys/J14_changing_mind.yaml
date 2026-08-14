@@ -1,0 +1,28 @@
+id: J14_changing_mind
+covers: [discovery, filters, references, cart-management]
+why: >
+  Constraints that arrive, tighten and then reverse. "Only black" holds until
+  the shopper says otherwise, and an earlier constraint must not leak into a
+  later turn -- "only" once carried from turn six into turn seven.
+turns:
+  - say: show me dresses
+    expect: {products_min: 2}
+  - say: only black ones
+    expect:
+      products_min: 1
+      every_product: {primary_color: black}
+  - say: actually I want something colourful instead
+    expect: {products_min: 1}
+  - say: show me skirts rather than dresses
+    expect:
+      products_min: 2
+      every_product: {subcategory: skirts}
+  - say: in a size 6
+    expect: {products_min: 1}
+  - say: add the Navy Fitted Skirt in a 6
+    expect:
+      cart: [{name: Navy Fitted Skirt, size: "6", qty: 1}]
+  - say: no wait, remove that
+    expect: {}
+  - say: what's in my cart
+    expect: {}

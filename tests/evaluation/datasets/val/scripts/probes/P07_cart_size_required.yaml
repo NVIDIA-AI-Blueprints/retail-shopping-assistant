@@ -1,0 +1,17 @@
+id: P07_cart_size_required
+covers: [cart-management, sizes]
+why: >
+  A sized product cannot enter the cart without a size, and the size must come
+  from the shopper. "Add the dress" once put a size 6 in a cart nobody asked
+  for, and the shopper left with three dresses.
+turns:
+  - say: show me some heels
+    expect:
+      products_min: 2
+  - say: add the Polished Pearl Pumps to my cart
+    expect:
+      cart_unchanged: true
+  - say: size 7
+    expect:
+      cart:
+        - {name: Polished Pearl Pumps, size: "7", qty: 1}

@@ -1,0 +1,10 @@
+id: P25_weather_dated_destination
+covers: [weather, outfit-styling]
+why: >
+  A forecast is not an answer on its own. This turn once returned weather and
+  generic advice with nothing to buy, three times out of three. It must also
+  confirm nothing about any product: rain does not make leather water-resistant.
+turns:
+  - say: I have a wedding in Cancun on August 15, what should I wear
+    expect:
+      products_min: 1

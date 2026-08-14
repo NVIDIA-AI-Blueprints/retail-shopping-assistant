@@ -12,8 +12,11 @@ turns:
     expect: {products_min: 1}
   - say: is it on a beach? what shoes work
     expect: {products_min: 1}
+  # These 215 products hold no outerwear and no sweaters, so demanding a product
+  # here would demand an invention. What must hold is that styling talk alone
+  # never reaches the cart.
   - say: I need something for the evening too, it might be cooler
-    expect: {products_min: 1}
+    expect: {cart_unchanged: true}
   - say: show me some heels
     expect: {products_min: 2}
   - say: add the Polished Pearl Pumps to my cart
@@ -48,10 +51,20 @@ turns:
     expect: {}
   - say: it's going to snow when we get back, what should I wear
     expect: {}
+  # The hardest reference in this journey. Four boots were shown one turn ago and
+  # one of them is black, but footwear runs 5-9, so "in a 2" can only mean the
+  # black dress from nine turns earlier. Resolving that is the ability; adding a
+  # boot, or asking, would both be wrong.
   - say: add the black one in a 2 and show me a clutch to go with it
-    expect: {}
-  - say: what's in my cart
     expect:
       cart:
         - {name: Polished Pearl Pumps, size: "7", qty: 1}
         - {name: Polished Pearl Pumps, size: "8", qty: 1}
+        - {name: Black Satin Lace-Up Dress, size: "2", qty: 1}
+  - say: what's in my cart
+    expect:
+      cart_unchanged: true
+      cart:
+        - {name: Polished Pearl Pumps, size: "7", qty: 1}
+        - {name: Polished Pearl Pumps, size: "8", qty: 1}
+        - {name: Black Satin Lace-Up Dress, size: "2", qty: 1}

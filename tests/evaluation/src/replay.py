@@ -448,19 +448,37 @@ def write_transcript(
     path.write_text("\n".join(lines))
 
 
-def preflight(config: EvalConfig) -> None:
-    """Refuse to run against a stack that is down, or a timeout that truncates.
+def preflight(config: EvalConfig, scenarios: list[dict[str, Any]]) -> None:
+    """Refuse to run against a stack that is down, or assets that are absent.
 
     A dead memory service answers every turn with "I cannot safely load this
     conversation", which is not a behaviour to fix -- and twice it was read as
     one. And a client that gives up before the server does silently cuts a
     conversation short, which once made a run score a bug that never happened.
+
+    Absent assets are the same class of lie: checked out on a branch without
+    them, a media scenario dies on turn 1 and the report says the scenario
+    errored. Say so before the run, not twenty minutes into it.
     """
 
     base = config.target_agent.base_url.rstrip("/")
     response = requests.get(f"{base}/health", timeout=10)
     response.raise_for_status()
     print(f"  assistant healthy at {base}")
+
+    missing = sorted({
+        str(step["attach"])
+        for scenario in scenarios
+        for step in scenario.get("turns") or []
+        if step.get("attach")
+        and not (SCRIPTS_ROOT / "assets" / str(step["attach"])).is_file()
+    })
+    if missing:
+        raise SystemExit(
+            f"  missing assets in {SCRIPTS_ROOT / 'assets'}: {', '.join(missing)}\n"
+            "  the media scenarios cannot run; check out the branch that carries them."
+        )
+    print(f"  assets present in {SCRIPTS_ROOT / 'assets'}")
 
 
 def main() -> None:
@@ -499,9 +517,9 @@ def main() -> None:
         args.concurrency = 1
 
     config = load_eval_config()
-    preflight(config)
-    assistant = Assistant(config)
     scenarios = load_scenarios(args.only)
+    preflight(config, scenarios)
+    assistant = Assistant(config)
 
     jobs = [
         (scenario, repeat)

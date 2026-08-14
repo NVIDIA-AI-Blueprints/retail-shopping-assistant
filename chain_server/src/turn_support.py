@@ -30,6 +30,8 @@ import os
 from pathlib import Path
 import re
 from collections.abc import Sequence
+from difflib import SequenceMatcher
+from types import SimpleNamespace
 from typing import Any, Literal
 import unicodedata
 import uuid
@@ -3799,6 +3801,12 @@ def _normalize_cart_add_tool_items(
         entry["quantity"] += quantity
         if not entry["expected_display_name"] and parsed.expected_display_name:
             entry["expected_display_name"] = parsed.expected_display_name.strip()
+        # Merged items share one entry, so a quotation on any of them is the
+        # quotation for the size or quantity they merged into. Keeping only the
+        # first item's dropped a later one that carried the shopper's words.
+        for field in ("size_stated_as", "quantity_stated_as"):
+            if not entry[field] and getattr(parsed, field, None):
+                entry[field] = str(getattr(parsed, field)).strip()
     return normalized
 
 
@@ -3877,12 +3885,227 @@ def _same_product_display_name(expected: str, actual: str) -> bool:
 _ONE_SIZE = "onesize"
 
 
-def _shopper_said(stated_as: str | None, shopper_text: str) -> bool:
-    """Whether these are really the shopper's words, from their own message."""
+#: The value, written the other way. Numbers only: a quantity of two is the
+#: same want whether the shopper typed it as a word or a digit.
+_SPELLED_NUMBERS = {
+    "1": "one", "2": "two", "3": "three", "4": "four", "5": "five",
+    "6": "six", "7": "seven", "8": "eight", "9": "nine", "10": "ten",
+    "11": "eleven", "12": "twelve",
+}
 
-    quoted = " ".join((stated_as or "").split())
-    return bool(
-        quoted and quoted.casefold() in " ".join(shopper_text.split()).casefold()
+
+def _shopper_words_this_conversation(state: Any) -> str:
+    """Everything the shopper has actually typed, this turn and before.
+
+    A size settled one turn ago -- "do you have it in a 6?" answered, then "yes,
+    add it" -- is established in the conversation and quotable from it. Reading
+    only the current message refused adds for sizes the shopper had already
+    given, which is the failure the cart reference had before it learned to look
+    further back than this turn.
+    """
+
+    parts = [str(getattr(state, "query", "") or "")]
+    for turn in getattr(state, "dialogue", None) or []:
+        text = getattr(turn, "shopper_text", "")
+        if text:
+            parts.append(str(text))
+    return "\n".join(parts)
+
+
+def _shopper_said(stated_as: str | None, shopper_text: str, value: str) -> bool:
+    """Whether the shopper really said this, for this value.
+
+    Two checks, because either alone lets the wrong thing through. The words
+    must be theirs, or the model authorises itself. And the words must carry
+    the value they authorise: "3 of the flats" is a real quotation and it does
+    not say two, yet it opened the gate for a quantity of two.
+    """
+
+    quoted = " ".join((stated_as or "").split()).casefold()
+    wanted = " ".join((value or "").split()).casefold()
+    if not quoted or not wanted:
+        return False
+    # Shoppers write numbers both ways -- "add two of them" is as ordinary as
+    # "add 2". Only the value is spelled out here, never anything about intent.
+    spelled = _SPELLED_NUMBERS.get(wanted)
+    if wanted not in quoted and not (spelled and spelled in quoted):
+        return False
+    return quoted in " ".join(shopper_text.split()).casefold()
+
+
+#: A word carries no identifying weight below this, and the short ones collide
+#: with ordinary sentences: "the" and "a" both belong to "The Office A-line
+#: Dress" and to "add the black one in a 2", which is how a navy dress was
+#: fitted to a request for a black one.
+_MIN_NAMING_WORD = 4
+#: How close a shopper's word has to be to a product's. Absorbs a typo or a
+#: missing plural without inventing a match: "ofice" is 0.91 against "office".
+_NAMING_LIKENESS = 0.85
+#: A fit has to be worth something, and it has to be clearly better than the
+#: next one. The margin is what protects the shopper: a threshold alone always
+#: has a best candidate, and picking the best of two near-equals is the silent
+#: choice this exists to prevent.
+_NAMING_FLOOR = 0.25
+_NAMING_MARGIN = 0.20
+
+
+def _products_the_shopper_fits(
+    shopper_text: str,
+    candidates: Sequence[Any],
+) -> list[Any]:
+    """Which of these products the shopper's words could be pointing at.
+
+    One question, so a second implementation can answer it later without moving
+    the rule that uses it: exactly one fit resolves, anything else is asked
+    about. Today the reading is lexical; a semantic one would score the same
+    candidates the same way and still never pick.
+
+    Words are weighted by how many of the candidates use them, read off the
+    candidates rather than a list of stop words: among four dresses "dress"
+    says nothing and "vivienne" says everything, and among four bags it is the
+    other way round. Two black dresses make "black" worth half, which is why
+    "the black one" cannot settle between them.
+
+    Comparison is by likeness rather than equality, so "the Ofice dress" and
+    "the Office dress" both land on the same product where whole-name matching
+    refused them, and words that match nothing are simply ignored.
+
+    The decision is the gap to the next candidate, not the score. A score alone
+    always has a winner; a gap is the difference between "this is the one" and
+    "it could be either", and only the first should reach a cart.
+    """
+
+    def words(value: str) -> list[str]:
+        return [
+            word
+            for word in _normalize_product_name(value).split()
+            if len(word) >= _MIN_NAMING_WORD
+        ]
+
+    per_candidate = [words(candidate.display_name) for candidate in candidates]
+    shared: dict[str, int] = {}
+    for names in per_candidate:
+        for word in set(names):
+            shared[word] = shared.get(word, 0) + 1
+    said = words(shopper_text)
+
+    scored: list[tuple[float, Any]] = []
+    for candidate, names in zip(candidates, per_candidate):
+        total = sum(1 / shared[word] for word in names)
+        if not total:
+            continue
+        matched = sum(
+            1 / shared[word]
+            for word in names
+            if any(
+                SequenceMatcher(None, word, spoken).ratio() >= _NAMING_LIKENESS
+                for spoken in said
+            )
+        )
+        scored.append((matched / total, candidate))
+
+    scored.sort(key=lambda entry: entry[0], reverse=True)
+    if not scored:
+        return []
+    best_score, best = scored[0]
+    runner_up = scored[1][0] if len(scored) > 1 else 0.0
+    if best_score < _NAMING_FLOOR or best_score - runner_up < _NAMING_MARGIN:
+        return []
+    return [best]
+
+
+def _most_recently_shown(state: Any) -> list[dict]:
+    """The last set of products put in front of the shopper."""
+
+    sets = [
+        entry
+        for entry in (getattr(state, "historical_product_sets", None) or [])
+        if isinstance(entry, dict) and isinstance(entry.get("products"), list)
+    ]
+    if not sets:
+        return []
+    newest = max(sets, key=lambda entry: entry.get("turn_seq") or 0)
+    return [item for item in newest["products"] if isinstance(item, dict)]
+
+
+def _reference_candidates(
+    evidence: ProductEvidence,
+    recently_shown: Sequence[Any] = (),
+) -> list[Any]:
+    """The products a reference in this turn could be pointing at."""
+
+    candidates = list(evidence.values())
+    seen = {candidate.product_id for candidate in candidates}
+    for entry in recently_shown or ():
+        ref = entry.get("ref") if isinstance(entry, dict) else None
+        name = entry.get("name") if isinstance(entry, dict) else None
+        if not ref or not name or ref in seen:
+            continue
+        seen.add(ref)
+        candidates.append(SimpleNamespace(product_id=ref, display_name=name))
+    return candidates
+
+
+def _cart_product_provenance_issue(
+    product: Any,
+    shopper_text: str,
+    evidence: ProductEvidence,
+    recently_shown: Sequence[Any] = (),
+) -> str:
+    """Say why this product cannot be trusted as the one meant, or "" if it can.
+
+    A shopper shown four black dresses says "add the black one in a 2", and the
+    assistant picks one. Every other check passes: the ref was really
+    established, the name matches that ref, the size is sold and they did say
+    "in a 2". The reference resolved correctly to the wrong product -- half the
+    runs of one demo script reached fourteen turns back for a navy dress.
+
+    Which product a description means is a judgement, and the model makes it.
+    What can be checked is whether anything confirmed it:
+
+    - the shopper named the product, in the words they actually used
+    - the record picked it, from a ref or the coordinates of a showing
+    - there was only one product it could have been
+
+    None of those, and the model chose between products it was shown without
+    saying so, which is the one thing it must not do silently.
+
+    Naming is read off the shopper's own message rather than a quotation the
+    model supplies, so there is nothing to fabricate and no optional field to
+    forget. The reading is the catalog-name matching this module already does
+    for the same purpose -- names found inside a sentence, so "add the
+    Southwest Bracelet" names one.
+    """
+
+    # What the shopper could plausibly have meant: what this turn established,
+    # and what they were last shown. Counting only this turn's evidence made
+    # the check vanish exactly when the model had already narrowed to one --
+    # four black dresses were on screen, the model resolved one of them, and
+    # with a single candidate there was nothing left to be ambiguous against.
+    candidates = _reference_candidates(evidence, recently_shown)
+    if len(candidates) <= 1:
+        return ""
+    # Named, not uniquely named: "add the dress and the bag" names two, and
+    # each is still the shopper's own choice. What must never pass is a product
+    # they named nothing about.
+    fits = _products_the_shopper_fits(shopper_text, candidates)
+    if len(fits) == 1 and fits[0].product_id == product.product_id:
+        return ""
+    if _explicitly_named_products(shopper_text, candidates):
+        # A full catalog name is naming even when several are named at once:
+        # "add the dress and the bag" is two choices, both the shopper's.
+        if any(
+            match.product_id == product.product_id
+            for match in _explicitly_named_products(shopper_text, candidates)
+        ):
+            return ""
+    if evidence.identified_by_the_system(product.product_id):
+        return ""
+    return (
+        f"PRODUCT NOT ESTABLISHED: the shopper did not name "
+        f"'{product.display_name}', and {len(candidates)} products are in play "
+        "this turn. Ask which one they mean, naming them, and add it when they "
+        "answer. Nothing was added."
     )
 
 
@@ -3901,7 +4124,7 @@ def _cart_quantity_provenance_issue(
 
     if quantity <= 1:
         return ""
-    if _shopper_said(stated_as, shopper_text):
+    if _shopper_said(stated_as, shopper_text, str(quantity)):
         return ""
     return (
         f"QUANTITY NOT ESTABLISHED: the shopper did not ask for {quantity}. "
@@ -3923,6 +4146,7 @@ def _cart_line_size(cart: Any, product_id: str) -> str | None:
 
 
 def _cart_size_provenance_issue(
+    product: Any,
     size: str | None,
     stated_as: str | None,
     shopper_text: str,
@@ -3936,21 +4160,26 @@ def _cart_size_provenance_issue(
     conversation with three dresses and one they never asked for.
 
     A size is a want, not a fact. The catalog says which sizes exist; only the
-    shopper says which one they want. So it comes from their words or from the
-    line already in their cart, and the model quotes them for it -- the same
-    move as expected_display_name, which states a claim the system can check
-    against its own record.
+    shopper says which one they want. So it comes from their words, from the
+    line already in their cart, or it is asked for.
 
-    Not a search for size-like words in their message: that would match the 6
-    in $69.99. The quotation has to be theirs.
+    Not a search of their message for size-like words: that would match the 6 in
+    $69.99. The model quotes them, and the quotation has to be theirs and has to
+    carry the size it authorises.
     """
 
     chosen = (size or "").strip()
     if not chosen:
         return ""
+    advertised = _advertised_sizes(product)
+    if not advertised or advertised == [_ONE_SIZE]:
+        # The catalog sells this in one size or states none. Nobody chose it,
+        # and asking a shopper what size handbag they want is worse than not
+        # asking -- the same carve-out the sold-size gate makes.
+        return ""
     if cart_line_size and chosen.casefold() == cart_line_size.casefold():
         return ""
-    if _shopper_said(stated_as, shopper_text):
+    if _shopper_said(stated_as, shopper_text, chosen):
         return ""
     return (
         f"SIZE NOT ESTABLISHED: the shopper did not ask for a size {chosen}. "

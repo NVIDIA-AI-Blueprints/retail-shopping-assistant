@@ -7785,6 +7785,142 @@ class TestDeepAgentsRuntimeRefs:
         )
         assert "ALREADY ESTABLISHED THIS TURN" not in mixed
 
+    def test_a_product_the_shopper_only_described_is_not_added(
+        self,
+        base_config,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The silent pick, through the tool that would have committed it.
+
+        Four black dresses shown; "add the black one" resolved to one of them
+        and every other check passed. Naming none of them, and with the record
+        having picked none of them, the model chose -- which is the one thing it
+        must not do without saying so.
+        """
+
+        from chain_server.src import deepagents_runtime as runtime_mod
+        from chain_server.src import turn_support as runtime_mod_support
+
+        captured: Dict[str, Any] = {}
+        deepagents_mod = ModuleType("deepagents")
+        tools_mod = ModuleType("langchain_core.tools")
+        openai_mod = ModuleType("langchain_openai")
+
+        class FakeProfile:
+            def __init__(self, *args, **kwargs) -> None:
+                pass
+
+        class FakeChatOpenAI:
+            def __init__(self, *args, **kwargs) -> None:
+                pass
+
+        def fake_tool(*, args_schema=None, return_direct: bool = False, **_kw):
+            def decorate(fn):
+                fn.args_schema = args_schema
+                fn.return_direct = return_direct
+                return fn
+
+            return decorate
+
+        deepagents_mod.GeneralPurposeSubagentProfile = FakeProfile
+        deepagents_mod.HarnessProfile = FakeProfile
+        deepagents_mod.create_deep_agent = lambda **kwargs: (
+            captured.update(kwargs) or SimpleNamespace()
+        )
+        deepagents_mod.register_harness_profile = lambda *args, **kwargs: None
+        tools_mod.tool = fake_tool
+        openai_mod.ChatOpenAI = FakeChatOpenAI
+        monkeypatch.setitem(sys.modules, "deepagents", deepagents_mod)
+        monkeypatch.setitem(sys.modules, "langchain_core.tools", tools_mod)
+        monkeypatch.setitem(sys.modules, "langchain_openai", openai_mod)
+
+        gown = ProductSummary(
+            product_id="prod_gown",
+            display_name="Belle Noir Satin Gown",
+            price=Money(amount=129.99),
+        )
+        lace = ProductSummary(
+            product_id="prod_lace",
+            display_name="Vivienne Lace Dress",
+            price=Money(amount=169.99),
+        )
+        monkeypatch.setattr(
+            runtime_mod,
+            "execute_catalog_search",
+            lambda plan, url, **kw: SimpleNamespace(
+                result=SearchCatalogResult(ok=True, products=[gown, lace]),
+                fallback_attempted=False,
+                fallback_used=False,
+            ),
+        )
+        monkeypatch.setattr(
+            runtime_mod,
+            "get_product_details",
+            lambda request, *a, **k: GetProductDetailsResult(
+                ok=True,
+                product=ProductDetail.model_validate(
+                    (gown if request.product_id == "prod_gown" else lace).model_dump()
+                ),
+            ),
+        )
+        added: list[Any] = []
+        monkeypatch.setattr(
+            runtime_mod,
+            "add_cart_item",
+            lambda request, memory_port: added.append(request)
+            or CartMutationResult(ok=True, message="ok"),
+        )
+
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+        runtime._read_cart = lambda user_id: Cart(contents=[])
+        runtime._catalog_capabilities = SimpleNamespace(
+            get=lambda **_: CatalogCapabilities(
+                catalog_id="fashion", retrieval_modes=["text"], filters={}
+            )
+        )
+        identity = runtime_mod_support.RequestIdentity(
+            session_id="session-a",
+            conversation_id="conversation-a",
+            cart_id="cart-a",
+            context_user_id=111,
+            cart_user_id=222,
+            request_id="request-a",
+        )
+        runtime._conversation_products = SimpleNamespace(
+            resolve=lambda *_: ResolveConversationProductsResult(
+                results=[
+                    ProductReferenceResolution(
+                        reference_id="black_one",
+                        status="not_found",
+                        matches=[],
+                        match_count=0,
+                        blocking_field=None,
+                    )
+                ]
+            )
+        )
+        runtime._create_agent(
+            State(user_id=111, query="add the black one"), identity
+        )
+        tools = {fn.__name__: fn for fn in captured["tools"]}
+        # Two products enter this turn by search, so the record picked neither.
+        tool_text(
+            tools["resolve_conversation_products_tool"](
+                references=[
+                    {"reference_id": "black_one", "display_name": "the black one"}
+                ]
+            )
+        )
+
+        response = tool_text(
+            tools["add_cart_items_tool"](
+                items=[{"product_ref": "prod_gown", "quantity": 1}]
+            )
+        )
+
+        assert "PRODUCT NOT ESTABLISHED" in response
+        assert added == []
+
     def test_a_product_never_shown_is_looked_up_in_the_catalog(
         self,
         base_config,
@@ -8279,7 +8415,7 @@ class TestDeepAgentsRuntimeRefs:
         runtime._conversation_products = SimpleNamespace(
             resolve=lambda *_: _resolved_conversation_products(product, bag, dress)
         )
-        runtime._create_agent(State(user_id=111, query="add the dress in a size 4 and 3 of the flats"), identity)
+        runtime._create_agent(State(user_id=111, query="add The Office A-line Dress in a size 4, 3 of the flats Felicity Flats and the Work Bag and the black one"), identity)
         tools_by_name = {fn.__name__: fn for fn in captured["tools"]}
         add_tool = tools_by_name["add_cart_items_tool"]
 
@@ -8342,6 +8478,7 @@ class TestDeepAgentsRuntimeRefs:
         assert "SIZE REQUIRED" not in sized
         assert len(added) == 1
         added.clear()
+
         added_response = tool_text(
             add_tool(
                 items=[
@@ -8489,8 +8626,12 @@ class TestDeepAgentsRuntimeRefs:
         )
 
         assert added == []
-        assert "outside the current explicit add request" in blocked_response
-        assert "Luminous Lace Blouse Sweater" in blocked_response
+        # Refused either way: the shopper did not name it, and it was not part
+        # of the explicit request. The provenance gate reaches it first.
+        assert (
+            "PRODUCT NOT ESTABLISHED" in blocked_response
+            or "outside the current explicit add request" in blocked_response
+        )
         assert "Green Meadow Sweater Top" in blocked_response
 
         mismatch_response = tool_text(

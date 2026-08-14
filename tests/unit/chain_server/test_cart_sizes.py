@@ -227,9 +227,16 @@ class TestSizeProvenance:
     """A size is a want, not a fact: only the shopper says which one."""
 
     def _issue(self, **kw):
+        from types import SimpleNamespace
+
         from chain_server.src.turn_support import _cart_size_provenance_issue
 
+        product = SimpleNamespace(
+            display_name="A Dress",
+            attributes={"sizes": kw.get("sizes", ["2", "4", "6", "8", "10"])},
+        )
         return _cart_size_provenance_issue(
+            product,
             kw.get("size", "8"),
             kw.get("stated_as"),
             kw.get("shopper_text", ""),
@@ -319,3 +326,229 @@ class TestQuantityProvenance:
         assert "QUANTITY NOT ESTABLISHED" in self._issue(
             5, stated_as="five of them", shopper_text="add the flats"
         )
+
+
+class TestProductProvenance:
+    """Which product a description means is a judgement; something must confirm it."""
+
+    def _product(self, ref="d0", name="Belle Noir Satin Gown"):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(product_id=ref, display_name=name)
+
+    def _dresses(self, n=4):
+        names = [
+            "Belle Noir Satin Gown",
+            "Black Satin Lace-Up Dress",
+            "Vivienne Lace Dress",
+            "Black Polka-Dotted Slip Dress",
+        ]
+        return [self._product(f"d{i}", names[i]) for i in range(n)]
+
+    def _evidence(self, *products, system_identified=()):
+        class _Evidence:
+            def values(self_inner):
+                return products
+
+            def identified_by_the_system(self_inner, ref):
+                return ref in system_identified
+
+        return _Evidence()
+
+    def _issue(self, **kw):
+        from chain_server.src.turn_support import (
+            _cart_product_provenance_issue,
+        )
+
+        return _cart_product_provenance_issue(
+            kw.get("product") or self._product(),
+            kw.get("shopper_text", ""),
+            kw["evidence"],
+            kw.get("recently_shown", ()),
+        )
+
+    def test_a_partial_name_is_still_a_naming(self) -> None:
+        """Shoppers shorten names, and a run of the name cannot be said by chance.
+
+        "the A line dress" carries 'a line' from The Office A-line Dress and
+        from no other candidate. Requiring the whole name refused the commonest
+        correct add; matching scattered words fitted a navy dress to "the black
+        one in a 2", because 'the' and 'a' belong to that name and to ordinary
+        sentences alike.
+        """
+
+        for words in (
+            "add the A line dress in a 2",
+            "A line dress please",
+            "add the Office dress",
+        ):
+            assert self._issue(
+                product=self._product("d4", "The Office A-line Dress"),
+                shopper_text=words,
+                evidence=self._evidence(
+                    self._product("d4", "The Office A-line Dress"),
+                    *self._dresses(4),
+                ),
+            ) == "", words
+
+    def test_ordinary_words_of_a_name_are_not_a_naming(self) -> None:
+        """'the' and 'a' belong to the name and to the sentence around it."""
+
+        assert "PRODUCT NOT ESTABLISHED" in self._issue(
+            product=self._product("d4", "The Office A-line Dress"),
+            shopper_text="add the black one in a 2",
+            evidence=self._evidence(
+                self._product("d4", "The Office A-line Dress"),
+                *self._dresses(4),
+            ),
+        )
+
+    def test_a_shortened_or_misspelt_name_still_names(self) -> None:
+        """Shoppers shorten names and mistype them, and still mean one product.
+
+        Whole-name matching refused "add the Southwest Bracelet" because the
+        catalog calls it "Southwest Bracelet"; a word-run rule then refused
+        "the noir one" because 'noir' is four letters. Likeness with a margin
+        takes both, and takes a typo with them.
+        """
+
+        for words in (
+            "add the A line dress in a 2",
+            "add the Office dress",
+            "add the Ofice dress",
+            "A line dress please",
+        ):
+            assert self._issue(
+                product=self._product("d4", "The Office A-line Dress"),
+                shopper_text=words,
+                evidence=self._evidence(
+                    self._product("d4", "The Office A-line Dress"),
+                    *self._dresses(4),
+                ),
+            ) == "", words
+
+    def test_the_last_products_shown_are_candidates_too(self) -> None:
+        """The check must not vanish because the model already narrowed.
+
+        Four black dresses were on screen. The model resolved one of them, so
+        this turn's evidence held a single product, nothing was ambiguous
+        against it, and the add went through silently -- the whole failure,
+        surviving the gate built to stop it.
+        """
+
+        issue = self._issue(
+            product=self._product("d1", "Black Satin Lace-Up Dress"),
+            shopper_text="add the black one in a size 8",
+            evidence=self._evidence(self._product("d1", "Black Satin Lace-Up Dress")),
+            recently_shown=[
+                {"ref": "d1", "name": "Black Satin Lace-Up Dress"},
+                {"ref": "d3", "name": "Black Polka-Dotted Slip Dress"},
+            ],
+        )
+
+        assert "PRODUCT NOT ESTABLISHED" in issue
+
+    def test_short_words_of_a_name_do_not_name_it(self) -> None:
+        """'the' and 'a' are part of the name and of every other sentence.
+
+        Counting them, "add the black one in a 2" fitted The Office A-line
+        Dress on 'the' and 'a' alone -- a navy dress, from fourteen turns
+        earlier, for a request about a black one.
+        """
+
+        assert "PRODUCT NOT ESTABLISHED" in self._issue(
+            product=self._product("d4", "The Office A-line Dress"),
+            shopper_text="add the black one in a 2",
+            evidence=self._evidence(
+                self._product("d4", "The Office A-line Dress"),
+                *self._dresses(4),
+            ),
+        )
+
+    def test_two_near_equal_candidates_are_asked_about(self) -> None:
+        """The margin, not the score, is what protects the shopper.
+
+        "the black one" fits two black dresses about equally. A threshold would
+        still have a best of the two and would add it -- which is exactly what
+        happened, fourteen turns from where the shopper was looking.
+        """
+
+        assert "PRODUCT NOT ESTABLISHED" in self._issue(
+            product=self._product("d1", "Black Satin Lace-Up Dress"),
+            shopper_text="add the black one in a 2",
+            evidence=self._evidence(*self._dresses(4)),
+        )
+
+    def test_a_shared_word_does_not_dilute_a_distinct_one(self) -> None:
+        """"the black polka dotted one" says black twice over and polka once.
+
+        Without discarding runs that two names share, 'black' would fit two
+        dresses, the count would be two, and a request that names one product
+        plainly would be answered with a question.
+        """
+
+        assert self._issue(
+            product=self._product("d3", "Black Polka-Dotted Slip Dress"),
+            shopper_text="add the black polka dotted one",
+            evidence=self._evidence(*self._dresses(4)),
+        ) == ""
+
+    def test_a_run_shared_by_two_candidates_is_refused(self) -> None:
+        """"the satin one" is a run of two names, so it names neither."""
+
+        assert "PRODUCT NOT ESTABLISHED" in self._issue(
+            product=self._product("d0", "Belle Noir Satin Gown"),
+            shopper_text="add the satin one in a 2",
+            evidence=self._evidence(*self._dresses(4)),
+        )
+
+    def test_a_description_that_fits_several_is_refused(self) -> None:
+        """The silent pick, recorded from the demo script.
+
+        Four black dresses had been shown. "add the black one in a 2" resolved
+        to a navy dress from fourteen turns earlier, and every check passed:
+        the ref was established, the name matched the ref, the size was sold
+        and the shopper really had said "in a 2".
+        """
+
+        issue = self._issue(
+            shopper_text="add the black one in a 2",
+            evidence=self._evidence(*self._dresses()),
+        )
+
+        assert "PRODUCT NOT ESTABLISHED" in issue
+        assert "Ask which one" in issue
+
+    def test_the_shopper_naming_it_is_enough(self) -> None:
+        assert self._issue(
+            shopper_text="add the Belle Noir Satin Gown in a 2",
+            evidence=self._evidence(*self._dresses()),
+        ) == ""
+
+    def test_a_name_they_never_said_is_not_a_naming(self) -> None:
+        """Otherwise the quotation is the model's word for its own choice."""
+
+        assert "PRODUCT NOT ESTABLISHED" in self._issue(
+            shopper_text="add the black one",
+            evidence=self._evidence(*self._dresses()),
+        )
+
+    def test_the_record_picking_it_is_enough(self) -> None:
+        """"that first one" is turn 2 of the 13-turn script.
+
+        The words name nothing, but the shopper gave a position and the record
+        resolved it. The system picked the product, not the model.
+        """
+
+        assert self._issue(
+            shopper_text="do you have that first one in a size 6",
+            evidence=self._evidence(*self._dresses(), system_identified={"d0"}),
+        ) == ""
+
+    def test_one_candidate_needs_no_words(self) -> None:
+        """"add it" after a single product is unambiguous whatever they said."""
+
+        assert self._issue(
+            shopper_text="add it",
+            evidence=self._evidence(self._product()),
+        ) == ""

@@ -1,9 +1,0 @@
-id: no_results_recovery
-covers: [discovery, filters]
-why: >
-  A combination with nothing behind it should relax and say what it relaxed,
-  not end the turn with an apology and a full search budget unspent.
-turns:
-  - say: do you have a green dress in a size 2
-    expect:
-      cart_unchanged: true

@@ -3,10 +3,6 @@
 Twenty-five conversations whose words never change, with assertions answered by
 the cart the service holds, the products it returned, and the tools it called.
 
-Nothing here reads the assistant's wording. That is the point: a run once
-reported "no failed turns" while a size 6 nobody asked for sat in the cart, and
-again while a dress had gone missing entirely.
-
 ## Running
 
 ```bash
@@ -30,8 +26,32 @@ twenty-five; under 30 at `--concurrency 4`.
 Needs the stack up (chain server on 8009, memory on 8011) and
 `EXPOSE_AGENT_DIAGNOSTICS=true` for the `tools_used` assertions.
 
-Results land in `tests/evaluation/results/val/<label>/`: `report.md` to read,
-`raw/<scenario>.json` for every turn, reply, product, tool and cart.
+Results land in `tests/evaluation/results/val/<label>/`, which is gitignored:
+
+```
+report.md                 one row per scenario, failures expanded
+transcripts/<id>-<n>.md   the conversation, with the cart after every turn
+raw/<id>-<n>.json         everything, for a tool to read
+```
+
+**The transcript is the artifact.** Judge from it -- by eye, or by handing it to
+a model -- and note that the cart is printed after every turn. A transcript of
+replies alone is judged on prose, and prose is what reported "no failed turns"
+over a size nobody asked for and again over a dress that had gone missing. Here
+the words and the cart sit next to each other:
+
+```markdown
+## 2. add the Black Satin Lace-Up Dress
+
+Added it in a size 2.
+
+> **Cart: 1 x Black Satin Lace-Up Dress (size 2)**
+> 18.0s · 0 products · tools ['add_cart_items_tool']
+> **FAILED** `cart_unchanged` — cart went from [] to [...]
+```
+
+Each transcript records the build it was run against, because several of ours
+could not say, and were misread for it.
 
 ## Writing a script
 

@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
 import requests
+import subprocess
 import yaml
 
 from .config import EvalConfig, load_eval_config
@@ -60,6 +61,7 @@ class TurnResult:
     cart: list[dict[str, Any]]
     tools: list[str]
     seconds: float
+    attached: str = ""
     checks: list[Check] = field(default_factory=list)
 
 
@@ -349,6 +351,7 @@ def run_scenario(
             error = f"turn {index}: {type(exc).__name__}: {exc}"
             break
         turn = TurnResult(
+            attached=str(step["attach"]) if step.get("attach") else "",
             index=index,
             said=str(step["say"]),
             reply=answered["reply"],
@@ -378,6 +381,62 @@ def run_scenario(
         "identity": identity,
         "turns": [vars(turn) | {"checks": [vars(c) for c in turn.checks]} for turn in turns],
     }
+
+
+def write_transcript(
+    path: Path,
+    scenario: Mapping[str, Any],
+    result: Mapping[str, Any],
+    build: str,
+) -> None:
+    """Write the conversation as something a person or a judge can read.
+
+    The cart appears after every turn, which is the point. A transcript of
+    replies alone is judged on prose, and prose is what reported "no failed
+    turns" over a size nobody asked for and again over a dress that had gone
+    missing. Whoever reads this -- a person or a model -- sees what the words
+    claimed and what the cart actually held, side by side.
+    """
+
+    lines = [
+        f"# {result['id']}",
+        "",
+        f"Build: {build}",
+        f"Covers: {', '.join(result['covers']) or '—'}",
+        f"Conversation: `{result['identity']['conversation_id']}`",
+        "",
+    ]
+    why = " ".join((scenario.get("why") or "").split())
+    if why:
+        lines += [f"> {why}", ""]
+    lines += ["---", ""]
+
+    for turn in result["turns"]:
+        lines += [f"## {turn['index']}. {turn['said']}", ""]
+        if turn.get("attached"):
+            lines += [f"*[attached {turn['attached']}]*", ""]
+        lines += [turn["reply"] or "*(no reply)*", ""]
+        cart = turn["cart"]
+        if cart:
+            held = "; ".join(
+                f"{line.get('amount')} x {line.get('item')}"
+                + (f" (size {line['size']})" if line.get("size") else "")
+                for line in cart
+            )
+        else:
+            held = "empty"
+        lines.append(f"> **Cart: {held}**")
+        lines.append(
+            f"> {turn['seconds']}s · {len(turn['products'])} products · "
+            f"tools {turn['tools'] or '—'}"
+        )
+        for check in turn["checks"]:
+            mark = {"pass": "ok", "fail": "**FAILED**", "error": "error"}[check["outcome"]]
+            detail = f" — {check['detail']}" if check["outcome"] != "pass" else ""
+            lines.append(f"> {mark} `{check['name']}`{detail}")
+        lines.append("")
+
+    path.write_text("\n".join(lines))
 
 
 def preflight(config: EvalConfig) -> None:
@@ -427,6 +486,13 @@ def main() -> None:
 
     out = RESULTS_ROOT / args.label
     (out / "raw").mkdir(parents=True, exist_ok=True)
+    (out / "transcripts").mkdir(parents=True, exist_ok=True)
+    # Which build produced this. A transcript that cannot say what it was run
+    # against is worth little, and that was learned by having several.
+    build = subprocess.run(
+        ["git", "log", "--oneline", "-1"],
+        capture_output=True, text=True, cwd=EVAL_ROOT,
+    ).stdout.strip() or "unknown"
     print(f"  {len(jobs)} runs, concurrency {args.concurrency}, label {args.label}")
 
     results: list[dict[str, Any]] = []
@@ -434,8 +500,11 @@ def main() -> None:
     def execute(job: tuple[Mapping[str, Any], int]) -> dict[str, Any]:
         scenario, repeat = job
         result = run_scenario(scenario, assistant, args.label, repeat)
-        name = f"{result['id']}-{repeat}.json"
-        (out / "raw" / name).write_text(json.dumps(result, indent=1, default=str))
+        stem = f"{result['id']}-{repeat}"
+        (out / "raw" / f"{stem}.json").write_text(
+            json.dumps(result, indent=1, default=str)
+        )
+        write_transcript(out / "transcripts" / f"{stem}.md", scenario, result, build)
         mark = {"pass": "ok  ", "fail": "FAIL", "error": "ERR "}[result["outcome"]]
         print(f"  {mark} {result['id']}", flush=True)
         for line in result["failed_checks"]:
@@ -459,6 +528,7 @@ def main() -> None:
     }
     print(f"\n  pass {counts['pass']}  fail {counts['fail']}  error {counts['error']}")
     print(f"  -> {out / 'report.md'}")
+    print(f"  -> {out / 'transcripts'}/  ({len(results)} conversations to read)")
 
 
 def _report(args: argparse.Namespace, results: Sequence[Mapping[str, Any]]) -> str:

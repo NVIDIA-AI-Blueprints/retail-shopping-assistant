@@ -285,3 +285,37 @@ class TestSizeProvenance:
         """Bags, jewellery and sunglasses are onesize and ask nothing."""
 
         assert self._issue(size=None, shopper_text="add the tote") == ""
+
+
+class TestQuantityProvenance:
+    """The sibling of the size: a number the shopper did not choose."""
+
+    def _issue(self, quantity, stated_as=None, shopper_text=""):
+        from chain_server.src.turn_support import (
+            _cart_quantity_provenance_issue,
+        )
+
+        return _cart_quantity_provenance_issue(quantity, stated_as, shopper_text)
+
+    def test_one_is_what_add_it_means(self) -> None:
+        """The ordinary add asks nothing and must stay free."""
+
+        assert self._issue(1, shopper_text="add it to my cart") == ""
+
+    def test_a_number_nobody_asked_for_is_refused(self) -> None:
+        """Quantity had no guard at all -- the size at least had to be sold."""
+
+        issue = self._issue(3, shopper_text="add the flats to my cart")
+
+        assert "QUANTITY NOT ESTABLISHED" in issue
+        assert "ask how many" in issue
+
+    def test_the_shoppers_own_words_are_enough(self) -> None:
+        assert self._issue(
+            2, stated_as="two of them", shopper_text="add two of them please"
+        ) == ""
+
+    def test_a_quantity_the_shopper_never_said_is_refused(self) -> None:
+        assert "QUANTITY NOT ESTABLISHED" in self._issue(
+            5, stated_as="five of them", shopper_text="add the flats"
+        )

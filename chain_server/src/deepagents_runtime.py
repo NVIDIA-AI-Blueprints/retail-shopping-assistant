@@ -62,6 +62,7 @@ from .turn_support import (
     _add_model_usage,
     _cart_size_issue,
     _cart_line_size,
+    _cart_quantity_provenance_issue,
     _cart_size_provenance_issue,
     _build_checkpointer,
     _cart_add_scope_failures,
@@ -1612,6 +1613,16 @@ class DeepAgentsRuntime:
                 )
                 if size_issue:
                     blocked.append(f"- PRODUCT_REF '{product_ref}': {size_issue}")
+                    continue
+                quantity_issue = _cart_quantity_provenance_issue(
+                    request["quantity"],
+                    request.get("quantity_stated_as"),
+                    state.query,
+                )
+                if quantity_issue:
+                    blocked.append(
+                        f"- PRODUCT_REF '{product_ref}': {quantity_issue}"
+                    )
                     continue
                 resolved.append(
                     (

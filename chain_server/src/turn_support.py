@@ -1525,6 +1525,15 @@ class AddCartItemsToolItemInput(BaseModel):
         ge=1,
         description="Quantity of this product to add.",
     )
+    quantity_stated_as: str | None = Field(
+        default=None,
+        max_length=200,
+        description=(
+            "The shopper's own words asking for more than one, quoted from "
+            "their message -- 'two of them', 'add 3'. Required above quantity "
+            "1. One is what 'add it' means; any more is a number they chose."
+        ),
+    )
     expected_display_name: str | None = Field(
         default=None,
         description=(
@@ -3784,6 +3793,7 @@ def _normalize_cart_add_tool_items(
                     else ""
                 ),
                 "size_stated_as": (parsed.size_stated_as or "").strip(),
+                "quantity_stated_as": (parsed.quantity_stated_as or "").strip(),
             },
         )
         entry["quantity"] += quantity
@@ -3867,6 +3877,38 @@ def _same_product_display_name(expected: str, actual: str) -> bool:
 _ONE_SIZE = "onesize"
 
 
+def _shopper_said(stated_as: str | None, shopper_text: str) -> bool:
+    """Whether these are really the shopper's words, from their own message."""
+
+    quoted = " ".join((stated_as or "").split())
+    return bool(
+        quoted and quoted.casefold() in " ".join(shopper_text.split()).casefold()
+    )
+
+
+def _cart_quantity_provenance_issue(
+    quantity: int,
+    stated_as: str | None,
+    shopper_text: str,
+) -> str:
+    """Say why this quantity cannot be trusted, or "" if it can.
+
+    The sibling of the size. "Add it" means one, so one needs nothing; any more
+    is a number the shopper chose, and a number they did not choose is theirs to
+    pay for. Nothing else guards it -- quantity is a plain integer on the tool,
+    where the size at least had to be sold by the catalog.
+    """
+
+    if quantity <= 1:
+        return ""
+    if _shopper_said(stated_as, shopper_text):
+        return ""
+    return (
+        f"QUANTITY NOT ESTABLISHED: the shopper did not ask for {quantity}. "
+        "Add one, or ask how many they want. Nothing was added."
+    )
+
+
 def _cart_line_size(cart: Any, product_id: str) -> str | None:
     """The size already on this shopper's line for this product, if any."""
 
@@ -3908,8 +3950,7 @@ def _cart_size_provenance_issue(
         return ""
     if cart_line_size and chosen.casefold() == cart_line_size.casefold():
         return ""
-    quoted = " ".join((stated_as or "").split())
-    if quoted and quoted.casefold() in " ".join(shopper_text.split()).casefold():
+    if _shopper_said(stated_as, shopper_text):
         return ""
     return (
         f"SIZE NOT ESTABLISHED: the shopper did not ask for a size {chosen}. "

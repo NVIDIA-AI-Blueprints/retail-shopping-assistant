@@ -8279,7 +8279,7 @@ class TestDeepAgentsRuntimeRefs:
         runtime._conversation_products = SimpleNamespace(
             resolve=lambda *_: _resolved_conversation_products(product, bag, dress)
         )
-        runtime._create_agent(State(user_id=111, query="add the dress in a size 4"), identity)
+        runtime._create_agent(State(user_id=111, query="add the dress in a size 4 and 3 of the flats"), identity)
         tools_by_name = {fn.__name__: fn for fn in captured["tools"]}
         add_tool = tools_by_name["add_cart_items_tool"]
 
@@ -8348,6 +8348,7 @@ class TestDeepAgentsRuntimeRefs:
                     {
                         "product_ref": "prod_flats",
                         "quantity": 2,
+                        "quantity_stated_as": "3 of the flats",
                         "expected_display_name": "Felicity Flats",
                     },
                     {"product_ref": "missing", "quantity": 1},

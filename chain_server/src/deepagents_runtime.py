@@ -63,6 +63,9 @@ from .turn_support import (
     _cart_size_issue,
     _cart_line_size,
     _cart_quantity_provenance_issue,
+    _cart_product_provenance_issue,
+    _most_recently_shown,
+    _shopper_words_this_conversation,
     _cart_size_provenance_issue,
     _build_checkpointer,
     _cart_add_scope_failures,
@@ -1432,7 +1435,7 @@ class DeepAgentsRuntime:
                     "REFERENCE RESOLUTION UNAVAILABLE: Ask which earlier product "
                     "the shopper means; do not guess or search for a substitute."
                 )
-            scope.product_evidence.add_resolutions(result.results)
+            scope.product_evidence.add_resolutions(result.results, references)
             for resolution in result.results:
                 if resolution.status != "resolved":
                     continue
@@ -1508,19 +1511,20 @@ class DeepAgentsRuntime:
             def _resolve_from_conversation_index(product_ref: str):
                 """Look one ref up in the conversation's durable product index."""
 
+                descriptors = [
+                    ProductReferenceDescriptor(
+                        reference_id="cart-add",
+                        product_ref=product_ref,
+                    )
+                ]
                 try:
                     result = self._conversation_products.resolve(
                         identity.conversation_id,
-                        [
-                            ProductReferenceDescriptor(
-                                reference_id="cart-add",
-                                product_ref=product_ref,
-                            )
-                        ],
+                        descriptors,
                     )
                 except (ConversationProductsError, ValidationError):
                     return None
-                scope.product_evidence.add_resolutions(result.results)
+                scope.product_evidence.add_resolutions(result.results, descriptors)
                 return scope.product_evidence.get(product_ref)
 
             resolved: list[tuple[str, ProductSummary, int]] = []
@@ -1606,9 +1610,10 @@ class DeepAgentsRuntime:
                 size_issue = _cart_size_issue(
                     active_detail.product, size
                 ) or _cart_size_provenance_issue(
+                    active_detail.product,
                     size,
                     request.get("size_stated_as"),
-                    state.query,
+                    _shopper_words_this_conversation(state),
                     _cart_line_size(state.cart, product.product_id),
                 )
                 if size_issue:
@@ -1617,11 +1622,22 @@ class DeepAgentsRuntime:
                 quantity_issue = _cart_quantity_provenance_issue(
                     request["quantity"],
                     request.get("quantity_stated_as"),
-                    state.query,
+                    _shopper_words_this_conversation(state),
                 )
                 if quantity_issue:
                     blocked.append(
                         f"- PRODUCT_REF '{product_ref}': {quantity_issue}"
+                    )
+                    continue
+                product_issue = _cart_product_provenance_issue(
+                    active_detail.product,
+                    _shopper_words_this_conversation(state),
+                    scope.product_evidence,
+                    _most_recently_shown(state),
+                )
+                if product_issue:
+                    blocked.append(
+                        f"- PRODUCT_REF '{product_ref}': {product_issue}"
                     )
                     continue
                 resolved.append(

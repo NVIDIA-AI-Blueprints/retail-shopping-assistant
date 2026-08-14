@@ -218,11 +218,36 @@ class ConversationProductsClient:
             ) from exc
 
 
+#: Selectors that identify a product without the model choosing which one: the
+#: coordinates recorded when the products were shown -- which turn, which set,
+#: which position. A product_ref is deliberately not among them. The refs are
+#: printed into the prompt, so picking one out of four black dresses is the
+#: model choosing and then quoting itself, which is the move this exists to
+#: catch.
+_SYSTEM_SELECTORS = ("ordinal", "candidate_set_id", "turn_sequence")
+
+
+def _descriptor_value(descriptor: Any, name: str) -> Any:
+    if isinstance(descriptor, dict):
+        return descriptor.get(name)
+    return getattr(descriptor, name, None)
+
+
+def _identified_by_the_system(descriptor: Any) -> bool:
+    if descriptor is None:
+        return False
+    return any(
+        _descriptor_value(descriptor, name) is not None
+        for name in _SYSTEM_SELECTORS
+    )
+
+
 class ProductEvidence:
     """Products authorized for deterministic tools in the current turn."""
 
     def __init__(self, products: Iterable[ProductSummary] = ()) -> None:
         self._products = {product.product_id: product for product in products}
+        self._system_identified: set[str] = set()
 
     def add(self, products: Iterable[ProductSummary]) -> None:
         for product in products:
@@ -231,10 +256,29 @@ class ProductEvidence:
     def add_resolutions(
         self,
         resolutions: Iterable[ProductReferenceResolution],
+        descriptors: Iterable[Any] = (),
     ) -> None:
+        by_reference = {
+            _descriptor_value(descriptor, "reference_id"): descriptor
+            for descriptor in descriptors or ()
+        }
         for resolution in resolutions:
-            if resolution.status == "resolved" and len(resolution.matches) == 1:
-                self.add([resolution.matches[0].product])
+            if resolution.status != "resolved" or len(resolution.matches) != 1:
+                continue
+            product = resolution.matches[0].product
+            self.add([product])
+            # How the product was identified, not just that it was. A ref the
+            # system minted, or a position it recorded, is the system picking
+            # the product. A display name is the model asserting one -- which is
+            # right when the shopper said the name and wrong when they said
+            # "the black one" and the model chose which black one they meant.
+            if _identified_by_the_system(by_reference.get(resolution.reference_id)):
+                self._system_identified.add(product.product_id)
+
+    def identified_by_the_system(self, product_ref: str) -> bool:
+        """Whether the record picked this product, rather than the model."""
+
+        return (product_ref or "").strip() in self._system_identified
 
     def get(self, product_ref: str) -> ProductSummary | None:
         return self._products.get((product_ref or "").strip())

@@ -1,0 +1,13 @@
+id: cart_onesize
+covers: [cart-management, sizes]
+why: >
+  Bags, jewellery and eyewear are one size. Asking a shopper what size handbag
+  they want is worse than not asking.
+turns:
+  - say: show me some tote bags
+    expect:
+      products_min: 2
+  - say: add the Ombre Canvas Tote Bag to my cart
+    expect:
+      cart:
+        - {name: Ombre Canvas Tote Bag, qty: 1}

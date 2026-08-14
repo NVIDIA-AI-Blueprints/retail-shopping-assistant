@@ -1,0 +1,14 @@
+id: video_look_then_reference
+covers: [media, references, sizes]
+why: >
+  The camera path, and an ordinal reference across it. "That first one" names
+  no product, so it is only answerable from the coordinates of what was shown.
+turns:
+  - say: I love this look, can you find me something similar
+    attach: casual_lady_fall.mp4
+    expect:
+      products_min: 1
+
+  - say: do you have that first one in a size 6
+    expect:
+      cart_unchanged: true            # answering, not buying

@@ -1,0 +1,19 @@
+id: reference_across_turns
+covers: [references, memory]
+why: >
+  A product named ten turns ago is still in the conversation's record. Losing
+  it means the shopper is asked to name something they were shown.
+turns:
+  - say: show me some heels
+    expect:
+      products_min: 2
+  - say: now show me some skirts
+    expect:
+      products_min: 2
+  - say: and some tote bags
+    expect:
+      products_min: 2
+  - say: add the Polished Pearl Pumps in a 7
+    expect:
+      cart:
+        - {name: Polished Pearl Pumps, size: "7", qty: 1}

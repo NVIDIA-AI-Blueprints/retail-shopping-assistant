@@ -1,0 +1,27 @@
+id: cart_two_sizes_are_two_lines
+covers: [cart-management, sizes]
+why: >
+  A size is a line, not a quantity, and a size nobody named is not their size.
+  Both were learned the hard way: reversing the first emptied a cart, and
+  ignoring the second put a size 6 in one and left the shopper with three
+  dresses.
+turns:
+  - say: show me black dresses in a size 2
+    expect:
+      products_min: 1
+      every_product: {primary_color: black}
+
+  - say: add the Black Satin Lace-Up Dress to my cart
+    expect:
+      cart_unchanged: true            # it must ask the size, not choose one
+
+  - say: size 2
+    expect:
+      cart:
+        - {name: Black Satin Lace-Up Dress, size: "2", qty: 1}
+
+  - say: actually add it in a 4 as well
+    expect:
+      cart:
+        - {name: Black Satin Lace-Up Dress, size: "2", qty: 1}
+        - {name: Black Satin Lace-Up Dress, size: "4", qty: 1}

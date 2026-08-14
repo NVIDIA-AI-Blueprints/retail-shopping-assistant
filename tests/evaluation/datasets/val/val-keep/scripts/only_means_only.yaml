@@ -1,0 +1,10 @@
+id: only_means_only
+covers: [discovery, filters]
+why: >
+  "Only" is a constraint, not a preference. Softening it into "here are some
+  black ones and also these" is the shopper being ignored politely.
+turns:
+  - say: show me ONLY black dresses in a size 2, don't show me anything else
+    expect:
+      products_min: 1
+      every_product: {primary_color: black, subcategory: dresses}

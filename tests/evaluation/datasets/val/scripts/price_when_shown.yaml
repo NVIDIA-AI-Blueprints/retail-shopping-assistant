@@ -1,0 +1,13 @@
+id: price_when_shown
+covers: [memory, honesty]
+why: >
+  A price the shopper was shown is a historical fact, not a current one. The
+  record keeps it as PRICE_WHEN_SHOWN so a later turn can say what was shown
+  without asserting it is still true.
+turns:
+  - say: show me some skirts
+    expect:
+      products_min: 2
+  - say: what did that first one cost
+    expect:
+      cart_unchanged: true

@@ -42,6 +42,11 @@ RESULTS_ROOT = EVAL_ROOT / "results" / "val"
 #: assertion in both would be meaningless while still reporting pass or fail.
 _USER_ID_BASE = 700_000_000
 
+#: The ceiling for --parallel. One turn is mostly model round trips, so beyond
+#: a handful of conversations nothing finishes sooner -- they all just take
+#: longer, and the timings stop meaning anything at all.
+_MAX_PARALLEL = 6
+
 
 @dataclass
 class Check:
@@ -467,13 +472,31 @@ def main() -> None:
         help="scenario numbers or names, comma separated: J01,J02,J13",
     )
     parser.add_argument("--repeat", type=int, default=1)
-    parser.add_argument(
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
+        "--sequential",
+        action="store_true",
+        help="one conversation at a time (the default)",
+    )
+    mode.add_argument(
+        "--parallel",
+        action="store_true",
+        help=f"all of them at once, up to {_MAX_PARALLEL}",
+    )
+    mode.add_argument(
         "--concurrency",
         type=int,
         default=1,
-        help="conversations at once; one by default so timings stay comparable",
+        help="an exact number of conversations at once",
     )
     args = parser.parse_args()
+
+    if args.parallel:
+        # Capped: the bottleneck is the model endpoint, and past that point
+        # every conversation just waits longer for the same total.
+        args.concurrency = _MAX_PARALLEL
+    if args.sequential:
+        args.concurrency = 1
 
     config = load_eval_config()
     preflight(config)
@@ -501,7 +524,8 @@ def main() -> None:
         ["git", "log", "--oneline", "-1"],
         capture_output=True, text=True, cwd=EVAL_ROOT,
     ).stdout.strip() or "unknown"
-    print(f"  {len(jobs)} runs, concurrency {args.concurrency}, label {args.label}")
+    how = "one at a time" if args.concurrency == 1 else f"{args.concurrency} at once"
+    print(f"  {len(jobs)} runs, {how}, label {args.label}")
 
     results: list[dict[str, Any]] = []
 

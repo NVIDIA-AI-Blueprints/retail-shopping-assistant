@@ -18,12 +18,17 @@ python -m tests.evaluation.src.replay --label three --only J01,J02,J13
 # a turn that fails one run in three, eight times
 python -m tests.evaluation.src.replay --only J04 --repeat 8
 
-# when wall clock matters more than comparable timings
+# all at once, when wall clock matters more than comparable timings
+python -m tests.evaluation.src.replay --label three --only J01,J02,J13 --parallel
+
+# or an exact number
 python -m tests.evaluation.src.replay --label nightly --concurrency 4
 ```
 
-Serial by default, so a failure is not competing with five other conversations
-for the model and the timings mean something. Roughly 90 minutes for all
+`--sequential` is the default, so a failure is not competing with five other
+conversations for the model and the timings mean something. `--parallel` runs
+up to six at once; beyond that nothing finishes sooner, because the bottleneck
+is the model endpoint. Roughly 90 minutes for all
 twenty-five; under 30 at `--concurrency 4`.
 
 Needs the stack up (chain server on 8009, memory on 8011) and

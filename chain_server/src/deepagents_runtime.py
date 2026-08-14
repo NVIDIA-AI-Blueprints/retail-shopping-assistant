@@ -622,6 +622,66 @@ class _CheckAvailabilityInput(BaseModel):
     )
 
 
+def _relay_instrumented(
+    agent_kwargs: dict[str, Any],
+    config: Any,
+) -> dict[str, Any]:
+    """Add NeMo Relay's instrumentation, or hand back exactly what came in.
+
+    Off unless RELAY_ENABLED says otherwise, and absent when the package is
+    not installed. An observability layer that changes behaviour by being
+    absent is not observability, so every failure here falls back to the
+    untouched arguments and says so once.
+
+    What we hand create_deep_agent carries the parts that make this agent
+    correct: middleware is the tool-loop control and the skill gate, backend is
+    the skills filesystem, checkpointer is the within-turn state that is
+    deleted at every exit. So the wrapper's output is checked rather than
+    trusted -- it appends its own middleware to ours, which is the behaviour we
+    want, and a release that replaced ours instead would silently remove both
+    gates.
+    """
+
+    if not getattr(config, "relay_enabled", False):
+        return agent_kwargs
+    try:
+        from nemo_relay.integrations.deepagents import add_nemo_relay_integration
+    except ImportError:
+        logger.warning(
+            "RELAY_ENABLED is set but nemo-relay is not installed; "
+            "running without it."
+        )
+        return agent_kwargs
+
+    try:
+        instrumented = add_nemo_relay_integration(agent_kwargs)
+    except Exception as exc:  # pragma: no cover - never break a turn for a trace
+        logger.warning("NeMo Relay instrumentation failed: %s", exc)
+        return agent_kwargs
+
+    for name, value in agent_kwargs.items():
+        if name not in instrumented:
+            logger.warning(
+                "NeMo Relay dropped %s from the agent arguments; "
+                "running without it.", name
+            )
+            return agent_kwargs
+        if name != "middleware" and instrumented[name] is not value:
+            logger.warning(
+                "NeMo Relay replaced %s rather than preserving it; "
+                "running without it.", name
+            )
+            return agent_kwargs
+    ours = agent_kwargs["middleware"]
+    if list(instrumented["middleware"])[: len(ours)] != list(ours):
+        logger.warning(
+            "NeMo Relay did not preserve our middleware order; "
+            "running without it."
+        )
+        return agent_kwargs
+    return instrumented
+
+
 class DeepAgentsRuntime:
     """Small adapter around the Deep Agents SDK.
 
@@ -2113,17 +2173,18 @@ class DeepAgentsRuntime:
             skill_gate.handle_activation_validation_error
         )
 
-        return create_deep_agent(
-            model=self._create_chat_model(),
-            tools=[activate_shopper_skills_tool, *shopping_tools],
-            system_prompt=self._system_prompt(
+        agent_kwargs: dict[str, Any] = {
+            "model": self._create_chat_model(),
+            "tools": [activate_shopper_skills_tool, *shopping_tools],
+            "system_prompt": self._system_prompt(
                 turn_capabilities,
                 shopper_context=state.shopper_context,
             ),
-            middleware=[tool_loop_control, skill_gate],
-            backend=skills_backend,
-            checkpointer=self._checkpointer,
-        )
+            "middleware": [tool_loop_control, skill_gate],
+            "backend": skills_backend,
+            "checkpointer": self._checkpointer,
+        }
+        return create_deep_agent(**_relay_instrumented(agent_kwargs, self.config))
 
     async def _delete_turn_checkpoint(self, identity: RequestIdentity) -> None:
         try:

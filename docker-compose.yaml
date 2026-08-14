@@ -22,6 +22,7 @@ services:
       - CHECKPOINT_STORE=${CHECKPOINT_STORE-memory}
       - DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS=${DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS:-45}
       - EXPOSE_AGENT_DIAGNOSTICS=${EXPOSE_AGENT_DIAGNOSTICS:-false}
+      - RELAY_ENABLED=${RELAY_ENABLED:-false}
       - WEATHER_ENABLED=${WEATHER_ENABLED:-false}
       - WEATHER_API_KEY=${WEATHER_API_KEY:-}
       # Unset by default: no endpoint means no exporter and no instrumentation.

@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
+from types import ModuleType
 from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
@@ -1298,3 +1300,127 @@ def test_a_refused_search_over_a_carried_type_still_fails_closed() -> None:
         _rejected_catalog_search_response(messages, request_id="current-request")
         == _REJECTED_CATALOG_SEARCH_RESPONSE
     )
+
+
+class TestRelayInstrumentation:
+    """An observability layer must not change what the agent is."""
+
+    def _kwargs(self):
+        return {
+            "model": object(),
+            "tools": [object()],
+            "system_prompt": "prompt",
+            "middleware": [object(), object()],
+            "backend": object(),
+            "checkpointer": object(),
+        }
+
+    def _instrument(self, kwargs, enabled=True):
+        from chain_server.src.deepagents_runtime import _relay_instrumented
+        from types import SimpleNamespace
+
+        return _relay_instrumented(kwargs, SimpleNamespace(relay_enabled=enabled))
+
+    def _stub_relay(self, monkeypatch, integration) -> None:
+        module = ModuleType("nemo_relay.integrations.deepagents")
+        module.add_nemo_relay_integration = integration
+        monkeypatch.setitem(sys.modules, "nemo_relay", ModuleType("nemo_relay"))
+        monkeypatch.setitem(
+            sys.modules, "nemo_relay.integrations", ModuleType("nemo_relay.integrations")
+        )
+        monkeypatch.setitem(sys.modules, "nemo_relay.integrations.deepagents", module)
+
+    def test_off_by_default_hands_back_exactly_what_it_got(self, monkeypatch) -> None:
+        """Absent configuration must never change behaviour.
+
+        Stubbed as installed and working, so this proves the flag rather than
+        the package being missing -- which it would otherwise pass for.
+        """
+
+        called = []
+        self._stub_relay(
+            monkeypatch,
+            lambda kwargs, **_: called.append(1) or {**kwargs, "middleware": ["relay"]},
+        )
+        kwargs = self._kwargs()
+
+        assert self._instrument(kwargs, enabled=False) is kwargs
+        assert called == []
+
+    def test_a_dropped_argument_is_refused(self, monkeypatch) -> None:
+        """middleware is the tool-loop control and the skill gate; backend is
+        the skills filesystem. A release that dropped one would remove a gate
+        silently, which is worse than having no tracing."""
+
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        module = ModuleType("nemo_relay.integrations.deepagents")
+        module.add_nemo_relay_integration = lambda kwargs, **_: {
+            name: value for name, value in kwargs.items() if name != "backend"
+        }
+        monkeypatch.setitem(sys.modules, "nemo_relay", ModuleType("nemo_relay"))
+        monkeypatch.setitem(
+            sys.modules, "nemo_relay.integrations", ModuleType("nemo_relay.integrations")
+        )
+        monkeypatch.setitem(sys.modules, "nemo_relay.integrations.deepagents", module)
+
+        kwargs = self._kwargs()
+
+        assert self._instrument(kwargs) is kwargs
+
+    def test_replacing_our_middleware_is_refused(self, monkeypatch) -> None:
+        """Appending its own is the behaviour we want. Replacing ours removes
+        both gates, and the agent would look instrumented while being wrong."""
+
+        module = ModuleType("nemo_relay.integrations.deepagents")
+        module.add_nemo_relay_integration = lambda kwargs, **_: {
+            **kwargs,
+            "middleware": ["relay-only"],
+        }
+        monkeypatch.setitem(sys.modules, "nemo_relay", ModuleType("nemo_relay"))
+        monkeypatch.setitem(
+            sys.modules, "nemo_relay.integrations", ModuleType("nemo_relay.integrations")
+        )
+        monkeypatch.setitem(sys.modules, "nemo_relay.integrations.deepagents", module)
+
+        kwargs = self._kwargs()
+
+        assert self._instrument(kwargs) is kwargs
+
+    def test_appending_its_own_middleware_is_accepted(self, monkeypatch) -> None:
+        """What the real package does today: ours first, its own after."""
+
+        module = ModuleType("nemo_relay.integrations.deepagents")
+        module.add_nemo_relay_integration = lambda kwargs, **_: {
+            **kwargs,
+            "middleware": [*kwargs["middleware"], "relay"],
+        }
+        monkeypatch.setitem(sys.modules, "nemo_relay", ModuleType("nemo_relay"))
+        monkeypatch.setitem(
+            sys.modules, "nemo_relay.integrations", ModuleType("nemo_relay.integrations")
+        )
+        monkeypatch.setitem(sys.modules, "nemo_relay.integrations.deepagents", module)
+
+        kwargs = self._kwargs()
+        instrumented = self._instrument(kwargs)
+
+        assert instrumented is not kwargs
+        assert instrumented["middleware"][:2] == kwargs["middleware"]
+        assert instrumented["middleware"][-1] == "relay"
+
+    def test_a_missing_package_is_not_a_failed_turn(self, monkeypatch) -> None:
+        """Enabled but not installed is a warning, not a broken shopper."""
+
+        import builtins
+
+        real_import = builtins.__import__
+
+        def refuse(name, *args, **kwargs):
+            if name.startswith("nemo_relay"):
+                raise ImportError(name)
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", refuse)
+        kwargs = self._kwargs()
+
+        assert self._instrument(kwargs) is kwargs

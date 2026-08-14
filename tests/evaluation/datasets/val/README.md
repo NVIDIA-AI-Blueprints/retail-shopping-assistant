@@ -73,16 +73,71 @@ model may call `add_cart_items_tool` and be refused by the size gate; the cart
 is what must not change. That mistake was made in the first draft of
 `cart_two_sizes_are_two_lines`.
 
-## What is here
+## Two kinds of script
 
-| Group | Scripts |
-|---|---|
-| **Discovery and filters** | `only_means_only`, `not_carried`, `unadvertised_requirement`, `no_results_recovery` |
-| **References** | `reference_by_full_name`, `reference_partial_name`, `reference_pronoun`, `reference_ordinal`, `reference_across_turns`, `reference_ambiguous_colour` |
-| **Cart** | `cart_size_required`, `cart_size_change`, `cart_two_sizes_are_two_lines`, `cart_onesize`, `cart_quantity`, `cart_readback` |
-| **Styling, weather, budget** | `weather_dated_destination`, `outfit_multi_role`, `budget_under_150` |
-| **Media** | `video_look_then_reference`, `image_find_similar`, `image_out_of_catalog` |
-| **Honesty and memory** | `store_policy`, `assumed_audience_disclosed`, `price_when_shown` |
+**Journeys** (`scripts/journeys/`) are continuous conversations of six to twenty
+turns, like the demo scripts they came from. They are where context accumulates,
+and accumulated context is what produced most of this week's failures: a navy
+dress chosen at turn nineteen, a size carried out of a turn-one search filter
+into a turn-five purchase. Nothing shorter would have caught either.
+
+| journey | turns | covers |
+|---|---|---|
+| `abandon_and_restart` | 8 | cart-management, references, memory |
+| `beach_holiday` | 10 | weather, outfit-styling, discovery, cart-management, sizes |
+| `budget_journey` | 9 | budget-shopping, filters, cart-management, honesty |
+| `cart_manager` | 10 | cart-management, sizes, references |
+| `changing_mind` | 8 | discovery, filters, references, cart-management |
+| `colour_ambiguity` | 7 | references, cart-management, discovery |
+| `comparison_shopper` | 8 | discovery, memory, honesty, cart-management |
+| `gift_shopping` | 7 | cart-management, sizes, discovery, references |
+| `impossible_requirements` | 7 | discovery, filters, honesty |
+| `indecisive_shopper` | 11 | references, cart-management, sizes, memory |
+| `long_memory` | 10 | memory, references, cart-management, sizes |
+| `menswear_pivot` | 6 | media, honesty, discovery, cart-management |
+| `not_carried_pivot` | 7 | discovery, honesty, cart-management |
+| `one_size_conversation` | 9 | sizes, cart-management, discovery |
+| `photo_then_build` | 7 | media, discovery, outfit-styling, cart-management |
+| `policy_and_purchase` | 8 | store-policy-answers, honesty, cart-management |
+| `size_explorer` | 10 | cart-management, sizes, references |
+| `video_look_full` | 13 | media, references, sizes, cart-management, weather, budget-shopping |
+| `wedding_abroad` | 20 | weather, outfit-styling, references, cart-management, sizes, honesty |
+| `work_capsule` | 9 | outfit-styling, budget-shopping, cart-management, sizes |
+
+**Probes** (`scripts/probes/`) are one to four turns and check a single
+behaviour. They are for narrowing down what a journey found, and for keeping a
+fixed bug fixed.
+
+## What the probes cover
+
+
+| script | covers | what it proves | turns | assertions | media |
+|---|---|---|---|---|---|
+| `assumed_audience_disclosed` | discovery, honesty | An unscoped ask returns womenswear; the shopper is told nobody chose that | 1 | `products_min` | — |
+| `budget_under_150` | budget-shopping, filters | A ceiling that genuinely excludes, in a $39.90-$269.99 catalog | 1 | `products_min` | — |
+| `cart_onesize` | cart-management, sizes | A one-size bag is added without ever being asked its size | 2 | `cart, products_min` | — |
+| `cart_quantity` | cart-management | Two means two; a number the shopper did not choose is not theirs | 2 | `cart, products_min` | — |
+| `cart_readback` | cart-management | What it says is in the cart is what the cart holds | 3 | `cart, products_min` | — |
+| `cart_size_change` | cart-management, sizes | A size change adds the new line before removing the old | 3 | `cart, products_min` | — |
+| `cart_size_required` | cart-management, sizes | No size, no add -- and the size comes from the shopper | 3 | `cart, cart_unchanged, products_min` | — |
+| `cart_two_sizes_are_two_lines` | cart-management, sizes | Two sizes are two lines; a search filter is not a purchase decision | 4 | `cart, cart_unchanged, every_product, products_min` | — |
+| `image_find_similar` | media, discovery | A photo becomes search terms, not catalog facts | 1 | `products_min` | Black_dress.jpeg |
+| `image_out_of_catalog` | media, honesty | No menswear exists; it says so rather than offering womenswear | 1 | `cart_unchanged` | male_look.jpeg |
+| `no_results_recovery` | discovery, filters | A combination with nothing behind it relaxes and says what it relaxed | 1 | `cart_unchanged` | — |
+| `not_carried` | discovery, honesty | Aprons are not carried; that is an answer, not a failure | 1 | `cart_unchanged, products_max` | — |
+| `only_means_only` | discovery, filters | Only is a constraint, not a preference | 1 | `every_product, products_min` | — |
+| `outfit_multi_role` | outfit-styling, discovery | Three roles in one sentence, each with its own filters | 1 | `products_min` | — |
+| `price_when_shown` | memory, honesty | A price shown earlier is history, not a current claim | 2 | `cart_unchanged, products_min` | — |
+| `reference_across_turns` | references, memory | A product named ten turns ago is still resolvable | 4 | `cart, products_min` | — |
+| `reference_ambiguous_colour` | references, cart-management | Several black dresses: ask which, never pick one | 3 | `cart_unchanged, every_product, products_min, tools_not_used` | — |
+| `reference_by_full_name` | references, cart-management | The article in 'the Southwest Bracelet' must not defeat naming | 2 | `cart, every_product, products_min` | — |
+| `reference_ordinal` | references | 'That first one' is answerable only from stored position | 2 | `cart_unchanged, every_product, products_min` | — |
+| `reference_partial_name` | references, cart-management | Shoppers shorten names and still mean one product | 2 | `cart, every_product, products_min` | — |
+| `reference_pronoun` | references, cart-management | 'Add it' with one product in play is unambiguous | 2 | `cart, products_min` | — |
+| `store_policy` | store-policy-answers, honesty | Returns and shipping answered, never invented | 1 | `cart_unchanged, products_max` | — |
+| `unadvertised_requirement` | discovery, filters, honesty | Waterproof is not an attribute here: disclose, do not veto | 1 | `every_product, products_min` | — |
+| `video_look_then_reference` | media, references, sizes | The camera path, then an ordinal reference across it | 2 | `cart_unchanged, products_min` | casual_lady_fall.mp4 |
+| `weather_dated_destination` | weather, outfit-styling | A forecast is not an answer on its own -- show clothes too | 1 | `products_min` | — |
 
 Assets in `assets/`, committed as the image-shopping dataset's are.
 

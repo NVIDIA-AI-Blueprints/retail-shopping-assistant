@@ -1,0 +1,43 @@
+id: video_look_full
+covers: [media, references, sizes, cart-management, weather, budget-shopping]
+why: >
+  The thirteen-turn demo. A look arrives as video, becomes search terms, and is
+  referred back to by position two turns later -- then the conversation moves
+  through occasion, colour, materials and the cart without losing it.
+turns:
+  - say: I love this look, can you find me something similar
+    attach: casual_lady_fall.mp4
+    expect: {products_min: 1}
+  - say: do you have that first one in a size 6
+    expect: {cart_unchanged: true}
+  - say: I also have a wedding in Cancun on August 15, what should I wear
+    expect: {products_min: 1}
+  - say: is it on a beach? what shoes work
+    expect: {products_min: 1}
+  - say: do you have a green dress in a size 2
+    expect: {}
+  - say: show me ONLY black dresses in a size 2, don't show me anything else
+    expect:
+      products_min: 1
+      every_product: {primary_color: black}
+  - say: what's the Black Satin Lace-Up Dress made of, and how do I care for it
+    expect: {}
+  - say: and there's another wedding in Cancun in November
+    expect: {}
+  - say: put together a work outfit for me, nothing over $150
+    expect: {products_min: 1}
+  - say: show me some tote bags
+    expect: {products_min: 2}
+  - say: add the Jade Tone Canvas Tote Bag to my cart
+    expect:
+      cart: [{name: Jade Tone Canvas Tote Bag, qty: 1}]
+  - say: add the Ombre Canvas Tote Bag as well
+    expect:
+      cart:
+        - {name: Jade Tone Canvas Tote Bag, qty: 1}
+        - {name: Ombre Canvas Tote Bag, qty: 1}
+  - say: what's in my cart
+    expect:
+      cart:
+        - {name: Jade Tone Canvas Tote Bag, qty: 1}
+        - {name: Ombre Canvas Tote Bag, qty: 1}

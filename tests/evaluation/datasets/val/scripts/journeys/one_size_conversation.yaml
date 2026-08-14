@@ -1,0 +1,31 @@
+id: one_size_conversation
+covers: [sizes, cart-management, discovery]
+why: >
+  An entire conversation in categories that have no sizes -- bags, jewellery,
+  eyewear. Nothing here should ever ask what size, and a sized product
+  appearing late must still ask.
+turns:
+  - say: show me sunglasses
+    expect:
+      products_min: 2
+      every_product: {subcategory: sunglasses}
+  - say: add the Vivid Rose Gold Aviator Sunglasses
+    expect:
+      cart: [{name: Vivid Rose Gold Aviator Sunglasses, qty: 1}]
+  - say: now some bracelets
+    expect: {products_min: 2}
+  - say: add the Southwest Bracelet
+    expect:
+      cart:
+        - {name: Vivid Rose Gold Aviator Sunglasses, qty: 1}
+        - {name: Southwest Bracelet, qty: 1}
+  - say: and a tote bag
+    expect: {products_min: 1}
+  - say: add the Jade Tone Canvas Tote Bag
+    expect: {}
+  - say: now show me some heels
+    expect: {products_min: 2}
+  - say: add the Polished Pearl Pumps
+    expect: {}
+  - say: what's in my cart
+    expect: {}

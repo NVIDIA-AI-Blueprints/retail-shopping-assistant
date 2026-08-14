@@ -81,7 +81,7 @@ def scenario_identity(label: str, scenario_id: str, repeat: int) -> dict[str, An
 
 
 def load_scenarios(only: str | None = None) -> list[dict[str, Any]]:
-    scripts = sorted((SCRIPTS_ROOT / "scripts").glob("*.yaml"))
+    scripts = sorted((SCRIPTS_ROOT / "scripts").rglob("*.yaml"))
     loaded = []
     for path in scripts:
         data = yaml.safe_load(path.read_text()) or {}

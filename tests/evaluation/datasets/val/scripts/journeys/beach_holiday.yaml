@@ -1,0 +1,34 @@
+id: beach_holiday
+covers: [weather, outfit-styling, discovery, cart-management, sizes]
+why: >
+  A dated destination, then a whole holiday wardrobe built across turns. A
+  forecast must come with clothes, and must confirm nothing about any product:
+  sun does not make a fabric breathable.
+turns:
+  - say: I'm going to Cancun next week, what's the weather like
+    expect: {}
+  - say: what should I pack
+    expect: {products_min: 1}
+  - say: I need sandals for the beach
+    expect: {products_min: 1}
+  - say: something for dinner in the evening
+    expect: {products_min: 1}
+  - say: and sunglasses
+    expect: {products_min: 1}
+  - say: add the Xenial Aviator Sunglasses
+    expect:
+      cart: [{name: Xenial Aviator Sunglasses, qty: 1}]
+  - say: a bag I can carry to the beach
+    expect: {products_min: 1}
+  - say: add the Linen Canvas Tote Bag too
+    expect:
+      cart:
+        - {name: Xenial Aviator Sunglasses, qty: 1}
+        - {name: Linen Canvas Tote Bag, qty: 1}
+  - say: will I need a jacket in the evening
+    expect: {}
+  - say: what's in my cart
+    expect:
+      cart:
+        - {name: Xenial Aviator Sunglasses, qty: 1}
+        - {name: Linen Canvas Tote Bag, qty: 1}

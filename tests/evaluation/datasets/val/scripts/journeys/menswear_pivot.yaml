@@ -1,0 +1,22 @@
+id: menswear_pivot
+covers: [media, honesty, discovery, cart-management]
+why: >
+  There is no menswear in these 215 products. A photo of a man's outfit must be
+  answered honestly rather than with womenswear, and the conversation must
+  survive the disappointment.
+turns:
+  - say: my husband wants something like this, what do you have
+    attach: male_look.jpeg
+    expect: {cart_unchanged: true}
+  - say: nothing for men at all?
+    expect: {}
+  - say: what about sunglasses, would those work for him
+    expect: {products_min: 1}
+  - say: add the Kaleidoscope Aviator Sunglasses
+    expect:
+      cart: [{name: Kaleidoscope Aviator Sunglasses, qty: 1}]
+  - say: and something for me, show me skirts
+    expect: {products_min: 2}
+  - say: what's in my cart
+    expect:
+      cart: [{name: Kaleidoscope Aviator Sunglasses, qty: 1}]

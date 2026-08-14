@@ -1,0 +1,21 @@
+id: impossible_requirements
+covers: [discovery, filters, honesty]
+why: >
+  Requirements the catalog cannot express or cannot satisfy, one after another.
+  Each must be disclosed rather than silently vetoed, and the conversation must
+  keep moving instead of ending in an apology with the search budget unspent.
+turns:
+  - say: I need waterproof sandals
+    expect: {products_min: 1}
+  - say: do you have them in a size 3
+    expect: {}
+  - say: what about a machine washable silk dress
+    expect: {}
+  - say: any petite sizing
+    expect: {}
+  - say: ok, just show me sandals in a 7
+    expect: {products_min: 1}
+  - say: add the first one
+    expect: {}
+  - say: what's in my cart
+    expect: {}

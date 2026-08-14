@@ -1424,3 +1424,95 @@ class TestRelayInstrumentation:
         kwargs = self._kwargs()
 
         assert self._instrument(kwargs) is kwargs
+
+
+class TestRelayExport:
+    """Attaching the middleware is half of it; the events have to leave."""
+
+    def _configure(self, monkeypatch, *, enabled=True, endpoint="http://collector:4318"):
+        from types import SimpleNamespace
+        from chain_server.src.deepagents_runtime import configure_relay_tracing
+
+        if endpoint is None:
+            monkeypatch.delenv("OTEL_EXPORTER_OTLP_ENDPOINT", raising=False)
+        else:
+            monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", endpoint)
+        return configure_relay_tracing(SimpleNamespace(relay_enabled=enabled))
+
+    def _stub_relay(self, monkeypatch, registered) -> None:
+        """Stand in for the package, recording what it was asked to export."""
+
+        class Config:
+            def __init__(self, otel_type, endpoint):
+                self.type, self.endpoint = otel_type, endpoint
+                self.service_name = None
+
+        class Subscriber:
+            def __init__(self, config):
+                self.config = config
+
+            def register(self, name):
+                registered.append((name, self.config))
+
+            def force_flush(self):
+                pass
+
+        module = ModuleType("nemo_relay")
+        module.OpenTelemetryConfig = Config
+        module.OpenTelemetrySubscriber = Subscriber
+        monkeypatch.setitem(sys.modules, "nemo_relay", module)
+
+    def test_it_exports_openinference_to_the_configured_collector(
+        self, monkeypatch
+    ) -> None:
+        """Phoenix reads openinference; gen_ai spans would arrive and show nothing.
+
+        The endpoint is the collector's OTLP address plus the traces path, taken
+        from the same variable the app's own exporter uses -- not a second one.
+        """
+
+        registered: list = []
+        self._stub_relay(monkeypatch, registered)
+        monkeypatch.setenv("OTEL_SERVICE_NAME", "chain-server")
+
+        assert self._configure(monkeypatch) is True
+        assert len(registered) == 1
+        name, config = registered[0]
+        assert name == "chain-server"
+        assert config.type == "openinference"
+        assert config.endpoint == "http://collector:4318/v1/traces"
+        assert config.service_name == "chain-server"
+
+    def test_no_endpoint_exports_nothing_rather_than_failing(self, monkeypatch) -> None:
+        """Enabled with nowhere to send is a warning, not a dead service."""
+
+        registered: list = []
+        self._stub_relay(monkeypatch, registered)
+
+        assert self._configure(monkeypatch, endpoint=None) is False
+        assert registered == []
+
+    def test_off_by_default_registers_nothing(self, monkeypatch) -> None:
+        """Stubbed as installed, so this proves the flag and not the absence."""
+
+        registered: list = []
+        self._stub_relay(monkeypatch, registered)
+
+        assert self._configure(monkeypatch, enabled=False) is False
+        assert registered == []
+
+    def test_a_subscriber_that_will_not_start_does_not_stop_the_service(
+        self, monkeypatch
+    ) -> None:
+        """A collector that rejects the config must not take the shop down."""
+
+        module = ModuleType("nemo_relay")
+
+        def explode(*_args, **_kwargs):
+            raise RuntimeError("no exporter")
+
+        module.OpenTelemetryConfig = explode
+        module.OpenTelemetrySubscriber = explode
+        monkeypatch.setitem(sys.modules, "nemo_relay", module)
+
+        assert self._configure(monkeypatch) is False

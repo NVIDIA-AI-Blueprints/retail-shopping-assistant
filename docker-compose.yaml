@@ -6,6 +6,9 @@ services:
   chain-server:
     build:
       context: ./chain_server
+      args:
+        # false by default: the shipped image carries the tested langgraph pin.
+        INSTALL_RELAY: ${INSTALL_RELAY:-false}
     container_name: chain-server
     ports:
       - "8009:8009"

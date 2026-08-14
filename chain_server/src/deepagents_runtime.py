@@ -11,6 +11,7 @@ from datetime import date as CalendarDate, datetime, timezone
 import logging
 
 import asyncio
+import atexit
 import contextlib
 import json
 import os
@@ -622,6 +623,60 @@ class _CheckAvailabilityInput(BaseModel):
     )
 
 
+def configure_relay_tracing(config: Any) -> bool:
+    """Export NeMo Relay's lifecycle events, or export nothing and say why.
+
+    Relay's middleware emits into an in-process runtime, and nothing leaves the
+    service until a subscriber is registered -- so attaching the middleware
+    alone is observable to nobody. This is the other half, and it lives beside
+    ``_relay_instrumented`` because neither half is any use without the other.
+
+    It speaks ``openinference`` rather than ``gen_ai`` because that is the
+    dialect Phoenix reads, and it reuses ``OTEL_EXPORTER_OTLP_ENDPOINT`` rather
+    than inventing a second endpoint setting: one collector address, whichever
+    producer is speaking. Relay carries its own exporter, so this adds a second
+    OTLP client to the process, not a second backend.
+
+    Returns whether events are being exported, so a caller can say so.
+    """
+
+    if not getattr(config, "relay_enabled", False):
+        return False
+
+    endpoint = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", "").strip()
+    if not endpoint:
+        logger.warning(
+            "RELAY_ENABLED is set but OTEL_EXPORTER_OTLP_ENDPOINT is not; "
+            "Relay events have nowhere to go and will not be exported."
+        )
+        return False
+
+    try:
+        from nemo_relay import OpenTelemetryConfig, OpenTelemetrySubscriber
+
+        relay_config = OpenTelemetryConfig(
+            "openinference", f"{endpoint.rstrip('/')}/v1/traces"
+        )
+        relay_config.service_name = os.environ.get("OTEL_SERVICE_NAME", "chain-server")
+        subscriber = OpenTelemetrySubscriber(relay_config)
+        subscriber.register("chain-server")
+        # Spans are batched, so a container stopped without a flush loses the
+        # tail of the last conversation -- the part worth reading.
+        atexit.register(subscriber.force_flush)
+    except ImportError:
+        logger.warning(
+            "RELAY_ENABLED is set but nemo-relay is not installed; "
+            "install requirements-relay.txt to export Relay events."
+        )
+        return False
+    except Exception as exc:  # noqa: BLE001 - tracing must never break startup.
+        logger.warning("Could not configure Relay tracing: %s", type(exc).__name__)
+        return False
+
+    logger.info("Relay tracing enabled, exporting to %s", endpoint)
+    return True
+
+
 def _relay_instrumented(
     agent_kwargs: dict[str, Any],
     config: Any,
@@ -692,6 +747,9 @@ class DeepAgentsRuntime:
 
     def __init__(self, config: Any) -> None:
         self.config = config
+        # Before the first agent is built, so the subscriber is registered by the
+        # time any middleware has an event to emit.
+        configure_relay_tracing(config)
         self._checkpointer = _build_checkpointer()
         self._profile_registered = False
         self._media_perception = MediaPerceptionClient(config)

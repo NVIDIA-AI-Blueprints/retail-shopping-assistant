@@ -1440,7 +1440,13 @@ class TestRelayExport:
         return configure_relay_tracing(SimpleNamespace(relay_enabled=enabled))
 
     def _stub_relay(self, monkeypatch, registered) -> None:
-        """Stand in for the package, recording what it was asked to export."""
+        """Stand in for the package, recording what it was asked to export.
+
+        Registration is global and refuses a duplicate name, exactly as the real
+        package does -- which is the whole point of one of the tests below.
+        """
+
+        live: set = set()
 
         class Config:
             def __init__(self, otel_type, endpoint):
@@ -1452,7 +1458,13 @@ class TestRelayExport:
                 self.config = config
 
             def register(self, name):
+                if name in live:
+                    raise RuntimeError(f"already exists: {name} subscriber already exists")
+                live.add(name)
                 registered.append((name, self.config))
+
+            def deregister(self, name):
+                live.discard(name)
 
             def force_flush(self):
                 pass
@@ -1500,6 +1512,54 @@ class TestRelayExport:
 
         assert self._configure(monkeypatch, enabled=False) is False
         assert registered == []
+
+    def test_a_second_runtime_does_not_read_as_broken_tracing(
+        self, monkeypatch
+    ) -> None:
+        """Registration is global and refuses a duplicate name.
+
+        A second runtime built in one process would raise, be swallowed as
+        "could not configure tracing", and report nothing exporting while the
+        first subscriber was exporting perfectly well.
+        """
+
+        registered: list = []
+        self._stub_relay(monkeypatch, registered)
+
+        assert self._configure(monkeypatch) is True
+        assert self._configure(monkeypatch) is True
+        assert [name for name, _ in registered] == ["chain-server", "chain-server"]
+
+    def test_a_missing_package_is_said_once_not_once_a_turn(
+        self, monkeypatch, caplog
+    ) -> None:
+        """The agent is rebuilt every turn, so a build-path warning is per turn."""
+
+        import builtins
+        import logging
+
+        from chain_server.src import deepagents_runtime
+
+        monkeypatch.setattr(deepagents_runtime, "_relay_warnings_said", set())
+        real_import = builtins.__import__
+
+        def refuse(name, *args, **kwargs):
+            if name.startswith("nemo_relay"):
+                raise ImportError(name)
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", refuse)
+        monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4318")
+
+        from types import SimpleNamespace
+
+        enabled = SimpleNamespace(relay_enabled=True)
+        with caplog.at_level(logging.WARNING):
+            for _ in range(5):
+                deepagents_runtime.configure_relay_tracing(enabled)
+
+        said = [r for r in caplog.records if "not installed" in r.getMessage()]
+        assert len(said) == 1
 
     def test_a_subscriber_that_will_not_start_does_not_stop_the_service(
         self, monkeypatch

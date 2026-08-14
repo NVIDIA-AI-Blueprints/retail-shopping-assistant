@@ -623,6 +623,25 @@ class _CheckAvailabilityInput(BaseModel):
     )
 
 
+_RELAY_SUBSCRIBER = "chain-server"
+
+_relay_warnings_said: set[str] = set()
+
+
+def _relay_warn_once(key: str, message: str, *args: Any) -> None:
+    """Say a Relay problem once, not once a turn.
+
+    The agent is rebuilt every turn, so a warning raised on the build path is a
+    warning per turn -- and the conditions here (a missing package, a release
+    that changed the arguments) are settled at startup and never change.
+    """
+
+    if key in _relay_warnings_said:
+        return
+    _relay_warnings_said.add(key)
+    logger.warning(message, *args)
+
+
 def configure_relay_tracing(config: Any) -> bool:
     """Export NeMo Relay's lifecycle events, or export nothing and say why.
 
@@ -659,14 +678,19 @@ def configure_relay_tracing(config: Any) -> bool:
         )
         relay_config.service_name = os.environ.get("OTEL_SERVICE_NAME", "chain-server")
         subscriber = OpenTelemetrySubscriber(relay_config)
-        subscriber.register("chain-server")
+        # Registration is global and refuses a duplicate name, so a second
+        # runtime would raise and read as "tracing broke" when the first
+        # subscriber is still exporting perfectly well.
+        subscriber.deregister(_RELAY_SUBSCRIBER)
+        subscriber.register(_RELAY_SUBSCRIBER)
         # Spans are batched, so a container stopped without a flush loses the
         # tail of the last conversation -- the part worth reading.
         atexit.register(subscriber.force_flush)
     except ImportError:
-        logger.warning(
+        _relay_warn_once(
+            "not-installed",
             "RELAY_ENABLED is set but nemo-relay is not installed; "
-            "install requirements-relay.txt to export Relay events."
+            "install requirements-relay.txt to trace.",
         )
         return False
     except Exception as exc:  # noqa: BLE001 - tracing must never break startup.
@@ -702,36 +726,40 @@ def _relay_instrumented(
     try:
         from nemo_relay.integrations.deepagents import add_nemo_relay_integration
     except ImportError:
-        logger.warning(
+        _relay_warn_once(
+            "not-installed",
             "RELAY_ENABLED is set but nemo-relay is not installed; "
-            "running without it."
+            "install requirements-relay.txt to trace.",
         )
         return agent_kwargs
 
     try:
         instrumented = add_nemo_relay_integration(agent_kwargs)
     except Exception as exc:  # pragma: no cover - never break a turn for a trace
-        logger.warning("NeMo Relay instrumentation failed: %s", exc)
+        _relay_warn_once("failed", "NeMo Relay instrumentation failed: %s", exc)
         return agent_kwargs
 
     for name, value in agent_kwargs.items():
         if name not in instrumented:
-            logger.warning(
+            _relay_warn_once(
+                f"dropped:{name}",
                 "NeMo Relay dropped %s from the agent arguments; "
                 "running without it.", name
             )
             return agent_kwargs
         if name != "middleware" and instrumented[name] is not value:
-            logger.warning(
+            _relay_warn_once(
+                f"replaced:{name}",
                 "NeMo Relay replaced %s rather than preserving it; "
                 "running without it.", name
             )
             return agent_kwargs
     ours = agent_kwargs["middleware"]
     if list(instrumented["middleware"])[: len(ours)] != list(ours):
-        logger.warning(
+        _relay_warn_once(
+            "middleware-order",
             "NeMo Relay did not preserve our middleware order; "
-            "running without it."
+            "running without it.",
         )
         return agent_kwargs
     return instrumented

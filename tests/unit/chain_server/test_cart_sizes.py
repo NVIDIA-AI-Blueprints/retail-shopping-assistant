@@ -243,6 +243,24 @@ class TestSizeProvenance:
             kw.get("cart_line_size"),
         )
 
+    def test_a_refusal_names_the_product_and_the_sizes_it_sells(self) -> None:
+        """Told only that a size was not established, the model guessed twice.
+
+        A shopper answered "Sweater: M and Boots: 6" -- a format the assistant
+        itself had offered. The model turned M into 6 and the gate refused it,
+        correctly. But the refusal named no product and listed no sizes, so the
+        model attributed the failure to the boots and told the shopper size 6
+        was not sold for a boot the catalog sells in 5, 6, 7 and 8.
+
+        The refusal has to carry what the next sentence needs.
+        """
+
+        issue = self._issue(size="6", stated_as="Sweater: M", shopper_text="Sweater: M and Boots: 6")
+
+        assert issue, "an inferred size must still be refused"
+        assert "A Dress" in issue, "the refusal must say which product"
+        assert "2, 4, 6, 8, 10" in issue, "and which sizes it is sold in"
+
     def test_a_size_nobody_asked_for_is_refused(self) -> None:
         """The invented 6, recorded from a real conversation.
 
@@ -255,7 +273,7 @@ class TestSizeProvenance:
         issue = self._issue(size="6", shopper_text="add the Office A-line Dress")
 
         assert "SIZE NOT ESTABLISHED" in issue
-        assert "Ask which size" in issue
+        assert "Ask which of those they want" in issue
 
     def test_the_shoppers_own_words_are_enough(self) -> None:
         assert self._issue(
@@ -302,12 +320,24 @@ class TestQuantityProvenance:
             _cart_quantity_provenance_issue,
         )
 
-        return _cart_quantity_provenance_issue(quantity, stated_as, shopper_text)
+        from types import SimpleNamespace
+
+        return _cart_quantity_provenance_issue(
+            quantity,
+            stated_as,
+            shopper_text,
+            SimpleNamespace(display_name="A Dress"),
+        )
 
     def test_one_is_what_add_it_means(self) -> None:
         """The ordinary add asks nothing and must stay free."""
 
         assert self._issue(1, shopper_text="add it to my cart") == ""
+
+    def test_a_quantity_refusal_names_the_product(self) -> None:
+        """Same reason as the size: a batch refusal it cannot attribute is a guess."""
+
+        assert "A Dress" in self._issue(3, shopper_text="add it to my cart")
 
     def test_a_number_nobody_asked_for_is_refused(self) -> None:
         """Quantity had no guard at all -- the size at least had to be sold."""

@@ -1664,7 +1664,18 @@ class DeepAgentsRuntime:
                     state.cart,
                     scope.product_evidence.values(),
                 )
-                return _format_cart_add_result([], failed + blocked, state.cart)
+                # Nothing is written -- the add is all or nothing. But the items
+                # that were established travel with the refusal, so the question
+                # put to the shopper is only the one still open.
+                ready = [
+                    f"- {product.display_name}"
+                    + (f", size {size}" if size else "")
+                    + f", qty {quantity}"
+                    for _ref, product, quantity, size in resolved
+                ]
+                return _format_cart_add_result(
+                    [], failed + blocked, state.cart, ready
+                )
 
             added: list[str] = []
             committed: list[dict[str, Any]] = []

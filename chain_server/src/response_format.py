@@ -253,7 +253,21 @@ def _format_product_refs(products: list[ProductSummary]) -> str:
     )
 
 
-def _format_cart_add_result(added: list[str], failed: list[str], cart: Cart) -> str:
+def _format_cart_add_result(
+    added: list[str],
+    failed: list[str],
+    cart: Cart,
+    ready: list[str] | None = None,
+) -> str:
+    """Report an add, including what was established but not written.
+
+    The add is all or nothing, so one unanswered item holds back the rest. That
+    is deliberate. What was not deliberate is that the held-back items vanished
+    from the result: a shopper who gave a correct size for the boots and a
+    letter size for the sweater was asked for both again, because nothing told
+    the model the boots were already settled.
+    """
+
     lines = ["CART_ADD_RESULT"]
     if added:
         lines.append("Added:")
@@ -261,6 +275,12 @@ def _format_cart_add_result(added: list[str], failed: list[str], cart: Cart) -> 
     if failed:
         lines.append("Failed:")
         lines.extend(failed)
+    if ready:
+        lines.append(
+            "Established, not added -- the add is all or nothing, so these are "
+            "waiting on the item above. Do not ask for these again:"
+        )
+        lines.extend(ready)
     lines.append("Current cart:")
     lines.append(_format_cart_lines(cart))
     lines.append("Cart total:")

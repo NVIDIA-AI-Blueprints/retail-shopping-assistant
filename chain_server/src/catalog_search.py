@@ -128,6 +128,38 @@ class SearchContext:
     constraint_input_model: type[BaseModel]
 
 
+def _advertised_counts(
+    capabilities: Any,
+    taxonomy: dict[str, Any],
+) -> dict[str, int]:
+    """What the catalog holds for the taxonomy this search covered.
+
+    A search matching nothing is a fact about the query. Without the counts it
+    reads as a fact about the shop, and once did: "I'm not seeing any blouses,
+    camisoles, jumpsuits, skirts, or sweaters" about sixty-nine products.
+
+    Read off the advertised capabilities the service already publishes, so this
+    costs no second search.
+    """
+
+    categories = getattr(getattr(capabilities, "taxonomy", None), "categories", None)
+    if not categories:
+        return {}
+    wanted_categories = [str(v) for v in (taxonomy.get("category") or [])]
+    wanted_subcategories = [str(v) for v in (taxonomy.get("subcategory") or [])]
+    counts: dict[str, int] = {}
+    for category_name, category in categories.items():
+        subcategories = getattr(category, "subcategories", {}) or {}
+        for name in wanted_subcategories:
+            if name in subcategories:
+                counts[name] = subcategories[name].product_count
+        # Only when the shopper named no subcategory: naming both would report
+        # the category total beside its own parts, which reads as a contradiction.
+        if not wanted_subcategories and category_name in wanted_categories:
+            counts[category_name] = getattr(category, "product_count", 0)
+    return counts
+
+
 def _lock_taxonomy_constraint_values(
     repair: CatalogRepairState,
     scope_key: str | None,
@@ -1425,6 +1457,9 @@ def _rendered_evidence(ctx: SearchContext, attempt: _Attempt) -> StepResult:
             scope_complete=bool(request.scope_complete),
             budget_exhausted=bool(search_budget_exhausted),
             unconfirmed_requirements=unconfirmable_requirements,
+            advertised_counts=_advertised_counts(
+                ctx.capabilities, taxonomy_constraints
+            ),
             scope_outcome={
                 "outcome": "zero_results",
                 "requested_product_type": request.requested_product_type,
@@ -1441,6 +1476,20 @@ def _rendered_evidence(ctx: SearchContext, attempt: _Attempt) -> StepResult:
             _SEARCH_NO_MATCH_GROUNDING_NOTE,
             _format_search_taxonomy_evidence(evidence.taxonomy),
         ]
+        if evidence.advertised_counts:
+            # The true number, in the result the model actually reads. The note
+            # above already forbids concluding the catalog is empty, and that
+            # prohibition still produced "I'm not seeing any blouses,
+            # camisoles, jumpsuits, skirts, or sweaters" about sixty-nine
+            # products. A prohibition leaves the model with nothing to say
+            # instead; a count leaves it nothing to infer.
+            lines.append(
+                "CATALOG_STOCKS (advertised, none matched this scope): "
+                + ", ".join(
+                    f"{name} {count}"
+                    for name, count in sorted(evidence.advertised_counts.items())
+                )
+            )
         if scope_relation_evidence:
             lines.append(scope_relation_evidence)
         if evidence.confirmed_filters:

@@ -66,6 +66,14 @@ class SearchEvidence:
     #: assumed. Empty once the audience is a stated constraint, because then
     #: there is no assumption left to disclose.
     assumed_audience: list[str] = field(default_factory=list)
+    #: What the catalog advertises for the taxonomy this search covered, as
+    #: {name: count}. Present only when the search matched nothing, which is
+    #: exactly when it is needed: told only that its query returned nothing, the
+    #: assistant said "I'm not seeing any blouses, camisoles, jumpsuits, skirts,
+    #: or sweaters" about a catalog holding sixty-nine of them. Forbidding that
+    #: conclusion in prose was already tried; this supplies the true number
+    #: instead, so there is nothing left to infer.
+    advertised_counts: dict[str, int] = field(default_factory=dict)
 
     def as_artifact(self) -> dict[str, Any]:
         return {
@@ -85,6 +93,7 @@ class SearchEvidence:
                 "scope_outcome": self.scope_outcome,
                 "unconfirmed_requirements": self.unconfirmed_requirements,
                 "assumed_audience": self.assumed_audience,
+                "advertised_counts": self.advertised_counts,
             }
         }
 

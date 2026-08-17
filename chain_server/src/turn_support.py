@@ -3311,6 +3311,19 @@ def _customer_safe_search_evidence(payload: dict[str, Any]) -> str:
                 "CONFIRMED_SEARCH_FILTERS: "
                 + json.dumps(confirmed_filters, sort_keys=True)
             )
+        counts = payload.get("advertised_counts") or {}
+        if counts:
+            # The true number, not merely a prohibition on inferring one. The
+            # rule above -- that this establishes nothing about the catalog --
+            # was already stated and still produced "I'm not seeing any
+            # blouses, camisoles, jumpsuits, skirts, or sweaters" about
+            # sixty-nine products.
+            lines.append(
+                "CATALOG_STOCKS (advertised, none matched this scope): "
+                + ", ".join(
+                    f"{name} {count}" for name, count in sorted(counts.items())
+                )
+            )
         relation = _scope_relation_line(payload, has_products=False)
         if relation:
             lines.append(relation)

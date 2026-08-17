@@ -614,6 +614,35 @@ class TestAtomicRefusalSaysWhatWasReady:
         # And it must not claim they went in.
         assert "Added:" not in result
 
+    def test_an_item_refused_as_out_of_scope_is_not_listed_as_settled(self) -> None:
+        """An item can pass every per-item gate and still be refused after them.
+
+        The scope check runs once, over everything resolved, and can block an
+        item that already passed size, quantity and product provenance. Listing
+        it as settled would tell the shopper not to ask again about the very
+        thing that failed -- a contradiction inside one message.
+        """
+
+        from chain_server.src.turn_support import _cart_add_scope_failures
+        from types import SimpleNamespace
+
+        dress = SimpleNamespace(
+            product_id="ref_dress", display_name="Office A-line Dress"
+        )
+        bag = SimpleNamespace(
+            product_id="ref_bag", display_name="Navy Leather Everyday Bag"
+        )
+        failures = _cart_add_scope_failures(
+            "add the Navy Leather Everyday Bag",
+            [("ref_dress", dress), ("ref_bag", bag)],
+            [dress, bag],
+        )
+
+        # The ref travels with the message, so the caller never has to read it
+        # back out of the prose.
+        assert [ref for ref, _message in failures] == ["ref_dress"]
+        assert all(isinstance(message, str) for _ref, message in failures)
+
     def test_nothing_established_says_nothing_extra(self) -> None:
         """One blocked item on its own must not grow a section about nobody."""
 

@@ -1,0 +1,25 @@
+id: P26_size_vocabulary_is_the_catalogs
+covers: [sizes, cart-management, honesty]
+why: >
+  A live session, 2026-08-17. The assistant offered "Reply like: 'Sweater: M,
+  Boots: 8'", the shopper complied, and the model turned M into 6. The size gate
+  refused it, correctly. Then the refusal -- naming no product and listing no
+  sizes -- was blamed on the wrong item, and the shopper was told size 6 was not
+  sold for a boot the catalog sells in 5, 6, 7 and 8.
+turns:
+  - say: show me sweaters
+    expect:
+      products_min: 1
+  - say: add the Ultra Soft Cashmere Blend Sweater Blouse to my cart
+    expect:
+      cart_unchanged: true          # sized product, no size stated
+  - say: size M
+    expect:
+      # M is not a size this catalog sells. A size the shopper did not choose
+      # from what is actually sold must never reach the cart -- least of all a
+      # number the model inferred from a letter.
+      cart_unchanged: true
+  - say: size 6
+    expect:
+      cart:
+        - {name: Ultra Soft Cashmere Blend Sweater Blouse, size: "6", qty: 1}

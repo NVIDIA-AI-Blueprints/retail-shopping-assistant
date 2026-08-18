@@ -3814,7 +3814,15 @@ def _cart_add_scope_failures(
     user_query: str,
     requested_products: list[tuple[str, ProductSummary]],
     available_products: Any,
-) -> list[str]:
+) -> list[tuple[str, str]]:
+    """Which requested products fall outside this turn's explicit request.
+
+    Returns the ref beside its message. The ref is what a caller needs to know
+    which item failed, and recovering it by reading the message back would be
+    parsing prose for control state -- which is the thing this codebase refuses
+    to do everywhere else.
+    """
+
     explicitly_named = _explicitly_named_products(user_query, available_products)
     if not explicitly_named:
         return []
@@ -3822,15 +3830,18 @@ def _cart_add_scope_failures(
     explicit_names = {
         _normalize_product_name(product.display_name) for product in explicitly_named
     }
-    failures = []
+    failures: list[tuple[str, str]] = []
     for product_ref, product in requested_products:
         if _normalize_product_name(product.display_name) in explicit_names:
             continue
         failures.append(
-            f"- PRODUCT_REF '{product_ref}': selected '{product.display_name}' is "
-            "outside the current explicit add request. The current request names: "
-            f"{_format_product_refs(explicitly_named)}. Retry with matching "
-            "PRODUCT_REF values only, or ask a clarification."
+            (
+                product_ref,
+                f"- PRODUCT_REF '{product_ref}': selected '{product.display_name}' "
+                "is outside the current explicit add request. The current request "
+                f"names: {_format_product_refs(explicitly_named)}. Retry with "
+                "matching PRODUCT_REF values only, or ask a clarification.",
+            )
         )
     return failures
 

@@ -8463,6 +8463,24 @@ class TestDeepAgentsRuntimeRefs:
         )
         assert "SIZE NOT ESTABLISHED" in unasked
         assert added == []
+        # Two items, one settled and one not. The add is all or nothing, so
+        # nothing is written -- but the settled item has to travel with the
+        # refusal. A shopper who answered "Sweater: M and Boots: 6" gave a
+        # correct size for the boots and was asked for it a second time,
+        # because the held-back item vanished from the result.
+        held_back = tool_text(
+            add_tool(
+                items=[
+                    {"product_ref": "prod_bag", "quantity": 1},
+                    {"product_ref": "prod_dress", "quantity": 1, "size": "4"},
+                ]
+            )
+        )
+        assert "SIZE NOT ESTABLISHED" in held_back
+        assert "Work Bag" in held_back
+        assert "Do not ask for these again" in held_back
+        assert "Added:" not in held_back
+        assert added == []
         sized = tool_text(
             add_tool(
                 items=[

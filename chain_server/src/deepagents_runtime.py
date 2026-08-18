@@ -1650,13 +1650,13 @@ class DeepAgentsRuntime:
                     )
                 )
 
-            blocked.extend(
-                _cart_add_scope_failures(
-                    state.query,
-                    [(product_ref, product) for product_ref, product, _, _ in resolved],
-                    scope.product_evidence.values(),
-                )
+            scope_failures = _cart_add_scope_failures(
+                state.query,
+                [(product_ref, product) for product_ref, product, _, _ in resolved],
+                scope.product_evidence.values(),
             )
+            blocked.extend(message for _ref, message in scope_failures)
+            out_of_scope = {ref for ref, _message in scope_failures}
             if blocked:
                 state.cart = self._read_cart(identity.cart_user_id)
                 self._append_product_images(
@@ -1664,7 +1664,23 @@ class DeepAgentsRuntime:
                     state.cart,
                     scope.product_evidence.values(),
                 )
-                return _format_cart_add_result([], failed + blocked, state.cart)
+                # Nothing is written -- the add is all or nothing. But the items
+                # that were established travel with the refusal, so the question
+                # put to the shopper is only the one still open.
+                # An item can pass every per-item gate and still be refused
+                # below as outside this turn's request. Listing it as settled
+                # would tell the shopper not to ask again about the very thing
+                # that failed.
+                ready = [
+                    f"- {product.display_name}"
+                    + (f", size {size}" if size else "")
+                    + f", qty {quantity}"
+                    for ref, product, quantity, size in resolved
+                    if ref not in out_of_scope
+                ]
+                return _format_cart_add_result(
+                    [], failed + blocked, state.cart, ready
+                )
 
             added: list[str] = []
             committed: list[dict[str, Any]] = []

@@ -582,3 +582,70 @@ class TestProductProvenance:
             shopper_text="add it",
             evidence=self._evidence(self._product()),
         ) == ""
+
+
+class TestAtomicRefusalSaysWhatWasReady:
+    """The add is all or nothing; the refusal must still carry what was settled."""
+
+    def _result(self, ready=None):
+        from chain_server.src.response_format import _format_cart_add_result
+        from types import SimpleNamespace
+
+        cart = SimpleNamespace(contents=[], lines=[], total=None)
+        failed = [
+            "- PRODUCT_REF 'x': SIZE NOT ESTABLISHED for 'A Sweater': the "
+            "shopper did not ask for a size 6. It is sold in 2, 4, 6, 8."
+        ]
+        return _format_cart_add_result([], failed, cart, ready)
+
+    def test_an_established_item_is_reported_though_nothing_was_written(self) -> None:
+        """A shopper answered for both items and was asked for both again.
+
+        "Sweater: M and Boots: 6" -- the boots size was correct and sold. The
+        sweater's was not, so nothing was added, which is the intended
+        atomicity. But the boots vanished from the result, so the model had no
+        way to know they were settled and asked for that size a second time.
+        """
+
+        result = self._result(ready=["- Yantra Leather Ankle Boots, size 6, qty 1"])
+
+        assert "Yantra Leather Ankle Boots" in result
+        assert "Do not ask for these again" in result
+        # And it must not claim they went in.
+        assert "Added:" not in result
+
+    def test_an_item_refused_as_out_of_scope_is_not_listed_as_settled(self) -> None:
+        """An item can pass every per-item gate and still be refused after them.
+
+        The scope check runs once, over everything resolved, and can block an
+        item that already passed size, quantity and product provenance. Listing
+        it as settled would tell the shopper not to ask again about the very
+        thing that failed -- a contradiction inside one message.
+        """
+
+        from chain_server.src.turn_support import _cart_add_scope_failures
+        from types import SimpleNamespace
+
+        dress = SimpleNamespace(
+            product_id="ref_dress", display_name="Office A-line Dress"
+        )
+        bag = SimpleNamespace(
+            product_id="ref_bag", display_name="Navy Leather Everyday Bag"
+        )
+        failures = _cart_add_scope_failures(
+            "add the Navy Leather Everyday Bag",
+            [("ref_dress", dress), ("ref_bag", bag)],
+            [dress, bag],
+        )
+
+        # The ref travels with the message, so the caller never has to read it
+        # back out of the prose.
+        assert [ref for ref, _message in failures] == ["ref_dress"]
+        assert all(isinstance(message, str) for _ref, message in failures)
+
+    def test_nothing_established_says_nothing_extra(self) -> None:
+        """One blocked item on its own must not grow a section about nobody."""
+
+        result = self._result(ready=[])
+
+        assert "Established, not added" not in result

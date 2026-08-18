@@ -4113,6 +4113,7 @@ def _cart_quantity_provenance_issue(
     quantity: int,
     stated_as: str | None,
     shopper_text: str,
+    product: Any = None,
 ) -> str:
     """Say why this quantity cannot be trusted, or "" if it can.
 
@@ -4126,9 +4127,13 @@ def _cart_quantity_provenance_issue(
         return ""
     if _shopper_said(stated_as, shopper_text, str(quantity)):
         return ""
+    # Named for the same reason a size refusal is: a batch refusal the model
+    # cannot attribute to an item becomes a confident guess in the reply.
+    named = getattr(product, "display_name", "") if product is not None else ""
+    subject = f" for '{named}'" if named else ""
     return (
-        f"QUANTITY NOT ESTABLISHED: the shopper did not ask for {quantity}. "
-        "Add one, or ask how many they want. Nothing was added."
+        f"QUANTITY NOT ESTABLISHED{subject}: the shopper did not ask for "
+        f"{quantity}. Add one, or ask how many they want. Nothing was added."
     )
 
 
@@ -4181,10 +4186,18 @@ def _cart_size_provenance_issue(
         return ""
     if _shopper_said(stated_as, shopper_text, chosen):
         return ""
+    # The product and its sizes travel with the refusal. Told only that a size
+    # was not established, and addressed by a PRODUCT_REF, the model had to work
+    # out which of two items had failed and what it could offer instead -- and
+    # got both wrong: it told a shopper size 6 was not sold for a boot sold in
+    # 5, 6, 7, 8, and blamed the item whose size had been stated correctly.
+    # Asking it to name "the sizes it is sold in" without supplying them is the
+    # same error in miniature.
     return (
-        f"SIZE NOT ESTABLISHED: the shopper did not ask for a size {chosen}. "
-        "Ask which size they want, naming the sizes it is sold in, and add it "
-        "when they answer. Nothing was added."
+        f"SIZE NOT ESTABLISHED for '{product.display_name}': the shopper did "
+        f"not ask for a size {chosen}. It is sold in {', '.join(advertised)}. "
+        "Ask which of those they want and add it when they answer. Nothing was "
+        "added."
     )
 
 

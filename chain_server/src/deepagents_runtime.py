@@ -1623,6 +1623,7 @@ class DeepAgentsRuntime:
                     request["quantity"],
                     request.get("quantity_stated_as"),
                     _shopper_words_this_conversation(state),
+                    active_detail.product,
                 )
                 if quantity_issue:
                     blocked.append(

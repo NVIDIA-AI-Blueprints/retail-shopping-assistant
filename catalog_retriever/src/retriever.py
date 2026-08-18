@@ -1363,6 +1363,39 @@ class Retriever:
                 )
         return effective
 
+    #: Columns the index adds for its own bookkeeping. They are not product
+    #: fields and must not reach the product contract.
+    _INDEX_ONLY_FIELDS = ("pk", "text", "vector", "catalog_fingerprint")
+
+    def product_record(self, product_id: str) -> Dict[str, Any] | None:
+        """One product's stored fields, read from the index rather than memory.
+
+        The index already holds every field the catalog declares, so the whole
+        catalog does not need to be kept in the process to answer "what is this
+        product". The returned mapping is the same shape the loader produces, so
+        the caller shapes it with the same `build_product_detail` and the
+        response cannot drift.
+        """
+
+        if self.text_db is None or self.text_db.col is None:
+            return None
+        wanted = str(product_id)
+        if '"' in wanted or "\\" in wanted:
+            return None
+        self.text_db.col.load()
+        rows = self.text_db.col.query(
+            expr=f'{self.product_id_field} == "{wanted}"',
+            limit=1,
+            output_fields=["*"],
+        )
+        if not rows:
+            return None
+        return {
+            name: value
+            for name, value in dict(rows[0]).items()
+            if name not in self._INDEX_ONLY_FIELDS
+        }
+
     def _product_payload_from_result(self, result: Tuple[Any, float]) -> Dict[str, Any]:
         doc, similarity = result
         metadata = doc.metadata

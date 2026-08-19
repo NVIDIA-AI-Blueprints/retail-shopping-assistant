@@ -16,6 +16,7 @@ from typing import List, Tuple, Dict, Any
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.embeddings import Embeddings
 from pymilvus import Collection, CollectionSchema, DataType, FieldSchema, connections, utility
+import json
 import os
 import sys
 import re
@@ -293,18 +294,23 @@ class Milvus:
         self,
         query: str,
         k: int = 4,
+        expr: str = "",
     ) -> List[Tuple[SimpleNamespace, float]]:
         if self.col is None:
             return []
 
         query_vector = self._vector(self.embedding_function.embed_query(query))
         self.col.load()
+        # The expression is applied during the search, so the ranked candidates
+        # are already the ones the shopper asked for rather than the catalog
+        # ranked and then discarded.
         search_result = self.col.search(
             data=[query_vector],
             anns_field=self.VECTOR_FIELD,
             param=self.search_params,
             limit=k,
             output_fields=["*"],
+            **({"expr": expr} if expr else {}),
         )
 
         results = []
@@ -755,6 +761,18 @@ class Retriever:
         structured_filters = (
             self._canonical_filters(effective_filters) if effective_filters else {}
         )
+        filter_expression, pushed_down = (
+            self._filter_expression(structured_filters)
+            if structured_filters
+            else ("", set())
+        )
+        # Filters the database could not decide -- today only numbers, whose
+        # values are stored as text -- still run in Python, so removals here are
+        # expected exactly when this is non-empty.
+        decided_in_python = set(structured_filters) - pushed_down
+        diagnostics["filter_expression"] = filter_expression
+        diagnostics["filters_pushed_down"] = sorted(pushed_down)
+        diagnostics["filters_decided_in_python"] = sorted(decided_in_python)
 
         # Check if our query is blank. If it is, replace it with dummy text.
         local_queries = query
@@ -783,6 +801,7 @@ class Retriever:
                         self.text_db.similarity_search_with_relevance_scores,
                         local_query,
                         k=candidate_limit,
+                        expr=filter_expression,
                     )
                 )
             if verbose:
@@ -796,6 +815,7 @@ class Retriever:
                 self.image_db.similarity_search_with_relevance_scores,
                 base64_string,
                 k=candidate_limit,
+                expr=filter_expression,
             )
 
             unformatted_results = await asyncio.gather(*t2t_tasks, i2i_task)
@@ -812,6 +832,7 @@ class Retriever:
                         self.text_db.similarity_search_with_relevance_scores,
                         local_query,
                         k=candidate_limit,
+                        expr=filter_expression,
                     )
                 )
             unformatted_results = await asyncio.gather(*results)
@@ -893,6 +914,20 @@ class Retriever:
             canonical=True,
         )
         diagnostics["after_filter_count"] = len(filtered_results)
+        # The Python matcher still runs, and for anything the database decided
+        # it must now find nothing left to remove. A non-zero count here means
+        # the expression and the matcher disagree, which is a defect worth
+        # seeing rather than a discrepancy worth tolerating.
+        removed_after_pushdown = len(candidate_results) - len(filtered_results)
+        diagnostics["removed_by_python_filter"] = removed_after_pushdown
+        if filter_expression and not decided_in_python and removed_after_pushdown:
+            logging.warning(
+                "CATALOG RETRIEVER | retrieve() | expression and Python filter "
+                "disagree: expr=%s removed=%d of %d",
+                filter_expression,
+                removed_after_pushdown,
+                len(candidate_results),
+            )
         if not filtered_results:
             diagnostics["returned_count"] = 0
             return RetrievalOutput(
@@ -1137,6 +1172,53 @@ class Retriever:
                 number_filter[bound] = filters[alias]
         return number_filter
 
+    #: Filter types whose canonical values can be compared in the database with
+    #: exactly the semantics `_metadata_matches_value_filter` applies in Python.
+    #: `number` is absent deliberately: prices are stored as text, so a numeric
+    #: comparison returns nothing rather than failing, which is the worst way to
+    #: be wrong.
+    _PUSHDOWN_TYPES = {"enum", "enum_list"}
+
+    def _filter_expression(
+        self, canonical_filters: Dict[str, Any]
+    ) -> Tuple[str, set]:
+        """A Milvus expression for the filters the database can decide exactly.
+
+        The catalog declares each filter's type and its source fields, and every
+        value it advertises is already stored in canonical form -- so an equality
+        test in the database and the Python matcher agree by construction, not by
+        approximation. Anything that would not agree is left out and still runs
+        in Python.
+
+        The shape mirrors `_metadata_matches_value_filter`: a filter is satisfied
+        when any of its source fields holds any of the requested values.
+        """
+
+        clauses: List[str] = []
+        covered: set = set()
+        for name in sorted(canonical_filters):
+            capability = self.filter_capabilities.get(name)
+            if capability is None or capability.type not in self._PUSHDOWN_TYPES:
+                continue
+            values = sorted(self._normalize_filter_values(canonical_filters[name]))
+            if not values:
+                continue
+            # A value that cannot be written as a literal is left to Python
+            # rather than escaped into an expression nobody can read.
+            if any('"' in value or "\\" in value for value in values):
+                continue
+            rendered = json.dumps(values)
+            fields = capability.source_fields or [name]
+            parts = [
+                f"json_contains_any({field}, {rendered})"
+                if capability.type == "enum_list"
+                else f"{field} in {rendered}"
+                for field in fields
+            ]
+            clauses.append("(" + " or ".join(parts) + ")")
+            covered.add(name)
+        return " and ".join(clauses), covered
+
     def _metadata_matches_filters(
         self,
         metadata: Dict[str, Any],
@@ -1280,6 +1362,39 @@ class Retriever:
                     + ", ".join(sorted(str(value) for value in categories))
                 )
         return effective
+
+    #: Columns the index adds for its own bookkeeping. They are not product
+    #: fields and must not reach the product contract.
+    _INDEX_ONLY_FIELDS = ("pk", "text", "vector", "catalog_fingerprint")
+
+    def product_record(self, product_id: str) -> Dict[str, Any] | None:
+        """One product's stored fields, read from the index rather than memory.
+
+        The index already holds every field the catalog declares, so the whole
+        catalog does not need to be kept in the process to answer "what is this
+        product". The returned mapping is the same shape the loader produces, so
+        the caller shapes it with the same `build_product_detail` and the
+        response cannot drift.
+        """
+
+        if self.text_db is None or self.text_db.col is None:
+            return None
+        wanted = str(product_id)
+        if '"' in wanted or "\\" in wanted:
+            return None
+        self.text_db.col.load()
+        rows = self.text_db.col.query(
+            expr=f'{self.product_id_field} == "{wanted}"',
+            limit=1,
+            output_fields=["*"],
+        )
+        if not rows:
+            return None
+        return {
+            name: value
+            for name, value in dict(rows[0]).items()
+            if name not in self._INDEX_ONLY_FIELDS
+        }
 
     def _product_payload_from_result(self, result: Tuple[Any, float]) -> Dict[str, Any]:
         doc, similarity = result

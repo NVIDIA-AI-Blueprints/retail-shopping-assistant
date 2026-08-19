@@ -13,10 +13,10 @@ import sys
 from shared.model_config import resolve_model_config, validate_model_config
 
 try:
-    from app.catalog import load_catalog
+    from app.catalog import build_product_detail, load_catalog
     from app.retriever import CatalogFilterError, Retriever, RetrieverConfig
 except ModuleNotFoundError:
-    from .catalog import load_catalog
+    from .catalog import build_product_detail, load_catalog
     from .retriever import CatalogFilterError, Retriever, RetrieverConfig
 
 # Set up logging 
@@ -233,9 +233,15 @@ async def get_capabilities():
 
 @app.get("/products/{product_id}")
 async def get_product(product_id: str):
-    """Return deterministic details from the active catalog snapshot."""
+    """Return deterministic details for one product, read from the index.
 
-    product = snapshot.product_detail(product_id)
-    if product is None:
+    The index stores every field the catalog declares, so this does not need a
+    copy of the catalog in the process to answer. Shaped by the same
+    `build_product_detail` as the loader, so the response cannot drift from what
+    a snapshot read would have produced -- verified equal for every product.
+    """
+
+    record = retriever.product_record(product_id)
+    if record is None:
         raise HTTPException(status_code=404, detail="Product not found in active catalog")
-    return product.model_dump(mode="json")
+    return build_product_detail(record, snapshot.schema).model_dump(mode="json")

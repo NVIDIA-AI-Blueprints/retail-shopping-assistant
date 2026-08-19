@@ -1105,8 +1105,11 @@ class TestRetrieve:
     ) -> None:
         captured: Dict[str, Any] = {}
 
-        def _search(query: str, k: int = 4) -> List[Tuple[Any, float]]:
+        def _search(
+            query: str, k: int = 4, expr: str = ""
+        ) -> List[Tuple[Any, float]]:
             captured["query"] = query
+            captured["expr"] = expr
             return [(_doc("A"), 0.9)]
 
         retriever.text_db.similarity_search_with_relevance_scores = _search

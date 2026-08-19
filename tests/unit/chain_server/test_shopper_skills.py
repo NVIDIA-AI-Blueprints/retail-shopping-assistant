@@ -260,3 +260,20 @@ def test_role_proposing_skills_name_the_audience_without_asking() -> None:
         # catalog swap and keep being stated after it stopped being true.
         for value in ("womens", "adult_all_genders", "womenswear", "menswear"):
             assert value not in body, f"{skill} hardcodes {value}"
+
+
+def test_cart_management_can_act_on_the_line_the_cart_took_last() -> None:
+    """A fact nothing licenses is a fact nobody uses.
+
+    The cart marks the line it added most recently, and the model read that
+    marker and asked which line was meant anyway -- correctly, because nothing
+    said a demonstrative could be answered from it.
+    """
+
+    _, body = _read_skill_path(REGISTERED_SKILL_PATHS["cart-management"])
+    normalized = " ".join(body.split())
+
+    assert "ADDED MOST RECENTLY" in normalized
+    assert "that is the line they mean" in normalized
+    # And the guard it must not swallow.
+    assert "Never guess a `CART_LINE_ID` from a product name" in normalized

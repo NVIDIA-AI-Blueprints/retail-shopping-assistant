@@ -2064,3 +2064,80 @@ def test_one_key_reused_with_a_different_size_is_not_a_replay(
         assert second.json()["cart_line"].get("size") != "6"
     else:
         assert second.status_code == 409
+
+
+def test_a_choice_is_filed_against_the_showing_it_was_made_from(
+    conversation_db: TestClient,
+) -> None:
+    """And is retired by the next showing, because that is where it lives.
+
+    Live, a shopper chose "the first pairing" and was asked to choose again on
+    every turn that followed: establishment was scoped to the message that made
+    it. Filing the choice against the set it was made from is what lets a later
+    turn honour it -- and what stops it honouring a set nobody is looking at
+    any more.
+    """
+
+    conversation = "conversation-durable-choice"
+    products = [
+        {"product_id": "bag-1", "display_name": "Structured Tote"},
+        {"product_id": "bag-2", "display_name": "Cobalt Crossbody"},
+    ]
+
+    shown = _start_turn(conversation_db, conversation, request_id="request-shown")
+    assert shown.status_code == 200
+    shown = shown.json()
+    _finalize_turn(
+        conversation_db,
+        conversation,
+        shown["turn_id"],
+        request_id="request-shown",
+        attempt_id=shown["attempt_id"],
+        output={"product_results": products, "retrieved": {}, "agent_diagnostics": {}},
+    )
+
+    chose = _start_turn(conversation_db, conversation, request_id="request-chose").json()
+    _finalize_turn(
+        conversation_db,
+        conversation,
+        chose["turn_id"],
+        request_id="request-chose",
+        attempt_id=chose["attempt_id"],
+        events=[
+            {
+                "event_key": "system-identified:request-chose",
+                "event_type": "historical_reference_resolved",
+                "source_kind": "runtime",
+                "payload": {"product_refs": ["bag-1"]},
+            }
+        ],
+    )
+
+    after = _start_turn(conversation_db, conversation, request_id="request-after")
+    index = after.json()["projection"]["product_reference_index"]
+    assert [entry.get("system_identified") for entry in index] == [["bag-1"]]
+    after = after.json()
+    _finalize_turn(
+        conversation_db,
+        conversation,
+        after["turn_id"],
+        request_id="request-after",
+        attempt_id=after["attempt_id"],
+    )
+
+    # A new showing is a new choice to make.
+    again = _start_turn(conversation_db, conversation, request_id="request-again")
+    again = again.json()
+    _finalize_turn(
+        conversation_db,
+        conversation,
+        again["turn_id"],
+        request_id="request-again",
+        attempt_id=again["attempt_id"],
+        output={"product_results": products, "retrieved": {}, "agent_diagnostics": {}},
+    )
+
+    latest = _start_turn(conversation_db, conversation, request_id="request-latest")
+    index = latest.json()["projection"]["product_reference_index"]
+    newest = max(index, key=lambda entry: entry["turn_seq"])
+    assert "system_identified" not in newest

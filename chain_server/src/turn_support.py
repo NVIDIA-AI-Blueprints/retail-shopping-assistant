@@ -2367,6 +2367,42 @@ def _audience_assumption_events(
     ]
 
 
+def _system_identification_events(
+    state: Any,
+    identity: Any,
+) -> list[ConversationEvent]:
+    """Record which products the record itself picked this turn.
+
+    Establishment was scoped to the message that produced it. A shopper chose
+    "the first pairing" in one turn and, three turns later -- having only
+    answered the assistant's own questions -- was still being told the products
+    were not established, because answering a question names nothing. The same
+    add was refused three times and accepted on the fourth, when they finally
+    typed both catalog names. The request never changed.
+
+    The choice itself is durable: it was made against a set of products the
+    record wrote down. So it is recorded here, and the memory service files it
+    against the set it was made from -- which is what makes it lapse when a new
+    set is shown, and nothing else does.
+    """
+
+    refs = [
+        str(ref)
+        for ref in (getattr(state, "system_identified_products", None) or [])
+        if ref
+    ]
+    if not refs:
+        return []
+    return [
+        ConversationEvent(
+            event_key=f"system-identified:{identity.request_id}",
+            event_type="historical_reference_resolved",
+            source_kind="runtime",
+            payload={"product_refs": refs[:16]},
+        )
+    ]
+
+
 def _turn_audience_events(
     state: Any,
     identity: Any,
@@ -4104,6 +4140,29 @@ def _most_recently_shown(state: Any) -> list[dict]:
     return [item for item in newest["products"] if isinstance(item, dict)]
 
 
+def _identified_in_the_current_showing(state: Any) -> set[str]:
+    """Products the record picked from the set now in front of the shopper.
+
+    An identification is filed against the showing it was made from, so this is
+    simply the newest showing's own list. When a newer set is presented it
+    becomes the newest, carrying its own choices and none of the older set's --
+    which is the lapse, expressed as a consequence of where the fact is kept
+    rather than as a rule that has to be remembered.
+    """
+
+    sets = [
+        entry
+        for entry in (getattr(state, "historical_product_sets", None) or [])
+        if isinstance(entry, dict) and isinstance(entry.get("products"), list)
+    ]
+    if not sets:
+        return set()
+    newest = max(sets, key=lambda entry: entry.get("turn_seq") or 0)
+    return {
+        str(ref) for ref in (newest.get("system_identified") or []) if ref
+    }
+
+
 def _reference_candidates(
     evidence: ProductEvidence,
     recently_shown: Sequence[Any] = (),
@@ -4127,6 +4186,7 @@ def _cart_product_provenance_issue(
     shopper_text: str,
     evidence: ProductEvidence,
     recently_shown: Sequence[Any] = (),
+    already_identified: Sequence[str] = (),
 ) -> str:
     """Say why this product cannot be trusted as the one meant, or "" if it can.
 
@@ -4176,6 +4236,14 @@ def _cart_product_provenance_issue(
         ):
             return ""
     if evidence.identified_by_the_system(product.product_id):
+        return ""
+    # The same fact, established earlier in this conversation and still true.
+    # A shopper who chose "the first pairing" was asked to choose again on
+    # every turn that followed, because answering the assistant's own questions
+    # names no product -- five turns to add two items it had itself proposed.
+    # Nothing about a later turn makes that choice untrue; a newer showing
+    # does, and that is what retires it.
+    if str(product.product_id) in {str(ref) for ref in (already_identified or ())}:
         return ""
     return (
         f"PRODUCT NOT ESTABLISHED: the shopper did not name "

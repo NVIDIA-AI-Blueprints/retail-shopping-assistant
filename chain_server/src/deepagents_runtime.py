@@ -56,6 +56,7 @@ from .turn_support import (
     _append_product_results,
     _detail_fields_already_held,
     _search_catalog_scopes_input_model,
+    _system_identification_events,
     _turn_audience_events,
     AddCartItemsToolItemInput,
     RequestIdentity,
@@ -64,6 +65,7 @@ from .turn_support import (
     _cart_line_size,
     _cart_quantity_provenance_issue,
     _cart_product_provenance_issue,
+    _identified_in_the_current_showing,
     _most_recently_shown,
     _images_in_product_order,
     _in_presentation_order,
@@ -1438,6 +1440,9 @@ class DeepAgentsRuntime:
                     "the shopper means; do not guess or search for a substitute."
                 )
             scope.product_evidence.add_resolutions(result.results, references)
+            state.system_identified_products = list(
+                scope.product_evidence.system_identified()
+            )
             for resolution in result.results:
                 if resolution.status != "resolved":
                     continue
@@ -1527,6 +1532,9 @@ class DeepAgentsRuntime:
                 except (ConversationProductsError, ValidationError):
                     return None
                 scope.product_evidence.add_resolutions(result.results, descriptors)
+                state.system_identified_products = list(
+                    scope.product_evidence.system_identified()
+                )
                 return scope.product_evidence.get(product_ref)
 
             resolved: list[tuple[str, ProductSummary, int]] = []
@@ -1637,6 +1645,7 @@ class DeepAgentsRuntime:
                     _shopper_words_this_conversation(state),
                     scope.product_evidence,
                     _most_recently_shown(state),
+                    _identified_in_the_current_showing(state),
                 )
                 if product_issue:
                     blocked.append(
@@ -3124,13 +3133,16 @@ Rules:
                 assistant_text=state.response,
                 status=final_status,
                 termination_reason=reason,
-                events=_turn_audience_events(
-                    state,
-                    identity,
-                    field_name=getattr(
-                        self.config, "wearer_audience_field", ""
+                events=[
+                    *_turn_audience_events(
+                        state,
+                        identity,
+                        field_name=getattr(
+                            self.config, "wearer_audience_field", ""
+                        ),
                     ),
-                ),
+                    *_system_identification_events(state, identity),
+                ],
                 output=output,
             )
             finalized = True

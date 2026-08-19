@@ -125,6 +125,10 @@ class State(BaseModel):
         default_factory=list,
         description="Typed prior turns; authoritative for shopper intent context"
     )
+    #: Products the record itself picked this turn, by ref. Written where the
+    #: resolutions land and read at finalization, so the choice can be recorded
+    #: durably instead of expiring with the message that made it.
+    system_identified_products: List[str] = Field(default_factory=list)
     historical_product_sets: List[Dict[str, Any]] = Field(
         default_factory=list,
         description=(

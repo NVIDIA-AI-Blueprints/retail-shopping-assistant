@@ -66,6 +66,7 @@ class TurnResult:
     cart: list[dict[str, Any]]
     tools: list[str]
     seconds: float
+    scopes: list[dict[str, Any]] = field(default_factory=list)
     attached: str = ""
     checks: list[Check] = field(default_factory=list)
 
@@ -176,6 +177,16 @@ class Assistant:
                 str(call.get("tool_name") or "")
                 for call in (diagnostics.get("tool_calls") or [])
             ],
+            # What the turn asked the catalog for, not only what came back. A
+            # filter the shopper never gave returns nothing and is then reported
+            # as though the shop were empty, so the request is the thing to
+            # assert on.
+            "scopes": [
+                scope
+                for call in (diagnostics.get("tool_calls") or [])
+                if call.get("tool_name") == "search_catalog_tool"
+                for scope in ((call.get("arguments") or {}).get("scopes") or [])
+            ],
             "seconds": round(time.monotonic() - started, 1),
         }
 
@@ -266,6 +277,28 @@ def check_turn(
             for product in turn.products
         ]
         record(f"no_product_named.{name}", name not in shown, f"shown: {shown[:6]}")
+
+    # A size the shopper gave for one kind of product must not be applied to
+    # another. "A dress in size 2 and shoes" put size 2 on the shoes scope in
+    # every recorded attempt, and footwear is sold in 5-9, so the search could
+    # only come back empty -- and the miss was then reported as though the shop
+    # had no shoes.
+    for product_type in expect.get("unsized_scopes", []) or []:
+        wanted = str(product_type).casefold()
+        offenders = [
+            {
+                "scope": scope.get("requested_product_type"),
+                "sizes": (scope.get("required_constraints") or {}).get("sizes"),
+            }
+            for scope in turn.scopes
+            if wanted in str(scope.get("requested_product_type") or "").casefold()
+            and (scope.get("required_constraints") or {}).get("sizes")
+        ]
+        record(
+            f"unsized_scopes.{product_type}",
+            not offenders,
+            f"a size was applied: {offenders}",
+        )
 
     for tool in expect.get("tools_used", []) or []:
         record(f"tools_used.{tool}", tool in turn.tools, f"called: {turn.tools}")
@@ -367,6 +400,7 @@ def run_scenario(
             products=answered["products"],
             cart=answered["cart"],
             tools=answered["tools"],
+            scopes=answered.get("scopes") or [],
             seconds=answered["seconds"],
         )
         turn.checks = check_turn(step.get("expect") or {}, turn, previous_cart)

@@ -649,3 +649,76 @@ class TestAtomicRefusalSaysWhatWasReady:
         result = self._result(ready=[])
 
         assert "Established, not added" not in result
+
+
+class TestTheCartSaysWhichLineItTookLast:
+    """"Replace that one with a size 6", over a cart of four.
+
+    The shopper had added a dress the turn before. The assistant read the cart
+    back, found two lines that were not size 6, and asked which had been meant.
+
+    It was right not to guess from its own earlier sentence -- dialogue is
+    intent, never fact, and a cart is not mutated on a narrative. The fact it
+    needed belongs to the cart, which knows the order its lines went in and
+    kept that to itself.
+    """
+
+    @staticmethod
+    def _cart(*items):
+        from chain_server.src.agenttypes import Cart
+
+        return Cart(contents=list(items))
+
+    def test_the_line_added_last_is_marked(self) -> None:
+        from chain_server.src.response_format import _format_cart
+
+        text = _format_cart(
+            self._cart(
+                {"cart_line_id": "a", "item": "Vivienne Lace Dress", "size": "2", "amount": 1},
+                {"cart_line_id": "b", "item": "Vivacious Velvet Dress", "size": "4", "amount": 1},
+            )
+        )
+
+        lines = text.splitlines()
+        assert "ADDED MOST RECENTLY" in lines[-1]
+        assert "Vivacious Velvet Dress" in lines[-1]
+        # Exactly one line carries it, or it identifies nothing.
+        assert sum("ADDED MOST RECENTLY" in line for line in lines) == 1
+
+    def test_an_empty_cart_marks_nothing(self) -> None:
+        from chain_server.src.response_format import _format_cart
+
+        assert "ADDED MOST RECENTLY" not in _format_cart(self._cart())
+
+    def test_the_commerce_cart_is_marked_the_same_way(self) -> None:
+        """Two renderings of one cart, and both are read by the model."""
+
+        from chain_server.src.response_format import _format_cart_lines
+        from shared.commerce_contracts import Cart as CommerceCart, CartLine
+
+        text = _format_cart_lines(
+            CommerceCart(
+                user_id="1",
+                lines=[
+                    CartLine(
+                        cart_line_id="a",
+                        product_id="p-a",
+                        display_name="Vivienne Lace Dress",
+                        quantity=1,
+                        size="2",
+                    ),
+                    CartLine(
+                        cart_line_id="b",
+                        product_id="p-b",
+                        display_name="Vivacious Velvet Dress",
+                        quantity=1,
+                        size="4",
+                    ),
+                ]
+            )
+        )
+
+        rendered = text.splitlines()
+        assert "ADDED MOST RECENTLY" in rendered[-1]
+        assert "Vivacious Velvet Dress" in rendered[-1]
+        assert sum("ADDED MOST RECENTLY" in line for line in rendered) == 1

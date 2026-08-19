@@ -842,3 +842,26 @@ class TestUserEndpoints:
     def test_clear_user_404_for_missing_user(self, client: TestClient) -> None:
         response = client.post("/user/1234/clear")
         assert response.status_code == 404
+
+
+def test_the_cart_is_read_in_the_order_its_lines_were_added(
+    client: TestClient,
+) -> None:
+    """A shopper's "that one" is answered from this order.
+
+    Left unordered it was whatever the engine happened to return -- usually
+    insertion order, and never promised to be. The assistant reads the cart
+    back to decide which line "that one" means, so the order is part of the
+    answer rather than a detail of storage.
+    """
+
+    for item in ("First Added", "Second Added", "Third Added"):
+        assert _add_cart(client, 4242, item, 1).status_code == 200
+
+    cart = client.get("/user/4242/cart").json()["cart"]
+
+    assert [line["item"] for line in cart] == [
+        "First Added",
+        "Second Added",
+        "Third Added",
+    ]

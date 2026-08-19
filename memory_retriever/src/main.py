@@ -261,7 +261,14 @@ async def get_user(user_id: int, db=Depends(get_db)):
 
 @app.get("/user/{user_id}/cart")
 async def report_cart(user_id: int, db=Depends(get_db)):
-    cart_items = db.query(CartItem).filter(CartItem.user_id == user_id).all()
+    # Ordered explicitly: the shopper's own "that one" is answered from
+    # this order, so it may not be whatever the engine happens to return.
+    cart_items = (
+        db.query(CartItem)
+        .filter(CartItem.user_id == user_id)
+        .order_by(CartItem.id)
+        .all()
+    )
     if not cart_items:
         return {
             "user_id": user_id,
@@ -468,7 +475,14 @@ async def update_cart_quantity(
 
 @app.post("/user/{user_id}/cart/clear")
 async def clear_cart(user_id: int, db=Depends(get_db)):
-    cart_items = db.query(CartItem).filter(CartItem.user_id == user_id).all()
+    # Ordered explicitly: the shopper's own "that one" is answered from
+    # this order, so it may not be whatever the engine happens to return.
+    cart_items = (
+        db.query(CartItem)
+        .filter(CartItem.user_id == user_id)
+        .order_by(CartItem.id)
+        .all()
+    )
     if not cart_items:
         raise HTTPException(status_code=404, detail="No items found in cart")
     for item in cart_items:

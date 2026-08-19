@@ -302,6 +302,7 @@ def _format_cart_lines(cart: Cart | CommerceCart) -> str:
             )
             for line in cart.lines
         ]
+        lines[-1] += " | ADDED MOST RECENTLY"
         if cart.subtotal:
             lines.append(
                 f"  SUBTOTAL: {cart.subtotal.currency} {cart.subtotal.amount:.2f}"
@@ -328,6 +329,17 @@ def _format_cart_lines(cart: Cart | CommerceCart) -> str:
             f"- CART_LINE_ID: {cart_line_id} | "
             f"{item.get('amount', 1)} x {item.get('item', '')}{size_text}{suffix}"
         )
+    if lines:
+        # A shopper who adds a dress and then says "replace that one with a
+        # size 6" is pointing at the line the cart took last. The cart knows
+        # which that is -- it is the order the lines were added in -- and used
+        # to keep it to itself, so the assistant read back four lines it could
+        # not tell apart and asked which one had been meant.
+        #
+        # Dialogue is intent, never fact, so "I just added it" in an earlier
+        # reply is not something to mutate a cart on. This is the same fact
+        # from the authority that owns it.
+        lines[-1] += " | ADDED MOST RECENTLY"
     return "\n".join(lines)
 
 

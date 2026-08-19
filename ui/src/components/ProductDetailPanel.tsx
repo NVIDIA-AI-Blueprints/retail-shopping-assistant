@@ -86,9 +86,6 @@ const ProductDetailPanel: React.FC<ProductDetailPanelProps> = ({
               {selectedProduct.price && (
                 <span>{formatPrice(selectedProduct.price)}</span>
               )}
-              {selectedProduct.availability && (
-                <span>{formatAvailability(selectedProduct.availability)}</span>
-              )}
               {selectedProduct.brand && <span>{selectedProduct.brand}</span>}
             </div>
 
@@ -164,14 +161,6 @@ const formatPrice = (price: ProductPrice): string => {
   } catch {
     return `$${price.amount.toFixed(2)}`;
   }
-};
-
-const formatAvailability = (availability: string): string => {
-  return availability
-    .split("_")
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
 };
 
 const getCatalogFacts = (product: ProductSummary | null): string[] => {

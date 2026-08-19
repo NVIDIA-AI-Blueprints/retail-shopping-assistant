@@ -65,6 +65,7 @@ from .turn_support import (
     _cart_quantity_provenance_issue,
     _cart_product_provenance_issue,
     _most_recently_shown,
+    _images_in_product_order,
     _in_presentation_order,
     _shopper_words_this_conversation,
     _cart_size_provenance_issue,
@@ -698,25 +699,12 @@ class DeepAgentsRuntime:
             raise
         # Re-raises whatever the turn raised, so failure handling is unchanged.
         output = await turn
-        # One order for both events: the cards and the sentences are the same
-        # list to a shopper, and "the second one" has to mean one product.
-        products = _in_presentation_order(
-            output.product_results or [], output.response or ""
-        )
+        products = output.product_results or []
         if products:
             yield json.dumps(
                 {"type": "products", "payload": products, "timestamp": time.time()}
             )
         images = output.retrieved or {}
-        shown = [
-            str(product.get("display_name") or "")
-            for product in products
-            if product.get("display_name")
-        ]
-        images = {
-            **{name: images[name] for name in shown if name in images},
-            **{name: url for name, url in images.items() if name not in set(shown)},
-        }
         yield json.dumps({"type": "images", "payload": images, "timestamp": time.time()})
         if output.response:
             yield json.dumps(
@@ -3101,6 +3089,18 @@ Rules:
         present_products: bool = True,
     ) -> bool:
         """Persist one terminal turn without changing its shopper response."""
+
+        # Ordered here, before the record is written and before the events are
+        # emitted, so the shopper, the durable index and the resolver all count
+        # the same list. Ordering only at the stream would have left "the second
+        # one" meaning the second shown to the shopper and the second ranked to
+        # the resolver.
+        state.product_results = _in_presentation_order(
+            state.product_results or [], state.response or ""
+        )
+        state.retrieved = _images_in_product_order(
+            state.retrieved or {}, state.product_results
+        )
 
         reason = termination_reason or str(
             state.agent_diagnostics.get("final_termination_reason") or "completed"

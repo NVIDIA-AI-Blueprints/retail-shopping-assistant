@@ -3731,6 +3731,32 @@ def _in_presentation_order(
     ]
 
 
+def _images_in_product_order(
+    images: dict[str, str],
+    products: list[dict[str, Any]],
+) -> dict[str, str]:
+    """The image map, following the product order, keeping every entry.
+
+    The cards render from this map, so it has to agree with the list beside it.
+    Anything it holds that the products do not name is kept at the end rather
+    than dropped: it was shown, and losing it would remove a card rather than
+    move one.
+    """
+
+    if not images:
+        return images
+    named = [
+        str(product.get("display_name") or "")
+        for product in products
+        if str(product.get("display_name") or "") in images
+    ]
+    seen = set(named)
+    return {
+        **{name: images[name] for name in named},
+        **{name: url for name, url in images.items() if name not in seen},
+    }
+
+
 def _search_attribute_facts(product: Any) -> dict[str, str]:
     """Structured attributes the catalog confirmed for one search hit.
 

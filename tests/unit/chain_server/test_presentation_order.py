@@ -65,3 +65,32 @@ def test_an_empty_reply_leaves_the_ranking_alone() -> None:
 
 def test_no_products_is_not_an_error() -> None:
     assert _in_presentation_order([], "anything") == []
+
+
+def test_the_images_follow_the_products_and_lose_nothing() -> None:
+    """The cards render from this map, so it must agree with the list beside it."""
+
+    from chain_server.src.turn_support import _images_in_product_order
+
+    images = {"Alpha Dress": "/a.jpg", "Beta Dress": "/b.jpg", "Gamma Dress": "/g.jpg"}
+    products = [_p("Gamma Dress"), _p("Alpha Dress"), _p("Beta Dress")]
+
+    assert list(_images_in_product_order(images, products)) == [
+        "Gamma Dress",
+        "Alpha Dress",
+        "Beta Dress",
+    ]
+
+
+def test_an_image_the_products_do_not_name_is_kept_at_the_end() -> None:
+    """It was shown. Dropping it would remove a card rather than move one."""
+
+    from chain_server.src.turn_support import _images_in_product_order
+
+    images = {"Alpha Dress": "/a.jpg", "Orphan Dress": "/o.jpg"}
+    products = [_p("Alpha Dress")]
+
+    ordered = _images_in_product_order(images, products)
+
+    assert list(ordered) == ["Alpha Dress", "Orphan Dress"]
+    assert ordered["Orphan Dress"] == "/o.jpg"

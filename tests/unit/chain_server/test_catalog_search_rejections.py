@@ -565,3 +565,68 @@ def test_an_advertised_type_rejected_on_its_taxonomy_is_not_called_uncarried() -
     text, artifact = result if isinstance(result, tuple) else (result, None)
     assert NOT_CARRIED_KEY not in (artifact or {})
     assert "NOT_CARRIED" not in text
+
+
+def test_a_type_the_catalog_does_not_list_is_disclosed_not_swapped_silently(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Shown a video with jeans in it, the model searched skirts.
+
+    Nothing said so. The disclosure only fired when a bare parent category was
+    chosen, so a scope naming real subcategories looked exactly like a direct
+    search for the thing that was asked for.
+
+    Whether the swap is sound is a judgement nothing here can make -- a pump is
+    a heel, a jean is not a skirt. That the shopper's type is not advertised is
+    certain, and is what gets recorded.
+    """
+
+    def _one_product(*_args: Any, **_kwargs: Any) -> Any:
+        return SimpleNamespace(
+            result=SearchCatalogResult(
+                ok=True,
+                products=[
+                    ProductSummary(
+                        product_id="skirt-1",
+                        display_name="A Skirt",
+                        category="skirts",
+                        price=Money(amount=49.99, currency="USD"),
+                    )
+                ],
+            ),
+            fallback_attempted=False,
+            fallback_used=False,
+        )
+
+    monkeypatch.setattr(catalog_search_mod, "execute_catalog_search", _one_product)
+
+    ctx = _context("do you have jeans")
+    result = search_catalog(
+        ctx,
+        [
+            _scope(
+                semantic_query="dark blue jeans",
+                requested_product_type="jeans",
+                taxonomy={"category": ["apparel"], "subcategory": ["dresses"]},
+            )
+        ],
+    )
+
+    text = result[0] if isinstance(result, tuple) else result
+    assert '"requested_product_type": "jeans"' in text
+    assert '"requested_type_is_advertised": false' in text
+    assert '"searched_types": ["dresses"]' in text
+
+
+def test_an_advertised_type_is_not_reported_as_a_substitution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Asking for tote bags and searching tote_bags substitutes nothing."""
+
+    monkeypatch.setattr(catalog_search_mod, "execute_catalog_search", _no_products)
+
+    ctx = _context("show me tote bags")
+    result = search_catalog(ctx, [_scope()])
+
+    text = result[0] if isinstance(result, tuple) else result
+    assert "requested_type_is_advertised" not in text

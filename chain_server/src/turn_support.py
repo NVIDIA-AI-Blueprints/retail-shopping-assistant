@@ -843,11 +843,16 @@ class SearchCatalogToolArguments(BaseModel):
             "-- a proposed 'top' may select blouses and sweaters together. Do not "
             "widen a role to types it does not cover. Never select "
             "a parent or sibling as a substitute for an advertised type. If a "
-            "shopper-named type is not separately advertised but one advertised "
-            "category is its faithful broader parent, select only that category "
-            "and leave subcategory empty; results remain alternatives under their "
-            "actual catalog types. For example, skirts may satisfy bottoms; "
-            "dresses may not."
+            "shopper-named type is not separately advertised, decide it against "
+            "the subcategories that exist, not the category word: select a "
+            "parent category only when one of its advertised subcategories "
+            "denotes the same kind of thing, and then leave subcategory empty. "
+            "Pumps are heels, so footwear qualifies. Every garment is apparel, "
+            "so 'a kind of this category' can never fail and is not the test. "
+            "When no advertised subcategory denotes the kind, the catalog does "
+            "not carry it: name it in not_covered and build no scope for it. "
+            "Results remain alternatives under their actual catalog types. For "
+            "example, skirts may satisfy bottoms; dresses may not."
         ),
     )
     required_constraints: dict[str, Any] = Field(
@@ -1124,9 +1129,11 @@ def _search_catalog_tool_input_model(
                     "may satisfy bottoms; dresses may not. For a broad request "
                     "that names no product type, choose one exact advertised "
                     "subcategory as the focused starting role. If a shopper-named "
-                    "type is not separately advertised but one faithful broader "
-                    "advertised parent category exists, select only that category "
-                    "and leave subcategory empty."
+                    "type is not separately advertised, select a parent category "
+                    "only when one of its advertised subcategories denotes the "
+                    "same kind of thing, and then leave subcategory empty. When "
+                    "none does, the catalog does not carry the type: name it in "
+                    "not_covered and build no scope for it."
                 ),
             ),
         ),
@@ -1221,7 +1228,7 @@ def _search_catalog_scopes_input_model(
                 max_length=10,
                 description=(
                     "Product types the shopper asked for that no advertised "
-                    "category covers, in the shopper's own words. Do not search "
+                    "subcategory denotes, in the shopper's own words. Do not search "
                     "for these -- naming them here is what records the request so "
                     "it can be answered. A shopper asking for 'a pan, a shoe and "
                     "a bag' gets scopes for the shoe and the bag, and 'pan' here."

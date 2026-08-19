@@ -143,8 +143,13 @@ def test_product_discovery_separates_request_lanes() -> None:
 
     assert "## Request Lanes" in body
     assert "ask one concise clarification directly" in normalized
-    assert "Do not call `search_catalog_tool`" in normalized
-    assert "claim the requested type is absent" in normalized
+    assert "do not call `search_catalog_tool` at all" in normalized
+    # The blanket "never claim absence" contradicted `not_covered`, whose
+    # whole purpose is to record a kind the catalog does not carry. Absence
+    # read off the published taxonomy is a fact; absence guessed from a thin
+    # search is the thing that was meant to be banned.
+    assert "the catalog does not carry it" in normalized
+    assert "absence guessed from a search that returned little" in normalized
     assert "put only that attribute in `unadvertised_requirements`" in normalized
     assert "keep it only in `semantic_query`" in normalized
     assert "A product type never belongs in `unadvertised_requirements`" in normalized

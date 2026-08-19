@@ -2352,7 +2352,7 @@ class TestDeepAgentsRuntimeRefs:
         assert "not separately advertised" in schema["properties"]["taxonomy"][
             "description"
         ]
-        assert "broader advertised parent category" in schema["properties"][
+        assert "advertised subcategories denotes the " in schema["properties"][
             "taxonomy"
         ]["description"]
         assert set(taxonomy_schema["required"]) == {"category", "subcategory"}
@@ -3174,15 +3174,11 @@ class TestDeepAgentsRuntimeRefs:
         assert "Call search_catalog_tool when exact advertised" in (
             captured["system_prompt"]
         )
-        assert "one faithful advertised parent category exists" in (
-            captured["system_prompt"]
-        )
+        assert "denotes the same kind of thing" in captured["system_prompt"]
         assert "Different wording is not a reason to ask" in (
             captured["system_prompt"]
         )
-        assert "ask one concise clarification question directly" in (
-            captured["system_prompt"]
-        )
+        assert "it in `not_covered`" in captured["system_prompt"]
         assert "no_direct_catalog_match" not in captured["system_prompt"]
         assert "One normalized taxonomy-and-required-constraint scope" in (
             captured["system_prompt"]

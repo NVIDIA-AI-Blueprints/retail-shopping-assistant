@@ -5,9 +5,13 @@
  * Product inspection panel for catalog results returned by the assistant.
  */
 
-import React from "react";
+import React, { useCallback, useRef, useState } from "react";
 import { ProductDetailPanelProps, ProductPrice, ProductSummary } from "../types";
 import { getDefaultImage } from "../config/config";
+
+/** Neither half of the panel may be driven to nothing by a drag. */
+const MIN_DETAIL_HEIGHT = 140;
+const MIN_RECENT_HEIGHT = 96;
 
 const ProductDetailPanel: React.FC<ProductDetailPanelProps> = ({
   selectedProduct,
@@ -17,8 +21,55 @@ const ProductDetailPanel: React.FC<ProductDetailPanelProps> = ({
   const displayImage = selectedProduct?.productUrl || getDefaultImage();
   const catalogFacts = getCatalogFacts(selectedProduct);
 
+  // The detail area used to take whatever height its content wanted, so a
+  // product with a long description squeezed the list below it to nothing and
+  // there was no longer anything to scroll. Its height is a split the shopper
+  // sets instead, and neither half can be driven to zero.
+  const panelRef = useRef<HTMLElement | null>(null);
+  const [detailHeight, setDetailHeight] = useState<number | null>(null);
+
+  const startResize = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const panel = panelRef.current;
+    if (!panel) return;
+    event.preventDefault();
+    const handle = event.currentTarget;
+    const { pointerId } = event;
+    handle.setPointerCapture(pointerId);
+
+    const onMove = (move: PointerEvent) => {
+      const bounds = panel.getBoundingClientRect();
+      const next = move.clientY - bounds.top;
+      const largest = bounds.height - MIN_RECENT_HEIGHT;
+      setDetailHeight(Math.max(MIN_DETAIL_HEIGHT, Math.min(next, largest)));
+    };
+    const onUp = () => {
+      // Releasing a pointer that has already gone throws, and a cancelled
+      // gesture never sends pointerup -- both would leave the handle dragging
+      // for the rest of the session.
+      try {
+        handle.releasePointerCapture(pointerId);
+      } catch {
+        /* already released */
+      }
+      handle.removeEventListener("pointermove", onMove);
+      handle.removeEventListener("pointerup", onUp);
+      handle.removeEventListener("pointercancel", onUp);
+    };
+    handle.addEventListener("pointermove", onMove);
+    handle.addEventListener("pointerup", onUp);
+    handle.addEventListener("pointercancel", onUp);
+  }, []);
+
   return (
-    <aside className="product-detail-panel" aria-label="Product detail panel">
+    <aside
+      className="product-detail-panel"
+      aria-label="Product detail panel"
+      ref={panelRef}
+    >
+      <div
+        className="product-detail-panel__detail"
+        style={detailHeight === null ? undefined : { flex: `0 0 ${detailHeight}px` }}
+      >
       <div className="product-detail-panel__media">
         <img src={displayImage} alt={selectedProduct?.productName || "Product preview"} />
       </div>
@@ -34,9 +85,6 @@ const ProductDetailPanel: React.FC<ProductDetailPanelProps> = ({
             <div className="product-detail-panel__meta">
               {selectedProduct.price && (
                 <span>{formatPrice(selectedProduct.price)}</span>
-              )}
-              {selectedProduct.availability && (
-                <span>{formatAvailability(selectedProduct.availability)}</span>
               )}
               {selectedProduct.brand && <span>{selectedProduct.brand}</span>}
             </div>
@@ -65,6 +113,17 @@ const ProductDetailPanel: React.FC<ProductDetailPanelProps> = ({
           </>
         )}
       </div>
+      </div>
+
+      {products.length > 0 && (
+        <div
+          className="product-detail-panel__resizer"
+          role="separator"
+          aria-orientation="horizontal"
+          aria-label="Resize product details"
+          onPointerDown={startResize}
+        />
+      )}
 
       {products.length > 0 && (
         <div className="product-detail-panel__recent" aria-label="Recent catalog results">
@@ -102,14 +161,6 @@ const formatPrice = (price: ProductPrice): string => {
   } catch {
     return `$${price.amount.toFixed(2)}`;
   }
-};
-
-const formatAvailability = (availability: string): string => {
-  return availability
-    .split("_")
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
 };
 
 const getCatalogFacts = (product: ProductSummary | null): string[] => {

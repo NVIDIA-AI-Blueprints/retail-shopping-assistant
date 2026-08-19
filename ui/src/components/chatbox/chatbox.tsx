@@ -269,6 +269,8 @@ const Chatbox: React.FC<ChatboxProps> = ({
   const [lastAssistantIndex, setLastAssistantIndex] = useState<number | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const productsByNameRef = useRef<Map<string, ProductSummary>>(new Map());
+  //: Display order for the panel: most recent turn first, catalog rank within it.
+  const productOrderRef = useRef<string[]>([]);
   const currentTurnHasMedia = useRef(false);
   const currentTurnGuardrails = useRef(isGuardrailsOn);
   const inFlightRef = useRef<AbortController | null>(null);
@@ -472,11 +474,23 @@ const Chatbox: React.FC<ChatboxProps> = ({
   };
 
   const mergeProductResults = (products: ProductSummary[]): ProductSummary[] => {
-    products.forEach((product) => {
-      productsByNameRef.current.set(productKey(product.productName), product);
+    const arriving = products.map((product) => productKey(product.productName));
+    products.forEach((product, index) => {
+      productsByNameRef.current.set(arriving[index], product);
     });
 
-    const nextProducts = Array.from(productsByNameRef.current.values());
+    // The panel is titled "Recent results", so the newest turn goes on top --
+    // but within a turn the catalog's ranking is kept, because the first result
+    // is the best match and reversing the whole list would put the worst one
+    // first and select it.
+    productOrderRef.current = [
+      ...arriving,
+      ...productOrderRef.current.filter((key) => !arriving.includes(key)),
+    ];
+
+    const nextProducts = productOrderRef.current
+      .map((key) => productsByNameRef.current.get(key))
+      .filter((product): product is ProductSummary => Boolean(product));
     onProductsUpdate(nextProducts);
 
     const hasSelectedProduct =
@@ -820,6 +834,7 @@ const Chatbox: React.FC<ChatboxProps> = ({
     setModelUsage({});
     setSessionUsage(sessionUsageRef.current);
     productsByNameRef.current.clear();
+    productOrderRef.current = [];
     onProductSelect(null);
     onProductsUpdate([]);
     if (clearIdentity) {

@@ -249,8 +249,8 @@ class ToolLoopControlMiddleware(AgentMiddleware):
                 continue
             if SEARCH_SCOPE_COMPLETE_PREFIX in content:
                 self._synthesis_required = True
-            elif content.startswith(
-                (SEARCH_VALIDATION_ERROR_PREFIX, CONSTRAINT_REVIEW_PREFIX)
+            elif _validation_error_body(content) or content.startswith(
+                CONSTRAINT_REVIEW_PREFIX
             ):
                 self._queue_repair(messages, tool_call_id, content)
             elif "SEARCH_RESULT_GROUNDING_NOTE" in content:
@@ -609,10 +609,24 @@ def _singularize_scope_word(word: str) -> str:
     return word
 
 
+def _validation_error_body(content: str) -> str:
+    """The validator's verdict inside a tool message, or "" if there is none.
+
+    The verdict does not always start the message. When a scope names a kind the
+    catalog does not carry, the body says so first and appends the mismatch --
+    so a `startswith` test misses it, no repair is queued, and the bounded-repair
+    accounting never runs. Matching anywhere is how `SEARCH_SCOPE_COMPLETE` is
+    already read, and for the same reason.
+    """
+
+    index = content.find(SEARCH_VALIDATION_ERROR_PREFIX)
+    return content[index:] if index >= 0 else ""
+
+
 def _sanitize_repair_feedback(content: str) -> str:
     """Remove rejected arguments and retain only safe schema field names."""
 
-    feedback = content.strip()
+    feedback = (_validation_error_body(content) or content).strip()
     if feedback.startswith(SEARCH_VALIDATION_ERROR_PREFIX):
         feedback = feedback.removeprefix(SEARCH_VALIDATION_ERROR_PREFIX).strip()
         if feedback.startswith("{"):
@@ -634,6 +648,11 @@ def _native_validation_fields(content: str) -> set[str]:
     _, separator, validation_error = content.rpartition(" with error:\n")
     if not separator:
         return set()
+    # Under the scoped contract every location reads `scopes.<n>.<field>`, so
+    # the first segment is always "scopes" and nothing ever matched. The result
+    # was an empty set, read by the caller as "nothing identifiable", and the
+    # model was told only that validation had failed -- `BUGS_OPEN` item 8.
+    validation_error = re.sub(r"^scopes\.\d+\.", "", validation_error, flags=re.M)
     field_names = {
         "semantic_query",
         "shopper_guidance",
@@ -654,9 +673,10 @@ def _native_validation_fields(content: str) -> set[str]:
 def _is_native_validation_failure(content: str) -> bool:
     """Return whether ToolNode rejected arguments before tool execution."""
 
-    if not content.startswith(SEARCH_VALIDATION_ERROR_PREFIX):
+    body = _validation_error_body(content)
+    if not body:
         return False
-    feedback = content.removeprefix(SEARCH_VALIDATION_ERROR_PREFIX).lstrip()
+    feedback = body.removeprefix(SEARCH_VALIDATION_ERROR_PREFIX).lstrip()
     return feedback.startswith("{")
 
 

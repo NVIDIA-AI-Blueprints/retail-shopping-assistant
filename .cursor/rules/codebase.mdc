@@ -273,8 +273,8 @@ Each service has YAML configurations in `/shared/configs/`:
 
 **Chain Server** (`chain_server/config.yaml`):
 ```yaml
-llm_port: "http://llama:8000/v1"
-llm_name: "meta/llama-3.1-70b-instruct"
+llm_port: "http://nemotron:8000/v1"
+llm_name: "nvidia/nemotron-3-super-120b-a12b"
 retriever_port: "http://catalog-retriever:8010"
 memory_port: "http://memory-retriever:8011"
 rails_port: "http://rails:8012"
@@ -290,7 +290,7 @@ agent_choices: ["cart", "retriever", "chatter"]
 ```yaml
 text_embed_port: "http://text-embedder:8000/v1"
 image_embed_port: "http://image-embedder:8000/v1"
-text_model_name: "nvidia/nv-embedqa-e5-v5"
+text_model_name: "nvidia/nemotron-3-embed-1b"
 image_model_name: "nvidia/nvclip"
 db_port: "milvus:19530"
 data_source: "/app/shared/data/products.csv"

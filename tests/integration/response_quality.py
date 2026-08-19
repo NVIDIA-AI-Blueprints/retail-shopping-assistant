@@ -8,7 +8,7 @@ import json
 import yaml
 
 # Configuration
-LLM_NAME = "nvdev/meta/llama-3.1-70b-instruct"
+LLM_NAME = "nvdev/nvidia/nemotron-3-super-120b-a12b"
 #LLM_NAME = "nvdev/nv-mistralai/mistral-nemo-12b-instruct"
 EMBED_NAME = "nvdev/nvidia/nemotron-3-embed-1b"
 LLM_CLIENT = OpenAI(

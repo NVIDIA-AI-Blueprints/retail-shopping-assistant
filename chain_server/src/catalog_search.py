@@ -1384,6 +1384,25 @@ def _rendered_evidence(ctx: SearchContext, attempt: _Attempt) -> StepResult:
         and request.taxonomy.category
         else None
     )
+    # What that parent actually holds. "Apparel" is true of every garment, so
+    # the category alone cannot tell the shopper whether their kind is here;
+    # its advertised subcategories can, and they are already published.
+    advertised_subcategories = (
+        sorted(
+            (
+                getattr(
+                    (attempt.capabilities.taxonomy.categories or {}).get(
+                        advertised_category
+                    ),
+                    "subcategories",
+                    None,
+                )
+                or {}
+            )
+        )
+        if advertised_category and attempt.capabilities.taxonomy
+        else []
+    )
     role_advertised_types = (
         list(request.taxonomy.subcategory or [])
         if attempt.composed_role
@@ -1393,6 +1412,7 @@ def _rendered_evidence(ctx: SearchContext, attempt: _Attempt) -> StepResult:
         _format_search_scope_relation_evidence(
             requested_product_type=request.requested_product_type or "",
             advertised_category=advertised_category,
+            advertised_subcategories=advertised_subcategories,
         )
         if advertised_category
         else (

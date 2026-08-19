@@ -138,19 +138,29 @@ def _format_search_scope_relation_evidence(
     *,
     requested_product_type: str,
     advertised_category: str,
+    advertised_subcategories: list[str] | None = None,
 ) -> str:
-    """Record a model-selected advertised parent for honest response framing."""
+    """Record a model-selected advertised parent for honest response framing.
 
+    The parent alone does not say whether the shopper's kind is here. Asked to
+    match a look containing jeans, the model chose `apparel` -- true of every
+    garment ever made -- and ranked dresses against "dark blue straight-leg
+    jeans". What settles it is the list of subcategories that parent actually
+    holds: blouses, camisoles, dresses, jumpsuits, skirts, sweaters. None is a
+    trouser, and that is a fact rather than a judgement, so it travels with the
+    relation instead of being left to be inferred.
+    """
+
+    payload = {
+        "relation": "model_selected_parent_category",
+        "requested_product_type": requested_product_type,
+        "advertised_category": advertised_category,
+    }
+    if advertised_subcategories:
+        payload["advertised_subcategories"] = list(advertised_subcategories)
     return (
         f"{_SEARCH_SCOPE_RELATION_EVIDENCE_PREFIX} "
-        + json.dumps(
-            {
-                "relation": "model_selected_parent_category",
-                "requested_product_type": requested_product_type,
-                "advertised_category": advertised_category,
-            },
-            sort_keys=True,
-        )
+        + json.dumps(payload, sort_keys=True)
     )
 
 

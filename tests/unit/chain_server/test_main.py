@@ -3988,9 +3988,14 @@ class TestDeepAgentsRuntimeRefs:
         # executed plan are asserted on it directly. Re-issuing the same scope
         # now correctly trips the duplicate-scope guard rather than being the
         # first real retrieval, so the former retry is gone.
+        # The parent alone cannot say whether the shopper's kind is here --
+        # "apparel" is true of every garment -- so what that parent actually
+        # holds travels with the relation.
         assert (
             'SEARCH_SCOPE_RELATION_EVIDENCE: {"advertised_category": '
-            '"footwear", "relation": "model_selected_parent_category", '
+            '"footwear", "advertised_subcategories": ["boots", "flats", '
+            '"heels", "sandals"], '
+            '"relation": "model_selected_parent_category", '
             '"requested_product_type": "sneakers"}'
             in misplaced_product_type
         )

@@ -65,6 +65,7 @@ from .turn_support import (
     _cart_quantity_provenance_issue,
     _cart_product_provenance_issue,
     _most_recently_shown,
+    _in_presentation_order,
     _shopper_words_this_conversation,
     _cart_size_provenance_issue,
     _build_checkpointer,
@@ -697,12 +698,25 @@ class DeepAgentsRuntime:
             raise
         # Re-raises whatever the turn raised, so failure handling is unchanged.
         output = await turn
-        products = output.product_results or []
+        # One order for both events: the cards and the sentences are the same
+        # list to a shopper, and "the second one" has to mean one product.
+        products = _in_presentation_order(
+            output.product_results or [], output.response or ""
+        )
         if products:
             yield json.dumps(
                 {"type": "products", "payload": products, "timestamp": time.time()}
             )
         images = output.retrieved or {}
+        shown = [
+            str(product.get("display_name") or "")
+            for product in products
+            if product.get("display_name")
+        ]
+        images = {
+            **{name: images[name] for name in shown if name in images},
+            **{name: url for name, url in images.items() if name not in set(shown)},
+        }
         yield json.dumps({"type": "images", "payload": images, "timestamp": time.time()})
         if output.response:
             yield json.dumps(

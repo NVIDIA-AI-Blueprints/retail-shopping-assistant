@@ -3692,6 +3692,45 @@ def _tool_search_mode(value: str | None) -> str | None:
 _NON_ATTRIBUTE_SEARCH_KEYS = frozenset({"catalog_text", "similarity", "taxonomy"})
 
 
+def _in_presentation_order(
+    products: list[dict[str, Any]],
+    reply: str,
+) -> list[dict[str, Any]]:
+    """The shown products, ordered as the reply presents them.
+
+    The cards and the words are the same list to a shopper, so "the second one"
+    has to mean one product. They were two orders: the cards followed the
+    catalog's ranking and the sentences followed whatever the model wrote, and
+    across recorded turns they disagreed about half the time.
+
+    The order is settled once, here, where the reply and the products are both
+    in hand -- so every consumer downstream renders one order rather than
+    each choosing its own.
+
+    This looks for the exact display names the service itself produced. It reads
+    nothing else out of the reply, and decides nothing but sequence: a product
+    the reply never names keeps its ranking, after the ones it does.
+    """
+
+    if not products or not reply:
+        return products
+    mentioned: list[tuple[int, int, dict[str, Any]]] = []
+    unmentioned: list[tuple[int, dict[str, Any]]] = []
+    for rank, product in enumerate(products):
+        name = str(product.get("display_name") or "")
+        at = reply.find(name) if name else -1
+        if at >= 0:
+            mentioned.append((at, rank, product))
+        else:
+            unmentioned.append((rank, product))
+    # Rank breaks ties, so two products named in the same breath keep the
+    # catalog's order between them.
+    mentioned.sort(key=lambda item: (item[0], item[1]))
+    return [product for _at, _rank, product in mentioned] + [
+        product for _rank, product in unmentioned
+    ]
+
+
 def _search_attribute_facts(product: Any) -> dict[str, str]:
     """Structured attributes the catalog confirmed for one search hit.
 

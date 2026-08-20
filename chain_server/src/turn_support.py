@@ -1634,11 +1634,15 @@ class AddCartItemsToolItemInput(BaseModel):
         default=None,
         max_length=200,
         description=(
-            "The shopper's own words that gave this size, quoted from their "
-            "message -- 'size 8', 'in a 10 as well'. Required with a size "
-            "unless the same size is already on their cart line. A size they "
-            "did not ask for is not their size: when they have not said one, "
-            "leave both empty and ask."
+            "The shopper's own words that gave this size, quoted from any "
+            "message in this conversation -- 'size 8', 'in a 10 as well'. It "
+            "is often not the message you are answering: a shopper who says "
+            "'shoe size 6' and picks a pair two turns later gave the size in "
+            "the earlier message, and that is the one to quote. The quotation "
+            "must contain the size it authorises. Required with a size unless "
+            "the same size is already on their cart line. A size they did not "
+            "ask for is not their size: when they have not said one, leave "
+            "both empty and ask."
         ),
     )
 
@@ -4370,6 +4374,43 @@ def _cart_line_size(cart: Any, product_id: str) -> str | None:
     return None
 
 
+def _size_quotation_problem(
+    stated_as: str | None,
+    shopper_text: str,
+    chosen: str,
+) -> str:
+    """Say which half of the check failed, and what would answer it.
+
+    The refusal used to say "the shopper did not ask for a size 6" whatever had
+    gone wrong. Live, they had: "shoe size 6", two turns earlier. What the gate
+    had established was narrower -- the quotation it was handed did not carry
+    the size -- and stating the broader thing sent the model to ask a question
+    the shopper had already answered.
+
+    A gate may only report what it checked. Anything more is a claim it cannot
+    support, and this one was false in the case that matters most.
+    """
+
+    quoted = " ".join((stated_as or "").split())
+    if not quoted:
+        return (
+            f"no words of the shopper's were quoted for size {chosen}. Quote "
+            "the message where they gave it, or ask them which size they want."
+        )
+    if quoted.casefold() not in " ".join(shopper_text.split()).casefold():
+        return (
+            f"'{quoted}' is not something the shopper said in this "
+            "conversation. Quote their own words, or ask them which size they "
+            "want."
+        )
+    return (
+        f"the quotation '{quoted}' does not contain {chosen}, so it does not "
+        f"give that size. If they gave it in an earlier message, quote that "
+        "message instead; if they never gave one, ask them which size they "
+        "want."
+    )
+
+
 def _cart_size_provenance_issue(
     product: Any,
     size: str | None,
@@ -4414,10 +4455,9 @@ def _cart_size_provenance_issue(
     # Asking it to name "the sizes it is sold in" without supplying them is the
     # same error in miniature.
     return (
-        f"SIZE NOT ESTABLISHED for '{product.display_name}': the shopper did "
-        f"not ask for a size {chosen}. It is sold in {', '.join(advertised)}. "
-        "Ask which of those they want and add it when they answer. Nothing was "
-        "added."
+        f"SIZE NOT ESTABLISHED for '{product.display_name}': "
+        f"{_size_quotation_problem(stated_as, shopper_text, chosen)} "
+        f"It is sold in {', '.join(advertised)}. Nothing was added."
     )
 
 

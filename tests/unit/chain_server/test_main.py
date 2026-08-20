@@ -9464,3 +9464,32 @@ class TestAudienceAwareSearch:
         assert "send every value that suits them as a hard filter" in normalized
         assert "Otherwise send no audience filter at all" in normalized
         assert "never ask the shopper their gender" in normalized
+
+
+def test_every_cart_impl_helper_is_callable_by_the_tool_that_wraps_it() -> None:
+    """`remove_cart_item_tool` calls its impl directly, and could not.
+
+    The impl carried a `@tool` decorator, which makes it a StructuredTool --
+    not callable. Every removal raised `'StructuredTool' object is not
+    callable' and the turn died with an agent error, so a shopper could not
+    take anything out of their cart, and a size change left both lines behind.
+
+    A source check rather than a call, because these helpers are closures
+    inside `_create_agent` and cannot be reached from here. What is checked is
+    exactly the property that broke: a helper the tool invokes directly must
+    not itself be a tool.
+    """
+
+    import inspect
+    import re
+
+    from chain_server.src import deepagents_runtime
+
+    source = inspect.getsource(deepagents_runtime).splitlines()
+    decorated: list[str] = []
+    for index, line in enumerate(source):
+        match = re.match(r"\s*def (_\w+_impl)\(", line)
+        if match and index and source[index - 1].strip().startswith("@tool"):
+            decorated.append(match.group(1))
+
+    assert decorated == []

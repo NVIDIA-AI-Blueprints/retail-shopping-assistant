@@ -1752,7 +1752,11 @@ class DeepAgentsRuntime:
 
             return normalize_tool_result(_add_cart_items_impl(items))
 
-        @tool(return_direct=False)
+        # Not a tool. `remove_cart_item_tool` calls this directly, and a
+        # decorated function is a StructuredTool, which is not callable -- so
+        # every removal raised `'StructuredTool' object is not callable` and
+        # the turn died. Its sibling `_add_cart_items_impl` is undecorated for
+        # the same reason.
         def _remove_cart_item_impl(cart_line_id: str, quantity: int = 1):
             """Remove a cart line. Use ONLY on explicit shopper intent to remove
             an item. Requires CART_LINE_ID from get_cart_tool — do not guess.

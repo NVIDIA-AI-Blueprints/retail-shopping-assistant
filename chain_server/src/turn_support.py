@@ -1177,6 +1177,61 @@ def _search_catalog_tool_input_model(
     )
 
 
+def _scope_content_errors_only(errors: Sequence[Any]) -> bool:
+    """Whether every error is about what is *inside* a scope.
+
+    A location of ``("scopes", 0, "required_constraints", ...)`` is one role's
+    content: the model chose a value this catalog does not advertise. Anything
+    shorter is structural -- too many scopes, a scope that is not an object, a
+    malformed ``not_covered`` -- and remains a hard failure at the boundary.
+    """
+
+    for error in errors:
+        location = tuple(error.get("loc") or ())
+        if len(location) < 3:
+            return False
+        if location[0] != "scopes" or not isinstance(location[1], int):
+            return False
+    return True
+
+
+def _admit_scopes_for_adjudication(cls: Any, data: Any, handler: Any) -> Any:
+    """Let the search body judge scope content, one role at a time.
+
+    The tool schema is how the catalog's shape reaches the model: every
+    advertised value is in it, and it must stay exact. But a schema bound as
+    ``args_schema`` also *adjudicates*, and it can only do so for the whole
+    call. One unadvertised colour on a third scope therefore cancelled two
+    valid searches, and the shopper was told the assistant could not search at
+    all -- observed live, `BUGS_OPEN` item 7.
+
+    `search_catalog` already validates each scope against this same model and
+    already reports rejections per role. It was built that way. Nothing reached
+    it, because the boundary answered first.
+
+    So the schema keeps advertising and stops adjudicating scope content: when
+    every complaint is about what is inside a scope, the raw scopes are admitted
+    and the body decides them one at a time -- rejecting the role that is wrong
+    and running the roles that are right. Structural complaints still fail here,
+    where they are the boundary's own business.
+    """
+
+    try:
+        return handler(data)
+    except ValidationError as exc:
+        if not isinstance(data, dict):
+            raise
+        if not _scope_content_errors_only(exc.errors()):
+            raise
+        scopes = data.get("scopes")
+        if not isinstance(scopes, list) or not scopes:
+            raise
+        return cls.model_construct(
+            scopes=list(scopes),
+            not_covered=data.get("not_covered"),
+        )
+
+
 def _search_catalog_scopes_input_model(
     capabilities: CatalogCapabilities,
     *,
@@ -1235,6 +1290,11 @@ def _search_catalog_scopes_input_model(
                 ),
             ),
         ),
+        __validators__={
+            "_admit_scopes_for_adjudication": model_validator(mode="wrap")(
+                classmethod(_admit_scopes_for_adjudication)
+            ),
+        },
     )
 
 

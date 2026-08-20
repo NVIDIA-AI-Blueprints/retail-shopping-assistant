@@ -567,6 +567,51 @@ def test_an_advertised_type_rejected_on_its_taxonomy_is_not_called_uncarried() -
     assert "NOT_CARRIED" not in text
 
 
+def test_one_rejected_scope_does_not_cancel_the_scopes_beside_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A shopper asked for a look and got nothing, over one word.
+
+    The model composed three roles and wrote an unadvertised colour on the
+    third. The whole call was refused at the tool boundary, so the two sound
+    roles never reached this function -- which had been built all along to judge
+    each role on its own and run the ones that stand up.
+    """
+
+    searched: list[str] = []
+
+    def _record(plan: Any, *_args: Any, **_kwargs: Any) -> Any:
+        searched.extend(plan.semantic_queries)
+        return SimpleNamespace(
+            result=SearchCatalogResult(ok=True, products=[]),
+            fallback_attempted=False,
+            fallback_used=False,
+        )
+
+    monkeypatch.setattr(catalog_search_mod, "execute_catalog_search", _record)
+
+    ctx = _context("a black dress and a tan tote bag")
+    result = search_catalog(
+        ctx,
+        [
+            _scope(
+                semantic_query="black dresses",
+                requested_product_type="dresses",
+                taxonomy={"category": ["apparel"], "subcategory": ["dresses"]},
+                required_constraints={"color": ["black"]},
+            ),
+            _scope(
+                semantic_query="tan tote bags",
+                required_constraints={"color": ["tan"]},
+            ),
+        ],
+    )
+
+    # The sound role ran; the unsound one did not.
+    assert searched == ["black dresses"]
+    assert SearchRejection.CAPABILITIES_SCHEMA_MISMATCH in _rejection_codes(result)
+
+
 def test_a_type_the_catalog_does_not_list_is_disclosed_not_swapped_silently(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

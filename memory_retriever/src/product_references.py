@@ -150,6 +150,41 @@ def append_presented_products_event(
     return event
 
 
+def _system_identifications_by_turn(db, conversation_id: str) -> list[tuple[int, list[str]]]:
+    """Which products the record itself picked, and on which turn.
+
+    A shopper who says "the first pairing" has chosen by a coordinate this
+    service wrote down. The choice is durable for the same reason the showing
+    is.
+    """
+
+    rows = (
+        db.query(ConversationEvent, ConversationTurn)
+        .join(ConversationTurn, ConversationTurn.turn_id == ConversationEvent.turn_id)
+        .filter(
+            ConversationTurn.conversation_id == conversation_id,
+            ConversationEvent.event_type == "historical_reference_resolved",
+            ConversationEvent.source_kind == "runtime",
+        )
+        .order_by(ConversationTurn.sequence, ConversationEvent.logical_order)
+        .all()
+    )
+    identifications: list[tuple[int, list[str]]] = []
+    for event, turn in rows:
+        try:
+            payload = json.loads(event.payload_json or "{}")
+        except (TypeError, ValueError):
+            continue
+        refs = [
+            str(ref)
+            for ref in (payload.get("product_refs") or [])
+            if isinstance(ref, (str, int))
+        ]
+        if refs:
+            identifications.append((turn.sequence, refs))
+    return identifications
+
+
 def rebuild_product_reference_index(
     db,
     projection: ConversationProjection,
@@ -157,6 +192,7 @@ def rebuild_product_reference_index(
     """Rebuild the compact index from durable presented-product events."""
 
     rows = _recent_presented_event_rows(db, projection.conversation_id)
+    identifications = _system_identifications_by_turn(db, projection.conversation_id)
     reference_sets = []
     for event, turn in rows:
         products = _compact_products(event.payload_json)
@@ -167,6 +203,21 @@ def rebuild_product_reference_index(
             "turn_seq": turn.sequence,
             "products": products,
         }
+        # A choice belongs to the set it was made from, so it is filed against
+        # the newest showing at or before the turn that made it. That is also
+        # what retires it: once a newer set is shown, this set is no longer the
+        # one in front of the shopper and its choices no longer answer for what
+        # is.
+        shown = {str(item.get("ref")) for item in products if isinstance(item, dict)}
+        picked = [
+            ref
+            for sequence, refs in identifications
+            if sequence >= turn.sequence
+            for ref in refs
+            if ref in shown
+        ]
+        if picked:
+            reference_set["system_identified"] = sorted(dict.fromkeys(picked))
         if turn.catalog_revision:
             reference_set["catalog_revision"] = turn.catalog_revision
         reference_sets.append(reference_set)

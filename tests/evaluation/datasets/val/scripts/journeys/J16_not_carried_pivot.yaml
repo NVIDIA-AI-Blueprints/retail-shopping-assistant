@@ -1,0 +1,22 @@
+id: J16_not_carried_pivot
+covers: [discovery, honesty, cart-management]
+why: >
+  The shopper wants things this catalog does not sell, three different ways,
+  and then buys something it does. Saying "we don't carry that" must not end
+  the conversation, and must never turn into a different product offered as
+  though it were the one asked for.
+turns:
+  - say: I'm choosing between two aprons - the Everyday Cotton Apron and the Linen Kitchen Apron
+    expect: {products_max: 0, cart_unchanged: true}
+  - say: ok, do you have any winter coats
+    expect: {cart_unchanged: true}
+  - say: what about men's shirts
+    expect: {cart_unchanged: true}
+  - say: alright, what do you actually sell
+    expect: {}
+  - say: show me some skirts then
+    expect: {products_min: 2}
+  - say: add the Navy Fitted Skirt in a 6
+    expect: {}
+  - say: what's in my cart
+    expect: {}

@@ -1,0 +1,18 @@
+id: P28_a_thin_search_is_not_an_empty_shop
+covers: [honesty, discovery]
+why: >
+  A live session claimed the catalog held no blouses, camisoles, jumpsuits,
+  skirts or sweaters, about sixty-nine products. This asks for a colour the
+  catalog does not stock in a category it carries -- skirts come in thirteen
+  colours, none of them gold -- so the honest answer scopes the absence to the
+  colour and still shows skirts.
+
+  Asserted as state: a turn that treats a thin result as an empty shop shows
+  nothing, so the product count is the check.
+turns:
+  - say: do you have any gold skirts
+    expect:
+      products_min: 1
+  - say: ok show me skirts then
+    expect:
+      products_min: 1               # the catalog carries 39

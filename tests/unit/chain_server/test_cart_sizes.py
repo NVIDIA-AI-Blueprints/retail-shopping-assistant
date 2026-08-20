@@ -273,7 +273,8 @@ class TestSizeProvenance:
         issue = self._issue(size="6", shopper_text="add the Office A-line Dress")
 
         assert "SIZE NOT ESTABLISHED" in issue
-        assert "Ask which of those they want" in issue
+        assert "no words of the shopper's were quoted" in issue
+        assert "ask them which size they want" in issue
 
     def test_the_shoppers_own_words_are_enough(self) -> None:
         assert self._issue(
@@ -649,6 +650,75 @@ class TestAtomicRefusalSaysWhatWasReady:
         result = self._result(ready=[])
 
         assert "Established, not added" not in result
+
+
+class TestARefusalSaysWhatItChecked:
+    """A gate may report what it established, and nothing wider.
+
+    Live: the shopper said "shoe size 6", picked a pair two turns later, and
+    was asked for the size again. The gate had established only that the
+    quotation it was handed carried no size. It said "the shopper did not ask
+    for a size 6" -- which was false, and which is why the model went back and
+    asked a question that had already been answered.
+    """
+
+    @staticmethod
+    def _product():
+        from types import SimpleNamespace
+
+        return SimpleNamespace(
+            display_name="Elegant Embroidered Espadrilles",
+            attributes={"sizes": ["5", "6", "7", "8", "9"]},
+        )
+
+    def _issue(self, *, stated_as, shopper_text):
+        from chain_server.src.turn_support import _cart_size_provenance_issue
+
+        return _cart_size_provenance_issue(
+            self._product(), "6", stated_as, shopper_text, None
+        )
+
+    def test_a_quotation_that_carries_no_size_is_named_as_the_problem(self) -> None:
+        issue = self._issue(
+            stated_as="The first one please",
+            shopper_text="shoe size 6 and its on the beach The first one please",
+        )
+
+        assert "does not contain 6" in issue
+        assert "quote that message instead" in issue
+        # The claim it cannot support, and which sent the model to ask again.
+        assert "the shopper did not ask for a size" not in issue
+
+    def test_quoting_the_earlier_message_is_accepted(self) -> None:
+        """The mechanism always allowed it; nothing said so."""
+
+        assert (
+            self._issue(
+                stated_as="shoe size 6",
+                shopper_text="shoe size 6 and its on the beach The first one please",
+            )
+            == ""
+        )
+
+    def test_words_the_shopper_never_said_are_still_refused(self) -> None:
+        issue = self._issue(
+            stated_as="size 6 please",
+            shopper_text="add the espadrilles",
+        )
+
+        assert "is not something the shopper said" in issue
+
+    def test_the_instruction_says_a_quotation_may_come_from_any_message(self) -> None:
+        """Prose the model reads while choosing the quotation."""
+
+        from chain_server.src.turn_support import AddCartItemsToolItemInput
+
+        description = AddCartItemsToolItemInput.model_fields[
+            "size_stated_as"
+        ].description
+
+        assert "any message in this conversation" in description
+        assert "not the message you are answering" in description
 
 
 class TestTheCartSaysWhichLineItTookLast:

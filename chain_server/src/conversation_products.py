@@ -280,6 +280,18 @@ class ProductEvidence:
 
         return (product_ref or "").strip() in self._system_identified
 
+    def system_identified(self) -> tuple[str, ...]:
+        """Every product the record picked this turn, in a stable order.
+
+        Read at finalization so the choice can be recorded. A shopper who says
+        "add the first pairing" has chosen, by a coordinate the system itself
+        wrote down -- and that choice used to be forgotten the moment the turn
+        ended, leaving them to say it again, and again, until they typed the
+        catalog's own names.
+        """
+
+        return tuple(sorted(self._system_identified))
+
     def get(self, product_ref: str) -> ProductSummary | None:
         return self._products.get((product_ref or "").strip())
 

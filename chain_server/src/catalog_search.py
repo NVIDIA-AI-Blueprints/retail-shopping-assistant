@@ -98,6 +98,7 @@ from .response_format import (
     _format_search_filter_evidence,
     _format_search_guidance_evidence,
     _format_search_composed_role_evidence,
+    _format_search_unadvertised_type_evidence,
     _format_search_scope_relation_evidence,
     _format_search_taxonomy_evidence,
 )
@@ -1384,17 +1385,79 @@ def _rendered_evidence(ctx: SearchContext, attempt: _Attempt) -> StepResult:
         and request.taxonomy.category
         else None
     )
+    # What that parent actually holds. "Apparel" is true of every garment, so
+    # the category alone cannot tell the shopper whether their kind is here;
+    # its advertised subcategories can, and they are already published.
+    advertised_subcategories = (
+        sorted(
+            (
+                getattr(
+                    (attempt.capabilities.taxonomy.categories or {}).get(
+                        advertised_category
+                    ),
+                    "subcategories",
+                    None,
+                )
+                or {}
+            )
+        )
+        if advertised_category and attempt.capabilities.taxonomy
+        else []
+    )
     role_advertised_types = (
         list(request.taxonomy.subcategory or [])
         if attempt.composed_role
+        else []
+    )
+    # The shopper named a type, it is not one this catalog lists, and the model
+    # answered with advertised types of its own choosing. A scope naming real
+    # subcategories was indistinguishable from a direct search for the thing
+    # asked for, so "jeans" came back as skirts with nothing saying so.
+    substituted_types = (
+        [str(value) for value in (request.taxonomy.subcategory or [])]
+        if (
+            not advertised_category
+            and not attempt.composed_role
+            and attempt.shopper_stated_scope
+            and request.requested_product_type
+            and request.taxonomy.subcategory
+            and _advertised_scope_match(
+                request.requested_product_type,
+                attempt.capabilities,
+            )
+            is None
+        )
+        else []
+    )
+    substituted_within = (
+        sorted(
+            (
+                getattr(
+                    (attempt.capabilities.taxonomy.categories or {}).get(
+                        (request.taxonomy.category or [None])[0]
+                    ),
+                    "subcategories",
+                    None,
+                )
+                or {}
+            )
+        )
+        if substituted_types and attempt.capabilities.taxonomy
         else []
     )
     scope_relation_evidence = (
         _format_search_scope_relation_evidence(
             requested_product_type=request.requested_product_type or "",
             advertised_category=advertised_category,
+            advertised_subcategories=advertised_subcategories,
         )
         if advertised_category
+        else _format_search_unadvertised_type_evidence(
+            requested_product_type=request.requested_product_type or "",
+            searched_types=substituted_types,
+            advertised_subcategories=substituted_within,
+        )
+        if substituted_types
         else (
             _format_search_composed_role_evidence(
                 requested_product_type=request.requested_product_type or "",

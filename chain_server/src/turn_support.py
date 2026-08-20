@@ -843,11 +843,16 @@ class SearchCatalogToolArguments(BaseModel):
             "-- a proposed 'top' may select blouses and sweaters together. Do not "
             "widen a role to types it does not cover. Never select "
             "a parent or sibling as a substitute for an advertised type. If a "
-            "shopper-named type is not separately advertised but one advertised "
-            "category is its faithful broader parent, select only that category "
-            "and leave subcategory empty; results remain alternatives under their "
-            "actual catalog types. For example, skirts may satisfy bottoms; "
-            "dresses may not."
+            "shopper-named type is not separately advertised, decide it against "
+            "the subcategories that exist, not the category word: select a "
+            "parent category only when one of its advertised subcategories "
+            "denotes the same kind of thing, and then leave subcategory empty. "
+            "Pumps are heels, so footwear qualifies. Every garment is apparel, "
+            "so 'a kind of this category' can never fail and is not the test. "
+            "When no advertised subcategory denotes the kind, the catalog does "
+            "not carry it: name it in not_covered and build no scope for it. "
+            "Results remain alternatives under their actual catalog types. For "
+            "example, skirts may satisfy bottoms; dresses may not."
         ),
     )
     required_constraints: dict[str, Any] = Field(
@@ -1124,9 +1129,11 @@ def _search_catalog_tool_input_model(
                     "may satisfy bottoms; dresses may not. For a broad request "
                     "that names no product type, choose one exact advertised "
                     "subcategory as the focused starting role. If a shopper-named "
-                    "type is not separately advertised but one faithful broader "
-                    "advertised parent category exists, select only that category "
-                    "and leave subcategory empty."
+                    "type is not separately advertised, select a parent category "
+                    "only when one of its advertised subcategories denotes the "
+                    "same kind of thing, and then leave subcategory empty. When "
+                    "none does, the catalog does not carry the type: name it in "
+                    "not_covered and build no scope for it."
                 ),
             ),
         ),
@@ -1136,8 +1143,11 @@ def _search_catalog_tool_input_model(
                 ...,
                 description=(
                     "Catalog hard filters and any defining requirement the active "
-                    "catalog cannot enforce. Apply constraints only when the "
-                    "current turn states them for the target products; an anchor's "
+                    "catalog cannot enforce. A modifier belongs to the product it "
+                    "was said about: in 'a dress in size 2 and shoes', size 2 is "
+                    "the dress's and the shoes have no size. Apply constraints "
+                    "only when the current turn states them for the target "
+                    "products; an anchor's "
                     "attributes belong in semantic styling context unless the "
                     "shopper explicitly requests the same value. Use only the "
                     "advertised properties "
@@ -1168,6 +1178,61 @@ def _search_catalog_tool_input_model(
             ),
         ),
     )
+
+
+def _scope_content_errors_only(errors: Sequence[Any]) -> bool:
+    """Whether every error is about what is *inside* a scope.
+
+    A location of ``("scopes", 0, "required_constraints", ...)`` is one role's
+    content: the model chose a value this catalog does not advertise. Anything
+    shorter is structural -- too many scopes, a scope that is not an object, a
+    malformed ``not_covered`` -- and remains a hard failure at the boundary.
+    """
+
+    for error in errors:
+        location = tuple(error.get("loc") or ())
+        if len(location) < 3:
+            return False
+        if location[0] != "scopes" or not isinstance(location[1], int):
+            return False
+    return True
+
+
+def _admit_scopes_for_adjudication(cls: Any, data: Any, handler: Any) -> Any:
+    """Let the search body judge scope content, one role at a time.
+
+    The tool schema is how the catalog's shape reaches the model: every
+    advertised value is in it, and it must stay exact. But a schema bound as
+    ``args_schema`` also *adjudicates*, and it can only do so for the whole
+    call. One unadvertised colour on a third scope therefore cancelled two
+    valid searches, and the shopper was told the assistant could not search at
+    all -- observed live, `BUGS_OPEN` item 7.
+
+    `search_catalog` already validates each scope against this same model and
+    already reports rejections per role. It was built that way. Nothing reached
+    it, because the boundary answered first.
+
+    So the schema keeps advertising and stops adjudicating scope content: when
+    every complaint is about what is inside a scope, the raw scopes are admitted
+    and the body decides them one at a time -- rejecting the role that is wrong
+    and running the roles that are right. Structural complaints still fail here,
+    where they are the boundary's own business.
+    """
+
+    try:
+        return handler(data)
+    except ValidationError as exc:
+        if not isinstance(data, dict):
+            raise
+        if not _scope_content_errors_only(exc.errors()):
+            raise
+        scopes = data.get("scopes")
+        if not isinstance(scopes, list) or not scopes:
+            raise
+        return cls.model_construct(
+            scopes=list(scopes),
+            not_covered=data.get("not_covered"),
+        )
 
 
 def _search_catalog_scopes_input_model(
@@ -1210,7 +1275,13 @@ def _search_catalog_scopes_input_model(
                 description=(
                     "One search scope per advertised category. Each scope owns "
                     "its own taxonomy and constraints, so a filter for one role "
-                    "can never exclude another role's products."
+                    "can never exclude another role's products -- and equally, a "
+                    "filter the shopper gave for one role must not be repeated "
+                    "onto another. A filter this role was never given empties "
+                    "this role's results: 'a dress in size 2 and shoes' sizes "
+                    "the dress and says nothing about the shoes, so the shoes "
+                    "scope carries no size. Leave a constraint out rather than "
+                    "carry one across."
                 ),
             ),
         ),
@@ -1221,13 +1292,18 @@ def _search_catalog_scopes_input_model(
                 max_length=10,
                 description=(
                     "Product types the shopper asked for that no advertised "
-                    "category covers, in the shopper's own words. Do not search "
+                    "subcategory denotes, in the shopper's own words. Do not search "
                     "for these -- naming them here is what records the request so "
                     "it can be answered. A shopper asking for 'a pan, a shoe and "
                     "a bag' gets scopes for the shoe and the bag, and 'pan' here."
                 ),
             ),
         ),
+        __validators__={
+            "_admit_scopes_for_adjudication": model_validator(mode="wrap")(
+                classmethod(_admit_scopes_for_adjudication)
+            ),
+        },
     )
 
 
@@ -1558,11 +1634,15 @@ class AddCartItemsToolItemInput(BaseModel):
         default=None,
         max_length=200,
         description=(
-            "The shopper's own words that gave this size, quoted from their "
-            "message -- 'size 8', 'in a 10 as well'. Required with a size "
-            "unless the same size is already on their cart line. A size they "
-            "did not ask for is not their size: when they have not said one, "
-            "leave both empty and ask."
+            "The shopper's own words that gave this size, quoted from any "
+            "message in this conversation -- 'size 8', 'in a 10 as well'. It "
+            "is often not the message you are answering: a shopper who says "
+            "'shoe size 6' and picks a pair two turns later gave the size in "
+            "the earlier message, and that is the one to quote. The quotation "
+            "must contain the size it authorises. Required with a size unless "
+            "the same size is already on their cart line. A size they did not "
+            "ask for is not their size: when they have not said one, leave "
+            "both empty and ask."
         ),
     )
 
@@ -2363,6 +2443,42 @@ def _audience_assumption_events(
             event_type="audience_assumption_disclosed",
             source_kind="runtime",
             payload={"audience": disclosed[:8]},
+        )
+    ]
+
+
+def _system_identification_events(
+    state: Any,
+    identity: Any,
+) -> list[ConversationEvent]:
+    """Record which products the record itself picked this turn.
+
+    Establishment was scoped to the message that produced it. A shopper chose
+    "the first pairing" in one turn and, three turns later -- having only
+    answered the assistant's own questions -- was still being told the products
+    were not established, because answering a question names nothing. The same
+    add was refused three times and accepted on the fourth, when they finally
+    typed both catalog names. The request never changed.
+
+    The choice itself is durable: it was made against a set of products the
+    record wrote down. So it is recorded here, and the memory service files it
+    against the set it was made from -- which is what makes it lapse when a new
+    set is shown, and nothing else does.
+    """
+
+    refs = [
+        str(ref)
+        for ref in (getattr(state, "system_identified_products", None) or [])
+        if ref
+    ]
+    if not refs:
+        return []
+    return [
+        ConversationEvent(
+            event_key=f"system-identified:{identity.request_id}",
+            event_type="historical_reference_resolved",
+            source_kind="runtime",
+            payload={"product_refs": refs[:16]},
         )
     ]
 
@@ -4104,6 +4220,29 @@ def _most_recently_shown(state: Any) -> list[dict]:
     return [item for item in newest["products"] if isinstance(item, dict)]
 
 
+def _identified_in_the_current_showing(state: Any) -> set[str]:
+    """Products the record picked from the set now in front of the shopper.
+
+    An identification is filed against the showing it was made from, so this is
+    simply the newest showing's own list. When a newer set is presented it
+    becomes the newest, carrying its own choices and none of the older set's --
+    which is the lapse, expressed as a consequence of where the fact is kept
+    rather than as a rule that has to be remembered.
+    """
+
+    sets = [
+        entry
+        for entry in (getattr(state, "historical_product_sets", None) or [])
+        if isinstance(entry, dict) and isinstance(entry.get("products"), list)
+    ]
+    if not sets:
+        return set()
+    newest = max(sets, key=lambda entry: entry.get("turn_seq") or 0)
+    return {
+        str(ref) for ref in (newest.get("system_identified") or []) if ref
+    }
+
+
 def _reference_candidates(
     evidence: ProductEvidence,
     recently_shown: Sequence[Any] = (),
@@ -4127,6 +4266,7 @@ def _cart_product_provenance_issue(
     shopper_text: str,
     evidence: ProductEvidence,
     recently_shown: Sequence[Any] = (),
+    already_identified: Sequence[str] = (),
 ) -> str:
     """Say why this product cannot be trusted as the one meant, or "" if it can.
 
@@ -4177,6 +4317,14 @@ def _cart_product_provenance_issue(
             return ""
     if evidence.identified_by_the_system(product.product_id):
         return ""
+    # The same fact, established earlier in this conversation and still true.
+    # A shopper who chose "the first pairing" was asked to choose again on
+    # every turn that followed, because answering the assistant's own questions
+    # names no product -- five turns to add two items it had itself proposed.
+    # Nothing about a later turn makes that choice untrue; a newer showing
+    # does, and that is what retires it.
+    if str(product.product_id) in {str(ref) for ref in (already_identified or ())}:
+        return ""
     return (
         f"PRODUCT NOT ESTABLISHED: the shopper did not name "
         f"'{product.display_name}', and {len(candidates)} products are in play "
@@ -4226,6 +4374,43 @@ def _cart_line_size(cart: Any, product_id: str) -> str | None:
     return None
 
 
+def _size_quotation_problem(
+    stated_as: str | None,
+    shopper_text: str,
+    chosen: str,
+) -> str:
+    """Say which half of the check failed, and what would answer it.
+
+    The refusal used to say "the shopper did not ask for a size 6" whatever had
+    gone wrong. Live, they had: "shoe size 6", two turns earlier. What the gate
+    had established was narrower -- the quotation it was handed did not carry
+    the size -- and stating the broader thing sent the model to ask a question
+    the shopper had already answered.
+
+    A gate may only report what it checked. Anything more is a claim it cannot
+    support, and this one was false in the case that matters most.
+    """
+
+    quoted = " ".join((stated_as or "").split())
+    if not quoted:
+        return (
+            f"no words of the shopper's were quoted for size {chosen}. Quote "
+            "the message where they gave it, or ask them which size they want."
+        )
+    if quoted.casefold() not in " ".join(shopper_text.split()).casefold():
+        return (
+            f"'{quoted}' is not something the shopper said in this "
+            "conversation. Quote their own words, or ask them which size they "
+            "want."
+        )
+    return (
+        f"the quotation '{quoted}' does not contain {chosen}, so it does not "
+        f"give that size. If they gave it in an earlier message, quote that "
+        "message instead; if they never gave one, ask them which size they "
+        "want."
+    )
+
+
 def _cart_size_provenance_issue(
     product: Any,
     size: str | None,
@@ -4270,10 +4455,9 @@ def _cart_size_provenance_issue(
     # Asking it to name "the sizes it is sold in" without supplying them is the
     # same error in miniature.
     return (
-        f"SIZE NOT ESTABLISHED for '{product.display_name}': the shopper did "
-        f"not ask for a size {chosen}. It is sold in {', '.join(advertised)}. "
-        "Ask which of those they want and add it when they answer. Nothing was "
-        "added."
+        f"SIZE NOT ESTABLISHED for '{product.display_name}': "
+        f"{_size_quotation_problem(stated_as, shopper_text, chosen)} "
+        f"It is sold in {', '.join(advertised)}. Nothing was added."
     )
 
 

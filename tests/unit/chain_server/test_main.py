@@ -2352,7 +2352,7 @@ class TestDeepAgentsRuntimeRefs:
         assert "not separately advertised" in schema["properties"]["taxonomy"][
             "description"
         ]
-        assert "broader advertised parent category" in schema["properties"][
+        assert "advertised subcategories denotes the " in schema["properties"][
             "taxonomy"
         ]["description"]
         assert set(taxonomy_schema["required"]) == {"category", "subcategory"}
@@ -3174,15 +3174,11 @@ class TestDeepAgentsRuntimeRefs:
         assert "Call search_catalog_tool when exact advertised" in (
             captured["system_prompt"]
         )
-        assert "one faithful advertised parent category exists" in (
-            captured["system_prompt"]
-        )
+        assert "denotes the same kind of thing" in captured["system_prompt"]
         assert "Different wording is not a reason to ask" in (
             captured["system_prompt"]
         )
-        assert "ask one concise clarification question directly" in (
-            captured["system_prompt"]
-        )
+        assert "it in `not_covered`" in captured["system_prompt"]
         assert "no_direct_catalog_match" not in captured["system_prompt"]
         assert "One normalized taxonomy-and-required-constraint scope" in (
             captured["system_prompt"]
@@ -3992,9 +3988,14 @@ class TestDeepAgentsRuntimeRefs:
         # executed plan are asserted on it directly. Re-issuing the same scope
         # now correctly trips the duplicate-scope guard rather than being the
         # first real retrieval, so the former retry is gone.
+        # The parent alone cannot say whether the shopper's kind is here --
+        # "apparel" is true of every garment -- so what that parent actually
+        # holds travels with the relation.
         assert (
             'SEARCH_SCOPE_RELATION_EVIDENCE: {"advertised_category": '
-            '"footwear", "relation": "model_selected_parent_category", '
+            '"footwear", "advertised_subcategories": ["boots", "flats", '
+            '"heels", "sandals"], '
+            '"relation": "model_selected_parent_category", '
             '"requested_product_type": "sneakers"}'
             in misplaced_product_type
         )
@@ -9463,3 +9464,32 @@ class TestAudienceAwareSearch:
         assert "send every value that suits them as a hard filter" in normalized
         assert "Otherwise send no audience filter at all" in normalized
         assert "never ask the shopper their gender" in normalized
+
+
+def test_every_cart_impl_helper_is_callable_by_the_tool_that_wraps_it() -> None:
+    """`remove_cart_item_tool` calls its impl directly, and could not.
+
+    The impl carried a `@tool` decorator, which makes it a StructuredTool --
+    not callable. Every removal raised `'StructuredTool' object is not
+    callable' and the turn died with an agent error, so a shopper could not
+    take anything out of their cart, and a size change left both lines behind.
+
+    A source check rather than a call, because these helpers are closures
+    inside `_create_agent` and cannot be reached from here. What is checked is
+    exactly the property that broke: a helper the tool invokes directly must
+    not itself be a tool.
+    """
+
+    import inspect
+    import re
+
+    from chain_server.src import deepagents_runtime
+
+    source = inspect.getsource(deepagents_runtime).splitlines()
+    decorated: list[str] = []
+    for index, line in enumerate(source):
+        match = re.match(r"\s*def (_\w+_impl)\(", line)
+        if match and index and source[index - 1].strip().startswith("@tool"):
+            decorated.append(match.group(1))
+
+    assert decorated == []

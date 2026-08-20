@@ -14,12 +14,16 @@ def test_catalog_search_rules_allow_model_selected_parent_category() -> None:
     from chain_server.src.catalog_scope import CATALOG_SEARCH_RULES
 
     assert "not separately advertised" in CATALOG_SEARCH_RULES
-    assert "one faithful advertised parent category" in CATALOG_SEARCH_RULES
+    assert "denotes the same kind of thing" in CATALOG_SEARCH_RULES
     assert "keep the shopper's product type" in CATALOG_SEARCH_RULES.lower()
     assert "never put a product type in `unadvertised_requirements`" in (
         CATALOG_SEARCH_RULES
     )
-    assert "ask one concise clarification question directly" in CATALOG_SEARCH_RULES
+    # A kind no advertised subcategory denotes is not carried, and saying so
+    # is a fact off the published taxonomy -- not the banned guess from a
+    # search that returned little.
+    assert "it in `not_covered`" in CATALOG_SEARCH_RULES
+    assert "do not call the tool at" in CATALOG_SEARCH_RULES
     assert "taxonomy_status" not in CATALOG_SEARCH_RULES
     assert "no_direct_catalog_match" not in CATALOG_SEARCH_RULES
 

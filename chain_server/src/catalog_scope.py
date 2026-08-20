@@ -7,16 +7,24 @@ from __future__ import annotations
 
 CATALOG_SEARCH_RULES = """- Call search_catalog_tool when exact advertised
   taxonomy values faithfully represent the shopper's product type.
-- If the shopper names a product type that is not separately advertised but the
-  model determines that one faithful advertised parent category exists, select
-  only that broader category. Keep the shopper's product type in
-  `requested_product_type` and `semantic_query`, leave subcategory empty, and
-  never put a product type in `unadvertised_requirements`. Returned products are
-  closest alternatives under their actual catalog types, not confirmed instances
-  of the shopper's unadvertised type.
-- If neither a direct advertised type nor one faithful parent category exists,
-  ask one concise clarification question directly and wait for the shopper; do
-  not call the tool, substitute another product type, or claim catalog absence.
+- If the shopper names a product type that is not separately advertised, decide
+  it against the subcategories that exist rather than the category word. A
+  parent category qualifies only when one of its advertised subcategories
+  denotes the same kind of thing: pumps are heels, so footwear qualifies. Every
+  garment is apparel, so "is it a kind of this category" can never fail and is
+  not the test. When a parent qualifies, select only that category and
+  keep the shopper's product type in `requested_product_type` and
+  `semantic_query`, leave subcategory empty, and
+  never put a product type in `unadvertised_requirements`.
+  Returned products are closest alternatives under their actual catalog types,
+  not confirmed instances of the shopper's type.
+- If no advertised subcategory denotes the requested kind, the catalog does not
+  carry it. Name it in `not_covered` beside the roles you can search, and build
+  no scope for it. If it is the only thing asked for, do not call the tool at
+  all: say plainly that the catalog does not carry it and offer one advertised
+  direction. Absence read off the published taxonomy is a fact the shopper
+  needs; absence guessed from a search that returned little is the thing never
+  to claim.
 - Different wording is not a reason to ask. When the shopper names a true
   umbrella, search every advertised value that is genuinely a kind of that
   umbrella. For example, skirts can satisfy bottoms; dresses cannot.

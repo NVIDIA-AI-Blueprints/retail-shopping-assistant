@@ -138,19 +138,63 @@ def _format_search_scope_relation_evidence(
     *,
     requested_product_type: str,
     advertised_category: str,
+    advertised_subcategories: list[str] | None = None,
 ) -> str:
-    """Record a model-selected advertised parent for honest response framing."""
+    """Record a model-selected advertised parent for honest response framing.
 
+    The parent alone does not say whether the shopper's kind is here. Asked to
+    match a look containing jeans, the model chose `apparel` -- true of every
+    garment ever made -- and ranked dresses against "dark blue straight-leg
+    jeans". What settles it is the list of subcategories that parent actually
+    holds: blouses, camisoles, dresses, jumpsuits, skirts, sweaters. None is a
+    trouser, and that is a fact rather than a judgement, so it travels with the
+    relation instead of being left to be inferred.
+    """
+
+    payload = {
+        "relation": "model_selected_parent_category",
+        "requested_product_type": requested_product_type,
+        "advertised_category": advertised_category,
+    }
+    if advertised_subcategories:
+        payload["advertised_subcategories"] = list(advertised_subcategories)
     return (
         f"{_SEARCH_SCOPE_RELATION_EVIDENCE_PREFIX} "
-        + json.dumps(
-            {
-                "relation": "model_selected_parent_category",
-                "requested_product_type": requested_product_type,
-                "advertised_category": advertised_category,
-            },
-            sort_keys=True,
-        )
+        + json.dumps(payload, sort_keys=True)
+    )
+
+
+def _format_search_unadvertised_type_evidence(
+    *,
+    requested_product_type: str,
+    searched_types: list[str],
+    advertised_subcategories: list[str] | None = None,
+) -> str:
+    """Record that the shopper's product type is not one this catalog lists.
+
+    Shown a video with jeans in it, the model searched `subcategory: skirts`
+    and presented what came back as the answer. Nothing said the shopper's word
+    had been swapped for another, because the disclosure only fired when a bare
+    parent category was chosen -- a scope naming real subcategories looked like
+    a direct search for exactly what was asked for.
+
+    Whether the swap is sound is a judgement no check here can make: a pump
+    really is a heel, and a jean really is not a skirt. What is certain, and
+    checkable, is that the shopper's type is not advertised. So it is recorded,
+    and the reply has to own it.
+    """
+
+    payload = {
+        "relation": "model_selected_advertised_types",
+        "requested_product_type": requested_product_type,
+        "requested_type_is_advertised": False,
+        "searched_types": list(searched_types),
+    }
+    if advertised_subcategories:
+        payload["advertised_subcategories"] = list(advertised_subcategories)
+    return (
+        f"{_SEARCH_SCOPE_RELATION_EVIDENCE_PREFIX} "
+        + json.dumps(payload, sort_keys=True)
     )
 
 

@@ -80,11 +80,12 @@ Use for search, browse, and filter requests. Do not expose skill names or tool n
 
 ## Filter Discipline
 
+- A constraint belongs to the product it was said about, and to no other. "A dress in size 2 and shoes" sizes the dress; the shoes were given no size, so their scope carries none. Repeating it onto the shoes does not widen the search, it empties it. Ask for the missing size, or show the role unsized -- never borrow one from another role.
 - Interpret the shopper's meaning against the catalog capabilities and choose only exact advertised taxonomy values that faithfully match. Generic product language is not taxonomy evidence.
 - If an explicitly requested product type is not separately advertised, use one model-selected advertised parent category only when it is a faithful broader scope. Keep the requested type explicit, label results with their actual catalog categories, and say they are closest alternatives. If no faithful parent can be selected, ask one concise clarification without calling the search tool; never omit the type, silently choose a sibling, or claim catalog absence.
 - Use only advertised filter values from the catalog capabilities.
 - Subjective style or vibe language belongs in the semantic query, not `unadvertised_requirements`. That field is only for directly stated objective product requirements the catalog cannot enforce.
-- Preserve every explicit must-have. Use its exact advertised property in `required_constraints`, or `unadvertised_requirements` when the property is absent; let deterministic validation report what the catalog cannot enforce rather than omitting or weakening it.
+- Preserve every explicit must-have, on the role it was given for. Use its exact advertised property in `required_constraints`, or `unadvertised_requirements` when the property is absent; let deterministic validation report what the catalog cannot enforce rather than omitting or weakening it.
 - When one shopper constraint maps to multiple advertised enum values, include all faithful values in one list and one search rather than retrying one value at a time.
 - If the shopper names a preference the catalog cannot enforce as a hard filter, place it in the semantic query and tell the shopper it is a preference signal, not a guaranteed filter.
 - If the shopper states an unsupported constraint as a must-have, do not weaken it into a preference or search as though it were guaranteed. Say that the catalog cannot enforce it and ask whether the shopper wants a preference-only search.

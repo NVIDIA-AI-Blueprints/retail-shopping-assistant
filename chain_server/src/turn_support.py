@@ -1136,8 +1136,11 @@ def _search_catalog_tool_input_model(
                 ...,
                 description=(
                     "Catalog hard filters and any defining requirement the active "
-                    "catalog cannot enforce. Apply constraints only when the "
-                    "current turn states them for the target products; an anchor's "
+                    "catalog cannot enforce. A modifier belongs to the product it "
+                    "was said about: in 'a dress in size 2 and shoes', size 2 is "
+                    "the dress's and the shoes have no size. Apply constraints "
+                    "only when the current turn states them for the target "
+                    "products; an anchor's "
                     "attributes belong in semantic styling context unless the "
                     "shopper explicitly requests the same value. Use only the "
                     "advertised properties "
@@ -1265,7 +1268,13 @@ def _search_catalog_scopes_input_model(
                 description=(
                     "One search scope per advertised category. Each scope owns "
                     "its own taxonomy and constraints, so a filter for one role "
-                    "can never exclude another role's products."
+                    "can never exclude another role's products -- and equally, a "
+                    "filter the shopper gave for one role must not be repeated "
+                    "onto another. A filter this role was never given empties "
+                    "this role's results: 'a dress in size 2 and shoes' sizes "
+                    "the dress and says nothing about the shoes, so the shoes "
+                    "scope carries no size. Leave a constraint out rather than "
+                    "carry one across."
                 ),
             ),
         ),

@@ -144,18 +144,31 @@ class ToolLoopControlMiddleware(AgentMiddleware):
                         _SYNTHESIS_PROMPT,
                     ),
                 )
-            if self._search_budget_exhausted or self._search_scope_closed:
+            if self._search_scope_closed and not self._search_budget_exhausted:
+                # The model said it needs no more searching. Its field
+                # description lists four things that should have made it say
+                # otherwise: another product role, a detail check, an
+                # availability check, a cart action. Three of those need a tool
+                # that is not search -- and the fourth needs search itself. So
+                # taking any tool away on a prediction drops one of the four
+                # silently, and the model is predicting, not reporting.
+                #
+                # Nothing is removed here. What bounds the loop is deterministic
+                # and already in place: the per-turn search budget below, the
+                # duplicate-scope guards, and the graph's own recursion limit. A
+                # model with nothing left to do simply stops calling tools.
+                return request.override(
+                    system_message=_append_system_text(
+                        request.system_message,
+                        _SEARCH_CLOSED_PROMPT,
+                    ),
+                )
+            if self._search_budget_exhausted:
                 tools = [
                     tool
                     for tool in request.tools
                     if _tool_name(tool) != SEARCH_TOOL_NAME
                 ]
-                system_message = request.system_message
-                if self._search_scope_closed:
-                    system_message = _append_system_text(
-                        system_message,
-                        _SEARCH_CLOSED_PROMPT,
-                    )
                 return request.override(
                     tools=tools,
                     tool_choice=(
@@ -167,7 +180,6 @@ class ToolLoopControlMiddleware(AgentMiddleware):
                             else request.tool_choice
                         )
                     ),
-                    system_message=system_message,
                 )
             if not self._repair_pending:
                 return request

@@ -56,6 +56,10 @@ def get_cart_tool() -> str:
 TOOLS = [activate_shopper_skills_tool, search_catalog_tool, get_cart_tool]
 
 
+def _tool_names(tools: list[Any]) -> list[str]:
+    return [getattr(t, "name", getattr(t, "__name__", str(t))) for t in tools]
+
+
 def _model_request(messages: list[Any] | None = None) -> ModelRequest:
     messages = messages or [HumanMessage(content="shopper request")]
     return ModelRequest(
@@ -152,9 +156,19 @@ def test_completed_search_scope_runs_one_tool_closed_synthesis() -> None:
     )
 
     assert len(captured) == 1
-    assert captured[0].tools == []
-    assert captured[0].tool_choice == "none"
-    assert "## Tool Loop Closed" in captured[0].system_prompt
+    # A finished search closes the search, not the turn. `scope_complete` is
+    # the model predicting it needs no further *search* -- its own description
+    # says to set it false when a cart action still has to run. Read as the end
+    # of the turn, a wrong prediction was final and silent: measured 4/4, an add
+    # asked for in plain words was never attempted because every tool had gone.
+    # Nothing is removed. Three of the four things that should have made the
+    # model say "not complete" need a tool that is not search, and the fourth
+    # needs search itself -- so taking any tool away on a prediction drops one
+    # of the four silently. The per-turn search budget still bounds the loop.
+    assert captured[0].tools == TOOLS
+    assert captured[0].tool_choice != "none"
+    assert "## Search Complete" in captured[0].system_prompt
+    assert "## Tool Loop Closed" not in captured[0].system_prompt
     assert response.result[0].content == "shopper answer"
 
 
@@ -213,7 +227,7 @@ def test_completed_search_after_non_search_tool_keeps_model_synthesis() -> None:
 
     response = middleware.wrap_model_call(_model_request(messages), handler)
 
-    assert captured[0].tools == []
+    assert captured[0].tools == TOOLS
     assert response.result[0].content == "answer"
 
 
@@ -229,8 +243,8 @@ def test_completed_scoped_no_match_removes_tools_from_next_model_step() -> None:
         _messages_with_result(result),
     )
 
-    assert prepared.tools == []
-    assert "## Tool Loop Closed" in prepared.system_prompt
+    assert prepared.tools == TOOLS
+    assert "## Search Complete" in prepared.system_prompt
 
 
 def test_partial_search_scope_keeps_tools_available() -> None:
@@ -436,7 +450,8 @@ def test_one_search_schema_repair_is_exposed_then_tools_are_removed() -> None:
     )
     assert invalid_call not in repair_request.messages
     assert error not in repair_request.messages
-    assert _capture_model_request(middleware, completed_messages).tools == []
+    # The repair searched and completed. Searching is over; acting is not.
+    assert _capture_model_request(middleware, completed_messages).tools == TOOLS
 
 
 def test_incomplete_successful_repair_allows_one_repair_for_next_scope() -> None:
@@ -1922,9 +1937,19 @@ async def test_async_completed_search_runs_one_tool_closed_synthesis() -> None:
     )
 
     assert len(captured) == 1
-    assert captured[0].tools == []
-    assert captured[0].tool_choice == "none"
-    assert "## Tool Loop Closed" in captured[0].system_prompt
+    # A finished search closes the search, not the turn. `scope_complete` is
+    # the model predicting it needs no further *search* -- its own description
+    # says to set it false when a cart action still has to run. Read as the end
+    # of the turn, a wrong prediction was final and silent: measured 4/4, an add
+    # asked for in plain words was never attempted because every tool had gone.
+    # Nothing is removed. Three of the four things that should have made the
+    # model say "not complete" need a tool that is not search, and the fourth
+    # needs search itself -- so taking any tool away on a prediction drops one
+    # of the four silently. The per-turn search budget still bounds the loop.
+    assert captured[0].tools == TOOLS
+    assert captured[0].tool_choice != "none"
+    assert "## Search Complete" in captured[0].system_prompt
+    assert "## Tool Loop Closed" not in captured[0].system_prompt
     assert response.result[0].content == "shopper answer"
 
 
@@ -2041,3 +2066,43 @@ def test_absent_or_malformed_artifact_falls_back_to_text() -> None:
     )
 
     assert captured.tool_choice == "none"
+
+
+def test_a_completed_scope_still_allows_a_second_role_to_be_searched() -> None:
+    """The fourth thing the model should have weighed needs search itself.
+
+    `scope_complete`'s description says to set it false when another explicitly
+    requested product role still has to run. A shopper asking for a dress and
+    shoes whose first search covered only the dress has a role outstanding --
+    and removing the search tool on the model's own prediction is what made
+    that unrecoverable.
+
+    The search budget is what bounds the loop, and it is deterministic.
+    """
+
+    middleware = ToolLoopControlMiddleware()
+    result = _tool_result(
+        "SEARCH_RESULT_GROUNDING_NOTE: grounded candidates\n\n"
+        "SEARCH_SCOPE_COMPLETE: This search covers every requested role."
+    )
+
+    prepared = _capture_model_request(middleware, _messages_with_result(result))
+
+    assert SEARCH_TOOL_NAME in _tool_names(prepared.tools)
+    assert "## Search Complete" in prepared.system_prompt
+
+
+def test_an_exhausted_budget_still_removes_only_the_search_tool() -> None:
+    """The deterministic bound, which a prediction must not be allowed to replace."""
+
+    middleware = ToolLoopControlMiddleware()
+    result = _tool_result(
+        "SEARCH_RESULT_GROUNDING_NOTE: grounded candidates\n\n"
+        f"{SEARCH_BUDGET_EXHAUSTED_PREFIX} no searches remain\n\n"
+        "SEARCH_SCOPE_COMPLETE: complete"
+    )
+
+    prepared = _capture_model_request(middleware, _messages_with_result(result))
+
+    assert SEARCH_TOOL_NAME not in _tool_names(prepared.tools)
+    assert "get_cart_tool" in _tool_names(prepared.tools)

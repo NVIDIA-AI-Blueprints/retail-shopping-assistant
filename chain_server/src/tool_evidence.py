@@ -37,6 +37,14 @@ class SearchEvidence:
     """Everything a search established, as data rather than prose."""
 
     outcome: str  # "results" | "zero_results" | "no_direct_catalog_match"
+    #: Products the same search finds with its optional constraints dropped,
+    #: never its size. Present only on a zero-result scope, so the reply can
+    #: show what the shop does have instead of asking which absence to explore.
+    relaxed_products: list[Any] = field(default_factory=list)
+    relaxed_dropped: list[str] = field(default_factory=list)
+    #: False when the only way to find anything was to drop the shopper's size.
+    #: The reply must then name the size it is showing instead of theirs.
+    relaxed_kept_the_size: bool = True
     taxonomy: dict[str, Any] = field(default_factory=dict)
     confirmed_filters: dict[str, Any] = field(default_factory=dict)
     semantic_query: str = ""

@@ -1326,7 +1326,12 @@ async def test_compiled_agent_executes_capability_valid_repair(
         config={"configurable": {"thread_id": identity.conversation_id}},
     )
 
-    assert len(executed_plans) == 1
+    # The shopper's own search runs first. A scope that finds nothing is then
+    # re-run without the constraints that may give, so the reply can show what
+    # the shop does have rather than asking which absence to explore.
+    assert executed_plans[0].hard_filters["primary_color"] == ["black"]
+    for relaxation in executed_plans[1:]:
+        assert "primary_color" not in relaxation.hard_filters
     assert executed_plans[0].hard_filters["primary_color"] == ["black"]
     assert "color" not in executed_plans[0].hard_filters
     assert executed_plans[0].search_mode == "text"

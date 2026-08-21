@@ -607,8 +607,11 @@ def test_one_rejected_scope_does_not_cancel_the_scopes_beside_it(
         ],
     )
 
-    # The sound role ran; the unsound one did not.
-    assert searched == ["black dresses"]
+    # The sound role ran; the unsound one did not. The repeat is that role's
+    # relaxed retry: it found nothing, so the same search runs again without
+    # the constraints that may give, and the reply shows what the shop has.
+    assert searched[0] == "black dresses"
+    assert set(searched) == {"black dresses"}
     assert SearchRejection.CAPABILITIES_SCHEMA_MISMATCH in _rejection_codes(result)
 
 

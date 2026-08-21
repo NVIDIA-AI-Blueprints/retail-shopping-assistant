@@ -68,7 +68,16 @@ class ProductReferenceDescriptor(_ConversationProductModel):
     ordinal: int | None = Field(
         default=None,
         ge=1,
-        description="One-based product position within the selected turn or set.",
+        description=(
+            "One-based product position within the selected turn or set. This "
+            "is how a positional reference resolves: 'the first one', 'the "
+            "second', 'the last one you showed' send `ordinal` with the "
+            "`candidate_set_id` or `turn_sequence` they were shown in, never a "
+            "guessed PRODUCT_REF. The index owns the order and you do not: "
+            "asked to add 'the first one' of four sandals, a guessed ref "
+            "picked the fourth, the name did not match it, nothing was added, "
+            "and the shopper was re-shown the same four in a different order."
+        ),
     )
 
     @model_validator(mode="after")
@@ -81,7 +90,18 @@ class ProductReferenceDescriptor(_ConversationProductModel):
             self.candidate_set_id,
         )
         if not any(value is not None for value in selectors):
-            raise ValueError("at least one product reference selector is required")
+            # `reference_id` is meant to be a label -- "first_sandals" -- but a
+            # model asked to add the Southwest Bracelet put the product's name
+            # there and nothing anywhere else. The whole call was refused, the
+            # name lookup that exists for exactly this never ran, and the turn
+            # died on "I could not complete that shopping request" with the
+            # product's name sitting one field over.
+            #
+            # A label that is plainly a name is a name. Reading it as one
+            # guesses nothing: it is looked up in the catalog and comes back
+            # labelled as found by name rather than shown before.
+            object.__setattr__(self, "display_name", self.reference_id)
+            return self
         if self.ordinal is not None and (
             self.turn_sequence is None and self.candidate_set_id is None
         ):
@@ -278,7 +298,12 @@ class ProductEvidence:
     def identified_by_the_system(self, product_ref: str) -> bool:
         """Whether the record picked this product, rather than the model."""
 
-        return (product_ref or "").strip() in self._system_identified
+        wanted = _reference_identifier(product_ref)
+        if wanted in self._system_identified:
+            return True
+        return any(
+            _same_reference(ref, wanted) for ref in self._system_identified
+        )
 
     def system_identified(self) -> tuple[str, ...]:
         """Every product the record picked this turn, in a stable order.
@@ -293,10 +318,60 @@ class ProductEvidence:
         return tuple(sorted(self._system_identified))
 
     def get(self, product_ref: str) -> ProductSummary | None:
-        return self._products.get((product_ref or "").strip())
+        wanted = _reference_identifier(product_ref)
+        if not wanted:
+            return None
+        exact = self._products.get(wanted)
+        if exact is not None:
+            return exact
+        # A model that drops the scheme is still naming what the index stored.
+        # Only when it names exactly one: two matches is a real ambiguity and
+        # must miss, so the shopper is asked rather than guessed at.
+        matches = [
+            product
+            for ref, product in self._products.items()
+            if _same_reference(ref, wanted)
+        ]
+        return matches[0] if len(matches) == 1 else None
 
     def values(self) -> tuple[ProductSummary, ...]:
         return tuple(self._products.values())
+
+
+#: Characters a model may wrap an opaque identifier in. Mirrors the resolver's
+#: own tolerance in `memory_retriever/src/product_references.py`, because a ref
+#: that resolves in one lane and misses in the other is the worst of both.
+_REFERENCE_WRAPPERS = "<>[]{}\"'`"
+
+
+def _reference_identifier(value: str) -> str:
+    """The identifier, without the punctuation a model may wrap it in."""
+
+    return (value or "").strip().strip(_REFERENCE_WRAPPERS).strip()
+
+
+def _same_reference(stored: str, given: str) -> bool:
+    """Whether these name the same product, however the model wrote it.
+
+    Asked to add a tote it had been shown one turn earlier, the model sent
+    `92a114b74aaa39ea` for `generated:92a114b74aaa39ea`, was told the ref did
+    not match, retried the identical value until its budget ran out, and then
+    told the shopper the bag was in their cart.
+
+    A bare identifier names what the index stored just as exactly as the
+    qualified form, so accepting it guesses nothing. Two different schemes are
+    two different references and still do not match.
+    """
+
+    left, right = _reference_identifier(stored), _reference_identifier(given)
+    if left == right:
+        return True
+    for bare, qualified in ((left, right), (right, left)):
+        if ":" in bare or ":" not in qualified:
+            continue
+        if qualified.split(":", 1)[1] == bare:
+            return True
+    return False
 
 
 #: Fields the catalog returns alongside attributes that are not product facts:

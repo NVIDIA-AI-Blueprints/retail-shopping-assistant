@@ -180,7 +180,7 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 - [Milvus](https://milvus.io/): Vector database for similarity search
 
 ### Related Projects
-- [NVIDIA Retrieval QA](https://catalog.ngc.nvidia.com/orgs/nim/teams/nvidia/containers/nv-embedqa-e5-v5): Embedding model for semantic search
+- [Nemotron 3 Embed 1B](https://catalog.ngc.nvidia.com/orgs/nim/teams/nvidia/containers/nemotron-3-embed-1b): Embedding model for semantic search (2048-dim)
 - [NV-CLIP](https://catalog.ngc.nvidia.com/orgs/nim/teams/nvidia/containers/nvclip): Visual understanding model _(deprecated — hosted/cloud endpoint no longer available; run as a local NIM)_
 - [Nemotron 3 Super](https://catalog.ngc.nvidia.com/orgs/nim/teams/nvidia/containers/nemotron-3-super-120b-a12b): Large language model
 
@@ -188,7 +188,7 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 
 GOVERNING TERMS: Use of the blueprint software and materials and NIM containers are governed by the [NVIDIA Software License Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement/) and [Product-specific Terms for AI products](https://www.nvidia.com/en-us/agreements/enterprise-software/product-specific-terms-for-ai-products/);  and the use of models is governed by the [NVIDIA Community Model License](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-community-models-license/).
  
-ADDITIONAL INFORMATION: [Llama 3.1 Community License Agreement](https://www.llama.com/llama3_1/license/) for Llama 3.1 70B Instruct NIM, Llama 3.1 NemoGuard 8B - Content Safety and Llama 3.1 NemoGuard 8B - Topic Control models, built with Llama, (ii) MIT license for NV-EmbedQA-E5-v5.
+ADDITIONAL INFORMATION: [Llama 3.1 Community License Agreement](https://www.llama.com/llama3_1/license/) for Llama 3.1 NemoGuard 8B - Content Safety and Llama 3.1 NemoGuard 8B - Topic Control models, built with Llama. Use of the Nemotron 3 Super 120B A12B and Nemotron 3 Embed 1B models is governed by the terms published on their respective NGC model cards.
  
 This project will download and install additional third-party open source software projects. Review the license terms of these open source projects before use, found in [License-3rd-party.txt](/LICENSE-3rd-party.txt).
  

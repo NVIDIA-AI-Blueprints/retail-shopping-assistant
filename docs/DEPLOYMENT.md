@@ -99,6 +99,22 @@ This guide covers deploying the Retail Shopping Assistant in various environment
 
 > **⚠️ `nvclip` is deprecated.** Its hosted endpoint on the NVIDIA API Catalog (`api.build.nvidia.com`) is no longer available, so image (visual) search does **not** work under Cloud NIM Deployment as-is. **Workaround:** run `nvclip` as a local NIM (from `docker-compose-nim-local.yaml`) and point `image_embed_port` at the local container, even when other endpoints stay on the cloud.
 
+> **⚠️ Embedding model migration — existing deployments must reset Milvus.**
+> The text embedder is now `nvidia/nemotron-3-embed-1b`, which emits **2048-dim**
+> vectors (the previous `nv-embedqa-e5-v5` emitted 1024). A collection created by
+> the old model will reject every query with
+> `vector dimension mismatch, expected vector size(byte) 4096, actual 8192`.
+>
+> `docker compose down -v` is **not** sufficient: Milvus data here lives in a host
+> bind-mount (`./catalog_retriever/volumes/milvus`), which survives `-v`. Remove the
+> directory to force a re-seed at the new dimension:
+> ```bash
+> docker compose -f docker-compose.yaml down -v
+> sudo rm -rf ./catalog_retriever/volumes
+> ```
+> Fresh checkouts are unaffected. Only the *text* collection changes dimension; the
+> image collection stays 1024-dim (`nvclip` is unchanged).
+
 ### Option 3: Hybrid Deployment
 
 **Best for**: Production with mixed requirements
@@ -261,7 +277,7 @@ metadata:
 data:
   config.yaml: |
     llm_port: "https://api.nvcf.nvidia.com/v1/chat/completions"
-    llm_name: "meta/llama-3.1-70b-instruct"
+    llm_name: "nvidia/nemotron-3-super-120b-a12b"
     retriever_port: "https://api.nvcf.nvidia.com/v1/embeddings"
     memory_port: "http://memory-retriever:8011"
     rails_port: "https://api.nvcf.nvidia.com/v1/chat/completions"
@@ -337,7 +353,7 @@ The main configuration is in `chain_server/config/config.yaml`:
 ```yaml
 # NIM Endpoints
 llm_port: "http://localhost:8000/v1"  # or cloud endpoint
-llm_name: "meta/llama-3.1-70b-instruct"
+llm_name: "nvidia/nemotron-3-super-120b-a12b"
 retriever_port: "http://localhost:8010"
 memory_port: "http://localhost:8011"
 rails_port: "http://localhost:8012"
@@ -421,14 +437,14 @@ docker compose -f docker-compose.yaml up -d --build
 ```yaml
 # LLM endpoint for local NIM deployment
 llm_port: "http://localhost:8000/v1"
-llm_name: "meta/llama-3.1-70b-instruct"
+llm_name: "nvidia/nemotron-3-super-120b-a12b"
 ```
 
 **Catalog Retriever Default** (`catalog_retriever/config/config.yaml`):
 ```yaml
 # Text embedding endpoint for local NIM deployment
 text_embed_port: "http://localhost:8001/v1"
-text_model_name: "nvidia/nv-embedqa-e5-v5"
+text_model_name: "nvidia/nemotron-3-embed-1b"
 
 # Image embedding endpoint for local NIM deployment
 image_embed_port: "http://localhost:8002/v1"
@@ -467,14 +483,14 @@ docker compose -f docker-compose.yaml up -d --build
 ```yaml
 # LLM endpoint for build.nvidia.com
 llm_port: "https://api.build.nvidia.com/v1"
-llm_name: "meta/llama-3.1-70b-instruct"
+llm_name: "nvidia/nemotron-3-super-120b-a12b"
 ```
 
 **Catalog Retriever Override** (`catalog_retriever/config/config-build.yaml`):
 ```yaml
 # Text embedding endpoint for build.nvidia.com
 text_embed_port: "https://api.build.nvidia.com/v1"
-text_model_name: "nvidia/nv-embedqa-e5-v5"
+text_model_name: "nvidia/nemotron-3-embed-1b"
 
 # Image embedding endpoint for build.nvidia.com
 image_embed_port: "https://api.build.nvidia.com/v1"

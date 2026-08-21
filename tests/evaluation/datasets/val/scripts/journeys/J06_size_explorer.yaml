@@ -1,0 +1,56 @@
+id: J06_size_explorer
+covers: [cart-management, sizes, references]
+why: >
+  A whole conversation about sizes. A size used to narrow a search is not a
+  purchase decision; two sizes are two lines; a change adds before it removes;
+  and a bag is never asked its size.
+  Names Jade Suede Heels, not Polished Pearl Pumps: this catalog gives that
+  second name to two products, so an assertion pinned to it measured
+  whether the model guessed which one. Asking is the correct behaviour and
+  was scored as a failure.
+
+turns:
+  - say: show me black dresses in a size 2
+    expect:
+      products_min: 1
+      every_product: {primary_color: black}
+  - say: add the Black Satin Lace-Up Dress to my cart
+    expect: {cart_unchanged: true}
+  - say: size 2 please
+    expect:
+      cart: [{name: Black Satin Lace-Up Dress, size: "2", qty: 1}]
+  - say: actually add it in a 4 as well
+    expect:
+      cart:
+        - {name: Black Satin Lace-Up Dress, size: "2", qty: 1}
+        - {name: Black Satin Lace-Up Dress, size: "4", qty: 1}
+  - say: show me some tote bags
+    expect: {products_min: 2}
+  - say: add the Linen Canvas Tote Bag
+    expect:
+      cart:
+        - {name: Black Satin Lace-Up Dress, size: "2", qty: 1}
+        - {name: Black Satin Lace-Up Dress, size: "4", qty: 1}
+        - {name: Linen Canvas Tote Bag, qty: 1}
+  - say: show me some heels
+    expect: {products_min: 2}
+  # A size change is one line at the new size, never two. The protocol adds the
+  # new line then removes the old; a half-finished swap leaves both, and these
+  # three turns asserted nothing, so it always passed.
+  - say: add the Jade Suede Heels in a 6
+    expect:
+      cart:
+        - {name: Black Satin Lace-Up Dress, size: "2", qty: 1}
+        - {name: Black Satin Lace-Up Dress, size: "4", qty: 1}
+        - {name: Linen Canvas Tote Bag, qty: 1}
+        - {name: Jade Suede Heels, size: "6", qty: 1}
+  - say: actually make those a 7
+    expect:
+      cart:
+        - {name: Black Satin Lace-Up Dress, size: "2", qty: 1}
+        - {name: Black Satin Lace-Up Dress, size: "4", qty: 1}
+        - {name: Linen Canvas Tote Bag, qty: 1}
+        - {name: Jade Suede Heels, size: "7", qty: 1}
+  - say: what's in my cart
+    expect:
+      cart_unchanged: true

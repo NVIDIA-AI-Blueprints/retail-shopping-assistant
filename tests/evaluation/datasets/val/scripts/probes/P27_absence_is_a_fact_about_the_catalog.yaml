@@ -1,0 +1,21 @@
+id: P27_absence_is_a_fact_about_the_catalog
+covers: [honesty, discovery]
+why: >
+  A live session, 2026-08-17: "I'm not seeing any blouses, camisoles, jumpsuits,
+  skirts, or sweaters, so I can't pull clothing pieces from those types." The
+  catalog holds 69 products across those five types -- 39 skirts, 18 sweaters,
+  9 blouses -- and the same assistant had shown sweaters forty minutes earlier.
+  A thin search result was reported as a fact about the shop.
+
+  Asserted as state, not wording: a turn that claims to carry none of a type
+  shows nothing of it, so the product count is the check.
+turns:
+  - say: I love a cosy neutral look, can you shop it for me and keep it under $300
+    expect:
+      products_min: 1
+  - say: now show me skirts
+    expect:
+      products_min: 1               # the catalog carries 39
+  - say: and blouses
+    expect:
+      products_min: 1               # the catalog carries 9

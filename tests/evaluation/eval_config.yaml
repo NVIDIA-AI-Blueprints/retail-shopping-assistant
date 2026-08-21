@@ -34,8 +34,11 @@ target_agent:
   base_url: "http://localhost:8009"
   endpoint: "/query/timing"
   # Must exceed the target's turn budget with room for transport, or the client
-  # aborts turns the assistant would have completed.
-  timeout_seconds: 120
+  # aborts turns the assistant would have completed. The budget is
+  # deepagents_execution_timeout_seconds, which a deployment may raise by env:
+  # at 150 a 120s client here aborted a scenario mid-conversation, and the
+  # challenger then wrote its next turn around the error it saw.
+  timeout_seconds: 210
   guardrails: false
 
 run:

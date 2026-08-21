@@ -185,6 +185,27 @@ def _system_identifications_by_turn(db, conversation_id: str) -> list[tuple[int,
     return identifications
 
 
+def _shopper_sizes_of(turn) -> list[str]:
+    """The sizes this turn's searches were filtered by, if exactly recorded.
+
+    Read from the turn's own diagnostics, which already cross the service
+    boundary and are already stored. Only one size qualifies a showing: two
+    means the shopper was comparing, and neither is the size they want.
+    """
+
+    try:
+        output = json.loads(turn.output_json or "{}")
+    except (TypeError, ValueError):
+        return []
+    diagnostics = output.get("agent_diagnostics")
+    if not isinstance(diagnostics, dict):
+        return []
+    sizes = diagnostics.get("shopper_sizes")
+    if not isinstance(sizes, list):
+        return []
+    return [str(value).strip() for value in sizes if str(value).strip()]
+
+
 def rebuild_product_reference_index(
     db,
     projection: ConversationProjection,
@@ -218,6 +239,13 @@ def rebuild_product_reference_index(
         ]
         if picked:
             reference_set["system_identified"] = sorted(dict.fromkeys(picked))
+        # A showing made under a size filter is size-qualified: those four
+        # sandals came back because they come in a 7. The size belongs to this
+        # set and to nothing else -- a later showing carries its own or none,
+        # and they never merge, so no size follows the shopper around.
+        sizes = _shopper_sizes_of(turn)
+        if len(sizes) == 1:
+            reference_set["shopper_size"] = sizes[0]
         if turn.catalog_revision:
             reference_set["catalog_revision"] = turn.catalog_revision
         reference_sets.append(reference_set)

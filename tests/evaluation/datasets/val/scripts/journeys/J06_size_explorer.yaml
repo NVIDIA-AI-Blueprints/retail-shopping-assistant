@@ -1,8 +1,9 @@
 id: J06_size_explorer
 covers: [cart-management, sizes, references]
 why: >
-  A whole conversation about sizes. A size used to narrow a search is not a
-  purchase decision; two sizes are two lines; a change adds before it removes;
+  A whole conversation about sizes. A size the shopper stated to narrow a
+  search is still the size they want, and asking for it again is asking them to
+  repeat themselves; two sizes are two lines; a change adds before it removes;
   and a bag is never asked its size.
   Names Jade Suede Heels, not Polished Pearl Pumps: this catalog gives that
   second name to two products, so an assertion pinned to it measured
@@ -14,10 +15,16 @@ turns:
     expect:
       products_min: 1
       every_product: {primary_color: black}
+  # The shopper said "in a size 2" one turn ago and then said add. Asking again
+  # is asking them to repeat themselves, and this file used to require it.
   - say: add the Black Satin Lace-Up Dress to my cart
-    expect: {cart_unchanged: true}
+    expect:
+      cart: [{name: Black Satin Lace-Up Dress, size: "2", qty: 1}]
+  # Confirming a size already applied changes nothing and must not duplicate
+  # the line.
   - say: size 2 please
     expect:
+      cart_unchanged: true
       cart: [{name: Black Satin Lace-Up Dress, size: "2", qty: 1}]
   - say: actually add it in a 4 as well
     expect:

@@ -1764,6 +1764,7 @@ def _empty_agent_diagnostics(final_termination_reason: str) -> dict[str, Any]:
         "product_evidence": [],
         "product_evidence_truncated": False,
         "catalog_scope_outcomes": [],
+        "shopper_sizes": [],
         "final_termination_reason": final_termination_reason,
         "partial_graph_messages": [],
     }
@@ -1903,6 +1904,7 @@ def _collect_agent_diagnostics(
     diagnostics["catalog_scope_outcomes"] = _diagnostic_catalog_scope_outcomes(
         turn_messages
     )
+    diagnostics["shopper_sizes"] = _diagnostic_shopper_sizes(turn_messages)
     if preserve_partial_messages:
         partial, truncated = _serialize_partial_graph_messages(turn_messages)
         diagnostics["partial_graph_messages"] = partial
@@ -2369,6 +2371,39 @@ def _diagnostic_product_evidence(
                 continue
             evidence.append(record)
     return evidence, truncated
+
+
+def _diagnostic_shopper_sizes(messages: list[Any]) -> list[str]:
+    """The sizes the shopper's own searches were filtered by this turn.
+
+    A showing made under a size filter is a size-qualified showing: those four
+    sandals came back *because* they come in a 7. That fact belonged to the
+    turn and was thrown away at the end of it, so "ok, just show me sandals in
+    a 7" followed by "add the first one" asked which size -- the shopper having
+    said it one turn earlier.
+
+    Recorded per turn rather than per shopper. Nothing here says the shopper
+    is a 7; it says this showing was. A later showing carries its own sizes or
+    none, and the two never merge.
+    """
+
+    sizes: list[str] = []
+    for message in messages:
+        if _message_type(message) != "tool":
+            continue
+        payload = evidence_of(message) or {}
+        outcome = payload.get("scope_outcome") or {}
+        if outcome.get("outcome") not in {None, "results"}:
+            continue
+        for scope in (payload.get("products") or []):
+            if not isinstance(scope, dict):
+                continue
+            confirmed = (scope.get("search_scope") or {}).get("confirmed_filters")
+            for value in ((confirmed or {}).get("sizes") or []):
+                text = str(value).strip()
+                if text and text not in sizes:
+                    sizes.append(text)
+    return sizes[:4]
 
 
 def _diagnostic_catalog_scope_outcomes(

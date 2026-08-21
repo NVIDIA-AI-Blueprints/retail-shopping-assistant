@@ -570,6 +570,7 @@ def _format_reference_set(value: Any) -> str:
     if not isinstance(value, dict):
         return ""
     set_id = _one_line(value.get("candidate_set_id"))
+    shopper_size = _one_line(value.get("shopper_size"))
     turn = value.get("turn_seq")
     products = value.get("products")
     if not set_id or not isinstance(turn, int) or not isinstance(products, list):
@@ -589,7 +590,16 @@ def _format_reference_set(value: Any) -> str:
             if category
             else f"{position}:{name} <{ref}>"
         )
-    return f"- set={set_id} turn={turn}: " + "; ".join(rendered) if rendered else ""
+    if not rendered:
+        return ""
+    # The showing remembers the size it was made under. "Show me sandals in a
+    # 7" then "add the first one" asked which size, with the answer one turn
+    # back. It qualifies this set and nothing else: a later showing carries its
+    # own size or none, so no size follows the shopper from one to the next.
+    qualifier = (
+        f" [shopper asked for size {shopper_size}]" if shopper_size else ""
+    )
+    return f"- set={set_id} turn={turn}{qualifier}: " + "; ".join(rendered)
 
 
 def _one_line(value: Any) -> str:

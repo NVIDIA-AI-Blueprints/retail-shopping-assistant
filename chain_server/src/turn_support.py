@@ -1904,7 +1904,7 @@ def _collect_agent_diagnostics(
     diagnostics["catalog_scope_outcomes"] = _diagnostic_catalog_scope_outcomes(
         turn_messages
     )
-    diagnostics["shopper_sizes"] = _diagnostic_shopper_sizes(turn_messages)
+    diagnostics["shopper_sizes"] = _diagnostic_shopper_sizes(product_evidence)
     if preserve_partial_messages:
         partial, truncated = _serialize_partial_graph_messages(turn_messages)
         diagnostics["partial_graph_messages"] = partial
@@ -2373,7 +2373,7 @@ def _diagnostic_product_evidence(
     return evidence, truncated
 
 
-def _diagnostic_shopper_sizes(messages: list[Any]) -> list[str]:
+def _diagnostic_shopper_sizes(product_evidence: list[Any]) -> list[str]:
     """The sizes the shopper's own searches were filtered by this turn.
 
     A showing made under a size filter is a size-qualified showing: those four
@@ -2385,24 +2385,27 @@ def _diagnostic_shopper_sizes(messages: list[Any]) -> list[str]:
     Recorded per turn rather than per shopper. Nothing here says the shopper
     is a 7; it says this showing was. A later showing carries its own sizes or
     none, and the two never merge.
+
+    Reads `product_evidence`, which already carries `search_scope` flattened
+    onto every record. The first version walked the raw tool payload looking
+    for `payload["products"]`, and products are nested under a keyed sub-dict
+    there, so the loop never ran once and this returned [] for two days. Its
+    tests covered the renderer and the set-scoped boundary; nothing fed it a
+    real payload and asked for a size back.
     """
 
     sizes: list[str] = []
-    for message in messages:
-        if _message_type(message) != "tool":
+    for record in product_evidence or ():
+        if not isinstance(record, dict):
             continue
-        payload = evidence_of(message) or {}
-        outcome = payload.get("scope_outcome") or {}
-        if outcome.get("outcome") not in {None, "results"}:
+        scope = record.get("search_scope")
+        if not isinstance(scope, dict):
             continue
-        for scope in (payload.get("products") or []):
-            if not isinstance(scope, dict):
-                continue
-            confirmed = (scope.get("search_scope") or {}).get("confirmed_filters")
-            for value in ((confirmed or {}).get("sizes") or []):
-                text = str(value).strip()
-                if text and text not in sizes:
-                    sizes.append(text)
+        confirmed = scope.get("confirmed_filters")
+        for value in ((confirmed or {}).get("sizes") or []):
+            text = str(value).strip()
+            if text and text not in sizes:
+                sizes.append(text)
     return sizes[:4]
 
 

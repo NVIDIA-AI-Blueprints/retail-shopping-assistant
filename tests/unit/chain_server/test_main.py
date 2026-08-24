@@ -2357,7 +2357,12 @@ class TestDeepAgentsRuntimeRefs:
         assert "advertised subcategories denotes the " in schema["properties"][
             "taxonomy"
         ]["description"]
-        assert set(taxonomy_schema["required"]) == {"category", "subcategory"}
+        # Neither role is required. "Show me some jewellery" names a category
+        # and no subcategory; requiring one rejected the call outright and the
+        # shopper was asked to clarify a request that could not have been
+        # plainer. A search with neither is still refused, by the validator
+        # rather than by the schema.
+        assert not taxonomy_schema.get("required")
         assert "search is image-only" in taxonomy_schema["properties"][
             "category"
         ]["description"]

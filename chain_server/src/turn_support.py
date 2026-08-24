@@ -250,11 +250,12 @@ class CatalogTaxonomyToolInput(BaseModel):
         ),
     )
     subcategory: list[str] = Field(
-        ...,
+        default_factory=list,
         description=(
             "Exact advertised subcategory values required by the shopper. Use an "
             "empty list when category supplies the text-search scope or the search "
-            "is image-only."
+            "is image-only. Omitting it means the whole category, which is what "
+            "'show me some jewellery' asks for."
         ),
     )
 
@@ -1379,18 +1380,30 @@ def _taxonomy_list_field(
     field_name = advertised_field or "not advertised"
     description = (
         f"Exact {role} values advertised through catalog field '{field_name}'. "
-        "Use an empty list when the other taxonomy role supplies the text scope or "
-        "the search is image-only."
+        "Use an empty list, or leave it out, when the other taxonomy role "
+        "supplies the text scope or the search is image-only."
     )
     if role == "category":
         description += " Select at most one category per catalog search."
+    else:
+        description += (
+            " Omit it to search the whole category, which is what 'show me "
+            "some jewellery' asks for: the shopper named no subcategory and "
+            "narrowing to one would be choosing for them."
+        )
     if not values:
-        return list[str], Field(..., max_length=0, description=description)
+        return list[str], Field(
+            default_factory=list, max_length=0, description=description
+        )
 
     literal_type = Literal.__getitem__(tuple(values))
     max_length = 1 if role == "category" else None
+    # Required at the boundary meant "show me some jewellery" -- a category
+    # with no subcategory named -- was rejected outright, and the shopper was
+    # asked to clarify a request that could not have been plainer. It killed
+    # J17 at turn 1 and took the journey with it.
     return list[literal_type], Field(
-        ...,
+        default_factory=list,
         max_length=max_length,
         description=description,
     )

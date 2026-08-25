@@ -774,3 +774,91 @@ def test_no_subcategory_narrows_nothing() -> None:
 # which is not the path production takes -- there the size is advertised
 # catalog-wide, passes validation, and matches nothing. Fighting the fixture
 # into the production shape tests the fixture.
+
+
+def test_several_categories_fan_out_with_their_subcategories(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """J10 t1, "I'm shopping on a tight budget, nothing over $50".
+
+    The shopper names no category and no product type, so every category is in
+    scope. The model asks for exactly that -- all of them with a price ceiling
+    -- and one category per scope turned the whole call back.
+
+    Each split scope carries its own category's advertised subcategories, which
+    is what the refusal asks for in as many words: "select every advertised
+    subcategory that role covers". That satisfies the open-role rule rather
+    than relaxing it.
+    """
+
+    seen: list = []
+
+    def _capture(plan, url, **kw):
+        seen.append(dict(plan.hard_filters or {}))
+        return SimpleNamespace(
+            result=SearchCatalogResult(ok=True, products=[]),
+            fallback_attempted=False,
+            fallback_used=False,
+        )
+
+    monkeypatch.setattr(catalog_search_mod, "execute_catalog_search", _capture)
+    ctx = _context("nothing over $50")
+    ctx.config.max_search_scopes_per_call = 10
+
+    search_catalog(
+        ctx,
+        [
+            _scope(
+                semantic_query="anything under fifty",
+                requested_product_type="items",
+                taxonomy={"category": ["apparel", "bags"], "subcategory": []},
+                required_constraints={"price": {"max": 50}},
+            )
+        ],
+    )
+
+    # Two scopes, each with its own category and that category's advertised
+    # subcategories. Further calls are the zero-result relaxation retrying,
+    # which is a different mechanism.
+    scoped = [f for f in seen if f.get("department")]
+    assert [f["department"] for f in scoped] == [["apparel"], ["bags"]], seen
+    assert scoped[0]["product_type"] == ["dresses"]
+    assert scoped[1]["product_type"] == ["crossbody_bags", "tote_bags"]
+    assert all(f["price"] == {"max": 50.0} for f in scoped)
+
+
+def test_one_category_and_no_subcategory_is_left_alone() -> None:
+    """"Rainy outfit under $60" arrives as apparel with a price and nothing
+    else. Filling in every apparel subcategory would answer an invented role
+    with the whole department, so this shape keeps its refusal."""
+
+    from chain_server.src.catalog_search import _one_scope_per_category
+
+    ctx = SimpleNamespace(
+        capabilities=_capabilities(),
+        config=SimpleNamespace(max_search_scopes_per_call=10),
+    )
+    scope = {
+        "semantic_query": "rainy outfit under $60",
+        "taxonomy": {"category": ["apparel"], "subcategory": []},
+    }
+
+    assert _one_scope_per_category(ctx, [scope]) == [scope]
+
+
+def test_a_scope_that_names_subcategories_is_left_alone() -> None:
+    from chain_server.src.catalog_search import _one_scope_per_category
+
+    ctx = SimpleNamespace(
+        capabilities=_capabilities(),
+        config=SimpleNamespace(max_search_scopes_per_call=10),
+    )
+    scope = {
+        "semantic_query": "dresses and totes",
+        "taxonomy": {
+            "category": ["apparel", "bags"],
+            "subcategory": ["dresses", "tote_bags"],
+        },
+    }
+
+    assert _one_scope_per_category(ctx, [scope]) == [scope]

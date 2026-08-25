@@ -1817,6 +1817,70 @@ def _planned_scope(ctx: SearchContext, attempt: _Attempt) -> StepResult:
     return None
 
 
+def _one_scope_per_category(ctx: SearchContext, scopes: list[Any]) -> list[Any]:
+    """Fan a several-category browse into one scope each, subcategories filled.
+
+    "I'm shopping on a tight budget, nothing over $50" names no category and no
+    product type, so every category is in scope. The model asks for exactly
+    that -- all five categories with a price ceiling -- and the schema allows
+    one category per scope, so the call is turned back and the shopper is asked
+    to clarify a request that was already complete.
+
+    Each split scope carries the category's own advertised subcategories. That
+    is not a workaround: it is what the refusal asks for in as many words --
+    "for a role the shopper did not name, select every advertised subcategory
+    that role covers". Filling them from the catalog satisfies the open-role
+    rule rather than relaxing it, so a model that invents a role ("loungewear")
+    and names one category is still turned back as it should be.
+
+    Left alone when the split will not fit the call's scope budget, and when
+    only one category was asked for.
+    """
+
+    limit = max(1, int(getattr(ctx.config, "max_search_scopes_per_call", 1) or 1))
+    categories = getattr(getattr(ctx.capabilities, "taxonomy", None), "categories", None) or {}
+
+    fanned: list[Any] = []
+    for raw in scopes:
+        fields = raw if isinstance(raw, dict) else raw.model_dump()
+        taxonomy = fields.get("taxonomy") or {}
+        asked = taxonomy.get("category") if isinstance(taxonomy, dict) else None
+        named = list(taxonomy.get("subcategory") or []) if isinstance(taxonomy, dict) else []
+        # Two or more categories only. One category with no subcategory is
+        # indistinguishable from an invented role: "rainy outfit under $60"
+        # arrives as apparel with a price and nothing else, and filling in
+        # every apparel subcategory would answer it with the whole department.
+        # The open-role rule exists for exactly that and is left alone.
+        #
+        # Naming five categories is not a role. It is "everything", and that is
+        # the shape this fans out.
+        if named or not isinstance(asked, list) or len(asked) < 2:
+            fanned.append(raw)
+            continue
+        if len(scopes) - 1 + len(asked) > limit:
+            fanned.append(raw)
+            continue
+        expanded: list[Any] = []
+        for category in asked:
+            advertised = categories.get(str(category))
+            subcategories = sorted(getattr(advertised, "subcategories", None) or {})
+            if not subcategories:
+                expanded = []
+                break
+            expanded.append(
+                {
+                    **fields,
+                    "taxonomy": {
+                        **taxonomy,
+                        "category": [category],
+                        "subcategory": subcategories,
+                    },
+                }
+            )
+        fanned.extend(expanded or [raw])
+    return fanned
+
+
 def search_catalog(
     ctx: SearchContext,
     scopes: list[dict[str, Any]],
@@ -1841,6 +1905,7 @@ def search_catalog(
     heels and no clutches for a two-category search.
     """
 
+    scopes = _one_scope_per_category(ctx, list(scopes))
     attempts: list[_Attempt] = []
     for index, raw in enumerate(scopes):
         fields = raw if isinstance(raw, dict) else raw.model_dump()

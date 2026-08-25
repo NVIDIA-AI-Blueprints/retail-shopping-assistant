@@ -208,6 +208,26 @@ def _cart_lines(cart: Any) -> list[dict[str, Any]]:
     return [line for line in contents if isinstance(line, dict)]
 
 
+#: Every expectation `check_turn` implements. An unknown key is a scenario
+#: asserting nothing, silently.
+_SUPPORTED_EXPECTATIONS = {
+    "cart",
+    "cart_lines",
+    "cart_unchanged",
+    "every_product",
+    "every_product.primary_color",
+    "no_constraint",
+    "no_product_named",
+    "product_named",
+    "products_max",
+    "products_min",
+    "reply_must_not_say",
+    "tools_not_used",
+    "tools_used",
+    "unsized_scopes",
+}
+
+
 def check_turn(
     expect: Mapping[str, Any],
     turn: TurnResult,
@@ -311,11 +331,33 @@ def check_turn(
             f"a size was applied: {offenders}",
         )
 
+    # Reading the reply, which this suite otherwise refuses to do. It is here
+    # because some defects ARE the wording: "the most expensive item in the
+    # catalog is the $199.99 crossbody bag" is false in a shop that reaches
+    # $269.99, and no assertion about products or the cart can see it.
+    #
+    # Scenario-local and explicit: the phrases sit in the yaml beside the turn
+    # they judge, so nothing general is matched anywhere.
+    for phrase in expect.get("reply_must_not_say", []) or []:
+        record(
+            f"reply_must_not_say.{phrase}",
+            phrase.casefold() not in (turn.reply or "").casefold(),
+            f"said: {(turn.reply or '')[:160]}",
+        )
+
     for tool in expect.get("tools_used", []) or []:
         record(f"tools_used.{tool}", tool in turn.tools, f"called: {turn.tools}")
 
     for tool in expect.get("tools_not_used", []) or []:
         record(f"tools_not_used.{tool}", tool not in turn.tools, f"called: {turn.tools}")
+
+    # An expectation this harness does not implement asserted nothing, and the
+    # scenario passed while proving whatever its author assumed. R08 was
+    # written with reply_must_not_say before that check existed here, and went
+    # green on a reply naming the wrong product.
+    unknown = sorted(set(expect) - _SUPPORTED_EXPECTATIONS)
+    if unknown:
+        record("expectation.unknown", False, f"not implemented: {unknown}")
 
     return checks
 

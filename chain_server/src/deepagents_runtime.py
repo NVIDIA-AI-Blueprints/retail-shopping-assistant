@@ -685,6 +685,30 @@ class _UpdateCartItemsInput(BaseModel):
         ),
     )
 
+    @field_validator("size", mode="before")
+    @classmethod
+    def _a_number_is_a_size_too(cls, value: Any) -> Any:
+        """Take a size written as a number, so the refusal can be reached.
+
+        This field exists for one reason: to turn "change it to a 7" into the
+        add-then-remove sequence instead of a silent no-op. A model that sent
+        `size: 7` rather than `size: "7"` never got there -- pydantic refused
+        the call for the type, three times running, with a validation error
+        that says nothing about carts. It then gave up, sent the quantity
+        alone, and told the shopper it had updated a dress it had never been
+        asked about.
+
+        Sizes are "2" and "onesize" in this catalog, so a bare number is the
+        obvious slip. Coercing it costs nothing and delivers the guidance the
+        field was declared for.
+        """
+
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return str(int(value) if float(value).is_integer() else value)
+        return value
+
 
 class _GetStorePolicyInput(BaseModel):
     topic: Literal[

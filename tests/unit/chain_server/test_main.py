@@ -2630,6 +2630,21 @@ class TestDeepAgentsRuntimeRefs:
                     "taxonomy_status": "exact_requested_type",
                 }
             )
+        # An advertised category grounds a role the shopper did not name: the
+        # category is the scope, unlimited by subcategory. Refused, this asked
+        # the shopper which product type they meant on a turn -- "it's going to
+        # snow, what should I wear" -- that had already said.
+        grounded_by_category = schema_model.model_validate(
+            {
+                **complete_request,
+                "requested_product_type": "bag",
+                "taxonomy_status": "agent_selected_type",
+                "taxonomy": {"category": ["bags"], "subcategory": []},
+            }
+        )
+        assert grounded_by_category.taxonomy.category == ["bags"]
+        assert grounded_by_category.taxonomy.subcategory == []
+        # With no category either, nothing grounds it and the rule still holds.
         with pytest.raises(
             ValueError,
             match="an open-role search requires an advertised subcategory",
@@ -2639,7 +2654,7 @@ class TestDeepAgentsRuntimeRefs:
                     **complete_request,
                     "requested_product_type": "bag",
                     "taxonomy_status": "agent_selected_type",
-                    "taxonomy": {"category": ["bags"], "subcategory": []},
+                    "taxonomy": {"category": [], "subcategory": []},
                 }
             )
         # A browse has no descriptive words and does not need any: "now show me
@@ -4378,20 +4393,28 @@ class TestDeepAgentsRuntimeRefs:
         )
         transport_scope = transport_request.scopes[0]
         assert transport_scope.taxonomy.subcategory == []
-        invalid_empty_rainy_scope = tool_text(
+        # Nothing grounds this role: no subcategory, no category, and a
+        # requirement that is not an advertised filter. The rule holds, and the
+        # refusal says which subcategories are on offer.
+        ungrounded_rainy_scope = tool_text(
             rainy_tools["search_catalog_tool"](scopes=[dict(
-                **transport_scope.model_dump()
+                **{
+                    **transport_scope.model_dump(),
+                    "taxonomy": {"category": [], "subcategory": []},
+                }
             )])
         )
-
-        assert invalid_empty_rainy_scope.startswith(
+        assert ungrounded_rainy_scope.startswith(
             tool_loop_control.SEARCH_VALIDATION_ERROR_PREFIX
         )
-        assert 'currently advertised subcategories: ["dresses"]' in (
-            invalid_empty_rainy_scope
-        )
+        # Every advertised subcategory, not apparel's alone: with no category
+        # named there is nothing narrowing what is on offer.
+        assert (
+            'currently advertised subcategories: ["boots", "crossbody_bags", '
+            '"dresses", "flats", "heels", "sandals", "satchels", "tote_bags"]'
+        ) in ungrounded_rainy_scope
         assert 'unadvertised_requirements ["water resistance"]' in (
-            invalid_empty_rainy_scope
+            ungrounded_rainy_scope
         )
         assert captured_plan["calls"] == calls_before_rainy
 
@@ -4449,6 +4472,7 @@ class TestDeepAgentsRuntimeRefs:
         assert captured_plan["plan"].semantic_queries == [
             "practical rainy day dresses"
         ]
+
         assert captured_plan["calls"] == calls_before_rainy + 1
 
         budget_rainy_state = State(
@@ -4650,11 +4674,14 @@ class TestDeepAgentsRuntimeRefs:
         schema_scrub_tools["activate_shopper_skills_tool"](
             skill_names=["outfit-styling"],
         )
+        # No category, so this first call is still turned back and there is a
+        # repair to scrub. Naming apparel now grounds the role and runs, which
+        # is the point of the rule change, not of this test.
         schema_scrub_tools["search_catalog_tool"](scopes=[dict(
             semantic_query="rainy day outfit",
             shopper_guidance="Starting with water-resistant outerwear.",
             requested_product_type="outerwear",
-            taxonomy={"category": ["apparel"], "subcategory": []},
+            taxonomy={"category": [], "subcategory": []},
             required_constraints={
                 "unadvertised_requirements": ["water resistance"]
             },

@@ -1032,6 +1032,7 @@ class SearchCatalogToolInput(SearchCatalogToolArguments):
         if (
             self.taxonomy_status == "agent_selected_type"
             and not self.taxonomy.subcategory
+            and not self.taxonomy.category
             and not self._scoped_by_a_hard_filter()
         ):
             # The rule exists so a role the model invented -- "loungewear" --
@@ -1044,6 +1045,14 @@ class SearchCatalogToolInput(SearchCatalogToolArguments):
             # and it answered "could you clarify the product type" instead of
             # showing anything.
             #
+            # An advertised category grounds the scope the same way a filter
+            # does, and nothing is mapped silently onto anything: the category
+            # IS the scope, unlimited by subcategory, and the role only ranks
+            # within it. "It's going to snow when we get back, what should I
+            # wear" reached apparel -- a real category, holding eighteen
+            # sweaters -- and was told to name a subcategory. It asked the
+            # shopper to clarify the product type instead, which is the same
+            # dead turn this rule already learned not to cause.
             raise ValueError(
                 "an open-role search requires an advertised subcategory"
             )

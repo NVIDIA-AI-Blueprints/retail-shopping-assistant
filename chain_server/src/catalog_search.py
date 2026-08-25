@@ -55,6 +55,7 @@ from shared.commerce_contracts import (
     CatalogCapabilities,
 )
 from .turn_support import (
+    _ONE_SIZE,
     _SEARCH_BUDGET_EXHAUSTED_NOTE,
     _SEARCH_NO_MATCH_GROUNDING_NOTE,
     _SEARCH_RESULT_GROUNDING_NOTE,
@@ -1103,6 +1104,58 @@ def _no_direct_match_outcome(ctx: SearchContext, attempt: _Attempt) -> StepResul
     return None
 
 
+def _size_that_cannot_apply(
+    taxonomy: Any,
+    constraints: Any,
+    capabilities: Any,
+) -> str:
+    """The size asked for, when nothing in the searched scope has sizes at all.
+
+    "Do you have a tote bag in a size 8" spent a turn on: "there aren't any in
+    that size... would you like me to show you tote bags in their standard one
+    size?" Four tote bags were sitting in the result the whole time.
+
+    The assistant was obeying us. The zero-result guidance says a size is never
+    the filter you give up -- right for a garment, where the wrong size is
+    something the shopper cannot wear -- and it says to offer rather than show.
+    A tote bag has no sizes to be wrong about: every bags subcategory
+    advertises `onesize` and nothing else. A number there is not an unmet
+    requirement, it is one that cannot apply.
+
+    Returns the offending size so the caller can drop it and say why. Silent
+    where any searched subcategory really is sold in sizes, so a garment search
+    keeps the size it was given.
+    """
+
+    asked = (constraints or {}).get("sizes") if isinstance(constraints, dict) else None
+    if not isinstance(asked, list) or not asked:
+        return ""
+    wanted = [str(value).strip() for value in asked if str(value).strip()]
+    if not wanted or {value.casefold() for value in wanted} == {_ONE_SIZE}:
+        return ""
+
+    subcategories = list(getattr(taxonomy, "subcategory", None) or [])
+    if not subcategories:
+        return ""
+    categories = getattr(getattr(capabilities, "taxonomy", None), "categories", None) or {}
+    seen_any = False
+    for category in categories.values():
+        for name, advertised in (getattr(category, "subcategories", None) or {}).items():
+            if name not in subcategories:
+                continue
+            sizes = (getattr(advertised, "filters", None) or {}).get("sizes")
+            values = {
+                str(v.value if hasattr(v, "value") else v).strip().casefold()
+                for v in (getattr(sizes, "values", None) or ())
+            }
+            if not values:
+                return ""
+            seen_any = True
+            if values != {_ONE_SIZE}:
+                return ""
+    return ", ".join(wanted) if seen_any else ""
+
+
 def _planned_search(ctx: SearchContext, attempt: _Attempt) -> StepResult:
     """Turn the validated request into a retrieval plan.
 
@@ -1120,6 +1173,19 @@ def _planned_search(ctx: SearchContext, attempt: _Attempt) -> StepResult:
         request.taxonomy,
         capabilities,
     )
+    # A number asked of a scope that has no sizes is not a requirement that
+    # failed; it is one that never applied. Drop it and say so, rather than
+    # returning nothing and offering to look again.
+    inapplicable_size = _size_that_cannot_apply(
+        request.taxonomy, normalized_constraints, capabilities
+    )
+    if inapplicable_size:
+        normalized_constraints = {
+            name: value
+            for name, value in normalized_constraints.items()
+            if name != "sizes"
+        }
+        attempt.normalized_constraints = normalized_constraints
     taxonomy_fields = {
         field_name
         for field_name in (

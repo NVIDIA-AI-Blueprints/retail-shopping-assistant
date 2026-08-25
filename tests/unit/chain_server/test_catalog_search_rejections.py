@@ -678,3 +678,99 @@ def test_an_advertised_type_is_not_reported_as_a_substitution(
 
     text = result[0] if isinstance(result, tuple) else result
     assert "requested_type_is_advertised" not in text
+
+
+def _sized(name, values):
+    from shared.commerce_contracts import (
+        CatalogCoverage,
+        CatalogFieldCapability,
+        CatalogTaxonomySubcategory,
+        CatalogValueCapability,
+    )
+    return name, CatalogTaxonomySubcategory(
+        product_count=1,
+        filters={"sizes": CatalogFieldCapability(
+            type="enum",
+            operators=["in"],
+            source_fields=["sizes"],
+            coverage=CatalogCoverage(present=1, total=1),
+            values=[CatalogValueCapability(value=v, count=1) for v in values],
+        )},
+    )
+
+
+def _catalog_with_sizes():
+    from shared.commerce_contracts import (
+        CatalogCapabilities, CatalogTaxonomyCapabilities, CatalogTaxonomyCategory,
+    )
+    bags = dict([_sized("tote_bags", ["onesize"]), _sized("clutches", ["onesize"])])
+    apparel = dict([_sized("dresses", ["2", "4", "6", "8", "10", "12"])])
+    from shared.commerce_contracts import CatalogFilterCapability
+    return CatalogCapabilities(
+        catalog_id="fashion", retrieval_modes=["text"],
+        filters={
+            "sizes": CatalogFilterCapability(
+                type="enum", operators=["in"], source_fields=["sizes"],
+                values=["onesize", "2", "4", "6", "8", "10", "12"],
+            )
+        },
+        taxonomy=CatalogTaxonomyCapabilities(
+            category_field="category", subcategory_field="subcategory",
+            categories={
+                "bags": CatalogTaxonomyCategory(product_count=2, subcategories=bags),
+                "apparel": CatalogTaxonomyCategory(product_count=1, subcategories=apparel),
+            },
+        ),
+    )
+
+
+def _asked(subcategories, sizes):
+    from types import SimpleNamespace
+    from chain_server.src.catalog_search import _size_that_cannot_apply
+    return _size_that_cannot_apply(
+        SimpleNamespace(subcategory=subcategories),
+        {"sizes": sizes},
+        _catalog_with_sizes(),
+    )
+
+
+def test_a_number_asked_of_a_onesize_scope_cannot_apply() -> None:
+    """J01 t11, "do you have a tote bag in a size 8".
+
+    A turn was spent on "there aren't any in that size -- would you like me to
+    show you tote bags in their standard one size?" with four tote bags already
+    in the result. The assistant was obeying the zero-result rule, which says a
+    size is never the filter you give up and to offer rather than show. That is
+    right for a garment and meaningless for a tote: every bags subcategory
+    advertises onesize and nothing else.
+    """
+
+    assert _asked(["tote_bags"], ["8"]) == "8"
+
+
+def test_a_size_a_garment_really_comes_in_is_kept() -> None:
+    """The rule must not start dropping sizes from clothes."""
+
+    assert _asked(["dresses"], ["8"]) == ""
+
+
+def test_a_mixed_scope_keeps_the_size() -> None:
+    """One sized subcategory in the scope and the size still means something."""
+
+    assert _asked(["tote_bags", "dresses"], ["8"]) == ""
+
+
+def test_onesize_asked_of_a_onesize_scope_is_not_dropped() -> None:
+    assert _asked(["tote_bags"], ["onesize"]) == ""
+
+
+def test_no_subcategory_narrows_nothing() -> None:
+    assert _asked([], ["8"]) == ""
+
+
+# The wiring for the inapplicable-size drop is proved by J01 t11 live, not
+# here. A unit attempt kept tripping a different gate: a per-subcategory sizes
+# capability makes "8" an unsupported constraint before the drop is reached,
+# which is not the path production takes -- there the size is advertised
+# catalog-wide, passes validation, and matches nothing. Fighting the fixture
+# into the production shape tests the fixture.

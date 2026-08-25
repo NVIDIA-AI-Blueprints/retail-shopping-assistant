@@ -3185,8 +3185,9 @@ class TestDeepAgentsRuntimeRefs:
         base = captured["system_prompt"]
 
         def skill(name: str) -> str:
-            return pathlib.Path(
-                f"chain_server/skills/shopper/{name}/SKILL.md"
+            return (
+                pathlib.Path(__file__).resolve().parents[3]
+                / f"chain_server/skills/shopper/{name}/SKILL.md"
             ).read_text()
 
         for phrase in (
@@ -9494,7 +9495,8 @@ class TestAudienceAwareSearch:
         # the search. Reachability on the turn that needs them is the property
         # under test -- not which file the words sit in.
         skill = pathlib.Path(
-            "chain_server/skills/shopper/product-discovery/SKILL.md"
+            pathlib.Path(__file__).resolve().parents[3]
+            / "chain_server/skills/shopper/product-discovery/SKILL.md"
         ).read_text()
         normalized = " ".join(
             (

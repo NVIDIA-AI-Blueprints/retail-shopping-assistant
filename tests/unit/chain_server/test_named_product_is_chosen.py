@@ -1,3 +1,10 @@
+
+from pathlib import Path
+
+# Resolved from this file, not the working directory: CI runs pytest with
+# `working-directory: tests`, where a path relative to the repo root does not
+# exist. The rest of the suite already does this.
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 """Naming a product by the catalog's own name for it is choosing it.
 
 "add the Southwest Bracelet" -- a real product, never shown in that
@@ -10,6 +17,7 @@ has no size to ask about. Four of the ten worst journeys fail on this shape.
 import re
 
 from chain_server.src.turn_support import _advertised_sizes, _ONE_SIZE
+
 
 
 class _Product:
@@ -41,7 +49,7 @@ def test_a_catalog_silent_about_sizes_is_not_a_one_size_product() -> None:
 
 
 def test_the_lookup_instruction_tells_it_to_add_a_named_one_size_product() -> None:
-    source = open("chain_server/src/deepagents_runtime.py").read()
+    source = open(_REPO_ROOT / "chain_server/src/deepagents_runtime.py").read()
     block = source[source.index("is the product they named") :][:1600]
     assert "They have chosen it" in block
     assert "Do not ask whether to add what they asked you to add" in block

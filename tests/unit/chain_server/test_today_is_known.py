@@ -1,3 +1,10 @@
+
+from pathlib import Path
+
+# Resolved from this file, not the working directory: CI runs pytest with
+# `working-directory: tests`, where a path relative to the repo root does not
+# exist. The rest of the suite already does this.
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 """The assistant must know what day it is.
 
 The weather tool may only be called for a window "within about 15 days of
@@ -11,6 +18,7 @@ import re
 from datetime import datetime, timezone
 
 from chain_server.src.deepagents_runtime import _today_for_the_shopper
+
 
 
 def test_today_is_the_real_date_not_the_build_date() -> None:
@@ -30,7 +38,7 @@ def test_it_reads_like_a_person_wrote_it() -> None:
 
 
 def test_the_prompt_states_the_date_and_what_it_is_for() -> None:
-    source = open("chain_server/src/deepagents_runtime.py").read()
+    source = open(_REPO_ROOT / "chain_server/src/deepagents_runtime.py").read()
     assert "TODAY IS {_today_for_the_shopper()}" in source
     block = source[source.index("TODAY IS") :][:600]
     assert "fifteen days" in block, "the forecast window is counted from today"
@@ -41,7 +49,7 @@ def test_a_country_is_forecast_and_disclosed_rather_than_refused() -> None:
     """Refusing to call for a country left the model asserting the weather
     instead, which is worse than either asking or calling."""
 
-    source = open("chain_server/src/deepagents_runtime.py").read()
+    source = open(_REPO_ROOT / "chain_server/src/deepagents_runtime.py").read()
     weather = source[source.index("def get_weather_forecast_tool") :][:3000]
     assert "capital or\n            largest city" in weather
     assert "never do is describe weather you did not fetch" in weather

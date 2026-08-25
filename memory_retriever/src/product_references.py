@@ -538,6 +538,15 @@ def _compact_products(payload_json: str) -> list[dict[str, Any]]:
         category = product.get("category")
         if isinstance(category, str) and category.strip():
             compact["category"] = category
+        # The sizes this product is sold in, so a later turn can tell which of
+        # the things on screen the shopper's "in a 2" could even mean. Whether
+        # a product comes in a 2 is a catalog fact; which one they meant is
+        # not, and only the first belongs in this record.
+        sizes = (product.get("attributes") or {}).get("sizes")
+        if isinstance(sizes, list):
+            kept = [str(value).strip() for value in sizes if str(value).strip()]
+            if kept:
+                compact["sizes"] = kept
         products.append(compact)
     return products
 

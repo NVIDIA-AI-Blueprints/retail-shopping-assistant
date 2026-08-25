@@ -1791,6 +1791,7 @@ class DeepAgentsRuntime:
                     scope.product_evidence,
                     _most_recently_shown(state),
                     _identified_in_the_current_showing(state),
+                    size,
                 )
                 if product_issue:
                     blocked.append(

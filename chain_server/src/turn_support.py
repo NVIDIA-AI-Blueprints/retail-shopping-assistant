@@ -1523,6 +1523,41 @@ _WEARER_AUDIENCE_FILTER_DESCRIPTION = (
 )
 
 
+def _an_empty_range_is_no_filter(cls, value: Any) -> Any:
+    """A numeric constraint with no bounds is no constraint.
+
+    "I have a wedding to go to and I need something to wear" sent every
+    advertised filter as null, price among them, as `{"min": null, "max":
+    null}`. That is the model saying it wants no price filter, in the shape the
+    schema gave it. Refusing it cost the turn twice over: the search was turned
+    back, and the repair the model reached for was to invent bounds -- 39.90 to
+    269.99, the whole catalog, which filters nothing -- while dropping the
+    subcategory to make room. That changed the scope, the repair lock refused
+    the changed scope, and the shopper was told no valid search could be built
+    for a wedding outfit.
+
+    An absent filter and an unbounded one ask for the same products, so this
+    reads the second as the first rather than making the model prove it meant
+    the first.
+    """
+
+    if not isinstance(value, dict):
+        return value
+    return {
+        name: (
+            None
+            if (
+                isinstance(entry, dict)
+                and entry
+                and set(entry) <= {"min", "max", "gte", "lte"}
+                and all(bound is None for bound in entry.values())
+            )
+            else entry
+        )
+        for name, entry in value.items()
+    }
+
+
 def _required_constraints_input_model(
     capabilities: CatalogCapabilities,
     *,
@@ -1590,6 +1625,11 @@ def _required_constraints_input_model(
     return create_model(
         "CatalogRequiredConstraints",
         __config__=ConfigDict(extra="forbid"),
+        __validators__={
+            "_an_empty_range_is_no_filter": model_validator(mode="before")(
+                classmethod(_an_empty_range_is_no_filter)
+            ),
+        },
         **fields,
     )
 

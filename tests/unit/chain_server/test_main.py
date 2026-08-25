@@ -3924,7 +3924,11 @@ class TestDeepAgentsRuntimeRefs:
                 required_constraints={"price": {"max": 60}},
             )])
         )
-        assert "an open-role search requires" in invalid_open_budget
+        # A browse scoped by a filter is no longer refused for naming no
+        # subcategory -- it runs and discloses the narrowing. This scope is
+        # still turned back, by the later check: "apparel" as a product type
+        # binds to the apparel category and was not shopper-stated.
+        assert "binds to advertised category" in invalid_open_budget
         drifted_open_budget = tool_text(
             open_budget_tools["search_catalog_tool"](scopes=[dict(
                 semantic_query="rainy dress under $60",

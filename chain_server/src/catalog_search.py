@@ -1742,6 +1742,18 @@ def _rendered_evidence(ctx: SearchContext, attempt: _Attempt) -> StepResult:
         lines.append(
             _format_search_filter_evidence(evidence.confirmed_filters)
         )
+        # A category the shopper never named, reached because a filter scoped
+        # the search. It is shown rather than refused -- a partial answer beats
+        # "could you clarify", which is what three runs in five used to get --
+        # and it is said out loud, because the shopper asked for everything
+        # under their ceiling and this is one department of it.
+        chosen = _a_category_the_shopper_did_not_name(evidence, attempt)
+        if chosen:
+            lines.append(
+                f"CATEGORY CHOSEN FOR THEM: the shopper named no product type, "
+                f"so these are {chosen} only. Say so, and offer the other "
+                "departments."
+            )
     if evidence.unconfirmed_requirements:
         lines.append(
             _unsupported_requirement_message(
@@ -1834,6 +1846,28 @@ def _planned_scope(ctx: SearchContext, attempt: _Attempt) -> StepResult:
         if outcome is not None:
             return outcome
     return None
+
+
+def _a_category_the_shopper_did_not_name(evidence: Any, attempt: Any) -> str:
+    """The department this browse narrowed to without being asked.
+
+    "Nothing over $50" is a request for everything under a ceiling. A search
+    that answers it with one category is answering a fraction, and the shopper
+    cannot tell from the products alone that a choice was made for them.
+    """
+
+    if getattr(attempt, "taxonomy_status", "") != "agent_selected_type":
+        return ""
+    taxonomy = getattr(evidence, "taxonomy", None) or {}
+    if not isinstance(taxonomy, dict):
+        return ""
+    categories = [
+        str(value)
+        for values in taxonomy.values()
+        if isinstance(values, list)
+        for value in values
+    ]
+    return categories[0] if len(categories) == 1 else ""
 
 
 def _hard_filter_scopes_this(required_constraints: Any) -> bool:

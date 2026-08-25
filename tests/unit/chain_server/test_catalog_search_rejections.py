@@ -864,16 +864,40 @@ def test_a_scope_that_names_subcategories_is_left_alone() -> None:
     assert _one_scope_per_category(ctx, [scope]) == [scope]
 
 
-def test_a_scopeless_browse_is_told_the_wider_shapes() -> None:
-    """J10 t1. The open-role refusal only ever described how to NARROW.
+def test_a_scopeless_browse_is_shown_rather_than_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """J10 t1, "I'm shopping on a tight budget, nothing over $50".
 
-    "Nothing over $50" names no product type, so every category is in scope and
-    any single one is the wrong answer. The model picked apparel four runs in
-    five and the shopper was asked to clarify a request that was complete. Both
-    wider shapes were already legal and neither was said at the point of
-    failure.
+    This used to be refused: the model named apparel, the shopper had named no
+    product type, and the open-role rule demanded subcategories to justify the
+    choice. Measured, that produced "could you clarify the product type" three
+    runs in five, on a request that was already complete.
+
+    The worst case being guarded against was a PARTIAL answer -- clothes under
+    $50 rather than everything under $50. The cost of guarding it was no answer
+    at all. So it runs, and the narrowing is disclosed the way a product chosen
+    from a description is.
     """
 
+    def _one(*_a, **_k):
+        return SimpleNamespace(
+            result=SearchCatalogResult(
+                ok=True,
+                products=[
+                    ProductSummary(
+                        product_id="d1",
+                        display_name="Black Polka-Dotted Slip Dress",
+                        category="dresses",
+                        price=Money(amount=49.90, currency="USD"),
+                    )
+                ],
+            ),
+            fallback_attempted=False,
+            fallback_used=False,
+        )
+
+    monkeypatch.setattr(catalog_search_mod, "execute_catalog_search", _one)
     ctx = _context("I'm shopping on a tight budget, nothing over $50")
 
     result = search_catalog(
@@ -881,16 +905,17 @@ def test_a_scopeless_browse_is_told_the_wider_shapes() -> None:
         [
             _scope(
                 semantic_query="anything under fifty",
-                requested_product_type="apparel",
+                # A generic noun, not a product type that binds to a category:
+                # "apparel" as a requested_product_type is turned back by a
+                # different check, and that one is still right.
+                requested_product_type="items",
                 taxonomy={"category": ["apparel"], "subcategory": []},
                 required_constraints={"price": {"max": 50}},
             )
         ],
     )
 
-    text = result[0] if isinstance(result, tuple) else result
-    assert "leave the category out" in text
-    assert "name every advertised category" in text
+    assert _rejection_codes(result) == []
 
 
 def test_a_narrowed_role_is_not_told_to_widen() -> None:

@@ -1022,7 +1022,7 @@ class SearchCatalogToolInput(SearchCatalogToolArguments):
         if (
             self.taxonomy_status == "agent_selected_type"
             and not self.taxonomy.subcategory
-            and not (not self.taxonomy.category and self._scoped_by_a_hard_filter())
+            and not self._scoped_by_a_hard_filter()
         ):
             # The rule exists so a role the model invented -- "loungewear" --
             # cannot be mapped onto subcategories silently. It fires on an

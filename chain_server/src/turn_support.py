@@ -925,6 +925,31 @@ class SearchCatalogToolInput(SearchCatalogToolArguments):
         "image_only",
     ] = Field(..., description="Server-derived catalog execution mode.")
 
+    def _scoped_by_a_hard_filter(self) -> bool:
+        """Whether an advertised filter narrows this search on its own.
+
+        Taxonomy is one way to say which products are meant; an enforceable
+        filter is another. A ceiling with no product type is a real request --
+        browse the shop under it -- and it belongs to no category, which is the
+        point rather than an omission.
+
+        unadvertised_requirements is excluded deliberately: it is the field for
+        things the catalog cannot enforce, so it narrows nothing and must not
+        license an unscoped search.
+        """
+
+        constraints = (
+            self.required_constraints.model_dump(exclude_none=True)
+            if isinstance(self.required_constraints, BaseModel)
+            else self.required_constraints
+        )
+        if not isinstance(constraints, dict):
+            return False
+        return any(
+            name != "unadvertised_requirements" and value not in (None, "", [], {})
+            for name, value in constraints.items()
+        )
+
     @model_validator(mode="after")
     def text_search_has_taxonomy_scope(self) -> "SearchCatalogToolInput":
         if len(set(self.taxonomy.category)) > 1:
@@ -994,9 +1019,20 @@ class SearchCatalogToolInput(SearchCatalogToolArguments):
             raise ValueError(
                 "an umbrella search requires an advertised subcategory"
             )
-        if self.taxonomy_status == "agent_selected_type" and not (
-            self.taxonomy.subcategory
+        if (
+            self.taxonomy_status == "agent_selected_type"
+            and not self.taxonomy.subcategory
+            and not (not self.taxonomy.category and self._scoped_by_a_hard_filter())
         ):
+            # The rule exists so a role the model invented -- "loungewear" --
+            # cannot be mapped onto subcategories silently. It fires on an
+            # INVENTED role, not an ABSENT one. "Nothing over $50" invents
+            # nothing: the shopper named no category, no subcategory and no
+            # product type, so clothes, shoes and accessories are all on the
+            # table and the price is the whole scope. Demanding a subcategory
+            # there asks the assistant to narrow a request that was complete,
+            # and it answered "could you clarify the product type" instead of
+            # showing anything.
             raise ValueError(
                 "an open-role search requires an advertised subcategory"
             )
@@ -1008,9 +1044,10 @@ class SearchCatalogToolInput(SearchCatalogToolArguments):
                 "a parent-category alternative requires one advertised category "
                 "and no subcategory"
             )
-        if has_query and not has_taxonomy:
+        if has_query and not has_taxonomy and not self._scoped_by_a_hard_filter():
             raise ValueError(
-                "text catalog search requires an advertised category or subcategory"
+                "text catalog search requires an advertised category or "
+                "subcategory, or a hard filter to scope it"
             )
         if not has_query and not has_taxonomy:
             raise ValueError("text catalog search requires a semantic query")

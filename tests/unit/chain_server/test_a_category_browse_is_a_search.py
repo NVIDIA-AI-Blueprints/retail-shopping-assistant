@@ -68,3 +68,64 @@ def test_a_search_with_no_taxonomy_at_all_is_still_refused(model) -> None:
 def test_neither_role_is_required_by_the_schema(model) -> None:
     taxonomy = model.model_json_schema()["$defs"]["CatalogTaxonomySelection"]
     assert not taxonomy.get("required")
+
+
+def test_a_price_ceiling_with_no_category_is_a_complete_request(model) -> None:
+    """J10 t1, "I'm shopping on a tight budget, nothing over $50".
+
+    The shopper named no category, no subcategory and no product type, so
+    clothes, shoes and accessories are all on the table and the price is the
+    whole scope. The search was refused twice over -- once for naming no
+    taxonomy, once as an "open-role search" -- and the assistant answered
+    "could you clarify the product type", asking them to narrow a request that
+    was already complete.
+
+    The open-role rule exists so a role the model INVENTED cannot be mapped
+    onto subcategories silently. An absent role invents nothing.
+    """
+
+    assert model.model_validate(
+        {
+            **BASE,
+            "semantic_query": "anything under fifty dollars",
+            "requested_product_type": "items",
+            "taxonomy_status": "agent_selected_type",
+            "taxonomy": {"category": [], "subcategory": []},
+            "required_constraints": {"price": {"max": 50}},
+        }
+    )
+
+
+def test_no_taxonomy_and_no_filter_is_still_refused(model) -> None:
+    """Nothing to search on at all. The relaxation is for a scoped request."""
+
+    with pytest.raises(Exception):
+        model.model_validate(
+            {
+                **BASE,
+                "semantic_query": "show me things",
+                "requested_product_type": "items",
+                "taxonomy_status": "agent_selected_type",
+                "taxonomy": {"category": [], "subcategory": []},
+                "required_constraints": {},
+            }
+        )
+
+
+def test_an_unenforceable_requirement_does_not_scope_a_search(model) -> None:
+    """unadvertised_requirements is the field for what the catalog CANNOT
+    enforce, so it narrows nothing and must not license an unscoped search."""
+
+    with pytest.raises(Exception):
+        model.model_validate(
+            {
+                **BASE,
+                "semantic_query": "something waterproof",
+                "requested_product_type": "items",
+                "taxonomy_status": "agent_selected_type",
+                "taxonomy": {"category": [], "subcategory": []},
+                "required_constraints": {
+                    "unadvertised_requirements": ["waterproof"]
+                },
+            }
+        )

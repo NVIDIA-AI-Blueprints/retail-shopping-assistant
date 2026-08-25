@@ -3861,9 +3861,14 @@ class TestDeepAgentsRuntimeRefs:
                 },
             )])
         )
-        assert "requires an advertised category or subcategory" in (
-            invalid_strict_taxonomy
-        )
+        # Still refused, and now by the more specific check one step later: a
+        # product type the shopper named binds to an advertised category, so
+        # dropping the taxonomy loses what they asked for. The blanket
+        # needs-some-taxonomy rule no longer catches it, because a hard filter
+        # can now scope a search that names no category at all -- "nothing over
+        # $50" belongs to every category, which is the point rather than an
+        # omission. "Work bags" is not that case and is still turned back.
+        assert "binds to advertised category" in invalid_strict_taxonomy
         assert (
             "Preserve these capability-validated advertised "
             "required_constraints exactly on repair"
@@ -4060,9 +4065,11 @@ class TestDeepAgentsRuntimeRefs:
                 required_constraints={"price": {"max": 60}},
             )])
         )
-        assert "requires an advertised category or subcategory" in (
-            invalid_advertised_no_direct
-        )
+        # As above: "bags" names an advertised category, so the refusal is the
+        # specific one that says which. A hard filter can scope a search that
+        # names no category; it cannot excuse dropping one the shopper's own
+        # product type binds to.
+        assert "binds to advertised category" in invalid_advertised_no_direct
         assert "capability-validated advertised required_constraints" in (
             invalid_advertised_no_direct
         )

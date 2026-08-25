@@ -3047,6 +3047,7 @@ class TestDeepAgentsRuntimeRefs:
             "remove_cart_item_tool",
             "update_cart_items_tool",
             "view_cart_total_tool",
+            "describe_catalog_tool",
             "get_store_policy_tool",
             "check_active_promotions_tool",
             "check_product_availability_tool",
@@ -3059,6 +3060,7 @@ class TestDeepAgentsRuntimeRefs:
         assert activation_schema["properties"]["skill_names"]["items"]["enum"] == [
             "budget-shopping",
             "cart-management",
+            "catalog-questions",
             "outfit-styling",
             "product-discovery",
             "store-policy-answers",
@@ -3497,6 +3499,7 @@ class TestDeepAgentsRuntimeRefs:
         }
 
         assert registered_tools == {
+            "describe_catalog_tool",
             "search_catalog_tool",
             "get_product_details_tool",
             "resolve_conversation_products_tool",

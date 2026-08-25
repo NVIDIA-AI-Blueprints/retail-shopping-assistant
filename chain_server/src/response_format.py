@@ -738,3 +738,88 @@ def format_cart_change(before: "Cart | None", after: "Cart | None") -> str:
             "turn. Do not tell the shopper otherwise, whatever the draft says."
         )
     return "\n".join(changes)
+
+
+def format_catalog_shape(capabilities: Any) -> str:
+    """What the shop holds, read off the published capabilities.
+
+    A shopper asking "what's the most expensive thing you have" is asking about
+    the shop, not about a product, and nothing could answer it. Measured over
+    five runs the assistant searched one department and reported its ceiling as
+    the catalog's -- a $189.99 purse, a $199.99 crossbody -- in a shop that
+    reaches $269.99, or refused outright. Every wrong answer was a category
+    ceiling, because a search is the only instrument it had.
+
+    Counts and price ranges per category are published and were never exposed.
+    This states them and nothing else: no ranking, no filters, no judgement,
+    so it cannot become a second way to search.
+    """
+
+    taxonomy = getattr(capabilities, "taxonomy", None)
+    categories = getattr(taxonomy, "categories", None) or {}
+    if not categories:
+        return "CATALOG_SHAPE: the catalog publishes no taxonomy."
+
+    def _money(value: Any) -> str:
+        return f"{float(value):.2f}".rstrip("0").rstrip(".") if value is not None else "?"
+
+    lows: list[float] = []
+    highs: list[float] = []
+    lines: list[str] = []
+    for name, category in sorted(categories.items()):
+        price = (getattr(category, "filters", None) or {}).get("price")
+        low = getattr(price, "min_value", None)
+        high = getattr(price, "max_value", None)
+        if low is not None:
+            lows.append(float(low))
+        if high is not None:
+            highs.append(float(high))
+        subcategories = sorted(getattr(category, "subcategories", None) or {})
+        lines.append(
+            f"- {name}: {getattr(category, 'product_count', '?')} products, "
+            f"{_money(low)}-{_money(high)}, "
+            f"subcategories: {', '.join(subcategories) or '(none)'}"
+        )
+
+    header = ["CATALOG_SHAPE (published, not a search result):"]
+    total = getattr(capabilities, "product_count", None)
+    if total is not None:
+        header.append(f"- {total} products in total")
+    if lows and highs:
+        dearest = max(
+            categories.items(),
+            key=lambda item: float(
+                getattr(
+                    (getattr(item[1], "filters", None) or {}).get("price"),
+                    "max_value",
+                    0,
+                )
+                or 0
+            ),
+        )[0]
+        cheapest = min(
+            categories.items(),
+            key=lambda item: float(
+                getattr(
+                    (getattr(item[1], "filters", None) or {}).get("price"),
+                    "min_value",
+                    10**9,
+                )
+                or 10**9
+            ),
+        )[0]
+        header.append(
+            f"- prices run {_money(min(lows))} to {_money(max(highs))}; the "
+            f"dearest things are in {dearest}, the cheapest in {cheapest}"
+        )
+        header.append(
+            "- Nothing exists outside that range. A budget below it is answered "
+            "by saying so and naming where prices start -- never by searching "
+            "and reporting an empty result."
+        )
+        header.append(
+            "- To name the actual dearest or cheapest item, search that "
+            "category at that price bound. A range is not an answer on its own; "
+            "show the shopper the thing."
+        )
+    return "\n".join(header + lines)

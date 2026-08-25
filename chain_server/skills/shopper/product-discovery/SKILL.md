@@ -5,6 +5,7 @@ response_guidance: These candidates match the searched product role and any conf
 role: primary
 exclusive_group: product_procedure
 tools_granted:
+  - describe_catalog_tool
   - search_catalog_tool
   - get_product_details_tool
   - check_product_availability_tool

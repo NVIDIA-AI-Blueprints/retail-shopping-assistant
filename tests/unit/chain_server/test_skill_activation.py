@@ -79,10 +79,18 @@ SKILL_TOOL_GRANTS = {
     "product-discovery": frozenset(
         {
             "check_active_promotions_tool",
+            "describe_catalog_tool",
             "get_weather_forecast_tool",
             "check_product_availability_tool",
             "get_product_details_tool",
             "resolve_conversation_products_tool",
+            "search_catalog_tool",
+        }
+    ),
+    "catalog-questions": frozenset(
+        {
+            "describe_catalog_tool",
+            "get_product_details_tool",
             "search_catalog_tool",
         }
     ),

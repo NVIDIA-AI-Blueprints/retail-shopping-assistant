@@ -30,6 +30,7 @@ import requests
 from .agenttypes import Cart, ShopperContext, State
 from .catalog_search import SearchContext, search_catalog
 from .response_format import (
+    format_catalog_shape,
     _format_availability_result,
     _format_cart,
     _format_cart_add_result,
@@ -709,6 +710,10 @@ class _UpdateCartItemsInput(BaseModel):
         if isinstance(value, (int, float)):
             return str(int(value) if float(value).is_integer() else value)
         return value
+
+
+class _DescribeCatalogInput(BaseModel):
+    """No arguments. The shape is published; there is nothing to narrow."""
 
 
 class _GetStorePolicyInput(BaseModel):
@@ -2103,6 +2108,22 @@ class DeepAgentsRuntime:
                 _update_cart_items_impl(cart_line_id, quantity, size)
             )
 
+        @tool(args_schema=_DescribeCatalogInput, return_direct=False)
+        def describe_catalog_tool() -> str:
+            """What this shop holds: how many products, which categories, the
+            price range of each, and their subcategories. Use for questions
+            about the SHOP rather than about a product -- the most or least
+            expensive thing, whether anything falls in a price range, what
+            departments exist. Takes no arguments and searches nothing.
+
+            A fact about the catalog comes from here, never from the results of
+            one search: the dearest item a search happened to return is that
+            search's maximum, not the shop's. To name the actual item, read the
+            range here and then search that category at that bound.
+            """
+
+            return format_catalog_shape(self._catalog_capabilities.get())
+
         @tool(args_schema=_GetStorePolicyInput, return_direct=False)
         def get_store_policy_tool(
             topic: Literal[
@@ -2272,6 +2293,7 @@ class DeepAgentsRuntime:
             view_cart_total_tool,
             get_store_policy_tool,
             check_product_availability_tool,
+            describe_catalog_tool,
             check_active_promotions_tool,
         ]
         # Off means absent, not present-and-failing. An unregistered tool

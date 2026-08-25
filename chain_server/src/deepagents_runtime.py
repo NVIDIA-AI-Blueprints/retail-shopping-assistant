@@ -66,6 +66,7 @@ from .turn_support import (
     _cart_size_issue,
     _cart_line_size,
     _cart_product_choice_note,
+    format_most_recent_subject,
     _identified_in_the_current_showing,
     _most_recently_shown,
     _images_in_product_order,
@@ -1564,7 +1565,7 @@ class DeepAgentsRuntime:
                         "asked for."
                     )
                 sections.append("\n".join(lines))
-            return "\n\n".join(sections)
+            return "\n\n".join(section for section in sections if section)
 
         def _resolve_conversation_products_impl(
             references: list[ProductReferenceDescriptor],
@@ -2939,6 +2940,7 @@ Rules:
                 f"MEDIA ATTACHED:\n{_format_media_summary(state.media)}",
                 f"MEDIA ANALYSIS:\n{state.media_analysis or '(none)'}",
                 f"CURRENT CART:\n{_format_cart(state.cart)}",
+                format_most_recent_subject(state),
                 f"RECENT DISCUSSION:\n{state.context or '(none)'}",
             ]
         )

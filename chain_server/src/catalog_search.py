@@ -30,6 +30,7 @@ from pydantic import (
     ValidationError,
 )
 from .agenttypes import State
+from .catalog_capabilities import effective_filter_capabilities
 from .catalog_execution import execute_catalog_search
 from .catalog_request import (
     CatalogSearchIntent,
@@ -1400,6 +1401,47 @@ def _reserved_search_slot(ctx: SearchContext, attempt: _Attempt) -> StepResult:
 _NEVER_RELAXED = frozenset({"sizes", "size"})
 
 
+def _outside_everything_the_shop_sells(
+    ctx: "SearchContext", filters: dict[str, Any]
+) -> bool:
+    """Whether a numeric bound asks for a span the catalog does not reach.
+
+    "$5 to $10" in a shop whose floor is $39.90 is not a search that came back
+    empty; it is a question the published range answered before the search ran.
+    Relaxing it drops the bound and returns whatever the department holds, so a
+    shopper with ten dollars was shown a $139.99 bag under a sentence saying we
+    had nothing for them. There is no near miss to offer when the spans do not
+    touch -- the honest answer is the floor, and the model already has it from
+    the advertised range on the field.
+
+    Only a bound that clears the whole advertised span counts. Asking for $60
+    where the cheapest is $39.90 overlaps, finds nothing in one department, and
+    still has real alternatives a relaxation should go and get.
+    """
+
+    capabilities = effective_filter_capabilities(ctx.capabilities)
+    for name, value in filters.items():
+        capability = capabilities.get(name)
+        if capability is None or not isinstance(value, dict):
+            continue
+        low = getattr(capability, "min_value", None)
+        high = getattr(capability, "max_value", None)
+        if low is None and high is None:
+            continue
+        asked_low = value.get("min", value.get("gte"))
+        asked_high = value.get("max", value.get("lte"))
+        try:
+            if asked_high is not None and low is not None:
+                if float(asked_high) < float(low):
+                    return True
+            if asked_low is not None and high is not None:
+                if float(asked_low) > float(high):
+                    return True
+        except (TypeError, ValueError):
+            continue
+    return False
+
+
 def _relaxed_alternatives(ctx: "SearchContext", attempt: "_Attempt") -> list[Any]:
     """What this search finds with its optional constraints dropped.
 
@@ -1415,6 +1457,8 @@ def _relaxed_alternatives(ctx: "SearchContext", attempt: "_Attempt") -> list[Any
 
     plan = attempt.plan
     filters = dict(plan.hard_filters or {})
+    if _outside_everything_the_shop_sells(ctx, filters):
+        return []
     # Two ways to give, in the order a shop would try them. Keeping the size
     # and dropping the rest answers "what do you have in my size"; dropping the
     # size answers "do you have this at all". The second is only reached when

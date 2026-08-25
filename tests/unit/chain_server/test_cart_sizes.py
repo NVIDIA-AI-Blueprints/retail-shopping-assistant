@@ -252,10 +252,10 @@ class TestProductProvenance:
 
     def _issue(self, **kw):
         from chain_server.src.turn_support import (
-            _cart_product_provenance_issue,
+            _cart_product_choice_note,
         )
 
-        return _cart_product_provenance_issue(
+        return _cart_product_choice_note(
             kw.get("product") or self._product(),
             kw.get("shopper_text", ""),
             kw["evidence"],
@@ -287,7 +287,7 @@ class TestProductProvenance:
                 product=self._product("d1", "Black Satin Lace-Up Dress"),
                 shopper_text=words,
                 evidence=self._evidence(*self._dresses(4)),
-            ).startswith("PRODUCT NOT ESTABLISHED"), words
+            ).startswith("CHOSEN FROM A DESCRIPTION"), words
 
     def test_the_whole_catalog_name_is_still_a_choice(self) -> None:
         """What survives: the name is in the sentence, or it is not.
@@ -306,7 +306,7 @@ class TestProductProvenance:
             product=self._product("d1", "Black Satin Lace-Up Dress"),
             shopper_text="add the Black Satin Laceup Dress",
             evidence=self._evidence(*self._dresses(4)),
-        ).startswith("PRODUCT NOT ESTABLISHED")
+        ).startswith("CHOSEN FROM A DESCRIPTION")
 
     def test_the_last_products_shown_are_candidates_too(self) -> None:
         """The check must not vanish because the model already narrowed.
@@ -327,7 +327,7 @@ class TestProductProvenance:
             ],
         )
 
-        assert "PRODUCT NOT ESTABLISHED" in issue
+        assert "CHOSEN FROM A DESCRIPTION" in issue
 
     def test_short_words_of_a_name_do_not_name_it(self) -> None:
         """'the' and 'a' are part of the name and of every other sentence.
@@ -337,7 +337,7 @@ class TestProductProvenance:
         earlier, for a request about a black one.
         """
 
-        assert "PRODUCT NOT ESTABLISHED" in self._issue(
+        assert "CHOSEN FROM A DESCRIPTION" in self._issue(
             product=self._product("d4", "The Office A-line Dress"),
             shopper_text="add the black one in a 2",
             evidence=self._evidence(
@@ -354,7 +354,7 @@ class TestProductProvenance:
         happened, fourteen turns from where the shopper was looking.
         """
 
-        assert "PRODUCT NOT ESTABLISHED" in self._issue(
+        assert "CHOSEN FROM A DESCRIPTION" in self._issue(
             product=self._product("d1", "Black Satin Lace-Up Dress"),
             shopper_text="add the black one in a 2",
             evidence=self._evidence(*self._dresses(4)),
@@ -371,12 +371,12 @@ class TestProductProvenance:
             product=self._product("d3", "Black Polka-Dotted Slip Dress"),
             shopper_text="add the black polka dotted one",
             evidence=self._evidence(*self._dresses(4)),
-        ).startswith("PRODUCT NOT ESTABLISHED")
+        ).startswith("CHOSEN FROM A DESCRIPTION")
 
     def test_a_run_shared_by_two_candidates_is_refused(self) -> None:
         """"the satin one" is a run of two names, so it names neither."""
 
-        assert "PRODUCT NOT ESTABLISHED" in self._issue(
+        assert "CHOSEN FROM A DESCRIPTION" in self._issue(
             product=self._product("d0", "Belle Noir Satin Gown"),
             shopper_text="add the satin one in a 2",
             evidence=self._evidence(*self._dresses(4)),
@@ -396,8 +396,8 @@ class TestProductProvenance:
             evidence=self._evidence(*self._dresses()),
         )
 
-        assert "PRODUCT NOT ESTABLISHED" in issue
-        assert "Ask which one" in issue
+        assert "CHOSEN FROM A DESCRIPTION" in issue
+        assert "Say which one you took them to mean" in issue
 
     def test_the_shopper_naming_it_is_enough(self) -> None:
         assert self._issue(
@@ -408,7 +408,7 @@ class TestProductProvenance:
     def test_a_name_they_never_said_is_not_a_naming(self) -> None:
         """Otherwise the quotation is the model's word for its own choice."""
 
-        assert "PRODUCT NOT ESTABLISHED" in self._issue(
+        assert "CHOSEN FROM A DESCRIPTION" in self._issue(
             shopper_text="add the black one",
             evidence=self._evidence(*self._dresses()),
         )
@@ -599,7 +599,7 @@ class TestTheSizeNarrowsWhatWasOnScreen:
 
         from types import SimpleNamespace
 
-        from chain_server.src.turn_support import _cart_product_provenance_issue
+        from chain_server.src.turn_support import _cart_product_choice_note
 
         class _Evidence:
             def values(self_inner):
@@ -611,7 +611,7 @@ class TestTheSizeNarrowsWhatWasOnScreen:
             def identified_by_the_system(self_inner, ref):
                 return False
 
-        assert _cart_product_provenance_issue(
+        assert _cart_product_choice_note(
             self._product("d1", "Black Satin Lace-Up Dress"),
             "add the black one in a 2",
             _Evidence(),
@@ -620,11 +620,11 @@ class TestTheSizeNarrowsWhatWasOnScreen:
             "2",
         ) == ""
         # And without the size, the same sentence is still ambiguous.
-        assert _cart_product_provenance_issue(
+        assert _cart_product_choice_note(
             self._product("d1", "Black Satin Lace-Up Dress"),
             "add the black one",
             _Evidence(),
             self._on_screen(),
             (),
             "",
-        ).startswith("PRODUCT NOT ESTABLISHED")
+        ).startswith("CHOSEN FROM A DESCRIPTION")

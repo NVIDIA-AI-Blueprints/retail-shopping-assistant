@@ -4183,32 +4183,6 @@ def _cart_add_scope_failures(
     return failures
 
 
-def _products_named_exactly(text: str, candidates: Any) -> list[Any]:
-    """Candidates whose full catalog name the shopper actually wrote.
-
-    Narrower than `_explicitly_named_products`, which also matches on token
-    overlap so a shortened or misspelt name still lands. That second half is a
-    reading; out-of-scope detection still wants it, a cart write does not.
-    """
-
-    normalized_text = _normalize_product_name(text)
-    if not normalized_text:
-        return []
-    padded = f" {normalized_text} "
-    named: list[Any] = []
-    seen: set[str] = set()
-    for candidate in candidates:
-        name = _normalize_product_name(getattr(candidate, "display_name", ""))
-        if not name or f" {name} " not in padded:
-            continue
-        key = getattr(candidate, "product_id", None) or name
-        if key in seen:
-            continue
-        seen.add(key)
-        named.append(candidate)
-    return named
-
-
 def _explicitly_named_products(
     text: str,
     available_products: Any,
@@ -4685,7 +4659,7 @@ def _identified_in_the_current_showing(state: Any) -> set[str]:
     }
 
 
-def _cart_product_provenance_issue(
+def _cart_product_choice_note(
     product: Any,
     shopper_text: str,
     evidence: ProductEvidence,
@@ -4693,52 +4667,35 @@ def _cart_product_provenance_issue(
     already_identified: Sequence[str] = (),
     size: str | None = None,
 ) -> str:
-    """Say why this product cannot be trusted as the one meant, or "" if it can.
+    """Say when a product reached the cart from a description rather than a name.
 
-    A shopper shown four black dresses says "add the black one in a 2", and the
-    assistant picks one. Every other check passes: the ref was really
-    established, the name matches that ref, the size is sold and they did say
-    "in a 2". The reference resolved correctly to the wrong product -- half the
-    runs of one demo script reached fourteen turns back for a navy dress.
+    This used to refuse. It refused on the ABSENCE of confirmation -- "nothing
+    here proves the shopper meant this one" -- which is a gap in our
+    bookkeeping rather than a fact about the world, and it cost a turn every
+    time it was wrong. It was wrong in both directions inside two days: it
+    turned down a correct resolution the assistant had itself proposed by name
+    on the two previous turns, and its word scorer put a different dress in a
+    cart because `black` happened to sit in that product's title.
 
-    Which product a description means is a judgement, and the model makes it.
-    What can be checked is whether anything confirmed it:
+    So it discloses instead, on the same reasoning that took out the size and
+    quantity gates: a product nobody chose is caught by being visible, not by
+    blocking the turns that got it right. The cart is on screen, a wrong line
+    is one click to remove, and the shopper is told which reading was taken.
 
-    - the shopper named the product, in the words they actually used
-    - the record picked it, from a ref or the coordinates of a showing
-    - there was only one product it could have been
+    Silent when the choice is settled by something checkable:
 
-    None of those, and the model chose between products it was shown without
-    saying so, which is the one thing it must not do silently.
-
-    Naming is read off the shopper's own message rather than a quotation the
-    model supplies, so there is nothing to fabricate and no optional field to
-    forget. The reading is the catalog-name matching this module already does
-    for the same purpose -- names found inside a sentence, so "add the
-    Southwest Bracelet" names one.
+    - only one product it could have been
+    - the shopper wrote the catalog's own name for it
+    - the record picked it, by a ref it minted or a position it wrote down
+    - they chose it earlier and no newer showing has retired that
+    - the size they gave leaves one thing on screen it could be
     """
 
-    # What the shopper could plausibly have meant: what this turn established,
-    # and what they were last shown. Counting only this turn's evidence made
-    # the check vanish exactly when the model had already narrowed to one --
-    # four black dresses were on screen, the model resolved one of them, and
-    # with a single candidate there was nothing left to be ambiguous against.
     candidates = _reference_candidates(evidence, recently_shown)
     if len(candidates) <= 1:
         return ""
-    # The size the shopper gave, against what was on screen when they gave it.
     if _the_only_one_on_screen_in_that_size(product, size, recently_shown):
         return ""
-    # Naming a product by the catalog's own name for it is choosing it: the
-    # name is either in the sentence or it is not. "Add the dress and the bag"
-    # names two, and each is still the shopper's own choice.
-    #
-    # What used to sit here as well was a scorer, weighing the shopper's words
-    # against product NAMES. It read "the black one in a size 8" as a unique
-    # fit for the Black Satin Lace-Up Dress because `black` is in that title,
-    # while the black heels beside it are black in their attributes -- and put
-    # a guessed dress in a real cart on that coincidence. A cart write is not
-    # the place for a reading.
     if any(
         getattr(match, "product_id", None) == product.product_id
         for match in _products_named_exactly(shopper_text, candidates)
@@ -4746,19 +4703,13 @@ def _cart_product_provenance_issue(
         return ""
     if evidence.identified_by_the_system(product.product_id):
         return ""
-    # The same fact, established earlier in this conversation and still true.
-    # A shopper who chose "the first pairing" was asked to choose again on
-    # every turn that followed, because answering the assistant's own questions
-    # names no product -- five turns to add two items it had itself proposed.
-    # Nothing about a later turn makes that choice untrue; a newer showing
-    # does, and that is what retires it.
     if str(product.product_id) in {str(ref) for ref in (already_identified or ())}:
         return ""
     return (
-        f"PRODUCT NOT ESTABLISHED: the shopper did not name "
-        f"'{product.display_name}', and {len(candidates)} products are in play "
-        "this turn. Ask which one they mean, naming them, and add it when they "
-        "answer. Nothing was added."
+        f"CHOSEN FROM A DESCRIPTION: the shopper did not name "
+        f"'{product.display_name}', and {len(candidates)} products were in "
+        "play. It has been added. Say which one you took them to mean and "
+        "offer to change it."
     )
 
 

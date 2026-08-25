@@ -65,7 +65,7 @@ from .turn_support import (
     _add_model_usage,
     _cart_size_issue,
     _cart_line_size,
-    _cart_product_provenance_issue,
+    _cart_product_choice_note,
     _identified_in_the_current_showing,
     _most_recently_shown,
     _images_in_product_order,
@@ -1666,6 +1666,7 @@ class DeepAgentsRuntime:
 
             try:
                 requested_items = _normalize_cart_add_tool_items(items)
+                choices_from_a_description: list[str] = []
             except ValueError as exc:
                 return f"Cart add failed: {exc}"
             if not requested_items:
@@ -1785,7 +1786,11 @@ class DeepAgentsRuntime:
                 if size_issue:
                     blocked.append(f"- PRODUCT_REF '{product_ref}': {size_issue}")
                     continue
-                product_issue = _cart_product_provenance_issue(
+                # Disclosed, not refused. A description the model read one way
+                # is added and said out loud, because the cart is on screen and
+                # a wrong line is one click away -- where a refusal costs a
+                # turn on every request it misjudges, and it misjudged plenty.
+                choice_note = _cart_product_choice_note(
                     active_detail.product,
                     _shopper_words_this_conversation(state),
                     scope.product_evidence,
@@ -1793,11 +1798,10 @@ class DeepAgentsRuntime:
                     _identified_in_the_current_showing(state),
                     size,
                 )
-                if product_issue:
-                    blocked.append(
-                        f"- PRODUCT_REF '{product_ref}': {product_issue}"
+                if choice_note:
+                    choices_from_a_description.append(
+                        f"- {active_detail.product.display_name}: {choice_note}"
                     )
-                    continue
                 resolved.append(
                     (
                         product_ref,
@@ -1895,6 +1899,8 @@ class DeepAgentsRuntime:
                 scope.product_evidence.values(),
             )
             rendered = _format_cart_add_result(added, failed, state.cart)
+            if choices_from_a_description:
+                rendered += "\n\n" + "\n".join(choices_from_a_description)
             if not committed:
                 return rendered
             return rendered, {EFFECTS_KEY: committed}

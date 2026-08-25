@@ -7947,8 +7947,13 @@ class TestDeepAgentsRuntimeRefs:
             )
         )
 
-        assert "PRODUCT NOT ESTABLISHED" in response
-        assert added == []
+        assert "CHOSEN FROM A DESCRIPTION" in response
+        # It IS added now, and that is the change. Refusing cost a turn every
+        # time the reading was right -- which was most of the time -- and the
+        # refusal could not tell a good reading from a bad one anyway. The
+        # cart is on screen and a wrong line is one click away; an unspoken
+        # choice is what could not be undone.
+        assert [item.display_name for item in added] == ["Belle Noir Satin Gown"]
 
     def test_a_product_never_shown_is_looked_up_in_the_catalog(
         self,
@@ -8686,7 +8691,7 @@ class TestDeepAgentsRuntimeRefs:
         # Refused either way: the shopper did not name it, and it was not part
         # of the explicit request. The provenance gate reaches it first.
         assert (
-            "PRODUCT NOT ESTABLISHED" in blocked_response
+            "CHOSEN FROM A DESCRIPTION" in blocked_response
             or "outside the current explicit add request" in blocked_response
         )
         assert "Green Meadow Sweater Top" in blocked_response

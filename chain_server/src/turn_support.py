@@ -1043,6 +1043,7 @@ class SearchCatalogToolInput(SearchCatalogToolArguments):
             # there asks the assistant to narrow a request that was complete,
             # and it answered "could you clarify the product type" instead of
             # showing anything.
+            #
             raise ValueError(
                 "an open-role search requires an advertised subcategory"
             )
@@ -1584,12 +1585,47 @@ def _required_constraints_input_model(
     )
 
 
+def _a_list_written_as_json_text(value: Any) -> Any:
+    """Read a list the model encoded as a string.
+
+    "add the Xenial Aviator Sunglasses" found the product, read its details,
+    and then sent `{"items": "[{\\"product_ref\\": \\"generated:9b8...\\"}]"}` --
+    the list JSON-encoded inside a string. The call was rejected whole and the
+    shopper's cart stayed empty on a turn where everything else had gone right.
+
+    The same punctuation cost a cart again through skill activation, where it
+    was not forgiven. A cart tool called without cart-management is refused,
+    and the right recovery is to activate it and try again -- which the model
+    did, as `{"skill_names": "[\\"cart-management\\"]"}`. That errored, the
+    retry never came, and the reply said the dress was in the cart when it was
+    not. Two turns of J01 ended that way in three runs.
+
+    Decoding it changes nothing about what was asked for: the contents are
+    validated against the same model either way, so a malformed item still
+    fails. Only the punctuation around it is forgiven.
+    """
+
+    if not isinstance(value, str):
+        return value
+    try:
+        decoded = json.loads(value)
+    except (TypeError, ValueError):
+        return value
+    return decoded if isinstance(decoded, list) else value
+
+
 class _ShopperSkillActivationInput(BaseModel):
     """Shared composition rules for dynamic shopper-skill activation."""
 
     model_config = ConfigDict(extra="forbid")
 
     skill_names: list[str]
+
+    # check_fields, because the real field is declared by the create_model
+    # subclass that narrows it to the registered skill names.
+    _accept_skill_names_as_text = field_validator(
+        "skill_names", mode="before", check_fields=False
+    )(_a_list_written_as_json_text)
 
     @model_validator(mode="after")
     def primary_procedures_are_exclusive(self) -> "_ShopperSkillActivationInput":

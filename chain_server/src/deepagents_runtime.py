@@ -56,6 +56,7 @@ from .response_format import (
 from .catalog_execution import execute_catalog_search
 from .catalog_request import CatalogSearchPlan
 from .turn_support import (
+    _a_list_written_as_json_text,
     _append_product_results,
     _detail_fields_already_held,
     _search_catalog_scopes_input_model,
@@ -632,31 +633,9 @@ _MAX_NAME_LOOKUPS = 2
 
 
 
-def _items_written_as_json_text(value: Any) -> Any:
-    """Read a list the model encoded as a string.
-
-    "add the Xenial Aviator Sunglasses" found the product, read its details,
-    and then sent `{"items": "[{\\"product_ref\\": \\"generated:9b8...\\"}]"}` --
-    the list JSON-encoded inside a string. The call was rejected whole and the
-    shopper's cart stayed empty on a turn where everything else had gone right.
-
-    Decoding it changes nothing about what was asked for: the contents are
-    validated against the same model either way, so a malformed item still
-    fails. Only the punctuation around it is forgiven.
-    """
-
-    if not isinstance(value, str):
-        return value
-    try:
-        decoded = json.loads(value)
-    except (TypeError, ValueError):
-        return value
-    return decoded if isinstance(decoded, list) else value
-
-
 class AddCartItemsToolInput(BaseModel):
     _accept_items_as_text = field_validator("items", mode="before")(
-        _items_written_as_json_text
+        _a_list_written_as_json_text
     )
 
     items: list[AddCartItemsToolItemInput] = Field(

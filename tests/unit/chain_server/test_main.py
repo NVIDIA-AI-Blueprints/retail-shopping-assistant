@@ -3918,7 +3918,7 @@ class TestDeepAgentsRuntimeRefs:
         open_budget_tools["activate_shopper_skills_tool"](
             skill_names=["outfit-styling", "budget-shopping"],
         )
-        invalid_open_budget = tool_text(
+        open_budget = tool_text(
             open_budget_tools["search_catalog_tool"](scopes=[dict(
                 semantic_query="rainy outfit under $60",
                 shopper_guidance="Starting a rainy outfit within the stated budget.",
@@ -3927,11 +3927,30 @@ class TestDeepAgentsRuntimeRefs:
                 required_constraints={"price": {"max": 60}},
             )])
         )
-        # A browse scoped by a filter is no longer refused for naming no
-        # subcategory -- it runs and discloses the narrowing. This scope is
-        # still turned back, by the later check: "apparel" as a product type
-        # binds to the apparel category and was not shopper-stated.
-        assert "binds to advertised category" in invalid_open_budget
+        # A browse scoped by a filter is not refused for naming no subcategory
+        # -- it runs and discloses the narrowing. Nor is it refused for the
+        # product type: "apparel" names the apparel category and selects
+        # apparel, so nothing has been substituted and there is nothing to
+        # repair. Both of those turned this scope back in turn, and the
+        # shopper paid a turn each time to be asked for a word they had not
+        # said. The type being the assistant's own reading rather than the
+        # shopper's is disclosed in the reply, not grounds for refusing.
+        assert "SEARCH_RESULT_GROUNDING_NOTE" in open_budget
+        assert captured_plan.get("calls", 0) == 1
+        captured_plan["calls"] = 0
+        # Substitution is what that check is for, and it still catches it:
+        # the type says bags and the taxonomy says apparel.
+        substituted_open_budget = tool_text(
+            open_budget_tools["search_catalog_tool"](scopes=[dict(
+                semantic_query="rainy outfit under $60",
+                shopper_guidance="Starting a rainy outfit within the stated budget.",
+                requested_product_type="bags",
+                taxonomy={"category": ["apparel"], "subcategory": []},
+                required_constraints={"price": {"max": 60}},
+            )])
+        )
+        assert "binds to advertised category" in substituted_open_budget
+        assert captured_plan.get("calls", 0) == 0
         drifted_open_budget = tool_text(
             open_budget_tools["search_catalog_tool"](scopes=[dict(
                 semantic_query="rainy dress under $60",

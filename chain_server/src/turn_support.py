@@ -716,8 +716,18 @@ def _advertised_taxonomy_scope_issue(
                 "taxonomy contains only its advertised children. Keep those "
                 "children together for the shopper's umbrella request."
             )
+        # Naming the category the type binds to, and nothing else, substitutes
+        # nothing -- the type is "jewelry" and the selected category is
+        # jewelry. It was accepted only when the shopper had said the word,
+        # so a turn deriving the category itself was refused for doing exactly
+        # what this refusal instructs: "select that category directly".
+        #
+        # Asked for the most expensive thing in the shop, the assistant read
+        # the published range, went to jewelry at $269.99 -- correctly, the
+        # only department that reaches it -- and was turned back.
         exact_category = (
-            taxonomy_status == "exact_requested_type"
+            taxonomy_status
+            in {"exact_requested_type", "agent_selected_type"}
             and not normalized_selected_subcategories
             and normalized_selected_categories == {normalized_category}
         )

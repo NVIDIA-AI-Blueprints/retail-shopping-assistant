@@ -862,3 +862,54 @@ def test_a_scope_that_names_subcategories_is_left_alone() -> None:
     }
 
     assert _one_scope_per_category(ctx, [scope]) == [scope]
+
+
+def test_a_scopeless_browse_is_told_the_wider_shapes() -> None:
+    """J10 t1. The open-role refusal only ever described how to NARROW.
+
+    "Nothing over $50" names no product type, so every category is in scope and
+    any single one is the wrong answer. The model picked apparel four runs in
+    five and the shopper was asked to clarify a request that was complete. Both
+    wider shapes were already legal and neither was said at the point of
+    failure.
+    """
+
+    ctx = _context("I'm shopping on a tight budget, nothing over $50")
+
+    result = search_catalog(
+        ctx,
+        [
+            _scope(
+                semantic_query="anything under fifty",
+                requested_product_type="apparel",
+                taxonomy={"category": ["apparel"], "subcategory": []},
+                required_constraints={"price": {"max": 50}},
+            )
+        ],
+    )
+
+    text = result[0] if isinstance(result, tuple) else result
+    assert "leave the category out" in text
+    assert "name every advertised category" in text
+
+
+def test_a_narrowed_role_is_not_told_to_widen() -> None:
+    """A role with no filter behind it gets the narrowing advice only. The
+    wider shapes are for a request that named no type at all."""
+
+    ctx = _context("something for a rainy day")
+
+    result = search_catalog(
+        ctx,
+        [
+            _scope(
+                semantic_query="rainy outfit",
+                requested_product_type="apparel",
+                taxonomy={"category": ["apparel"], "subcategory": []},
+                required_constraints={},
+            )
+        ],
+    )
+
+    text = result[0] if isinstance(result, tuple) else result
+    assert "leave the category out" not in text

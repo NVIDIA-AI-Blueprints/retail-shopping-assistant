@@ -573,6 +573,25 @@ def _validated_request(ctx: SearchContext, attempt: _Attempt) -> StepResult:
                     "compare two aprons, a catalog with no aprons produced an "
                     "empty taxonomy five turns running rather than saying so."
                 )
+                # The role may not exist at all. "Nothing over $50" names no
+                # product type, so every category the shop has is in scope and
+                # any single one of them is the wrong answer -- but this
+                # refusal only ever described how to narrow, so the model kept
+                # narrowing. It picked apparel four runs in five and the
+                # shopper was asked to clarify a request that was complete.
+                #
+                # Both wider shapes are already legal; neither was ever said
+                # out loud at the point they were needed.
+                if _hard_filter_scopes_this(required_constraints):
+                    repair_guidance += (
+                        " If the shopper named no product type at all -- a "
+                        "budget, a colour, nothing else -- then no category is "
+                        "the right one and choosing one shows a fraction of "
+                        "what they asked for. Either leave the category out "
+                        "entirely and let the filter scope the search, or name "
+                        "every advertised category and it will be split into "
+                        "one search each."
+                    )
                 constraints = (
                     required_constraints.model_dump(exclude_none=True)
                     if isinstance(required_constraints, BaseModel)
@@ -1815,6 +1834,26 @@ def _planned_scope(ctx: SearchContext, attempt: _Attempt) -> StepResult:
         if outcome is not None:
             return outcome
     return None
+
+
+def _hard_filter_scopes_this(required_constraints: Any) -> bool:
+    """Whether an advertised filter narrows the search on its own.
+
+    unadvertised_requirements is excluded: it is the field for what the catalog
+    cannot enforce, so it scopes nothing.
+    """
+
+    constraints = (
+        required_constraints.model_dump(exclude_none=True)
+        if isinstance(required_constraints, BaseModel)
+        else required_constraints
+    )
+    if not isinstance(constraints, dict):
+        return False
+    return any(
+        name != "unadvertised_requirements" and value not in (None, "", [], {})
+        for name, value in constraints.items()
+    )
 
 
 def _one_scope_per_category(ctx: SearchContext, scopes: list[Any]) -> list[Any]:

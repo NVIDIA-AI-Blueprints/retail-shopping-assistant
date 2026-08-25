@@ -1421,7 +1421,13 @@ def _taxonomy_list_field(
         "supplies the text scope or the search is image-only."
     )
     if role == "category":
-        description += " Select at most one category per catalog search."
+        description += (
+            " Select at most one category per catalog search. Omit it entirely "
+            "when the shopper named no category and no product type -- "
+            "\"nothing over $50\" belongs to every category, and choosing one "
+            "for them shows a fraction of what they asked to see. A search "
+            "with no category needs a hard filter to scope it."
+        )
     else:
         description += (
             " Omit it to search the whole category, which is what 'show me "

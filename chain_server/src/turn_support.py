@@ -1408,6 +1408,23 @@ def _search_catalog_scopes_input_model(
     )
 
 
+def _advertised_range(capability: Any) -> str:
+    """The lowest and highest values the catalog holds for a numeric filter."""
+
+    low = getattr(capability, "min_value", None)
+    high = getattr(capability, "max_value", None)
+    if low is None and high is None:
+        return ""
+
+    def _render(value: Any) -> str:
+        number = float(value)
+        return f"{number:.2f}".rstrip("0").rstrip(".")
+
+    if low is not None and high is not None:
+        return f"{_render(low)} to {_render(high)}"
+    return f"from {_render(low)}" if low is not None else f"up to {_render(high)}"
+
+
 def _taxonomy_list_field(
     values: list[str],
     *,
@@ -1512,17 +1529,20 @@ def _required_constraints_input_model(
             field_type = _CatalogNumberConstraint | None
         else:
             field_type = str | list[str] | None
-        fields[name] = (
-            field_type,
-            Field(
-                default=None,
-                description=(
-                    _WEARER_AUDIENCE_FILTER_DESCRIPTION
-                    if name and name == wearer_audience_field
-                    else f"Advertised hard filter '{name}'."
-                ),
-            ),
-        )
+        if name and name == wearer_audience_field:
+            description = _WEARER_AUDIENCE_FILTER_DESCRIPTION
+        else:
+            description = f"Advertised hard filter '{name}'."
+            # The catalog publishes the range of every numeric filter and this
+            # threw it away. Asked for "the most expensive thing you have", the
+            # assistant searched one category and reported its dearest item as
+            # the shop's -- a $189.99 purse in a catalog that runs to $269.99 --
+            # or refused outright. The answer was in capabilities the whole
+            # time; it just never reached the field the model reads.
+            span = _advertised_range(capability)
+            if span:
+                description += f" Advertised range: {span}."
+        fields[name] = (field_type, Field(default=None, description=description))
     fields["unadvertised_requirements"] = (
         list[str],
         Field(

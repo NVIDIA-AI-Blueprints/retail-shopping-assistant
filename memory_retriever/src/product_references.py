@@ -185,6 +185,27 @@ def _system_identifications_by_turn(db, conversation_id: str) -> list[tuple[int,
     return identifications
 
 
+def _shopper_sizes_of(turn) -> list[str]:
+    """The sizes this turn's searches were filtered by, if exactly recorded.
+
+    Read from the turn's own diagnostics, which already cross the service
+    boundary and are already stored. Only one size qualifies a showing: two
+    means the shopper was comparing, and neither is the size they want.
+    """
+
+    try:
+        output = json.loads(turn.output_json or "{}")
+    except (TypeError, ValueError):
+        return []
+    diagnostics = output.get("agent_diagnostics")
+    if not isinstance(diagnostics, dict):
+        return []
+    sizes = diagnostics.get("shopper_sizes")
+    if not isinstance(sizes, list):
+        return []
+    return [str(value).strip() for value in sizes if str(value).strip()]
+
+
 def rebuild_product_reference_index(
     db,
     projection: ConversationProjection,
@@ -218,6 +239,13 @@ def rebuild_product_reference_index(
         ]
         if picked:
             reference_set["system_identified"] = sorted(dict.fromkeys(picked))
+        # A showing made under a size filter is size-qualified: those four
+        # sandals came back because they come in a 7. The size belongs to this
+        # set and to nothing else -- a later showing carries its own or none,
+        # and they never merge, so no size follows the shopper around.
+        sizes = _shopper_sizes_of(turn)
+        if len(sizes) == 1:
+            reference_set["shopper_size"] = sizes[0]
         if turn.catalog_revision:
             reference_set["catalog_revision"] = turn.catalog_revision
         reference_sets.append(reference_set)
@@ -409,9 +437,9 @@ def _matches_descriptor(
     descriptor: ProductReferenceDescriptor,
 ) -> bool:
     product = match.product
-    if descriptor.product_ref is not None and _identifier(
-        product["product_id"]
-    ) != _identifier(descriptor.product_ref):
+    if descriptor.product_ref is not None and not _same_reference(
+        product["product_id"], descriptor.product_ref
+    ):
         return False
     if descriptor.display_name is not None and _normalized(
         product["display_name"]
@@ -569,3 +597,29 @@ def _identifier(value: str) -> str:
     """
 
     return value.strip().strip(_REFERENCE_WRAPPERS).strip()
+
+
+def _same_reference(stored: str, given: str) -> bool:
+    """Whether these name the same product, however the model wrote it.
+
+    The wrapper tolerance above exists because a model sent
+    `<generated:add69d96c548b4a3>`. The same model drops the other half: asked
+    to add a tote it had been shown one turn earlier it sent
+    `92a114b74aaa39ea` for `generated:92a114b74aaa39ea`, was told the ref did
+    not match, retried the identical value until its budget ran out, and then
+    told the shopper the bag was in their cart.
+
+    A bare identifier names what the index stored just as exactly as the
+    qualified form does, so accepting it guesses nothing. Two *different*
+    schemes are two different references and still do not match.
+    """
+
+    left, right = _identifier(stored), _identifier(given)
+    if left == right:
+        return True
+    for bare, qualified in ((left, right), (right, left)):
+        if ":" in bare or ":" not in qualified:
+            continue
+        if qualified.split(":", 1)[1] == bare:
+            return True
+    return False

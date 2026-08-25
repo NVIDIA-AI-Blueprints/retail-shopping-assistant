@@ -119,6 +119,24 @@ These are *not* part of the unit suite and are not collected by `pytest`
 by default. They are intended for periodic quality/performance evaluation
 against a deployed stack.
 
+## Replaying fixed conversations
+
+Forty-five scripted conversations whose words never change, checked against the
+cart the service holds rather than the wording of the reply.
+
+```bash
+python -m tests.evaluation.src.replay --only J01            # one journey
+python -m tests.evaluation.src.replay --only J01,J02,J13    # several
+python -m tests.evaluation.src.replay --label nightly --parallel
+```
+
+Scenarios in `tests/evaluation/datasets/val/`, transcripts in
+`tests/evaluation/results/val/<label>/transcripts/`. See
+`tests/evaluation/datasets/val/README.md`.
+
+Use it before a merge. Use the challenger to find what nobody thought of; use
+this to confirm it stays fixed.
+
 ## Evaluation scaffold
 
 The `evaluation/` folder contains the Challenger/Judge evaluation workflows. It captures

@@ -72,8 +72,14 @@ def _match(product_id: str, display_name: str, position: int) -> dict[str, Any]:
 
 
 def test_reference_descriptors_require_selectors_and_scope_ordinals() -> None:
-    with pytest.raises(ValidationError, match="selector"):
-        ProductReferenceDescriptor(reference_id="bag")
+    # A descriptor carrying only a label used to be refused outright. A model
+    # asked to add the Southwest Bracelet put the product's name in that label
+    # and nothing anywhere else; the call died and so did the turn. The label
+    # is now read as the name, which is looked up in the catalog and reported
+    # as found by name rather than shown before.
+    named_only = ProductReferenceDescriptor(reference_id="Southwest Bracelet")
+    assert named_only.display_name == "Southwest Bracelet"
+    assert named_only.product_ref is None
     with pytest.raises(ValidationError, match="ordinal requires"):
         ProductReferenceDescriptor(
             reference_id="bag",

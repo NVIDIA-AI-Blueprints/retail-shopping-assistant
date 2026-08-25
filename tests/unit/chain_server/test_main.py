@@ -19,6 +19,8 @@ from types import ModuleType, SimpleNamespace
 from threading import Barrier
 from typing import Any, Dict, Iterator, List
 
+import pathlib
+
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
@@ -2635,12 +2637,24 @@ class TestDeepAgentsRuntimeRefs:
                     "taxonomy": {"category": ["bags"], "subcategory": []},
                 }
             )
+        # A browse has no descriptive words and does not need any: "now show me
+        # some skirts" is fully expressed by its taxonomy. Demanding a query as
+        # well refused that search and the assistant asked the shopper which
+        # product type they meant. The taxonomy stands in for the query.
+        browsed = schema_model.model_validate(
+            {**complete_request, "semantic_query": ""}
+        )
+        assert browsed.semantic_query
         with pytest.raises(
             ValueError,
-            match="text catalog search requires a semantic query",
+            match="requires an advertised",
         ):
             schema_model.model_validate(
-                {**complete_request, "semantic_query": ""}
+                {
+                    **complete_request,
+                    "semantic_query": "",
+                    "taxonomy": {"category": [], "subcategory": []},
+                }
             )
 
         image_only = schema_model.model_validate(
@@ -3165,57 +3179,69 @@ class TestDeepAgentsRuntimeRefs:
         assert "read_file" not in excluded_tools
         assert "write_file" in excluded_tools
         assert "execute" in excluded_tools
-        assert "Retrieval modes: text" in captured["system_prompt"]
-        assert "values dress" in captured["system_prompt"]
-        assert "Put every non-taxonomy shopper must-have" in (
-            captured["system_prompt"]
-        )
-        assert "Semantic relevance cannot guarantee" in captured["system_prompt"]
-        assert "Call search_catalog_tool when exact advertised" in (
-            captured["system_prompt"]
-        )
-        assert "denotes the same kind of thing" in captured["system_prompt"]
-        assert "Different wording is not a reason to ask" in (
-            captured["system_prompt"]
-        )
-        assert "it in `not_covered`" in captured["system_prompt"]
-        assert "no_direct_catalog_match" not in captured["system_prompt"]
-        assert "One normalized taxonomy-and-required-constraint scope" in (
-            captured["system_prompt"]
-        )
-        assert "semantic_queries" not in captured["system_prompt"]
-        assert "top blouse sweater" not in captured["system_prompt"]
-        assert "Cart mutation scope must match" in captured["system_prompt"]
-        assert "Selection, approval, or styling preference is not cart intent" in (
-            captured["system_prompt"]
-        )
-        assert "If cart mutation scope is ambiguous" in captured["system_prompt"]
-        assert "ask one concise clarification" in captured["system_prompt"]
-        assert "For an explicit cart swap" in captured["system_prompt"]
-        assert "remove the rejected cart line" in captured["system_prompt"]
-        assert "Product comparison tables" in captured["system_prompt"]
-        assert "require get_product_details_tool" in captured["system_prompt"]
-        assert "Do not upgrade shopper assumptions" in captured["system_prompt"]
-        assert "Do not\nshow them to shoppers" in captured["system_prompt"]
-        assert "Do not group leather, rubber, metal" in captured["system_prompt"]
-        assert "Shopper wording is not product evidence" in captured["system_prompt"]
-        assert "making unsupported whole-outfit claims" in captured["system_prompt"]
-        assert "Initial recommendations should use product name" in (
-            captured["system_prompt"]
-        )
-        assert "Search-only product names are display names" in (
-            captured["system_prompt"]
-        )
-        assert "Do not make group-level claims" in captured["system_prompt"]
-        assert "Do not enumerate materials" in captured["system_prompt"]
-        assert "Tax and delivery dates are not available" in (
-            captured["system_prompt"]
-        )
-        assert "availability claims require check_product_availability_tool" in (
-            captured["system_prompt"]
-        )
-        assert "require get_store_policy_tool" in captured["system_prompt"]
-        assert "require check_product_availability_tool" in captured["system_prompt"]
+        # Where a rule lives is now part of the contract: procedure belongs to
+        # the skill that performs it and must reach the model on that turn,
+        # while the always-on prompt keeps only what every turn needs.
+        base = captured["system_prompt"]
+
+        def skill(name: str) -> str:
+            return (
+                pathlib.Path(__file__).resolve().parents[3]
+                / f"chain_server/skills/shopper/{name}/SKILL.md"
+            ).read_text()
+
+        for phrase in (
+            "Retrieval modes: text",
+            "values dress",
+            "Call search_catalog_tool when exact advertised",
+            "Different wording is not a reason to ask",
+            "One normalized taxonomy-and-required-constraint scope",
+            "denotes the same kind of thing",
+            "it in `not_covered`",
+            "Do not upgrade shopper assumptions",
+            "Do not group leather, rubber, metal",
+            "Shopper wording is not product evidence",
+            "making unsupported whole-outfit claims",
+        ):
+            assert phrase in base, f"{phrase!r} must stay in the always-on prompt"
+
+        reachable = {
+            "cart-management": (
+                "Cart mutation scope must match",
+                "Selection, approval, or styling preference is not cart intent",
+                "If cart mutation scope is ambiguous",
+                "For an explicit cart swap",
+                "remove the rejected cart line",
+            ),
+            "product-discovery": (
+                "Product comparison tables",
+                "require get_product_details_tool",
+                "Initial recommendations should use product name",
+                "Search-only product names are display names",
+                "Do not make group-level claims",
+                "Do not enumerate materials",
+                "Tax and delivery dates are not available",
+                "availability claims require check_product_availability_tool",
+            ),
+            "outfit-styling": (
+                "Tax and delivery dates are not available",
+                "availability claims require check_product_availability_tool",
+            ),
+        }
+        for name, phrases in reachable.items():
+            body = skill(name)
+            for phrase in phrases:
+                assert phrase in body, f"{phrase!r} unreachable in {name}"
+                assert phrase not in base, (
+                    f"{phrase!r} is skill procedure and must not ride on "
+                    "every turn"
+                )
+
+        assert "no_direct_catalog_match" not in base
+        assert "semantic_queries" not in base
+        assert "top blouse sweater" not in base
+        assert "require get_store_policy_tool" in skill("store-policy-answers")
+        assert "require check_product_availability_tool" in skill("product-discovery")
         assert "Outdoor-practicality claims require exact support" in (
             captured["system_prompt"]
         )
@@ -3249,19 +3275,19 @@ class TestDeepAgentsRuntimeRefs:
         # and then added nothing, because no size could be recorded anywhere.
         # The question is real now, so the rules for it live here.
         assert "ask which size, offering that product's own run" in (
-            captured["system_prompt"]
+            skill("cart-management")
         )
-        assert "worse than not\n  asking at all" in captured["system_prompt"]
+        assert "worse than not\n  asking at all" in skill("cart-management")
         assert "never add a size the product does not list" in (
-            captured["system_prompt"]
+            skill("cart-management")
         )
         # A size guess is invisible until the parcel arrives, so it is
         # disclosed where it cannot be missed and names its neighbours.
         assert "say which in the line that confirms the\n  add" in (
-            captured["system_prompt"]
+            skill("cart-management")
         )
-        assert "cannot see a size until it arrives" in captured["system_prompt"]
-        assert "offer pieces\n  that do come in it" in captured["system_prompt"]
+        assert "cannot see a size until it arrives" in skill("cart-management")
+        assert "offer pieces\n  that do come in it" in skill("product-discovery")
         # Live: "add it in a 10 too" raised the size-8 line to quantity 2 and
         # then asked whether the second should be a 10 -- the wrong garment
         # twice, presented as agreement.
@@ -3274,10 +3300,10 @@ class TestDeepAgentsRuntimeRefs:
             captured["system_prompt"]
         )
         assert "the forecast never gets asked for" in captured["system_prompt"]
-        assert "a size 8 tote is not a thing" in captured["system_prompt"]
-        assert "those come in one size" in captured["system_prompt"]
-        assert "another line, not more of" in captured["system_prompt"]
-        assert "adds\n  the wrong garment twice" in captured["system_prompt"]
+        assert "a size 8 tote is not a thing" in skill("product-discovery")
+        assert "those come in one size" in skill("product-discovery")
+        assert "another line, not more of" in skill("cart-management")
+        assert "adds\n  the wrong garment twice" in skill("cart-management")
         assert "Advice is not an answer on its own either" in (
             captured["system_prompt"]
         )
@@ -3303,7 +3329,7 @@ class TestDeepAgentsRuntimeRefs:
         assert "Rubber sole means" in captured["system_prompt"]
         assert "maximum breathability" in captured["system_prompt"]
         assert "best-in-category performance" in captured["system_prompt"]
-        assert "compare only confirmed construction facts" in captured["system_prompt"]
+        assert "compare only confirmed construction facts" in skill("product-discovery")
 
         policy_response = tools_by_name["get_store_policy_tool"](topic="returns")
         assert policy_response.startswith("POLICY NOT AVAILABLE:")
@@ -4547,7 +4573,9 @@ class TestDeepAgentsRuntimeRefs:
         assert "SEARCH_SCOPE_COMPLETE" not in no_result
         assert "search again without it" in no_result
         assert "PRODUCT_REF:" not in no_result
-        assert captured_plan["calls"] == 7
+        # Two more than before: each zero-result scope is re-run once without
+        # its optional constraints, so the reply has products to show.
+        assert captured_plan["calls"] == 9
 
         image_state = State(
             user_id=111,
@@ -4569,7 +4597,7 @@ class TestDeepAgentsRuntimeRefs:
         assert "SEARCH_FILTER_EVIDENCE:" not in image_result
         assert "PRODUCT_REF: prod_1" in image_result
         assert captured_plan["plan"].search_mode == "hybrid"
-        assert captured_plan["calls"] == 8
+        assert captured_plan["calls"] == 10
         assert image_state.model_usage["text_embedding"]["status"] == "used"
         assert image_state.model_usage["text_embedding"]["calls"] == 1
         assert image_state.model_usage["image_embedding"]["status"] == "used"
@@ -4610,7 +4638,7 @@ class TestDeepAgentsRuntimeRefs:
             scrubbed_schema_repair
         )
         assert "waterproof dress" not in scrubbed_schema_repair
-        assert captured_plan["calls"] == 9
+        assert captured_plan["calls"] == 11
 
     def test_search_catalog_tool_enforces_per_turn_cap(
         self,
@@ -8452,9 +8480,14 @@ class TestDeepAgentsRuntimeRefs:
         )
         assert "not sold" in wrong_size
         assert added == []
-        # A size with nothing behind it is refused now, whether or not the
-        # catalog sells it: "add the Office A-line Dress" put a size 6 in a
-        # cart nobody asked for, and every check passed because 6 was real.
+        # "add the Office A-line Dress" once put a size 6 in a cart nobody
+        # asked for. That used to be refused, on a quotation the model had to
+        # supply -- which it filled about half the time, so the refusal mostly
+        # landed on shoppers who *had* given a size and were asked again.
+        #
+        # The add now goes through and the size travels with it. A size the
+        # shopper did not choose is caught by being visible on the turn it
+        # happens, not by blocking the turn that got it right.
         unasked = tool_text(
             add_tool(
                 items=[
@@ -8462,22 +8495,29 @@ class TestDeepAgentsRuntimeRefs:
                 ]
             )
         )
-        assert "SIZE NOT ESTABLISHED" in unasked
-        assert added == []
+        assert "SIZE NOT ESTABLISHED" not in unasked
+        assert "size 4" in unasked, "the size must be visible in the result"
+        assert len(added) == 1
+        added.clear()
         # Two items, one settled and one not. The add is all or nothing, so
         # nothing is written -- but the settled item has to travel with the
         # refusal. A shopper who answered "Sweater: M and Boots: 6" gave a
         # correct size for the boots and was asked for it a second time,
         # because the held-back item vanished from the result.
+        # The held-back path still matters -- a size the catalog does not sell
+        # is still refused, and the settled item must travel with the refusal
+        # rather than vanishing. A shopper who answered "Sweater: M and Boots:
+        # 6" gave a correct size for the boots and was asked for it twice,
+        # because the held-back item disappeared from the result.
         held_back = tool_text(
             add_tool(
                 items=[
                     {"product_ref": "prod_bag", "quantity": 1},
-                    {"product_ref": "prod_dress", "quantity": 1, "size": "4"},
+                    {"product_ref": "prod_dress", "quantity": 1, "size": "14"},
                 ]
             )
         )
-        assert "SIZE NOT ESTABLISHED" in held_back
+        assert "not sold" in held_back
         assert "Work Bag" in held_back
         assert "Do not ask for these again" in held_back
         assert "Added:" not in held_back
@@ -8489,7 +8529,6 @@ class TestDeepAgentsRuntimeRefs:
                         "product_ref": "prod_dress",
                         "quantity": 1,
                         "size": "4",
-                        "size_stated_as": "size 4",
                     }
                 ]
             )
@@ -8504,7 +8543,6 @@ class TestDeepAgentsRuntimeRefs:
                     {
                         "product_ref": "prod_flats",
                         "quantity": 2,
-                        "quantity_stated_as": "3 of the flats",
                         "expected_display_name": "Felicity Flats",
                     },
                     {"product_ref": "missing", "quantity": 1},
@@ -9453,8 +9491,18 @@ class TestAudienceAwareSearch:
 
         runtime = runtime_mod.DeepAgentsRuntime(base_config)
 
+        # The audience rules moved to product-discovery, the skill that builds
+        # the search. Reachability on the turn that needs them is the property
+        # under test -- not which file the words sit in.
+        skill = pathlib.Path(
+            pathlib.Path(__file__).resolve().parents[3]
+            / "chain_server/skills/shopper/product-discovery/SKILL.md"
+        ).read_text()
         normalized = " ".join(
-            runtime._system_prompt(CatalogCapabilities(catalog_id="test")).split()
+            (
+                runtime._system_prompt(CatalogCapabilities(catalog_id="test"))
+                + skill
+            ).split()
         )
 
         assert "Read those values from Catalog capabilities" in normalized

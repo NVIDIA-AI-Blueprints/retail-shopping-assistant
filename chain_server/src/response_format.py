@@ -693,3 +693,48 @@ def _format_media_summary(media: list[dict[str, Any]]) -> str:
         media_type = str(item.get("type") or "unknown")
         counts[media_type] = counts.get(media_type, 0) + 1
     return ", ".join(f"{count} {media_type}(s)" for media_type, count in sorted(counts.items()))
+
+def _cart_line_key(line: dict) -> tuple:
+    """Identity of a cart line for comparison: what a shopper would call
+    'the same line' -- the product and the size, not the opaque line id."""
+    return (
+        str(line.get("item") or line.get("display_name") or ""),
+        str(line.get("size") or ""),
+    )
+
+
+def format_cart_change(before: "Cart | None", after: "Cart | None") -> str:
+    """State what this turn did to the cart, as a fact.
+
+    The editor was already told not to claim a cart action absent from CURRENT
+    CART, and it still passed "I've added the tote bag back" on a turn where the
+    add failed and the cart was unchanged. A prohibition left it comparing two
+    lists and judging; this hands it the answer. Computed from the two
+    snapshots, so it cannot disagree with the cart.
+    """
+
+    if before is None or after is None:
+        return "not known for this turn"
+    b: dict[tuple, int] = {}
+    for line in getattr(before, "contents", []) or []:
+        k = _cart_line_key(line)
+        b[k] = b.get(k, 0) + int(line.get("amount") or 0)
+    a: dict[tuple, int] = {}
+    for line in getattr(after, "contents", []) or []:
+        k = _cart_line_key(line)
+        a[k] = a.get(k, 0) + int(line.get("amount") or 0)
+    changes: list[str] = []
+    for k in sorted(set(a) | set(b), key=lambda x: (x[0], x[1])):
+        name, size = k
+        label = f"{name}" + (f" (size {size})" if size else "")
+        delta = a.get(k, 0) - b.get(k, 0)
+        if delta > 0:
+            changes.append(f"- added {label} x{delta}")
+        elif delta < 0:
+            changes.append(f"- removed {label} x{-delta}")
+    if not changes:
+        return (
+            "NOTHING CHANGED. No item was added, removed, or altered this "
+            "turn. Do not tell the shopper otherwise, whatever the draft says."
+        )
+    return "\n".join(changes)

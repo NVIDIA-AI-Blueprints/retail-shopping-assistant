@@ -230,6 +230,10 @@ class _Attempt:
     #: and must not read a miss inside the searched types as the role being
     #: unavailable.
     composed_role: bool = False
+    #: Whether the relaxed retry that found something kept the shopper's size.
+    #: When it did not, the reply must say so: a size is never substituted
+    #: silently, however helpful the alternative looks.
+    relaxed_kept_the_size: bool = True
     constraint_payload: Any = None
     evidence: Any = None
     #: Shopper scopes searched by *earlier calls*, snapshotted at the start
@@ -1304,6 +1308,74 @@ def _reserved_search_slot(ctx: SearchContext, attempt: _Attempt) -> StepResult:
     return None
 
 
+
+#: Filters a relaxed retry will not drop. A shopper's size is not negotiable --
+#: showing a 4 to someone who asked for a 2 is the one substitution a shop must
+#: never make -- so the relaxation gives on colour, style and price instead.
+_NEVER_RELAXED = frozenset({"sizes", "size"})
+
+
+def _relaxed_alternatives(ctx: "SearchContext", attempt: "_Attempt") -> list[Any]:
+    """What this search finds with its optional constraints dropped.
+
+    Zero results used to hand the model an absence and nothing else, so it
+    asked which alternative the shopper wanted and showed none of them: "no
+    green dress in a size 2 -- would you like size 4, or another colour?" on a
+    turn where the catalog held plenty of size 2 dresses in other colours.
+
+    Telling the model to go and look did not hold; a model that has products in
+    hand shows them, and one that has only a prohibition writes a menu. So the
+    search is run again here, once, without the constraints that may give.
+    """
+
+    plan = attempt.plan
+    filters = dict(plan.hard_filters or {})
+    # Two ways to give, in the order a shop would try them. Keeping the size
+    # and dropping the rest answers "what do you have in my size"; dropping the
+    # size answers "do you have this at all". The second is only reached when
+    # the first finds nothing -- and when it is what comes back, the note says
+    # plainly that these are a different size, because a size is never
+    # substituted silently. "a tote bag in a size 8" needed the second: totes
+    # are one size, so the size was the only filter and nothing could give.
+    relaxations = [
+        {k: v for k, v in filters.items() if k in _NEVER_RELAXED},
+        {k: v for k, v in filters.items() if k not in _NEVER_RELAXED},
+    ]
+    result = None
+    for candidate in relaxations:
+        if candidate == filters:
+            continue
+        try:
+            execution = execute_catalog_search(
+                plan.model_copy(update={"hard_filters": candidate}),
+                ctx.config.retriever_port,
+                image_base64=ctx.state.image,
+                timeout_seconds=ctx.config.catalog_search_timeout_seconds,
+            )
+        except Exception:  # pragma: no cover - a relaxation is best effort
+            continue
+        found = getattr(execution, "result", None)
+        if found is not None and getattr(found, "ok", False) and found.products:
+            result = found
+            attempt.relaxed_kept_the_size = bool(candidate)
+            break
+    if result is None:
+        return []
+    products = list(getattr(result, "products", []) or [])[:4]
+    if not products:
+        return []
+    # Registered exactly as a normal result is. A product the reply names has
+    # been shown, and a shown product must be referenceable and addable: left
+    # out of the index these came back as prose the shopper could not act on,
+    # and "the coral one" would have resolved to nothing on the next turn.
+    ctx.scope.product_evidence.add(products)
+    _append_product_results(ctx.state, products)
+    for product in products:
+        if product.image_url:
+            ctx.scope.retrieved[product.display_name] = product.image_url
+    return [_search_product_record(product) for product in products]
+
+
 def _executed_search(ctx: SearchContext, attempt: _Attempt) -> StepResult:
     """Run the retrieval and record what it cost and returned."""
 
@@ -1477,8 +1549,16 @@ def _rendered_evidence(ctx: SearchContext, attempt: _Attempt) -> StepResult:
                     attempt.shopper_scope_key
                 )
         # Build the payload first; every line below renders from it.
+        relaxed = _relaxed_alternatives(ctx, attempt)
         evidence = SearchEvidence(
             outcome="zero_results",
+            relaxed_products=relaxed,
+            relaxed_dropped=sorted(
+                key
+                for key in (confirmed_filters or {})
+                if (key not in _NEVER_RELAXED) or not attempt.relaxed_kept_the_size
+            ),
+            relaxed_kept_the_size=attempt.relaxed_kept_the_size,
             taxonomy=taxonomy_constraints,
             confirmed_filters=confirmed_filters,
             requested_product_type=request.requested_product_type,

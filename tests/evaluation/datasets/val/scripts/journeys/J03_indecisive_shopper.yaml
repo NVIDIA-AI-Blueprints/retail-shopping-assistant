@@ -1,0 +1,51 @@
+id: J03_indecisive_shopper
+covers: [references, cart-management, sizes, memory]
+why: >
+  Every kind of reference in one conversation -- ordinal, pronoun, partial
+  name, full name, and a description that fits several. The last of those must
+  be asked about; the rest must not be.
+  Names Jade Suede Heels, not Polished Pearl Pumps: this catalog gives that
+  second name to two products, so an assertion pinned to it measured
+  whether the model guessed which one. Asking is the correct behaviour and
+  was scored as a failure.
+
+turns:
+  - say: show me some heels
+    expect: {products_min: 2}
+  - say: what is the first one made of
+    expect: {cart_unchanged: true}
+  - say: show me some tote bags too
+    expect: {products_min: 2}
+  - say: and some bracelets
+    expect: {products_min: 2}
+  - say: add the Southwest Bracelet
+    expect:
+      cart: [{name: Southwest Bracelet, qty: 1}]
+  - say: actually show me sunglasses
+    expect: {products_min: 2}
+  - say: add the Xenial Aviator Sunglasses too
+    expect:
+      cart:
+        - {name: Southwest Bracelet, qty: 1}
+        - {name: Xenial Aviator Sunglasses, qty: 1}
+  - say: show me black dresses
+    expect:
+      products_min: 2
+      every_product: {primary_color: black}
+  - say: add the black one in a size 8
+    expect:
+      cart:
+        - {name: Southwest Bracelet, qty: 1}
+        - {name: Xenial Aviator Sunglasses, qty: 1}
+  - say: the Jade Suede Heels, in a 7
+    expect:
+      cart:
+        - {name: Southwest Bracelet, qty: 1}
+        - {name: Xenial Aviator Sunglasses, qty: 1}
+        - {name: Jade Suede Heels, size: "7", qty: 1}
+  - say: what's in my cart
+    expect:
+      cart:
+        - {name: Southwest Bracelet, qty: 1}
+        - {name: Xenial Aviator Sunglasses, qty: 1}
+        - {name: Jade Suede Heels, size: "7", qty: 1}

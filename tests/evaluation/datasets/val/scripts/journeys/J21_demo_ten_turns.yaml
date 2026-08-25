@@ -13,7 +13,7 @@ turns:
       products_min: 1
 
   # 2. A real forecast, with the provider named in the reply.
-  - say: it's in Cancun on August 24th
+  - say: it's in Cancun around mid next week
     expect:
       products_min: 1
 

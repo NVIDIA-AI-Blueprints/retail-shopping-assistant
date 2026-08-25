@@ -145,6 +145,14 @@ class State(BaseModel):
         description="Rendered prompt text only; never parsed back into state"
     )
     cart: Cart = Field(default_factory=Cart, description="User's shopping cart")
+    cart_at_turn_start: Cart | None = Field(
+        default=None,
+        description=(
+            "The cart as it stood before this turn ran. Held so the effect of "
+            "the turn on the cart can be stated as a computed fact rather than "
+            "left for a model to infer by comparing two lists."
+        ),
+    )
     response: str = Field(default="", description="Generated response from agents")
     image: str = Field(default="", description="Base64 encoded image data")
     media: List[Dict[str, Any]] = Field(

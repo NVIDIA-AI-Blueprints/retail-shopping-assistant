@@ -1,0 +1,13 @@
+id: P21_reference_pronoun
+covers: [references, cart-management]
+why: >
+  "Add it" after a single product is unambiguous, and a check that refuses it
+  turns every follow-up turn into an interrogation.
+turns:
+  - say: show me the Jade Tone Canvas Tote Bag
+    expect:
+      products_min: 1
+  - say: add it to my cart
+    expect:
+      cart:
+        - {name: Jade Tone Canvas Tote Bag, qty: 1}

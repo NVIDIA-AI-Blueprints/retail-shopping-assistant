@@ -809,11 +809,22 @@ class SearchCatalogToolArguments(BaseModel):
         description=(
             "One concise, product-agnostic shopper-facing sentence written under "
             "the active skill before search results are known. Connect this "
-            "product role to the shopper's stated goal or direct antecedent. Do "
+            "product role to what the shopper asked for in THIS turn, or its "
+            "direct antecedent. A purpose they gave earlier -- a wedding, a "
+            "trip -- has already been served and does not travel: once they "
+            "move on, so do you. Naming it again on every later turn produced "
+            "'skirts that would work well for your wedding abroad outfit' six "
+            "turns after the wedding, and a bag for someone else described as "
+            "complementing the shopper's own outfit. Do "
             "not name unselected or unavailable product types, name or describe "
             "candidate products, assert product attributes, or mention tools, "
-            "schemas, filters, evidence, or identifiers. Use an empty string only "
-            "for image-only search."
+            "schemas, filters, evidence, or identifiers. Leave it empty when the "
+            "shopper simply named a product type and nothing else -- 'now show "
+            "me some skirts' is a request to see skirts, not a request to see "
+            "skirts for something. Required to say something, the model reached "
+            "back twelve turns for the only purpose in the conversation and "
+            "produced 'skirts that could work well for your wedding abroad "
+            "outfit'. An empty string is also right for an image-only search."
         ),
     )
     requested_product_type: str | None = Field(
@@ -1000,8 +1011,26 @@ class SearchCatalogToolInput(SearchCatalogToolArguments):
             raise ValueError(
                 "text catalog search requires an advertised category or subcategory"
             )
-        if not has_query:
+        if not has_query and not has_taxonomy:
             raise ValueError("text catalog search requires a semantic query")
+        if not has_query:
+            # A browse has no descriptive words and does not need any: "now show
+            # me some skirts" is fully expressed by its taxonomy. Demanding a
+            # semantic query as well refused that search outright, and the
+            # assistant -- holding a plain request for skirts -- asked the
+            # shopper which product type they meant. The taxonomy is the query.
+            object.__setattr__(
+                self,
+                "semantic_query",
+                (self.requested_product_type or "").strip()
+                or " ".join(
+                    str(value)
+                    for value in (
+                        list(self.taxonomy.subcategory or [])
+                        or list(self.taxonomy.category or [])
+                    )
+                ),
+            )
         return self
 
 
@@ -1198,6 +1227,37 @@ def _scope_content_errors_only(errors: Sequence[Any]) -> bool:
     return True
 
 
+def _one_scope_is_a_list_of_one(cls: Any, data: Any, handler: Any) -> Any:
+    """Read a single search scope written without its wrapper.
+
+    "add the Xenial Aviator Sunglasses" produced a scope's fields at the top
+    level -- category, subcategory, semantic_query -- with no `scopes` list
+    around them. The whole call was invalid, and the shopper was told "I
+    couldn't complete a valid catalog search for that request" on a turn that
+    named one product plainly.
+
+    A lone scope is one scope however it is wrapped. Every field inside it is
+    still validated exactly as before, so nothing is admitted that a properly
+    wrapped call would not have been.
+    """
+
+    if isinstance(data, dict) and "scopes" not in data:
+        scope_fields = {
+            "taxonomy",
+            "semantic_query",
+            "requested_product_type",
+            "required_constraints",
+            "category",
+            "subcategory",
+            "shopper_guidance",
+        }
+        if scope_fields & set(data):
+            not_covered = data.get("not_covered")
+            scope = {k: v for k, v in data.items() if k != "not_covered"}
+            data = {"scopes": [scope], "not_covered": not_covered}
+    return handler(data)
+
+
 def _admit_scopes_for_adjudication(cls: Any, data: Any, handler: Any) -> Any:
     """Let the search body judge scope content, one role at a time.
 
@@ -1300,6 +1360,9 @@ def _search_catalog_scopes_input_model(
             ),
         ),
         __validators__={
+            "_one_scope_is_a_list_of_one": model_validator(mode="wrap")(
+                classmethod(_one_scope_is_a_list_of_one)
+            ),
             "_admit_scopes_for_adjudication": model_validator(mode="wrap")(
                 classmethod(_admit_scopes_for_adjudication)
             ),
@@ -1603,15 +1666,6 @@ class AddCartItemsToolItemInput(BaseModel):
         ge=1,
         description="Quantity of this product to add.",
     )
-    quantity_stated_as: str | None = Field(
-        default=None,
-        max_length=200,
-        description=(
-            "The shopper's own words asking for more than one, quoted from "
-            "their message -- 'two of them', 'add 3'. Required above quantity "
-            "1. One is what 'add it' means; any more is a number they chose."
-        ),
-    )
     expected_display_name: str | None = Field(
         default=None,
         description=(
@@ -1628,21 +1682,6 @@ class AddCartItemsToolItemInput(BaseModel):
             "is 'onesize' -- asking what size handbag someone wants is worse "
             "than not asking. Use only a size that product actually comes in; "
             "the sizes differ per product and are in its details."
-        ),
-    )
-    size_stated_as: str | None = Field(
-        default=None,
-        max_length=200,
-        description=(
-            "The shopper's own words that gave this size, quoted from any "
-            "message in this conversation -- 'size 8', 'in a 10 as well'. It "
-            "is often not the message you are answering: a shopper who says "
-            "'shoe size 6' and picks a pair two turns later gave the size in "
-            "the earlier message, and that is the one to quote. The quotation "
-            "must contain the size it authorises. Required with a size unless "
-            "the same size is already on their cart line. A size they did not "
-            "ask for is not their size: when they have not said one, leave "
-            "both empty and ask."
         ),
     )
 
@@ -1725,6 +1764,7 @@ def _empty_agent_diagnostics(final_termination_reason: str) -> dict[str, Any]:
         "product_evidence": [],
         "product_evidence_truncated": False,
         "catalog_scope_outcomes": [],
+        "shopper_sizes": [],
         "final_termination_reason": final_termination_reason,
         "partial_graph_messages": [],
     }
@@ -1864,6 +1904,7 @@ def _collect_agent_diagnostics(
     diagnostics["catalog_scope_outcomes"] = _diagnostic_catalog_scope_outcomes(
         turn_messages
     )
+    diagnostics["shopper_sizes"] = _diagnostic_shopper_sizes(turn_messages)
     if preserve_partial_messages:
         partial, truncated = _serialize_partial_graph_messages(turn_messages)
         diagnostics["partial_graph_messages"] = partial
@@ -2332,6 +2373,39 @@ def _diagnostic_product_evidence(
     return evidence, truncated
 
 
+def _diagnostic_shopper_sizes(messages: list[Any]) -> list[str]:
+    """The sizes the shopper's own searches were filtered by this turn.
+
+    A showing made under a size filter is a size-qualified showing: those four
+    sandals came back *because* they come in a 7. That fact belonged to the
+    turn and was thrown away at the end of it, so "ok, just show me sandals in
+    a 7" followed by "add the first one" asked which size -- the shopper having
+    said it one turn earlier.
+
+    Recorded per turn rather than per shopper. Nothing here says the shopper
+    is a 7; it says this showing was. A later showing carries its own sizes or
+    none, and the two never merge.
+    """
+
+    sizes: list[str] = []
+    for message in messages:
+        if _message_type(message) != "tool":
+            continue
+        payload = evidence_of(message) or {}
+        outcome = payload.get("scope_outcome") or {}
+        if outcome.get("outcome") not in {None, "results"}:
+            continue
+        for scope in (payload.get("products") or []):
+            if not isinstance(scope, dict):
+                continue
+            confirmed = (scope.get("search_scope") or {}).get("confirmed_filters")
+            for value in ((confirmed or {}).get("sizes") or []):
+                text = str(value).strip()
+                if text and text not in sizes:
+                    sizes.append(text)
+    return sizes[:4]
+
+
 def _diagnostic_catalog_scope_outcomes(
     messages: list[Any],
 ) -> list[dict[str, Any]]:
@@ -2634,6 +2708,49 @@ def _append_product_results(state: State, products: list[ProductSummary]) -> Non
         state.product_results.append(payload)
         if product_id:
             existing_ids.add(product_id)
+
+
+def _products_found_receipt(state: Any) -> str:
+    """Answer from the products this turn actually found, or "" if none.
+
+    A turn that fetched a Cancun forecast, had one search refused and its retry
+    succeed, then ran out of budget before writing anything, told the shopper
+    "I could not complete that shopping request. Please try again." The work was
+    done and thrown away, and the shopper was asked to pay for it twice.
+
+    This is not a reply the assistant composed -- it names what was found and
+    nothing more, because everything that would need judgement is exactly what
+    there was no budget left to do.
+    """
+
+    products = [
+        record
+        for record in (getattr(state, "product_results", None) or [])
+        if isinstance(record, dict) and record.get("display_name")
+    ]
+    if not products:
+        return ""
+    lines = ["Here is what I found before I ran out of time on this request:"]
+    seen: set[str] = set()
+    for record in products:
+        name = str(record.get("display_name"))
+        if name in seen:
+            continue
+        seen.add(name)
+        price = record.get("price")
+        amount = (
+            f" -- {price.get('amount')} {price.get('currency')}"
+            if isinstance(price, dict) and price.get("amount") is not None
+            else ""
+        )
+        lines.append(f"- {name}{amount}")
+        if len(seen) >= 6:
+            break
+    lines.append(
+        "Ask me about any of these, or say what to change and I will search "
+        "again."
+    )
+    return "\n".join(lines)
 
 
 def _committed_effect_receipt(
@@ -3430,6 +3547,49 @@ def _customer_safe_search_evidence(payload: dict[str, Any]) -> str:
         relation = _scope_relation_line(payload, has_products=False)
         if relation:
             lines.append(relation)
+        # Zero results told the model what was absent and nothing about what
+        # was present, so it asked. "No green dress in a size 2 -- would you
+        # like size 4 instead?" showed nothing, on a turn where the catalog
+        # held green dresses in a 4 and plenty of size 2 dresses in other
+        # colours. A shopper asked to choose between two things they cannot
+        # see has been given less than nothing.
+        relaxed = payload.get("relaxed_products")
+        if isinstance(relaxed, list) and relaxed:
+            dropped = [str(v) for v in (payload.get("relaxed_dropped") or [])]
+            lines.append(
+                _render_product_evidence_summary(
+                    relaxed,
+                    heading="CUSTOMER_SAFE_RELAXED_SEARCH_EVIDENCE",
+                    note=(
+                        "The same search without "
+                        + (", ".join(dropped) if dropped else "its optional constraints")
+                        + " found these. They are real products and may be "
+                        "shown. Show them in this reply rather than asking "
+                        "whether the shopper would like to widen the search: "
+                        "being offered a choice between two things you cannot "
+                        "see is worse than being shown one of them. Say plainly "
+                        "which requirement could not be met and which you "
+                        "relaxed. "
+                        + (
+                            "The shopper's size was kept -- these are their size."
+                            if payload.get("relaxed_kept_the_size", True)
+                            else "THE SHOPPER'S SIZE WAS NOT KEPT. Nothing they "
+                            "asked for exists in it. Say that first, name the "
+                            "sizes these actually come in, and never present "
+                            "them as the size they asked for."
+                        )
+                    ),
+                    confirmed_filters={},
+                    taxonomy_scope=payload.get("taxonomy") or {},
+                )
+            )
+        else:
+            lines.append(
+                "NEXT: nothing was found with these constraints and nothing "
+                "was found without the optional ones either. Say so plainly, "
+                "name what the catalog does carry in this category, and do "
+                "not answer with a question alone."
+            )
         return "\n".join(lines)
 
     lines = [_summarize_typed_product_evidence(payload)]
@@ -3552,8 +3712,12 @@ def _assumed_audience_line(payload: dict[str, Any]) -> str:
     return (
         "ASSUMED_AUDIENCE: nobody said who these pieces are for; every one "
         "that came back is for " + ", ".join(sorted(audience)) + ". Open by "
-        "naming that as what you have assumed the shopper is looking for -- "
-        "\"assuming you're looking for ... clothes\" -- and invite them to "
+        "naming that as what you have assumed the shopper is looking for, in "
+        "words that fit what they actually asked for -- \"assuming you're "
+        "looking for women's dresses\", \"assuming these are for you\". Never "
+        "describe a bag, a pair of sunglasses or a bracelet as something worn "
+        "-- a reply about tote bags opened by calling them things to put on "
+        "-- and invite them to "
         "correct it. One clause, then get on with the answer. It is an "
         "assumption about what they want, not a note about the shop's style "
         "or about what this reply happened to return. Never turn it into a "
@@ -3975,19 +4139,11 @@ def _normalize_cart_add_tool_items(
                     if parsed.expected_display_name
                     else ""
                 ),
-                "size_stated_as": (parsed.size_stated_as or "").strip(),
-                "quantity_stated_as": (parsed.quantity_stated_as or "").strip(),
             },
         )
         entry["quantity"] += quantity
         if not entry["expected_display_name"] and parsed.expected_display_name:
             entry["expected_display_name"] = parsed.expected_display_name.strip()
-        # Merged items share one entry, so a quotation on any of them is the
-        # quotation for the size or quantity they merged into. Keeping only the
-        # first item's dropped a later one that carried the shopper's words.
-        for field in ("size_stated_as", "quantity_stated_as"):
-            if not entry[field] and getattr(parsed, field, None):
-                entry[field] = str(getattr(parsed, field)).strip()
     return normalized
 
 
@@ -4102,27 +4258,6 @@ def _shopper_words_this_conversation(state: Any) -> str:
         if text:
             parts.append(str(text))
     return "\n".join(parts)
-
-
-def _shopper_said(stated_as: str | None, shopper_text: str, value: str) -> bool:
-    """Whether the shopper really said this, for this value.
-
-    Two checks, because either alone lets the wrong thing through. The words
-    must be theirs, or the model authorises itself. And the words must carry
-    the value they authorise: "3 of the flats" is a real quotation and it does
-    not say two, yet it opened the gate for a quantity of two.
-    """
-
-    quoted = " ".join((stated_as or "").split()).casefold()
-    wanted = " ".join((value or "").split()).casefold()
-    if not quoted or not wanted:
-        return False
-    # Shoppers write numbers both ways -- "add two of them" is as ordinary as
-    # "add 2". Only the value is spelled out here, never anything about intent.
-    spelled = _SPELLED_NUMBERS.get(wanted)
-    if wanted not in quoted and not (spelled and spelled in quoted):
-        return False
-    return quoted in " ".join(shopper_text.split()).casefold()
 
 
 #: A word carries no identifying weight below this, and the short ones collide
@@ -4333,34 +4468,6 @@ def _cart_product_provenance_issue(
     )
 
 
-def _cart_quantity_provenance_issue(
-    quantity: int,
-    stated_as: str | None,
-    shopper_text: str,
-    product: Any = None,
-) -> str:
-    """Say why this quantity cannot be trusted, or "" if it can.
-
-    The sibling of the size. "Add it" means one, so one needs nothing; any more
-    is a number the shopper chose, and a number they did not choose is theirs to
-    pay for. Nothing else guards it -- quantity is a plain integer on the tool,
-    where the size at least had to be sold by the catalog.
-    """
-
-    if quantity <= 1:
-        return ""
-    if _shopper_said(stated_as, shopper_text, str(quantity)):
-        return ""
-    # Named for the same reason a size refusal is: a batch refusal the model
-    # cannot attribute to an item becomes a confident guess in the reply.
-    named = getattr(product, "display_name", "") if product is not None else ""
-    subject = f" for '{named}'" if named else ""
-    return (
-        f"QUANTITY NOT ESTABLISHED{subject}: the shopper did not ask for "
-        f"{quantity}. Add one, or ask how many they want. Nothing was added."
-    )
-
-
 def _cart_line_size(cart: Any, product_id: str) -> str | None:
     """The size already on this shopper's line for this product, if any."""
 
@@ -4372,93 +4479,6 @@ def _cart_line_size(cart: Any, product_id: str) -> str | None:
             if size:
                 return size
     return None
-
-
-def _size_quotation_problem(
-    stated_as: str | None,
-    shopper_text: str,
-    chosen: str,
-) -> str:
-    """Say which half of the check failed, and what would answer it.
-
-    The refusal used to say "the shopper did not ask for a size 6" whatever had
-    gone wrong. Live, they had: "shoe size 6", two turns earlier. What the gate
-    had established was narrower -- the quotation it was handed did not carry
-    the size -- and stating the broader thing sent the model to ask a question
-    the shopper had already answered.
-
-    A gate may only report what it checked. Anything more is a claim it cannot
-    support, and this one was false in the case that matters most.
-    """
-
-    quoted = " ".join((stated_as or "").split())
-    if not quoted:
-        return (
-            f"no words of the shopper's were quoted for size {chosen}. Quote "
-            "the message where they gave it, or ask them which size they want."
-        )
-    if quoted.casefold() not in " ".join(shopper_text.split()).casefold():
-        return (
-            f"'{quoted}' is not something the shopper said in this "
-            "conversation. Quote their own words, or ask them which size they "
-            "want."
-        )
-    return (
-        f"the quotation '{quoted}' does not contain {chosen}, so it does not "
-        f"give that size. If they gave it in an earlier message, quote that "
-        "message instead; if they never gave one, ask them which size they "
-        "want."
-    )
-
-
-def _cart_size_provenance_issue(
-    product: Any,
-    size: str | None,
-    stated_as: str | None,
-    shopper_text: str,
-    cart_line_size: str | None,
-) -> str:
-    """Say why this size cannot be trusted, or "" if it can.
-
-    The gate below asks whether a size is present and sold. It cannot ask who
-    chose it, so a size the shopper never mentioned passed every check: "add
-    the Office A-line Dress" put a size 6 in the cart, and the shopper left the
-    conversation with three dresses and one they never asked for.
-
-    A size is a want, not a fact. The catalog says which sizes exist; only the
-    shopper says which one they want. So it comes from their words, from the
-    line already in their cart, or it is asked for.
-
-    Not a search of their message for size-like words: that would match the 6 in
-    $69.99. The model quotes them, and the quotation has to be theirs and has to
-    carry the size it authorises.
-    """
-
-    chosen = (size or "").strip()
-    if not chosen:
-        return ""
-    advertised = _advertised_sizes(product)
-    if not advertised or advertised == [_ONE_SIZE]:
-        # The catalog sells this in one size or states none. Nobody chose it,
-        # and asking a shopper what size handbag they want is worse than not
-        # asking -- the same carve-out the sold-size gate makes.
-        return ""
-    if cart_line_size and chosen.casefold() == cart_line_size.casefold():
-        return ""
-    if _shopper_said(stated_as, shopper_text, chosen):
-        return ""
-    # The product and its sizes travel with the refusal. Told only that a size
-    # was not established, and addressed by a PRODUCT_REF, the model had to work
-    # out which of two items had failed and what it could offer instead -- and
-    # got both wrong: it told a shopper size 6 was not sold for a boot sold in
-    # 5, 6, 7, 8, and blamed the item whose size had been stated correctly.
-    # Asking it to name "the sizes it is sold in" without supplying them is the
-    # same error in miniature.
-    return (
-        f"SIZE NOT ESTABLISHED for '{product.display_name}': "
-        f"{_size_quotation_problem(stated_as, shopper_text, chosen)} "
-        f"It is sold in {', '.join(advertised)}. Nothing was added."
-    )
 
 
 def _cart_size_issue(product: Any, size: str | None) -> str:

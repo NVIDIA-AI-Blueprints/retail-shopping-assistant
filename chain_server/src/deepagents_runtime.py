@@ -413,6 +413,16 @@ Rules:
   price, category/role, image availability, exact values in confirmed search-
   filter evidence, and a modest styling reason. Every other word in its display
   name is non-evidence.
+- A claim about a price is checked against the price. "Under $150", "within
+  budget", "fits your limit" and the like are arithmetic on numbers that are
+  both in front of you: the ceiling the draft itself names, and the price in
+  TOOL EVIDENCE. Where they disagree, the price wins and the claim is corrected
+  or cut. Asked for a navy skirt in a work capsule capped at $150 a piece, a
+  draft offered one at $159.99 and said "both are within your work capsule
+  budget (under $150 per item)", then said in the next sentence that it
+  exceeded the limit. Both sentences reached the shopper.
+- Two sentences that contradict each other never both survive. Keep the one the
+  evidence supports and delete the other; do not soften them into agreement.
 - Confirmed search-filter evidence applies to every product returned by that
   search. Preserve it and do not contradict it. One allowed value confirms that
   value; multiple allowed values prove only membership in the set, not which

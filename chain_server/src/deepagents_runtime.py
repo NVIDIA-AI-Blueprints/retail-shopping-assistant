@@ -56,6 +56,8 @@ from .response_format import (
 from .catalog_execution import execute_catalog_search
 from .catalog_request import CatalogSearchPlan
 from .turn_support import (
+    WEATHER_PLACE_NOT_IN_THIS_TURN,
+    a_place_this_turn_named,
     _a_list_written_as_json_text,
     _append_product_results,
     _detail_fields_already_held,
@@ -2149,6 +2151,7 @@ class DeepAgentsRuntime:
         @tool(args_schema=_WeatherForecastInput, return_direct=False)
         def get_weather_forecast_tool(
             city: str,
+            shopper_words_naming_the_place: str,
             date: CalendarDate | None = None,
             start_date: CalendarDate | None = None,
             end_date: CalendarDate | None = None,
@@ -2156,11 +2159,17 @@ class DeepAgentsRuntime:
             """Live daily forecast for one place, for the dates being dressed
             for.
 
-            Call it, without being asked, when all three hold: the shopper
-            named a CITY, town or postal code; they named a date or window;
-            and that window is within about 15 days of TODAY. A destination
-            wedding, a trip, an outdoor event. Conditions change what to wear
-            more than anything else about a destination.
+            Call it, without being asked, when all three hold IN THE TURN YOU
+            ARE ANSWERING: the shopper named a CITY, town or postal code; they
+            named a date or window; and that window is within about 15 days of
+            TODAY. A destination wedding, a trip, an outdoor event. Conditions
+            change what to wear more than anything else about a destination.
+
+            In the turn you are answering, because a city they named earlier is
+            not where they are asking about now. "It's going to snow when we
+            get back" names no place: asked that, the assistant fetched the
+            forecast for Rome -- the wedding two turns before -- and offered
+            warm-weather clothes for a shopper describing snow.
 
             The `city` argument takes a city, town or postal code. A country
             or region has no single weather, so prefer asking which city over
@@ -2169,6 +2178,10 @@ class DeepAgentsRuntime:
             never present them as the weather where the shopper will be.
 
             Do not call it otherwise. Specifically:
+            - The shopper already said what the weather will be. "It's going to
+              snow when we get back" is the answer, and they are the authority
+              on their own trip. A forecast cannot improve on it and a forecast
+              for somewhere else contradicts it.
             - No date. Today is not what they are dressing for; ask instead.
             - A date further out than about 15 days. There is no forecast that
               far ahead, so a call cannot produce anything true.
@@ -2189,6 +2202,10 @@ class DeepAgentsRuntime:
             range -- and never send a relative date or invent a place.
             """
 
+            if not a_place_this_turn_named(
+                state.query, shopper_words_naming_the_place
+            ):
+                return WEATHER_PLACE_NOT_IN_THIS_TURN
             if weather_call_needs_a_date(date, start_date, end_date):
                 # The library treats a missing date as local today, which is
                 # right for "what is it like there now" and wrong for the only

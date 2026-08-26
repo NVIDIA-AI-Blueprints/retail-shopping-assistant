@@ -486,6 +486,28 @@ class WeatherForecastInput(BaseModel):
             "the shopper which city instead of calling."
         ),
     )
+    #: Where the place came from, as a parameter rather than a rule, for the
+    #: reason above: the prose form said "the shopper named a CITY" without
+    #: saying when, and a city named two turns ago satisfies it. "It's going to
+    #: snow when we get back" names no place, so the assistant reached for the
+    #: wedding city of an earlier turn and answered a shopper describing snow
+    #: with the forecast for Rome at 77-97F.
+    #:
+    #: Nothing to quote is the signal. Ask which place they mean.
+    shopper_words_naming_the_place: str = Field(
+        ...,
+        min_length=1,
+        max_length=200,
+        description=(
+            "Quote the words from THIS turn -- the one you are answering -- "
+            "that name this place. Not an earlier turn: a city they named "
+            "before is not where they are asking about now. If this turn names "
+            "no place, there is nothing to quote and this is not a call to "
+            "make; ask which place they mean instead. And if the shopper has "
+            "said what the weather will be, they are the authority on their "
+            "own trip and no forecast is needed at all."
+        ),
+    )
     date: CalendarDate | None = Field(
         default=None, description="One exact ISO date, resolved against TODAY."
     )

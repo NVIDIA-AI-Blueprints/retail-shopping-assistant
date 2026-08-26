@@ -371,6 +371,34 @@ def _shopper_stated_requirement(query: str, requirement: str) -> bool:
     return bool(requirement_words) and requirement_words.issubset(query_words)
 
 
+WEATHER_PLACE_NOT_IN_THIS_TURN = (
+    "WEATHER_PLACE_NOT_STATED: this turn names no place, so there is no "
+    "forecast to fetch for it. The words you quoted are not in the turn you "
+    "are answering -- a place from an earlier turn is not where the shopper is "
+    "asking about now. If they told you the weather themselves, they are the "
+    "authority on their own trip and you already have your answer. Otherwise "
+    "ask which place they mean. Do not call this again for this turn."
+)
+
+
+def a_place_this_turn_named(query: str, quoted: str) -> bool:
+    """Whether the words offered as naming the place are in this turn at all.
+
+    The tool asks the model to quote the words that named the place, and the
+    model quoted "Italy" on a turn reading "it's going to snow when we get
+    back" -- and, in the next run, "Rome", which the shopper never said in any
+    turn. A required field it can fill with anything is a field it will fill
+    with anything.
+
+    So the citation is checked against the record, which is the same thing
+    `expected_display_name` does for a product name: not what the words mean,
+    only whether they were said here. Reusing the constraint-provenance reader
+    so a quotation is judged the same way everywhere.
+    """
+
+    return bool(quoted.strip()) and _shopper_stated_requirement(query, quoted)
+
+
 def _product_scope_key(value: str | None) -> str:
     """Return the full normalized product phrase preserved across repair."""
 

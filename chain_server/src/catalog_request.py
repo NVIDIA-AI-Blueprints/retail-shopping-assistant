@@ -128,7 +128,7 @@ def build_catalog_search_plan(
 def _hard_filters(
     intent: CatalogSearchIntent,
     capabilities: CatalogCapabilities,
-) -> tuple[dict[str, Any], list[str]]:
+) -> tuple[dict[str, Any], list[str], list[str]]:
     filters: dict[str, Any] = {}
     issues: list[str] = []
     partial: list[str] = []

@@ -79,23 +79,12 @@ class Cart(BaseModel):
 
 
 class State(BaseModel):
-    """
-    Main state object that flows through the LangGraph.
-    
-    This object contains all the information needed by the various agents
-    to process user queries and generate responses.
-    
-    Attributes:
-        user_id: Unique identifier for the user
-        query: The user's input query
-        context: Previous conversation context
-        cart: User's shopping cart
-        response: Generated response from agents
-        image: Base64 encoded image data (if provided)
-        retrieved: Dictionary of retrieved product information
-        next_agent: Next agent to route to (set by planner)
-        guardrails: Whether to enable content safety checks
-        timings: Performance timing information
+    """Everything one turn carries, from request to final response.
+
+    The attribute list that used to live here named nine fields of the
+    twenty-five below and described `next_agent` as being set by a planner
+    that no longer exists. Each field documents itself, so there is no second
+    list here to drift out of date.
     """
     user_id: int = Field(..., description="Unique user identifier")
     query: str = Field(..., description="User's input query")

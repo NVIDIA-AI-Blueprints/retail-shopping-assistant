@@ -139,7 +139,14 @@ def test_the_tool_turns_back_a_citation_from_another_turn(base_config) -> None:
             )
         )
         assert "WEATHER_PLACE_NOT_STATED" in refused
-        assert "ask which place they mean" in refused
+        # And it says to carry on rather than to stop and ask. Leading with
+        # the question, the assistant answered "I don't have a place to check
+        # the weather for... otherwise you already know the weather at your
+        # destination and can decide what to wear based on that" -- to a
+        # shopper who had said it was going to snow and asked what to wear.
+        assert "Carry on and answer them" in refused
+        assert "Search for what those conditions call for and show" in refused
+        assert "Ask only if you cannot tell what they need" in refused
 
 
 def test_a_citation_from_this_turn_is_not_turned_back(base_config) -> None:

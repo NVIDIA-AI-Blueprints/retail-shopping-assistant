@@ -372,12 +372,19 @@ def _shopper_stated_requirement(query: str, requirement: str) -> bool:
 
 
 WEATHER_PLACE_NOT_IN_THIS_TURN = (
-    "WEATHER_PLACE_NOT_STATED: this turn names no place, so there is no "
-    "forecast to fetch for it. The words you quoted are not in the turn you "
-    "are answering -- a place from an earlier turn is not where the shopper is "
-    "asking about now. If they told you the weather themselves, they are the "
-    "authority on their own trip and you already have your answer. Otherwise "
-    "ask which place they mean. Do not call this again for this turn."
+    "WEATHER_PLACE_NOT_STATED: no forecast for this turn -- the words you "
+    "quoted are not in it, and a place named on an earlier turn is not where "
+    "the shopper is asking about now.\n"
+    "Carry on and answer them. A forecast was never the request: they asked "
+    "what to wear. If they said what the conditions will be -- \"it's going "
+    "to snow when we get back\" -- that is the answer to the weather "
+    "question, they are the authority on their own trip, and you have "
+    "everything you need. Search for what those conditions call for and show "
+    "it.\n"
+    "Ask only if you cannot tell what they need at all. Do not end the turn "
+    "on a question about a place when they have already told you the weather, "
+    "and do not tell them they can work it out themselves. Do not call this "
+    "tool again for this turn."
 )
 
 

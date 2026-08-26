@@ -15,20 +15,37 @@ Four review notes are this same rejection -- J10 t2, J16 t4, J17 t1, and the
 skirts turn earlier in the week.
 """
 
-import json
-import urllib.request
+
+from pathlib import Path
 
 import pytest
+
+from catalog_retriever.src.catalog import load_catalog
 
 from chain_server.src.catalog_capabilities import CatalogCapabilities
 from chain_server.src.turn_support import _search_catalog_tool_input_model
 
 
+#: The catalog the repository ships, read from disk. This fixture used to
+#: fetch http://localhost:8010/capabilities, which passes on a machine running
+#: the services and fails in CI, where the unit suite runs offline and nothing
+#: is listening. Same catalog either way -- the service builds its capabilities
+#: from these two files.
+REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
 @pytest.fixture(scope="module")
 def model():
-    raw = json.load(
-        urllib.request.urlopen("http://localhost:8010/capabilities", timeout=20)
+    snapshot = load_catalog(
+        str(REPO_ROOT / "shared/data/enriched_products.jsonl"),
+        str(REPO_ROOT / "shared/data/enriched_products.schema.yaml"),
+        catalog_id="fashion_products",
+        image_enabled=False,
+        text_model_name="text-model",
     )
+    raw = snapshot.capabilities
+    if not isinstance(raw, dict):
+        raw = raw.model_dump() if hasattr(raw, "model_dump") else dict(raw)
     return _search_catalog_tool_input_model(CatalogCapabilities.model_validate(raw))
 
 

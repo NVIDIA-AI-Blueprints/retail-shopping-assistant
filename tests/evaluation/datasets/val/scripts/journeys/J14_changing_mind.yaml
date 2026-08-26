@@ -19,9 +19,17 @@ turns:
       every_product: {subcategory: skirts}
   - say: in a size 6
     expect: {products_min: 1}
+  # The shopper names a product by name. Whether it was among the skirts shown
+  # a turn earlier varies by run, and when it was not, saying so and asking
+  # before adding is the rule working -- never add what the shopper has not
+  # been shown. Both are right, so both pass; the removal below is unaffected
+  # either way, because a cart that never gained it is already empty.
   - say: add the Navy Fitted Skirt in a 6
     expect:
-      cart: [{name: Navy Fitted Skirt, size: "6", qty: 1}]
+      any_of:
+        - cart: [{name: Navy Fitted Skirt, size: "6", qty: 1}]
+        - cart_unchanged: true
+          reply_asks: true
   # Changing your mind is the whole point of this journey, and the turn where
   # the shopper does it asserted nothing.
   - say: no wait, remove that

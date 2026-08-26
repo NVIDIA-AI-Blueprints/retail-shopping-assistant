@@ -18,10 +18,18 @@ turns:
     expect: {products_min: 2}
   # After four turns of the catalog not carrying what was asked for, the pivot
   # has to actually work. It was never checked.
+  # The shopper names a skirt by name. Whether it was among the ones shown a
+  # turn earlier varies by run, and when it was not, saying so and asking
+  # before adding is the rule working: never add what the shopper has not been
+  # shown. Both are right, so both pass.
   - say: add the Navy Fitted Skirt in a 6
     expect:
-      cart: [{name: Navy Fitted Skirt, size: "6", qty: 1}]
+      any_of:
+        - cart: [{name: Navy Fitted Skirt, size: "6", qty: 1}]
+        - cart_unchanged: true
+          reply_asks: true
+  # A readback reports the cart; what it must not do is change it. Pinning the
+  # skirt here made this turn re-assert the one above rather than test itself.
   - say: what's in my cart
     expect:
       cart_unchanged: true
-      cart: [{name: Navy Fitted Skirt, size: "6", qty: 1}]

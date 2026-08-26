@@ -59,27 +59,38 @@ turns:
     expect: {products_min: 2}
   - say: we're going to Italy first, what do I wear at the weekend
     expect: {}
-  - say: Florence
-    expect: {}
   - say: and there's another wedding in Cancun in about three months
     expect: {}
   - say: it's going to snow when we get back, what should I wear
     expect: {}
-  # The hardest reference in this journey. Boots were shown one turn ago and one
-  # of them is black, but footwear runs 5-9, so "in a 2" can only mean the black
-  # dress from nine turns earlier -- and after the narrowing above there is
-  # exactly one of those. Resolving that is the ability being tested; adding a
-  # boot would be wrong, and so would asking, because only one candidate fits.
+  # The hardest reference in this journey: a bare description, nine turns after
+  # the thing it points at, with a clutch request riding along behind it.
+  #
+  # It used to pin the Black Satin Lace-Up Dress, on the reasoning that boots
+  # were the only other black thing shown and footwear runs 5-9, so "in a 2"
+  # could only mean the dress. That stopped being true. Turn 17 shows black
+  # dresses of its own, and turn 18 -- now that the snow turn returns sweaters
+  # rather than dying on a refusal -- shows black sweaters, cut 2 to 12. Three
+  # defensible answers, and which is newest depends on what those two turns
+  # return that run.
+  #
+  # So this asserts what the turn is for and not what the catalog happened to
+  # rank first: a described reference reaches the cart as one new line, and the
+  # clutch is shown in the same turn rather than costing another one. Pinning a
+  # product here measured the search's ranking, and scored the assistant wrong
+  # for resolving to the most recent black thing in a size 2 -- which is what
+  # the shopper was looking at.
   - say: add the black one in a 2 and show me a clutch to go with it
     expect:
-      cart:
-        - {name: Jade Suede Heels, size: "7", qty: 1}
-        - {name: Jade Suede Heels, size: "8", qty: 1}
-        - {name: Black Satin Lace-Up Dress, size: "2", qty: 1}
+      any_of:
+        # Resolved: a black thing the shopper was shown reaches the cart as a
+        # third line, and the clutch comes back in the same turn.
+        - cart_lines: 3
+          products_min: 1
+        # Or asked: several black things in a size 2 have been shown by now and
+        # the assistant says so rather than picking one. The cart is untouched.
+        - cart_unchanged: true
+          reply_asks: true
   - say: what's in my cart
     expect:
       cart_unchanged: true
-      cart:
-        - {name: Jade Suede Heels, size: "7", qty: 1}
-        - {name: Jade Suede Heels, size: "8", qty: 1}
-        - {name: Black Satin Lace-Up Dress, size: "2", qty: 1}

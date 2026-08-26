@@ -211,6 +211,7 @@ def _cart_lines(cart: Any) -> list[dict[str, Any]]:
 #: Every expectation `check_turn` implements. An unknown key is a scenario
 #: asserting nothing, silently.
 _SUPPORTED_EXPECTATIONS = {
+    "any_of",
     "cart",
     "cart_lines",
     "cart_unchanged",
@@ -221,6 +222,7 @@ _SUPPORTED_EXPECTATIONS = {
     "product_named",
     "products_max",
     "products_min",
+    "reply_asks",
     "reply_must_not_say",
     "tools_not_used",
     "tools_used",
@@ -239,6 +241,50 @@ def check_turn(
 
     def record(name: str, ok: bool, detail: str = "") -> None:
         checks.append(Check(name, "pass" if ok else "fail", detail))
+
+    if "any_of" in expect:
+        # A turn with more than one right answer. "Add the black one in a 2"
+        # may resolve to the black thing the shopper was last shown, or ask
+        # which of several they meant; both are correct, and a script that
+        # names one of them scores the other wrong. Each branch is a whole
+        # expectation, checked as if it were the turn's own, and one branch
+        # passing is the turn passing.
+        branches = expect["any_of"] or []
+        outcomes = [
+            check_turn(branch, turn, previous_cart) for branch in branches
+        ]
+        passed = [
+            index
+            for index, branch in enumerate(outcomes)
+            if branch and all(check.outcome == "pass" for check in branch)
+        ]
+        record(
+            "any_of",
+            bool(passed),
+            f"branch {passed[0] + 1} of {len(branches)}"
+            if passed
+            else "; ".join(
+                f"branch {index + 1}: "
+                + ", ".join(
+                    check.detail or check.name
+                    for check in branch
+                    if check.outcome == "fail"
+                )
+                for index, branch in enumerate(outcomes)
+            ),
+        )
+
+    if "reply_asks" in expect:
+        # Whether the assistant put a question to the shopper. Wording, which
+        # every other check here avoids -- but a clarification is a speech act
+        # and leaves no other trace: the cart is unchanged either way, and so
+        # is everything else this harness can read.
+        asked = "?" in (turn.reply or "")
+        record(
+            "reply_asks",
+            asked is bool(expect["reply_asks"]),
+            f"reply {'asks' if asked else 'does not ask'} a question",
+        )
 
     if "cart" in expect:
         wanted = expect["cart"] or []

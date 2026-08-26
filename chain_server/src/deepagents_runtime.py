@@ -2980,6 +2980,23 @@ Rules:
                 f"RECENT DISCUSSION:\n{state.context or '(none)'}",
             ]
         )
+        # Last, because it was arriving fifth of nine with eleven thousand
+        # characters of history behind it, and the final words the model read
+        # before choosing a tool were a product showing from turn one.
+        #
+        # Asked "it's going to snow when we get back, what should I wear", it
+        # searched for "a dress suitable for a warm-weather wedding in Cancun"
+        # carrying black, high_neck and size 2 from six turns earlier -- the
+        # constraints of the turn whose reply is quoted in the history above.
+        # The request was in the prompt the whole time, buried at character
+        # 1,182 of 12,865.
+        #
+        # The same words, moved, and nothing said about what outranks what. An
+        # earlier attempt to fix this by declaring the query authoritative over
+        # anything established before it took this journey from three passes in
+        # three to none: the cart and the references it resolves are
+        # established earlier too, and they still count.
+        sections.append(f"THIS TURN'S REQUEST, TO ANSWER NOW:\n{state.query}")
         return "\n\n".join(sections)
 
     @staticmethod

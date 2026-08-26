@@ -165,3 +165,41 @@ def test_a_citation_from_this_turn_is_not_turned_back(base_config) -> None:
         )
     )
     assert "WEATHER_PLACE_NOT_STATED" not in answered
+
+
+def test_the_request_is_the_last_thing_the_prompt_says(base_config) -> None:
+    """It was fifth of nine, with eleven thousand characters behind it.
+
+    The last words before the model chose a tool were a product showing from
+    turn one. Asked what to wear for snow, it searched for a warm-weather
+    wedding dress in black, high-neck, size 2 -- the constraints of a turn six
+    earlier, whose reply is quoted in the history that follows the request.
+    """
+
+    from chain_server.src.agenttypes import State
+    from chain_server.src.deepagents_runtime import DeepAgentsRuntime
+    from chain_server.src.turn_support import RequestIdentity
+
+    runtime = DeepAgentsRuntime(base_config)
+    state = State(
+        user_id=1,
+        query="it's going to snow when we get back, what should I wear",
+    )
+    state.context = "RECENT CONVERSATION:\n" + ("older turns\n" * 400)
+
+    message = runtime._build_user_message(
+        state,
+        RequestIdentity(
+            request_id="r1",
+            session_id="s1",
+            conversation_id="c1",
+            cart_id="cart1",
+            context_user_id=1,
+            cart_user_id=1,
+        ),
+    )
+
+    assert message.rstrip().endswith(state.query)
+    # And the history is still there, in front of it rather than after it.
+    assert "older turns" in message
+    assert message.index("older turns") < message.rindex(state.query)

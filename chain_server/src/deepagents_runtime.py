@@ -1680,7 +1680,11 @@ class DeepAgentsRuntime:
             """Add products to the cart. Use ONLY on explicit shopper intent to
             add, buy, or put items in the cart. Requires PRODUCT_REF values from
             current-turn search or historical-product resolution — not names.
-            Call once with all items, not once per item.
+            Call once with every item the shopper asked to add, not once
+            per item. "All items" means the ones they asked for, not
+            everything in play this turn: "add the black one in a 2 and
+            show me a clutch to go with it" adds the dress and shows the
+            clutch. A product the shopper asked to see is not an item.
             """
 
             try:
@@ -1933,7 +1937,11 @@ class DeepAgentsRuntime:
             """Add products to the cart. Use ONLY on explicit shopper intent to
             add, buy, or put items in the cart. Requires PRODUCT_REF values from
             current-turn search or historical-product resolution — not names.
-            Call once with all items, not once per item.
+            Call once with every item the shopper asked to add, not once
+            per item. "All items" means the ones they asked for, not
+            everything in play this turn: "add the black one in a 2 and
+            show me a clutch to go with it" adds the dress and shows the
+            clutch. A product the shopper asked to see is not an item.
             """
 
             return normalize_tool_result(_add_cart_items_impl(items))

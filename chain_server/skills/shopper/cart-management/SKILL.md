@@ -39,7 +39,11 @@ Handle explicit cart operations. Do not expose tool names or internal identifier
   reads as not listening, and the shopper's instruction goes unfulfilled.
 - Pass `PRODUCT_REF` values established by current-turn search or successful
   historical-product resolution — never product names.
-- For multiple items, call `add_cart_items_tool` once with the full list.
+- For multiple items, call `add_cart_items_tool` once with the full list of
+  what the shopper asked to add. A turn can ask for two different things:
+  "add the black one in a 2 and show me a clutch to go with it" adds the
+  dress and shows the clutch. Showing is not adding, and a product found
+  for the second half of that sentence never belongs in the list.
 
 ## Remove and Update Rules
 

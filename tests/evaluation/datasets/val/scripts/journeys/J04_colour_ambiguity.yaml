@@ -18,8 +18,25 @@ turns:
     expect: {products_min: 1}
   - say: and a black bag
     expect: {products_min: 1}
+  # Six black bags were shown a turn ago and every one of them is one size, so
+  # a size 8 cannot mean any of them. The black heels are the only thing shown
+  # that takes one, and the shopper's own size settles it -- so this resolves
+  # rather than asks. Demanding a question here asked the assistant to ignore
+  # the one fact that made the reference unambiguous.
   - say: add the black one in a size 8
-    expect: {cart_unchanged: true}
+    expect:
+      any_of:
+        # When the size narrows it to one it resolves: six black bags shown a
+        # turn earlier are all cut one-size, so a size 8 cannot mean any of
+        # them and the black heels are the only thing left that takes one.
+        - cart:
+            - {name: Polished Pearl Pumps, size: "8", qty: 1}
+        # When black dresses in a size 8 are on screen too, several fit and
+        # nothing the shopper said tells them apart, so it asks. Which of the
+        # two happens depends on what the earlier searches returned, so the
+        # script cannot name one without scoring the other wrong.
+        - cart_unchanged: true
+          reply_asks: true
   - say: the Polished Pearl Pumps
     expect: {}
   - say: size 8

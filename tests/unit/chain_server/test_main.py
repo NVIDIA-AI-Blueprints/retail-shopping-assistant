@@ -2357,7 +2357,12 @@ class TestDeepAgentsRuntimeRefs:
         assert "advertised subcategories denotes the " in schema["properties"][
             "taxonomy"
         ]["description"]
-        assert set(taxonomy_schema["required"]) == {"category", "subcategory"}
+        # Neither role is required. "Show me some jewellery" names a category
+        # and no subcategory; requiring one rejected the call outright and the
+        # shopper was asked to clarify a request that could not have been
+        # plainer. A search with neither is still refused, by the validator
+        # rather than by the schema.
+        assert not taxonomy_schema.get("required")
         assert "search is image-only" in taxonomy_schema["properties"][
             "category"
         ]["description"]
@@ -2625,6 +2630,21 @@ class TestDeepAgentsRuntimeRefs:
                     "taxonomy_status": "exact_requested_type",
                 }
             )
+        # An advertised category grounds a role the shopper did not name: the
+        # category is the scope, unlimited by subcategory. Refused, this asked
+        # the shopper which product type they meant on a turn -- "it's going to
+        # snow, what should I wear" -- that had already said.
+        grounded_by_category = schema_model.model_validate(
+            {
+                **complete_request,
+                "requested_product_type": "bag",
+                "taxonomy_status": "agent_selected_type",
+                "taxonomy": {"category": ["bags"], "subcategory": []},
+            }
+        )
+        assert grounded_by_category.taxonomy.category == ["bags"]
+        assert grounded_by_category.taxonomy.subcategory == []
+        # With no category either, nothing grounds it and the rule still holds.
         with pytest.raises(
             ValueError,
             match="an open-role search requires an advertised subcategory",
@@ -2634,7 +2654,7 @@ class TestDeepAgentsRuntimeRefs:
                     **complete_request,
                     "requested_product_type": "bag",
                     "taxonomy_status": "agent_selected_type",
-                    "taxonomy": {"category": ["bags"], "subcategory": []},
+                    "taxonomy": {"category": [], "subcategory": []},
                 }
             )
         # A browse has no descriptive words and does not need any: "now show me
@@ -3042,6 +3062,7 @@ class TestDeepAgentsRuntimeRefs:
             "remove_cart_item_tool",
             "update_cart_items_tool",
             "view_cart_total_tool",
+            "describe_catalog_tool",
             "get_store_policy_tool",
             "check_active_promotions_tool",
             "check_product_availability_tool",
@@ -3054,6 +3075,7 @@ class TestDeepAgentsRuntimeRefs:
         assert activation_schema["properties"]["skill_names"]["items"]["enum"] == [
             "budget-shopping",
             "cart-management",
+            "catalog-questions",
             "outfit-styling",
             "product-discovery",
             "store-policy-answers",
@@ -3492,6 +3514,7 @@ class TestDeepAgentsRuntimeRefs:
         }
 
         assert registered_tools == {
+            "describe_catalog_tool",
             "search_catalog_tool",
             "get_product_details_tool",
             "resolve_conversation_products_tool",
@@ -3856,9 +3879,14 @@ class TestDeepAgentsRuntimeRefs:
                 },
             )])
         )
-        assert "requires an advertised category or subcategory" in (
-            invalid_strict_taxonomy
-        )
+        # Still refused, and now by the more specific check one step later: a
+        # product type the shopper named binds to an advertised category, so
+        # dropping the taxonomy loses what they asked for. The blanket
+        # needs-some-taxonomy rule no longer catches it, because a hard filter
+        # can now scope a search that names no category at all -- "nothing over
+        # $50" belongs to every category, which is the point rather than an
+        # omission. "Work bags" is not that case and is still turned back.
+        assert "binds to advertised category" in invalid_strict_taxonomy
         assert (
             "Preserve these capability-validated advertised "
             "required_constraints exactly on repair"
@@ -3905,7 +3933,7 @@ class TestDeepAgentsRuntimeRefs:
         open_budget_tools["activate_shopper_skills_tool"](
             skill_names=["outfit-styling", "budget-shopping"],
         )
-        invalid_open_budget = tool_text(
+        open_budget = tool_text(
             open_budget_tools["search_catalog_tool"](scopes=[dict(
                 semantic_query="rainy outfit under $60",
                 shopper_guidance="Starting a rainy outfit within the stated budget.",
@@ -3914,7 +3942,30 @@ class TestDeepAgentsRuntimeRefs:
                 required_constraints={"price": {"max": 60}},
             )])
         )
-        assert "an open-role search requires" in invalid_open_budget
+        # A browse scoped by a filter is not refused for naming no subcategory
+        # -- it runs and discloses the narrowing. Nor is it refused for the
+        # product type: "apparel" names the apparel category and selects
+        # apparel, so nothing has been substituted and there is nothing to
+        # repair. Both of those turned this scope back in turn, and the
+        # shopper paid a turn each time to be asked for a word they had not
+        # said. The type being the assistant's own reading rather than the
+        # shopper's is disclosed in the reply, not grounds for refusing.
+        assert "SEARCH_RESULT_GROUNDING_NOTE" in open_budget
+        assert captured_plan.get("calls", 0) == 1
+        captured_plan["calls"] = 0
+        # Substitution is what that check is for, and it still catches it:
+        # the type says bags and the taxonomy says apparel.
+        substituted_open_budget = tool_text(
+            open_budget_tools["search_catalog_tool"](scopes=[dict(
+                semantic_query="rainy outfit under $60",
+                shopper_guidance="Starting a rainy outfit within the stated budget.",
+                requested_product_type="bags",
+                taxonomy={"category": ["apparel"], "subcategory": []},
+                required_constraints={"price": {"max": 60}},
+            )])
+        )
+        assert "binds to advertised category" in substituted_open_budget
+        assert captured_plan.get("calls", 0) == 0
         drifted_open_budget = tool_text(
             open_budget_tools["search_catalog_tool"](scopes=[dict(
                 semantic_query="rainy dress under $60",
@@ -4055,9 +4106,11 @@ class TestDeepAgentsRuntimeRefs:
                 required_constraints={"price": {"max": 60}},
             )])
         )
-        assert "requires an advertised category or subcategory" in (
-            invalid_advertised_no_direct
-        )
+        # As above: "bags" names an advertised category, so the refusal is the
+        # specific one that says which. A hard filter can scope a search that
+        # names no category; it cannot excuse dropping one the shopper's own
+        # product type binds to.
+        assert "binds to advertised category" in invalid_advertised_no_direct
         assert "capability-validated advertised required_constraints" in (
             invalid_advertised_no_direct
         )
@@ -4340,20 +4393,28 @@ class TestDeepAgentsRuntimeRefs:
         )
         transport_scope = transport_request.scopes[0]
         assert transport_scope.taxonomy.subcategory == []
-        invalid_empty_rainy_scope = tool_text(
+        # Nothing grounds this role: no subcategory, no category, and a
+        # requirement that is not an advertised filter. The rule holds, and the
+        # refusal says which subcategories are on offer.
+        ungrounded_rainy_scope = tool_text(
             rainy_tools["search_catalog_tool"](scopes=[dict(
-                **transport_scope.model_dump()
+                **{
+                    **transport_scope.model_dump(),
+                    "taxonomy": {"category": [], "subcategory": []},
+                }
             )])
         )
-
-        assert invalid_empty_rainy_scope.startswith(
+        assert ungrounded_rainy_scope.startswith(
             tool_loop_control.SEARCH_VALIDATION_ERROR_PREFIX
         )
-        assert 'currently advertised subcategories: ["dresses"]' in (
-            invalid_empty_rainy_scope
-        )
+        # Every advertised subcategory, not apparel's alone: with no category
+        # named there is nothing narrowing what is on offer.
+        assert (
+            'currently advertised subcategories: ["boots", "crossbody_bags", '
+            '"dresses", "flats", "heels", "sandals", "satchels", "tote_bags"]'
+        ) in ungrounded_rainy_scope
         assert 'unadvertised_requirements ["water resistance"]' in (
-            invalid_empty_rainy_scope
+            ungrounded_rainy_scope
         )
         assert captured_plan["calls"] == calls_before_rainy
 
@@ -4411,6 +4472,7 @@ class TestDeepAgentsRuntimeRefs:
         assert captured_plan["plan"].semantic_queries == [
             "practical rainy day dresses"
         ]
+
         assert captured_plan["calls"] == calls_before_rainy + 1
 
         budget_rainy_state = State(
@@ -4612,11 +4674,14 @@ class TestDeepAgentsRuntimeRefs:
         schema_scrub_tools["activate_shopper_skills_tool"](
             skill_names=["outfit-styling"],
         )
+        # No category, so this first call is still turned back and there is a
+        # repair to scrub. Naming apparel now grounds the role and runs, which
+        # is the point of the rule change, not of this test.
         schema_scrub_tools["search_catalog_tool"](scopes=[dict(
             semantic_query="rainy day outfit",
             shopper_guidance="Starting with water-resistant outerwear.",
             requested_product_type="outerwear",
-            taxonomy={"category": ["apparel"], "subcategory": []},
+            taxonomy={"category": [], "subcategory": []},
             required_constraints={
                 "unadvertised_requirements": ["water resistance"]
             },
@@ -7947,8 +8012,13 @@ class TestDeepAgentsRuntimeRefs:
             )
         )
 
-        assert "PRODUCT NOT ESTABLISHED" in response
-        assert added == []
+        assert "CHOSEN FROM A DESCRIPTION" in response
+        # It IS added now, and that is the change. Refusing cost a turn every
+        # time the reading was right -- which was most of the time -- and the
+        # refusal could not tell a good reading from a bad one anyway. The
+        # cart is on screen and a wrong line is one click away; an unspoken
+        # choice is what could not be undone.
+        assert [item.display_name for item in added] == ["Belle Noir Satin Gown"]
 
     def test_a_product_never_shown_is_looked_up_in_the_catalog(
         self,
@@ -8686,7 +8756,7 @@ class TestDeepAgentsRuntimeRefs:
         # Refused either way: the shopper did not name it, and it was not part
         # of the explicit request. The provenance gate reaches it first.
         assert (
-            "PRODUCT NOT ESTABLISHED" in blocked_response
+            "CHOSEN FROM A DESCRIPTION" in blocked_response
             or "outside the current explicit add request" in blocked_response
         )
         assert "Green Meadow Sweater Top" in blocked_response

@@ -1,0 +1,16 @@
+id: R09_a_range_below_the_floor
+covers: [honesty, budget-shopping]
+why: >
+  "Anything for $5-10" in a shop that starts at $39.90. The published range
+  answers it outright and no search is needed -- and a search would find
+  nothing, which is not the same fact and cannot support the claim.
+
+  Absence read off the published shape is something the shopper can rely on.
+  Absence guessed from an empty result is what this assistant has been told
+  never to assert.
+turns:
+  - say: do you have anything for $5 to $10
+    expect:
+      products_max: 0
+      reply_must_not_say:
+        - "couldn't complete"

@@ -202,6 +202,7 @@ outcomes from diagnostics.
 | `outfit-styling` | `chain_server/skills/shopper/outfit-styling/SKILL.md` | Registered | `primary` / `product_procedure` | Search, details, availability, promotions, same-conversation product resolution | Build, complete, or refine a look; coordinate a requested piece with an anchor; use cart evidence only when cart management is also active |
 | `cart-management` | `chain_server/skills/shopper/cart-management/SKILL.md` | Registered | `standalone` | Cart read, total, add, remove, update, same-conversation product resolution | Explicit cart reads and mutations, alone or beside a product procedure |
 | `budget-shopping` | `chain_server/skills/shopper/budget-shopping/SKILL.md` | Registered | `modifier` | None | Stated price ceilings and budget bundles; combine with cart management for cart-total checks |
+| `catalog-questions` | `chain_server/skills/shopper/catalog-questions/SKILL.md` | Registered | `primary` | Questions about the shop | The most or least expensive thing, whether anything falls in a price range, what departments exist |
 | `store-policy-answers` | `chain_server/skills/shopper/store-policy-answers/SKILL.md` | Registered | `standalone` | Policy lookup | Returns, shipping, sizing, payment, price matching, and gift cards |
 
 ## `product-discovery`
@@ -395,3 +396,25 @@ skill guides decision boundaries and response style.
 Promote styling to a dedicated subagent only if evaluation shows repeated
 failures that require private multi-step planning beyond the main agent loop,
 or if styling needs its own tool budget, memory policy, or response schema.
+
+
+## `catalog-questions`
+
+Asks about the catalog rather than about a product: the most or least expensive
+thing, whether anything falls in a price range, what departments exist and how
+much each holds.
+
+`describe_catalog_tool` answers them from what the catalog publishes -- product
+counts and price ranges per category -- and the skill's one rule is that a fact
+about the shop comes from there and never from the results of one search. The
+failure it exists for: "the most expensive item in the catalog is the
+Quintessence Zippered Crossbody Bag at $199.99", said in a shop that reaches
+$269.99, because bags were the only department searched.
+
+A superlative is two steps and ends with the product: the shape says which
+category reaches the bound, a search of that category at that bound names the
+item. A range the shop does not reach is answered from the published floor
+without searching at all.
+
+It hands over to `product-discovery` the moment the shopper narrows to a kind
+of product.

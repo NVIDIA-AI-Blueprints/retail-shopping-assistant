@@ -208,6 +208,28 @@ def _cart_lines(cart: Any) -> list[dict[str, Any]]:
     return [line for line in contents if isinstance(line, dict)]
 
 
+#: Every expectation `check_turn` implements. An unknown key is a scenario
+#: asserting nothing, silently.
+_SUPPORTED_EXPECTATIONS = {
+    "any_of",
+    "cart",
+    "cart_lines",
+    "cart_unchanged",
+    "every_product",
+    "every_product.primary_color",
+    "no_constraint",
+    "no_product_named",
+    "product_named",
+    "products_max",
+    "products_min",
+    "reply_asks",
+    "reply_must_not_say",
+    "tools_not_used",
+    "tools_used",
+    "unsized_scopes",
+}
+
+
 def check_turn(
     expect: Mapping[str, Any],
     turn: TurnResult,
@@ -219,6 +241,50 @@ def check_turn(
 
     def record(name: str, ok: bool, detail: str = "") -> None:
         checks.append(Check(name, "pass" if ok else "fail", detail))
+
+    if "any_of" in expect:
+        # A turn with more than one right answer. "Add the black one in a 2"
+        # may resolve to the black thing the shopper was last shown, or ask
+        # which of several they meant; both are correct, and a script that
+        # names one of them scores the other wrong. Each branch is a whole
+        # expectation, checked as if it were the turn's own, and one branch
+        # passing is the turn passing.
+        branches = expect["any_of"] or []
+        outcomes = [
+            check_turn(branch, turn, previous_cart) for branch in branches
+        ]
+        passed = [
+            index
+            for index, branch in enumerate(outcomes)
+            if branch and all(check.outcome == "pass" for check in branch)
+        ]
+        record(
+            "any_of",
+            bool(passed),
+            f"branch {passed[0] + 1} of {len(branches)}"
+            if passed
+            else "; ".join(
+                f"branch {index + 1}: "
+                + ", ".join(
+                    check.detail or check.name
+                    for check in branch
+                    if check.outcome == "fail"
+                )
+                for index, branch in enumerate(outcomes)
+            ),
+        )
+
+    if "reply_asks" in expect:
+        # Whether the assistant put a question to the shopper. Wording, which
+        # every other check here avoids -- but a clarification is a speech act
+        # and leaves no other trace: the cart is unchanged either way, and so
+        # is everything else this harness can read.
+        asked = "?" in (turn.reply or "")
+        record(
+            "reply_asks",
+            asked is bool(expect["reply_asks"]),
+            f"reply {'asks' if asked else 'does not ask'} a question",
+        )
 
     if "cart" in expect:
         wanted = expect["cart"] or []
@@ -311,11 +377,33 @@ def check_turn(
             f"a size was applied: {offenders}",
         )
 
+    # Reading the reply, which this suite otherwise refuses to do. It is here
+    # because some defects ARE the wording: "the most expensive item in the
+    # catalog is the $199.99 crossbody bag" is false in a shop that reaches
+    # $269.99, and no assertion about products or the cart can see it.
+    #
+    # Scenario-local and explicit: the phrases sit in the yaml beside the turn
+    # they judge, so nothing general is matched anywhere.
+    for phrase in expect.get("reply_must_not_say", []) or []:
+        record(
+            f"reply_must_not_say.{phrase}",
+            phrase.casefold() not in (turn.reply or "").casefold(),
+            f"said: {(turn.reply or '')[:160]}",
+        )
+
     for tool in expect.get("tools_used", []) or []:
         record(f"tools_used.{tool}", tool in turn.tools, f"called: {turn.tools}")
 
     for tool in expect.get("tools_not_used", []) or []:
         record(f"tools_not_used.{tool}", tool not in turn.tools, f"called: {turn.tools}")
+
+    # An expectation this harness does not implement asserted nothing, and the
+    # scenario passed while proving whatever its author assumed. R08 was
+    # written with reply_must_not_say before that check existed here, and went
+    # green on a reply naming the wrong product.
+    unknown = sorted(set(expect) - _SUPPORTED_EXPECTATIONS)
+    if unknown:
+        record("expectation.unknown", False, f"not implemented: {unknown}")
 
     return checks
 

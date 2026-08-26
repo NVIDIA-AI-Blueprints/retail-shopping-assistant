@@ -1063,7 +1063,11 @@ def test_product_resolution_requires_selector_and_scoped_ordinal(
     )
 
     assert missing_selector.status_code == 422
-    assert unscoped_ordinal.status_code == 422
+    # An ordinal alone used to be rejected for naming no turn and no candidate
+    # set -- which is exactly what a shopper saying "the second one" gives you,
+    # and what the model would have had to invent. It now counts within the
+    # most recent showing, which is the one they are looking at.
+    assert unscoped_ordinal.status_code == 200
 
 
 def test_finalize_persists_ordered_events_and_replays_exactly(

@@ -17,6 +17,7 @@ REGISTERED_SKILL_PATHS = {
         "cart-management",
         "outfit-styling",
         "product-discovery",
+        "catalog-questions",
         "store-policy-answers",
     )
 }
@@ -56,12 +57,22 @@ EXPECTED_SKILL_POLICY = {
         "role": "primary",
         "exclusive_group": "product_procedure",
         "tools_granted": [
+            "describe_catalog_tool",
             "search_catalog_tool",
             "get_product_details_tool",
             "check_product_availability_tool",
             "check_active_promotions_tool",
             "resolve_conversation_products_tool",
             "get_weather_forecast_tool",
+        ],
+    },
+    "catalog-questions": {
+        "role": "primary",
+        "exclusive_group": "product_procedure",
+        "tools_granted": [
+            "describe_catalog_tool",
+            "search_catalog_tool",
+            "get_product_details_tool",
         ],
     },
     "store-policy-answers": {

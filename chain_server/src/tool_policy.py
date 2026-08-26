@@ -48,13 +48,13 @@ SHOPPING_TOOL_POLICIES: Mapping[str, ToolPolicy] = MappingProxyType(
     {
         "search_catalog_tool": ToolPolicy(
             allowed_skills_any_of=frozenset(
-                {"outfit-styling", "product-discovery"}
+                {"catalog-questions", "outfit-styling", "product-discovery"}
             ),
             risk="read",
         ),
         "get_product_details_tool": ToolPolicy(
             allowed_skills_any_of=frozenset(
-                {"outfit-styling", "product-discovery"}
+                {"catalog-questions", "outfit-styling", "product-discovery"}
             ),
             risk="read",
         ),
@@ -102,6 +102,15 @@ SHOPPING_TOOL_POLICIES: Mapping[str, ToolPolicy] = MappingProxyType(
             allowed_skills_any_of=frozenset({"cart-management"}),
             risk="mutating",
             required_intent_kind="cart_update",
+        ),
+        # Questions about the shop rather than about a product. Read-only and
+        # argument-free, so granting it widens nothing: it returns the same
+        # published shape that already builds the search tool's own schema.
+        "describe_catalog_tool": ToolPolicy(
+            allowed_skills_any_of=frozenset(
+                {"catalog-questions", "product-discovery"}
+            ),
+            risk="read",
         ),
         "get_store_policy_tool": ToolPolicy(
             allowed_skills_any_of=frozenset({"store-policy-answers"}),

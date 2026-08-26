@@ -41,6 +41,7 @@ def test_policy_covers_all_registered_shopping_tools() -> None:
         "check_product_availability_tool",
         "get_cart_tool",
         "get_product_details_tool",
+        "describe_catalog_tool",
         "get_store_policy_tool",
         "remove_cart_item_tool",
         "resolve_conversation_products_tool",

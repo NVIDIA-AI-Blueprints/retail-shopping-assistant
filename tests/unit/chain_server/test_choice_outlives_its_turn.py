@@ -18,7 +18,7 @@ from types import SimpleNamespace
 
 from chain_server.src.conversation_products import ProductEvidence
 from chain_server.src.turn_support import (
-    _cart_product_provenance_issue,
+    _cart_product_choice_note,
     _identified_in_the_current_showing,
     _system_identification_events,
 )
@@ -57,7 +57,7 @@ def test_a_product_chosen_in_an_earlier_turn_is_still_established() -> None:
         ]
     )
 
-    issue = _cart_product_provenance_issue(
+    issue = _cart_product_choice_note(
         DRESS,
         "I need size 6 for the shoes",
         ProductEvidence(),
@@ -75,7 +75,7 @@ def test_a_product_nobody_chose_is_still_refused() -> None:
         historical_product_sets=[_showing(2, identified=[DRESS.product_id])]
     )
 
-    issue = _cart_product_provenance_issue(
+    issue = _cart_product_choice_note(
         OTHER,
         "I need size 6 for the shoes",
         ProductEvidence(),
@@ -83,7 +83,7 @@ def test_a_product_nobody_chose_is_still_refused() -> None:
         _identified_in_the_current_showing(state),
     )
 
-    assert "PRODUCT NOT ESTABLISHED" in issue
+    assert "CHOSEN FROM A DESCRIPTION" in issue
     assert OTHER.display_name in issue
 
 
@@ -104,7 +104,7 @@ def test_a_newer_showing_retires_the_earlier_choice() -> None:
 
     assert _identified_in_the_current_showing(state) == set()
 
-    issue = _cart_product_provenance_issue(
+    issue = _cart_product_choice_note(
         DRESS,
         "add it",
         ProductEvidence(),
@@ -112,7 +112,7 @@ def test_a_newer_showing_retires_the_earlier_choice() -> None:
         _identified_in_the_current_showing(state),
     )
 
-    assert "PRODUCT NOT ESTABLISHED" in issue
+    assert "CHOSEN FROM A DESCRIPTION" in issue
 
 
 def test_the_newest_showing_carries_its_own_choices() -> None:

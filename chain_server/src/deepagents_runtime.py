@@ -30,6 +30,7 @@ import requests
 from .agenttypes import Cart, ShopperContext, State
 from .catalog_search import SearchContext, search_catalog
 from .response_format import (
+    format_catalog_shape,
     _format_availability_result,
     _format_cart,
     _format_cart_add_result,
@@ -55,6 +56,9 @@ from .response_format import (
 from .catalog_execution import execute_catalog_search
 from .catalog_request import CatalogSearchPlan
 from .turn_support import (
+    WEATHER_PLACE_NOT_IN_THIS_TURN,
+    a_place_this_turn_named,
+    _a_list_written_as_json_text,
     _append_product_results,
     _detail_fields_already_held,
     _search_catalog_scopes_input_model,
@@ -65,7 +69,8 @@ from .turn_support import (
     _add_model_usage,
     _cart_size_issue,
     _cart_line_size,
-    _cart_product_provenance_issue,
+    _cart_product_choice_note,
+    format_most_recent_subject,
     _identified_in_the_current_showing,
     _most_recently_shown,
     _images_in_product_order,
@@ -410,6 +415,16 @@ Rules:
   price, category/role, image availability, exact values in confirmed search-
   filter evidence, and a modest styling reason. Every other word in its display
   name is non-evidence.
+- A claim about a price is checked against the price. "Under $150", "within
+  budget", "fits your limit" and the like are arithmetic on numbers that are
+  both in front of you: the ceiling the draft itself names, and the price in
+  TOOL EVIDENCE. Where they disagree, the price wins and the claim is corrected
+  or cut. Asked for a navy skirt in a work capsule capped at $150 a piece, a
+  draft offered one at $159.99 and said "both are within your work capsule
+  budget (under $150 per item)", then said in the next sentence that it
+  exceeded the limit. Both sentences reached the shopper.
+- Two sentences that contradict each other never both survive. Keep the one the
+  evidence supports and delete the other; do not soften them into agreement.
 - Confirmed search-filter evidence applies to every product returned by that
   search. Preserve it and do not contradict it. One allowed value confirms that
   value; multiple allowed values prove only membership in the set, not which
@@ -630,31 +645,9 @@ _MAX_NAME_LOOKUPS = 2
 
 
 
-def _items_written_as_json_text(value: Any) -> Any:
-    """Read a list the model encoded as a string.
-
-    "add the Xenial Aviator Sunglasses" found the product, read its details,
-    and then sent `{"items": "[{\\"product_ref\\": \\"generated:9b8...\\"}]"}` --
-    the list JSON-encoded inside a string. The call was rejected whole and the
-    shopper's cart stayed empty on a turn where everything else had gone right.
-
-    Decoding it changes nothing about what was asked for: the contents are
-    validated against the same model either way, so a malformed item still
-    fails. Only the punctuation around it is forgiven.
-    """
-
-    if not isinstance(value, str):
-        return value
-    try:
-        decoded = json.loads(value)
-    except (TypeError, ValueError):
-        return value
-    return decoded if isinstance(decoded, list) else value
-
-
 class AddCartItemsToolInput(BaseModel):
     _accept_items_as_text = field_validator("items", mode="before")(
-        _items_written_as_json_text
+        _a_list_written_as_json_text
     )
 
     items: list[AddCartItemsToolItemInput] = Field(
@@ -684,6 +677,34 @@ class _UpdateCartItemsInput(BaseModel):
             "silently ignored."
         ),
     )
+
+    @field_validator("size", mode="before")
+    @classmethod
+    def _a_number_is_a_size_too(cls, value: Any) -> Any:
+        """Take a size written as a number, so the refusal can be reached.
+
+        This field exists for one reason: to turn "change it to a 7" into the
+        add-then-remove sequence instead of a silent no-op. A model that sent
+        `size: 7` rather than `size: "7"` never got there -- pydantic refused
+        the call for the type, three times running, with a validation error
+        that says nothing about carts. It then gave up, sent the quantity
+        alone, and told the shopper it had updated a dress it had never been
+        asked about.
+
+        Sizes are "2" and "onesize" in this catalog, so a bare number is the
+        obvious slip. Coercing it costs nothing and delivers the guidance the
+        field was declared for.
+        """
+
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return str(int(value) if float(value).is_integer() else value)
+        return value
+
+
+class _DescribeCatalogInput(BaseModel):
+    """No arguments. The shape is published; there is nothing to narrow."""
 
 
 class _GetStorePolicyInput(BaseModel):
@@ -1540,7 +1561,7 @@ class DeepAgentsRuntime:
                         "asked for."
                     )
                 sections.append("\n".join(lines))
-            return "\n\n".join(sections)
+            return "\n\n".join(section for section in sections if section)
 
         def _resolve_conversation_products_impl(
             references: list[ProductReferenceDescriptor],
@@ -1661,11 +1682,16 @@ class DeepAgentsRuntime:
             """Add products to the cart. Use ONLY on explicit shopper intent to
             add, buy, or put items in the cart. Requires PRODUCT_REF values from
             current-turn search or historical-product resolution — not names.
-            Call once with all items, not once per item.
+            Call once with every item the shopper asked to add, not once
+            per item. "All items" means the ones they asked for, not
+            everything in play this turn: "add the black one in a 2 and
+            show me a clutch to go with it" adds the dress and shows the
+            clutch. A product the shopper asked to see is not an item.
             """
 
             try:
                 requested_items = _normalize_cart_add_tool_items(items)
+                choices_from_a_description: list[str] = []
             except ValueError as exc:
                 return f"Cart add failed: {exc}"
             if not requested_items:
@@ -1785,18 +1811,22 @@ class DeepAgentsRuntime:
                 if size_issue:
                     blocked.append(f"- PRODUCT_REF '{product_ref}': {size_issue}")
                     continue
-                product_issue = _cart_product_provenance_issue(
+                # Disclosed, not refused. A description the model read one way
+                # is added and said out loud, because the cart is on screen and
+                # a wrong line is one click away -- where a refusal costs a
+                # turn on every request it misjudges, and it misjudged plenty.
+                choice_note = _cart_product_choice_note(
                     active_detail.product,
                     _shopper_words_this_conversation(state),
                     scope.product_evidence,
                     _most_recently_shown(state),
                     _identified_in_the_current_showing(state),
+                    size,
                 )
-                if product_issue:
-                    blocked.append(
-                        f"- PRODUCT_REF '{product_ref}': {product_issue}"
+                if choice_note:
+                    choices_from_a_description.append(
+                        f"- {active_detail.product.display_name}: {choice_note}"
                     )
-                    continue
                 resolved.append(
                     (
                         product_ref,
@@ -1894,6 +1924,8 @@ class DeepAgentsRuntime:
                 scope.product_evidence.values(),
             )
             rendered = _format_cart_add_result(added, failed, state.cart)
+            if choices_from_a_description:
+                rendered += "\n\n" + "\n".join(choices_from_a_description)
             if not committed:
                 return rendered
             return rendered, {EFFECTS_KEY: committed}
@@ -1907,7 +1939,11 @@ class DeepAgentsRuntime:
             """Add products to the cart. Use ONLY on explicit shopper intent to
             add, buy, or put items in the cart. Requires PRODUCT_REF values from
             current-turn search or historical-product resolution — not names.
-            Call once with all items, not once per item.
+            Call once with every item the shopper asked to add, not once
+            per item. "All items" means the ones they asked for, not
+            everything in play this turn: "add the black one in a 2 and
+            show me a clutch to go with it" adds the dress and shows the
+            clutch. A product the shopper asked to see is not an item.
             """
 
             return normalize_tool_result(_add_cart_items_impl(items))
@@ -2071,6 +2107,22 @@ class DeepAgentsRuntime:
                 _update_cart_items_impl(cart_line_id, quantity, size)
             )
 
+        @tool(args_schema=_DescribeCatalogInput, return_direct=False)
+        def describe_catalog_tool() -> str:
+            """What this shop holds: how many products, which categories, the
+            price range of each, and their subcategories. Use for questions
+            about the SHOP rather than about a product -- the most or least
+            expensive thing, whether anything falls in a price range, what
+            departments exist. Takes no arguments and searches nothing.
+
+            A fact about the catalog comes from here, never from the results of
+            one search: the dearest item a search happened to return is that
+            search's maximum, not the shop's. To name the actual item, read the
+            range here and then search that category at that bound.
+            """
+
+            return format_catalog_shape(self._catalog_capabilities.get())
+
         @tool(args_schema=_GetStorePolicyInput, return_direct=False)
         def get_store_policy_tool(
             topic: Literal[
@@ -2099,6 +2151,7 @@ class DeepAgentsRuntime:
         @tool(args_schema=_WeatherForecastInput, return_direct=False)
         def get_weather_forecast_tool(
             city: str,
+            shopper_words_naming_the_place: str,
             date: CalendarDate | None = None,
             start_date: CalendarDate | None = None,
             end_date: CalendarDate | None = None,
@@ -2106,11 +2159,17 @@ class DeepAgentsRuntime:
             """Live daily forecast for one place, for the dates being dressed
             for.
 
-            Call it, without being asked, when all three hold: the shopper
-            named a CITY, town or postal code; they named a date or window;
-            and that window is within about 15 days of TODAY. A destination
-            wedding, a trip, an outdoor event. Conditions change what to wear
-            more than anything else about a destination.
+            Call it, without being asked, when all three hold IN THE TURN YOU
+            ARE ANSWERING: the shopper named a CITY, town or postal code; they
+            named a date or window; and that window is within about 15 days of
+            TODAY. A destination wedding, a trip, an outdoor event. Conditions
+            change what to wear more than anything else about a destination.
+
+            In the turn you are answering, because a city they named earlier is
+            not where they are asking about now. "It's going to snow when we
+            get back" names no place: asked that, the assistant fetched the
+            forecast for Rome -- the wedding two turns before -- and offered
+            warm-weather clothes for a shopper describing snow.
 
             The `city` argument takes a city, town or postal code. A country
             or region has no single weather, so prefer asking which city over
@@ -2119,6 +2178,10 @@ class DeepAgentsRuntime:
             never present them as the weather where the shopper will be.
 
             Do not call it otherwise. Specifically:
+            - The shopper already said what the weather will be. "It's going to
+              snow when we get back" is the answer, and they are the authority
+              on their own trip. A forecast cannot improve on it and a forecast
+              for somewhere else contradicts it.
             - No date. Today is not what they are dressing for; ask instead.
             - A date further out than about 15 days. There is no forecast that
               far ahead, so a call cannot produce anything true.
@@ -2139,6 +2202,10 @@ class DeepAgentsRuntime:
             range -- and never send a relative date or invent a place.
             """
 
+            if not a_place_this_turn_named(
+                state.query, shopper_words_naming_the_place
+            ):
+                return WEATHER_PLACE_NOT_IN_THIS_TURN
             if weather_call_needs_a_date(date, start_date, end_date):
                 # The library treats a missing date as local today, which is
                 # right for "what is it like there now" and wrong for the only
@@ -2240,6 +2307,7 @@ class DeepAgentsRuntime:
             view_cart_total_tool,
             get_store_policy_tool,
             check_product_availability_tool,
+            describe_catalog_tool,
             check_active_promotions_tool,
         ]
         # Off means absent, not present-and-failing. An unregistered tool
@@ -2908,9 +2976,27 @@ Rules:
                 f"MEDIA ATTACHED:\n{_format_media_summary(state.media)}",
                 f"MEDIA ANALYSIS:\n{state.media_analysis or '(none)'}",
                 f"CURRENT CART:\n{_format_cart(state.cart)}",
+                format_most_recent_subject(state),
                 f"RECENT DISCUSSION:\n{state.context or '(none)'}",
             ]
         )
+        # Last, because it was arriving fifth of nine with eleven thousand
+        # characters of history behind it, and the final words the model read
+        # before choosing a tool were a product showing from turn one.
+        #
+        # Asked "it's going to snow when we get back, what should I wear", it
+        # searched for "a dress suitable for a warm-weather wedding in Cancun"
+        # carrying black, high_neck and size 2 from six turns earlier -- the
+        # constraints of the turn whose reply is quoted in the history above.
+        # The request was in the prompt the whole time, buried at character
+        # 1,182 of 12,865.
+        #
+        # The same words, moved, and nothing said about what outranks what. An
+        # earlier attempt to fix this by declaring the query authoritative over
+        # anything established before it took this journey from three passes in
+        # three to none: the cart and the references it resolves are
+        # established earlier too, and they still count.
+        sections.append(f"THIS TURN'S REQUEST, TO ANSWER NOW:\n{state.query}")
         return "\n\n".join(sections)
 
     @staticmethod

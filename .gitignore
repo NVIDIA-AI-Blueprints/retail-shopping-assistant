@@ -78,3 +78,7 @@ tests/evaluation/results/*
 
 # Next.js build output (the UI is CRA; this appears from stray tooling runs)
 ui/.next/
+
+# Spare catalog snapshots kept locally for comparison; never shipped.
+shared/data/enriched_products_0805.jsonl
+shared/data/enriched_products_old.jsonl

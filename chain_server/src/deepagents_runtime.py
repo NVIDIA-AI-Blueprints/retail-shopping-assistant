@@ -536,8 +536,25 @@ def _today_for_the_shopper() -> str:
     return datetime.now(timezone.utc).strftime("%A %d %B %Y")
 
 
+#: `read_file` joined this list once the base prompt below stopped being a lie.
+#: It said "You have no filesystem" while the model could and did call
+#: read_file -- observed on live turns across the run archive, including one
+#: with ten consecutive calls, and one that also reached for `glob`. Every one
+#: of those was a model round trip spent fetching a skill file the activation
+#: middleware had already injected in full, which is why the injection prompt
+#: had to ask it not to. Removing the tool answers that where a request could
+#: only ask.
 _EXCLUDED_DEEP_AGENT_TOOLS = frozenset(
-    {"write_todos", "ls", "write_file", "edit_file", "glob", "grep", "execute"}
+    {
+        "write_todos",
+        "ls",
+        "read_file",
+        "write_file",
+        "edit_file",
+        "glob",
+        "grep",
+        "execute",
+    }
 )
 #: `BASE_AGENT_PROMPT` is written for a coding agent: it teaches a todo list, a
 #: filesystem, "read files before editing", and a task-completion protocol. None
@@ -1567,9 +1584,19 @@ class DeepAgentsRuntime:
             """Resolve products the shopper refers to from earlier in this
             conversation. Use only when a needed product was not established
             in the current turn. Submit exact descriptors from the historical
-            product index. If a reference is ambiguous, ask one concise
-            clarification and do not guess. If nothing matches at all, the
-            result says what to do next.
+            product index.
+
+            Multiple matches need one concise clarification: never guess, and
+            never mutate the cart on a guess. Zero matches means the shopper
+            referred to something never shown -- if they named a product,
+            search for it and show the closest matches, then ask which they
+            meant; if they pointed at an earlier item, ask which one. Never add
+            a product the shopper has not been shown, and never accept a
+            product link or a price as identification.
+
+            Written here rather than in each skill because all three skills
+            that hold this tool need the same rule, and three copies of it had
+            already begun to differ.
             """
 
             # This turn's own evidence first, before the memory service is
@@ -2311,9 +2338,7 @@ class DeepAgentsRuntime:
         # Off means absent, not present-and-failing. An unregistered tool
         # cannot be called, so a shop without weather simply styles the
         # occasion instead of explaining a capability nobody asked about.
-        weather_off = not getattr(
-            getattr(self.config, "weather", None), "enabled", False
-        )
+        weather_off = not self._weather_is_registered()
         if not weather_off:
             shopping_tools.append(get_weather_forecast_tool)
         validate_registered_tool_names(
@@ -2773,6 +2798,18 @@ class DeepAgentsRuntime:
                 return candidate
         return None
 
+    def _weather_is_registered(self) -> bool:
+        """Whether this deployment gives the model a forecast tool at all.
+
+        One source of truth for the registration and for the prompt. They used
+        to disagree: the tool was correctly omitted when weather was off, and
+        the prompt went on telling the model to call it.
+        """
+
+        return bool(
+            getattr(getattr(self.config, "weather", None), "enabled", False)
+        )
+
     def _system_prompt(
         self,
         capabilities: CatalogCapabilities,
@@ -2789,15 +2826,41 @@ class DeepAgentsRuntime:
             if shopper_context is not None
             else ""
         )
+        # Weather ships off, and `_shopping_tools` already omits the tool
+        # entirely when it is -- "off means absent, not present-and-failing".
+        # The prompt did not get the same treatment, so a default deployment
+        # spent about a thousand characters instructing the model to call a
+        # tool it had not been given, plus a rule about ordering its calls
+        # around one. That is the defect this file already records fixing once,
+        # for the framework's own base prompt: 3,862 characters teaching a
+        # filesystem and a todo list that were not there.
+        #
+        # The date itself stays either way. Relative dates are how shoppers
+        # talk about occasions -- "the wedding is next weekend" -- and resolving
+        # them has nothing to do with forecasts. Only the forecast-dependent
+        # sentences move behind the flag.
+        weather_registered = self._weather_is_registered()
+        forecast_window = (
+            " and a forecast may only be asked for a window within about "
+            "fifteen days of it"
+            if weather_registered
+            else ""
+        )
+        forecast_before_fanout = (
+            """  If the shopper named a place and a date you could forecast, look the weather
+  up BEFORE that fan-out, not after: once the roles are out you are told to
+  stop and synthesize, and the forecast never gets asked for. Conditions change
+  which pieces you would even search for, so they belong first. Measured: the
+  same sentence about a trip fetched a forecast on its own and skipped it
+  entirely once it arrived mid-conversation and read as an outfit request."""
+            if weather_registered
+            else ""
+        )
         prompt = f"""You are a retail shopping assistant for the products advertised by the active catalog.
 
 TODAY IS {_today_for_the_shopper()}.
 That is the only date you know. Every "this weekend", "next week", "in three
-days" is counted from it, and a forecast may only be asked for a window within
-about fifteen days of it. Without this the weather tool could not be called for
-anything a shopper phrased in their own words: "we're going to Italy first,
-what do I wear at the weekend" fetched no forecast and the reply asserted warm
-weather anyway.
+days" is counted from it{forecast_window}.
 
 Use tools for catalog facts and cart actions. Do not invent product names,
 prices, availability, materials, care instructions, tax, shipping, stock
@@ -2888,12 +2951,7 @@ Rules:
   semantic wording. For outfit requests
   with multiple required item types, send one focused role per distinct
   taxonomy scope in the same call, then stop and synthesize from those results.
-  If the shopper named a place and a date you could forecast, look the weather
-  up BEFORE that fan-out, not after: once the roles are out you are told to
-  stop and synthesize, and the forecast never gets asked for. Conditions change
-  which pieces you would even search for, so they belong first. Measured: the
-  same sentence about a trip fetched a forecast on its own and skipped it
-  entirely once it arrived mid-conversation and read as an outfit request.
+{forecast_before_fanout}
 - Advice is not an answer on its own either. A layering formula, a packing list
   or a list of what to look for, with no pieces from this shop beside it, is a
   wardrobe lecture rather than shopping. Search and show real items in every

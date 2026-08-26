@@ -1400,7 +1400,11 @@ def _search_catalog_scopes_input_model(
                     "this role's results: 'a dress in size 2 and shoes' sizes "
                     "the dress and says nothing about the shoes, so the shoes "
                     "scope carries no size. Leave a constraint out rather than "
-                    "carry one across."
+                    "carry one across. One role gets one scope carrying every "
+                    "faithful advertised type for it; do not spend a spare "
+                    "scope on an adjacent category or a one-piece substitute. "
+                    "A dress is not a bottom and does not satisfy a request "
+                    "for separates."
                 ),
             ),
         ),

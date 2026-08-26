@@ -38,6 +38,11 @@ class ProductReferenceDescriptor(_ReferenceModel):
     turn_sequence: int | None = Field(default=None, ge=1)
     candidate_set_id: str | None = Field(default=None, min_length=1, max_length=64)
     ordinal: int | None = Field(default=None, ge=1)
+    #: What the shopper described rather than named, in advertised attribute
+    #: terms: "the black one" is {"primary_color": "black"}. Compared against
+    #: the attributes the catalog confirmed when the product was shown, so the
+    #: reading stays the model's and the matching stays exact.
+    attributes: dict[str, str] | None = Field(default=None, max_length=12)
 
     @model_validator(mode="after")
     def _validate_selectors(self):
@@ -47,13 +52,15 @@ class ProductReferenceDescriptor(_ReferenceModel):
             self.category,
             self.turn_sequence,
             self.candidate_set_id,
+            self.ordinal,
+            self.attributes,
         )
         if not any(selector is not None for selector in selectors):
             raise ValueError("At least one product reference selector is required")
-        if self.ordinal is not None and (
-            self.turn_sequence is None and self.candidate_set_id is None
-        ):
-            raise ValueError("ordinal requires turn_sequence or candidate_set_id")
+        # An ordinal used to require a turn or a candidate set, which the
+        # shopper saying "the second one" does not supply and the model can
+        # only guess at. Alone it counts within the most recent showing, which
+        # is the one they are looking at.
         return self
 
 
@@ -341,6 +348,24 @@ def _matched_occurrences(
 ) -> list[ProductReferenceMatch]:
     """Collapse matching occurrences to one per product, newest kept."""
 
+    # "The second one" counts within the showing the shopper is looking at.
+    # Left unscoped it counted within every showing at once, so a conversation
+    # with four of them offered four second ones and the reference that could
+    # not be clearer became a clarification. Occurrences arrive oldest first,
+    # so the last one names the newest set.
+    if (
+        descriptor.ordinal is not None
+        and descriptor.turn_sequence is None
+        and descriptor.candidate_set_id is None
+        and occurrences
+    ):
+        newest = _identifier(occurrences[-1].candidate_set_id)
+        occurrences = [
+            occurrence
+            for occurrence in occurrences
+            if _identifier(occurrence.candidate_set_id) == newest
+        ]
+
     matches_by_ref: dict[str, ProductReferenceMatch] = {}
     for occurrence in occurrences:
         if not _matches_descriptor(occurrence, descriptor):
@@ -383,6 +408,37 @@ def _resolve_descriptor(
     blocking_field: str | None = None
     corroboration_mismatch: list[str] = []
     matches = _matched_occurrences(descriptor, occurrences)
+
+    if not matches and descriptor.attributes and descriptor.display_name:
+        # A phrase can be read as a name or as a description, and the model
+        # sent both readings of the same one: display_name "black one"
+        # alongside {"primary_color": "black", "sizes": "2"}. Selectors
+        # compose, so the reading that could never match took the one that
+        # could down with it, and the reference came back NOT FOUND with the
+        # dress it described sitting in the index.
+        #
+        # Nothing is called "black one". When the name finds nothing and a
+        # description was given too, the description is what the shopper meant.
+        # Only a descriptor that resolves nothing reaches here, so a name that
+        # does match is still the answer.
+        matches = _matched_occurrences(
+            descriptor.model_copy(update={"display_name": None}), occurrences
+        )
+
+    if len(matches) > 1 and descriptor.attributes:
+        # Several showings fit the description, so the most recent one is the
+        # one the shopper is pointing at: "the black one" a turn after a black
+        # dress was shown does not mean the black dress from nine turns before.
+        # Within a single showing recency says nothing -- four black dresses on
+        # one screen are equally recent -- and those stay a question to ask.
+        newest = _identifier(
+            max(matches, key=lambda match: match.turn_sequence).candidate_set_id
+        )
+        matches = [
+            match
+            for match in matches
+            if _identifier(match.candidate_set_id) == newest
+        ]
 
     if not matches and descriptor.product_ref is not None:
         # Strictly a second chance: a descriptor that resolves today resolves
@@ -462,6 +518,45 @@ def _matches_descriptor(
         return False
     if descriptor.ordinal is not None and match.position != descriptor.ordinal:
         return False
+    if descriptor.attributes and not _attributes_agree(
+        match.product, descriptor.attributes
+    ):
+        return False
+    return True
+
+
+def _attributes_agree(product: Any, wanted: dict[str, str]) -> bool:
+    """Whether a shown product carries every attribute the shopper described.
+
+    "Add the black one in a 2" could be asked of this index and never answered
+    from it: a description is not a PRODUCT_REF and not a product name, so the
+    two comparisons on offer both missed, the reference came back NOT FOUND,
+    and a catalog lookup went off and ranked products by how much their names
+    resembled the string "black one".
+
+    Every fact needed was already recorded. The attributes the catalog
+    confirmed when the product was shown are stored with the showing, so
+    matching them is a comparison against this system's own record. The model
+    reads "black" into primary_color; nothing here reads anything.
+
+    A stored list holds each value the product offers -- sizes 2, 4, 6 -- so
+    the shopper's size matches by membership. Anything else matches whole.
+    """
+
+    recorded = getattr(product, "attributes", None)
+    if recorded is None and isinstance(product, dict):
+        recorded = product.get("attributes")
+    if not isinstance(recorded, dict):
+        return False
+    for name, value in wanted.items():
+        if name not in recorded:
+            return False
+        held = recorded[name]
+        if isinstance(held, (list, tuple, set)):
+            if not any(_normalized(str(item)) == _normalized(value) for item in held):
+                return False
+        elif _normalized(str(held)) != _normalized(value):
+            return False
     return True
 
 

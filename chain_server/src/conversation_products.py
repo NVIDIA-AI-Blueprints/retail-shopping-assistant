@@ -77,6 +77,25 @@ class ProductReferenceDescriptor(_ConversationProductModel):
             "asked to add 'the first one' of four sandals, a guessed ref "
             "picked the fourth, the name did not match it, nothing was added, "
             "and the shopper was re-shown the same four in a different order."
+            " Sent alone it counts within the most recently shown set, which "
+            "is the one the shopper is looking at."
+        ),
+    )
+    attributes: dict[str, str] | None = Field(
+        default=None,
+        max_length=12,
+        description=(
+            "What the shopper described rather than named, in advertised "
+            "attribute values: 'the black one' is {'primary_color': 'black'}, "
+            "'the black one in a 2' adds {'sizes': '2'}. This is how a "
+            "descriptive reference resolves. It is compared against the "
+            "attributes the catalog confirmed when each product was shown, "
+            "most recently shown first, so it finds what the shopper is "
+            "pointing at rather than what shares a word with their phrase. "
+            "Send it instead of display_name, which is for a product's actual "
+            "name: nothing is called 'black one', so sending that as a name "
+            "found nothing shown, searched the catalog for it, and offered "
+            "four products the shopper had never seen."
         ),
     )
 
@@ -88,6 +107,8 @@ class ProductReferenceDescriptor(_ConversationProductModel):
             self.category,
             self.turn_sequence,
             self.candidate_set_id,
+            self.ordinal,
+            self.attributes,
         )
         if not any(value is not None for value in selectors):
             # `reference_id` is meant to be a label -- "first_sandals" -- but a
@@ -102,10 +123,6 @@ class ProductReferenceDescriptor(_ConversationProductModel):
             # labelled as found by name rather than shown before.
             object.__setattr__(self, "display_name", self.reference_id)
             return self
-        if self.ordinal is not None and (
-            self.turn_sequence is None and self.candidate_set_id is None
-        ):
-            raise ValueError("ordinal requires turn_sequence or candidate_set_id")
         return self
 
 
@@ -505,11 +522,29 @@ def format_product_resolution(result: ResolveConversationProductsResult) -> str:
         #
         # Which recovery fits depends on whether the shopper named a product or
         # pointed at one, and the model is the only reader that can tell.
+        # What was checked, not what was concluded. Two things were compared:
+        # the PRODUCT_REF, and the display name as a whole string. "Nothing
+        # shown in this conversation matches it" reports far more than that,
+        # and for a reference the shopper pointed with rather than named, it is
+        # simply untrue.
+        #
+        # "Add the black one in a 2" came here. No product is called "black
+        # one", so neither comparison could hit -- and the black dress in a
+        # size 2 was sitting in the index, shown nine turns earlier. Told
+        # nothing shown matched, and handed four catalog products it had never
+        # shown, the assistant stopped believing the index it was already
+        # holding and asked the shopper which black item they meant.
         lines.append(
-            f"REFERENCE {resolution.reference_id}: NOT FOUND. Nothing shown in "
-            "this conversation matches it. If the shopper named a product, "
+            f"REFERENCE {resolution.reference_id}: NOT FOUND. No product shown "
+            "in this conversation carries that PRODUCT_REF or that exact name; "
+            "a description was not compared against what was shown. If the "
+            "shopper pointed at an earlier item rather than naming one -- 'the "
+            "black one', 'the second one' -- read the HISTORICAL PRODUCT INDEX "
+            "in your context, most recently shown first, and use the "
+            "PRODUCT_REF of the one that fits; ask only if more than one does. "
+            "If the shopper named a product, "
             "search the catalog and show the closest matches, then ask which to "
-            "add. If they pointed at an earlier item, ask which one. Never add "
+            "add. Never add "
             "a product the shopper has not been shown, and do not ask for a "
             "product link or a price -- neither identifies a catalog product."
         )

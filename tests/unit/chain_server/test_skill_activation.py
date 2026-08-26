@@ -615,7 +615,18 @@ def test_outfit_styling_rejects_cart_mutation_before_execution(
 
     assert handled == []
     assert isinstance(result, ToolMessage)
-    assert str(result.content).startswith(SKILL_TOOL_NOT_GRANTED)
+    content = str(result.content)
+    assert content.startswith(SKILL_TOOL_NOT_GRANTED)
+    # Refused, and told how to stop being refused. This message used to end
+    # "continue using only the tools available for this turn", and a turn that
+    # obeyed it said "I've added the Ombre Canvas Tote Bag to your cart" over
+    # an empty cart. Asserted here rather than on the message alone, because
+    # what went wrong was the model reading this exact reply.
+    assert "cart-management" in content
+    assert "activate_shopper_skills_tool" in content
+    assert "call the tool again" in content
+    assert "Nothing has been done yet" in content
+    assert "Continue using only the tools available" not in content
 
 
 def test_browse_only_product_discovery_rejects_cart_mutation() -> None:
@@ -1346,3 +1357,73 @@ async def test_compiled_agent_executes_capability_valid_repair(
     assert model.calls[2]["tools"] == ["search_catalog_tool"]
     assert model.calls[3]["tools"] == []
     assert result["messages"][-1].content.startswith("I found no black flats")
+
+
+def test_a_turn_may_correct_the_skills_it_opened_with() -> None:
+    """The selection made at the first token is not always the right one.
+
+    Six turns into building a capsule the shopper says "add the Ombre Canvas
+    Tote Bag". The turn opens with outfit-styling and budget-shopping -- right
+    for the six turns before it -- finds the bag, reads its details, and is
+    refused the cart tool for the grant.
+
+    A second activation used to return False, change no grants, and report
+    itself already complete. So the turn could not acquire the tool it needed,
+    and said "I've added the Ombre Canvas Tote Bag to your cart" over an empty
+    cart.
+    """
+
+    middleware = _middleware()
+    middleware.activate(
+        {
+            "/shopper/outfit-styling/SKILL.md": "# Outfit Styling",
+            "/shopper/budget-shopping/SKILL.md": "# Budget",
+        },
+        ["outfit-styling", "budget-shopping"],
+    )
+    refused = middleware.wrap_tool_call(
+        _tool_request("add_cart_items_tool", _activated_messages()), lambda r: r
+    )
+    assert str(refused.content).startswith(SKILL_TOOL_NOT_GRANTED)
+
+    corrected = middleware.activate(
+        {"/shopper/cart-management/SKILL.md": "# Cart"}, ["cart-management"]
+    )
+
+    assert corrected is True
+    handled: list[ToolCallRequest] = []
+    result = middleware.wrap_tool_call(
+        _tool_request("add_cart_items_tool", _activated_messages()),
+        handled.append,
+    )
+    assert handled, "the corrected selection must grant the tool"
+    assert not str(getattr(result, "content", "")).startswith(
+        SKILL_TOOL_NOT_GRANTED
+    )
+
+
+def test_a_turn_cannot_reselect_for_ever() -> None:
+    """Past the cap the answer is no, rather than a success granting nothing.
+
+    Told to activate and retry, a model that cannot find the tool it wants
+    otherwise loops -- activate, refused, activate, refused -- until the turn
+    dies on the recursion limit and the shopper is told an error occurred.
+    """
+
+    middleware = _middleware()
+    for _ in range(3):
+        assert middleware.activate(
+            {"/shopper/outfit-styling/SKILL.md": "# Outfit Styling"},
+            ["outfit-styling"],
+        )
+    assert (
+        middleware.activate(
+            {"/shopper/cart-management/SKILL.md": "# Cart"}, ["cart-management"]
+        )
+        is False
+    )
+    # And the grants stay where the last accepted selection left them.
+    refused = middleware.wrap_tool_call(
+        _tool_request("add_cart_items_tool", _activated_messages()), lambda r: r
+    )
+    assert str(refused.content).startswith(SKILL_TOOL_NOT_GRANTED)

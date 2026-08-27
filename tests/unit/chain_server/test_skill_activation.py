@@ -1049,7 +1049,10 @@ async def test_compiled_agent_loads_skill_and_blocks_ungranted_tool(
     assert "check_active_promotions_tool" in shopping_call["tools"]
     assert "get_cart_tool" not in shopping_call["tools"]
     assert "add_cart_items_tool" not in shopping_call["tools"]
-    assert "read_file" in shopping_call["tools"]
+    # `read_file` is no longer registered at all. The skills are injected in
+    # full by the activation middleware, so nothing needs to fetch them, and
+    # the base prompt can now truthfully say there is no filesystem.
+    assert "read_file" not in shopping_call["tools"]
     assert "## Active Shopper Skills" in shopping_call["system_prompt"]
     rejected = [
         message

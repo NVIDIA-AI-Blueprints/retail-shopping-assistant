@@ -111,6 +111,13 @@ def _field_capability(
         values=values,
         min_value=min_value,
         max_value=max_value,
+        # Only for values this catalog actually carries: a meaning for a value
+        # no product has would describe a filter that returns nothing.
+        value_meanings={
+            key: text
+            for key, text in spec.value_meanings.items()
+            if any(value.value == key for value in values)
+        },
     )
 
 
@@ -128,6 +135,7 @@ def _compatibility_filter(
         min_value=capability.min_value,
         max_value=capability.max_value,
         request_aliases=aliases,
+        value_meanings=dict(capability.value_meanings),
     )
 
 

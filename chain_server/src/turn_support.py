@@ -1230,10 +1230,28 @@ def _search_catalog_tool_input_model(
             Field(
                 ...,
                 description=(
+                    # The size-2-and-shoes example lives on `scopes`, which is
+                    # where cross-role ownership belongs, and was stated here
+                    # too. Both arrived on 2026-08-20 (#191). Measured across
+                    # the run archive on J01 turn 12 -- "my husband is coming
+                    # too, he needs sunglasses" -- the audience filter was
+                    # correct 3 times in 5 on the build before that day, and
+                    # once in the ~105 runs after it. Nothing was removed in
+                    # between and the audience rule itself has not changed
+                    # since 2026-08-06; 140 characters of size-and-role worked
+                    # example were added to the front of the object where the
+                    # audience value gets chosen. Stated once, on the field
+                    # that owns it.
                     "Catalog hard filters and any defining requirement the active "
-                    "catalog cannot enforce. A modifier belongs to the product it "
-                    "was said about: in 'a dress in size 2 and shoes', size 2 is "
-                    "the dress's and the shoes have no size. Apply constraints "
+                    "catalog cannot enforce. When the shopper names a specific "
+                    "product and asks whether it meets some condition -- within a "
+                    "budget, in stock, in a colour, on sale -- do not send that "
+                    "condition as a filter. You are checking one product, not "
+                    "narrowing a category, and a filter can only hide the answer. "
+                    "Asked whether a named bracelet came within a $150 ceiling, a "
+                    "search filtered to $150 could not return the $169.99 bracelet "
+                    "and the shopper was told the shop did not have it. Find the "
+                    "product first, then compare. Apply constraints "
                     "only when the current turn states them for the target "
                     "products; an anchor's "
                     "attributes belong in semantic styling context unless the "
@@ -1400,7 +1418,11 @@ def _search_catalog_scopes_input_model(
                     "this role's results: 'a dress in size 2 and shoes' sizes "
                     "the dress and says nothing about the shoes, so the shoes "
                     "scope carries no size. Leave a constraint out rather than "
-                    "carry one across."
+                    "carry one across. One role gets one scope carrying every "
+                    "faithful advertised type for it; do not spend a spare "
+                    "scope on an adjacent category or a one-piece substitute. "
+                    "A dress is not a bottom and does not satisfy a request "
+                    "for separates."
                 ),
             ),
         ),
@@ -1497,30 +1519,47 @@ def _taxonomy_list_field(
 #: returned women's sunglasses. The rule below is not new -- it is the one
 #: already written in the system prompt, moved to the channel the model reads.
 _WEARER_AUDIENCE_FILTER_DESCRIPTION = (
-    "Who the products are for. When the shopper names the person this is for, "
-    "send every advertised value that suits them, and a value covering all "
-    "genders always suits anyone, so include it alongside the value for their "
-    "gender. Shoppers name people casually and every one of these counts the "
-    "same as a formal word: hubby, my guy, my man, my other half, my brother, "
-    "my dad, my son, my wife, my girlfriend, my mum, my sister, my daughter, "
-    "the kids. Buying for a woman means the women's value and the all-genders "
-    "value together, because both suit her; buying for a man in a catalog "
-    "that advertises no men's value means the all-genders value alone, "
-    "because the women's pieces genuinely do not suit him. When nobody is "
-    "named, omit this filter entirely -- do not send a covers-everyone value "
-    "to mean unspecified, which would discard everything stocked for one "
-    "audience. If nothing advertised suits the named person, such as a child "
-    "in an adult-only catalog, search for them anyway and let it return "
-    "nothing; never substitute what does not suit them. The person-words "
-    "listed above are for reading what the shopper said. They are not "
-    "audiences to offer back: a reply may name only audiences this catalog "
-    "advertises, and must never suggest looking for one it does not stock. "
-    "Only this turn's "
-    "words count. An audience established earlier in the conversation never "
-    "carries into a request that does not name that person again, however "
-    "obviously they are still around: send no filter and let the shopper "
-    "redirect you. Enumerating the ways a shopper moves on is hopeless, so "
-    "the rule is the reverse -- naming someone is what turns the filter on."
+    # Two halves, learned separately and measured apart.
+    #
+    # The MEANING of the values comes from Catalog capabilities, not from a
+    # table of cases written here. Enumerating them scored a man 0/10 to 11/18
+    # depending on wording, and "shades for hubby" never once: the model had
+    # to infer from the bare string `womens` whether it was a wearability
+    # constraint or a department, and men do shop womenswear. Published as a
+    # fact, hubby went to 4/4 and dad to 4/4.
+    #
+    # The TRIGGER and the ORDER have to stay here. A version that carried only
+    # the meanings sent no filter at all for a wife or a sister, 0/10 -- it
+    # knew what the values meant and never reached for them. So: say plainly
+    # when to send it, and keep the covers-everyone value unconditional so
+    # there is no judgment to lose.
+    "Who the products are for. Send this whenever the shopper names the person "
+    "they are buying for, however casually. Every one of these counts the same "
+    "as a formal word: hubby, my guy, my man, my other half, my brother, my "
+    "dad, my son, my wife, my girlfriend, my mum, my sister, my daughter, the "
+    "kids. Build the list "
+    "in two steps, in this order. First: the value covering all genders is "
+    "always in the list, because it suits everyone -- it is never the thing "
+    "you leave out. Second: add any other value only when its published "
+    "meaning fits the person named. Buying for a woman, the women's value fits "
+    "and is added, so the list holds both. Buying for a man or a child, "
+    "nothing is added and the covers-everyone value goes alone. Being the "
+    "closest value available is not the test and never justifies adding one. "
+    "If nothing published suits the named person, such as a child in a "
+    "catalog whose values are all adult, send what covers everyone, say so "
+    "in the reply, and never substitute what does not suit them. "
+    "The person-words listed above are for reading what the shopper said. "
+    "They are not audiences to offer back: a reply may name only audiences "
+    "this catalog advertises, and must never suggest looking for one it "
+    "does not stock. "
+    "When nobody is named, omit this filter entirely -- do not send a "
+    "covers-everyone value to mean unspecified, which "
+    "discards everything stocked for one audience. Only this turn's words "
+    "count. An audience established earlier never carries into a request that "
+    "does not name that person again, however obviously they are still "
+    "around: send no filter and let the shopper redirect you. Enumerating the "
+    "ways a shopper moves on is hopeless, so the rule is the reverse -- naming "
+    "someone is what turns the filter on."
 )
 
 
@@ -1587,6 +1626,20 @@ def _required_constraints_input_model(
             field_type = str | list[str] | None
         if name and name == wearer_audience_field:
             description = _WEARER_AUDIENCE_FILTER_DESCRIPTION
+            # The catalog publishes what its values mean; render them onto the
+            # field the model fills, not only into the capabilities block.
+            # Measured: with the meanings in the system prompt alone, "shades
+            # for hubby" went 0/4 to 3/4 -- the fact was doing real work -- but
+            # a wife or sister collapsed to 1/14, because the binding channel
+            # had lost the instruction to the weaker one. The fact belongs
+            # where the decision is made.
+            meanings = getattr(capability, "value_meanings", None) or {}
+            if meanings:
+                description += " What each value means, published by this "
+                description += "catalog: " + "; ".join(
+                    f"{value} -- {text}"
+                    for value, text in sorted(meanings.items())
+                ) + "."
         else:
             description = f"Advertised hard filter '{name}'."
             # The catalog publishes the range of every numeric filter and this
@@ -4766,6 +4819,70 @@ def _most_recently_shown(state: Any) -> list[dict]:
         return []
     newest = max(sets, key=lambda entry: entry.get("turn_seq") or 0)
     return [item for item in newest["products"] if isinstance(item, dict)]
+
+
+def _a_choice_only_the_shopper_can_make(
+    product: Any,
+    shopper_text: str,
+    evidence: ProductEvidence,
+    recently_shown: Sequence[Any] = (),
+    already_identified: Sequence[str] = (),
+    size: str | None = None,
+) -> str:
+    """Ask when the candidates are genuinely indistinguishable, not merely unconfirmed.
+
+    Disclosure replaced refusal for a good reason: refusing on the ABSENCE of
+    confirmation blocked turns that had got it right, and it cost a turn every
+    time it was wrong. That reasoning holds wherever one candidate is a better
+    reading than the others -- the shopper sees which one was taken and a wrong
+    line is one click away.
+
+    It does not hold when nothing distinguishes them. "add the black one in a
+    size 8", with four black dresses on screen and every one of them sold in an
+    8, is not a reading the assistant can be more or less right about. It took
+    the Black Satin Lace-Up Dress because its name begins with the word the
+    shopper used, which is the same name-matching that once put a navy dress in
+    a cart for a request for a black one.
+
+    So the scorer decides. `_products_the_shopper_fits` weights each word by how
+    many candidates share it -- among four black dresses "black" is worth a
+    quarter, and "vivienne" would be worth everything -- and returns a single
+    product only when one clears the floor and beats the next by the margin.
+    One fit is a reading, and is disclosed. No fit among several candidates is a
+    tie, and a tie is the shopper's to break.
+    """
+
+    candidates = _reference_candidates(evidence, recently_shown)
+    if len(candidates) <= 1:
+        return ""
+    if _the_only_one_on_screen_in_that_size(product, size, recently_shown):
+        return ""
+    if any(
+        getattr(match, "product_id", None) == product.product_id
+        for match in _products_named_exactly(shopper_text, candidates)
+    ):
+        return ""
+    if evidence.identified_by_the_system(product.product_id):
+        return ""
+    if str(product.product_id) in {str(ref) for ref in (already_identified or ())}:
+        return ""
+    if _products_the_shopper_fits(shopper_text, candidates):
+        return ""
+    names = [
+        str(getattr(c, "display_name", "") or "")
+        for c in candidates
+        if getattr(c, "display_name", None)
+    ]
+    if len(names) < 2:
+        return ""
+    listed = ", ".join(names[:4])
+    return (
+        "NOTHING DISTINGUISHES THESE: the shopper's words fit "
+        f"{len(candidates)} of the products on screen equally -- {listed}. "
+        "Nothing was added. Ask which one they mean, naming them, and add it "
+        "when they say. Do not pick one because its name repeats a word they "
+        "used."
+    )
 
 
 def _cart_product_choice_note(

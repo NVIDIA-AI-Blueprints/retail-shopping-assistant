@@ -41,8 +41,62 @@ def test_the_prompt_states_the_date_and_what_it_is_for() -> None:
     source = open(_REPO_ROOT / "chain_server/src/deepagents_runtime.py").read()
     assert "TODAY IS {_today_for_the_shopper()}" in source
     block = source[source.index("TODAY IS") :][:600]
-    assert "fifteen days" in block, "the forecast window is counted from today"
     assert "only date you know" in block
+    # The date itself is unconditional: "the wedding is next weekend" needs
+    # resolving whether or not this deployment has a forecast tool. The
+    # fifteen-day window is not -- it describes a tool, and it is asserted
+    # against the assembled prompt below rather than the source, because the
+    # source now holds both branches.
+    assert "fifteen days" not in block
+
+
+def _prompts_either_way(base_config) -> tuple[str, str]:
+    """Build once, toggle the flag, restore it.
+
+    `runtime.config` is the same object the fixture handed in, so mutating its
+    weather section leaked into the next construction and blew up building the
+    weather client. Toggle in place and put it back.
+    """
+
+    from chain_server.src import deepagents_runtime as runtime_mod
+    from shared.commerce_contracts import CatalogCapabilities
+
+    from types import SimpleNamespace
+
+    runtime = runtime_mod.DeepAgentsRuntime(base_config)
+    original = getattr(runtime.config, "weather", None)
+    capabilities = CatalogCapabilities(catalog_id="test")
+    try:
+        runtime.config.weather = SimpleNamespace(enabled=True)
+        on = runtime._system_prompt(capabilities)
+        runtime.config.weather = SimpleNamespace(enabled=False)
+        off = runtime._system_prompt(capabilities)
+    finally:
+        runtime.config.weather = original
+    return on, off
+
+
+def test_the_forecast_window_is_stated_only_when_the_tool_exists(
+    base_config,
+) -> None:
+    """Weather ships off, and the tool is then not registered at all.
+
+    The prompt kept describing it regardless: about a thousand characters
+    telling the model when it may call a forecast, and to fetch one before
+    fanning out searches, on a deployment where no such tool is offered. That
+    is the defect this file's own comments record fixing once, for the
+    framework's base prompt.
+    """
+
+    on, off = _prompts_either_way(base_config)
+
+    assert "TODAY IS" in on and "TODAY IS" in off
+    assert "only date you know" in on and "only date you know" in off
+
+    assert "fifteen days" in on
+    assert "fifteen days" not in off
+    assert "look the weather" in on
+    assert "look the weather" not in off
 
 
 def test_a_country_is_forecast_and_disclosed_rather_than_refused() -> None:

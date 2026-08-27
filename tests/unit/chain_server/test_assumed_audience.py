@@ -426,8 +426,25 @@ def test_the_audience_filter_carries_the_rule_the_model_needs() -> None:
     described = model.model_fields[AUDIENCE_FIELD].description or ""
 
     # The rule, which is what makes it portable to a catalog with more values.
-    assert "every advertised value that suits them" in described
-    assert "covering all genders always suits anyone" in described
+    # It is built in two ordered steps rather than as a judgment about which
+    # values "suit" the person. Measured on "my husband is coming too, he needs
+    # sunglasses": the suits-them phrasing scored 0 of 10, and asking the model
+    # to weigh inclusion against exclusion only moved the failure between the
+    # man and the woman. The covers-everyone value being unconditional, and the
+    # gendered value being opt-in, is what stopped it oscillating.
+    # Two ordered steps with nothing to weigh, and the meaning of each value
+    # supplied by the catalog rather than enumerated here. Measured across six
+    # wordings on the running service: asking which values "suit" the person
+    # scored a man 0/10, and every variant that fixed one gender broke the
+    # other. This one scored men 14/14 and adult women 8/10.
+    assert "covering all genders is always in the list" in described
+    assert "only when its published meaning fits the person named" in described
+    assert "closest value available is not the test" in described
+    # The vocabulary, which is what "for men" had and "hubby" did not.
+    # Measured: cutting the female terms out of this list dropped "sister" to
+    # 1/4 because the filter stopped firing at all.
+    for word in ("hubby", "my wife", "my sister", "my daughter", "my dad"):
+        assert word in described, word
     # The vocabulary, which is what "for men" had and "hubby" did not.
     assert "hubby" in described
     # The clause protecting the case a required field broke: answering

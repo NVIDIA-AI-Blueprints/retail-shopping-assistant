@@ -3198,7 +3198,12 @@ class TestDeepAgentsRuntimeRefs:
         )
         assert captured["backend"].virtual_mode is True
         excluded_tools = registered_profile["profile"].kwargs["excluded_tools"]
-        assert "read_file" not in excluded_tools
+        # `read_file` is excluded now. The base prompt says "You have no
+        # filesystem", and until this it was not true: the model called
+        # read_file on live turns -- once ten times in a row -- to fetch skill
+        # files the middleware had already injected in full, at a model round
+        # trip each.
+        assert "read_file" in excluded_tools
         assert "write_file" in excluded_tools
         assert "execute" in excluded_tools
         # Where a rule lives is now part of the contract: procedure belongs to
@@ -3227,27 +3232,29 @@ class TestDeepAgentsRuntimeRefs:
         ):
             assert phrase in base, f"{phrase!r} must stay in the always-on prompt"
 
+        # Procedure belongs to the skill that performs it. The phrases below
+        # are the ones still carried by a skill body rather than by a tool
+        # description; several that used to be listed here -- comparison
+        # tables, display-name inference, group-level claims, enumerating
+        # materials -- were the same rules the grounding editor already
+        # enforces on the way out, and asserting the skill copy made that
+        # duplication load-bearing.
         reachable = {
             "cart-management": (
                 "Cart mutation scope must match",
                 "Selection, approval, or styling preference is not cart intent",
-                "If cart mutation scope is ambiguous",
-                "For an explicit cart swap",
-                "remove the rejected cart line",
+                "ask one concise clarification naming the candidates",
+                "For an explicit swap",
+                "remove the",
             ),
             "product-discovery": (
-                "Product comparison tables",
-                "require get_product_details_tool",
-                "Initial recommendations should use product name",
-                "Search-only product names are display names",
-                "Do not make group-level claims",
-                "Do not enumerate materials",
                 "Tax and delivery dates are not available",
-                "availability claims require check_product_availability_tool",
+                "in stock or ready to ship",
+                "one inclusive search scope",
             ),
             "outfit-styling": (
-                "Tax and delivery dates are not available",
-                "availability claims require check_product_availability_tool",
+                "Prefer an honest partial",
+                "60-30-10",
             ),
         }
         for name, phrases in reachable.items():
@@ -3262,8 +3269,18 @@ class TestDeepAgentsRuntimeRefs:
         assert "no_direct_catalog_match" not in base
         assert "semantic_queries" not in base
         assert "top blouse sweater" not in base
-        assert "require get_store_policy_tool" in skill("store-policy-answers")
-        assert "require check_product_availability_tool" in skill("product-discovery")
+        # The skill said this twice, in a "Rules" bullet and again under a
+        # "Routing" heading. One statement, asserted once.
+        policy = skill("store-policy-answers")
+        assert "Call `get_store_policy_tool` only for a supported topic" in policy
+        assert "Never answer any policy from model knowledge" in policy
+        # Availability now says so on the tool itself, which is the channel the
+        # model reads when it is deciding whether to call it.
+        runtime_source = (
+            pathlib.Path(__file__).resolve().parents[3]
+            / "chain_server/src/deepagents_runtime.py"
+        ).read_text()
+        assert "explicitly asks about availability" in runtime_source
         assert "Outdoor-practicality claims require exact support" in (
             captured["system_prompt"]
         )
@@ -3296,20 +3313,22 @@ class TestDeepAgentsRuntimeRefs:
         # Turn 14 of the fifteen-turn script asked "what size should I add?"
         # and then added nothing, because no size could be recorded anywhere.
         # The question is real now, so the rules for it live here.
-        assert "ask which size, offering that product's own run" in (
-            skill("cart-management")
-        )
-        assert "worse than not\n  asking at all" in skill("cart-management")
-        assert "never add a size the product does not list" in (
-            skill("cart-management")
-        )
+        # Whitespace-normalised: these assert a rule, not a line-wrapping.
+        # Pinned to the exact wrap, they failed on a reflow that changed no
+        # word of the rule, which teaches the next person to reflow the test
+        # rather than read it.
+        cart = " ".join(skill("cart-management").split())
+        assert "ask which size, offering that product's own run" in cart
+        assert "worse than not asking at all" in cart
+        assert "never add a size the product does not list" in cart
         # A size guess is invisible until the parcel arrives, so it is
         # disclosed where it cannot be missed and names its neighbours.
-        assert "say which in the line that confirms the\n  add" in (
-            skill("cart-management")
-        )
-        assert "cannot see a size until it arrives" in skill("cart-management")
-        assert "offer pieces\n  that do come in it" in skill("product-discovery")
+        assert "say which in the line that confirms the add" in cart
+        assert "cannot see a size until it arrives" in cart
+        # Offering pieces that do come in the wanted size is an add-path rule,
+        # so it is stated once, by the skill that adds. product-discovery said
+        # it too, word for word.
+        assert "offer pieces that do come in it" in cart
         # Live: "add it in a 10 too" raised the size-8 line to quantity 2 and
         # then asked whether the second should be a 10 -- the wrong garment
         # twice, presented as agreement.
@@ -3318,14 +3337,16 @@ class TestDeepAgentsRuntimeRefs:
         # "Stop and synthesize" fired before the forecast was ever considered:
         # the same sentence fetched weather alone and skipped it once it read
         # as an outfit request mid-conversation.
-        assert "look the weather\n  up BEFORE that fan-out" in (
-            captured["system_prompt"]
-        )
-        assert "the forecast never gets asked for" in captured["system_prompt"]
-        assert "a size 8 tote is not a thing" in skill("product-discovery")
-        assert "those come in one size" in skill("product-discovery")
-        assert "another line, not more of" in skill("cart-management")
-        assert "adds\n  the wrong garment twice" in skill("cart-management")
+        # The forecast-ordering rule is now conditional on the tool existing,
+        # and this fixture has weather off -- which is the shipped default. It
+        # is asserted for both branches in test_today_is_known.
+        assert "look the weather" not in captured["system_prompt"]
+        assert "the forecast never gets asked for" not in captured["system_prompt"]
+        product_discovery = " ".join(skill("product-discovery").split())
+        assert "a size 8 tote is not a thing" in product_discovery
+        assert "those come in one size" in product_discovery
+        assert "another line, not more of" in cart
+        assert "adds the wrong garment twice" in cart
         assert "Advice is not an answer on its own either" in (
             captured["system_prompt"]
         )
@@ -3351,7 +3372,13 @@ class TestDeepAgentsRuntimeRefs:
         assert "Rubber sole means" in captured["system_prompt"]
         assert "maximum breathability" in captured["system_prompt"]
         assert "best-in-category performance" in captured["system_prompt"]
-        assert "compare only confirmed construction facts" in skill("product-discovery")
+        # The outdoor-claims rules are stated in the always-on prompt and
+        # enforced again by the grounding editor. product-discovery said them a
+        # third time in its own words; that copy is gone, and the rule is
+        # asserted where it is actually enforced.
+        assert "Do not convert sole or strap facts into surface guarantees" in (
+            captured["system_prompt"]
+        )
 
         policy_response = tools_by_name["get_store_policy_tool"](topic="returns")
         assert policy_response.startswith("POLICY NOT AVAILABLE:")
@@ -8012,13 +8039,17 @@ class TestDeepAgentsRuntimeRefs:
             )
         )
 
-        assert "CHOSEN FROM A DESCRIPTION" in response
-        # It IS added now, and that is the change. Refusing cost a turn every
-        # time the reading was right -- which was most of the time -- and the
-        # refusal could not tell a good reading from a bad one anyway. The
-        # cart is on screen and a wrong line is one click away; an unspoken
-        # choice is what could not be undone.
-        assert [item.display_name for item in added] == ["Belle Noir Satin Gown"]
+        # Not added, and not disclosed either: the words fit both candidates
+        # equally. Disclosure earns its place where one reading is better than
+        # the others -- the shopper sees which was taken and a wrong line is one
+        # click away. Where nothing distinguishes them there is no reading to
+        # disclose, and the pick came from a word repeating in a display name,
+        # which is what put a navy dress in a cart for a request for a black
+        # one. The scorer decides: one fit is a reading, no fit among several
+        # is a tie, and a tie is the shopper's to break.
+        assert "NOTHING DISTINGUISHES THESE" in response
+        assert "Ask which one they mean" in response
+        assert added == []
 
     def test_a_product_never_shown_is_looked_up_in_the_catalog(
         self,
@@ -8757,6 +8788,7 @@ class TestDeepAgentsRuntimeRefs:
         # of the explicit request. The provenance gate reaches it first.
         assert (
             "CHOSEN FROM A DESCRIPTION" in blocked_response
+            or "NOTHING DISTINGUISHES THESE" in blocked_response
             or "outside the current explicit add request" in blocked_response
         )
         assert "Green Meadow Sweater Top" in blocked_response
@@ -9561,26 +9593,22 @@ class TestAudienceAwareSearch:
 
         runtime = runtime_mod.DeepAgentsRuntime(base_config)
 
-        # The audience rules moved to product-discovery, the skill that builds
-        # the search. Reachability on the turn that needs them is the property
-        # under test -- not which file the words sit in.
-        skill = pathlib.Path(
-            pathlib.Path(__file__).resolve().parents[3]
-            / "chain_server/skills/shopper/product-discovery/SKILL.md"
-        ).read_text()
-        normalized = " ".join(
-            (
-                runtime._system_prompt(CatalogCapabilities(catalog_id="test"))
-                + skill
-            ).split()
-        )
+        # Reachability on the turn that needs them is the property under test
+        # -- not which file the words sit in. The union now includes the search
+        # tool's rendered schema, because the half of this rule that decides
+        # which values go in the filter lives on the audience field itself,
+        # which is the channel that binds it. Asserting only the skill body
+        # would fail a move in exactly that direction.
+        from .model_visible import reachable_on_a_turn_using
+
+        normalized = reachable_on_a_turn_using(runtime, "product-discovery")
 
         assert "Read those values from Catalog capabilities" in normalized
         assert (
             "never name an audience the catalog does not advertise" in normalized
         )
-        assert "send every value that suits them as a hard filter" in normalized
-        assert "Otherwise send no audience filter at all" in normalized
+        assert "covering all genders is always in the list" in normalized
+        assert "omit this filter entirely" in normalized
         assert "never ask the shopper their gender" in normalized
 
 

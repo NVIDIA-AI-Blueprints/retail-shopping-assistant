@@ -125,14 +125,24 @@ def test_registered_shopper_skills_have_valid_frontmatter() -> None:
         assert body.strip()
 
 
-def test_outfit_styling_references_the_shared_trend_snapshot() -> None:
-    _, body = _read_skill()
-    trend_text = TRENDS_PATH.read_text()
+def test_the_trend_snapshot_is_inline_and_not_a_dangling_pointer() -> None:
+    """It pointed at a file `read_file` could fetch, and never did.
 
-    assert trend_text.strip()
-    assert "Not catalog truth" in trend_text
-    assert "`/shopper/trends-current.md`" in body
-    assert not (SKILL_PATH.parent / "trends-current.md").exists()
+    Zero reads across 37 archived runs. `read_file` is no longer registered --
+    the base prompt says there is no filesystem and now that is true -- so a
+    pointer would be unreachable rather than merely unused. The guidance that
+    earned its place is inline; the 7.7k of tables it came from is not.
+    """
+
+    _, body = _read_skill()
+    normalized = " ".join(body.lower().split())
+
+    assert not TRENDS_PATH.exists(), "an unreachable file is still on disk"
+    assert "/shopper/trends-current.md" not in body, "dangling pointer"
+    assert "trends" in normalized
+    assert "never catalog truth" in normalized
+    assert "fundamentals and the shopper's own preferences outrank it" in normalized
+    assert "broadly wearable" in normalized
 
 
 def test_primary_skill_descriptions_define_the_activation_boundary() -> None:
@@ -148,22 +158,35 @@ def test_primary_skill_descriptions_define_the_activation_boundary() -> None:
     )
 
 
-def test_product_discovery_separates_request_lanes() -> None:
-    _, body = _read_skill_path(REGISTERED_SKILL_PATHS["product-discovery"])
-    normalized = " ".join(body.split())
+def test_product_discovery_separates_request_lanes(base_config) -> None:
+    """Assert the model reads these rules, not which file holds them.
 
-    assert "## Request Lanes" in body
-    assert "ask one concise clarification directly" in normalized
-    assert "do not call `search_catalog_tool` at all" in normalized
+    They used to be five bullets in the skill saying what the search tool's own
+    field descriptions and the catalog rules already said. Asserting the skill
+    text made the duplication load-bearing: the test would fail the moment a
+    rule moved to the channel that binds the decision, which is the direction
+    you want rules to move.
+    """
+
+    from chain_server.src import deepagents_runtime as runtime_mod
+
+    from .model_visible import reachable_on_a_turn_using
+
+    normalized = reachable_on_a_turn_using(
+        runtime_mod.DeepAgentsRuntime(base_config), "product-discovery"
+    )
+
+    assert "ask one concise clarification" in normalized
+    assert "do not call the tool at all" in normalized
     # The blanket "never claim absence" contradicted `not_covered`, whose
     # whole purpose is to record a kind the catalog does not carry. Absence
     # read off the published taxonomy is a fact; absence guessed from a thin
     # search is the thing that was meant to be banned.
     assert "the catalog does not carry it" in normalized
     assert "absence guessed from a search that returned little" in normalized
-    assert "put only that attribute in `unadvertised_requirements`" in normalized
+    assert "unadvertised_requirements" in normalized
     assert "keep it only in `semantic_query`" in normalized
-    assert "A product type never belongs in `unadvertised_requirements`" in normalized
+    assert "product type never belongs" in normalized.lower()
 
 
 def test_outfit_styling_owns_domain_judgment_and_clarification() -> None:
@@ -276,3 +299,40 @@ def test_role_proposing_skills_name_the_audience_without_asking() -> None:
         # catalog swap and keep being stated after it stopped being true.
         for value in ("womens", "adult_all_genders", "womenswear", "menswear"):
             assert value not in body, f"{skill} hardcodes {value}"
+
+
+def test_no_rule_is_stated_in_two_skills_at_once(base_config) -> None:
+    """Cross-skill duplication is what made the prune necessary.
+
+    Before it, outfit-styling and product-discovery ended with three
+    byte-identical bullets each -- availability, promotions, tax and delivery --
+    and shared twenty-five exact sentences in all. A rule in two skills has two
+    places to drift and no way to tell which one the model followed.
+
+    Sentence-level and exact, so it catches copy-paste without objecting to two
+    skills happening to use the same short phrase.
+    """
+
+    import re
+
+    bodies = {}
+    for name, path in REGISTERED_SKILL_PATHS.items():
+        _, body = _read_skill_path(path)
+        text = " ".join(body.split())
+        bodies[name] = {
+            sentence.strip()
+            for sentence in re.split(r"(?<=[.!?]) ", text)
+            if len(sentence.split()) >= 12
+        }
+
+    seen: dict[str, str] = {}
+    duplicated: list[str] = []
+    for name, sentences in sorted(bodies.items()):
+        for sentence in sentences:
+            if sentence in seen and seen[sentence] != name:
+                duplicated.append(f"{seen[sentence]} + {name}: {sentence[:80]}")
+            seen.setdefault(sentence, name)
+
+    assert not duplicated, "sentences stated in two skills:\n" + "\n".join(
+        duplicated
+    )

@@ -14,11 +14,9 @@ from shared.model_config import resolve_model_config, validate_model_config
 
 try:
     from app.catalog import build_product_detail, load_catalog
-    from app.index_catalog import index_on_boot
     from app.retriever import CatalogFilterError, Retriever, RetrieverConfig
 except ModuleNotFoundError:
     from .catalog import build_product_detail, load_catalog
-    from .index_catalog import index_on_boot
     from .retriever import CatalogFilterError, Retriever, RetrieverConfig
 
 # Set up logging 
@@ -139,36 +137,21 @@ logging.info("CATALOG RETRIEVER | startup | config.yaml ingested.")
 logging.info("CATALOG RETRIEVER | startup | Initializing Retriever object.")
 retriever = Retriever(config=config)
 
-#: Whether a serving pod builds the index itself.
-#:
-#: True is right for one replica, which is what docker compose runs, and keeps
-#: local work a single command. It is wrong for more than one, because building
-#: starts by dropping the collection: two pods doing it together can leave one
-#: filling a collection the other has just dropped, and the result is a partial
-#: index that nothing notices, since the fingerprint is written per row.
-#:
-#: Set it false and run `python -m app.index_catalog` once as a Job before the
-#: pods roll. They will then wait, not build -- see the readiness check below.
-_INDEX_ON_BOOT = index_on_boot()
-
-if _INDEX_ON_BOOT:
-    logging.info(
-        "CATALOG RETRIEVER | startup | Checking and populating Milvus if needed."
-    )
-    retriever.sync_snapshot(snapshot, verbose=True)
-    logging.info("CATALOG RETRIEVER | startup | Milvus database ready.")
-else:
-    # Deliberately not a failure. The Job may still be running, and a pod that
-    # exits here would crash-loop through a perfectly normal rollout; refusing
-    # readiness is how it waits without pretending to serve.
-    logging.info(
-        "CATALOG RETRIEVER | startup | Not indexing (CATALOG_INDEX_ON_BOOT is "
-        "false). Readiness waits for the index to match."
-    )
-    # The snapshot still has to be described to the retriever even when nothing
-    # is built, because sync_snapshot is what tells it which fields it is
-    # serving. Skipping it entirely would leave the retriever unconfigured.
-    retriever.describe_snapshot(snapshot)
+# A serving pod never builds the index. Building starts by dropping the
+# collection, so it is the one operation here that must happen exactly once, and
+# a pod cannot know whether it is the only one doing it. There is no flag for
+# this and deliberately no second code path: a switch that lets a pod index
+# would be the error-prone case, and it would only ever be wrong in the
+# deployment that has more than one.
+#
+# `python -m app.index_catalog` is what builds, run once before the pods that
+# read it -- a Job in Kubernetes, a run-once service in compose. Until it has,
+# this pod is alive and unready, which is exactly what it is.
+logging.info(
+    "CATALOG RETRIEVER | startup | Serving only; the index is built by "
+    "`python -m app.index_catalog` as a deployment step."
+)
+retriever.describe_snapshot(snapshot)
 
 
 #: `matches_catalog` flushes the collection, which is too expensive to do on

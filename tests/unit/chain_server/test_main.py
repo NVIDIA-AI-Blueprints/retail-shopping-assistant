@@ -1731,7 +1731,7 @@ class TestDeepAgentsRuntimeScopes:
         assert cancelled is True
 
     @pytest.mark.asyncio
-    async def test_finalize_failure_preserves_response_and_checkpoint(
+    async def test_finalize_failure_preserves_the_response_but_not_the_checkpoint(
         self,
         base_config,
         monkeypatch: pytest.MonkeyPatch,
@@ -1788,7 +1788,21 @@ class TestDeepAgentsRuntimeScopes:
         assert output.agent_diagnostics["memory_finalize_error"] == (
             "memory_service_unavailable"
         )
-        assert deleted_threads == []
+        # The checkpoint goes, even though this error is retryable.
+        #
+        # Keeping it was a real optimisation: a retry carrying the same
+        # request_id produces the same thread, so the graph could resume rather
+        # than re-run an expensive turn. But that only happens if the retry
+        # reaches the same pod, and with more than one there is nothing making
+        # it. So it was a saving that could not be relied on -- a sticky-session
+        # dependency in all but name -- and it was paid for with a leak: this is
+        # MemorySaver, a dict with no eviction, holding the whole message
+        # history of every turn that failed to finalize for as long as the
+        # process lives.
+        #
+        # Re-running has to be safe regardless, because it is already what
+        # happens whenever a retry lands on another pod.
+        assert deleted_threads == [identity.checkpoint_thread_id]
 
     def test_superseded_attempt_does_not_return_its_unstored_response(
         self,

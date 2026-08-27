@@ -179,44 +179,17 @@ def test_the_indexer_is_reachable_as_its_own_entry_point() -> None:
     assert callable(index_catalog.main)
 
 
-@pytest.mark.parametrize(
-    "value,expected",
-    [
-        (None, True),      # one replica, compose, unchanged behaviour
-        ("true", True),
-        ("false", False),
-        ("FALSE", False),
-        ("0", False),
-        ("no", False),
-        (" false ", False),
-    ],
-)
-def test_serving_pods_can_be_told_not_to_index(
-    monkeypatch: pytest.MonkeyPatch, value, expected: bool
-) -> None:
-    """The flag that lets more than one replica exist safely.
+def test_a_serving_pod_has_no_way_to_index() -> None:
+    """One path, not a switch that could be set wrong.
 
-    Default true, because one replica building its own index is fine and is
-    what compose runs. The point is that N replicas have a supported way to
-    say no.
-    """
-
-    from catalog_retriever.src.index_catalog import index_on_boot
-
-    if value is None:
-        monkeypatch.delenv("CATALOG_INDEX_ON_BOOT", raising=False)
-    else:
-        monkeypatch.setenv("CATALOG_INDEX_ON_BOOT", value)
-
-    assert index_on_boot() is expected
-
-
-def test_a_pod_that_does_not_index_still_describes_and_still_gates_readiness() -> None:
-    """Two lines in main.py that the flag is worthless without.
+    A flag permitting a pod to index would only ever be wrong in the deployment
+    that has more than one pod -- which is the deployment that matters. So the
+    serving module must not call the build at all, and must not read a flag that
+    would let it.
 
     Asserted against the source because importing main builds a retriever and
-    needs a live Milvus. That makes this the weakest test here, so it pins the
-    exact statements rather than the names appearing anywhere.
+    needs a live Milvus. That makes this the weakest test here, so it pins exact
+    statements rather than names appearing anywhere.
     """
 
     source = (
@@ -226,8 +199,11 @@ def test_a_pod_that_does_not_index_still_describes_and_still_gates_readiness() -
         / "main.py"
     ).read_text()
 
-    # Without this, a non-indexing pod would not know which fields it serves.
+    # The build, in any form, must not be reachable from the serving module.
+    assert "sync_snapshot" not in source
+    assert "CATALOG_INDEX_ON_BOOT" not in source
+    # Without this a pod would not know which fields it serves.
     assert "retriever.describe_snapshot(snapshot)" in source
-    # Without this, it would serve searches against a missing index and answer
+    # Without this it would serve searches against a missing index and answer
     # them with no products rather than refusing traffic.
     assert "if not index_is_ready():" in source

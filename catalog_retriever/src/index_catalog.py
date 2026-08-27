@@ -9,45 +9,31 @@ merely wasted work: one can drop the collection while the other is part way
 through filling it, and what is left is a partial index that nothing detects,
 because the fingerprint is written row by row as rows are added.
 
-Serving pods therefore do not index. They check whether the index matches the
-catalog they loaded and refuse readiness until it does -- see `index_is_ready`
-in main.py. This module is what does the building, run once before the pods that
-need it:
+Serving pods therefore never index -- there is no flag and no second path, so
+there is no deployment in which a pod might. They check whether the index matches
+the catalog they loaded and refuse readiness until it does, which is how they
+wait for this without pretending to serve. See `index_is_ready` in main.py.
 
-    kind: Job                      # or an initContainer on the first rollout
+This is what builds, run once before the pods that read it:
+
+    kind: Job                      # parallelism: 1 -- that is the contract
     command: ["python", "-m", "app.index_catalog"]
 
 It is safe to run when the index is already current: it makes the same
-fingerprint check first and does nothing. It is not safe to run two of these at
-once, which is the whole point -- a Job with parallelism 1 is the contract.
+fingerprint check first and does nothing, so it can sit unconditionally in a
+deployment pipeline. It is not safe to run two at once, which is the whole
+point, and nothing in this process can prevent that -- a lock across replicas
+would need somewhere to live. The deployment is what guarantees it.
 
-Locally, `docker compose` runs a single replica and CATALOG_INDEX_ON_BOOT
-defaults to true, so nothing changes and no separate step is needed.
+Locally there is nothing extra to run: `docker compose up` starts the
+`catalog-indexer` service, which runs this and exits, and catalog-retriever
+waits for it to succeed.
 """
 
 from __future__ import annotations
 
 import logging
-import os
 import sys
-
-
-def index_on_boot() -> bool:
-    """Whether a serving pod may build the index itself.
-
-    True suits one replica, which is what docker compose runs, and keeps local
-    work a single command. It has to be false for more than one, because
-    building starts by dropping the collections.
-
-    Lives here rather than inline in main.py so it can be tested without
-    importing main, which builds a retriever and needs a live Milvus.
-    """
-
-    return os.environ.get("CATALOG_INDEX_ON_BOOT", "true").strip().lower() not in {
-        "false",
-        "0",
-        "no",
-    }
 
 
 def main() -> int:

@@ -902,6 +902,17 @@ class DeepAgentsRuntime:
                 # In a finally, not on the success path: a failed turn is
                 # exactly when the trace is worth having.
                 _record_turn_diagnostics(span, state)
+                # Likewise, and for a blunter reason. The checkpoint thread is
+                # keyed on (conversation_id, request_id), so it belongs to this
+                # one request and nothing will ever read it again. It used to be
+                # freed only when the turn finalized, which meant every turn
+                # that failed to finalize -- a superseded attempt, a memory
+                # service blip, a turn that never started -- left its whole
+                # message history in this process for as long as the process
+                # lived. Pods are long-lived and there is no eviction, so that
+                # is a leak that ends in an OOMKill, and more pods only means
+                # more of them leaking.
+                await self._delete_turn_checkpoint(identity)
 
     async def _run_turn_inner(
         self,
@@ -920,7 +931,6 @@ class DeepAgentsRuntime:
         state.disclosed_audience = []
         turn = self._start_conversation_turn(state, identity)
         if turn is not None and turn.replayed:
-            await self._delete_turn_checkpoint(identity)
             return self._restore_replayed_turn(state, turn)
         if turn is None and state.response:
             return state
@@ -940,7 +950,7 @@ class DeepAgentsRuntime:
                         "This request was interrupted. Please check your cart "
                         "before retrying."
                     )
-                finalized = self._finalize_conversation_turn(
+                self._finalize_conversation_turn(
                     state,
                     identity,
                     turn,
@@ -948,12 +958,10 @@ class DeepAgentsRuntime:
                     termination_reason="request_cancelled",
                     present_products=False,
                 )
-                if finalized:
-                    await self._delete_turn_checkpoint(identity)
             raise
         except Exception:
             if turn is not None:
-                finalized = self._finalize_conversation_turn(
+                self._finalize_conversation_turn(
                     state,
                     identity,
                     turn,
@@ -961,14 +969,10 @@ class DeepAgentsRuntime:
                     termination_reason="unexpected_runtime_error",
                     present_products=False,
                 )
-                if finalized:
-                    await self._delete_turn_checkpoint(identity)
             raise
 
         if turn is not None:
-            finalized = self._finalize_conversation_turn(state, identity, turn)
-            if finalized:
-                await self._delete_turn_checkpoint(identity)
+            self._finalize_conversation_turn(state, identity, turn)
         return output
 
     async def _execute_turn(

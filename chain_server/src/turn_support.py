@@ -1243,7 +1243,15 @@ def _search_catalog_tool_input_model(
                     # audience value gets chosen. Stated once, on the field
                     # that owns it.
                     "Catalog hard filters and any defining requirement the active "
-                    "catalog cannot enforce. Apply constraints "
+                    "catalog cannot enforce. When the shopper names a specific "
+                    "product and asks whether it meets some condition -- within a "
+                    "budget, in stock, in a colour, on sale -- do not send that "
+                    "condition as a filter. You are checking one product, not "
+                    "narrowing a category, and a filter can only hide the answer. "
+                    "Asked whether a named bracelet came within a $150 ceiling, a "
+                    "search filtered to $150 could not return the $169.99 bracelet "
+                    "and the shopper was told the shop did not have it. Find the "
+                    "product first, then compare. Apply constraints "
                     "only when the current turn states them for the target "
                     "products; an anchor's "
                     "attributes belong in semantic styling context unless the "

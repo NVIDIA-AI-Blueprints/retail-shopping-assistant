@@ -17,6 +17,7 @@ from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
+from pydantic import ValidationError
 
 from catalog_retriever.src import retriever as retriever_mod
 from catalog_retriever.src.retriever import (
@@ -197,7 +198,7 @@ class TestMilvusAdapter:
 
 class TestRetrieverConfig:
     def test_all_fields_required(self) -> None:
-        with pytest.raises(Exception):  # pydantic ValidationError
+        with pytest.raises(ValidationError):
             RetrieverConfig()  # type: ignore[call-arg]
 
     def test_valid_config_builds(self) -> None:

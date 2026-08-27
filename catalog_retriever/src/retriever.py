@@ -564,6 +564,7 @@ class Retriever:
             for entry in os.listdir("."):
                 dir_contents.append(entry)
             logging.info(f"CATALOG RETRIEVER | Retriever.milvus_from_csv() | Directory contents at failure: {dir_contents}")
+            raise
 
         # Create combined name and description strings
         metadatas = df.to_dict(orient="records")

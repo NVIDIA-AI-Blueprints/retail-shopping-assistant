@@ -9,6 +9,7 @@ import time
 
 from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel, Field
+from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from typing import Optional
 
@@ -22,6 +23,7 @@ from .database import (
     engine,
 )
 from .migrations import (
+    expected_schema_version,
     cart_mutation_digest,
     ensure_cart_line_id_column,
     ensure_price_column,
@@ -277,7 +279,7 @@ def _cart_item_for_add(
 
 
 @app.get("/user/{user_id}")
-async def get_user(user_id: int, db=Depends(get_db)):
+def get_user(user_id: int, db=Depends(get_db)):
     user = db.query(User).filter(User.id == user_id).first()
     cart_items = db.query(CartItem).filter(CartItem.id == user_id).all()
     if not user:
@@ -285,7 +287,7 @@ async def get_user(user_id: int, db=Depends(get_db)):
     return {"id": user.id, "context": user.context, "cart": [_cart_item_dict(item) for item in cart_items]}
 
 @app.get("/user/{user_id}/cart")
-async def report_cart(user_id: int, db=Depends(get_db)):
+def report_cart(user_id: int, db=Depends(get_db)):
     cart_items = db.query(CartItem).filter(CartItem.user_id == user_id).all()
     if not cart_items:
         return {
@@ -299,7 +301,7 @@ async def report_cart(user_id: int, db=Depends(get_db)):
         }
   
 @app.get("/user/{user_id}/context")
-async def get_context(user_id: int, db=Depends(get_db)):
+def get_context(user_id: int, db=Depends(get_db)):
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         return {
@@ -313,7 +315,7 @@ async def get_context(user_id: int, db=Depends(get_db)):
         }
 
 @app.post("/user/{user_id}/cart/add")
-async def add_to_cart(
+def add_to_cart(
     user_id: int,
     item_update: ItemUpdate,
     db=Depends(get_db),
@@ -379,7 +381,7 @@ async def add_to_cart(
         raise
 
 @app.post("/user/{user_id}/cart/remove")
-async def remove_cart(
+def remove_cart(
     user_id: int,
     item_update: CartRemoveUpdate,
     db=Depends(get_db),
@@ -438,7 +440,7 @@ async def remove_cart(
         raise
 
 @app.put("/user/{user_id}/cart/{cart_line_id}/quantity")
-async def update_cart_quantity(
+def update_cart_quantity(
     user_id: int,
     cart_line_id: str,
     quantity_update: CartQuantityUpdate,
@@ -492,7 +494,7 @@ async def update_cart_quantity(
         raise
 
 @app.post("/user/{user_id}/cart/clear")
-async def clear_cart(user_id: int, db=Depends(get_db)):
+def clear_cart(user_id: int, db=Depends(get_db)):
     cart_items = db.query(CartItem).filter(CartItem.user_id == user_id).all()
     if not cart_items:
         raise HTTPException(status_code=404, detail="No items found in cart")
@@ -505,7 +507,7 @@ async def clear_cart(user_id: int, db=Depends(get_db)):
         }
 
 @app.post("/user/{user_id}/context/add")
-async def add_context(
+def add_context(
     user_id: int,
     context_update: ContextUpdate,
     db=Depends(get_db),
@@ -523,7 +525,7 @@ async def add_context(
         }
 
 @app.post("/user/{user_id}/context/replace")
-async def replace_context(
+def replace_context(
     user_id: int,
     context_update: ContextUpdate,
     db=Depends(get_db),
@@ -541,7 +543,7 @@ async def replace_context(
         }
 
 @app.post("/user/{user_id}/context/clear")
-async def clear_context(user_id: int, db=Depends(get_db)):
+def clear_context(user_id: int, db=Depends(get_db)):
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -553,7 +555,7 @@ async def clear_context(user_id: int, db=Depends(get_db)):
         }
 
 @app.post("/user/{user_id}/clear")
-async def clear_user(user_id: int, db=Depends(get_db)):
+def clear_user(user_id: int, db=Depends(get_db)):
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -564,9 +566,54 @@ async def clear_user(user_id: int, db=Depends(get_db)):
         "message": f"In response to the user's request, deleted cart and context for user {user_id}"
         }
 
+@app.get("/ready")
+def readiness_check(db=Depends(get_db)):
+    """Readiness, which unlike /health is allowed to say no.
+
+    Liveness answers "is this process alive"; readiness answers "should this pod
+    be sent shopper traffic". They need different answers during a rollout: a
+    pod that has started but not finished its migrations is alive and must not
+    receive requests, and with only /health a load balancer cannot tell.
+
+    It checks what this pod needs in order to serve, and nothing downstream. A
+    readiness probe that checks its dependencies turns one service's outage into
+    every service's outage, and takes the whole deployment out rather than the
+    part that is actually broken.
+    """
+
+    expected = expected_schema_version()
+    try:
+        applied = db.execute(
+            text("SELECT MAX(version) FROM schema_migrations")
+        ).scalar()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"database unavailable: {type(exc).__name__}",
+        )
+
+    if applied is None or applied < expected:
+        raise HTTPException(
+            status_code=503,
+            detail=f"schema at {applied}, needs {expected}",
+        )
+    return {"status": "ready", "schema_version": applied}
+
+
 @app.get("/health")
 async def health_check():
-    """Health check endpoint."""
+    """Liveness, and deliberately the one endpoint still on the event loop.
+
+    Every other endpoint here is a plain `def`, so FastAPI runs it in the
+    threadpool and sixty-four of them can be in flight. This one stays on the
+    loop so that a busy service still answers it instantly: a liveness probe
+    that queues behind sixty-four database calls reports a loaded pod as a dead
+    one and gets it killed. Left here, it fails only when the event loop itself
+    is stuck, which is the condition worth restarting a pod for -- and is
+    exactly how the connection-pool wedge was caught.
+
+    It is not a readiness probe; see /ready, which is allowed to say no.
+    """
     return {
         "status": "healthy",
         "timestamp": time.time(),

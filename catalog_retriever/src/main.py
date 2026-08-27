@@ -215,6 +215,30 @@ async def query_image(req: ImageQueryRequest):
         "no_result_reason": result.no_result_reason,
     }
 
+@app.get("/ready")
+async def readiness_check():
+    """Readiness: has this pod got a catalog to answer from?
+
+    Indexing runs at import, before uvicorn binds the port, so a pod cannot
+    reach the point of answering this without having finished. That makes the
+    check cheap on purpose -- it reads the snapshot already in memory rather
+    than asking Milvus, because a probe that runs every ten seconds must not
+    flush a collection to answer.
+
+    It deliberately does not check the embedding service or any other
+    dependency. Readiness that fails on a dependency removes every pod at once,
+    which turns a partial outage into a total one.
+    """
+
+    if not snapshot.product_count:
+        raise HTTPException(status_code=503, detail="catalog snapshot is empty")
+    return {
+        "status": "ready",
+        "catalog_id": capabilities.catalog_id,
+        "products": snapshot.product_count,
+    }
+
+
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""

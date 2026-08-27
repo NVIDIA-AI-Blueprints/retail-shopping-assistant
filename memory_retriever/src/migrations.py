@@ -252,6 +252,12 @@ _MIGRATIONS = (
 )
 
 
+def expected_schema_version() -> int:
+    """The version a pod must have reached before it can serve."""
+
+    return max(version for version, _ in _MIGRATIONS)
+
+
 def run_schema_migrations(database_engine: Engine) -> None:
     """Apply each schema version once without losing existing data."""
 

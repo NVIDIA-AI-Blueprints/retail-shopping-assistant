@@ -25,4 +25,5 @@ EXPOSE 8011
 # `exec` because the shell form is only here to expand the variable. Without it
 # the shell stays as PID 1, SIGTERM stops at the shell, and every deploy kills
 # uvicorn mid-request ten seconds later instead of draining it.
-CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port 8011 --limit-concurrency ${MEMORY_MAX_CONCURRENT_REQUESTS:-64}"]
+CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port 8011 --limit-concurrency ${MEMORY_MAX_CONCURRENT_REQUESTS:-64} \
+  --timeout-graceful-shutdown ${SHUTDOWN_GRACE_SECONDS:-30}"]

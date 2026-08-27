@@ -214,7 +214,7 @@ def create_shopper_profile_router(
         "/shopper-profiles",
         response_model=list[ShopperProfileContract],
     )
-    async def list_shopper_profiles(
+    def list_shopper_profiles(
         db=Depends(get_db),
     ) -> Sequence[ShopperProfile]:
         return (
@@ -227,7 +227,7 @@ def create_shopper_profile_router(
         "/shopper-profiles/{shopper_profile_id}",
         response_model=ShopperProfileContract,
     )
-    async def get_shopper_profile(
+    def get_shopper_profile(
         shopper_profile_id: str = ApiPath(
             ...,
             min_length=1,

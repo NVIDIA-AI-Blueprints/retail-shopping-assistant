@@ -28,13 +28,26 @@ Any code change that alters `build_search_document()` output must also bump
 Otherwise an existing index could match unchanged data/model inputs even though
 its embedded text uses the previous template.
 
-Each indexed record carries that fingerprint. The service reuses an index only
-when its fingerprint and entity count match the active snapshot. Otherwise it
-drops and rebuilds all enabled catalog collections. A failed required text or
-image embedding aborts startup so a partial snapshot is not served.
+Each indexed record carries that fingerprint. An index counts as current only
+when its fingerprint and entity count match the active snapshot.
+
+Two things follow, and they are done by different processes:
+
+- **The serving container checks.** When the fingerprint does not match it
+  answers `/ready` with 503 and serves nothing. It never rebuilds, and has no
+  code path that could.
+- **`python -m app.index_catalog` rebuilds**, dropping and refilling all enabled
+  collections. A failed required text or image embedding aborts it, so a partial
+  snapshot is never served.
+
+The split exists because a rebuild starts by dropping the collection. One
+process doing that is fine; two are destructive, and undetectably so -- the
+fingerprint is written row by row, so a collection half-filled by one process
+while another drops it carries the right fingerprint on every row it has, and
+the check above passes on it.
 
 Manual volume deletion is therefore unnecessary for ordinary catalog or model
-changes.
+changes. Running the indexer is.
 
 ## Text Embedding Source
 
@@ -86,16 +99,34 @@ hybrid modes then disappear from `/capabilities`.
    export CATALOG_SCHEMA_SOURCE="$PWD/shared/data/my_products.schema.yaml"
    ```
 
-4. Restart the catalog service and watch indexing:
+4. Restart the catalog service, then index. **Restarting no longer indexes**:
 
    ```bash
    docker compose up -d --build catalog-retriever
-   docker compose logs -f catalog-retriever
+   docker compose exec catalog-retriever python -m app.index_catalog
    ```
 
-5. Wait for catalog health and verify the active schema and values:
+   Indexing is a separate, deliberate step because rebuilding starts by
+   dropping the collection. That is safe when exactly one process does it and
+   destructive when two do: the second can drop what the first is still
+   filling, and nothing downstream notices, because the fingerprint is written
+   row by row, so a half-filled collection carries the right fingerprint on
+   every row it has. A serving pod has no code path that indexes, so it cannot
+   be the second one.
+
+   The command is safe to repeat. It checks the fingerprint first and does
+   nothing when the index is already current, so it can sit unconditionally in
+   a deployment pipeline.
+
+   Until it has run against a changed catalog, the service answers `/health`
+   with 200 and `/ready` with 503: alive, deliberately serving no traffic.
+
+5. Wait for catalog readiness and verify the active schema and values.
+   Use `/ready`, not `/health`: health only says the process is alive, and a
+   service with an unbuilt index is alive and unable to answer.
 
    ```bash
+   curl -s http://localhost:8010/ready
    curl -s http://localhost:8010/health
    curl -s http://localhost:8010/capabilities
    ```

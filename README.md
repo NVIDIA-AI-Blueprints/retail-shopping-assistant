@@ -435,10 +435,17 @@ The exact published response is documented in
    the exported shell environment instead of auto-parsing repo-root `.env`.
    `CHECKPOINT_STORE=memory` is the only supported graph-checkpoint
    configuration. Graph checkpoints disappear on chain-server restart and are
-   not shared across replicas. Separately, Compose stores the single-replica
-   memory-service SQLite database at `/data/context.db` on the `memory-data`
-   named volume. A production shared graph backend and multi-replica memory
-   design remain open decisions described in the
+   not shared across replicas, and neither matters: a checkpoint is keyed on
+   `(conversation_id, request_id)`, so it belongs to one request and two turns
+   of a conversation can never share one. **No session affinity is needed** --
+   any chain-server replica can serve any turn, because everything that carries
+   across turns lives in the memory service. Revisit only if turns must survive
+   a restart mid-turn.
+
+   Compose stores the memory-service SQLite database at `/data/context.db` on
+   the `memory-data` named volume. SQLite is a single-writer file on a
+   single-mount volume, so it is the one-replica choice; PostgreSQL is selected
+   by `MEMORY_DATABASE_URL` when more than one replica is needed. See the
    [Deployment Guide](docs/DEPLOYMENT.md).
 
    Weather remains disabled by default. Leave `WEATHER_ENABLED=false` and
@@ -470,9 +477,26 @@ The exact published response is documented in
 
    Model routing lives in `shared/configs/models.yaml`.
 
-6. **Access the application**: Open your browser to `http://localhost:3000`
+6. **Index the product catalog**:
+   ```bash
+   docker compose exec catalog-retriever python -m app.index_catalog
+   curl -s http://localhost:8010/ready
+   ```
 
-7. **Stop the containers**:
+   Required once after a first deployment, and again whenever the catalog data,
+   schema, or embedding model changes. Serving containers do not index
+   themselves: rebuilding an index begins by dropping the collection, which is
+   safe when one process does it and destructive when two do, so it is an
+   explicit step rather than something that happens on start.
+
+   Skipping it is visible rather than silent. `/ready` returns 503 until the
+   index matches, and searches would otherwise return no products -- a shopper
+   would be told the catalog is empty. The command is safe to repeat: it checks
+   the catalog fingerprint first and does nothing when the index is current.
+
+7. **Access the application**: Open your browser to `http://localhost:3000`
+
+8. **Stop the containers**:
 
    **Application services**:
    ```bash

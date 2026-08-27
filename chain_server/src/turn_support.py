@@ -29,7 +29,7 @@ import logging
 import os
 from pathlib import Path
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from difflib import SequenceMatcher
 from types import SimpleNamespace
 from typing import Any, Literal
@@ -1662,7 +1662,12 @@ def _a_list_written_as_json_text(value: Any) -> Any:
 
 
 class _ShopperSkillActivationInput(BaseModel):
-    """Shared composition rules for dynamic shopper-skill activation."""
+    """Shared composition rules for dynamic shopper-skill activation.
+
+    The composition rule itself lives on the subclass `create_model` builds,
+    because it depends on which skills are registered and what roles they
+    declare. This base carries only what every registry shares.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -1674,52 +1679,132 @@ class _ShopperSkillActivationInput(BaseModel):
         "skill_names", mode="before", check_fields=False
     )(_a_list_written_as_json_text)
 
-    @model_validator(mode="after")
-    def primary_procedures_are_exclusive(self) -> "_ShopperSkillActivationInput":
-        selected = set(self.skill_names)
-        primary = selected.intersection(
-            {"outfit-styling", "product-discovery"}
-        )
-        if len(primary) > 1:
+
+def primary_skills_by_group(
+    skills: Mapping[str, Any],
+) -> dict[str, tuple[str, ...]]:
+    """Group the registry's primary skills by the group they are exclusive in.
+
+    Read off `role` and `exclusive_group` in the frontmatter, which
+    `_shopper_skill_from_metadata` already requires to agree: a skill is
+    primary if and only if it names a group.
+    """
+
+    groups: dict[str, list[str]] = {}
+    for name, skill in skills.items():
+        if getattr(skill, "role", "") != "primary":
+            continue
+        group = getattr(skill, "exclusive_group", None)
+        if group:
+            groups.setdefault(str(group), []).append(name)
+    return {group: tuple(sorted(names)) for group, names in groups.items()}
+
+
+def _one_primary_per_group(self: Any) -> Any:
+    """Reject two primaries from one exclusive group, or a stranded modifier.
+
+    This used to intersect against the literal set
+    ``{"outfit-styling", "product-discovery"}``. `catalog-questions` shipped on
+    2026-08-25 declaring ``role: primary`` and ``exclusive_group:
+    product_procedure`` -- the same group as the other two -- and the check
+    could not see it. Measured on the shipped registry: selecting it beside
+    product-discovery was *accepted*, two primaries from one group, while
+    selecting it beside budget-shopping was *rejected* as a modifier with no
+    primary, which is the shape of "do you have anything for $5 to $10".
+
+    `ShopperSkill.exclusive_group` was parsed, validated and stored the whole
+    time, and nothing ever read it. So read it.
+    """
+
+    cls = type(self)
+    groups: Mapping[str, tuple[str, ...]] = cls._primary_skills_by_group
+    selected = set(self.skill_names)
+    primaries: list[str] = []
+    for group, names in sorted(groups.items()):
+        chosen = sorted(selected.intersection(names))
+        if len(chosen) > 1:
             raise PydanticCustomError(
                 SKILL_ACTIVATION_MULTIPLE_PRIMARY,
-                "select exactly one primary procedure: outfit-styling or "
-                "product-discovery, never both",
+                "select exactly one primary procedure: {options}, never more "
+                "than one",
+                {"options": " or ".join(chosen)},
             )
-        if "budget-shopping" in selected and len(primary) != 1:
-            raise PydanticCustomError(
-                SKILL_ACTIVATION_MODIFIER_REQUIRES_PRIMARY,
-                "budget-shopping requires exactly one primary procedure: "
-                "outfit-styling or product-discovery",
-            )
-        return self
+        primaries.extend(chosen)
+
+    modifiers: tuple[str, ...] = cls._modifier_skills
+    stranded = sorted(selected.intersection(modifiers))
+    if stranded and not primaries:
+        raise PydanticCustomError(
+            SKILL_ACTIVATION_MODIFIER_REQUIRES_PRIMARY,
+            "{modifier} is a modifier and requires exactly one primary "
+            "procedure: {options}",
+            {
+                "modifier": stranded[0],
+                "options": " or ".join(
+                    name for names in sorted(groups.values()) for name in names
+                ),
+            },
+        )
+    return self
 
 
 def _skill_activation_input_model(
-    skill_names: tuple[str, ...],
+    skills: Mapping[str, Any],
 ) -> type[BaseModel]:
     """Create the semantic skill-selection schema from the active registry."""
 
-    skill_name_type = Literal.__getitem__(skill_names)
-    return create_model(
+    skill_names = tuple(skills)
+    groups = primary_skills_by_group(skills)
+    modifiers = tuple(
+        sorted(
+            name
+            for name, skill in skills.items()
+            if getattr(skill, "role", "") == "modifier"
+        )
+    )
+    # Named here rather than in a literal, so a skill added to the registry is
+    # described to the model without anyone remembering to edit this string.
+    every_primary = [name for names in sorted(groups.values()) for name in names]
+    choose_one = (
+        " Select exactly one primary procedure -- "
+        + ", ".join(every_primary)
+        + " -- and never two."
+        if every_primary
+        else ""
+    )
+    modifier_rule = (
+        " " + ", ".join(modifiers) + " may only accompany a primary, never "
+        "stand alone."
+        if modifiers
+        else ""
+    )
+    model = create_model(
         "ShopperSkillActivationInput",
         __base__=_ShopperSkillActivationInput,
+        __validators__={
+            "_one_primary_per_group": model_validator(mode="after")(
+                _one_primary_per_group
+            ),
+        },
         skill_names=(
-            list[skill_name_type],
+            list[Literal.__getitem__(skill_names)],
             Field(
                 ...,
                 min_length=1,
                 max_length=len(skill_names),
                 description=(
                     "Smallest set of registered shopper skills whose descriptions "
-                    "cover the current turn's complete intent. For product search "
-                    "or styling, select exactly one primary procedure: outfit-"
-                    "styling or product-discovery, never both. Cart and policy "
-                    "intents may select their standalone skill without a primary."
+                    "cover the current turn's complete intent." + choose_one
+                    + modifier_rule
+                    + " Standalone skills may be selected with or without a "
+                    "primary."
                 ),
             ),
         ),
     )
+    model._primary_skills_by_group = groups
+    model._modifier_skills = modifiers
+    return model
 
 
 def _taxonomy_hard_constraints(

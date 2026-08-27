@@ -15,6 +15,11 @@ Handle firm-budget requests. Do not expose skill names or tool names in response
 - Treat a stated price ceiling as a hard constraint. Pass it as `required_constraints.price.max` in catalog search.
 - Do not recommend over-budget items framed as "just a bit more" or "worth considering."
 - When recommending multiple products, compare only confirmed prices. Actual cart totals belong to `cart-management`.
+- A budget below what the shop charges is a fact about the shop, not a search
+  that came back empty. When the primary procedure is answering a question about
+  the catalog itself, the published price range settles it and no search is
+  needed: say where prices start. An empty result proves only that one query
+  found nothing, and cannot support "there is nothing in that range."
 
 ## When the Budget Is Tight
 

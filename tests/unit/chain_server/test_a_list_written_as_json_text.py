@@ -20,13 +20,25 @@ exactly as before.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 from pydantic import ValidationError
 
 from chain_server.src.deepagents_runtime import AddCartItemsToolInput
 from chain_server.src.turn_support import _skill_activation_input_model
 
-_REGISTERED = ("outfit-styling", "product-discovery", "cart-management")
+# The builder reads `role` and `exclusive_group` off each registered skill, so
+# a bare tuple of names no longer describes a registry.
+_REGISTERED = {
+    "outfit-styling": SimpleNamespace(
+        role="primary", exclusive_group="product_procedure"
+    ),
+    "product-discovery": SimpleNamespace(
+        role="primary", exclusive_group="product_procedure"
+    ),
+    "cart-management": SimpleNamespace(role="standalone", exclusive_group=None),
+}
 
 
 def _activation_model() -> type:

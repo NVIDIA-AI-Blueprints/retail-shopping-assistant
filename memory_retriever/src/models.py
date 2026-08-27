@@ -8,6 +8,7 @@ from __future__ import annotations
 from uuid import uuid4
 
 from sqlalchemy import (
+    BigInteger,
     CheckConstraint,
     Column,
     Float,
@@ -33,7 +34,16 @@ def new_turn_attempt_id() -> str:
 
 class User(Base):
     __tablename__ = "users"
-    id = Column(Integer, primary_key=True, index=True)
+    #: Client-asserted and large: the biggest live one is 1.08e18, which is
+    #: half a billion times what PostgreSQL's INTEGER holds. SQLite never
+    #: complained because its INTEGER is 64-bit regardless of the declaration,
+    #: so this only surfaces on the first insert after a Postgres migration.
+    #: The variant keeps SQLite's autoincrement working, which needs INTEGER.
+    id = Column(
+        BigInteger().with_variant(Integer, "sqlite"),
+        primary_key=True,
+        index=True,
+    )
     context = Column(String, default="")
 
 
@@ -91,7 +101,7 @@ class CartItem(Base):
         unique=True,
         index=True,
     )
-    user_id = Column(Integer, index=True)
+    user_id = Column(BigInteger, index=True)
     product_id = Column(String, nullable=True, index=True)
     item = Column(String)
     # Null for one-size goods. The size a shopper chose, not a product
@@ -107,7 +117,7 @@ class CartQuantityIdempotency(Base):
 
     __tablename__ = "cart_quantity_idempotency"
     idempotency_key = Column(String, primary_key=True)
-    user_id = Column(Integer, nullable=False)
+    user_id = Column(BigInteger, nullable=False)
     cart_line_id = Column(String, nullable=False)
     quantity = Column(Integer, nullable=False)
     response_body = Column(String, nullable=False)
@@ -115,7 +125,7 @@ class CartQuantityIdempotency(Base):
 
 class CartMutation(Base):
     __tablename__ = "cart_mutations"
-    user_id = Column(Integer, primary_key=True)
+    user_id = Column(BigInteger, primary_key=True)
     idempotency_key = Column(String, primary_key=True)
     operation = Column(String, nullable=False)
     canonical_digest = Column(String, nullable=False)
@@ -159,7 +169,12 @@ class ShopperProfile(Base):
             name="ck_shopper_profiles_behavior",
         ),
         CheckConstraint(
-            "length(zipcode) = 5 AND zipcode NOT GLOB '*[^0-9]*'",
+            # Five characters, none of which survive having every digit
+            # removed. Said this way because the obvious spelling is
+            # `NOT GLOB '*[^0-9]*'` and GLOB exists only in SQLite: Postgres
+            # rejects the statement outright, so the table cannot be created
+            # there at all. `replace` and `length` are in both.
+            "length(zipcode) = 5 AND replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(zipcode, '0', ''), '1', ''), '2', ''), '3', ''), '4', ''), '5', ''), '6', ''), '7', ''), '8', ''), '9', '') = ''",
             name="ck_shopper_profiles_zipcode",
         ),
     )
@@ -192,7 +207,13 @@ class ConversationTurn(Base):
             "uq_conversation_started",
             "conversation_id",
             unique=True,
+            # Both dialects, always. With only the SQLite clause this
+            # becomes a *full* unique index on conversation_id everywhere else
+            # -- one turn per conversation, ever -- and the service is unusable
+            # from the first second turn. Found by copying live data into
+            # Postgres, which is the only place it can show.
             sqlite_where=text("status = 'started'"),
+            postgresql_where=text("status = 'started'"),
         ),
     )
 
@@ -207,7 +228,7 @@ class ConversationTurn(Base):
         nullable=False,
     )
     finalize_digest = Column(String, nullable=True)
-    cart_user_id = Column(Integer, nullable=False)
+    cart_user_id = Column(BigInteger, nullable=False)
     shopper_profile_id = Column(
         String(64),
         ForeignKey(

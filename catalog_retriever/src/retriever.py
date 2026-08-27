@@ -650,8 +650,13 @@ class Retriever:
 
 
 
-    def sync_snapshot(self, snapshot: CatalogSnapshot, verbose: bool = False) -> None:
-        """Reuse or rebuild the fixed collections for one validated snapshot."""
+    def describe_snapshot(self, snapshot: CatalogSnapshot) -> None:
+        """Tell the retriever which fields it is serving, and build nothing.
+
+        Separate from `sync_snapshot` because a pod that is not allowed to index
+        still has to know the shape of the catalog it is answering about. This
+        touches no collection and costs nothing.
+        """
 
         record = snapshot.schema.record
         self.catalog_size = snapshot.product_count
@@ -664,6 +669,15 @@ class Retriever:
         self.taxonomy_fields = snapshot.schema.taxonomy.fields
         self.detail_fields = list(snapshot.schema.detail_fields)
         self.filter_capabilities = snapshot.capabilities.filters
+
+    def matches_snapshot(self, snapshot: CatalogSnapshot) -> bool:
+        """Whether the stored indexes already represent exactly this snapshot.
+
+        Both indexes, not either: serving with a current text index and a stale
+        image one answers image searches from the wrong catalog rather than
+        failing, which is worse than not serving.
+        """
+
         text_ready = self.text_db.matches_catalog(
             snapshot.fingerprint, snapshot.product_count
         )
@@ -673,7 +687,24 @@ class Retriever:
                 snapshot.fingerprint, snapshot.product_count
             )
         )
-        if text_ready and image_ready:
+        return bool(text_ready and image_ready)
+
+    def sync_snapshot(self, snapshot: CatalogSnapshot, verbose: bool = False) -> None:
+        """Reuse or rebuild the fixed collections for one validated snapshot.
+
+        Exactly one process may be in here at a time. Rebuilding begins by
+        dropping the collections, so a second caller can drop what the first is
+        still filling, and the result is a partial index that no check catches
+        -- the fingerprint is written per row, so a half-filled collection
+        carries the right fingerprint on every row it has.
+
+        Nothing in this process enforces that. The deployment does, by running
+        `python -m app.index_catalog` as a single Job and setting
+        CATALOG_INDEX_ON_BOOT=false on the serving pods.
+        """
+
+        self.describe_snapshot(snapshot)
+        if self.matches_snapshot(snapshot):
             logging.info(
                 "CATALOG RETRIEVER | Retriever.sync_snapshot() | "
                 "Indexes match the active catalog; reusing them."

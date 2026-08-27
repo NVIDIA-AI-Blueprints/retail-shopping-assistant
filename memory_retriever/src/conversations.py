@@ -23,6 +23,7 @@ from pydantic import (
 )
 from sqlalchemy import func, text
 
+from .database import begin_write_transaction
 from .models import (
     CartItem,
     ConversationEvent,
@@ -489,7 +490,7 @@ def _require_conversation_profile(
 
 
 def _start_turn(db, conversation_id: str, request: TurnStartRequest) -> dict[str, Any]:
-    db.execute(text("BEGIN IMMEDIATE"))
+    begin_write_transaction(db, f"conversation:{conversation_id}")
     current_time = time.time()
     _mark_stale_started_turns(
         db,
@@ -683,7 +684,7 @@ def _finalize_turn(
     turn_id: str,
     request: TurnFinalizeRequest,
 ) -> dict[str, Any]:
-    db.execute(text("BEGIN IMMEDIATE"))
+    begin_write_transaction(db, f"conversation:{conversation_id}")
     turn = (
         db.query(ConversationTurn)
         .filter_by(
@@ -753,7 +754,7 @@ def _finalize_turn(
 
 
 def _delete_conversation(db, conversation_id: str) -> dict[str, Any]:
-    db.execute(text("BEGIN IMMEDIATE"))
+    begin_write_transaction(db, f"conversation:{conversation_id}")
     turn_ids = db.query(ConversationTurn.turn_id).filter_by(
         conversation_id=conversation_id
     )
@@ -807,7 +808,9 @@ def sweep_abandoned_turns(
     )
     with session_factory() as db:
         try:
-            db.execute(text("BEGIN IMMEDIATE"))
+            # No conversation to name: the sweep looks at every one of them,
+            # so two sweeps running together must exclude each other.
+            begin_write_transaction(db, "sweep:abandoned-turns")
             abandoned_count = _mark_stale_started_turns(
                 db,
                 current_time=current_time,

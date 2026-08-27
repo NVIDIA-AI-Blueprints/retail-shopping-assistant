@@ -299,6 +299,27 @@ async def process_query_timing(request: QueryRequest):
         logger.error(f"Error processing timing query: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
         
+@app.get("/ready")
+async def readiness_check():
+    """Readiness, which here is honestly the same as liveness.
+
+    The runtime is built at import and raises if configuration is bad, so a pod
+    that answers at all has already got one; there is no state this can catch
+    that /health does not. It exists so the deployment can point a readiness
+    probe somewhere stable, and so that when this service does grow a warm-up
+    step the probe is already wired.
+
+    It does not probe the catalog or memory services, and should not start. They
+    have their own readiness, and checking them from here would take every
+    chain-server pod out of rotation when one of them blinks -- a partial outage
+    made total.
+    """
+
+    if globals().get("assistant_runtime") is None:  # pragma: no cover
+        raise HTTPException(status_code=503, detail="runtime not initialised")
+    return {"status": "ready"}
+
+
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""

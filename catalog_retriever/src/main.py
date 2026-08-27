@@ -136,9 +136,43 @@ config = RetrieverConfig(
 logging.info("CATALOG RETRIEVER | startup | config.yaml ingested.")
 logging.info("CATALOG RETRIEVER | startup | Initializing Retriever object.")
 retriever = Retriever(config=config)
-logging.info("CATALOG RETRIEVER | startup | Checking and populating Milvus database if needed.")
-retriever.sync_snapshot(snapshot, verbose=True)
-logging.info("CATALOG RETRIEVER | startup | Milvus database ready.")
+
+# A serving pod never builds the index. Building starts by dropping the
+# collection, so it is the one operation here that must happen exactly once, and
+# a pod cannot know whether it is the only one doing it. There is no flag for
+# this and deliberately no second code path: a switch that lets a pod index
+# would be the error-prone case, and it would only ever be wrong in the
+# deployment that has more than one.
+#
+# `python -m app.index_catalog` is what builds, run once before the pods that
+# read it -- a Job in Kubernetes, a run-once service in compose. Until it has,
+# this pod is alive and unready, which is exactly what it is.
+logging.info(
+    "CATALOG RETRIEVER | startup | Serving only; the index is built by "
+    "`python -m app.index_catalog` as a deployment step."
+)
+retriever.describe_snapshot(snapshot)
+
+
+#: `matches_catalog` flushes the collection, which is too expensive to do on
+#: every probe, and the answer only ever changes once: the index a pod is
+#: waiting for either arrives or the pod is replaced when the catalog changes.
+#: So the positive answer is cached and never asked again.
+_index_ready = False
+
+
+def index_is_ready() -> bool:
+    """Whether Milvus holds the index for the catalog this pod loaded."""
+
+    global _index_ready
+    if _index_ready:
+        return True
+    try:
+        _index_ready = retriever.matches_snapshot(snapshot)
+    except Exception as exc:  # pragma: no cover - Milvus may still be starting
+        logging.warning("CATALOG RETRIEVER | readiness | index check failed: %s", exc)
+        return False
+    return _index_ready
 
 # Request bodies
 class TextQueryRequest(BaseModel):
@@ -214,6 +248,39 @@ async def query_image(req: ImageQueryRequest):
         "diagnostics": result.diagnostics,
         "no_result_reason": result.no_result_reason,
     }
+
+@app.get("/ready")
+async def readiness_check():
+    """Readiness: has this pod got a catalog to answer from?
+
+    Indexing runs at import, before uvicorn binds the port, so a pod cannot
+    reach the point of answering this without having finished. That makes the
+    check cheap on purpose -- it reads the snapshot already in memory rather
+    than asking Milvus, because a probe that runs every ten seconds must not
+    flush a collection to answer.
+
+    It deliberately does not check the embedding service or any other
+    dependency. Readiness that fails on a dependency removes every pod at once,
+    which turns a partial outage into a total one.
+    """
+
+    if not snapshot.product_count:
+        raise HTTPException(status_code=503, detail="catalog snapshot is empty")
+    if not index_is_ready():
+        # The usual reason is that the indexing Job has not finished. Saying so
+        # keeps the pod out of rotation instead of serving empty searches, which
+        # is what it would otherwise do -- a search against a missing index
+        # returns no products rather than an error.
+        raise HTTPException(
+            status_code=503,
+            detail="catalog index is not built for this snapshot yet",
+        )
+    return {
+        "status": "ready",
+        "catalog_id": capabilities.catalog_id,
+        "products": snapshot.product_count,
+    }
+
 
 @app.get("/health")
 async def health_check():

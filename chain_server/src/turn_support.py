@@ -889,55 +889,16 @@ class SearchCatalogToolArguments(BaseModel):
             "only for image-only search."
         ),
     )
-    taxonomy: CatalogTaxonomyToolInput = Field(
-        ...,
-        description=(
-            "Required catalog-derived taxonomy selection. Allowed category and "
-            "subcategory values come from the active catalog capabilities. Every "
-            "selected value must be the requested product type or a child of an "
-            "umbrella the shopper actually named. For a role the shopper did not "
-            "name, select every advertised subcategory that role genuinely covers "
-            "-- a proposed 'top' may select blouses and sweaters together. Do not "
-            "widen a role to types it does not cover. Never select "
-            "a parent or sibling as a substitute for an advertised type. If a "
-            "shopper-named type is not separately advertised, decide it against "
-            "the subcategories that exist, not the category word: select a "
-            "parent category only when one of its advertised subcategories "
-            "denotes the same kind of thing, and then leave subcategory empty. "
-            "Pumps are heels, so footwear qualifies. Every garment is apparel, "
-            "so 'a kind of this category' can never fail and is not the test. "
-            "When no advertised subcategory denotes the kind, the catalog does "
-            "not carry it: name it in not_covered and build no scope for it. "
-            "Results remain alternatives under their actual catalog types. For "
-            "example, skirts may satisfy bottoms; dresses may not."
-        ),
-    )
-    required_constraints: dict[str, Any] = Field(
-        ...,
-        description=(
-            "Every non-taxonomy must-have stated for the target products in the "
-            "current shopper turn, as a structured field and value. Facts about "
-            "an antecedent or anchor guide semantic styling judgment; do not copy "
-            "them onto a complementary product unless the shopper explicitly asks "
-            "for the same value. "
-            "Use exact hard-filter properties and advertised enum values from "
-            "current Catalog capabilities. Put a directly stated requirement "
-            "those capabilities do not advertise in unadvertised_requirements. "
-            "Season, weather, occasion, "
-            "and subjective style/vibe "
-            "context remain semantic direction unless the shopper directly "
-            "requires an objective product attribute. A defining material is a "
-            "must-have: for 'Any denim skirts available?', put 'denim' in "
-            "unadvertised_requirements when composition is not a hard filter. "
-            "Product types never belong in unadvertised_requirements. "
-            "When the shopper names who an item is for, and the catalog "
-            "advertises an audience filter, include it with every advertised "
-            "value that suits that person -- a value covering all genders "
-            "suits anyone. Without it, items that person cannot use stay in "
-            "the results. Omit it entirely when the shopper has not said who "
-            "the item is for."
-        ),
-    )
+    # No description on either field. `_search_catalog_tool_input_model`
+    # redefines both with the active catalog's enums, and a redefined field
+    # replaces the whole `FieldInfo` -- description included. Text written here
+    # never reaches the model. It sat here for months saying things the live
+    # description did not say, which is worse than saying nothing: two
+    # statements of the taxonomy contract, one of them inert, and nothing to
+    # keep them in step. The clauses worth keeping were moved into the live
+    # description; the rest were never tested, because they were never read.
+    taxonomy: CatalogTaxonomyToolInput = Field(...)
+    required_constraints: dict[str, Any] = Field(...)
     scope_complete: bool = Field(
         ...,
         description=(
@@ -1248,12 +1209,17 @@ def _search_catalog_tool_input_model(
                     "category or subcategory; both arrays may be empty only for "
                     "an image-only search."
                     " Every value must be a kind of the requested scope: skirts "
-                    "may satisfy bottoms; dresses may not. For a broad request "
+                    "may satisfy bottoms; dresses may not. Never select a parent "
+                    "or sibling as a substitute for an advertised type. For a "
+                    "broad request "
                     "that names no product type, choose one exact advertised "
                     "subcategory as the focused starting role. If a shopper-named "
                     "type is not separately advertised, select a parent category "
                     "only when one of its advertised subcategories denotes the "
-                    "same kind of thing, and then leave subcategory empty. When "
+                    "same kind of thing, and then leave subcategory empty. Pumps "
+                    "are heels, so footwear qualifies; every garment is apparel, "
+                    "so 'a kind of this category' can never fail and is not the "
+                    "test. When "
                     "none does, the catalog does not carry the type: name it in "
                     "not_covered and build no scope for it."
                 ),
@@ -1648,9 +1614,6 @@ def _required_constraints_input_model(
                 "recommendation adjectives such as comfortable, relaxed, soft, "
                 "breathable, lightweight, casual, dressy, bold, bright, vibrant, "
                 "or sporty always stay semantic; never put them in this field. "
-                "Before calling the tool, include every exact advertised filter "
-                "value that modifies the target product; do not leave this object "
-                "empty when one applies. "
                 "In an 'A or B' request, do not put the "
                 "supported advertised branch here. A product type never belongs "
                 "here."
@@ -4387,178 +4350,6 @@ def _cart_add_scope_failures(
             )
         )
     return failures
-
-
-def _explicitly_named_products(
-    text: str,
-    available_products: Any,
-) -> list[ProductSummary]:
-    normalized_text = _normalize_product_name(text)
-    if not normalized_text:
-        return []
-
-    padded_text = f" {normalized_text} "
-    matches: list[ProductSummary] = []
-    seen: set[str] = set()
-    products = list(available_products)
-    for product in products:
-        normalized_name = _normalize_product_name(product.display_name)
-        if not normalized_name:
-            continue
-        if f" {normalized_name} " not in padded_text:
-            continue
-        key = product.product_id or product.display_name
-        if key in seen:
-            continue
-        seen.add(key)
-        matches.append(product)
-
-    query_tokens = set(_product_name_tokens(text))
-    for product in products:
-        key = product.product_id or product.display_name
-        if key in seen:
-            continue
-        product_tokens = _product_name_tokens(product.display_name)
-        required_overlap = 3 if len(product_tokens) > 3 and matches else 2
-        if not _product_name_tokens_match(
-            query_tokens,
-            product_tokens,
-            required_overlap=required_overlap,
-        ):
-            continue
-        seen.add(key)
-        matches.append(product)
-    return matches
-
-
-def _same_product_display_name(expected: str, actual: str) -> bool:
-    return _normalize_product_name(expected) == _normalize_product_name(actual)
-
-
-#: What the catalog carries for a product sold in exactly one size.
-_ONE_SIZE = "onesize"
-
-
-#: The value, written the other way. Numbers only: a quantity of two is the
-#: same want whether the shopper typed it as a word or a digit.
-_SPELLED_NUMBERS = {
-    "1": "one", "2": "two", "3": "three", "4": "four", "5": "five",
-    "6": "six", "7": "seven", "8": "eight", "9": "nine", "10": "ten",
-    "11": "eleven", "12": "twelve",
-}
-
-
-def _shopper_words_this_conversation(state: Any) -> str:
-    """Everything the shopper has actually typed, this turn and before.
-
-    A size settled one turn ago -- "do you have it in a 6?" answered, then "yes,
-    add it" -- is established in the conversation and quotable from it. Reading
-    only the current message refused adds for sizes the shopper had already
-    given, which is the failure the cart reference had before it learned to look
-    further back than this turn.
-    """
-
-    parts = [str(getattr(state, "query", "") or "")]
-    for turn in getattr(state, "dialogue", None) or []:
-        text = getattr(turn, "shopper_text", "")
-        if text:
-            parts.append(str(text))
-    return "\n".join(parts)
-
-
-#: A word carries no identifying weight below this, and the short ones collide
-#: with ordinary sentences: "the" and "a" both belong to "The Office A-line
-#: Dress" and to "add the black one in a 2", which is how a navy dress was
-#: fitted to a request for a black one.
-_MIN_NAMING_WORD = 4
-#: How close a shopper's word has to be to a product's. Absorbs a typo or a
-#: missing plural without inventing a match: "ofice" is 0.91 against "office".
-_NAMING_LIKENESS = 0.85
-#: A fit has to be worth something, and it has to be clearly better than the
-#: next one. The margin is what protects the shopper: a threshold alone always
-#: has a best candidate, and picking the best of two near-equals is the silent
-#: choice this exists to prevent.
-_NAMING_FLOOR = 0.25
-_NAMING_MARGIN = 0.20
-
-
-def _products_the_shopper_fits(
-    shopper_text: str,
-    candidates: Sequence[Any],
-) -> list[Any]:
-    """Which of these products the shopper's words could be pointing at.
-
-    One question, so a second implementation can answer it later without moving
-    the rule that uses it: exactly one fit resolves, anything else is asked
-    about. Today the reading is lexical; a semantic one would score the same
-    candidates the same way and still never pick.
-
-    Words are weighted by how many of the candidates use them, read off the
-    candidates rather than a list of stop words: among four dresses "dress"
-    says nothing and "vivienne" says everything, and among four bags it is the
-    other way round. Two black dresses make "black" worth half, which is why
-    "the black one" cannot settle between them.
-
-    Comparison is by likeness rather than equality, so "the Ofice dress" and
-    "the Office dress" both land on the same product where whole-name matching
-    refused them, and words that match nothing are simply ignored.
-
-    The decision is the gap to the next candidate, not the score. A score alone
-    always has a winner; a gap is the difference between "this is the one" and
-    "it could be either", and only the first should reach a cart.
-    """
-
-    def words(value: str) -> list[str]:
-        return [
-            word
-            for word in _normalize_product_name(value).split()
-            if len(word) >= _MIN_NAMING_WORD
-        ]
-
-    per_candidate = [words(candidate.display_name) for candidate in candidates]
-    shared: dict[str, int] = {}
-    for names in per_candidate:
-        for word in set(names):
-            shared[word] = shared.get(word, 0) + 1
-    said = words(shopper_text)
-
-    scored: list[tuple[float, Any]] = []
-    for candidate, names in zip(candidates, per_candidate):
-        total = sum(1 / shared[word] for word in names)
-        if not total:
-            continue
-        matched = sum(
-            1 / shared[word]
-            for word in names
-            if any(
-                SequenceMatcher(None, word, spoken).ratio() >= _NAMING_LIKENESS
-                for spoken in said
-            )
-        )
-        scored.append((matched / total, candidate))
-
-    scored.sort(key=lambda entry: entry[0], reverse=True)
-    if not scored:
-        return []
-    best_score, best = scored[0]
-    runner_up = scored[1][0] if len(scored) > 1 else 0.0
-    if best_score < _NAMING_FLOOR or best_score - runner_up < _NAMING_MARGIN:
-        return []
-    return [best]
-
-
-def _most_recently_shown(state: Any) -> list[dict]:
-    """The last set of products put in front of the shopper."""
-
-    sets = [
-        entry
-        for entry in (getattr(state, "historical_product_sets", None) or [])
-        if isinstance(entry, dict) and isinstance(entry.get("products"), list)
-    ]
-    if not sets:
-        return []
-    newest = max(sets, key=lambda entry: entry.get("turn_seq") or 0)
-    return [item for item in newest["products"] if isinstance(item, dict)]
 
 
 def format_most_recent_subject(state: Any) -> str:

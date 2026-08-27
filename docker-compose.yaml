@@ -47,6 +47,11 @@ services:
     ports:
       - "8010:8010"
     environment:
+      # One replica here, so the pod may build its own index. With more than
+      # one, set this false and run `python -m app.index_catalog` as a Job:
+      # rebuilding drops the collection, so two pods doing it together can
+      # leave a partial index behind.
+      - CATALOG_INDEX_ON_BOOT=${CATALOG_INDEX_ON_BOOT:-true}
       - EMBED_API_KEY=${EMBED_API_KEY:-}
       - TEXT_EMBED_BASE_URL=${TEXT_EMBED_BASE_URL:-}
       - TEXT_EMBED_MODEL=${TEXT_EMBED_MODEL:-}

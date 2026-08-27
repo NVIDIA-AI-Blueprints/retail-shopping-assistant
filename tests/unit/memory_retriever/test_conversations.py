@@ -18,6 +18,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from memory_retriever.src import main as memory_main
+from memory_retriever.src.migrations import _MIGRATIONS
 from memory_retriever.src import product_references
 
 
@@ -1619,7 +1620,7 @@ def test_versioned_migrations_upgrade_legacy_schema_once_without_data_loss(
             ).scalars()
         )
 
-    assert versions == [1, 2, 3, 4, 5, 6, 7]
+    assert versions == [1, 2, 3, 4, 5, 6, 7, 8]
     assert row[0] == "Legacy Bag"
     assert len(row[1]) == 32
     assert row[2:] == (None, None)
@@ -1694,7 +1695,7 @@ def test_file_database_reopens_with_sqlite_safety_settings(
             connection.execute(
                 text("SELECT COUNT(*) FROM schema_migrations")
             ).scalar_one()
-            == 7
+            == len(_MIGRATIONS)
         )
     reopened_engine.dispose()
 

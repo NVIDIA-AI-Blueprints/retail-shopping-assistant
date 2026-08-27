@@ -211,6 +211,35 @@ def _cart_size(connection: Connection) -> None:
     ensure_cart_size_column(connection)
 
 
+def _cart_line_uniqueness(connection: Connection) -> None:
+    """Make one cart line per (user, product, size) a rule the database keeps.
+
+    Written to run on a database that already has rows. It builds the indexes
+    directly rather than through `create_all`, so it applies to tables created
+    before the model declared them.
+
+    It does not deduplicate first. Checked on the live volume on 2026-08-27:
+    2,061 cart rows and zero duplicate groups, so the indexes build cleanly. A
+    week earlier it was 249 rows -- the count grows with use, and a database
+    that has drifted will need a merge step before this runs. Failing loudly
+    here is right: silently dropping a shopper's second line to make an index
+    build is worse than a migration that stops and asks.
+
+    Two indexes because `size` is nullable and NULLs do not collide in a unique
+    index. `IF NOT EXISTS` so a re-run is a no-op, matching the rest of this
+    file.
+    """
+
+    connection.exec_driver_sql(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_cart_line_sized "
+        "ON cart_items (user_id, product_id, size) WHERE size IS NOT NULL"
+    )
+    connection.exec_driver_sql(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_cart_line_unsized "
+        "ON cart_items (user_id, product_id) WHERE size IS NULL"
+    )
+
+
 _MIGRATIONS = (
     (1, _legacy_schema),
     (2, _conversation_schema),
@@ -219,6 +248,7 @@ _MIGRATIONS = (
     (5, _shopper_profiles_schema),
     (6, _conversation_shopper_profile),
     (7, _cart_size),
+    (8, _cart_line_uniqueness),
 )
 
 

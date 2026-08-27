@@ -8039,17 +8039,13 @@ class TestDeepAgentsRuntimeRefs:
             )
         )
 
-        # Not added, and not disclosed either: the words fit both candidates
-        # equally. Disclosure earns its place where one reading is better than
-        # the others -- the shopper sees which was taken and a wrong line is one
-        # click away. Where nothing distinguishes them there is no reading to
-        # disclose, and the pick came from a word repeating in a display name,
-        # which is what put a navy dress in a cart for a request for a black
-        # one. The scorer decides: one fit is a reading, no fit among several
-        # is a tie, and a tie is the shopper's to break.
-        assert "NOTHING DISTINGUISHES THESE" in response
-        assert "Ask which one they mean" in response
-        assert added == []
+        assert "CHOSEN FROM A DESCRIPTION" in response
+        # It IS added now, and that is the change. Refusing cost a turn every
+        # time the reading was right -- which was most of the time -- and the
+        # refusal could not tell a good reading from a bad one anyway. The
+        # cart is on screen and a wrong line is one click away; an unspoken
+        # choice is what could not be undone.
+        assert [item.display_name for item in added] == ["Belle Noir Satin Gown"]
 
     def test_a_product_never_shown_is_looked_up_in_the_catalog(
         self,
@@ -8788,7 +8784,6 @@ class TestDeepAgentsRuntimeRefs:
         # of the explicit request. The provenance gate reaches it first.
         assert (
             "CHOSEN FROM A DESCRIPTION" in blocked_response
-            or "NOTHING DISTINGUISHES THESE" in blocked_response
             or "outside the current explicit add request" in blocked_response
         )
         assert "Green Meadow Sweater Top" in blocked_response

@@ -1511,17 +1511,33 @@ def _taxonomy_list_field(
 #: returned women's sunglasses. The rule below is not new -- it is the one
 #: already written in the system prompt, moved to the channel the model reads.
 _WEARER_AUDIENCE_FILTER_DESCRIPTION = (
-    "Who the products are for. When the shopper names the person this is for, "
-    "send every advertised value that suits them, and a value covering all "
-    "genders always suits anyone, so include it alongside the value for their "
-    "gender. Shoppers name people casually and every one of these counts the "
-    "same as a formal word: hubby, my guy, my man, my other half, my brother, "
-    "my dad, my son, my wife, my girlfriend, my mum, my sister, my daughter, "
-    "the kids. Buying for a woman means the women's value and the all-genders "
-    "value together, because both suit her; buying for a man in a catalog "
-    "that advertises no men's value means the all-genders value alone, "
-    "because the women's pieces genuinely do not suit him. When nobody is "
-    "named, omit this filter entirely -- do not send a covers-everyone value "
+    # Three prose framings were measured on "my husband is coming too, he
+    # needs sunglasses". Asking which values "suit" the person made the model
+    # choose a posture rather than run a test, and the wording only decided
+    # which posture: lead with exclusion and a man scored 10/12 while a woman
+    # scored 0/4; lead with inclusion and they swapped. The original scored
+    # 0/10 for a man.
+    #
+    # This one is not a balance. The covers-everyone value is always in. A
+    # gender-specific value is opt-in, and only for a person of that gender.
+    # There is nothing to weigh, so there is no posture to pick.
+    "Who the products are for. Send this whenever the shopper names the person "
+    "they are buying for. Build the list in two steps, in this order. First: "
+    "the value that covers all genders is always in the list -- it suits "
+    "everyone, so it is never the thing you leave out. Second: add a "
+    "gender-specific value ONLY if the person named is of that gender. Buying "
+    "for a woman, the women's value is added, so the list holds both. Buying "
+    "for a man, a child, or anyone who is not a woman, nothing is added to the "
+    "covers-everyone value and it goes alone -- women's pieces are not "
+    "something he can wear, and if this catalog advertises no value for him "
+    "then what covers everyone is the whole of what the shop can offer him. "
+    "Never add a gender-specific value because it is the closest one "
+    "available; closest is not the test, and it puts clothes in front of "
+    "someone who cannot wear them. Shoppers name people casually and every one "
+    "of these counts the same as a formal word: hubby, my guy, my man, my "
+    "other half, my brother, my dad, my son, my wife, my girlfriend, my mum, "
+    "my sister, my daughter, the kids. When nobody is "
+"named, omit this filter entirely -- do not send a covers-everyone value "
     "to mean unspecified, which would discard everything stocked for one "
     "audience. If nothing advertised suits the named person, such as a child "
     "in an adult-only catalog, search for them anyway and let it return "

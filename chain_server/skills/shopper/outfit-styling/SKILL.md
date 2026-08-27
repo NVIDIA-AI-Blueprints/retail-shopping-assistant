@@ -37,6 +37,11 @@ piece works with another.
   confirmed candidate group may be the anchor. An anchor is context, not a
   request to search for that item again.
 - Search only the role requested now, not the whole look at once.
+- Write `shopper_guidance` as your own sentence about this role, never the
+  shopper's words back at them, and never a running tally of everything shown
+  so far -- "skirts to complete your look with bracelets, sunglasses, tote bags
+  and heels" invents an outfit out of a browse. When the item is for someone
+  else, it is for them: their sunglasses do not complement the shopper's look.
 - When the shopper names several pieces, treat each as a distinct role, then
   explain how the grounded results work together.
 - For a complete-look request with enough occasion, vibe or anchor context,

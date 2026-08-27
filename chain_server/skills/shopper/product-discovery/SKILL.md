@@ -47,6 +47,12 @@ What follows is what those cannot say.
   is not a filter, and making it one empties the results.
 - If the first search returns nothing, offer to relax one constraint before
   retrying, and say which one and why.
+- Write `shopper_guidance` as your own concise sentence, never the shopper's
+  words back at them. It is shopper-facing on a clarification or a degraded
+  turn, so "show me ONLY black high-neck dresses in a size 2, don't show me
+  anything else" copied into it is read aloud to the person who just said it.
+  Say what this scope is for and stop; leave it empty when they simply named a
+  product type.
 
 ## Products From Earlier Turns
 

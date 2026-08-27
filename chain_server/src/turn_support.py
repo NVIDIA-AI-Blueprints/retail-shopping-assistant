@@ -1230,10 +1230,20 @@ def _search_catalog_tool_input_model(
             Field(
                 ...,
                 description=(
+                    # The size-2-and-shoes example lives on `scopes`, which is
+                    # where cross-role ownership belongs, and was stated here
+                    # too. Both arrived on 2026-08-20 (#191). Measured across
+                    # the run archive on J01 turn 12 -- "my husband is coming
+                    # too, he needs sunglasses" -- the audience filter was
+                    # correct 3 times in 5 on the build before that day, and
+                    # once in the ~105 runs after it. Nothing was removed in
+                    # between and the audience rule itself has not changed
+                    # since 2026-08-06; 140 characters of size-and-role worked
+                    # example were added to the front of the object where the
+                    # audience value gets chosen. Stated once, on the field
+                    # that owns it.
                     "Catalog hard filters and any defining requirement the active "
-                    "catalog cannot enforce. A modifier belongs to the product it "
-                    "was said about: in 'a dress in size 2 and shoes', size 2 is "
-                    "the dress's and the shoes have no size. Apply constraints "
+                    "catalog cannot enforce. Apply constraints "
                     "only when the current turn states them for the target "
                     "products; an anchor's "
                     "attributes belong in semantic styling context unless the "

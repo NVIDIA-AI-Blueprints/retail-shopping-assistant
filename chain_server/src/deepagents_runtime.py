@@ -69,7 +69,6 @@ from .turn_support import (
     _add_model_usage,
     _cart_size_issue,
     _cart_line_size,
-    _a_choice_only_the_shopper_can_make,
     _cart_product_choice_note,
     format_most_recent_subject,
     _identified_in_the_current_showing,
@@ -1841,21 +1840,6 @@ class DeepAgentsRuntime:
                 # is added and said out loud, because the cart is on screen and
                 # a wrong line is one click away -- where a refusal costs a
                 # turn on every request it misjudges, and it misjudged plenty.
-                # A tie is the shopper's to break. Disclosure is right when one
-                # candidate is a better reading than the others; it is weakest
-                # when nothing distinguishes them, because then the reading
-                # being disclosed was made by matching a word in a display name.
-                a_tie = _a_choice_only_the_shopper_can_make(
-                    active_detail.product,
-                    _shopper_words_this_conversation(state),
-                    scope.product_evidence,
-                    _most_recently_shown(state),
-                    _identified_in_the_current_showing(state),
-                    size,
-                )
-                if a_tie:
-                    blocked.append(f"- PRODUCT_REF '{product_ref}': {a_tie}")
-                    continue
                 choice_note = _cart_product_choice_note(
                     active_detail.product,
                     _shopper_words_this_conversation(state),

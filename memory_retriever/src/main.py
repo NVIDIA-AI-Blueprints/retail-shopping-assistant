@@ -1,6 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import anyio.to_thread
+
 from contextlib import asynccontextmanager
 import json
 import time
@@ -11,7 +13,14 @@ from sqlalchemy.exc import IntegrityError
 from typing import Optional
 
 from .conversations import create_conversation_router, sweep_abandoned_turns
-from .database import Base, DATABASE_URL, SessionLocal, build_engine, engine
+from .database import (
+    Base,
+    DATABASE_URL,
+    SessionLocal,
+    build_engine,
+    configured_max_concurrent_requests,
+    engine,
+)
 from .migrations import (
     cart_mutation_digest,
     ensure_cart_line_id_column,
@@ -136,8 +145,24 @@ class CartQuantityUpdate(BaseModel):
     quantity: int = Field(ge=0)
     idempotency_key: str = Field(..., min_length=1)
 
+def _match_threadpool_to_the_connection_pool() -> None:
+    """Stop the threadpool admitting more work than there are connections.
+
+    Every endpoint here takes ``get_db``, a synchronous dependency, so FastAPI
+    runs it in anyio's threadpool. That pool defaults to forty threads and knows
+    nothing about how many database connections exist, so it will happily start
+    more sessions than the pool can supply and leave the surplus blocking. Tie
+    it to the same number the engine was built with.
+    """
+
+    anyio.to_thread.current_default_thread_limiter().total_tokens = (
+        configured_max_concurrent_requests()
+    )
+
+
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
+    _match_threadpool_to_the_connection_pool()
     _run_schema_migrations()
     _bootstrap_shopper_profiles()
     _sweep_abandoned_turns()

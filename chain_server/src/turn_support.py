@@ -4821,6 +4821,70 @@ def _most_recently_shown(state: Any) -> list[dict]:
     return [item for item in newest["products"] if isinstance(item, dict)]
 
 
+def _a_choice_only_the_shopper_can_make(
+    product: Any,
+    shopper_text: str,
+    evidence: ProductEvidence,
+    recently_shown: Sequence[Any] = (),
+    already_identified: Sequence[str] = (),
+    size: str | None = None,
+) -> str:
+    """Ask when the candidates are genuinely indistinguishable, not merely unconfirmed.
+
+    Disclosure replaced refusal for a good reason: refusing on the ABSENCE of
+    confirmation blocked turns that had got it right, and it cost a turn every
+    time it was wrong. That reasoning holds wherever one candidate is a better
+    reading than the others -- the shopper sees which one was taken and a wrong
+    line is one click away.
+
+    It does not hold when nothing distinguishes them. "add the black one in a
+    size 8", with four black dresses on screen and every one of them sold in an
+    8, is not a reading the assistant can be more or less right about. It took
+    the Black Satin Lace-Up Dress because its name begins with the word the
+    shopper used, which is the same name-matching that once put a navy dress in
+    a cart for a request for a black one.
+
+    So the scorer decides. `_products_the_shopper_fits` weights each word by how
+    many candidates share it -- among four black dresses "black" is worth a
+    quarter, and "vivienne" would be worth everything -- and returns a single
+    product only when one clears the floor and beats the next by the margin.
+    One fit is a reading, and is disclosed. No fit among several candidates is a
+    tie, and a tie is the shopper's to break.
+    """
+
+    candidates = _reference_candidates(evidence, recently_shown)
+    if len(candidates) <= 1:
+        return ""
+    if _the_only_one_on_screen_in_that_size(product, size, recently_shown):
+        return ""
+    if any(
+        getattr(match, "product_id", None) == product.product_id
+        for match in _products_named_exactly(shopper_text, candidates)
+    ):
+        return ""
+    if evidence.identified_by_the_system(product.product_id):
+        return ""
+    if str(product.product_id) in {str(ref) for ref in (already_identified or ())}:
+        return ""
+    if _products_the_shopper_fits(shopper_text, candidates):
+        return ""
+    names = [
+        str(getattr(c, "display_name", "") or "")
+        for c in candidates
+        if getattr(c, "display_name", None)
+    ]
+    if len(names) < 2:
+        return ""
+    listed = ", ".join(names[:4])
+    return (
+        "NOTHING DISTINGUISHES THESE: the shopper's words fit "
+        f"{len(candidates)} of the products on screen equally -- {listed}. "
+        "Nothing was added. Ask which one they mean, naming them, and add it "
+        "when they say. Do not pick one because its name repeats a word they "
+        "used."
+    )
+
+
 def _cart_product_choice_note(
     product: Any,
     shopper_text: str,

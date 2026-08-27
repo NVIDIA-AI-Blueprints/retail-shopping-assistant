@@ -38,7 +38,51 @@ class User(Base):
 
 
 class CartItem(Base):
+    """One line of the cart: a product, a chosen size, and a quantity.
+
+    The line is unique on `(user_id, product_id, size)`, and that is enforced
+    here rather than left to the add path. The add reads then writes, and today
+    two concurrent adds of the same product and size cannot interleave -- not
+    because anything prevents it, but because every endpoint is `async def`
+    doing blocking work, so the event loop serialises the whole service. That
+    is an accident, and the two steps that make this service scale both remove
+    it: Postgres replaces database-wide write serialisation with MVCC, and
+    making the endpoints threadpool-bound removes the loop lock. After either,
+    the read-then-write is a lost update or a duplicate line.
+
+    So the invariant moves into the schema first, while it is still cheap. The
+    durable-turn tables already work this way -- `uq_turn_event_key`,
+    `uq_turn_event_order`, and a partial unique index on in-flight turns. The
+    cart was the outlier.
+
+    Two indexes rather than one, because `size` is nullable and NULLs are
+    distinct in a unique index on both SQLite and Postgres. A single
+    three-column index would leave every one-size product -- bags, sunglasses,
+    jewellery, 38 of the 215 in this catalog -- entirely unconstrained, which
+    is the half of the cart most likely to be added twice.
+    """
+
     __tablename__ = "cart_items"
+    __table_args__ = (
+        Index(
+            "uq_cart_line_sized",
+            "user_id",
+            "product_id",
+            "size",
+            unique=True,
+            sqlite_where=text("size IS NOT NULL"),
+            postgresql_where=text("size IS NOT NULL"),
+        ),
+        Index(
+            "uq_cart_line_unsized",
+            "user_id",
+            "product_id",
+            unique=True,
+            sqlite_where=text("size IS NULL"),
+            postgresql_where=text("size IS NULL"),
+        ),
+    )
+
     id = Column(Integer, primary_key=True, index=True)
     cart_line_id = Column(
         String,

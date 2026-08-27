@@ -60,7 +60,7 @@ class TextEmbeddings(Embeddings):
         """Generate text embeddings for multiple texts"""
         logging.info(f"TextEmbeddings | embed_documents() | called.")
         res = self.retriever.text_embeddings(texts)
-        normed = [list(r/np.linalg.norm(r) for r in res)]
+        normed = [(np.asarray(r) / np.linalg.norm(r)).tolist() for r in res]
         return normed
 
 # Defines a type for storing and embedding images.

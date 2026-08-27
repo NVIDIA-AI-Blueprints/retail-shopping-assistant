@@ -559,11 +559,12 @@ class Retriever:
             df = pd.read_csv(csv_path)
             logging.info(f"CATALOG RETRIEVER | Retriever.milvus_from_csv() | CSV read in.")
         except Exception as e:
-            logging.debug(f"CATALOG RETRIEVER | Retriever.milvus_from_csv() | Error: {e} -- Failed to read CSV: {csv_path}.")            
+            logging.error(f"CATALOG RETRIEVER | Retriever.milvus_from_csv() | Error: {e} -- Failed to read CSV: {csv_path}.")
             dir_contents = []
             for entry in os.listdir("."):
                 dir_contents.append(entry)
             logging.info(f"CATALOG RETRIEVER | Retriever.milvus_from_csv() | Directory contents at failure: {dir_contents}")
+            raise
 
         # Create combined name and description strings
         metadatas = df.to_dict(orient="records")

@@ -396,6 +396,15 @@ Rules:
   and filter scope returned no products. It does not prove that a different,
   unsearched, or unadvertised product type is absent, and it never supports a
   catalog-wide availability claim.
+- WHAT THE SHOPPER'S MEDIA SHOWED is your sight of what they attached. It
+  supports saying what the media contained, and nothing else: it is not a
+  catalog fact, it never proves a product exists or what it is made of, and a
+  garment seen there is not a garment this shop sells. On a turn that carries
+  media, say what was seen before answering from it -- a shopper who sends a
+  photo is owed the assistant naming what it looked at, and where the shop
+  cannot serve that look, saying so is the answer rather than a list of the
+  nearest things. Never tell them you could not view their media when this lane
+  is present.
 - Use CONVERSATION to resolve direct references such as "that" and "those," and
   to honour what the shopper has already told you. It carries intent only: it
   can never establish a product fact, a price, availability, whether a search
@@ -2593,6 +2602,13 @@ class DeepAgentsRuntime:
             f"{format_cart_change(state.cart_at_turn_start, state.cart)}\n\n"
             "CONVERSATION (shopper intent only — never a product fact):\n"
             f"{state.dialogue_context or '(none)'}\n\n"
+            # The editor had seven lanes and none of them was the shopper's own
+            # media, so a draft naming what the photo showed -- "tan blazer,
+            # cable-knit sweater, salmon trousers" -- had no lane supporting it,
+            # and this editor cuts what no lane supports. It was not merely
+            # failing to require the description; it had reason to remove one.
+            "WHAT THE SHOPPER'S MEDIA SHOWED (sight, never a catalog fact):\n"
+            f"{state.media_analysis or '(none)'}\n\n"
             f"AVAILABLE IMAGES:\n{_format_retrieved_images(state.retrieved)}\n\n"
             f"DRAFT RESPONSE:\n{draft_response}"
         )

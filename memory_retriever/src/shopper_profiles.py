@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
+from .database import begin_write_transaction
 from .models import ShopperProfile
 
 
@@ -151,7 +152,8 @@ def bootstrap_shopper_profiles(
     }
     db = session_factory()
     try:
-        db.execute(text("BEGIN IMMEDIATE"))
+        # Every pod runs this at startup, so N of them start it together.
+        begin_write_transaction(db, "bootstrap:shopper-profiles")
         existing = db.query(ShopperProfile).all()
         existing_by_id = {
             profile.shopper_profile_id: profile for profile in existing

@@ -432,9 +432,19 @@ def test_the_audience_filter_carries_the_rule_the_model_needs() -> None:
     # to weigh inclusion against exclusion only moved the failure between the
     # man and the woman. The covers-everyone value being unconditional, and the
     # gendered value being opt-in, is what stopped it oscillating.
-    assert "covers all genders is always in the list" in described
-    assert "ONLY if the person named is of that gender" in described
-    assert "closest is not the test" in described
+    # Two ordered steps with nothing to weigh, and the meaning of each value
+    # supplied by the catalog rather than enumerated here. Measured across six
+    # wordings on the running service: asking which values "suit" the person
+    # scored a man 0/10, and every variant that fixed one gender broke the
+    # other. This one scored men 14/14 and adult women 8/10.
+    assert "covering all genders is always in the list" in described
+    assert "only when its published meaning fits the person named" in described
+    assert "closest value available is not the test" in described
+    # The vocabulary, which is what "for men" had and "hubby" did not.
+    # Measured: cutting the female terms out of this list dropped "sister" to
+    # 1/4 because the filter stopped firing at all.
+    for word in ("hubby", "my wife", "my sister", "my daughter", "my dad"):
+        assert word in described, word
     # The vocabulary, which is what "for men" had and "hubby" did not.
     assert "hubby" in described
     # The clause protecting the case a required field broke: answering

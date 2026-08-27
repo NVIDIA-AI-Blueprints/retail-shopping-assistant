@@ -64,6 +64,25 @@ class CatalogFieldSchema(BaseModel):
 
     type: CatalogSourceType
     uses: list[CatalogFieldUse] = Field(default_factory=list)
+    #: What a value *means*, for values whose name does not say it.
+    #:
+    #: `target_audience` published two bare strings, `womens` and
+    #: `adult_all_genders`, and the model had to guess whether `womens` was a
+    #: wearability constraint or a department name. Men do shop womenswear, so
+    #: including it for a husband is not obviously wrong from the name alone --
+    #: and it was included in 65 of 110 archived runs, putting women's clothes
+    #: in front of a man.
+    #:
+    #: The compensating rule was 1,519 characters of worked cases in the tool
+    #: schema, which enumerated the catalog it was written against. Publishing
+    #: the meaning here puts the fact where the shape of the catalog already
+    #: lives, so a catalog adding a value describes it once and no prompt
+    #: changes.
+    #:
+    #: Keys not present among the field's values are ignored rather than
+    #: rejected: the value set is whatever the products happen to carry, and an
+    #: operator should be able to describe a value before stocking it.
+    value_meanings: dict[str, str] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def unique_uses(self) -> "CatalogFieldSchema":
@@ -72,6 +91,12 @@ class CatalogFieldSchema(BaseModel):
             raise ValueError(
                 "text fields cannot be hard filters; use enum, enum_list, or number"
             )
+        cleaned: dict[str, str] = {}
+        for raw_key, raw_text in self.value_meanings.items():
+            key, text = str(raw_key).strip(), str(raw_text).strip()
+            if key and text:
+                cleaned[key] = text
+        self.value_meanings = cleaned
         return self
 
 
@@ -423,6 +448,43 @@ def _required_product_id(
     return raw_value
 
 
+def _indexing_relevant_schema_bytes(schema_bytes: bytes) -> bytes:
+    """The schema, minus the parts that only ever reach a prompt.
+
+    The fingerprint decides whether the vector index is rebuilt, so it must
+    cover what changes the index -- field types, uses, taxonomy, the record
+    mapping -- and nothing else. `value_meanings` is prose published to the
+    model; it changes no document, no embedding and no filter. Hashing it
+    meant an operator describing a value triggered a full re-embed of the
+    catalog, which is both expensive and a reason not to describe values.
+
+    Falls back to the raw bytes if the schema will not parse: an unparseable
+    schema fails later with a better message than a fingerprint helper can
+    give, and a changed fingerprint is the safe direction to be wrong in.
+    """
+
+    try:
+        parsed = yaml.safe_load(schema_bytes)
+    except yaml.YAMLError:
+        return schema_bytes
+    if not isinstance(parsed, dict):
+        return schema_bytes
+    fields = parsed.get("fields")
+    if isinstance(fields, dict):
+        parsed = {
+            **parsed,
+            "fields": {
+                name: (
+                    {k: v for k, v in spec.items() if k != "value_meanings"}
+                    if isinstance(spec, dict)
+                    else spec
+                )
+                for name, spec in fields.items()
+            },
+        }
+    return yaml.safe_dump(parsed, sort_keys=True).encode("utf-8")
+
+
 def _catalog_fingerprint(
     *,
     data_bytes: bytes,
@@ -435,7 +497,7 @@ def _catalog_fingerprint(
     digest = sha256()
     for label, payload in (
         (b"data", data_bytes),
-        (b"schema", schema_bytes),
+        (b"schema", _indexing_relevant_schema_bytes(schema_bytes)),
         (b"text_model", text_model_name.encode("utf-8")),
         (
             b"image_model",

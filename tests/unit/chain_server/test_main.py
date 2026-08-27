@@ -9602,7 +9602,7 @@ class TestAudienceAwareSearch:
         assert (
             "never name an audience the catalog does not advertise" in normalized
         )
-        assert "covers all genders is always in the list" in normalized
+        assert "covering all genders is always in the list" in normalized
         assert "omit this filter entirely" in normalized
         assert "never ask the shopper their gender" in normalized
 

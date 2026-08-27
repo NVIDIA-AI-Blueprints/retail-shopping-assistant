@@ -139,6 +139,10 @@ class CatalogFilterCapability(CommerceModel):
     min_value: float | None = None
     max_value: float | None = None
     request_aliases: dict[str, str] = Field(default_factory=dict)
+    #: What a value means, where its name does not say. Published by the
+    #: catalog so the model reasons from a fact rather than from a string, and
+    #: so a rule about the values does not have to enumerate them in prose.
+    value_meanings: dict[str, str] = Field(default_factory=dict)
 
 
 class CatalogValueCapability(CommerceModel):
@@ -164,6 +168,7 @@ class CatalogFieldCapability(CommerceModel):
     values: list[CatalogValueCapability] = Field(default_factory=list)
     min_value: float | None = None
     max_value: float | None = None
+    value_meanings: dict[str, str] = Field(default_factory=dict)
 
 
 class CatalogTaxonomySubcategory(CommerceModel):

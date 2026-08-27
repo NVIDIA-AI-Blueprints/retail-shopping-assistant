@@ -97,6 +97,13 @@ def format_catalog_capabilities_for_prompt(
                     searchable=field.searchable if field is not None else None,
                 )
             )
+            # What a value means, where its name does not say it. Published by
+            # the catalog rather than written into a rule, so the model reads a
+            # fact about this catalog instead of inferring one from a string.
+            for value, meaning in sorted(
+                (getattr(capability, "value_meanings", None) or {}).items()
+            ):
+                lines.append(f"    - {value}: {meaning}")
 
     semantic_only = {
         name: field
@@ -116,7 +123,8 @@ def format_catalog_capabilities_for_prompt(
         lines.append(
             "Taxonomy-specific field availability "
             f"({category_field} > {subcategory_field}; "
-            "use exact values from Hard filters above):"
+            "use exact values from Hard filters above; a subcategory listing "
+            "no fields of its own has the same ones as its category):"
         )
         taxonomy_fields = {
             field
@@ -146,6 +154,16 @@ def format_catalog_capabilities_for_prompt(
             ):
                 subcategory = category.subcategories[subcategory_name]
                 lines.append(f"  - {subcategory_field}={subcategory_name}")
+                # 13 of 20 subcategories restated their parent's filter set
+                # word for word, 2,472 characters of it. Every repetition is
+                # another reading of a filter's name with nothing new attached,
+                # which is how a field ends up looking interchangeable with the
+                # nine beside it. Say it where it differs.
+                if (
+                    subcategory.filters == category.filters
+                    and subcategory.semantic_fields == category.semantic_fields
+                ):
+                    continue
                 lines.extend(
                     _format_scope(
                         subcategory.filters,
@@ -178,6 +196,7 @@ def effective_filter_capabilities(
                 if field.type == "number"
                 else {}
             ),
+            value_meanings=dict(field.value_meanings),
         )
         for name, field in capabilities.fields.items()
         if field.filterable and field.coverage.present > 0

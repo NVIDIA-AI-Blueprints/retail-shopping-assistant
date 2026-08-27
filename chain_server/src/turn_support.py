@@ -1511,46 +1511,47 @@ def _taxonomy_list_field(
 #: returned women's sunglasses. The rule below is not new -- it is the one
 #: already written in the system prompt, moved to the channel the model reads.
 _WEARER_AUDIENCE_FILTER_DESCRIPTION = (
-    # Three prose framings were measured on "my husband is coming too, he
-    # needs sunglasses". Asking which values "suit" the person made the model
-    # choose a posture rather than run a test, and the wording only decided
-    # which posture: lead with exclusion and a man scored 10/12 while a woman
-    # scored 0/4; lead with inclusion and they swapped. The original scored
-    # 0/10 for a man.
+    # Two halves, learned separately and measured apart.
     #
-    # This one is not a balance. The covers-everyone value is always in. A
-    # gender-specific value is opt-in, and only for a person of that gender.
-    # There is nothing to weigh, so there is no posture to pick.
+    # The MEANING of the values comes from Catalog capabilities, not from a
+    # table of cases written here. Enumerating them scored a man 0/10 to 11/18
+    # depending on wording, and "shades for hubby" never once: the model had
+    # to infer from the bare string `womens` whether it was a wearability
+    # constraint or a department, and men do shop womenswear. Published as a
+    # fact, hubby went to 4/4 and dad to 4/4.
+    #
+    # The TRIGGER and the ORDER have to stay here. A version that carried only
+    # the meanings sent no filter at all for a wife or a sister, 0/10 -- it
+    # knew what the values meant and never reached for them. So: say plainly
+    # when to send it, and keep the covers-everyone value unconditional so
+    # there is no judgment to lose.
     "Who the products are for. Send this whenever the shopper names the person "
-    "they are buying for. Build the list in two steps, in this order. First: "
-    "the value that covers all genders is always in the list -- it suits "
-    "everyone, so it is never the thing you leave out. Second: add a "
-    "gender-specific value ONLY if the person named is of that gender. Buying "
-    "for a woman, the women's value is added, so the list holds both. Buying "
-    "for a man, a child, or anyone who is not a woman, nothing is added to the "
-    "covers-everyone value and it goes alone -- women's pieces are not "
-    "something he can wear, and if this catalog advertises no value for him "
-    "then what covers everyone is the whole of what the shop can offer him. "
-    "Never add a gender-specific value because it is the closest one "
-    "available; closest is not the test, and it puts clothes in front of "
-    "someone who cannot wear them. Shoppers name people casually and every one "
-    "of these counts the same as a formal word: hubby, my guy, my man, my "
-    "other half, my brother, my dad, my son, my wife, my girlfriend, my mum, "
-    "my sister, my daughter, the kids. When nobody is "
-"named, omit this filter entirely -- do not send a covers-everyone value "
-    "to mean unspecified, which would discard everything stocked for one "
-    "audience. If nothing advertised suits the named person, such as a child "
-    "in an adult-only catalog, search for them anyway and let it return "
-    "nothing; never substitute what does not suit them. The person-words "
-    "listed above are for reading what the shopper said. They are not "
-    "audiences to offer back: a reply may name only audiences this catalog "
-    "advertises, and must never suggest looking for one it does not stock. "
-    "Only this turn's "
-    "words count. An audience established earlier in the conversation never "
-    "carries into a request that does not name that person again, however "
-    "obviously they are still around: send no filter and let the shopper "
-    "redirect you. Enumerating the ways a shopper moves on is hopeless, so "
-    "the rule is the reverse -- naming someone is what turns the filter on."
+    "they are buying for, however casually. Every one of these counts the same "
+    "as a formal word: hubby, my guy, my man, my other half, my brother, my "
+    "dad, my son, my wife, my girlfriend, my mum, my sister, my daughter, the "
+    "kids. Build the list "
+    "in two steps, in this order. First: the value covering all genders is "
+    "always in the list, because it suits everyone -- it is never the thing "
+    "you leave out. Second: add any other value only when its published "
+    "meaning fits the person named. Buying for a woman, the women's value fits "
+    "and is added, so the list holds both. Buying for a man or a child, "
+    "nothing is added and the covers-everyone value goes alone. Being the "
+    "closest value available is not the test and never justifies adding one. "
+    "If nothing published suits the named person, such as a child in a "
+    "catalog whose values are all adult, send what covers everyone, say so "
+    "in the reply, and never substitute what does not suit them. "
+    "The person-words listed above are for reading what the shopper said. "
+    "They are not audiences to offer back: a reply may name only audiences "
+    "this catalog advertises, and must never suggest looking for one it "
+    "does not stock. "
+    "When nobody is named, omit this filter entirely -- do not send a "
+    "covers-everyone value to mean unspecified, which "
+    "discards everything stocked for one audience. Only this turn's words "
+    "count. An audience established earlier never carries into a request that "
+    "does not name that person again, however obviously they are still "
+    "around: send no filter and let the shopper redirect you. Enumerating the "
+    "ways a shopper moves on is hopeless, so the rule is the reverse -- naming "
+    "someone is what turns the filter on."
 )
 
 
@@ -1617,6 +1618,20 @@ def _required_constraints_input_model(
             field_type = str | list[str] | None
         if name and name == wearer_audience_field:
             description = _WEARER_AUDIENCE_FILTER_DESCRIPTION
+            # The catalog publishes what its values mean; render them onto the
+            # field the model fills, not only into the capabilities block.
+            # Measured: with the meanings in the system prompt alone, "shades
+            # for hubby" went 0/4 to 3/4 -- the fact was doing real work -- but
+            # a wife or sister collapsed to 1/14, because the binding channel
+            # had lost the instruction to the weaker one. The fact belongs
+            # where the decision is made.
+            meanings = getattr(capability, "value_meanings", None) or {}
+            if meanings:
+                description += " What each value means, published by this "
+                description += "catalog: " + "; ".join(
+                    f"{value} -- {text}"
+                    for value, text in sorted(meanings.items())
+                ) + "."
         else:
             description = f"Advertised hard filter '{name}'."
             # The catalog publishes the range of every numeric filter and this

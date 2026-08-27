@@ -144,3 +144,42 @@ async def test_the_thread_belongs_to_one_request_and_never_to_a_conversation(
     second = RequestIdentity(request_id="r2", **common)
 
     assert first.checkpoint_thread_id != second.checkpoint_thread_id
+
+
+@pytest.mark.asyncio
+async def test_a_genuinely_cancelled_task_still_frees_its_checkpoint() -> None:
+    """Cancellation for real, not a raised CancelledError.
+
+    The two are not the same. Freeing happens in a `finally` that awaits, and
+    inside a task that is actually being cancelled an await can behave
+    differently from one following a plain raise. A shopper closing the tab
+    cancels the task, so this is the path that happens in production, and the
+    other test would not notice if it stopped working.
+    """
+
+    import asyncio
+
+    from chain_server.src.deepagents_runtime import DeepAgentsRuntime
+    from types import SimpleNamespace
+
+    runtime = DeepAgentsRuntime.__new__(DeepAgentsRuntime)
+    runtime._checkpointer = _CountingCheckpointer()
+    identity = _identity()
+    runtime._checkpointer.remember(identity.checkpoint_thread_id)
+
+    started = asyncio.Event()
+
+    async def body(state, ident, on_progress=None):
+        started.set()
+        await asyncio.sleep(3600)  # as a turn waiting on a model would
+
+    runtime._run_turn_inner = body
+    state = SimpleNamespace(agent_diagnostics={}, response="")
+
+    task = asyncio.create_task(runtime._run_turn(state, identity))
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert runtime._checkpointer.threads == set()

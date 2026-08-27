@@ -1220,9 +1220,7 @@ class DeepAgentsRuntime:
         if skills_backend is None:
             raise RuntimeError("Shopper skill backend is unavailable.")
         skill_registry = _shopper_skill_registry(skills_root)
-        skill_activation_input = _skill_activation_input_model(
-            tuple(skill_registry)
-        )
+        skill_activation_input = _skill_activation_input_model(skill_registry)
         scope = TurnScope()
         state.retrieved = scope.retrieved
         wearer_audience_field = str(
@@ -2357,20 +2355,24 @@ class DeepAgentsRuntime:
             """Select and load shopper behavior skills for this turn. This is
             the required first step before answering or calling shopping tools.
             Select the smallest set whose registered descriptions cover the
-            complete current intent. Use outfit-styling for outfit building,
-            completion, refinement, or mid-browse styling questions; style-led
-            single-piece selection, including a statement or balancing piece,
-            also uses outfit-styling. Use product-discovery for search and browse
-            without styling intent. These are alternative primary procedures,
-            never a pair. Adding a product the shopper names that no search in
-            this conversation has shown is a discovery request as well as a cart
-            one: select product-discovery with cart-management, because the cart
-            skill cannot search and the product must be found and shown before
-            it can be added. Add budget-shopping only as a modifier when the
-            shopper states a budget. Keep outfit-styling as the primary skill throughout
-            an active outfit-building thread, including its single-piece follow-up
-            searches.
+            complete current intent.
 
+            Which primary to pick is answered by the registered descriptions
+            themselves, and by the allowed values on `skill_names`. This
+            docstring used to answer it again in its own words, naming two of
+            the primaries; a third was registered and the list here did not
+            know, so the one skill that could answer a question about the shop
+            was never offered as an option. Read the descriptions.
+
+            What they cannot tell you, because it spans two of them: adding a
+            product the shopper names that no search in this conversation has
+            shown is a discovery request as well as a cart one. Select
+            `product-discovery` and `cart-management` together -- the cart skill
+            cannot search, and a product must be found and shown before it can
+            be added. Both names are literal here on purpose. This is one
+            composition rule about two specific skills, not a list of the
+            members of a group, so it does not go stale when a skill is
+            registered; a test asserts both are still registered.
             """
 
             selected_names = list(dict.fromkeys(skill_names))
@@ -2870,16 +2872,14 @@ Rules:
   about which size, became a fresh dress search instead of the add the shopper
   was waiting for. Search only when the shopper is asking to see something
   they have not been shown.
-- Outfit styling and product discovery are alternative primary procedures;
-  never activate both. Budget shopping may accompany either only as a modifier
-  when the shopper states a budget.
-- Style-led fashion selection belongs to outfit styling even when the shopper
-  asks for one statement or balancing piece. Product discovery is for browse
-  and filter intent without styling judgment.
-- Keep the primary skill aligned with the active conversation task. An outfit-
-  building or styling thread continues to use outfit styling for piece-by-piece
-  searches until the shopper changes tasks; do not reclassify a follow-up as
-  product discovery merely because it asks for one product type.
+- Which skills exist, what each is for, and which may be combined are stated in
+  the activation step's own registered descriptions and allowed values. Do not
+  work from memory of a fixed pair: three of these bullets used to name two
+  primary procedures, and were still naming two after a third was registered.
+- Keep the primary skill aligned with the active conversation task. A styling
+  thread continues with the styling procedure for its piece-by-piece searches
+  until the shopper changes tasks; do not reclassify a follow-up merely because
+  it asks for one product type.
 - Use at most {self.config.max_catalog_searches_per_turn} product roles across
   all catalog searches in one user turn, and carry them in as few calls as
   possible: roles in one call retrieve together and cost one round trip.

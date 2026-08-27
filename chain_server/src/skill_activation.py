@@ -96,15 +96,15 @@ registered skills that fully covers the shopper's current intent. Use the
 registered descriptions below and the full conversation context; this is
 semantic selection, not keyword matching. Do not attempt another tool in the
 same response. The runtime will load the complete selected instructions before
-the next model step. Outfit styling and product discovery are alternative
-primary procedures, so never select both; budget shopping may accompany either
-only when the shopper states a budget. Keep the primary procedure aligned with
-the active conversation task: an outfit-building or styling thread continues
-to use outfit styling for piece-by-piece searches until the shopper changes
-tasks. Do not switch to product discovery merely because the current turn asks
-for one product type; a terse item-only follow-up does not by itself end an
-active outfit task. Do not mention this activation step or skill names to the
-shopper."""
+the next model step. Read every registered description before choosing: the
+right primary is the one whose description names what this turn is actually
+asking for, not the one you reached for last time. Keep the primary procedure
+aligned with the active conversation task -- an outfit-building or styling
+thread continues with the styling procedure for piece-by-piece searches until
+the shopper changes tasks. Do not switch procedures merely because the current
+turn asks for one product type; a terse item-only follow-up does not by itself
+end an active outfit task. Do not mention this activation step or skill names
+to the shopper."""
 
 _ACTIVATION_FAILED_PROMPT = """## Shopper Skill Activation Failed
 
@@ -236,7 +236,7 @@ class ShopperSkillActivationMiddleware(AgentMiddleware):
         """Return bounded model feedback for an invalid skill selection."""
 
         issue = _activation_validation_issue(error)
-        feedback = _activation_validation_feedback(issue)
+        feedback = _activation_validation_feedback(error, issue)
         with self._lock:
             if self._status != "pending":
                 return f"{SKILL_ACTIVATION_INVALID} {feedback}"
@@ -510,17 +510,26 @@ def _activation_validation_issue(error: Any) -> str:
     return "invalid_selection"
 
 
-def _activation_validation_feedback(issue: str) -> str:
-    if issue == SKILL_ACTIVATION_MODIFIER_REQUIRES_PRIMARY:
-        return (
-            "budget-shopping is a modifier and requires exactly one primary "
-            "procedure: outfit-styling or product-discovery."
-        )
-    if issue == SKILL_ACTIVATION_MULTIPLE_PRIMARY:
-        return (
-            "Select exactly one primary procedure: outfit-styling or "
-            "product-discovery, never both."
-        )
+def _activation_validation_feedback(error: Any, issue: str) -> str:
+    """Relay the validator's own message rather than restating the rule.
+
+    This used to hold its own copy, naming outfit-styling and product-discovery
+    in both branches. The copy went stale when a third primary was registered,
+    so a model that selected `catalog-questions` beside a budget was told to
+    swap in one of two skills that were not the right answer. The validator
+    already names the skills it actually rejected; there is no second version
+    of the rule to keep in step.
+    """
+
+    errors = error.errors() if callable(getattr(error, "errors", None)) else []
+    for detail in errors:
+        if str(_value(detail, "type") or "") != issue:
+            continue
+        message = str(_value(detail, "msg") or "").strip()
+        if message:
+            message = message.removeprefix("Value error, ").strip()
+        if message:
+            return message if message.endswith(".") else f"{message}."
     return "The selected shopper-skill combination is invalid."
 
 

@@ -6,6 +6,9 @@ services:
   chain-server:
     build:
       context: ./chain_server
+      args:
+        # false by default: the shipped image carries the tested langgraph pin.
+        INSTALL_RELAY: ${INSTALL_RELAY:-false}
     container_name: chain-server
     ports:
       - "8009:8009"
@@ -24,6 +27,7 @@ services:
       - CHAIN_SERVER_RELOAD=${CHAIN_SERVER_RELOAD:-false}
       - SHUTDOWN_GRACE_SECONDS=${SHUTDOWN_GRACE_SECONDS:-160}
       - EXPOSE_AGENT_DIAGNOSTICS=${EXPOSE_AGENT_DIAGNOSTICS:-false}
+      - RELAY_ENABLED=${RELAY_ENABLED:-false}
       - WEATHER_ENABLED=${WEATHER_ENABLED:-false}
       - WEATHER_API_KEY=${WEATHER_API_KEY:-}
       # Unset by default: no endpoint means no exporter and no instrumentation.

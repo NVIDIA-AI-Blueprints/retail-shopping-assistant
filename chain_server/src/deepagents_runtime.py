@@ -11,9 +11,11 @@ from datetime import date as CalendarDate, datetime, timezone
 import logging
 
 import asyncio
+import atexit
 import contextlib
 import json
 import os
+import sys
 from pathlib import Path
 import time
 from typing import Any, AsyncIterator, Literal
@@ -769,6 +771,196 @@ class _CheckAvailabilityInput(BaseModel):
     )
 
 
+_RELAY_SUBSCRIBER = "chain-server"
+
+_relay_warnings_said: set[str] = set()
+
+
+def _relay_warn_once(key: str, message: str, *args: Any) -> None:
+    """Say a Relay problem once, not once a turn.
+
+    The agent is rebuilt every turn, so a warning raised on the build path is a
+    warning per turn -- and the conditions here (a missing package, a release
+    that changed the arguments) are settled at startup and never change.
+    """
+
+    if key in _relay_warnings_said:
+        return
+    _relay_warnings_said.add(key)
+    logger.warning(message, *args)
+
+
+def configure_relay_tracing(config: Any) -> bool:
+    """Export NeMo Relay's lifecycle events, or export nothing and say why.
+
+    Relay's middleware emits into an in-process runtime, and nothing leaves the
+    service until a subscriber is registered -- so attaching the middleware
+    alone is observable to nobody. This is the other half, and it lives beside
+    ``_relay_instrumented`` because neither half is any use without the other.
+
+    It speaks ``openinference`` rather than ``gen_ai`` because that is the
+    dialect Phoenix reads, and it reuses ``OTEL_EXPORTER_OTLP_ENDPOINT`` rather
+    than inventing a second endpoint setting: one collector address, whichever
+    producer is speaking. Relay carries its own exporter, so this adds a second
+    OTLP client to the process, not a second backend.
+
+    Returns whether events are being exported, so a caller can say so.
+    """
+
+    if not getattr(config, "relay_enabled", False):
+        return False
+
+    endpoint = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", "").strip()
+    if not endpoint:
+        logger.warning(
+            "RELAY_ENABLED is set but OTEL_EXPORTER_OTLP_ENDPOINT is not; "
+            "Relay events have nowhere to go and will not be exported."
+        )
+        return False
+
+    try:
+        from nemo_relay import OpenTelemetryConfig, OpenTelemetrySubscriber
+
+        relay_config = OpenTelemetryConfig(
+            "openinference", f"{endpoint.rstrip('/')}/v1/traces"
+        )
+        relay_config.service_name = os.environ.get("OTEL_SERVICE_NAME", "chain-server")
+        subscriber = OpenTelemetrySubscriber(relay_config)
+        # Registration is global and refuses a duplicate name, so a second
+        # runtime would raise and read as "tracing broke" when the first
+        # subscriber is still exporting perfectly well.
+        subscriber.deregister(_RELAY_SUBSCRIBER)
+        subscriber.register(_RELAY_SUBSCRIBER)
+        # Spans are batched, so a container stopped without a flush loses the
+        # tail of the last conversation -- the part worth reading.
+        atexit.register(subscriber.force_flush)
+    except ImportError:
+        _relay_warn_once(
+            "not-installed",
+            "RELAY_ENABLED is set but nemo-relay is not installed; "
+            "install requirements-relay.txt to trace.",
+        )
+        return False
+    except Exception as exc:  # noqa: BLE001 - tracing must never break startup.
+        logger.warning("Could not configure Relay tracing: %s", type(exc).__name__)
+        return False
+
+    logger.info("Relay tracing enabled, exporting to %s", endpoint)
+    return True
+
+
+@contextlib.contextmanager
+def _relay_turn_scope(config: Any, conversation_id: str):
+    """Open one Relay scope around the turn, so its events have somewhere to go.
+
+    Relay does not read OpenTelemetry's context. Its events go into a runtime
+    with its own scope stack, so a session set with ``using_attributes`` reaches
+    the LangChain spans and never reaches Relay's -- and with no Relay scope
+    open, every Relay span is emitted as its own root.
+
+    Both of those are the same absence. One scope here gives Relay's spans a
+    parent to nest under and a place to carry the conversation, and it is the
+    supported way to do it: no LangGraph internals are touched.
+
+    A no-op when Relay is off or absent, and a no-op when the scope will not
+    open -- a trace must never cost a turn.
+    """
+
+    if not getattr(config, "relay_enabled", False):
+        yield
+        return
+
+    try:
+        from nemo_relay import ScopeType
+        from nemo_relay import scope as relay_scope
+
+        # Not "turn": our own OpenTelemetry span already owns that name, and two
+        # different producers emitting a span called "turn" is unreadable.
+        opened = relay_scope.scope(
+            "relay-turn",
+            ScopeType.Agent,
+            metadata={"session.id": conversation_id},
+        )
+        opened.__enter__()
+    except ImportError:
+        yield
+        return
+    except Exception as exc:  # noqa: BLE001 - never break a turn for a trace
+        _relay_warn_once("scope", "NeMo Relay could not open a turn scope: %s", exc)
+        yield
+        return
+
+    try:
+        yield
+    finally:
+        with contextlib.suppress(Exception):
+            opened.__exit__(*sys.exc_info())
+
+
+def _relay_instrumented(
+    agent_kwargs: dict[str, Any],
+    config: Any,
+) -> dict[str, Any]:
+    """Add NeMo Relay's instrumentation, or hand back exactly what came in.
+
+    Off unless RELAY_ENABLED says otherwise, and absent when the package is
+    not installed. An observability layer that changes behaviour by being
+    absent is not observability, so every failure here falls back to the
+    untouched arguments and says so once.
+
+    What we hand create_deep_agent carries the parts that make this agent
+    correct: middleware is the tool-loop control and the skill gate, backend is
+    the skills filesystem, checkpointer is the within-turn state that is
+    deleted at every exit. So the wrapper's output is checked rather than
+    trusted -- it appends its own middleware to ours, which is the behaviour we
+    want, and a release that replaced ours instead would silently remove both
+    gates.
+    """
+
+    if not getattr(config, "relay_enabled", False):
+        return agent_kwargs
+    try:
+        from nemo_relay.integrations.deepagents import add_nemo_relay_integration
+    except ImportError:
+        _relay_warn_once(
+            "not-installed",
+            "RELAY_ENABLED is set but nemo-relay is not installed; "
+            "install requirements-relay.txt to trace.",
+        )
+        return agent_kwargs
+
+    try:
+        instrumented = add_nemo_relay_integration(agent_kwargs)
+    except Exception as exc:  # pragma: no cover - never break a turn for a trace
+        _relay_warn_once("failed", "NeMo Relay instrumentation failed: %s", exc)
+        return agent_kwargs
+
+    for name, value in agent_kwargs.items():
+        if name not in instrumented:
+            _relay_warn_once(
+                f"dropped:{name}",
+                "NeMo Relay dropped %s from the agent arguments; "
+                "running without it.", name
+            )
+            return agent_kwargs
+        if name != "middleware" and instrumented[name] is not value:
+            _relay_warn_once(
+                f"replaced:{name}",
+                "NeMo Relay replaced %s rather than preserving it; "
+                "running without it.", name
+            )
+            return agent_kwargs
+    ours = agent_kwargs["middleware"]
+    if list(instrumented["middleware"])[: len(ours)] != list(ours):
+        _relay_warn_once(
+            "middleware-order",
+            "NeMo Relay did not preserve our middleware order; "
+            "running without it.",
+        )
+        return agent_kwargs
+    return instrumented
+
+
 class DeepAgentsRuntime:
     """Small adapter around the Deep Agents SDK.
 
@@ -779,6 +971,9 @@ class DeepAgentsRuntime:
 
     def __init__(self, config: Any) -> None:
         self.config = config
+        # Before the first agent is built, so the subscriber is registered by the
+        # time any middleware has an event to emit.
+        configure_relay_tracing(config)
         self._checkpointer = _build_checkpointer()
         self._profile_registered = False
         self._media_perception = MediaPerceptionClient(config)
@@ -1062,13 +1257,14 @@ class DeepAgentsRuntime:
             )
             if agent_timeout <= 0:
                 raise TimeoutError
-            result = await asyncio.wait_for(
-                agent.ainvoke(
-                    {"messages": [{"role": "user", "content": input_message}]},
-                    config=invoke_config,
-                ),
-                timeout=agent_timeout,
-            )
+            with _relay_turn_scope(self.config, identity.conversation_id):
+                result = await asyncio.wait_for(
+                    agent.ainvoke(
+                        {"messages": [{"role": "user", "content": input_message}]},
+                        config=invoke_config,
+                    ),
+                    timeout=agent_timeout,
+                )
             result_messages = _result_messages(result)
             state.selected_skill_names = list(
                 selected_skill_names_for_turn(
@@ -2437,18 +2633,19 @@ class DeepAgentsRuntime:
             skill_gate.handle_activation_validation_error
         )
 
-        return create_deep_agent(
-            model=self._create_chat_model(),
-            tools=[activate_shopper_skills_tool, *shopping_tools],
-            system_prompt=self._system_prompt(
+        agent_kwargs: dict[str, Any] = {
+            "model": self._create_chat_model(),
+            "tools": [activate_shopper_skills_tool, *shopping_tools],
+            "system_prompt": self._system_prompt(
                 turn_capabilities,
                 shopper_context=state.shopper_context,
                 media=bool(state.media),
             ),
-            middleware=[tool_loop_control, skill_gate],
-            backend=skills_backend,
-            checkpointer=self._checkpointer,
-        )
+            "middleware": [tool_loop_control, skill_gate],
+            "backend": skills_backend,
+            "checkpointer": self._checkpointer,
+        }
+        return create_deep_agent(**_relay_instrumented(agent_kwargs, self.config))
 
     async def _delete_turn_checkpoint(self, identity: RequestIdentity) -> None:
         try:

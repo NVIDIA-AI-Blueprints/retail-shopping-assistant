@@ -9,6 +9,17 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# NeMo Relay tracing, absent from the default image on purpose: it requires
+# langgraph>=1.2.9 while requirements.txt pins 1.2.7, so installing it moves the
+# agent runtime. Keeping it behind a build arg means the image that ships is the
+# image that was tested, and tracing can be built and tried without changing it.
+#   docker compose build --build-arg INSTALL_RELAY=true chain-server
+ARG INSTALL_RELAY=false
+COPY requirements-relay.txt .
+RUN if [ "$INSTALL_RELAY" = "true" ]; then \
+        pip install --no-cache-dir -r requirements-relay.txt; \
+    fi
+
 # Copy the application code and config
 COPY ./src ./app
 COPY ./skills ./skills

@@ -14,6 +14,7 @@ Welcome to the Retail Shopping Assistant documentation! This hub provides compre
 - **[Catalog Schema and Filters](CATALOG_FILTERS.md)** - Declaring JSONL field roles without static catalog values
 - **[Catalog Architecture](CATALOG_REFACTOR_PLAN.md)** - Start here for JSONL ingestion, advertised capabilities, agent discovery, and validated retrieval
 - **[Commerce Contracts](COMMERCE_CONTRACTS.md)** - Internal product, cart, and commerce tool contracts
+- **[Observability](OBSERVABILITY.md)** - Study a shopper's session, and dig into why a turn did what it did
 - **[Shopper Agent Architecture](SHOPPER_AGENT_ARCHITECTURE.md)** - Published catalog, turn flow, skill-to-tool mapping, and memory boundaries
 - **[Shopper Agent Leadership Note](SHOPPER_AGENT_LEADERSHIP_NOTE.md)** - Executive request flow, memory ownership, worked example, and prioritized next steps
 - **[Shopper Agent Tool Registry](SHOPPER_AGENT_TOOL_REGISTRY.md)** - Registered Deep Agents tools for the shopper-serving agent
@@ -46,6 +47,7 @@ Welcome to the Retail Shopping Assistant documentation! This hub provides compre
 | [Catalog Schema and Filters](CATALOG_FILTERS.md) | Configure data-derived filters with a catalog role sidecar | Developers, operators |
 | [Catalog Architecture](CATALOG_REFACTOR_PLAN.md) | Understand the end-to-end ingest, capability advertisement, agent discovery, and validated retrieval flow | Developers, architects |
 | [Commerce Contracts](COMMERCE_CONTRACTS.md) | Internal product, cart, and commerce tool contracts | Developers, architects |
+| [Observability](OBSERVABILITY.md) | Read a conversation turn by turn, open one turn's trace, and find what the model was told | Developers, operators, evaluators |
 | [Shopper Agent Architecture](SHOPPER_AGENT_ARCHITECTURE.md) | Understand the published catalog, turn flow, skill-to-tool mapping, and memory boundaries | Developers, architects |
 | [Shopper Agent Leadership Note](SHOPPER_AGENT_LEADERSHIP_NOTE.md) | Understand the executive flow, state ownership, worked example, and next architecture priorities | Senior leaders, architects, product owners |
 | [Shopper Agent Tool Registry](SHOPPER_AGENT_TOOL_REGISTRY.md) | Registered Deep Agents tools, risk classes, and skill access boundaries for the shopper-serving agent | Developers, architects, evaluators |

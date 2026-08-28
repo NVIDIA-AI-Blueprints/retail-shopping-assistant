@@ -142,6 +142,14 @@ class ChainServerConfig(BaseModel):
             "Enable only on a trusted operator or evaluation surface."
         ),
     )
+    relay_enabled: bool = Field(
+        default=False,
+        description=(
+            "Whether to instrument the agent with NeMo Relay. Off by default: "
+            "absent configuration must never change behaviour, and this sees "
+            "prompts, completions and cart contents."
+        ),
+    )
     catalog_search_timeout_seconds: Optional[float] = Field(
         default=None,
         description=(
@@ -281,6 +289,7 @@ def load_config(config_path: Optional[str] = None) -> ChainServerConfig:
             "GROUNDING_REWRITE_MAX_EVIDENCE_CHARS"
         ),
         "expose_agent_diagnostics": _env_bool("EXPOSE_AGENT_DIAGNOSTICS"),
+        "relay_enabled": _env_bool("RELAY_ENABLED"),
         "guardrails_enabled": _env_bool("GUARDRAILS_ENABLED"),
     }
     config_data.update(

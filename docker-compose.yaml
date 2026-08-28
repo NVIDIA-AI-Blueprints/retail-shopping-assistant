@@ -39,6 +39,52 @@ services:
     networks:
       - shopping-network
 
+  # Catalog Indexer - builds the vector index, then exits.
+  #
+  # Indexing is deliberately not done by the serving container: rebuilding
+  # starts by dropping the collection, so exactly one process may do it at a
+  # time. This one-shot service is the Compose equivalent of the
+  # `parallelism: 1` Job that docs/DEPLOYMENT.md prescribes for Kubernetes, and
+  # it is what makes `docker compose up` sufficient on its own.
+  #
+  # Two things keep it to a single run, which is the whole contract:
+  #
+  #  - `container_name` pins it to one container. Compose refuses to scale a
+  #    service that has one, so `--scale catalog-indexer=N` cannot start a
+  #    second indexer; it warns and leaves the single container alone.
+  #  - The fingerprint check makes repeat runs free. Bringing the stack up
+  #    again re-runs this service, which compares the catalog fingerprint and
+  #    exits without touching Milvus when the index is already current.
+  #
+  # Neither of those is a distributed lock, and this process cannot provide one
+  # -- a lock across replicas needs somewhere to live. Scaling out horizontally
+  # means Kubernetes, where the indexing Job's `parallelism: 1` is the
+  # guarantee and the serving replicas stay unready until it succeeds.
+  catalog-indexer:
+    build:
+      context: ./catalog_retriever
+    container_name: catalog-indexer
+    command: ["python", "-m", "app.index_catalog"]
+    restart: "no"
+    environment:
+      - EMBED_API_KEY=${EMBED_API_KEY:-}
+      - TEXT_EMBED_BASE_URL=${TEXT_EMBED_BASE_URL:-}
+      - TEXT_EMBED_MODEL=${TEXT_EMBED_MODEL:-}
+      - IMAGE_EMBED_BASE_URL=${IMAGE_EMBED_BASE_URL:-}
+      - IMAGE_EMBED_MODEL=${IMAGE_EMBED_MODEL:-}
+      - CATALOG_DATA_SOURCE=${CATALOG_DATA_SOURCE:-}
+      - CATALOG_SCHEMA_SOURCE=${CATALOG_SCHEMA_SOURCE:-}
+      - CATALOG_IMAGE_EMBEDDING_ENABLED=${CATALOG_IMAGE_EMBEDDING_ENABLED:-true}
+      - MILVUS_HOST=milvus
+      - MILVUS_PORT=19530
+    volumes:
+      - ./shared:/app/shared
+    depends_on:
+      milvus:
+        condition: service_healthy
+    networks:
+      - shopping-network
+
   # Catalog Retriever
   catalog-retriever:
     build:
@@ -62,6 +108,12 @@ services:
     depends_on:
       milvus:
         condition: service_healthy
+      # Waiting for a successful exit is what keeps this container from serving
+      # empty searches against a missing index. It also means the server binds
+      # its Milvus collections after they exist, rather than holding a handle
+      # from before the indexer created them.
+      catalog-indexer:
+        condition: service_completed_successfully
     networks:
       - shopping-network
 

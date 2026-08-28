@@ -34,6 +34,112 @@ chain-server ──┬── our turn span ────────────�
 
 ---
 
+## What Relay gives you, and what it costs
+
+Relay is the third and optional producer. The first two — the `turn` span this
+service writes, and `openinference-instrumentation-langchain` — are always on
+and answer *what happened*. Relay answers *what the agent was thinking while it
+happened*: the prompt as sent, the completion as returned, which skill was
+selected, which subagent ran, and every tool call with its arguments and result.
+
+The practical difference, on a turn that went wrong:
+
+| question | without Relay | with Relay |
+|---|---|---|
+| Which tools ran, in what order | yes | yes |
+| How long each took | yes | yes |
+| **What arguments the tool was called with** | no | **yes** |
+| **What the tool returned** | no | **yes** |
+| **The exact prompt the model saw** | no | **yes** |
+| **Which skill the agent selected and why** | partly | **yes** |
+
+That is the difference between "the search returned nothing" and "the search was
+asked for `taxonomy_level_2=dresses` with `primary_color=red`, and the catalogue
+has no red dress".
+
+**What it costs.** It is not free and it is not merely additive:
+
+- It sees prompts, completions and cart contents. That is shopper data leaving
+  the process; it belongs in a backend you control.
+- Installing it moves the agent runtime. `nemo-relay[deepagents]` requires
+  `langgraph>=1.2.9` and `requirements.txt` pins `1.2.7`, which is why it is a
+  build argument rather than a normal dependency.
+- It adds a second OTLP exporter to the process.
+
+**Leave it off for normal running.** Turn it on to study a specific problem,
+then turn it off. It is not a monitoring tool — it produces one detailed trace
+per turn, not metrics.
+
+### Worked example: a shopper says the assistant found nothing
+
+The shopper asked for red dresses under $100 and was told the shop has none.
+Is that true, or did the search go wrong?
+
+**1. Turn Relay on and reproduce the turn.**
+
+```bash
+INSTALL_RELAY=true docker compose build chain-server
+INSTALL_RELAY=true RELAY_ENABLED=true \
+  OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318 \
+  docker compose up -d chain-server
+docker logs chain-server | grep -i relay
+# → Relay tracing enabled, exporting to http://otel-collector:4318
+```
+
+**2. Open Phoenix** at `http://localhost:6006` and find the conversation. Each
+turn is one `turn` span; Relay's events nest under it, so the whole turn reads
+top to bottom in one place.
+
+**3. Open the `search_catalog_tool` call** and read its arguments. This is the
+thing you cannot see any other way. You are looking for the difference between
+three quite different failures:
+
+- The arguments match what the shopper asked for, and the result is genuinely
+  empty → the catalogue has no red dress. The assistant was right.
+- The arguments carry a constraint the shopper never gave → the agent invented
+  one, and the empty result is its own doing.
+- The arguments are right, the result has products, and the reply says
+  otherwise → a grounding failure between the tool and the answer.
+
+**4. Turn it back off** when you have your answer:
+
+```bash
+docker compose build chain-server && docker compose up -d chain-server
+```
+
+### A defect this found, and what it means for trusting a trace
+
+Enabling Relay used to change the agent's behaviour. Its tool wrapper did not
+pass the model's arguments to the tool: it encoded them for the span and handed
+the tool the decoded copy, and the copy was not the original. The codec tries
+`model_dump()` first, which materialises every optional field that was never
+set, so a search sent as:
+
+```json
+{"requested_product_type": "dress"}
+```
+
+arrived at the tool as:
+
+```json
+{"requested_product_type": "dress", "price": {"min": null, "max": null}}
+```
+
+This service rejects constraints the shopper never gave, so the tool refused its
+own call and the turn answered *"I couldn't complete a valid catalog search"*.
+Measured on journey J01: two failures with tracing on, five passes with it off,
+on the same image, differing only by `RELAY_ENABLED`.
+
+`_relay_must_not_rewrite_arguments` in `deepagents_runtime.py` is the fix. Relay
+still records the call; the tool now receives what the model sent. The property
+is held by tests, not by care.
+
+Worth stating plainly because it is the general lesson: **an observability layer
+that can rewrite what it observes can change the outcome it is reporting on.**
+If a turn behaves differently with tracing on, the trace is evidence about a
+system that no longer exists. Reproduce with tracing off before believing a
+finding, and that is cheap here — one build argument apart.
+
 ## Turning it on
 
 ```bash

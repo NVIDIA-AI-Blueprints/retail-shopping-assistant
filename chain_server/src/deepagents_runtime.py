@@ -897,6 +897,49 @@ def _relay_turn_scope(config: Any, conversation_id: str):
             opened.__exit__(*sys.exc_info())
 
 
+
+def _relay_must_not_rewrite_arguments(middleware: Any) -> None:
+    """Let Relay observe a tool call without deciding what the tool receives.
+
+    Relay's tool wrapper does not pass the model's arguments to the tool. It
+    encodes them with ``BestEffortAnyCodec`` for the span and hands the decoded
+    copy onward, and the copy is not the original: the codec tries
+    ``model_dump()`` first, which materialises every optional field that was
+    never set. A search the model sent as::
+
+        {"requested_product_type": "dress"}
+
+    reaches the tool as::
+
+        {"requested_product_type": "dress", "price": {"min": null, "max": null}}
+
+    -- a price constraint the shopper never gave and the model never sent. This
+    service rejects invented constraints on purpose, so the tool refuses its own
+    call and the turn answers "I couldn't complete a valid catalog search".
+    Measured: J01 failed twice with tracing on and passed five times with it
+    off, on the same image, differing only by RELAY_ENABLED.
+
+    So the trace keeps its arguments and the tool keeps the model's. Relay still
+    encodes what it likes for the span; the handler simply ignores the copy it
+    is offered and answers the request that actually arrived.
+
+    This is a workaround for behaviour in nemo-relay, not a fix to it, and it is
+    narrow on purpose: it changes which arguments reach the tool and nothing
+    else about the instrumentation.
+    """
+
+    for name in ("wrap_tool_call", "awrap_tool_call"):
+        wrapped = getattr(middleware, name, None)
+        if wrapped is None:
+            continue
+
+        def preserving(request: Any, handler: Any, _wrapped: Any = wrapped) -> Any:
+            # `_rewritten` is Relay's re-encoded copy, deliberately discarded.
+            return _wrapped(request, lambda _rewritten: handler(request))
+
+        setattr(middleware, name, preserving)
+
+
 def _relay_instrumented(
     agent_kwargs: dict[str, Any],
     config: Any,
@@ -951,6 +994,8 @@ def _relay_instrumented(
             )
             return agent_kwargs
     ours = agent_kwargs["middleware"]
+    for added in list(instrumented["middleware"])[len(ours):]:
+        _relay_must_not_rewrite_arguments(added)
     if list(instrumented["middleware"])[: len(ours)] != list(ours):
         _relay_warn_once(
             "middleware-order",

@@ -189,14 +189,21 @@ Serving containers do not index themselves. Rebuilding an index begins by
 dropping the collection, so it must happen exactly once, and a container cannot
 know whether it is the only one doing it.
 
+Under Compose this is already handled: the `catalog-indexer` service runs
+`python -m app.index_catalog` once and exits, and `catalog-retriever` depends on
+its successful completion, so it cannot start against a missing index. `up`
+re-runs it, which covers any change to the catalog data, schema, or embedding
+model.
+
+To index out of band -- forcing a rebuild without cycling Compose, or after
+editing catalog files in place -- run it directly:
+
 ```bash
 docker compose exec catalog-retriever python -m app.index_catalog
 ```
 
-Required after a first deployment and after any change to the catalog data,
-schema, or embedding model. Safe to repeat and safe to leave unconditionally in
-a pipeline: it checks the catalog fingerprint first and does nothing when the
-index is already current.
+Safe to repeat and safe to leave unconditionally in a pipeline: it checks the
+catalog fingerprint first and does nothing when the index is already current.
 
 ### Step 6: Verify Deployment
 

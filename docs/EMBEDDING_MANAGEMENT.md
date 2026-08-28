@@ -99,10 +99,17 @@ hybrid modes then disappear from `/capabilities`.
    export CATALOG_SCHEMA_SOURCE="$PWD/shared/data/my_products.schema.yaml"
    ```
 
-4. Restart the catalog service, then index. **Restarting no longer indexes**:
+4. Rebuild and bring the catalog service back up. **A serving container never
+   indexes itself**, but Compose runs the `catalog-indexer` service for you and
+   `catalog-retriever` waits for it to finish, so this is one command:
 
    ```bash
    docker compose up -d --build catalog-retriever
+   ```
+
+   To index without cycling the service, run it directly instead:
+
+   ```bash
    docker compose exec catalog-retriever python -m app.index_catalog
    ```
 

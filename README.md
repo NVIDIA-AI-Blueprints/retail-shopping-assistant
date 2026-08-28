@@ -477,22 +477,33 @@ The exact published response is documented in
 
    Model routing lives in `shared/configs/models.yaml`.
 
-6. **Index the product catalog**:
+6. **Confirm the product catalog is indexed**:
    ```bash
-   docker compose exec catalog-retriever python -m app.index_catalog
    curl -s http://localhost:8010/ready
    ```
 
-   Required once after a first deployment, and again whenever the catalog data,
-   schema, or embedding model changes. Serving containers do not index
-   themselves: rebuilding an index begins by dropping the collection, which is
-   safe when one process does it and destructive when two do, so it is an
-   explicit step rather than something that happens on start.
+   Compose indexes for you: the `catalog-indexer` service runs once, builds the
+   index and exits, and `catalog-retriever` waits for it to succeed before it
+   starts. Bringing the stack up again re-runs it, so a change to the catalog
+   data, schema, or embedding model is picked up by `docker compose up -d`.
 
-   Skipping it is visible rather than silent. `/ready` returns 503 until the
-   index matches, and searches would otherwise return no products -- a shopper
-   would be told the catalog is empty. The command is safe to repeat: it checks
-   the catalog fingerprint first and does nothing when the index is current.
+   Serving containers do not index themselves: rebuilding an index begins by
+   dropping the collection, which is safe when one process does it and
+   destructive when two do, so it is a separate one-shot service rather than
+   something that happens on start.
+
+   To rebuild without cycling Compose, run it directly. Safe to repeat: it
+   checks the catalog fingerprint first and does nothing when the index is
+   already current.
+
+   ```bash
+   docker compose exec catalog-retriever python -m app.index_catalog
+   ```
+
+   Check `/ready` here, not `/health`. A catalog container with no matching
+   index is alive but deliberately serving no traffic, so `/health` returns 200
+   while `/ready` returns 503. Searches in that state return no products rather
+   than an error, and a shopper is told the catalog is empty.
 
 7. **Access the application**: Open your browser to `http://localhost:3000`
 

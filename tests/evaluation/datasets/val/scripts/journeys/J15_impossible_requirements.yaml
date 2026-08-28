@@ -1,0 +1,26 @@
+id: J15_impossible_requirements
+covers: [discovery, filters, honesty]
+why: >
+  Requirements the catalog cannot express or cannot satisfy, one after another.
+  Each must be disclosed rather than silently vetoed, and the conversation must
+  keep moving instead of ending in an apology with the search budget unspent.
+turns:
+  - say: I need waterproof sandals
+    expect: {products_min: 1}
+  - say: do you have them in a size 3
+    expect: {}
+  - say: what about a machine washable silk dress
+    expect: {}
+  - say: any petite sizing
+    expect: {}
+  - say: ok, just show me sandals in a 7
+    expect: {products_min: 1}
+  # An ordinal add: which sandal it is varies by run, so the line cannot be
+  # named. That it landed at all can be, and was not.
+  - say: add the first one
+    expect:
+      cart_lines: 1
+  - say: what's in my cart
+    expect:
+      cart_unchanged: true
+      cart_lines: 1

@@ -1,0 +1,45 @@
+id: J09_one_size_conversation
+covers: [sizes, cart-management, discovery]
+why: >
+  An entire conversation in categories that have no sizes -- bags, jewellery,
+  eyewear. Nothing here should ever ask what size, and a sized product
+  appearing late must still ask.
+  Names Jade Suede Heels, not Polished Pearl Pumps: this catalog gives that
+  second name to two products, so an assertion pinned to it measured
+  whether the model guessed which one. Asking is the correct behaviour and
+  was scored as a failure.
+
+turns:
+  - say: show me sunglasses
+    expect:
+      products_min: 2
+      every_product: {subcategory: sunglasses}
+  - say: add the Vivid Rose Gold Aviator Sunglasses
+    expect:
+      cart: [{name: Vivid Rose Gold Aviator Sunglasses, qty: 1}]
+  - say: now some bracelets
+    expect: {products_min: 2}
+  - say: add the Southwest Bracelet
+    expect:
+      cart:
+        - {name: Vivid Rose Gold Aviator Sunglasses, qty: 1}
+        - {name: Southwest Bracelet, qty: 1}
+  - say: and a tote bag
+    expect: {products_min: 1}
+  - say: add the Jade Tone Canvas Tote Bag
+    expect:
+      cart:
+        - {name: Vivid Rose Gold Aviator Sunglasses, qty: 1}
+        - {name: Southwest Bracelet, qty: 1}
+        - {name: Jade Tone Canvas Tote Bag, qty: 1}
+  - say: now show me some heels
+    expect: {products_min: 2}
+  # Heels are sized, so this one must not land until a size is given -- the
+  # opposite of the three one-size products above it, which must never be
+  # asked. That contrast is what this journey is for and it was not checked.
+  - say: add the Jade Suede Heels
+    expect:
+      cart_unchanged: true
+  - say: what's in my cart
+    expect:
+      cart_unchanged: true

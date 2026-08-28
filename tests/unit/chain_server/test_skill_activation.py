@@ -6,6 +6,8 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
@@ -79,10 +81,18 @@ SKILL_TOOL_GRANTS = {
     "product-discovery": frozenset(
         {
             "check_active_promotions_tool",
+            "describe_catalog_tool",
             "get_weather_forecast_tool",
             "check_product_availability_tool",
             "get_product_details_tool",
             "resolve_conversation_products_tool",
+            "search_catalog_tool",
+        }
+    ),
+    "catalog-questions": frozenset(
+        {
+            "describe_catalog_tool",
+            "get_product_details_tool",
             "search_catalog_tool",
         }
     ),
@@ -213,10 +223,23 @@ def _middleware(
     )
 
 
+def _skill(role: str, group: str | None = None) -> SimpleNamespace:
+    return SimpleNamespace(role=role, exclusive_group=group)
+
+
+#: Three primaries in one group, which is what the shipped registry has.
+_THREE_PRIMARIES = {
+    "outfit-styling": _skill("primary", "product_procedure"),
+    "product-discovery": _skill("primary", "product_procedure"),
+    "catalog-questions": _skill("primary", "product_procedure"),
+    "budget-shopping": _skill("modifier"),
+    "cart-management": _skill("standalone"),
+    "store-policy-answers": _skill("standalone"),
+}
+
+
 def test_activation_schema_rejects_two_primary_procedures() -> None:
-    activation_input = _skill_activation_input_model(
-        ("budget-shopping", "outfit-styling", "product-discovery")
-    )
+    activation_input = _skill_activation_input_model(_THREE_PRIMARIES)
 
     with pytest.raises(ValueError, match="select exactly one primary procedure"):
         activation_input(
@@ -229,29 +252,112 @@ def test_activation_schema_rejects_two_primary_procedures() -> None:
     assert selected.skill_names == ["outfit-styling", "budget-shopping"]
 
 
+def test_every_primary_in_a_group_is_exclusive_with_every_other() -> None:
+    """The pair that used to be hardcoded was two of three.
+
+    `catalog-questions` declares the same `exclusive_group` as the other two.
+    Measured on the shipped registry before this changed: selecting it beside
+    product-discovery was accepted, because the check intersected against a
+    literal set that did not contain it.
+    """
+
+    activation_input = _skill_activation_input_model(_THREE_PRIMARIES)
+    primaries = ["outfit-styling", "product-discovery", "catalog-questions"]
+
+    for first in primaries:
+        for second in primaries:
+            if first == second:
+                continue
+            with pytest.raises(
+                ValueError, match="select exactly one primary procedure"
+            ):
+                activation_input(skill_names=[first, second])
+
+
 def test_activation_schema_requires_primary_for_budget_only() -> None:
-    activation_input = _skill_activation_input_model(
-        ("budget-shopping", "outfit-styling", "product-discovery")
-    )
+    activation_input = _skill_activation_input_model(_THREE_PRIMARIES)
 
     with pytest.raises(
         ValueError,
-        match="budget-shopping requires exactly one primary procedure",
+        match="budget-shopping is a modifier and requires exactly one primary",
     ):
         activation_input(
             skill_names=["budget-shopping"],
         )
 
 
-def test_activation_schema_allows_standalone_cart_and_policy_skills() -> None:
-    activation_input = _skill_activation_input_model(
-        (
-            "cart-management",
-            "outfit-styling",
-            "product-discovery",
-            "store-policy-answers",
-        )
+def test_a_modifier_may_accompany_any_primary_in_the_group() -> None:
+    """"Do you have anything for $5 to $10" is a budget and a shop question.
+
+    It was rejected as a stranded modifier, and the shopper got "What product
+    or outfit would you like to find within your budget?" instead of an answer
+    -- because catalog-questions did not count as a primary.
+    """
+
+    activation_input = _skill_activation_input_model(_THREE_PRIMARIES)
+
+    for primary in ("outfit-styling", "product-discovery", "catalog-questions"):
+        selected = activation_input(skill_names=[primary, "budget-shopping"])
+        assert set(selected.skill_names) == {primary, "budget-shopping"}
+
+
+def test_the_schema_names_every_primary_to_the_model() -> None:
+    """The allowed-values description is the channel that binds the choice.
+
+    It named two primaries while three were registered, so the one skill that
+    could answer a question about the shop was never offered as an option.
+    """
+
+    activation_input = _skill_activation_input_model(_THREE_PRIMARIES)
+    description = activation_input.model_fields["skill_names"].description
+
+    for primary in ("outfit-styling", "product-discovery", "catalog-questions"):
+        assert primary in description
+    assert "budget-shopping" in description
+
+
+def test_enforcement_matches_the_shipped_frontmatter() -> None:
+    """Read the real registry, not a fixture.
+
+    Nothing asserted that the enforcement agreed with the frontmatter, which is
+    exactly how a third primary shipped with `exclusive_group:
+    product_procedure` and went unseen for a day.
+    """
+
+    from chain_server.src.tool_policy import load_shopper_skill_registry
+    from chain_server.src.turn_support import primary_skills_by_group
+
+    registry = load_shopper_skill_registry(
+        Path(__file__).resolve().parents[3] / "chain_server" / "skills"
     )
+    groups = primary_skills_by_group(registry)
+
+    declared = {
+        name
+        for name, skill in registry.items()
+        if skill.role == "primary"
+    }
+    grouped = {name for names in groups.values() for name in names}
+    assert declared == grouped, "a primary skill is missing from its group"
+
+    activation_input = _skill_activation_input_model(registry)
+    description = activation_input.model_fields["skill_names"].description
+    for name in declared:
+        assert name in description, f"{name} is invisible to the model"
+
+    for group, names in groups.items():
+        for first in names:
+            for second in names:
+                if first == second:
+                    continue
+                with pytest.raises(
+                    ValueError, match="select exactly one primary procedure"
+                ):
+                    activation_input(skill_names=[first, second])
+
+
+def test_activation_schema_allows_standalone_cart_and_policy_skills() -> None:
+    activation_input = _skill_activation_input_model(_THREE_PRIMARIES)
 
     assert activation_input(
         skill_names=["cart-management"],
@@ -386,11 +492,15 @@ def test_pending_phase_forces_only_the_activation_tool() -> None:
     assert "Required Shopper Skill Selection" in prepared.system_prompt
     assert "outfit-styling: Use for outfit completion" in prepared.system_prompt
     assert "product-discovery: Use for browsing" in prepared.system_prompt
-    assert "never select both" in prepared.system_prompt
-    assert "budget shopping may accompany either" in prepared.system_prompt
+    # The composition rule is not restated here. It is generated from the
+    # registry onto the `skill_names` allowed values, which is the channel that
+    # binds the choice; a second copy in prose is what went stale when a third
+    # primary was registered.
+    assert "never select both" not in prepared.system_prompt
+    assert "Read every registered description" in prepared.system_prompt
     assert (
-        "Do not switch to product discovery merely because the current turn asks"
-        in prepared.system_prompt
+        "does not by itself\nend an active outfit task" in prepared.system_prompt
+        or "end an active outfit task" in prepared.system_prompt
     )
 
 
@@ -607,7 +717,18 @@ def test_outfit_styling_rejects_cart_mutation_before_execution(
 
     assert handled == []
     assert isinstance(result, ToolMessage)
-    assert str(result.content).startswith(SKILL_TOOL_NOT_GRANTED)
+    content = str(result.content)
+    assert content.startswith(SKILL_TOOL_NOT_GRANTED)
+    # Refused, and told how to stop being refused. This message used to end
+    # "continue using only the tools available for this turn", and a turn that
+    # obeyed it said "I've added the Ombre Canvas Tote Bag to your cart" over
+    # an empty cart. Asserted here rather than on the message alone, because
+    # what went wrong was the model reading this exact reply.
+    assert "cart-management" in content
+    assert "activate_shopper_skills_tool" in content
+    assert "call the tool again" in content
+    assert "Nothing has been done yet" in content
+    assert "Continue using only the tools available" not in content
 
 
 def test_browse_only_product_discovery_rejects_cart_mutation() -> None:
@@ -928,7 +1049,10 @@ async def test_compiled_agent_loads_skill_and_blocks_ungranted_tool(
     assert "check_active_promotions_tool" in shopping_call["tools"]
     assert "get_cart_tool" not in shopping_call["tools"]
     assert "add_cart_items_tool" not in shopping_call["tools"]
-    assert "read_file" in shopping_call["tools"]
+    # `read_file` is no longer registered at all. The skills are injected in
+    # full by the activation middleware, so nothing needs to fetch them, and
+    # the base prompt can now truthfully say there is no filesystem.
+    assert "read_file" not in shopping_call["tools"]
     assert "## Active Shopper Skills" in shopping_call["system_prompt"]
     rejected = [
         message
@@ -1326,10 +1450,121 @@ async def test_compiled_agent_executes_capability_valid_repair(
         config={"configurable": {"thread_id": identity.conversation_id}},
     )
 
-    assert len(executed_plans) == 1
+    # The shopper's own search runs first. A scope that finds nothing is then
+    # re-run without the constraints that may give, so the reply can show what
+    # the shop does have rather than asking which absence to explore.
+    assert executed_plans[0].hard_filters["primary_color"] == ["black"]
+    for relaxation in executed_plans[1:]:
+        assert "primary_color" not in relaxation.hard_filters
     assert executed_plans[0].hard_filters["primary_color"] == ["black"]
     assert "color" not in executed_plans[0].hard_filters
     assert executed_plans[0].search_mode == "text"
     assert model.calls[2]["tools"] == ["search_catalog_tool"]
     assert model.calls[3]["tools"] == []
     assert result["messages"][-1].content.startswith("I found no black flats")
+
+
+def test_a_turn_may_correct_the_skills_it_opened_with() -> None:
+    """The selection made at the first token is not always the right one.
+
+    Six turns into building a capsule the shopper says "add the Ombre Canvas
+    Tote Bag". The turn opens with outfit-styling and budget-shopping -- right
+    for the six turns before it -- finds the bag, reads its details, and is
+    refused the cart tool for the grant.
+
+    A second activation used to return False, change no grants, and report
+    itself already complete. So the turn could not acquire the tool it needed,
+    and said "I've added the Ombre Canvas Tote Bag to your cart" over an empty
+    cart.
+    """
+
+    middleware = _middleware()
+    middleware.activate(
+        {
+            "/shopper/outfit-styling/SKILL.md": "# Outfit Styling",
+            "/shopper/budget-shopping/SKILL.md": "# Budget",
+        },
+        ["outfit-styling", "budget-shopping"],
+    )
+    refused = middleware.wrap_tool_call(
+        _tool_request("add_cart_items_tool", _activated_messages()), lambda r: r
+    )
+    assert str(refused.content).startswith(SKILL_TOOL_NOT_GRANTED)
+
+    corrected = middleware.activate(
+        {"/shopper/cart-management/SKILL.md": "# Cart"}, ["cart-management"]
+    )
+
+    assert corrected is True
+    handled: list[ToolCallRequest] = []
+    result = middleware.wrap_tool_call(
+        _tool_request("add_cart_items_tool", _activated_messages()),
+        handled.append,
+    )
+    assert handled, "the corrected selection must grant the tool"
+    assert not str(getattr(result, "content", "")).startswith(
+        SKILL_TOOL_NOT_GRANTED
+    )
+
+
+def test_a_turn_cannot_reselect_for_ever() -> None:
+    """Past the cap the answer is no, rather than a success granting nothing.
+
+    Told to activate and retry, a model that cannot find the tool it wants
+    otherwise loops -- activate, refused, activate, refused -- until the turn
+    dies on the recursion limit and the shopper is told an error occurred.
+    """
+
+    middleware = _middleware()
+    for _ in range(3):
+        assert middleware.activate(
+            {"/shopper/outfit-styling/SKILL.md": "# Outfit Styling"},
+            ["outfit-styling"],
+        )
+    assert (
+        middleware.activate(
+            {"/shopper/cart-management/SKILL.md": "# Cart"}, ["cart-management"]
+        )
+        is False
+    )
+    # And the grants stay where the last accepted selection left them.
+    refused = middleware.wrap_tool_call(
+        _tool_request("add_cart_items_tool", _activated_messages()), lambda r: r
+    )
+    assert str(refused.content).startswith(SKILL_TOOL_NOT_GRANTED)
+
+
+def test_skills_named_in_the_activation_tool_are_registered() -> None:
+    """The one place a skill name is still written literally.
+
+    The exclusivity rule was an enumeration of a group's members, so it went
+    stale when a third member was registered and is now generated. This is a
+    different thing: one composition rule about two specific skills, where
+    naming them is what makes it actionable. Measured -- softening it to "the
+    discovery procedure alongside cart management" produced a turn that
+    activated twice, searched three times, said "Now I'll add it to your cart"
+    and added nothing.
+
+    So the names stay, and this asserts they still exist.
+    """
+
+    import re
+
+    from chain_server.src.tool_policy import load_shopper_skill_registry
+
+    runtime_source = (
+        Path(__file__).resolve().parents[3]
+        / "chain_server"
+        / "src"
+        / "deepagents_runtime.py"
+    ).read_text()
+    start = runtime_source.index("def activate_shopper_skills_tool(")
+    docstring = runtime_source[start : runtime_source.index('"""', start + 400)]
+
+    registry = load_shopper_skill_registry(
+        Path(__file__).resolve().parents[3] / "chain_server" / "skills"
+    )
+    named = set(re.findall(r"`([a-z][a-z-]+)`", docstring))
+    assert named, "the composition rule names no skill at all"
+    unknown = named - set(registry)
+    assert not unknown, f"activation tool names unregistered skills: {unknown}"

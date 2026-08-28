@@ -26,6 +26,15 @@ fields:
   target_audience:
     type: enum
     uses: [filter, semantic, detail]
+    # These names do not say what they mean. `womens` reads as a department,
+    # and a man can shop a women's department, so nothing in the bare string
+    # rules it out for him -- it was sent for a husband in 65 of 110 recorded
+    # runs. Said here once, the rule that reads it needs no worked cases.
+    value_meanings:
+      womens: >-
+        cut and sized for a woman's body; a man or a child cannot wear these
+      adult_all_genders: >-
+        made to be worn by any adult, whatever their gender
   # A list per product: the sizes that product actually comes in. Deliberately
   # not semantic -- a size adds nothing to ranking, and including it would let
   # "medium" drift into matching prose.

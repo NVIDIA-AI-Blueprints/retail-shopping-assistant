@@ -72,7 +72,10 @@ services:
       - shopping-network
 
   embedqa:
-    image: nvcr.io/nim/nvidia/nv-embedqa-e5-v5:1.6
+    # Per the published self-hosted deploy for nemotron-3-embed-1b:
+    #   https://build.nvidia.com/nvidia/nemotron-3-embed-1b/deploy?nim=self-hosted
+    image: nvcr.io/nim/nvidia/nemotron-3-embed-1b:latest
+    shm_size: "16gb"
     ports:
       - "8001:8000"
     environment:

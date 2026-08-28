@@ -1,0 +1,34 @@
+id: J10_budget_journey
+covers: [budget-shopping, filters, cart-management, honesty]
+why: >
+  A ceiling that genuinely excludes, held across several turns and then
+  relaxed. The catalog runs $39.90 to $269.99, so nothing under $50 is a real
+  constraint and the assistant must not quietly show a $269 bracelet.
+turns:
+  # A ceiling with no product type is still a request: browse the shop under
+  # it. The price is the filter and no category is named, so every category is
+  # in scope -- one scope each if that is what the schema needs. Answering it
+  # with "could you clarify the product type" is asking the shopper to narrow a
+  # request that was already complete.
+  #
+  # The follow-up that used to sit here -- "show me what you have in that
+  # range" -- is gone. It only existed because this turn showed nothing, and
+  # "that range" with nothing on screen has no antecedent.
+  - say: I'm shopping on a tight budget, nothing over $50
+    expect: {products_min: 1}
+  - say: any tote bags under $50
+    expect: {products_min: 1}
+  - say: add the Jade Tone Canvas Tote Bag
+    expect:
+      cart: [{name: Jade Tone Canvas Tote Bag, qty: 1}]
+  - say: what about sunglasses, same budget
+    expect: {products_min: 1}
+  - say: ok I can stretch to $150 for a nice piece of jewellery
+    expect: {products_min: 1}
+  - say: is the Southwest Bracelet within that
+    expect: {}
+  - say: what's the most expensive thing you have
+    expect: {}
+  - say: what's in my cart
+    expect:
+      cart: [{name: Jade Tone Canvas Tote Bag, qty: 1}]

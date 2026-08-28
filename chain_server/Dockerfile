@@ -35,4 +35,15 @@ ENV RAILS_URL=http://rails:8012
 EXPOSE 8009
 
 # Command to run the application
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8009", "--reload"]
+# --reload is a development flag: it runs a file-watching parent process, so
+# the server is a child and never receives the signal that should drain it.
+# CHAIN_SERVER_RELOAD=true brings it back for local work.
+#
+# --timeout-graceful-shutdown must clear a whole turn. A turn is allowed
+# DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS (150 in this deployment), and a rollout
+# that waits less than that kills shoppers mid-answer. Kubernetes must be told
+# the same thing: terminationGracePeriodSeconds has to exceed this, or the
+# kubelet sends SIGKILL while uvicorn is still draining.
+CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port 8009 \
+  --timeout-graceful-shutdown ${SHUTDOWN_GRACE_SECONDS:-160} \
+  $([ \"${CHAIN_SERVER_RELOAD:-false}\" = true ] && echo --reload)"]

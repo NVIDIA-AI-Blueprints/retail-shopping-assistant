@@ -19,6 +19,8 @@ from types import ModuleType, SimpleNamespace
 from threading import Barrier
 from typing import Any, Dict, Iterator, List
 
+import pathlib
+
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
@@ -1729,7 +1731,7 @@ class TestDeepAgentsRuntimeScopes:
         assert cancelled is True
 
     @pytest.mark.asyncio
-    async def test_finalize_failure_preserves_response_and_checkpoint(
+    async def test_finalize_failure_preserves_the_response_but_not_the_checkpoint(
         self,
         base_config,
         monkeypatch: pytest.MonkeyPatch,
@@ -1786,7 +1788,21 @@ class TestDeepAgentsRuntimeScopes:
         assert output.agent_diagnostics["memory_finalize_error"] == (
             "memory_service_unavailable"
         )
-        assert deleted_threads == []
+        # The checkpoint goes, even though this error is retryable.
+        #
+        # Keeping it was a real optimisation: a retry carrying the same
+        # request_id produces the same thread, so the graph could resume rather
+        # than re-run an expensive turn. But that only happens if the retry
+        # reaches the same pod, and with more than one there is nothing making
+        # it. So it was a saving that could not be relied on -- a sticky-session
+        # dependency in all but name -- and it was paid for with a leak: this is
+        # MemorySaver, a dict with no eviction, holding the whole message
+        # history of every turn that failed to finalize for as long as the
+        # process lives.
+        #
+        # Re-running has to be safe regardless, because it is already what
+        # happens whenever a retry lands on another pod.
+        assert deleted_threads == [identity.checkpoint_thread_id]
 
     def test_superseded_attempt_does_not_return_its_unstored_response(
         self,
@@ -2352,10 +2368,15 @@ class TestDeepAgentsRuntimeRefs:
         assert "not separately advertised" in schema["properties"]["taxonomy"][
             "description"
         ]
-        assert "broader advertised parent category" in schema["properties"][
+        assert "advertised subcategories denotes the " in schema["properties"][
             "taxonomy"
         ]["description"]
-        assert set(taxonomy_schema["required"]) == {"category", "subcategory"}
+        # Neither role is required. "Show me some jewellery" names a category
+        # and no subcategory; requiring one rejected the call outright and the
+        # shopper was asked to clarify a request that could not have been
+        # plainer. A search with neither is still refused, by the validator
+        # rather than by the schema.
+        assert not taxonomy_schema.get("required")
         assert "search is image-only" in taxonomy_schema["properties"][
             "category"
         ]["description"]
@@ -2623,6 +2644,21 @@ class TestDeepAgentsRuntimeRefs:
                     "taxonomy_status": "exact_requested_type",
                 }
             )
+        # An advertised category grounds a role the shopper did not name: the
+        # category is the scope, unlimited by subcategory. Refused, this asked
+        # the shopper which product type they meant on a turn -- "it's going to
+        # snow, what should I wear" -- that had already said.
+        grounded_by_category = schema_model.model_validate(
+            {
+                **complete_request,
+                "requested_product_type": "bag",
+                "taxonomy_status": "agent_selected_type",
+                "taxonomy": {"category": ["bags"], "subcategory": []},
+            }
+        )
+        assert grounded_by_category.taxonomy.category == ["bags"]
+        assert grounded_by_category.taxonomy.subcategory == []
+        # With no category either, nothing grounds it and the rule still holds.
         with pytest.raises(
             ValueError,
             match="an open-role search requires an advertised subcategory",
@@ -2632,15 +2668,27 @@ class TestDeepAgentsRuntimeRefs:
                     **complete_request,
                     "requested_product_type": "bag",
                     "taxonomy_status": "agent_selected_type",
-                    "taxonomy": {"category": ["bags"], "subcategory": []},
+                    "taxonomy": {"category": [], "subcategory": []},
                 }
             )
+        # A browse has no descriptive words and does not need any: "now show me
+        # some skirts" is fully expressed by its taxonomy. Demanding a query as
+        # well refused that search and the assistant asked the shopper which
+        # product type they meant. The taxonomy stands in for the query.
+        browsed = schema_model.model_validate(
+            {**complete_request, "semantic_query": ""}
+        )
+        assert browsed.semantic_query
         with pytest.raises(
             ValueError,
-            match="text catalog search requires a semantic query",
+            match="requires an advertised",
         ):
             schema_model.model_validate(
-                {**complete_request, "semantic_query": ""}
+                {
+                    **complete_request,
+                    "semantic_query": "",
+                    "taxonomy": {"category": [], "subcategory": []},
+                }
             )
 
         image_only = schema_model.model_validate(
@@ -3028,6 +3076,7 @@ class TestDeepAgentsRuntimeRefs:
             "remove_cart_item_tool",
             "update_cart_items_tool",
             "view_cart_total_tool",
+            "describe_catalog_tool",
             "get_store_policy_tool",
             "check_active_promotions_tool",
             "check_product_availability_tool",
@@ -3040,6 +3089,7 @@ class TestDeepAgentsRuntimeRefs:
         assert activation_schema["properties"]["skill_names"]["items"]["enum"] == [
             "budget-shopping",
             "cart-management",
+            "catalog-questions",
             "outfit-styling",
             "product-discovery",
             "store-policy-answers",
@@ -3162,64 +3212,89 @@ class TestDeepAgentsRuntimeRefs:
         )
         assert captured["backend"].virtual_mode is True
         excluded_tools = registered_profile["profile"].kwargs["excluded_tools"]
-        assert "read_file" not in excluded_tools
+        # `read_file` is excluded now. The base prompt says "You have no
+        # filesystem", and until this it was not true: the model called
+        # read_file on live turns -- once ten times in a row -- to fetch skill
+        # files the middleware had already injected in full, at a model round
+        # trip each.
+        assert "read_file" in excluded_tools
         assert "write_file" in excluded_tools
         assert "execute" in excluded_tools
-        assert "Retrieval modes: text" in captured["system_prompt"]
-        assert "values dress" in captured["system_prompt"]
-        assert "Put every non-taxonomy shopper must-have" in (
-            captured["system_prompt"]
-        )
-        assert "Semantic relevance cannot guarantee" in captured["system_prompt"]
-        assert "Call search_catalog_tool when exact advertised" in (
-            captured["system_prompt"]
-        )
-        assert "one faithful advertised parent category exists" in (
-            captured["system_prompt"]
-        )
-        assert "Different wording is not a reason to ask" in (
-            captured["system_prompt"]
-        )
-        assert "ask one concise clarification question directly" in (
-            captured["system_prompt"]
-        )
-        assert "no_direct_catalog_match" not in captured["system_prompt"]
-        assert "One normalized taxonomy-and-required-constraint scope" in (
-            captured["system_prompt"]
-        )
-        assert "semantic_queries" not in captured["system_prompt"]
-        assert "top blouse sweater" not in captured["system_prompt"]
-        assert "Cart mutation scope must match" in captured["system_prompt"]
-        assert "Selection, approval, or styling preference is not cart intent" in (
-            captured["system_prompt"]
-        )
-        assert "If cart mutation scope is ambiguous" in captured["system_prompt"]
-        assert "ask one concise clarification" in captured["system_prompt"]
-        assert "For an explicit cart swap" in captured["system_prompt"]
-        assert "remove the rejected cart line" in captured["system_prompt"]
-        assert "Product comparison tables" in captured["system_prompt"]
-        assert "require get_product_details_tool" in captured["system_prompt"]
-        assert "Do not upgrade shopper assumptions" in captured["system_prompt"]
-        assert "Do not\nshow them to shoppers" in captured["system_prompt"]
-        assert "Do not group leather, rubber, metal" in captured["system_prompt"]
-        assert "Shopper wording is not product evidence" in captured["system_prompt"]
-        assert "making unsupported whole-outfit claims" in captured["system_prompt"]
-        assert "Initial recommendations should use product name" in (
-            captured["system_prompt"]
-        )
-        assert "Search-only product names are display names" in (
-            captured["system_prompt"]
-        )
-        assert "Do not make group-level claims" in captured["system_prompt"]
-        assert "Do not enumerate materials" in captured["system_prompt"]
-        assert "Tax and delivery dates are not available" in (
-            captured["system_prompt"]
-        )
-        assert "availability claims require check_product_availability_tool" in (
-            captured["system_prompt"]
-        )
-        assert "require get_store_policy_tool" in captured["system_prompt"]
-        assert "require check_product_availability_tool" in captured["system_prompt"]
+        # Where a rule lives is now part of the contract: procedure belongs to
+        # the skill that performs it and must reach the model on that turn,
+        # while the always-on prompt keeps only what every turn needs.
+        base = captured["system_prompt"]
+
+        def skill(name: str) -> str:
+            return (
+                pathlib.Path(__file__).resolve().parents[3]
+                / f"chain_server/skills/shopper/{name}/SKILL.md"
+            ).read_text()
+
+        for phrase in (
+            "Retrieval modes: text",
+            "values dress",
+            "Call search_catalog_tool when exact advertised",
+            "Different wording is not a reason to ask",
+            "One normalized taxonomy-and-required-constraint scope",
+            "denotes the same kind of thing",
+            "it in `not_covered`",
+            "Do not upgrade shopper assumptions",
+            "Do not group leather, rubber, metal",
+            "Shopper wording is not product evidence",
+            "making unsupported whole-outfit claims",
+        ):
+            assert phrase in base, f"{phrase!r} must stay in the always-on prompt"
+
+        # Procedure belongs to the skill that performs it. The phrases below
+        # are the ones still carried by a skill body rather than by a tool
+        # description; several that used to be listed here -- comparison
+        # tables, display-name inference, group-level claims, enumerating
+        # materials -- were the same rules the grounding editor already
+        # enforces on the way out, and asserting the skill copy made that
+        # duplication load-bearing.
+        reachable = {
+            "cart-management": (
+                "Cart mutation scope must match",
+                "Selection, approval, or styling preference is not cart intent",
+                "ask one concise clarification naming the candidates",
+                "For an explicit swap",
+                "remove the",
+            ),
+            "product-discovery": (
+                "Tax and delivery dates are not available",
+                "in stock or ready to ship",
+                "one inclusive search scope",
+            ),
+            "outfit-styling": (
+                "Prefer an honest partial",
+                "60-30-10",
+            ),
+        }
+        for name, phrases in reachable.items():
+            body = skill(name)
+            for phrase in phrases:
+                assert phrase in body, f"{phrase!r} unreachable in {name}"
+                assert phrase not in base, (
+                    f"{phrase!r} is skill procedure and must not ride on "
+                    "every turn"
+                )
+
+        assert "no_direct_catalog_match" not in base
+        assert "semantic_queries" not in base
+        assert "top blouse sweater" not in base
+        # The skill said this twice, in a "Rules" bullet and again under a
+        # "Routing" heading. One statement, asserted once.
+        policy = skill("store-policy-answers")
+        assert "Call `get_store_policy_tool` only for a supported topic" in policy
+        assert "Never answer any policy from model knowledge" in policy
+        # Availability now says so on the tool itself, which is the channel the
+        # model reads when it is deciding whether to call it.
+        runtime_source = (
+            pathlib.Path(__file__).resolve().parents[3]
+            / "chain_server/src/deepagents_runtime.py"
+        ).read_text()
+        assert "explicitly asks about availability" in runtime_source
         assert "Outdoor-practicality claims require exact support" in (
             captured["system_prompt"]
         )
@@ -3252,20 +3327,22 @@ class TestDeepAgentsRuntimeRefs:
         # Turn 14 of the fifteen-turn script asked "what size should I add?"
         # and then added nothing, because no size could be recorded anywhere.
         # The question is real now, so the rules for it live here.
-        assert "ask which size, offering that product's own run" in (
-            captured["system_prompt"]
-        )
-        assert "worse than not\n  asking at all" in captured["system_prompt"]
-        assert "never add a size the product does not list" in (
-            captured["system_prompt"]
-        )
+        # Whitespace-normalised: these assert a rule, not a line-wrapping.
+        # Pinned to the exact wrap, they failed on a reflow that changed no
+        # word of the rule, which teaches the next person to reflow the test
+        # rather than read it.
+        cart = " ".join(skill("cart-management").split())
+        assert "ask which size, offering that product's own run" in cart
+        assert "worse than not asking at all" in cart
+        assert "never add a size the product does not list" in cart
         # A size guess is invisible until the parcel arrives, so it is
         # disclosed where it cannot be missed and names its neighbours.
-        assert "say which in the line that confirms the\n  add" in (
-            captured["system_prompt"]
-        )
-        assert "cannot see a size until it arrives" in captured["system_prompt"]
-        assert "offer pieces\n  that do come in it" in captured["system_prompt"]
+        assert "say which in the line that confirms the add" in cart
+        assert "cannot see a size until it arrives" in cart
+        # Offering pieces that do come in the wanted size is an add-path rule,
+        # so it is stated once, by the skill that adds. product-discovery said
+        # it too, word for word.
+        assert "offer pieces that do come in it" in cart
         # Live: "add it in a 10 too" raised the size-8 line to quantity 2 and
         # then asked whether the second should be a 10 -- the wrong garment
         # twice, presented as agreement.
@@ -3274,14 +3351,16 @@ class TestDeepAgentsRuntimeRefs:
         # "Stop and synthesize" fired before the forecast was ever considered:
         # the same sentence fetched weather alone and skipped it once it read
         # as an outfit request mid-conversation.
-        assert "look the weather\n  up BEFORE that fan-out" in (
-            captured["system_prompt"]
-        )
-        assert "the forecast never gets asked for" in captured["system_prompt"]
-        assert "a size 8 tote is not a thing" in captured["system_prompt"]
-        assert "those come in one size" in captured["system_prompt"]
-        assert "another line, not more of" in captured["system_prompt"]
-        assert "adds\n  the wrong garment twice" in captured["system_prompt"]
+        # The forecast-ordering rule is now conditional on the tool existing,
+        # and this fixture has weather off -- which is the shipped default. It
+        # is asserted for both branches in test_today_is_known.
+        assert "look the weather" not in captured["system_prompt"]
+        assert "the forecast never gets asked for" not in captured["system_prompt"]
+        product_discovery = " ".join(skill("product-discovery").split())
+        assert "a size 8 tote is not a thing" in product_discovery
+        assert "those come in one size" in product_discovery
+        assert "another line, not more of" in cart
+        assert "adds the wrong garment twice" in cart
         assert "Advice is not an answer on its own either" in (
             captured["system_prompt"]
         )
@@ -3307,7 +3386,13 @@ class TestDeepAgentsRuntimeRefs:
         assert "Rubber sole means" in captured["system_prompt"]
         assert "maximum breathability" in captured["system_prompt"]
         assert "best-in-category performance" in captured["system_prompt"]
-        assert "compare only confirmed construction facts" in captured["system_prompt"]
+        # The outdoor-claims rules are stated in the always-on prompt and
+        # enforced again by the grounding editor. product-discovery said them a
+        # third time in its own words; that copy is gone, and the rule is
+        # asserted where it is actually enforced.
+        assert "Do not convert sole or strap facts into surface guarantees" in (
+            captured["system_prompt"]
+        )
 
         policy_response = tools_by_name["get_store_policy_tool"](topic="returns")
         assert policy_response.startswith("POLICY NOT AVAILABLE:")
@@ -3470,6 +3555,7 @@ class TestDeepAgentsRuntimeRefs:
         }
 
         assert registered_tools == {
+            "describe_catalog_tool",
             "search_catalog_tool",
             "get_product_details_tool",
             "resolve_conversation_products_tool",
@@ -3834,9 +3920,14 @@ class TestDeepAgentsRuntimeRefs:
                 },
             )])
         )
-        assert "requires an advertised category or subcategory" in (
-            invalid_strict_taxonomy
-        )
+        # Still refused, and now by the more specific check one step later: a
+        # product type the shopper named binds to an advertised category, so
+        # dropping the taxonomy loses what they asked for. The blanket
+        # needs-some-taxonomy rule no longer catches it, because a hard filter
+        # can now scope a search that names no category at all -- "nothing over
+        # $50" belongs to every category, which is the point rather than an
+        # omission. "Work bags" is not that case and is still turned back.
+        assert "binds to advertised category" in invalid_strict_taxonomy
         assert (
             "Preserve these capability-validated advertised "
             "required_constraints exactly on repair"
@@ -3883,7 +3974,7 @@ class TestDeepAgentsRuntimeRefs:
         open_budget_tools["activate_shopper_skills_tool"](
             skill_names=["outfit-styling", "budget-shopping"],
         )
-        invalid_open_budget = tool_text(
+        open_budget = tool_text(
             open_budget_tools["search_catalog_tool"](scopes=[dict(
                 semantic_query="rainy outfit under $60",
                 shopper_guidance="Starting a rainy outfit within the stated budget.",
@@ -3892,7 +3983,30 @@ class TestDeepAgentsRuntimeRefs:
                 required_constraints={"price": {"max": 60}},
             )])
         )
-        assert "an open-role search requires" in invalid_open_budget
+        # A browse scoped by a filter is not refused for naming no subcategory
+        # -- it runs and discloses the narrowing. Nor is it refused for the
+        # product type: "apparel" names the apparel category and selects
+        # apparel, so nothing has been substituted and there is nothing to
+        # repair. Both of those turned this scope back in turn, and the
+        # shopper paid a turn each time to be asked for a word they had not
+        # said. The type being the assistant's own reading rather than the
+        # shopper's is disclosed in the reply, not grounds for refusing.
+        assert "SEARCH_RESULT_GROUNDING_NOTE" in open_budget
+        assert captured_plan.get("calls", 0) == 1
+        captured_plan["calls"] = 0
+        # Substitution is what that check is for, and it still catches it:
+        # the type says bags and the taxonomy says apparel.
+        substituted_open_budget = tool_text(
+            open_budget_tools["search_catalog_tool"](scopes=[dict(
+                semantic_query="rainy outfit under $60",
+                shopper_guidance="Starting a rainy outfit within the stated budget.",
+                requested_product_type="bags",
+                taxonomy={"category": ["apparel"], "subcategory": []},
+                required_constraints={"price": {"max": 60}},
+            )])
+        )
+        assert "binds to advertised category" in substituted_open_budget
+        assert captured_plan.get("calls", 0) == 0
         drifted_open_budget = tool_text(
             open_budget_tools["search_catalog_tool"](scopes=[dict(
                 semantic_query="rainy dress under $60",
@@ -3992,9 +4106,14 @@ class TestDeepAgentsRuntimeRefs:
         # executed plan are asserted on it directly. Re-issuing the same scope
         # now correctly trips the duplicate-scope guard rather than being the
         # first real retrieval, so the former retry is gone.
+        # The parent alone cannot say whether the shopper's kind is here --
+        # "apparel" is true of every garment -- so what that parent actually
+        # holds travels with the relation.
         assert (
             'SEARCH_SCOPE_RELATION_EVIDENCE: {"advertised_category": '
-            '"footwear", "relation": "model_selected_parent_category", '
+            '"footwear", "advertised_subcategories": ["boots", "flats", '
+            '"heels", "sandals"], '
+            '"relation": "model_selected_parent_category", '
             '"requested_product_type": "sneakers"}'
             in misplaced_product_type
         )
@@ -4028,9 +4147,11 @@ class TestDeepAgentsRuntimeRefs:
                 required_constraints={"price": {"max": 60}},
             )])
         )
-        assert "requires an advertised category or subcategory" in (
-            invalid_advertised_no_direct
-        )
+        # As above: "bags" names an advertised category, so the refusal is the
+        # specific one that says which. A hard filter can scope a search that
+        # names no category; it cannot excuse dropping one the shopper's own
+        # product type binds to.
+        assert "binds to advertised category" in invalid_advertised_no_direct
         assert "capability-validated advertised required_constraints" in (
             invalid_advertised_no_direct
         )
@@ -4313,20 +4434,28 @@ class TestDeepAgentsRuntimeRefs:
         )
         transport_scope = transport_request.scopes[0]
         assert transport_scope.taxonomy.subcategory == []
-        invalid_empty_rainy_scope = tool_text(
+        # Nothing grounds this role: no subcategory, no category, and a
+        # requirement that is not an advertised filter. The rule holds, and the
+        # refusal says which subcategories are on offer.
+        ungrounded_rainy_scope = tool_text(
             rainy_tools["search_catalog_tool"](scopes=[dict(
-                **transport_scope.model_dump()
+                **{
+                    **transport_scope.model_dump(),
+                    "taxonomy": {"category": [], "subcategory": []},
+                }
             )])
         )
-
-        assert invalid_empty_rainy_scope.startswith(
+        assert ungrounded_rainy_scope.startswith(
             tool_loop_control.SEARCH_VALIDATION_ERROR_PREFIX
         )
-        assert 'currently advertised subcategories: ["dresses"]' in (
-            invalid_empty_rainy_scope
-        )
+        # Every advertised subcategory, not apparel's alone: with no category
+        # named there is nothing narrowing what is on offer.
+        assert (
+            'currently advertised subcategories: ["boots", "crossbody_bags", '
+            '"dresses", "flats", "heels", "sandals", "satchels", "tote_bags"]'
+        ) in ungrounded_rainy_scope
         assert 'unadvertised_requirements ["water resistance"]' in (
-            invalid_empty_rainy_scope
+            ungrounded_rainy_scope
         )
         assert captured_plan["calls"] == calls_before_rainy
 
@@ -4384,6 +4513,7 @@ class TestDeepAgentsRuntimeRefs:
         assert captured_plan["plan"].semantic_queries == [
             "practical rainy day dresses"
         ]
+
         assert captured_plan["calls"] == calls_before_rainy + 1
 
         budget_rainy_state = State(
@@ -4546,7 +4676,9 @@ class TestDeepAgentsRuntimeRefs:
         assert "SEARCH_SCOPE_COMPLETE" not in no_result
         assert "search again without it" in no_result
         assert "PRODUCT_REF:" not in no_result
-        assert captured_plan["calls"] == 7
+        # Two more than before: each zero-result scope is re-run once without
+        # its optional constraints, so the reply has products to show.
+        assert captured_plan["calls"] == 9
 
         image_state = State(
             user_id=111,
@@ -4568,7 +4700,7 @@ class TestDeepAgentsRuntimeRefs:
         assert "SEARCH_FILTER_EVIDENCE:" not in image_result
         assert "PRODUCT_REF: prod_1" in image_result
         assert captured_plan["plan"].search_mode == "hybrid"
-        assert captured_plan["calls"] == 8
+        assert captured_plan["calls"] == 10
         assert image_state.model_usage["text_embedding"]["status"] == "used"
         assert image_state.model_usage["text_embedding"]["calls"] == 1
         assert image_state.model_usage["image_embedding"]["status"] == "used"
@@ -4583,11 +4715,14 @@ class TestDeepAgentsRuntimeRefs:
         schema_scrub_tools["activate_shopper_skills_tool"](
             skill_names=["outfit-styling"],
         )
+        # No category, so this first call is still turned back and there is a
+        # repair to scrub. Naming apparel now grounds the role and runs, which
+        # is the point of the rule change, not of this test.
         schema_scrub_tools["search_catalog_tool"](scopes=[dict(
             semantic_query="rainy day outfit",
             shopper_guidance="Starting with water-resistant outerwear.",
             requested_product_type="outerwear",
-            taxonomy={"category": ["apparel"], "subcategory": []},
+            taxonomy={"category": [], "subcategory": []},
             required_constraints={
                 "unadvertised_requirements": ["water resistance"]
             },
@@ -4609,7 +4744,7 @@ class TestDeepAgentsRuntimeRefs:
             scrubbed_schema_repair
         )
         assert "waterproof dress" not in scrubbed_schema_repair
-        assert captured_plan["calls"] == 9
+        assert captured_plan["calls"] == 11
 
     def test_search_catalog_tool_enforces_per_turn_cap(
         self,
@@ -7918,8 +8053,13 @@ class TestDeepAgentsRuntimeRefs:
             )
         )
 
-        assert "PRODUCT NOT ESTABLISHED" in response
-        assert added == []
+        assert "CHOSEN FROM A DESCRIPTION" in response
+        # It IS added now, and that is the change. Refusing cost a turn every
+        # time the reading was right -- which was most of the time -- and the
+        # refusal could not tell a good reading from a bad one anyway. The
+        # cart is on screen and a wrong line is one click away; an unspoken
+        # choice is what could not be undone.
+        assert [item.display_name for item in added] == ["Belle Noir Satin Gown"]
 
     def test_a_product_never_shown_is_looked_up_in_the_catalog(
         self,
@@ -8451,9 +8591,14 @@ class TestDeepAgentsRuntimeRefs:
         )
         assert "not sold" in wrong_size
         assert added == []
-        # A size with nothing behind it is refused now, whether or not the
-        # catalog sells it: "add the Office A-line Dress" put a size 6 in a
-        # cart nobody asked for, and every check passed because 6 was real.
+        # "add the Office A-line Dress" once put a size 6 in a cart nobody
+        # asked for. That used to be refused, on a quotation the model had to
+        # supply -- which it filled about half the time, so the refusal mostly
+        # landed on shoppers who *had* given a size and were asked again.
+        #
+        # The add now goes through and the size travels with it. A size the
+        # shopper did not choose is caught by being visible on the turn it
+        # happens, not by blocking the turn that got it right.
         unasked = tool_text(
             add_tool(
                 items=[
@@ -8461,7 +8606,32 @@ class TestDeepAgentsRuntimeRefs:
                 ]
             )
         )
-        assert "SIZE NOT ESTABLISHED" in unasked
+        assert "SIZE NOT ESTABLISHED" not in unasked
+        assert "size 4" in unasked, "the size must be visible in the result"
+        assert len(added) == 1
+        added.clear()
+        # Two items, one settled and one not. The add is all or nothing, so
+        # nothing is written -- but the settled item has to travel with the
+        # refusal. A shopper who answered "Sweater: M and Boots: 6" gave a
+        # correct size for the boots and was asked for it a second time,
+        # because the held-back item vanished from the result.
+        # The held-back path still matters -- a size the catalog does not sell
+        # is still refused, and the settled item must travel with the refusal
+        # rather than vanishing. A shopper who answered "Sweater: M and Boots:
+        # 6" gave a correct size for the boots and was asked for it twice,
+        # because the held-back item disappeared from the result.
+        held_back = tool_text(
+            add_tool(
+                items=[
+                    {"product_ref": "prod_bag", "quantity": 1},
+                    {"product_ref": "prod_dress", "quantity": 1, "size": "14"},
+                ]
+            )
+        )
+        assert "not sold" in held_back
+        assert "Work Bag" in held_back
+        assert "Do not ask for these again" in held_back
+        assert "Added:" not in held_back
         assert added == []
         sized = tool_text(
             add_tool(
@@ -8470,7 +8640,6 @@ class TestDeepAgentsRuntimeRefs:
                         "product_ref": "prod_dress",
                         "quantity": 1,
                         "size": "4",
-                        "size_stated_as": "size 4",
                     }
                 ]
             )
@@ -8485,7 +8654,6 @@ class TestDeepAgentsRuntimeRefs:
                     {
                         "product_ref": "prod_flats",
                         "quantity": 2,
-                        "quantity_stated_as": "3 of the flats",
                         "expected_display_name": "Felicity Flats",
                     },
                     {"product_ref": "missing", "quantity": 1},
@@ -8629,7 +8797,7 @@ class TestDeepAgentsRuntimeRefs:
         # Refused either way: the shopper did not name it, and it was not part
         # of the explicit request. The provenance gate reaches it first.
         assert (
-            "PRODUCT NOT ESTABLISHED" in blocked_response
+            "CHOSEN FROM A DESCRIPTION" in blocked_response
             or "outside the current explicit add request" in blocked_response
         )
         assert "Green Meadow Sweater Top" in blocked_response
@@ -9434,14 +9602,49 @@ class TestAudienceAwareSearch:
 
         runtime = runtime_mod.DeepAgentsRuntime(base_config)
 
-        normalized = " ".join(
-            runtime._system_prompt(CatalogCapabilities(catalog_id="test")).split()
-        )
+        # Reachability on the turn that needs them is the property under test
+        # -- not which file the words sit in. The union now includes the search
+        # tool's rendered schema, because the half of this rule that decides
+        # which values go in the filter lives on the audience field itself,
+        # which is the channel that binds it. Asserting only the skill body
+        # would fail a move in exactly that direction.
+        from .model_visible import reachable_on_a_turn_using
+
+        normalized = reachable_on_a_turn_using(runtime, "product-discovery")
 
         assert "Read those values from Catalog capabilities" in normalized
         assert (
             "never name an audience the catalog does not advertise" in normalized
         )
-        assert "send every value that suits them as a hard filter" in normalized
-        assert "Otherwise send no audience filter at all" in normalized
+        assert "covering all genders is always in the list" in normalized
+        assert "omit this filter entirely" in normalized
         assert "never ask the shopper their gender" in normalized
+
+
+def test_every_cart_impl_helper_is_callable_by_the_tool_that_wraps_it() -> None:
+    """`remove_cart_item_tool` calls its impl directly, and could not.
+
+    The impl carried a `@tool` decorator, which makes it a StructuredTool --
+    not callable. Every removal raised `'StructuredTool' object is not
+    callable' and the turn died with an agent error, so a shopper could not
+    take anything out of their cart, and a size change left both lines behind.
+
+    A source check rather than a call, because these helpers are closures
+    inside `_create_agent` and cannot be reached from here. What is checked is
+    exactly the property that broke: a helper the tool invokes directly must
+    not itself be a tool.
+    """
+
+    import inspect
+    import re
+
+    from chain_server.src import deepagents_runtime
+
+    source = inspect.getsource(deepagents_runtime).splitlines()
+    decorated: list[str] = []
+    for index, line in enumerate(source):
+        match = re.match(r"\s*def (_\w+_impl)\(", line)
+        if match and index and source[index - 1].strip().startswith("@tool"):
+            decorated.append(match.group(1))
+
+    assert decorated == []

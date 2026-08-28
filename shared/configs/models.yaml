@@ -16,7 +16,7 @@ local_nims:
       compose_file: docker-compose-nim-local.yaml
       compose_service: embedqa
       base_url: "http://embedqa:8000/v1"
-      model: "nvidia/nv-embedqa-e5-v5"
+      model: "nvidia/nemotron-3-embed-1b"
 
     nvclip:
       compose_file: docker-compose-nim-local.yaml
@@ -58,7 +58,7 @@ models:
     base_url_env: TEXT_EMBED_BASE_URL
     base_url: "https://integrate.api.nvidia.com/v1"
     model_env: TEXT_EMBED_MODEL
-    model: "nvidia/nv-embedqa-e5-v5"
+    model: "nvidia/nemotron-3-embed-1b"
     api_key_env: EMBED_API_KEY
 
   image_embedding:

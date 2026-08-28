@@ -46,6 +46,18 @@ product-free catalog scope outcomes for that turn. Legacy runs without these
 fields remain valid and supply empty lists with
 `product_evidence_truncated: false`.
 
+### Two modes
+
+| | Challenger | Replay |
+|---|---|---|
+| The shopper's words | generated fresh each run | frozen |
+| Judged by | a model reading the reply | a reader, from a transcript carrying the cart |
+| Answers | what is broken that nobody considered | did this build keep its promises |
+| Datasets | `text_shopping`, `image_shopping`, `style_guide` | `val` |
+
+Neither replaces the other. When the challenger finds something, freeze those
+turns as a replay scenario and it cannot come back unnoticed.
+
 ## Running
 
 Start the target Shopping Assistant, then source the repo-root environment file:
@@ -234,6 +246,53 @@ supports apparel, footwear, bags, or accessory styling.
 Some scenarios include `turn_sequence` for setup-sensitive behavior such as cart
 styling. Challenger must follow those steps in order so the target app is tested
 against real cart state rather than an unverified shopper claim.
+
+## Replay Commands
+
+The other half of this application. The challenger writes the shopper's words
+fresh every run, which makes it good at finding a bug and useless for
+confirming one; replay never changes a word.
+
+```bash
+# one journey by its number
+python -m tests.evaluation.src.replay --only J01
+
+# several at once in one run
+python -m tests.evaluation.src.replay --label three --only J01,J02,J13
+
+# all forty-five scenarios, one conversation at a time
+python -m tests.evaluation.src.replay --label 2026-08-14
+
+# the same, several conversations at once
+python -m tests.evaluation.src.replay --label nightly --parallel
+python -m tests.evaluation.src.replay --label nightly --concurrency 4
+
+# a turn that fails one run in three, eight times over
+python -m tests.evaluation.src.replay --only J04 --repeat 8
+```
+
+`--sequential` is the default. `--parallel` runs up to six conversations at
+once; past that nothing finishes sooner, because the bottleneck is the model
+endpoint.
+
+Scenarios live in `datasets/val/`: twenty journeys of six to twenty turns
+(`J01`-`J20`, of which `J01` and `J02` are the two demo conversations) and
+twenty-five short probes (`P01`-`P25`). See `datasets/val/README.md` for what
+each one covers and how to write another.
+
+Output lands in `results/val/<label>/`, gitignored:
+
+| | |
+|---|---|
+| `transcripts/<id>-<n>.md` | the conversation, with the cart printed after every turn |
+| `report.md` | one row per scenario, failures expanded |
+| `raw/<id>-<n>.json` | everything, for a tool to read |
+
+**Judge from the transcripts.** They carry the cart beside the words, which is
+why they can be judged safely -- a transcript of replies alone was judged clean
+over a size nobody asked for, and again over a dress that had gone missing.
+
+Needs the stack up and `EXPOSE_AGENT_DIAGNOSTICS=true` for the tool assertions.
 
 ## Judge Commands
 

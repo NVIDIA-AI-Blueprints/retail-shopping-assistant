@@ -1,0 +1,17 @@
+id: P25_weather_dated_destination
+covers: [weather, outfit-styling]
+why: >
+  A forecast is not an answer on its own. This turn once returned weather and
+  generic advice with nothing to buy, three times out of three. It must also
+  confirm nothing about any product: rain does not make leather water-resistant.
+
+  The date is spoken the way a shopper speaks it. It used to say "August 15",
+  which put the wedding inside the forecast window in August and in the past by
+  September -- so the turn would have started failing on a date arithmetic
+  nobody changed. Relative wording also tests the thing that was actually
+  broken: the assistant was never told what day it is, so "mid next week" was
+  unresolvable and it described the weather in Cancun without fetching it.
+turns:
+  - say: I have a wedding in Cancun around mid next week, what should I wear
+    expect:
+      products_min: 1

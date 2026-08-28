@@ -183,12 +183,35 @@ docker compose -f docker-compose.yaml logs -f
 The helper starts only the NIM services referenced by roles with
 `source: local_nim`, then starts the application services.
 
-### Step 5: Verify Deployment
+### Step 5: Index the catalog
+
+Serving containers do not index themselves. Rebuilding an index begins by
+dropping the collection, so it must happen exactly once, and a container cannot
+know whether it is the only one doing it.
+
+```bash
+docker compose exec catalog-retriever python -m app.index_catalog
+```
+
+Required after a first deployment and after any change to the catalog data,
+schema, or embedding model. Safe to repeat and safe to leave unconditionally in
+a pipeline: it checks the catalog fingerprint first and does nothing when the
+index is already current.
+
+### Step 6: Verify Deployment
+
+Check `/ready`, not only `/health`. They answer different questions and are
+meant to disagree: `/health` says the process is alive and should not be
+restarted, `/ready` says it should be sent traffic. A catalog container with an
+unbuilt index is alive and unable to answer.
 
 ```bash
 docker compose -f docker-compose.yaml ps
 docker compose -f docker-compose-nim-local.yaml ps
-curl http://localhost:8009/health
+
+curl http://localhost:8009/ready    # chain server
+curl http://localhost:8010/ready    # catalog: 503 until the index is built
+curl http://localhost:8011/ready    # memory: 503 until migrations finish
 curl http://localhost:3000
 ```
 
@@ -237,6 +260,42 @@ docker compose -f docker-compose.yaml ps
 ## 🏭 Production Deployment
 
 ### Kubernetes Deployment
+
+#### What is already decided, so it need not be re-decided here
+
+- **No session affinity.** A graph checkpoint is keyed on
+  `(conversation_id, request_id)`, so two turns of one conversation never share
+  one and nothing carries across turns inside a pod. Any chain-server replica
+  can serve any turn. Verified by running a four-turn conversation, including a
+  referring expression and a cart write, with every turn on a different pod.
+- **Probes are distinct.** `/health` is liveness and stays on the event loop, so
+  a loaded pod answers it instantly and is not killed for being busy. `/ready`
+  is readiness and is allowed to say no. Neither checks a dependency: a
+  readiness probe that fails on a downstream service removes every pod at once
+  and turns a partial outage into a total one.
+- **Draining works.** uvicorn is PID 1 in every container, so SIGTERM starts a
+  drain rather than stopping at a shell. `terminationGracePeriodSeconds` must
+  exceed `SHUTDOWN_GRACE_SECONDS` (160 for the chain server, which must clear a
+  turn that may run to `DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS`) or the kubelet
+  sends SIGKILL mid-drain.
+- **Streaming.** The Ingress must not buffer and must allow a whole turn:
+  `proxy_buffering off` and a read timeout above the turn budget. Turns are
+  server-sent events over a single long request.
+
+#### What must be decided here
+
+- **Catalog indexing is a Job**, `parallelism: 1`, using the catalog image with
+  `command: ["python", "-m", "app.index_catalog"]`. Run it before the pods that
+  read the index; they will sit unready until it succeeds, which is correct and
+  needs no coordination.
+- **More than one memory replica requires PostgreSQL.** SQLite is a
+  single-writer file on a single-mount volume. Set `MEMORY_DATABASE_URL` and
+  move existing data with `scripts/copy_memory_to_postgres.py` first.
+- **`shared/` is still a bind mount.** All four services read configuration,
+  data, images, and Python modules from it, and a hostPath does not exist on
+  another node. It is read-only at runtime, so the fix is
+  `COPY ./shared /app/shared` in the four Dockerfiles and dropping the mounts.
+  Open, and deliberately deferred to this work.
 
 #### Prerequisites
 - Kubernetes cluster (1.24+)

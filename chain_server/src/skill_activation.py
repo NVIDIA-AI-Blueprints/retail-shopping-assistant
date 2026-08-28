@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Collection, Mapping
+from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from threading import Lock
 from typing import Any
 
@@ -42,10 +42,46 @@ SKILL_ACTIVATION_REQUIRED = (
     "SKILL_ACTIVATION_REQUIRED: Shopper skills must be selected and loaded "
     "before any shopping tool can run. Retry after activation completes."
 )
+#: Kept as the prefix of every not-granted message, because four readers
+#: recognise the outcome by it.
+#: Selections allowed in one turn. One to open it, and room to correct the
+#: opening when the shopper turns out to want something else.
+_MAX_TURN_ACTIVATIONS = 3
+
 SKILL_TOOL_NOT_GRANTED = (
     "SHOPPER_SKILL_TOOL_NOT_GRANTED: The active shopper skills do not grant "
-    "this tool. Continue using only the tools available for this turn."
+    "this tool."
 )
+
+
+def _tool_not_granted(tool_name: str, selected_skills: Sequence[str]) -> str:
+    """Say which skill grants the tool, and that asking for it is allowed.
+
+    This used to end "continue using only the tools available for this turn",
+    which forbids the one recovery that works. Asked to "add the Ombre Canvas
+    Tote Bag", a turn holding outfit-styling and budget-shopping found the bag,
+    read its details, called the cart tool, was refused for the grant -- and,
+    told to carry on without it, replied "I've added the Ombre Canvas Tote Bag
+    to your cart" over an empty cart. It did as it was told.
+
+    The skill that grants the tool is known here, so the message names it. The
+    last line matters as much as the first: a refused call is not a thing that
+    happened, and the reply is written by the same model that reads this.
+    """
+
+    granting = sorted(
+        SHOPPING_TOOL_POLICIES[tool_name].allowed_skills_any_of
+    )
+    active = ", ".join(sorted(selected_skills)) or "none"
+    return (
+        f"{SKILL_TOOL_NOT_GRANTED} '{tool_name}' is granted by "
+        f"{' or '.join(granting)}; this turn activated {active}. If the "
+        "shopper asked for what this tool does, call "
+        f"{SKILL_ACTIVATION_TOOL_NAME} again with the skill that grants it, "
+        "keeping the primary procedure you already selected if it still "
+        "applies, and then call the tool again. Nothing has been done yet: do "
+        "not tell the shopper it has."
+    )
 
 
 class ShopperSkillActivationError(RuntimeError):
@@ -60,15 +96,15 @@ registered skills that fully covers the shopper's current intent. Use the
 registered descriptions below and the full conversation context; this is
 semantic selection, not keyword matching. Do not attempt another tool in the
 same response. The runtime will load the complete selected instructions before
-the next model step. Outfit styling and product discovery are alternative
-primary procedures, so never select both; budget shopping may accompany either
-only when the shopper states a budget. Keep the primary procedure aligned with
-the active conversation task: an outfit-building or styling thread continues
-to use outfit styling for piece-by-piece searches until the shopper changes
-tasks. Do not switch to product discovery merely because the current turn asks
-for one product type; a terse item-only follow-up does not by itself end an
-active outfit task. Do not mention this activation step or skill names to the
-shopper."""
+the next model step. Read every registered description before choosing: the
+right primary is the one whose description names what this turn is actually
+asking for, not the one you reached for last time. Keep the primary procedure
+aligned with the active conversation task -- an outfit-building or styling
+thread continues with the styling procedure for piece-by-piece searches until
+the shopper changes tasks. Do not switch procedures merely because the current
+turn asks for one product type; a terse item-only follow-up does not by itself
+end an active outfit task. Do not mention this activation step or skill names
+to the shopper."""
 
 _ACTIVATION_FAILED_PROMPT = """## Shopper Skill Activation Failed
 
@@ -101,6 +137,7 @@ class ShopperSkillActivationMiddleware(AgentMiddleware):
         self._selected_skills: frozenset[str] = frozenset()
         self._granted_tools: frozenset[str] = frozenset()
         self._activation_validation_failures = 0
+        self._activations = 0
         self._clarification_response = ""
         self._previous_selected_skills = tuple(
             dict.fromkeys(
@@ -130,12 +167,36 @@ class ShopperSkillActivationMiddleware(AgentMiddleware):
             self._skill_tool_grants,
         )
         with self._lock:
-            if self._status != "pending":
+            # A turn's first selection used to be its last. A second call
+            # returned False, changed no grants, and was reported to the model
+            # as already complete -- which reads like success.
+            #
+            # A shopper says "add the Ombre Canvas Tote Bag" six turns into
+            # building a capsule. The turn opens with outfit-styling and
+            # budget-shopping, finds the bag, reads its details, and is refused
+            # the cart tool for the grant. Asked to select cart-management and
+            # try again it does exactly that, is told the selection is already
+            # complete, and is refused again -- twelve times, until the turn
+            # died on the recursion limit. The run before, obeying an older
+            # message that told it not to retry, it simply said "I've added the
+            # Ombre Canvas Tote Bag to your cart" over an empty cart.
+            #
+            # What the shopper wants is not always clear at the first token of
+            # a turn, and a selection made then has to be correctable. So a
+            # later call replaces the selection and re-grants against it,
+            # through the same validation as the first. The cap is what stops a
+            # model that cannot find the tool it wants from spinning: past it
+            # the answer is honestly no, rather than a success that grants
+            # nothing.
+            if self._status not in {"pending", "active"}:
+                return False
+            if self._activations >= _MAX_TURN_ACTIVATIONS:
                 return False
             self._skill_files = dict(skill_files)
             self._selected_skills = selected
             self._granted_tools = granted_tools
             self._status = "active"
+            self._activations += 1
         return True
 
     def fail(self) -> None:
@@ -175,7 +236,7 @@ class ShopperSkillActivationMiddleware(AgentMiddleware):
         """Return bounded model feedback for an invalid skill selection."""
 
         issue = _activation_validation_issue(error)
-        feedback = _activation_validation_feedback(issue)
+        feedback = _activation_validation_feedback(error, issue)
         with self._lock:
             if self._status != "pending":
                 return f"{SKILL_ACTIVATION_INVALID} {feedback}"
@@ -307,7 +368,7 @@ class ShopperSkillActivationMiddleware(AgentMiddleware):
             selected_skills,
             granted_tools,
         ):
-            return SKILL_TOOL_NOT_GRANTED
+            return _tool_not_granted(tool_name, selected_skills)
         return None
 
     def _validate_model_response(self, response: ModelResponse) -> ModelResponse:
@@ -449,17 +510,26 @@ def _activation_validation_issue(error: Any) -> str:
     return "invalid_selection"
 
 
-def _activation_validation_feedback(issue: str) -> str:
-    if issue == SKILL_ACTIVATION_MODIFIER_REQUIRES_PRIMARY:
-        return (
-            "budget-shopping is a modifier and requires exactly one primary "
-            "procedure: outfit-styling or product-discovery."
-        )
-    if issue == SKILL_ACTIVATION_MULTIPLE_PRIMARY:
-        return (
-            "Select exactly one primary procedure: outfit-styling or "
-            "product-discovery, never both."
-        )
+def _activation_validation_feedback(error: Any, issue: str) -> str:
+    """Relay the validator's own message rather than restating the rule.
+
+    This used to hold its own copy, naming outfit-styling and product-discovery
+    in both branches. The copy went stale when a third primary was registered,
+    so a model that selected `catalog-questions` beside a budget was told to
+    swap in one of two skills that were not the right answer. The validator
+    already names the skills it actually rejected; there is no second version
+    of the rule to keep in step.
+    """
+
+    errors = error.errors() if callable(getattr(error, "errors", None)) else []
+    for detail in errors:
+        if str(_value(detail, "type") or "") != issue:
+            continue
+        message = str(_value(detail, "msg") or "").strip()
+        if message:
+            message = message.removeprefix("Value error, ").strip()
+        if message:
+            return message if message.endswith(".") else f"{message}."
     return "The selected shopper-skill combination is invalid."
 
 

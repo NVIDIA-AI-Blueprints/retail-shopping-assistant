@@ -38,6 +38,11 @@ class ProductReferenceDescriptor(_ReferenceModel):
     turn_sequence: int | None = Field(default=None, ge=1)
     candidate_set_id: str | None = Field(default=None, min_length=1, max_length=64)
     ordinal: int | None = Field(default=None, ge=1)
+    #: What the shopper described rather than named, in advertised attribute
+    #: terms: "the black one" is {"primary_color": "black"}. Compared against
+    #: the attributes the catalog confirmed when the product was shown, so the
+    #: reading stays the model's and the matching stays exact.
+    attributes: dict[str, str] | None = Field(default=None, max_length=12)
 
     @model_validator(mode="after")
     def _validate_selectors(self):
@@ -47,13 +52,15 @@ class ProductReferenceDescriptor(_ReferenceModel):
             self.category,
             self.turn_sequence,
             self.candidate_set_id,
+            self.ordinal,
+            self.attributes,
         )
         if not any(selector is not None for selector in selectors):
             raise ValueError("At least one product reference selector is required")
-        if self.ordinal is not None and (
-            self.turn_sequence is None and self.candidate_set_id is None
-        ):
-            raise ValueError("ordinal requires turn_sequence or candidate_set_id")
+        # An ordinal used to require a turn or a candidate set, which the
+        # shopper saying "the second one" does not supply and the model can
+        # only guess at. Alone it counts within the most recent showing, which
+        # is the one they are looking at.
         return self
 
 
@@ -150,6 +157,62 @@ def append_presented_products_event(
     return event
 
 
+def _system_identifications_by_turn(db, conversation_id: str) -> list[tuple[int, list[str]]]:
+    """Which products the record itself picked, and on which turn.
+
+    A shopper who says "the first pairing" has chosen by a coordinate this
+    service wrote down. The choice is durable for the same reason the showing
+    is.
+    """
+
+    rows = (
+        db.query(ConversationEvent, ConversationTurn)
+        .join(ConversationTurn, ConversationTurn.turn_id == ConversationEvent.turn_id)
+        .filter(
+            ConversationTurn.conversation_id == conversation_id,
+            ConversationEvent.event_type == "historical_reference_resolved",
+            ConversationEvent.source_kind == "runtime",
+        )
+        .order_by(ConversationTurn.sequence, ConversationEvent.logical_order)
+        .all()
+    )
+    identifications: list[tuple[int, list[str]]] = []
+    for event, turn in rows:
+        try:
+            payload = json.loads(event.payload_json or "{}")
+        except (TypeError, ValueError):
+            continue
+        refs = [
+            str(ref)
+            for ref in (payload.get("product_refs") or [])
+            if isinstance(ref, (str, int))
+        ]
+        if refs:
+            identifications.append((turn.sequence, refs))
+    return identifications
+
+
+def _shopper_sizes_of(turn) -> list[str]:
+    """The sizes this turn's searches were filtered by, if exactly recorded.
+
+    Read from the turn's own diagnostics, which already cross the service
+    boundary and are already stored. Only one size qualifies a showing: two
+    means the shopper was comparing, and neither is the size they want.
+    """
+
+    try:
+        output = json.loads(turn.output_json or "{}")
+    except (TypeError, ValueError):
+        return []
+    diagnostics = output.get("agent_diagnostics")
+    if not isinstance(diagnostics, dict):
+        return []
+    sizes = diagnostics.get("shopper_sizes")
+    if not isinstance(sizes, list):
+        return []
+    return [str(value).strip() for value in sizes if str(value).strip()]
+
+
 def rebuild_product_reference_index(
     db,
     projection: ConversationProjection,
@@ -157,6 +220,7 @@ def rebuild_product_reference_index(
     """Rebuild the compact index from durable presented-product events."""
 
     rows = _recent_presented_event_rows(db, projection.conversation_id)
+    identifications = _system_identifications_by_turn(db, projection.conversation_id)
     reference_sets = []
     for event, turn in rows:
         products = _compact_products(event.payload_json)
@@ -167,6 +231,28 @@ def rebuild_product_reference_index(
             "turn_seq": turn.sequence,
             "products": products,
         }
+        # A choice belongs to the set it was made from, so it is filed against
+        # the newest showing at or before the turn that made it. That is also
+        # what retires it: once a newer set is shown, this set is no longer the
+        # one in front of the shopper and its choices no longer answer for what
+        # is.
+        shown = {str(item.get("ref")) for item in products if isinstance(item, dict)}
+        picked = [
+            ref
+            for sequence, refs in identifications
+            if sequence >= turn.sequence
+            for ref in refs
+            if ref in shown
+        ]
+        if picked:
+            reference_set["system_identified"] = sorted(dict.fromkeys(picked))
+        # A showing made under a size filter is size-qualified: those four
+        # sandals came back because they come in a 7. The size belongs to this
+        # set and to nothing else -- a later showing carries its own or none,
+        # and they never merge, so no size follows the shopper around.
+        sizes = _shopper_sizes_of(turn)
+        if len(sizes) == 1:
+            reference_set["shopper_size"] = sizes[0]
         if turn.catalog_revision:
             reference_set["catalog_revision"] = turn.catalog_revision
         reference_sets.append(reference_set)
@@ -262,6 +348,24 @@ def _matched_occurrences(
 ) -> list[ProductReferenceMatch]:
     """Collapse matching occurrences to one per product, newest kept."""
 
+    # "The second one" counts within the showing the shopper is looking at.
+    # Left unscoped it counted within every showing at once, so a conversation
+    # with four of them offered four second ones and the reference that could
+    # not be clearer became a clarification. Occurrences arrive oldest first,
+    # so the last one names the newest set.
+    if (
+        descriptor.ordinal is not None
+        and descriptor.turn_sequence is None
+        and descriptor.candidate_set_id is None
+        and occurrences
+    ):
+        newest = _identifier(occurrences[-1].candidate_set_id)
+        occurrences = [
+            occurrence
+            for occurrence in occurrences
+            if _identifier(occurrence.candidate_set_id) == newest
+        ]
+
     matches_by_ref: dict[str, ProductReferenceMatch] = {}
     for occurrence in occurrences:
         if not _matches_descriptor(occurrence, descriptor):
@@ -304,6 +408,37 @@ def _resolve_descriptor(
     blocking_field: str | None = None
     corroboration_mismatch: list[str] = []
     matches = _matched_occurrences(descriptor, occurrences)
+
+    if not matches and descriptor.attributes and descriptor.display_name:
+        # A phrase can be read as a name or as a description, and the model
+        # sent both readings of the same one: display_name "black one"
+        # alongside {"primary_color": "black", "sizes": "2"}. Selectors
+        # compose, so the reading that could never match took the one that
+        # could down with it, and the reference came back NOT FOUND with the
+        # dress it described sitting in the index.
+        #
+        # Nothing is called "black one". When the name finds nothing and a
+        # description was given too, the description is what the shopper meant.
+        # Only a descriptor that resolves nothing reaches here, so a name that
+        # does match is still the answer.
+        matches = _matched_occurrences(
+            descriptor.model_copy(update={"display_name": None}), occurrences
+        )
+
+    if len(matches) > 1 and descriptor.attributes:
+        # Several showings fit the description, so the most recent one is the
+        # one the shopper is pointing at: "the black one" a turn after a black
+        # dress was shown does not mean the black dress from nine turns before.
+        # Within a single showing recency says nothing -- four black dresses on
+        # one screen are equally recent -- and those stay a question to ask.
+        newest = _identifier(
+            max(matches, key=lambda match: match.turn_sequence).candidate_set_id
+        )
+        matches = [
+            match
+            for match in matches
+            if _identifier(match.candidate_set_id) == newest
+        ]
 
     if not matches and descriptor.product_ref is not None:
         # Strictly a second chance: a descriptor that resolves today resolves
@@ -358,9 +493,9 @@ def _matches_descriptor(
     descriptor: ProductReferenceDescriptor,
 ) -> bool:
     product = match.product
-    if descriptor.product_ref is not None and _identifier(
-        product["product_id"]
-    ) != _identifier(descriptor.product_ref):
+    if descriptor.product_ref is not None and not _same_reference(
+        product["product_id"], descriptor.product_ref
+    ):
         return False
     if descriptor.display_name is not None and _normalized(
         product["display_name"]
@@ -383,6 +518,45 @@ def _matches_descriptor(
         return False
     if descriptor.ordinal is not None and match.position != descriptor.ordinal:
         return False
+    if descriptor.attributes and not _attributes_agree(
+        match.product, descriptor.attributes
+    ):
+        return False
+    return True
+
+
+def _attributes_agree(product: Any, wanted: dict[str, str]) -> bool:
+    """Whether a shown product carries every attribute the shopper described.
+
+    "Add the black one in a 2" could be asked of this index and never answered
+    from it: a description is not a PRODUCT_REF and not a product name, so the
+    two comparisons on offer both missed, the reference came back NOT FOUND,
+    and a catalog lookup went off and ranked products by how much their names
+    resembled the string "black one".
+
+    Every fact needed was already recorded. The attributes the catalog
+    confirmed when the product was shown are stored with the showing, so
+    matching them is a comparison against this system's own record. The model
+    reads "black" into primary_color; nothing here reads anything.
+
+    A stored list holds each value the product offers -- sizes 2, 4, 6 -- so
+    the shopper's size matches by membership. Anything else matches whole.
+    """
+
+    recorded = getattr(product, "attributes", None)
+    if recorded is None and isinstance(product, dict):
+        recorded = product.get("attributes")
+    if not isinstance(recorded, dict):
+        return False
+    for name, value in wanted.items():
+        if name not in recorded:
+            return False
+        held = recorded[name]
+        if isinstance(held, (list, tuple, set)):
+            if not any(_normalized(str(item)) == _normalized(value) for item in held):
+                return False
+        elif _normalized(str(held)) != _normalized(value):
+            return False
     return True
 
 
@@ -459,6 +633,15 @@ def _compact_products(payload_json: str) -> list[dict[str, Any]]:
         category = product.get("category")
         if isinstance(category, str) and category.strip():
             compact["category"] = category
+        # The sizes this product is sold in, so a later turn can tell which of
+        # the things on screen the shopper's "in a 2" could even mean. Whether
+        # a product comes in a 2 is a catalog fact; which one they meant is
+        # not, and only the first belongs in this record.
+        sizes = (product.get("attributes") or {}).get("sizes")
+        if isinstance(sizes, list):
+            kept = [str(value).strip() for value in sizes if str(value).strip()]
+            if kept:
+                compact["sizes"] = kept
         products.append(compact)
     return products
 
@@ -518,3 +701,29 @@ def _identifier(value: str) -> str:
     """
 
     return value.strip().strip(_REFERENCE_WRAPPERS).strip()
+
+
+def _same_reference(stored: str, given: str) -> bool:
+    """Whether these name the same product, however the model wrote it.
+
+    The wrapper tolerance above exists because a model sent
+    `<generated:add69d96c548b4a3>`. The same model drops the other half: asked
+    to add a tote it had been shown one turn earlier it sent
+    `92a114b74aaa39ea` for `generated:92a114b74aaa39ea`, was told the ref did
+    not match, retried the identical value until its budget ran out, and then
+    told the shopper the bag was in their cart.
+
+    A bare identifier names what the index stored just as exactly as the
+    qualified form does, so accepting it guesses nothing. Two *different*
+    schemes are two different references and still do not match.
+    """
+
+    left, right = _identifier(stored), _identifier(given)
+    if left == right:
+        return True
+    for bare, qualified in ((left, right), (right, left)):
+        if ":" in bare or ":" not in qualified:
+            continue
+        if qualified.split(":", 1)[1] == bare:
+            return True
+    return False

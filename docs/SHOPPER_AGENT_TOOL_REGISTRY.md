@@ -257,6 +257,7 @@ termination reason to `incomplete_agent_response`.
 | `add_cart_items_tool` | `mutating_cart` | Memory cart service | Registered |
 | `remove_cart_item_tool` | `mutating_cart` | Memory cart service | Registered |
 | `update_cart_items_tool` | `mutating_cart` | Memory cart service | Registered |
+| `describe_catalog_tool` | `read_only_catalog` | Published catalog capabilities | Registered |
 | `get_store_policy_tool` | `read_only_policy` | Operator-managed static policy file | Registered |
 | `check_product_availability_tool` | `read_only_catalog` | Application availability contract; no live inventory source | Registered |
 | `check_active_promotions_tool` | `read_only_promotions` | Application promotions contract; no live promotions source | Registered |
@@ -999,6 +1000,7 @@ activation.
 | `outfit-styling` | `search_catalog_tool`, `get_product_details_tool`, `check_product_availability_tool`, `check_active_promotions_tool`, `resolve_conversation_products_tool` |
 | `budget-shopping` | None (`tools_granted: []`) |
 | `cart-management` | `get_cart_tool`, `view_cart_total_tool`, `add_cart_items_tool`, `remove_cart_item_tool`, `update_cart_items_tool`, `resolve_conversation_products_tool` |
+| `catalog-questions` | `describe_catalog_tool`, `search_catalog_tool`, `get_product_details_tool` |
 | `store-policy-answers` | `get_store_policy_tool` |
 
 Multi-intent turns should select and inject every needed skill during the one
@@ -1075,3 +1077,16 @@ Mutating tools also need explicit user intent, idempotency design, ownership
 checks, and retry behavior. Checkout, payment, order, account, and profile-write
 tools require a separate confirmation and authorization design before they are
 eligible for the shopper-facing agent.
+
+
+### `describe_catalog_tool`
+
+What the shop holds: total product count, and each category with its own count,
+price range and subcategories. Takes no arguments and searches nothing, so it
+cannot become a second retrieval path.
+
+It exposes the capabilities that already build `search_catalog_tool`'s schema
+and were otherwise unreadable by the assistant. Without it a question about the
+catalog could only be answered from whatever one search happened to return --
+which is how a $199.99 bag came to be described as the most expensive item in a
+catalog reaching $269.99.

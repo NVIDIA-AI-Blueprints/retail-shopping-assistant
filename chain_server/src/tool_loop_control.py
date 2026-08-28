@@ -40,6 +40,13 @@ is insufficient, say what the catalog could not establish and offer one next
 step. When the outcome says no faithful advertised taxonomy matches, do not
 claim a search ran and do not name alternative product types; ask permission
 before searching a different advertised type."""
+_SEARCH_CLOSED_PROMPT = """## Search Complete
+
+The catalog search for this turn is finished. Do not search again. If the
+shopper asked for something still to be done -- an item added to their cart, a
+detail confirmed, availability checked -- do that now with the tools you still
+have, then answer. If nothing remains, answer from the evidence already in this
+turn."""
 _REPAIR_PROMPT = """## Catalog Search Repair
 
 Correct one invalid catalog search. Either return exactly one
@@ -90,6 +97,10 @@ class ToolLoopControlMiddleware(AgentMiddleware):
         self._repair_feedback = ""
         self._synthesis_required = False
         self._search_budget_exhausted = False
+        #: The search is finished. That is a statement about searching, not
+        #: about the turn: a shopper who asked for something to be added is
+        #: still owed the add.
+        self._search_scope_closed = False
         self._observed_tool_results: set[str] = set()
         self._lock = Lock()
 
@@ -131,6 +142,25 @@ class ToolLoopControlMiddleware(AgentMiddleware):
                     system_message=_append_system_text(
                         request.system_message,
                         _SYNTHESIS_PROMPT,
+                    ),
+                )
+            if self._search_scope_closed and not self._search_budget_exhausted:
+                # The model said it needs no more searching. Its field
+                # description lists four things that should have made it say
+                # otherwise: another product role, a detail check, an
+                # availability check, a cart action. Three of those need a tool
+                # that is not search -- and the fourth needs search itself. So
+                # taking any tool away on a prediction drops one of the four
+                # silently, and the model is predicting, not reporting.
+                #
+                # Nothing is removed here. What bounds the loop is deterministic
+                # and already in place: the per-turn search budget below, the
+                # duplicate-scope guards, and the graph's own recursion limit. A
+                # model with nothing left to do simply stops calling tools.
+                return request.override(
+                    system_message=_append_system_text(
+                        request.system_message,
+                        _SEARCH_CLOSED_PROMPT,
                     ),
                 )
             if self._search_budget_exhausted:
@@ -248,9 +278,15 @@ class ToolLoopControlMiddleware(AgentMiddleware):
                     self._synthesis_required = True
                 continue
             if SEARCH_SCOPE_COMPLETE_PREFIX in content:
-                self._synthesis_required = True
-            elif content.startswith(
-                (SEARCH_VALIDATION_ERROR_PREFIX, CONSTRAINT_REVIEW_PREFIX)
+                # Not synthesis. `scope_complete` is the model predicting it
+                # needs no further *search*, and its own description says to
+                # set it false when a cart action still has to run. Taking it
+                # as the end of the turn made a wrong prediction final and
+                # silent: measured 4/4, an add asked for in plain words was
+                # never attempted, because every tool had been taken away.
+                self._search_scope_closed = True
+            elif _validation_error_body(content) or content.startswith(
+                CONSTRAINT_REVIEW_PREFIX
             ):
                 self._queue_repair(messages, tool_call_id, content)
             elif "SEARCH_RESULT_GROUNDING_NOTE" in content:
@@ -609,10 +645,24 @@ def _singularize_scope_word(word: str) -> str:
     return word
 
 
+def _validation_error_body(content: str) -> str:
+    """The validator's verdict inside a tool message, or "" if there is none.
+
+    The verdict does not always start the message. When a scope names a kind the
+    catalog does not carry, the body says so first and appends the mismatch --
+    so a `startswith` test misses it, no repair is queued, and the bounded-repair
+    accounting never runs. Matching anywhere is how `SEARCH_SCOPE_COMPLETE` is
+    already read, and for the same reason.
+    """
+
+    index = content.find(SEARCH_VALIDATION_ERROR_PREFIX)
+    return content[index:] if index >= 0 else ""
+
+
 def _sanitize_repair_feedback(content: str) -> str:
     """Remove rejected arguments and retain only safe schema field names."""
 
-    feedback = content.strip()
+    feedback = (_validation_error_body(content) or content).strip()
     if feedback.startswith(SEARCH_VALIDATION_ERROR_PREFIX):
         feedback = feedback.removeprefix(SEARCH_VALIDATION_ERROR_PREFIX).strip()
         if feedback.startswith("{"):
@@ -634,6 +684,11 @@ def _native_validation_fields(content: str) -> set[str]:
     _, separator, validation_error = content.rpartition(" with error:\n")
     if not separator:
         return set()
+    # Under the scoped contract every location reads `scopes.<n>.<field>`, so
+    # the first segment is always "scopes" and nothing ever matched. The result
+    # was an empty set, read by the caller as "nothing identifiable", and the
+    # model was told only that validation had failed -- `BUGS_OPEN` item 8.
+    validation_error = re.sub(r"^scopes\.\d+\.", "", validation_error, flags=re.M)
     field_names = {
         "semantic_query",
         "shopper_guidance",
@@ -654,9 +709,10 @@ def _native_validation_fields(content: str) -> set[str]:
 def _is_native_validation_failure(content: str) -> bool:
     """Return whether ToolNode rejected arguments before tool execution."""
 
-    if not content.startswith(SEARCH_VALIDATION_ERROR_PREFIX):
+    body = _validation_error_body(content)
+    if not body:
         return False
-    feedback = content.removeprefix(SEARCH_VALIDATION_ERROR_PREFIX).lstrip()
+    feedback = body.removeprefix(SEARCH_VALIDATION_ERROR_PREFIX).lstrip()
     return feedback.startswith("{")
 
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 from uuid import uuid4
 
 from sqlalchemy import (
+    BigInteger,
     CheckConstraint,
     Column,
     Float,
@@ -33,12 +34,65 @@ def new_turn_attempt_id() -> str:
 
 class User(Base):
     __tablename__ = "users"
-    id = Column(Integer, primary_key=True, index=True)
+    #: Client-asserted and large: the biggest live one is 1.08e18, which is
+    #: half a billion times what PostgreSQL's INTEGER holds. SQLite never
+    #: complained because its INTEGER is 64-bit regardless of the declaration,
+    #: so this only surfaces on the first insert after a Postgres migration.
+    #: The variant keeps SQLite's autoincrement working, which needs INTEGER.
+    id = Column(
+        BigInteger().with_variant(Integer, "sqlite"),
+        primary_key=True,
+        index=True,
+    )
     context = Column(String, default="")
 
 
 class CartItem(Base):
+    """One line of the cart: a product, a chosen size, and a quantity.
+
+    The line is unique on `(user_id, product_id, size)`, and that is enforced
+    here rather than left to the add path. The add reads then writes, and today
+    two concurrent adds of the same product and size cannot interleave -- not
+    because anything prevents it, but because every endpoint is `async def`
+    doing blocking work, so the event loop serialises the whole service. That
+    is an accident, and the two steps that make this service scale both remove
+    it: Postgres replaces database-wide write serialisation with MVCC, and
+    making the endpoints threadpool-bound removes the loop lock. After either,
+    the read-then-write is a lost update or a duplicate line.
+
+    So the invariant moves into the schema first, while it is still cheap. The
+    durable-turn tables already work this way -- `uq_turn_event_key`,
+    `uq_turn_event_order`, and a partial unique index on in-flight turns. The
+    cart was the outlier.
+
+    Two indexes rather than one, because `size` is nullable and NULLs are
+    distinct in a unique index on both SQLite and Postgres. A single
+    three-column index would leave every one-size product -- bags, sunglasses,
+    jewellery, 38 of the 215 in this catalog -- entirely unconstrained, which
+    is the half of the cart most likely to be added twice.
+    """
+
     __tablename__ = "cart_items"
+    __table_args__ = (
+        Index(
+            "uq_cart_line_sized",
+            "user_id",
+            "product_id",
+            "size",
+            unique=True,
+            sqlite_where=text("size IS NOT NULL"),
+            postgresql_where=text("size IS NOT NULL"),
+        ),
+        Index(
+            "uq_cart_line_unsized",
+            "user_id",
+            "product_id",
+            unique=True,
+            sqlite_where=text("size IS NULL"),
+            postgresql_where=text("size IS NULL"),
+        ),
+    )
+
     id = Column(Integer, primary_key=True, index=True)
     cart_line_id = Column(
         String,
@@ -47,7 +101,7 @@ class CartItem(Base):
         unique=True,
         index=True,
     )
-    user_id = Column(Integer, index=True)
+    user_id = Column(BigInteger, index=True)
     product_id = Column(String, nullable=True, index=True)
     item = Column(String)
     # Null for one-size goods. The size a shopper chose, not a product
@@ -63,7 +117,7 @@ class CartQuantityIdempotency(Base):
 
     __tablename__ = "cart_quantity_idempotency"
     idempotency_key = Column(String, primary_key=True)
-    user_id = Column(Integer, nullable=False)
+    user_id = Column(BigInteger, nullable=False)
     cart_line_id = Column(String, nullable=False)
     quantity = Column(Integer, nullable=False)
     response_body = Column(String, nullable=False)
@@ -71,7 +125,7 @@ class CartQuantityIdempotency(Base):
 
 class CartMutation(Base):
     __tablename__ = "cart_mutations"
-    user_id = Column(Integer, primary_key=True)
+    user_id = Column(BigInteger, primary_key=True)
     idempotency_key = Column(String, primary_key=True)
     operation = Column(String, nullable=False)
     canonical_digest = Column(String, nullable=False)
@@ -115,7 +169,12 @@ class ShopperProfile(Base):
             name="ck_shopper_profiles_behavior",
         ),
         CheckConstraint(
-            "length(zipcode) = 5 AND zipcode NOT GLOB '*[^0-9]*'",
+            # Five characters, none of which survive having every digit
+            # removed. Said this way because the obvious spelling is
+            # `NOT GLOB '*[^0-9]*'` and GLOB exists only in SQLite: Postgres
+            # rejects the statement outright, so the table cannot be created
+            # there at all. `replace` and `length` are in both.
+            "length(zipcode) = 5 AND replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(zipcode, '0', ''), '1', ''), '2', ''), '3', ''), '4', ''), '5', ''), '6', ''), '7', ''), '8', ''), '9', '') = ''",
             name="ck_shopper_profiles_zipcode",
         ),
     )
@@ -148,7 +207,13 @@ class ConversationTurn(Base):
             "uq_conversation_started",
             "conversation_id",
             unique=True,
+            # Both dialects, always. With only the SQLite clause this
+            # becomes a *full* unique index on conversation_id everywhere else
+            # -- one turn per conversation, ever -- and the service is unusable
+            # from the first second turn. Found by copying live data into
+            # Postgres, which is the only place it can show.
             sqlite_where=text("status = 'started'"),
+            postgresql_where=text("status = 'started'"),
         ),
     )
 
@@ -163,7 +228,7 @@ class ConversationTurn(Base):
         nullable=False,
     )
     finalize_digest = Column(String, nullable=True)
-    cart_user_id = Column(Integer, nullable=False)
+    cart_user_id = Column(BigInteger, nullable=False)
     shopper_profile_id = Column(
         String(64),
         ForeignKey(

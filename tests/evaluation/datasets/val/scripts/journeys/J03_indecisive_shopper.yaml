@@ -1,0 +1,68 @@
+id: J03_indecisive_shopper
+covers: [references, cart-management, sizes, memory]
+why: >
+  Every kind of reference in one conversation -- ordinal, pronoun, partial
+  name, full name, and a description that fits several. The last of those is
+  now added and disclosed rather than refused: the assistant says which one it
+  took the description to mean and offers to change it, because the cart is on
+  screen and a wrong line is one click away, where a refusal cost a turn on
+  every request it misjudged.
+  Names Jade Suede Heels, not Polished Pearl Pumps: this catalog gives that
+  second name to two products, so an assertion pinned to it measured
+  whether the model guessed which one. Asking is the correct behaviour and
+  was scored as a failure.
+
+turns:
+  - say: show me some heels
+    expect: {products_min: 2}
+  - say: what is the first one made of
+    expect: {cart_unchanged: true}
+  - say: show me some tote bags too
+    expect: {products_min: 2}
+  - say: and some bracelets
+    expect: {products_min: 2}
+  - say: add the Southwest Bracelet
+    expect:
+      cart: [{name: Southwest Bracelet, qty: 1}]
+  - say: actually show me sunglasses
+    expect: {products_min: 2}
+  - say: add the Xenial Aviator Sunglasses too
+    expect:
+      cart:
+        - {name: Southwest Bracelet, qty: 1}
+        - {name: Xenial Aviator Sunglasses, qty: 1}
+  - say: show me black dresses
+    expect:
+      products_min: 2
+      every_product: {primary_color: black}
+  # A description that fits four black dresses. It is a guess, and it is meant
+  # to be a visible one -- the reply names which dress it took them to mean.
+  # Four black dresses were shown and all four are cut to a size 8, so nothing
+  # the shopper said narrows it. Asking which is the answer, and this used to
+  # pin one of the four -- scoring the assistant correct when it guessed right
+  # one time in four and wrong when it did the right thing.
+  - say: add the black one in a size 8
+    expect:
+      cart_unchanged: true
+      reply_asks: true
+      cart:
+        - {name: Southwest Bracelet, qty: 1}
+        - {name: Xenial Aviator Sunglasses, qty: 1}
+  # Was "the Jade Suede Heels, in a 7" -- a bare noun phrase with no verb,
+  # arriving right after the assistant had asked "please confirm you'd like to
+  # proceed". In that position it reads as a redirect, not an instruction to
+  # add, and asserting a cart change for it was asking the assistant to infer a
+  # command the shopper never gave. The full-name reference is what this turn
+  # exists to test, and it still does.
+  - say: add the Jade Suede Heels, in a 7
+    expect:
+      cart:
+        - {name: Southwest Bracelet, qty: 1}
+        - {name: Xenial Aviator Sunglasses, qty: 1}
+        - {name: Jade Suede Heels, size: "7", qty: 1}
+  - say: what's in my cart
+    expect:
+      cart:
+        - {name: Southwest Bracelet, qty: 1}
+        - {name: Xenial Aviator Sunglasses, qty: 1}
+        - {name: Jade Suede Heels, size: "7", qty: 1}

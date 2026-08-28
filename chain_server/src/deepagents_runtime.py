@@ -22,6 +22,7 @@ from typing import Any, AsyncIterator, Literal
 
 from langgraph.errors import GraphRecursionError
 from pydantic import (
+    field_validator,
     BaseModel,
     Field,
     ValidationError,
@@ -31,6 +32,7 @@ import requests
 from .agenttypes import Cart, ShopperContext, State
 from .catalog_search import SearchContext, search_catalog
 from .response_format import (
+    format_catalog_shape,
     _format_availability_result,
     _format_cart,
     _format_cart_add_result,
@@ -51,24 +53,31 @@ from .response_format import (
     claim_weather_call,
     _format_wearer_audience,
     _format_update_cart_result,
+    format_cart_change,
 )
 from .catalog_execution import execute_catalog_search
 from .catalog_request import CatalogSearchPlan
 from .turn_support import (
+    WEATHER_PLACE_NOT_IN_THIS_TURN,
+    a_place_this_turn_named,
+    _a_list_written_as_json_text,
     _append_product_results,
     _detail_fields_already_held,
     _search_catalog_scopes_input_model,
+    _system_identification_events,
     _turn_audience_events,
     AddCartItemsToolItemInput,
     RequestIdentity,
     _add_model_usage,
     _cart_size_issue,
     _cart_line_size,
-    _cart_quantity_provenance_issue,
-    _cart_product_provenance_issue,
+    _cart_product_choice_note,
+    format_most_recent_subject,
+    _identified_in_the_current_showing,
     _most_recently_shown,
+    _images_in_product_order,
+    _in_presentation_order,
     _shopper_words_this_conversation,
-    _cart_size_provenance_issue,
     _build_checkpointer,
     _cart_add_scope_failures,
     _cart_line_by_id,
@@ -103,6 +112,9 @@ from .turn_support import (
     _should_short_circuit_media_failure,
     _skill_activation_input_model,
     _store_policies_path,
+    _products_found_receipt,
+    _advertised_sizes,
+    _ONE_SIZE,
 )
 from .catalog_capabilities import (
     CatalogCapabilitiesClient,
@@ -386,6 +398,15 @@ Rules:
   and filter scope returned no products. It does not prove that a different,
   unsearched, or unadvertised product type is absent, and it never supports a
   catalog-wide availability claim.
+- WHAT THE SHOPPER'S MEDIA SHOWED is your sight of what they attached. It
+  supports saying what the media contained, and nothing else: it is not a
+  catalog fact, it never proves a product exists or what it is made of, and a
+  garment seen there is not a garment this shop sells. On a turn that carries
+  media, say what was seen before answering from it -- a shopper who sends a
+  photo is owed the assistant naming what it looked at, and where the shop
+  cannot serve that look, saying so is the answer rather than a list of the
+  nearest things. Never tell them you could not view their media when this lane
+  is present.
 - Use CONVERSATION to resolve direct references such as "that" and "those," and
   to honour what the shopper has already told you. It carries intent only: it
   can never establish a product fact, a price, availability, whether a search
@@ -405,6 +426,16 @@ Rules:
   price, category/role, image availability, exact values in confirmed search-
   filter evidence, and a modest styling reason. Every other word in its display
   name is non-evidence.
+- A claim about a price is checked against the price. "Under $150", "within
+  budget", "fits your limit" and the like are arithmetic on numbers that are
+  both in front of you: the ceiling the draft itself names, and the price in
+  TOOL EVIDENCE. Where they disagree, the price wins and the claim is corrected
+  or cut. Asked for a navy skirt in a work capsule capped at $150 a piece, a
+  draft offered one at $159.99 and said "both are within your work capsule
+  budget (under $150 per item)", then said in the next sentence that it
+  exceeded the limit. Both sentences reached the shopper.
+- Two sentences that contradict each other never both survive. Keep the one the
+  evidence supports and delete the other; do not soften them into agreement.
 - Confirmed search-filter evidence applies to every product returned by that
   search. Preserve it and do not contradict it. One allowed value confirms that
   value; multiple allowed values prove only membership in the set, not which
@@ -473,9 +504,80 @@ Rules:
   CART or tool evidence.
 - If the draft is already compliant, return it unchanged.
 """
+_MEDIA_TURN_RULES = """- Media-only or descriptive media requests such as "what's in this look",
+  "describe this outfit", "what am I wearing", or "what colors are here" must
+  be answered from MEDIA ANALYSIS. Do not call search_catalog_tool and do not
+  show catalog products unless the shopper explicitly asks to find, shop,
+  recommend, compare, price-check, check availability, or add an item.
+- If an image is attached, the current image is already available to
+  search_catalog_tool. Use that tool for "this", "similar", and image-price
+  refinement requests.
+- If MEDIA ANALYSIS is present, use it as the visual/video understanding of
+  the attached media. It can guide search_catalog_tool queries and follow-up
+  pronoun resolution, but catalog results remain the source of truth for
+  product names and prices. Catalog results are not inventory evidence.
+- MEDIA ANALYSIS is what the media actually showed. It is your sight of the
+  attached image or video: speak from it with confidence, name what it saw, and
+  never tell the shopper you could not view their media when an analysis is
+  present.
+- What it is not is catalog vocabulary. Its words describe what was seen, not
+  what the catalog can filter on, so treat each term as you would the same word
+  from the shopper: map it to an advertised value before placing it in
+  required_constraints, and carry what has no advertised value in
+  unadvertised_requirements. Never copy a term out of MEDIA ANALYSIS into
+  required_constraints unchanged, whatever field it came from -- including
+  constraints_detected, which records what was observed and not what may be
+  filtered on.
+- When the media shows several garments and the shopper asked about one, search
+  for the one they asked about. Name what else you saw; do not search it unasked.
+- If MEDIA ANALYSIS says media analysis failed, VLM authentication failed, the
+  VLM is unavailable, or video understanding is not configured, say so plainly.
+  Do not infer video-similar products from the media; ask the shopper for a
+  text description or search only from explicit text in the shopper request.
+  If an image is attached, image embedding search through search_catalog_tool is
+  still available even when MEDIA ANALYSIS is unavailable.
+"""
+def _today_for_the_shopper() -> str:
+    """The date the shopper is shopping on, written the way they would say it.
+
+    Read at request time rather than build time: an image that has been running
+    a week would otherwise date every conversation to the day it was built.
+    """
+
+    return datetime.now(timezone.utc).strftime("%A %d %B %Y")
+
+
+#: `read_file` joined this list once the base prompt below stopped being a lie.
+#: It said "You have no filesystem" while the model could and did call
+#: read_file -- observed on live turns across the run archive, including one
+#: with ten consecutive calls, and one that also reached for `glob`. Every one
+#: of those was a model round trip spent fetching a skill file the activation
+#: middleware had already injected in full, which is why the injection prompt
+#: had to ask it not to. Removing the tool answers that where a request could
+#: only ask.
 _EXCLUDED_DEEP_AGENT_TOOLS = frozenset(
-    {"write_todos", "ls", "write_file", "edit_file", "glob", "grep", "execute"}
+    {
+        "write_todos",
+        "ls",
+        "read_file",
+        "write_file",
+        "edit_file",
+        "glob",
+        "grep",
+        "execute",
+    }
 )
+#: `BASE_AGENT_PROMPT` is written for a coding agent: it teaches a todo list, a
+#: filesystem, "read files before editing", and a task-completion protocol. None
+#: of it applies to a shopping assistant, and every tool it names is in
+#: `_EXCLUDED_DEEP_AGENT_TOOLS`, so it spent 3,862 characters instructing the
+#: model to call tools it had not been given. `base_system_prompt` is the
+#: framework's own slot for replacing it; the shopping instructions the agent
+#: does need are assembled in `_system_prompt` and passed as `system_prompt`,
+#: which sits ahead of this base.
+_DEEP_AGENT_BASE_PROMPT = """You have no filesystem, no shell, and no todo list.
+The tools you are given are the only ones that exist; there is no planning or
+bookkeeping step before using them."""
 #: Historical-product resolutions allowed per turn while none has resolved. A
 #: resolution that succeeds ends the budget immediately; this only bounds the
 #: corrections a failing one may attempt.
@@ -486,6 +588,10 @@ _REFERENCE_WRAPPERS = "<>[]{}\"'`"
 #: Names looked up in the catalog when a reference resolves to nothing. Bounded
 #: because each is a retrieval, and a turn that names more than two products the
 #: assistant never showed is a conversation to have, not a batch to satisfy.
+#: The longest one model request may take before it is abandoned, whatever the
+#: deployment's turn budget. A request slower than this has stalled rather than
+#: thought: the median turn costs ten seconds end to end.
+_MODEL_REQUEST_TIMEOUT_CEILING_SECONDS = 40.0
 _MAX_NAME_LOOKUPS = 2
 
 
@@ -568,6 +674,10 @@ _MAX_NAME_LOOKUPS = 2
 
 
 class AddCartItemsToolInput(BaseModel):
+    _accept_items_as_text = field_validator("items", mode="before")(
+        _a_list_written_as_json_text
+    )
+
     items: list[AddCartItemsToolItemInput] = Field(
         ...,
         min_length=1,
@@ -586,6 +696,43 @@ class _UpdateCartItemsInput(BaseModel):
         ge=0,
         description="New total quantity. Set to 0 to remove the line.",
     )
+    size: str | None = Field(
+        default=None,
+        description=(
+            "Do not use. A size is a different cart line, not a property of "
+            "one, and this tool cannot change it. Declared here only so the "
+            "attempt is refused with the correct sequence rather than "
+            "silently ignored."
+        ),
+    )
+
+    @field_validator("size", mode="before")
+    @classmethod
+    def _a_number_is_a_size_too(cls, value: Any) -> Any:
+        """Take a size written as a number, so the refusal can be reached.
+
+        This field exists for one reason: to turn "change it to a 7" into the
+        add-then-remove sequence instead of a silent no-op. A model that sent
+        `size: 7` rather than `size: "7"` never got there -- pydantic refused
+        the call for the type, three times running, with a validation error
+        that says nothing about carts. It then gave up, sent the quantity
+        alone, and told the shopper it had updated a dress it had never been
+        asked about.
+
+        Sizes are "2" and "onesize" in this catalog, so a bare number is the
+        obvious slip. Coercing it costs nothing and delivers the guidance the
+        field was declared for.
+        """
+
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return str(int(value) if float(value).is_integer() else value)
+        return value
+
+
+class _DescribeCatalogInput(BaseModel):
+    """No arguments. The shape is published; there is nothing to narrow."""
 
 
 class _GetStorePolicyInput(BaseModel):
@@ -950,6 +1097,17 @@ class DeepAgentsRuntime:
                 # In a finally, not on the success path: a failed turn is
                 # exactly when the trace is worth having.
                 _record_turn_diagnostics(span, state)
+                # Likewise, and for a blunter reason. The checkpoint thread is
+                # keyed on (conversation_id, request_id), so it belongs to this
+                # one request and nothing will ever read it again. It used to be
+                # freed only when the turn finalized, which meant every turn
+                # that failed to finalize -- a superseded attempt, a memory
+                # service blip, a turn that never started -- left its whole
+                # message history in this process for as long as the process
+                # lived. Pods are long-lived and there is no eviction, so that
+                # is a leak that ends in an OOMKill, and more pods only means
+                # more of them leaking.
+                await self._delete_turn_checkpoint(identity)
 
     async def _run_turn_inner(
         self,
@@ -968,10 +1126,13 @@ class DeepAgentsRuntime:
         state.disclosed_audience = []
         turn = self._start_conversation_turn(state, identity)
         if turn is not None and turn.replayed:
-            await self._delete_turn_checkpoint(identity)
             return self._restore_replayed_turn(state, turn)
         if turn is None and state.response:
             return state
+
+        # Snapshot the cart before any tool can touch it. The effect of the
+        # turn is then a computed fact rather than something a model infers.
+        state.cart_at_turn_start = state.cart.model_copy(deep=True)
 
         try:
             output = await self._execute_turn(
@@ -984,7 +1145,7 @@ class DeepAgentsRuntime:
                         "This request was interrupted. Please check your cart "
                         "before retrying."
                     )
-                finalized = self._finalize_conversation_turn(
+                self._finalize_conversation_turn(
                     state,
                     identity,
                     turn,
@@ -992,12 +1153,10 @@ class DeepAgentsRuntime:
                     termination_reason="request_cancelled",
                     present_products=False,
                 )
-                if finalized:
-                    await self._delete_turn_checkpoint(identity)
             raise
         except Exception:
             if turn is not None:
-                finalized = self._finalize_conversation_turn(
+                self._finalize_conversation_turn(
                     state,
                     identity,
                     turn,
@@ -1005,14 +1164,10 @@ class DeepAgentsRuntime:
                     termination_reason="unexpected_runtime_error",
                     present_products=False,
                 )
-                if finalized:
-                    await self._delete_turn_checkpoint(identity)
             raise
 
         if turn is not None:
-            finalized = self._finalize_conversation_turn(state, identity, turn)
-            if finalized:
-                await self._delete_turn_checkpoint(identity)
+            self._finalize_conversation_turn(state, identity, turn)
         return output
 
     async def _execute_turn(
@@ -1158,12 +1313,18 @@ class DeepAgentsRuntime:
                     timeout_seconds=remaining_seconds,
                 )
             if not state.response:
+                # The work is already done and paid for. Answering from it
+                # beats asking the shopper to run the turn again.
+                state.response = _products_found_receipt(state)
+                state.agent_diagnostics["final_termination_reason"] = (
+                    "incomplete_agent_response_answered_from_evidence"
+                    if state.response
+                    else "incomplete_agent_response"
+                )
+            if not state.response:
                 state.response = (
                     "I could not complete that shopping request. Please try again."
                 )
-                state.agent_diagnostics[
-                    "final_termination_reason"
-                ] = "incomplete_agent_response"
         except Exception as exc:  # noqa: BLE001 - keep endpoint resilient.
             partial_messages, capture_error = await _partial_graph_messages(
                 agent,
@@ -1272,7 +1433,9 @@ class DeepAgentsRuntime:
             register_harness_profile(
                 f"openai:{self.config.llm_name}",
                 HarnessProfile(
+                    base_system_prompt=_DEEP_AGENT_BASE_PROMPT,
                     excluded_tools=_EXCLUDED_DEEP_AGENT_TOOLS,
+                    excluded_middleware=frozenset({"TodoListMiddleware"}),
                     general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False),
                 ),
             )
@@ -1283,9 +1446,7 @@ class DeepAgentsRuntime:
         if skills_backend is None:
             raise RuntimeError("Shopper skill backend is unavailable.")
         skill_registry = _shopper_skill_registry(skills_root)
-        skill_activation_input = _skill_activation_input_model(
-            tuple(skill_registry)
-        )
+        skill_activation_input = _skill_activation_input_model(skill_registry)
         scope = TurnScope()
         state.retrieved = scope.retrieved
         wearer_audience_field = str(
@@ -1511,10 +1672,17 @@ class DeepAgentsRuntime:
             for descriptor in references or []:
                 reference_id = _descriptor_field(descriptor, "reference_id")
                 display_name = _descriptor_field(descriptor, "display_name")
-                if reference_id in unresolved and display_name:
-                    text = str(display_name).strip()
-                    if text and text not in names:
-                        names.append(text)
+                if reference_id not in unresolved:
+                    continue
+                # The name is usually in `display_name`. When the model puts it
+                # in `reference_id` instead -- "Southwest Bracelet" as the label
+                # rather than the name -- the lookup used to collect nothing and
+                # do nothing, and the shopper was told the product could not be
+                # found while its name sat one field over. Both fields are the
+                # model's own free text; either may carry it.
+                text = str(display_name or reference_id or "").strip()
+                if text and text not in names:
+                    names.append(text)
             if not names:
                 return ""
 
@@ -1568,15 +1736,56 @@ class DeepAgentsRuntime:
                         f"{rank}. {product.display_name}{price} "
                         f"[PRODUCT_REF {product.product_id}]"
                     )
-                lines.append(
-                    "Say plainly that this was not something you had shown. If "
-                    "one of these is the product the shopper named, offer it "
-                    "and ask which size before adding. If none is, say you do "
-                    "not carry that one and name the closest you do -- never "
-                    "present a different product as the one they asked for."
-                )
+                exact = [
+                    product
+                    for product in found.products
+                    if _same_product_display_name(name, product.display_name)
+                ]
+                if len(exact) == 1:
+                    # Naming a product by the name the catalog gives it is not
+                    # a resemblance to be judged -- it is the same product, and
+                    # choosing it is the shopper's to do. Told to "offer it and
+                    # ask which size", the assistant answered "add the
+                    # Southwest Bracelet" with "I found a Southwest Bracelet
+                    # for $169.99. Would you like me to add that?" -- asking
+                    # permission for the thing it had just been asked to do,
+                    # about a bracelet that has no size to ask about.
+                    match = exact[0]
+                    sizes = _advertised_sizes(match)
+                    lines.append(
+                        f"'{match.display_name}' is the product they named, by "
+                        "the catalog's own name for it. They have chosen it. "
+                        "Say plainly that it was not among the ones you had "
+                        "shown, then "
+                        + (
+                            # Only a catalog that says "onesize" settles it.
+                            # Silence about sizes is not evidence of having
+                            # none, and a garment added in a size nobody chose
+                            # is the failure this must not reintroduce.
+                            "add it."
+                            if sizes == [_ONE_SIZE]
+                            else "ask which size"
+                            + (
+                                ", offering " + ", ".join(sizes)
+                                if sizes
+                                else ""
+                            )
+                            + " -- unless they already said one, in which case "
+                            "add it."
+                        )
+                        + " Do not ask whether to add what they asked you to add."
+                    )
+                else:
+                    lines.append(
+                        "Say plainly that this was not something you had shown. "
+                        "If one of these is the product the shopper named, offer "
+                        "it and ask which size before adding. If none is, say "
+                        "you do not carry that one and name the closest you do "
+                        "-- never present a different product as the one they "
+                        "asked for."
+                    )
                 sections.append("\n".join(lines))
-            return "\n\n".join(sections)
+            return "\n\n".join(section for section in sections if section)
 
         def _resolve_conversation_products_impl(
             references: list[ProductReferenceDescriptor],
@@ -1584,9 +1793,19 @@ class DeepAgentsRuntime:
             """Resolve products the shopper refers to from earlier in this
             conversation. Use only when a needed product was not established
             in the current turn. Submit exact descriptors from the historical
-            product index. If a reference is ambiguous, ask one concise
-            clarification and do not guess. If nothing matches at all, the
-            result says what to do next.
+            product index.
+
+            Multiple matches need one concise clarification: never guess, and
+            never mutate the cart on a guess. Zero matches means the shopper
+            referred to something never shown -- if they named a product,
+            search for it and show the closest matches, then ask which they
+            meant; if they pointed at an earlier item, ask which one. Never add
+            a product the shopper has not been shown, and never accept a
+            product link or a price as identification.
+
+            Written here rather than in each skill because all three skills
+            that hold this tool need the same rule, and three copies of it had
+            already begun to differ.
             """
 
             # This turn's own evidence first, before the memory service is
@@ -1632,6 +1851,9 @@ class DeepAgentsRuntime:
                     "the shopper means; do not guess or search for a substitute."
                 )
             scope.product_evidence.add_resolutions(result.results, references)
+            state.system_identified_products = list(
+                scope.product_evidence.system_identified()
+            )
             for resolution in result.results:
                 if resolution.status != "resolved":
                     continue
@@ -1694,11 +1916,16 @@ class DeepAgentsRuntime:
             """Add products to the cart. Use ONLY on explicit shopper intent to
             add, buy, or put items in the cart. Requires PRODUCT_REF values from
             current-turn search or historical-product resolution — not names.
-            Call once with all items, not once per item.
+            Call once with every item the shopper asked to add, not once
+            per item. "All items" means the ones they asked for, not
+            everything in play this turn: "add the black one in a 2 and
+            show me a clutch to go with it" adds the dress and shows the
+            clutch. A product the shopper asked to see is not an item.
             """
 
             try:
                 requested_items = _normalize_cart_add_tool_items(items)
+                choices_from_a_description: list[str] = []
             except ValueError as exc:
                 return f"Cart add failed: {exc}"
             if not requested_items:
@@ -1721,6 +1948,9 @@ class DeepAgentsRuntime:
                 except (ConversationProductsError, ValidationError):
                     return None
                 scope.product_evidence.add_resolutions(result.results, descriptors)
+                state.system_identified_products = list(
+                    scope.product_evidence.system_identified()
+                )
                 return scope.product_evidence.get(product_ref)
 
             resolved: list[tuple[str, ProductSummary, int]] = []
@@ -1803,39 +2033,34 @@ class DeepAgentsRuntime:
                         "the new PRODUCT_REF before adding it."
                     )
                     continue
-                size_issue = _cart_size_issue(
-                    active_detail.product, size
-                ) or _cart_size_provenance_issue(
-                    active_detail.product,
-                    size,
-                    request.get("size_stated_as"),
-                    _shopper_words_this_conversation(state),
-                    _cart_line_size(state.cart, product.product_id),
-                )
+                # Whether the catalog sells this size is a fact and is still
+                # checked. Whether the shopper chose it is a reading, and the
+                # model reads the conversation better than any matcher here
+                # could: it resolved the right heel and picked size 7 from "add
+                # the Jade Suede Heels in a 7", then was refused for not also
+                # quoting the shopper back into a field. The size and quantity
+                # now travel into the result instead, where a wrong one is
+                # visible on the turn it happens.
+                size_issue = _cart_size_issue(active_detail.product, size)
                 if size_issue:
                     blocked.append(f"- PRODUCT_REF '{product_ref}': {size_issue}")
                     continue
-                quantity_issue = _cart_quantity_provenance_issue(
-                    request["quantity"],
-                    request.get("quantity_stated_as"),
-                    _shopper_words_this_conversation(state),
-                )
-                if quantity_issue:
-                    blocked.append(
-                        f"- PRODUCT_REF '{product_ref}': {quantity_issue}"
-                    )
-                    continue
-                product_issue = _cart_product_provenance_issue(
+                # Disclosed, not refused. A description the model read one way
+                # is added and said out loud, because the cart is on screen and
+                # a wrong line is one click away -- where a refusal costs a
+                # turn on every request it misjudges, and it misjudged plenty.
+                choice_note = _cart_product_choice_note(
                     active_detail.product,
                     _shopper_words_this_conversation(state),
                     scope.product_evidence,
                     _most_recently_shown(state),
+                    _identified_in_the_current_showing(state),
+                    size,
                 )
-                if product_issue:
-                    blocked.append(
-                        f"- PRODUCT_REF '{product_ref}': {product_issue}"
+                if choice_note:
+                    choices_from_a_description.append(
+                        f"- {active_detail.product.display_name}: {choice_note}"
                     )
-                    continue
                 resolved.append(
                     (
                         product_ref,
@@ -1845,13 +2070,13 @@ class DeepAgentsRuntime:
                     )
                 )
 
-            blocked.extend(
-                _cart_add_scope_failures(
-                    state.query,
-                    [(product_ref, product) for product_ref, product, _, _ in resolved],
-                    scope.product_evidence.values(),
-                )
+            scope_failures = _cart_add_scope_failures(
+                state.query,
+                [(product_ref, product) for product_ref, product, _, _ in resolved],
+                scope.product_evidence.values(),
             )
+            blocked.extend(message for _ref, message in scope_failures)
+            out_of_scope = {ref for ref, _message in scope_failures}
             if blocked:
                 state.cart = self._read_cart(identity.cart_user_id)
                 self._append_product_images(
@@ -1859,7 +2084,23 @@ class DeepAgentsRuntime:
                     state.cart,
                     scope.product_evidence.values(),
                 )
-                return _format_cart_add_result([], failed + blocked, state.cart)
+                # Nothing is written -- the add is all or nothing. But the items
+                # that were established travel with the refusal, so the question
+                # put to the shopper is only the one still open.
+                # An item can pass every per-item gate and still be refused
+                # below as outside this turn's request. Listing it as settled
+                # would tell the shopper not to ask again about the very thing
+                # that failed.
+                ready = [
+                    f"- {product.display_name}"
+                    + (f", size {size}" if size else "")
+                    + f", qty {quantity}"
+                    for ref, product, quantity, size in resolved
+                    if ref not in out_of_scope
+                ]
+                return _format_cart_add_result(
+                    [], failed + blocked, state.cart, ready
+                )
 
             added: list[str] = []
             committed: list[dict[str, Any]] = []
@@ -1894,9 +2135,15 @@ class DeepAgentsRuntime:
                             "quantity": quantity,
                         }
                     )
+                    # The size travels with the line it went in as. Nothing
+                    # now refuses a size the shopper did not choose, so the
+                    # whole safety story is that it is visible -- to the model
+                    # writing the reply, and through it to the shopper, on the
+                    # turn it happens rather than at checkout.
                     added.append(
-                        f"- {quantity} x {product.display_name} "
-                        f"(PRODUCT_REF: {product.product_id})"
+                        f"- {quantity} x {product.display_name}"
+                        + (f", size {size}" if size else "")
+                        + f" (PRODUCT_REF: {product.product_id})"
                     )
                 else:
                     message = (
@@ -1911,6 +2158,8 @@ class DeepAgentsRuntime:
                 scope.product_evidence.values(),
             )
             rendered = _format_cart_add_result(added, failed, state.cart)
+            if choices_from_a_description:
+                rendered += "\n\n" + "\n".join(choices_from_a_description)
             if not committed:
                 return rendered
             return rendered, {EFFECTS_KEY: committed}
@@ -1924,12 +2173,20 @@ class DeepAgentsRuntime:
             """Add products to the cart. Use ONLY on explicit shopper intent to
             add, buy, or put items in the cart. Requires PRODUCT_REF values from
             current-turn search or historical-product resolution — not names.
-            Call once with all items, not once per item.
+            Call once with every item the shopper asked to add, not once
+            per item. "All items" means the ones they asked for, not
+            everything in play this turn: "add the black one in a 2 and
+            show me a clutch to go with it" adds the dress and shows the
+            clutch. A product the shopper asked to see is not an item.
             """
 
             return normalize_tool_result(_add_cart_items_impl(items))
 
-        @tool(return_direct=False)
+        # Not a tool. `remove_cart_item_tool` calls this directly, and a
+        # decorated function is a StructuredTool, which is not callable -- so
+        # every removal raised `'StructuredTool' object is not callable` and
+        # the turn died. Its sibling `_add_cart_items_impl` is undecorated for
+        # the same reason.
         def _remove_cart_item_impl(cart_line_id: str, quantity: int = 1):
             """Remove a cart line. Use ONLY on explicit shopper intent to remove
             an item. Requires CART_LINE_ID from get_cart_tool — do not guess.
@@ -1988,12 +2245,34 @@ class DeepAgentsRuntime:
                 _remove_cart_item_impl(cart_line_id, quantity)
             )
 
-        def _update_cart_items_impl(cart_line_id: str, quantity: int):
+        def _update_cart_items_impl(
+            cart_line_id: str,
+            quantity: int,
+            size: str | None = None,
+        ):
             """Change the quantity of an item already in the cart. Use ONLY when
             the shopper explicitly asks to change a quantity. Do NOT use for
             initial adds — use add_cart_items_tool. Do NOT guess the
             CART_LINE_ID; call get_cart_tool first if you do not have one.
             """
+
+            if size is not None:
+                # `size` is accepted only so it can be refused. The parameter
+                # does not exist on the cart, and there is no route behind it:
+                # asked to "change the heels to an 8" the model sent
+                # quantity 1 with size 8, the argument went nowhere, the
+                # quantity was set 1 -> 1, and the assistant told the shopper
+                # the size had changed while the cart kept the old one. A
+                # silently dropped argument is worse than a rejected one.
+                return (
+                    "CART_UPDATE_REFUSED: this tool changes quantities only, and "
+                    "a size is a different line rather than a property of one. "
+                    "To change a size: add the new size with add_cart_items_tool "
+                    "FIRST, confirm it is in the cart, then remove the old line "
+                    "with remove_cart_item_tool. Never the other way round -- a "
+                    "failure between the two must leave the shopper with an "
+                    "extra line, never with nothing."
+                )
 
             if quantity == 0:
                 # A size is a different line, not a different quantity, and the
@@ -2048,15 +2327,35 @@ class DeepAgentsRuntime:
             return_direct=False,
             response_format="content_and_artifact",
         )
-        def update_cart_items_tool(cart_line_id: str, quantity: int):
+        def update_cart_items_tool(
+            cart_line_id: str,
+            quantity: int,
+            size: str | None = None,
+        ):
             """Set the exact quantity for one cart line. Use for quantity
             changes instead of removing and re-adding. Requires CART_LINE_ID
             from get_cart_tool.
             """
 
             return normalize_tool_result(
-                _update_cart_items_impl(cart_line_id, quantity)
+                _update_cart_items_impl(cart_line_id, quantity, size)
             )
+
+        @tool(args_schema=_DescribeCatalogInput, return_direct=False)
+        def describe_catalog_tool() -> str:
+            """What this shop holds: how many products, which categories, the
+            price range of each, and their subcategories. Use for questions
+            about the SHOP rather than about a product -- the most or least
+            expensive thing, whether anything falls in a price range, what
+            departments exist. Takes no arguments and searches nothing.
+
+            A fact about the catalog comes from here, never from the results of
+            one search: the dearest item a search happened to return is that
+            search's maximum, not the shop's. To name the actual item, read the
+            range here and then search that category at that bound.
+            """
+
+            return format_catalog_shape(self._catalog_capabilities.get())
 
         @tool(args_schema=_GetStorePolicyInput, return_direct=False)
         def get_store_policy_tool(
@@ -2086,6 +2385,7 @@ class DeepAgentsRuntime:
         @tool(args_schema=_WeatherForecastInput, return_direct=False)
         def get_weather_forecast_tool(
             city: str,
+            shopper_words_naming_the_place: str,
             date: CalendarDate | None = None,
             start_date: CalendarDate | None = None,
             end_date: CalendarDate | None = None,
@@ -2093,11 +2393,17 @@ class DeepAgentsRuntime:
             """Live daily forecast for one place, for the dates being dressed
             for.
 
-            Call it, without being asked, when all three hold: the shopper
-            named a CITY, town or postal code; they named a date or window;
-            and that window is within about 15 days of TODAY. A destination
-            wedding, a trip, an outdoor event. Conditions change what to wear
-            more than anything else about a destination.
+            Call it, without being asked, when all three hold IN THE TURN YOU
+            ARE ANSWERING: the shopper named a CITY, town or postal code; they
+            named a date or window; and that window is within about 15 days of
+            TODAY. A destination wedding, a trip, an outdoor event. Conditions
+            change what to wear more than anything else about a destination.
+
+            In the turn you are answering, because a city they named earlier is
+            not where they are asking about now. "It's going to snow when we
+            get back" names no place: asked that, the assistant fetched the
+            forecast for Rome -- the wedding two turns before -- and offered
+            warm-weather clothes for a shopper describing snow.
 
             The `city` argument takes a city, town or postal code. A country
             or region has no single weather, so prefer asking which city over
@@ -2106,11 +2412,22 @@ class DeepAgentsRuntime:
             never present them as the weather where the shopper will be.
 
             Do not call it otherwise. Specifically:
+            - The shopper already said what the weather will be. "It's going to
+              snow when we get back" is the answer, and they are the authority
+              on their own trip. A forecast cannot improve on it and a forecast
+              for somewhere else contradicts it.
             - No date. Today is not what they are dressing for; ask instead.
             - A date further out than about 15 days. There is no forecast that
               far ahead, so a call cannot produce anything true.
-            - Anything broader than a city, per above. Ask which city.
             - No place, or nothing they are dressing for.
+
+            A country or region does not stop you. "We're going to Italy at the
+            weekend" was answered with no forecast at all and a flat assertion
+            that the weather would be warm -- worse than either asking or
+            calling. Call it for the place they named, using its capital or
+            largest city when they named a country, then say which city the
+            numbers are for and ask whether that is where they will be. What
+            you may never do is describe weather you did not fetch.
 
             Dress the date they are dressing for, not the one they travel on:
             "flying to Rome tomorrow, what do I wear at the weekend" is a
@@ -2119,6 +2436,10 @@ class DeepAgentsRuntime:
             range -- and never send a relative date or invent a place.
             """
 
+            if not a_place_this_turn_named(
+                state.query, shopper_words_naming_the_place
+            ):
+                return WEATHER_PLACE_NOT_IN_THIS_TURN
             if weather_call_needs_a_date(date, start_date, end_date):
                 # The library treats a missing date as local today, which is
                 # right for "what is it like there now" and wrong for the only
@@ -2220,14 +2541,13 @@ class DeepAgentsRuntime:
             view_cart_total_tool,
             get_store_policy_tool,
             check_product_availability_tool,
+            describe_catalog_tool,
             check_active_promotions_tool,
         ]
         # Off means absent, not present-and-failing. An unregistered tool
         # cannot be called, so a shop without weather simply styles the
         # occasion instead of explaining a capability nobody asked about.
-        weather_off = not getattr(
-            getattr(self.config, "weather", None), "enabled", False
-        )
+        weather_off = not self._weather_is_registered()
         if not weather_off:
             shopping_tools.append(get_weather_forecast_tool)
         validate_registered_tool_names(
@@ -2269,20 +2589,24 @@ class DeepAgentsRuntime:
             """Select and load shopper behavior skills for this turn. This is
             the required first step before answering or calling shopping tools.
             Select the smallest set whose registered descriptions cover the
-            complete current intent. Use outfit-styling for outfit building,
-            completion, refinement, or mid-browse styling questions; style-led
-            single-piece selection, including a statement or balancing piece,
-            also uses outfit-styling. Use product-discovery for search and browse
-            without styling intent. These are alternative primary procedures,
-            never a pair. Adding a product the shopper names that no search in
-            this conversation has shown is a discovery request as well as a cart
-            one: select product-discovery with cart-management, because the cart
-            skill cannot search and the product must be found and shown before
-            it can be added. Add budget-shopping only as a modifier when the
-            shopper states a budget. Keep outfit-styling as the primary skill throughout
-            an active outfit-building thread, including its single-piece follow-up
-            searches.
+            complete current intent.
 
+            Which primary to pick is answered by the registered descriptions
+            themselves, and by the allowed values on `skill_names`. This
+            docstring used to answer it again in its own words, naming two of
+            the primaries; a third was registered and the list here did not
+            know, so the one skill that could answer a question about the shop
+            was never offered as an option. Read the descriptions.
+
+            What they cannot tell you, because it spans two of them: adding a
+            product the shopper names that no search in this conversation has
+            shown is a discovery request as well as a cart one. Select
+            `product-discovery` and `cart-management` together -- the cart skill
+            cannot search, and a product must be found and shown before it can
+            be added. Both names are literal here on purpose. This is one
+            composition rule about two specific skills, not a list of the
+            members of a group, so it does not go stale when a skill is
+            registered; a test asserts both are still registered.
             """
 
             selected_names = list(dict.fromkeys(skill_names))
@@ -2315,6 +2639,7 @@ class DeepAgentsRuntime:
             "system_prompt": self._system_prompt(
                 turn_capabilities,
                 shopper_context=state.shopper_context,
+                media=bool(state.media),
             ),
             "middleware": [tool_loop_control, skill_gate],
             "backend": skills_backend,
@@ -2332,6 +2657,23 @@ class DeepAgentsRuntime:
         except Exception as exc:  # pragma: no cover - cleanup is best effort.
             logger.warning("Could not delete Deep Agents turn checkpoint: %s", exc)
 
+    def _model_request_timeout(self) -> float:
+        """How long one request may take, derived from this turn's budget.
+
+        A fixed ceiling was wrong: forty seconds fits a 150-second deployment
+        and swallows the whole loop of a 45-second one. Two attempts have to
+        fit inside whatever the loop is actually given, or the retry the
+        deadline exists to enable is itself cut off by the turn.
+        """
+
+        budget = max(0.0, float(self.config.deepagents_execution_timeout_seconds))
+        reserve = min(
+            max(0.0, float(getattr(self.config, "grounding_editor_reserve_seconds", 0.0))),
+            budget / 2,
+        )
+        allowance = max(budget - reserve, budget / 2)
+        return max(5.0, min(_MODEL_REQUEST_TIMEOUT_CEILING_SECONDS, allowance / 2))
+
     def _create_chat_model(self):
         from langchain_openai import ChatOpenAI
 
@@ -2342,6 +2684,19 @@ class DeepAgentsRuntime:
             base_url=self.config.llm_port,
             api_key=api_key or "not-needed",
             temperature=0,
+            # One request hung for 133.8 seconds and took the whole turn with
+            # it: the shopper asked to add a bracelet and got "this request
+            # took too long to complete" after two and a quarter minutes, on a
+            # turn that normally costs ten seconds. Without a deadline here the
+            # only limit was the turn budget, so a single stalled call spent
+            # everything the turn had.
+            #
+            # This also switches on the retry that was already configured.
+            # `max_retries` defaults to 2 and fires on errors -- and a hang is
+            # not an error, so nothing ever retried. A call that has not
+            # answered in forty seconds is not going to; failing it leaves time
+            # to ask again and still finish inside the turn.
+            timeout=self._model_request_timeout(),
             extra_body={"chat_template_kwargs": {"enable_thinking": False}},
         )
 
@@ -2444,8 +2799,17 @@ class DeepAgentsRuntime:
             "PRODUCTS SHOWN EARLIER (identity only — not current facts):\n"
             f"{format_historical_product_index(state.historical_product_sets) or '(none)'}\n\n"
             f"CURRENT CART (authoritative):\n{_format_cart(state.cart)}\n\n"
+            "WHAT THIS TURN DID TO THE CART (authoritative, computed):\n"
+            f"{format_cart_change(state.cart_at_turn_start, state.cart)}\n\n"
             "CONVERSATION (shopper intent only — never a product fact):\n"
             f"{state.dialogue_context or '(none)'}\n\n"
+            # The editor had seven lanes and none of them was the shopper's own
+            # media, so a draft naming what the photo showed -- "tan blazer,
+            # cable-knit sweater, salmon trousers" -- had no lane supporting it,
+            # and this editor cuts what no lane supports. It was not merely
+            # failing to require the description; it had reason to remove one.
+            "WHAT THE SHOPPER'S MEDIA SHOWED (sight, never a catalog fact):\n"
+            f"{state.media_analysis or '(none)'}\n\n"
             f"AVAILABLE IMAGES:\n{_format_retrieved_images(state.retrieved)}\n\n"
             f"DRAFT RESPONSE:\n{draft_response}"
         )
@@ -2651,19 +3015,69 @@ class DeepAgentsRuntime:
                 return candidate
         return None
 
+    def _weather_is_registered(self) -> bool:
+        """Whether this deployment gives the model a forecast tool at all.
+
+        One source of truth for the registration and for the prompt. They used
+        to disagree: the tool was correctly omitted when weather was off, and
+        the prompt went on telling the model to call it.
+        """
+
+        return bool(
+            getattr(getattr(self.config, "weather", None), "enabled", False)
+        )
+
     def _system_prompt(
         self,
         capabilities: CatalogCapabilities,
         *,
         shopper_context: ShopperContext | None = None,
+        media: bool = False,
     ) -> str:
         catalog_context = format_catalog_capabilities_for_prompt(capabilities)
+        # Media rules are only reachable on a turn that carries media, so they
+        # are only assembled then.
+        media_rules = _MEDIA_TURN_RULES if media else ""
         shopper_context_rules = (
             f"\n{_SHOPPER_CONTEXT_SYSTEM_RULES}\n"
             if shopper_context is not None
             else ""
         )
+        # Weather ships off, and `_shopping_tools` already omits the tool
+        # entirely when it is -- "off means absent, not present-and-failing".
+        # The prompt did not get the same treatment, so a default deployment
+        # spent about a thousand characters instructing the model to call a
+        # tool it had not been given, plus a rule about ordering its calls
+        # around one. That is the defect this file already records fixing once,
+        # for the framework's own base prompt: 3,862 characters teaching a
+        # filesystem and a todo list that were not there.
+        #
+        # The date itself stays either way. Relative dates are how shoppers
+        # talk about occasions -- "the wedding is next weekend" -- and resolving
+        # them has nothing to do with forecasts. Only the forecast-dependent
+        # sentences move behind the flag.
+        weather_registered = self._weather_is_registered()
+        forecast_window = (
+            " and a forecast may only be asked for a window within about "
+            "fifteen days of it"
+            if weather_registered
+            else ""
+        )
+        forecast_before_fanout = (
+            """  If the shopper named a place and a date you could forecast, look the weather
+  up BEFORE that fan-out, not after: once the roles are out you are told to
+  stop and synthesize, and the forecast never gets asked for. Conditions change
+  which pieces you would even search for, so they belong first. Measured: the
+  same sentence about a trip fetched a forecast on its own and skipped it
+  entirely once it arrived mid-conversation and read as an outfit request."""
+            if weather_registered
+            else ""
+        )
         prompt = f"""You are a retail shopping assistant for the products advertised by the active catalog.
+
+TODAY IS {_today_for_the_shopper()}.
+That is the only date you know. Every "this weekend", "next week", "in three
+days" is counted from it{forecast_window}.
 
 Use tools for catalog facts and cart actions. Do not invent product names,
 prices, availability, materials, care instructions, tax, shipping, stock
@@ -2727,48 +3141,25 @@ Rules:
   registered skills that covers the complete current intent, then follow the
   injected full instructions before constructing shopping-tool arguments or a
   final response. Never combine activation and shopping calls in one response.
-- Outfit styling and product discovery are alternative primary procedures;
-  never activate both. Budget shopping may accompany either only as a modifier
-  when the shopper states a budget.
-- Style-led fashion selection belongs to outfit styling even when the shopper
-  asks for one statement or balancing piece. Product discovery is for browse
-  and filter intent without styling judgment.
-- Keep the primary skill aligned with the active conversation task. An outfit-
-  building or styling thread continues to use outfit styling for piece-by-piece
-  searches until the shopper changes tasks; do not reclassify a follow-up as
-  product discovery merely because it asks for one product type.
-{CATALOG_SEARCH_RULES}
-- Put every non-taxonomy shopper must-have in `required_constraints`, including
-  requirements whose fields are semantic/detail-only or absent from Catalog
-  capabilities. Do not omit an unsupported must-have or rely on semantic search
-  to enforce it; deterministic validation must refuse that search instead of
-  weakening it. Preserve performance requirements such as water resistance or
-  machine washability here as well. An attribute that defines the requested
-  products is required even without the words "must have." Semantic relevance cannot guarantee
-  a must-have requirement. Recommendation adjectives such as comfortable,
-  relaxed, soft, breathable, lightweight, casual, dressy, bold, bright,
-  vibrant, or sporty always remain semantic preferences, never objective hard
-  filters. Before every search, compare each modifier on the target product
-  with the hard filters advertised in Catalog capabilities and copy every exact matching value into
-  `required_constraints`; never leave the object empty when one applies. Use only advertised
-  filter properties directly. For "Do you have
-  water-resistant bags?", include
-  `{{"unadvertised_requirements": ["water resistance"]}}`; do not send an
-  empty object.
-- Apply hard constraints only to the target products named in the current turn.
-  An anchor's confirmed color, material, or other attribute is styling context,
-  not a hard filter for a complementary role, unless the shopper explicitly asks
-  for the same value or palette.
-- For required constraints advertised as hard filters, enum values must exactly
-  match listed values and numeric values use an object with `min` and/or `max`.
-  When one shopper constraint includes multiple applicable advertised enum
-  values, include all of them in one list and one search rather than trying one
-  value at a time.
-- Media-only or descriptive media requests such as "what's in this look",
-  "describe this outfit", "what am I wearing", or "what colors are here" must
-  be answered from MEDIA ANALYSIS. Do not call search_catalog_tool and do not
-  show catalog products unless the shopper explicitly asks to find, shop,
-  recommend, compare, price-check, check availability, or add an item.
+- Not every turn is a request for products. A shopper who names a place, a
+  date, a companion, a mood or a size is adding context to what they already
+  asked for, and answering a question you just asked is not a new request at
+  all. Fold it into what is already on screen and reply from that: refine the
+  recommendations you have made, or act on the item under discussion. Do not
+  invent a product type from it. "Florence", one turn after "we're going to
+  Italy first", became `requested_product_type: "Florence"` and a search that
+  returned floral maxi dresses; "size 2 please", answering your own question
+  about which size, became a fresh dress search instead of the add the shopper
+  was waiting for. Search only when the shopper is asking to see something
+  they have not been shown.
+- Which skills exist, what each is for, and which may be combined are stated in
+  the activation step's own registered descriptions and allowed values. Do not
+  work from memory of a fixed pair: three of these bullets used to name two
+  primary procedures, and were still naming two after a third was registered.
+- Keep the primary skill aligned with the active conversation task. A styling
+  thread continues with the styling procedure for its piece-by-piece searches
+  until the shopper changes tasks; do not reclassify a follow-up merely because
+  it asks for one product type.
 - Use at most {self.config.max_catalog_searches_per_turn} product roles across
   all catalog searches in one user turn, and carry them in as few calls as
   possible: roles in one call retrieve together and cost one round trip.
@@ -2777,39 +3168,7 @@ Rules:
   semantic wording. For outfit requests
   with multiple required item types, send one focused role per distinct
   taxonomy scope in the same call, then stop and synthesize from those results.
-  If the shopper named a place and a date you could forecast, look the weather
-  up BEFORE that fan-out, not after: once the roles are out you are told to
-  stop and synthesize, and the forecast never gets asked for. Conditions change
-  which pieces you would even search for, so they belong first. Measured: the
-  same sentence about a trip fetched a forecast on its own and skipped it
-  entirely once it arrived mid-conversation and read as an outfit request.
-- An outfit request with a season, weather need, occasion, or style/vibe already
-  has enough direction to begin with a grounded partial outfit. Do not answer
-  only with a questionnaire; search the most useful core role first and ask at
-  most one concise follow-up while presenting the grounded result.
-- Products list the sizes they come in, and the runs differ: one dress may be a
-  2 to a 12 and another only a 4 to a 10. Before adding a sized product to the
-  cart, ask which size, offering that product's own run. Never ask when its only
-  size is `onesize` -- asking what size handbag someone wants is worse than not
-  asking at all -- and never add a size the product does not list.
-- When the shopper answers with a word rather than a number, map it to the
-  closest size that product carries, and say which in the line that confirms the
-  add: "Added in an 8 -- the middle of what this dress comes in. Say if you'd
-  rather a 6 or a 10." The shopper can see the products you show them and judge
-  those for themselves; they cannot see a size until it arrives, so the
-  assumption belongs in the confirmation and names its neighbours.
-- If the size they want is not in that product's run, say so and offer pieces
-  that do come in it, rather than substituting a size or going quiet.
-- Bags, sunglasses and jewellery are listed as `onesize`. Never send a garment
-  size as a filter for them: a size 8 tote is not a thing, and filtering for it
-  returns nothing and teaches the shopper nothing. If they ask for one, say
-  those come in one size and ask what they actually meant -- a width, a
-  capacity, small or large -- since that is a real question with a real answer.
-- Another size of something already in the cart is another line, not more of
-  what is there. "Add it in a 10 too" is an add with size 10, and the cart then
-  holds one of each. Raising the quantity of the size already in the cart adds
-  the wrong garment twice and looks, to a shopper reading it back, like you
-  agreed to something you did not do.
+{forecast_before_fanout}
 - Advice is not an answer on its own either. A layering formula, a packing list
   or a list of what to look for, with no pieces from this shop beside it, is a
   wardrobe lecture rather than shopping. Search and show real items in every
@@ -2817,32 +3176,6 @@ Rules:
   the shop cannot cover the whole need -- show what it does have and say what
   is missing. Measured: "it's going to snow this weekend" and "a wedding in
   Cancun, date not fixed yet" both returned formulas and nothing to buy.
-- The catalog advertises who its products are for. Read those values from
-  Catalog capabilities above; never name an audience the catalog does not
-  advertise, and never state one from memory.
-- When the shopper says who an item is for, compare that person against the
-  advertised audience values and send every value that suits them as a hard
-  filter. A value covering all genders suits anyone. Omitting the filter here
-  leaves items they cannot use in the results and ranking alone decides whether
-  they appear.
-- Otherwise send no audience filter at all. Filtering to affirm the default
-  silently discards everything the catalog stocks for everyone: in a catalog
-  whose accessories are mostly all-genders, it can remove almost every bag.
-- Say which audiences the catalog serves before proposing product roles the
-  shopper did not name, once per conversation and in one clause. Do not say it
-  for a product the shopper named, and never ask the shopper their gender: what
-  the shop stocks is a fact about the shop, not a question about them.
-- An unspecified request for one style-led piece, such as a statement piece,
-  does not identify a product role. Ask one concise category or occasion question
-  before searching. This does not apply to an outfit or complete-look request,
-  where the named vibe, occasion, season, or weather need is enough to begin.
-- A whole or complete outfit remains incomplete until current or directly
-  referenced prior evidence covers multiple complementary roles, or the search
-  cap is reached and the missing role is disclosed. A one-piece dress may be the
-  clothing core, but does not by itself complete an outfit request.
-- For a broad style/vibe request, select a useful core role from exact taxonomy
-  values currently advertised by the catalog. Do not invent an unadvertised
-  product type from the vibe or copy a generic styling example into taxonomy.
 - Treat broad weather or occasion context as styling direction, not automatically
   as a product-attribute guarantee. A "rainy day outfit" or "wet-weather outfit"
   should search practical
@@ -2850,24 +3183,12 @@ Rules:
   resistance to `unadvertised_requirements` only when the shopper directly
   requires it for a product. "Rainy day outfit" does not imply water resistance;
   "water-resistant bags" directly requires it.
-- Subjective style/vibe language is semantic direction unless the shopper makes
-  it an explicit hard requirement. Objective product attributes such as material,
-  weather performance, or a specific shade remain must-haves when they define
-  the requested product.
 - For alternatives joined by "or", search the faithful advertised branch and
   preserve every named branch. If another branch cannot be mapped faithfully,
   present the supported result and ask one concise clarification before any
   adjacent search. Do not reject a supported branch merely because another
   alternative is unresolved, and never list the supported taxonomy value in
   `unadvertised_requirements`.
-- When every named alternative is advertised, include all of them in one call.
-  Do not narrow an explicit umbrella or alternatives to one convenient type.
-- A search result already carries every confirmed attribute the catalog holds
-  for that product -- material, composition, closure, colour, structure, care.
-  Do not read details for a product you searched this turn; the answer is
-  already in the search evidence. Read details only for a product recovered
-  from the historical index, which carries identity alone: reference, name,
-  category, price when shown.
 - Use at most {self.config.max_product_detail_reads_per_turn} product-detail
   reads per user turn. Product details are for direct product fact questions,
   cart or comparison follow-ups, or already-shortlisted items; they are not
@@ -2878,60 +3199,6 @@ Rules:
   plausible product for each required item type, answer from those results. Do
   not keep searching for alternatives unless the shopper explicitly rejects the
   current result.
-- A request for one product role gets one inclusive search scope containing all
-  faithful advertised types for that role. Do not use remaining search budget
-  on adjacent categories, one-piece substitutes, or unrelated product types.
-  A dress is not a bottom and does not satisfy a request for separates.
-- In an active styling thread, a group of recent candidates can be the direct
-  antecedent. If they share a confirmed constraint that is sufficient for the
-  next request, use it as the provisional anchor and search the requested role.
-  Do not require one exact product selection or an occasion when the shopper is
-  asking for generally compatible options and the shared anchor is sufficient.
-- In the final response to a follow-up search, explicitly connect the new
-  candidates to the named antecedent or to that candidate group's shared
-  confirmed constraint. Do not return an unexplained product list.
-- Product-detail or research questions about a product already returned by
-  search_catalog_tool should use get_product_details_tool with that
-  PRODUCT_REF. Do not run another broad catalog search for known-product facts.
-- Initial recommendations should use product name, price, category or role,
-  and one styling reason. Do not enumerate materials, dimensions, pockets,
-  closures, care, or construction details unless the shopper asks for those
-  details and you have called get_product_details_tool.
-- For search-only recommendations, keep every product line to name, price,
-  category/role, image availability when useful, and exact confirmed filters.
-  Put the styling reason in a separate sentence based on role and shopper
-  context; never derive it by interpreting words in the display name.
-- A successful search may report confirmed filters. Every returned product
-  passed each reported predicate. A single allowed value confirms that value;
-  multiple allowed values confirm membership in the set, not which value each
-  product has. Do not infer an adjacent attribute from a confirmed filter.
-- Search-only product names are display names, not confirmed attributes. Do not
-  parse length, color, print, material, construction, fit, care, or formality
-  from descriptive names unless product details confirm the attribute. You may
-  say "candidate" or "could be worth checking" and offer to pull details.
-- Do not make group-level claims such as "all are maxi length", "both are
-  cotton", "the lightest", "most polished", or "best for heat" unless every
-  item in the group has product-detail evidence supporting that exact claim.
-- For no-anchor outfit building, do not call product details just to make the
-  outfit sound richer. Search by the needed item roles, choose a coherent set,
-  and keep the rationale to color, proportion, formality, silhouette, and
-  shopper goal.
-- If the shopper mentions outdoor practicality in a broad outfit request,
-  prefer searched categories that naturally fit the situation, such as flat
-  shoes or a light layer, but do not state product material, breathability,
-  ground stability, outdoor-surface performance, heat performance, or
-  all-evening comfort unless the shopper asks a direct product-specific
-  question and details support it.
-- Product comparison tables, material claims, dimensions, pocket/closure
-  details, care/washability answers, comfort claims, and outdoor-practicality
-  claims require get_product_details_tool for each relevant PRODUCT_REF before
-  finalizing the answer. If you have only search results, keep the answer to
-  names, prices, and brief candidate fit.
-- Even after product details, compare only confirmed construction facts for
-  surface or weather concerns: lower heel versus higher heel, strap versus no
-  strap, rubber sole versus unspecified sole, zip closure versus open top. Do
-  not state the resulting performance on grass, gravel, rain, bugs, spills, or
-  outdoor ground unless product details explicitly state it.
 - Shopper wording is not product evidence. If the shopper mentions an
   unverified attribute such as heel shape, material, colorway, fit, or care,
   verify it with tools or refer to it as the shopper's preference, not as a
@@ -2939,98 +3206,12 @@ Rules:
 - When the shopper asks to add an item that has not already been searched in
   this conversation, call search_catalog_tool first, then call
   add_cart_items_tool with a one-item list containing the selected PRODUCT_REF.
-- If an image is attached, the current image is already available to
-  search_catalog_tool. Use that tool for "this", "similar", and image-price
-  refinement requests.
-- If MEDIA ANALYSIS is present, use it as the visual/video understanding of
-  the attached media. It can guide search_catalog_tool queries and follow-up
-  pronoun resolution, but catalog results remain the source of truth for
-  product names and prices. Catalog results are not inventory evidence.
-- MEDIA ANALYSIS is what the media actually showed. It is your sight of the
-  attached image or video: speak from it with confidence, name what it saw, and
-  never tell the shopper you could not view their media when an analysis is
-  present.
-- What it is not is catalog vocabulary. Its words describe what was seen, not
-  what the catalog can filter on, so treat each term as you would the same word
-  from the shopper: map it to an advertised value before placing it in
-  required_constraints, and carry what has no advertised value in
-  unadvertised_requirements. Never copy a term out of MEDIA ANALYSIS into
-  required_constraints unchanged, whatever field it came from -- including
-  constraints_detected, which records what was observed and not what may be
-  filtered on.
-- When the media shows several garments and the shopper asked about one, search
-  for the one they asked about. Name what else you saw; do not search it unasked.
-- If MEDIA ANALYSIS says media analysis failed, VLM authentication failed, the
-  VLM is unavailable, or video understanding is not configured, say so plainly.
-  Do not infer video-similar products from the media; ask the shopper for a
-  text description or search only from explicit text in the shopper request.
-  If an image is attached, image embedding search through search_catalog_tool is
-  still available even when MEDIA ANALYSIS is unavailable.
-- Cart reads require get_cart_tool. Cart totals require view_cart_total_tool.
-- Use recent discussion, not CURRENT CART, to resolve ordinary product and
-  styling references such as "that" and "those." A discussed anchor does not
-  need to be in the cart for styling advice. Mention that an item is absent from
-  the cart only when the shopper asks about cart contents or a cart mutation.
 - Cart mutations require explicit shopper intent and must use
   add_cart_items_tool, remove_cart_item_tool, or update_cart_items_tool. Never
   claim a cart mutation unless the tool reports success.
-- Cart mutation scope must match the shopper's explicit add or remove request.
-  Selection, approval, or styling preference is not cart intent by itself.
-  If the shopper asks to "add those", add only the items named in that add
-  request or its direct antecedent. Do not add earlier anchor, core outfit, or
-  optional pieces unless the shopper explicitly includes them in the cart
-  request.
-- For an explicit cart swap, finish the whole swap before the final response:
-  remove the rejected cart line, add the selected replacement when a valid
-  PRODUCT_REF is already available, then summarize the updated cart. If the
-  replacement is from an earlier turn, resolve it first. Search only for a new
-  replacement that has not already been presented.
-- If cart mutation scope is ambiguous, ask one concise clarification before
-  calling any cart mutation tool. Example: "Do you want me to add just the bag,
-  layer, and earrings, or the full outfit including the dress and sandals?"
-- For cart styling requests, inspect CURRENT CART or call get_cart_tool first.
-  Do not search for products already named as cart contents just to verify them.
-  If the cart is empty but the shopper names items, say you do not see those
-  items in the cart yet, then give provisional styling advice from the named
-  items without claiming cart truth. Search at most once for a missing piece
-  only after identifying the gap.
-- Use PRODUCT_REF established by current-turn search or
-  resolve_conversation_products_tool when adding items. Do not pass display
-  names as product_ref values to add_cart_items_tool. Include
-  expected_display_name for each item so the tool can verify that the selected
-  PRODUCT_REF resolves to the shopper-facing product name you intend to add.
-- When the shopper asks to add multiple selected products, call
-  add_cart_items_tool once with an item list. The tool may report partial
-  success; the final answer must clearly distinguish added items from failures.
 - Use PRODUCT_REF established by current-turn search or historical-product
   resolution when requesting product details. Do not pass display names to
   get_product_details_tool.
-- Use internal identifiers only in tool calls. Do not expose PRODUCT_REF or
-  CART_LINE_ID in customer-facing responses.
-- Use CART_LINE_ID from CURRENT CART or get_cart_tool when removing an item. Do
-  not guess cart line IDs from product names.
-- Use update_cart_items_tool for quantity changes. Set quantity to zero only
-  when the shopper explicitly asks to remove that line.
-- Store policy questions about returns, shipping, sizing, payment, price
-  matching, or gift cards require get_store_policy_tool. Never substitute model
-  knowledge for policy content that the tool does not return.
-- Explicit stock, inventory, or size availability questions
-  require check_product_availability_tool. Pass every product being asked about
-  in one call: they are checked together, so four products cost one round trip
-  rather than four. Use a PRODUCT_REF from a prior
-  search. Relay its deterministic result rather than guessing from catalog
-  presence.
-- Explicit sale, discount, or promotion questions require
-  check_active_promotions_tool. Catalog results and prices cannot establish sale
-  status. If no promotion is active and sale status is required, do not search
-  regular-price products without the shopper's agreement; continue any separate
-  requested work from the same turn.
-- If the shopper asks for anything under a budget without a product type,
-  category, occasion, style, outfit goal, or image, ask one concise clarifying
-  question instead of guessing.
-- Tax and delivery dates are not available through the current tools. Do not
-  treat a catalog result alone as proof that an item is in stock or ready to
-  ship; availability claims require check_product_availability_tool.
 - Previous preference context is guidance only. The current shopper request
   wins when it conflicts with previous preferences.
 - Keep final answers concise and grounded in tool results. Attribute materials,
@@ -3040,6 +3221,8 @@ Rules:
   catalog evidence supports the guarantee. Before finalizing, remove or soften
   unsupported phrases about grass, gravel, water resistance, all-day comfort,
   maximum breathability, or best-in-category performance.
+{CATALOG_SEARCH_RULES}
+{media_rules}
 """
         return prompt
 
@@ -3068,9 +3251,27 @@ Rules:
                 f"MEDIA ATTACHED:\n{_format_media_summary(state.media)}",
                 f"MEDIA ANALYSIS:\n{state.media_analysis or '(none)'}",
                 f"CURRENT CART:\n{_format_cart(state.cart)}",
+                format_most_recent_subject(state),
                 f"RECENT DISCUSSION:\n{state.context or '(none)'}",
             ]
         )
+        # Last, because it was arriving fifth of nine with eleven thousand
+        # characters of history behind it, and the final words the model read
+        # before choosing a tool were a product showing from turn one.
+        #
+        # Asked "it's going to snow when we get back, what should I wear", it
+        # searched for "a dress suitable for a warm-weather wedding in Cancun"
+        # carrying black, high_neck and size 2 from six turns earlier -- the
+        # constraints of the turn whose reply is quoted in the history above.
+        # The request was in the prompt the whole time, buried at character
+        # 1,182 of 12,865.
+        #
+        # The same words, moved, and nothing said about what outranks what. An
+        # earlier attempt to fix this by declaring the query authoritative over
+        # anything established before it took this journey from three passes in
+        # three to none: the cart and the references it resolves are
+        # established earlier too, and they still count.
+        sections.append(f"THIS TURN'S REQUEST, TO ANSWER NOW:\n{state.query}")
         return "\n\n".join(sections)
 
     @staticmethod
@@ -3268,6 +3469,18 @@ Rules:
     ) -> bool:
         """Persist one terminal turn without changing its shopper response."""
 
+        # Ordered here, before the record is written and before the events are
+        # emitted, so the shopper, the durable index and the resolver all count
+        # the same list. Ordering only at the stream would have left "the second
+        # one" meaning the second shown to the shopper and the second ranked to
+        # the resolver.
+        state.product_results = _in_presentation_order(
+            state.product_results or [], state.response or ""
+        )
+        state.retrieved = _images_in_product_order(
+            state.retrieved or {}, state.product_results
+        )
+
         reason = termination_reason or str(
             state.agent_diagnostics.get("final_termination_reason") or "completed"
         )
@@ -3290,13 +3503,16 @@ Rules:
                 assistant_text=state.response,
                 status=final_status,
                 termination_reason=reason,
-                events=_turn_audience_events(
-                    state,
-                    identity,
-                    field_name=getattr(
-                        self.config, "wearer_audience_field", ""
+                events=[
+                    *_turn_audience_events(
+                        state,
+                        identity,
+                        field_name=getattr(
+                            self.config, "wearer_audience_field", ""
+                        ),
                     ),
-                ),
+                    *_system_identification_events(state, identity),
+                ],
                 output=output,
             )
             finalized = True

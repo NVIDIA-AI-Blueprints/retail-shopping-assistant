@@ -79,23 +79,12 @@ class Cart(BaseModel):
 
 
 class State(BaseModel):
-    """
-    Main state object that flows through the LangGraph.
-    
-    This object contains all the information needed by the various agents
-    to process user queries and generate responses.
-    
-    Attributes:
-        user_id: Unique identifier for the user
-        query: The user's input query
-        context: Previous conversation context
-        cart: User's shopping cart
-        response: Generated response from agents
-        image: Base64 encoded image data (if provided)
-        retrieved: Dictionary of retrieved product information
-        next_agent: Next agent to route to (set by planner)
-        guardrails: Whether to enable content safety checks
-        timings: Performance timing information
+    """Everything one turn carries, from request to final response.
+
+    The attribute list that used to live here named nine fields of the
+    twenty-five below and described `next_agent` as being set by a planner
+    that no longer exists. Each field documents itself, so there is no second
+    list here to drift out of date.
     """
     user_id: int = Field(..., description="Unique user identifier")
     query: str = Field(..., description="User's input query")
@@ -125,6 +114,10 @@ class State(BaseModel):
         default_factory=list,
         description="Typed prior turns; authoritative for shopper intent context"
     )
+    #: Products the record itself picked this turn, by ref. Written where the
+    #: resolutions land and read at finalization, so the choice can be recorded
+    #: durably instead of expiring with the message that made it.
+    system_identified_products: List[str] = Field(default_factory=list)
     historical_product_sets: List[Dict[str, Any]] = Field(
         default_factory=list,
         description=(
@@ -141,6 +134,14 @@ class State(BaseModel):
         description="Rendered prompt text only; never parsed back into state"
     )
     cart: Cart = Field(default_factory=Cart, description="User's shopping cart")
+    cart_at_turn_start: Cart | None = Field(
+        default=None,
+        description=(
+            "The cart as it stood before this turn ran. Held so the effect of "
+            "the turn on the cart can be stated as a computed fact rather than "
+            "left for a model to infer by comparing two lists."
+        ),
+    )
     response: str = Field(default="", description="Generated response from agents")
     image: str = Field(default="", description="Base64 encoded image data")
     media: List[Dict[str, Any]] = Field(

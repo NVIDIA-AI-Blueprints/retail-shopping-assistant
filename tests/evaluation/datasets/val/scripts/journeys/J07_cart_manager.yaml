@@ -1,0 +1,58 @@
+id: J07_cart_manager
+covers: [cart-management, sizes, references]
+why: >
+  Adding, changing and removing across a long conversation. A size change must
+  never leave the cart emptier than it started, and the readback must match the
+  cart rather than the assistant's memory of it.
+  Names Jade Suede Heels, not Polished Pearl Pumps: this catalog gives that
+  second name to two products, so an assertion pinned to it measured
+  whether the model guessed which one. Asking is the correct behaviour and
+  was scored as a failure.
+
+turns:
+  - say: show me some heels
+    expect: {products_min: 2}
+  - say: add the Jade Suede Heels in a 7
+    expect:
+      cart: [{name: Jade Suede Heels, size: "7", qty: 1}]
+  - say: show me some tote bags
+    expect: {products_min: 2}
+  - say: add the Ombre Canvas Tote Bag
+    expect:
+      cart:
+        - {name: Jade Suede Heels, size: "7", qty: 1}
+        - {name: Ombre Canvas Tote Bag, qty: 1}
+  - say: what's in my cart
+    expect:
+      cart:
+        - {name: Jade Suede Heels, size: "7", qty: 1}
+        - {name: Ombre Canvas Tote Bag, qty: 1}
+  # Everything below used to assert nothing, in the journey named for cart
+  # management. Cart removal was broken outright for an unknown length of time
+  # and this suite passed throughout, because no removal turn anywhere checked
+  # the cart afterwards.
+  #
+  # A size change is one line at the new size, never two: the protocol adds the
+  # new line and then removes the old, and a half-finished swap leaves both.
+  - say: change the heels to an 8
+    expect:
+      cart:
+        - {name: Jade Suede Heels, size: "8", qty: 1}
+        - {name: Ombre Canvas Tote Bag, qty: 1}
+  - say: remove the tote bag
+    expect:
+      cart:
+        - {name: Jade Suede Heels, size: "8", qty: 1}
+  - say: what's in my cart now
+    expect:
+      cart_unchanged: true
+      cart:
+        - {name: Jade Suede Heels, size: "8", qty: 1}
+  - say: actually add the tote bag back
+    expect:
+      cart:
+        - {name: Jade Suede Heels, size: "8", qty: 1}
+        - {name: Ombre Canvas Tote Bag, qty: 1}
+  - say: and what's the total
+    expect:
+      cart_unchanged: true

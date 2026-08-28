@@ -1,0 +1,96 @@
+id: J01_wedding_abroad
+covers: [weather, outfit-styling, references, cart-management, sizes, honesty]
+why: >
+  The demo conversation, and the one that found most of this week's bugs. A
+  shopper arrives with an occasion and no product in mind, and by turn nineteen
+  the assistant must still know which dress "the black one" means. It once
+  reached fourteen turns back for a navy one.
+  Names Jade Suede Heels, not Polished Pearl Pumps: this catalog gives that
+  second name to two products, so every assertion pinned to it measured
+  whether the model guessed rather than what this journey is for. The
+  assistant asking which pair is correct, and was scored as a failure.
+
+turns:
+  - say: I have a wedding to go to and I need something to wear
+    expect: {products_min: 1}
+  - say: it's in Cancun around mid next week
+    expect: {products_min: 1}
+  - say: is it on a beach? what shoes work
+    expect: {products_min: 1}
+  # The catalog holds no outerwear, but it does hold eighteen sweaters, so a
+  # cooler evening has a real answer here. An earlier version of this file
+  # claimed there were none and used that to excuse showing nothing.
+  # Both things must hold: something is shown, and styling talk alone never
+  # reaches the cart.
+  - say: I need something for the evening too, it might be cooler
+    expect:
+      products_min: 1
+      cart_unchanged: true
+  - say: show me some heels
+    expect: {products_min: 2}
+  - say: add the Jade Suede Heels to my cart
+    expect: {cart_unchanged: true}
+  - say: size 7
+    expect:
+      cart: [{name: Jade Suede Heels, size: "7", qty: 1}]
+  - say: actually add them in an 8 as well
+    expect:
+      cart:
+        - {name: Jade Suede Heels, size: "7", qty: 1}
+        - {name: Jade Suede Heels, size: "8", qty: 1}
+  - say: do you have a green dress in a size 2
+    expect: {}
+  # High-neck, because "the black one" nine turns later has to mean one dress.
+  # Plain "black dresses in a size 2" shows four, and pinning one of them in the
+  # cart assertion below measured whether the model guessed right out of four --
+  # while asking which, the correct behaviour, scored as a failure. Only means
+  # only is still what this turn tests.
+  - say: show me ONLY black high-neck dresses in a size 2, don't show me anything else
+    expect:
+      products_min: 1
+      every_product: {primary_color: black}
+  - say: do you have a tote bag in a size 8
+    expect: {}
+  - say: my husband is coming too, he needs sunglasses
+    expect: {products_min: 1}
+  - say: he also wants a bag for the trip
+    expect: {products_min: 1}
+  - say: now show me some skirts
+    expect: {products_min: 2}
+  - say: we're going to Italy first, what do I wear at the weekend
+    expect: {}
+  - say: and there's another wedding in Cancun in about three months
+    expect: {}
+  - say: it's going to snow when we get back, what should I wear
+    expect: {}
+  # The hardest reference in this journey: a bare description, nine turns after
+  # the thing it points at, with a clutch request riding along behind it.
+  #
+  # It used to pin the Black Satin Lace-Up Dress, on the reasoning that boots
+  # were the only other black thing shown and footwear runs 5-9, so "in a 2"
+  # could only mean the dress. That stopped being true. Turn 17 shows black
+  # dresses of its own, and turn 18 -- now that the snow turn returns sweaters
+  # rather than dying on a refusal -- shows black sweaters, cut 2 to 12. Three
+  # defensible answers, and which is newest depends on what those two turns
+  # return that run.
+  #
+  # So this asserts what the turn is for and not what the catalog happened to
+  # rank first: a described reference reaches the cart as one new line, and the
+  # clutch is shown in the same turn rather than costing another one. Pinning a
+  # product here measured the search's ranking, and scored the assistant wrong
+  # for resolving to the most recent black thing in a size 2 -- which is what
+  # the shopper was looking at.
+  - say: add the black one in a 2 and show me a clutch to go with it
+    expect:
+      any_of:
+        # Resolved: a black thing the shopper was shown reaches the cart as a
+        # third line, and the clutch comes back in the same turn.
+        - cart_lines: 3
+          products_min: 1
+        # Or asked: several black things in a size 2 have been shown by now and
+        # the assistant says so rather than picking one. The cart is untouched.
+        - cart_unchanged: true
+          reply_asks: true
+  - say: what's in my cart
+    expect:
+      cart_unchanged: true

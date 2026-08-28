@@ -441,3 +441,62 @@ Key env vars:
 3. Validate via health + targeted scenario.
 4. If API shape changes, update docs in `docs/API.md` and any UI assumptions.
 5. Note any config/env additions in docs.
+
+## 10) Diagnose Before You Build
+
+Four questions, answerable from Phoenix in minutes, before writing any fix for
+assistant behaviour. Skipping them cost a day this week on a change that was
+already measured as ineffective.
+
+**1. Does the model already have the fact?** Read the prompt, do not assume it.
+
+```
+sessions(first:1, sessionFilterCondition: "session_id == '<conversation-id>'")
+  { edges { node { sessionId numTraces traces(first:30)
+      { edges { node { rootSpan { name startTime } } } } } } }
+```
+
+`span_kind == 'LLM'` gives the whole prompt; `span_kind == 'TOOL'` gives each
+tool's input **and its return**, which the durable record does not store.
+
+If the fact is already in the prompt, a second copy of it will not help. The
+size a showing was made under was recorded, rendered into the historical index,
+verified live -- and the behaviour it targeted measured 6 in 10 both before and
+after, because the shopper's own words were one turn up the conversation the
+whole time. That is a tie, not a gap.
+
+**2. Is our code refusing, or is the model choosing?** Read the tool result.
+
+A refusal of a correct action is our bug and usually has a deterministic fix. A
+model that had everything and chose otherwise is a tie. These look identical in
+a transcript and are opposite problems.
+
+**3. Can you make it fail on demand?** A scenario that goes red before the fix.
+
+Where you cannot reproduce it, say so and do not claim a fix. Two changes this
+week were shipped as "unit-tested, journey-level unproven", which is honest and
+useful; a third was claimed as fixed on a single green run and was not.
+
+**4. Code or words?** Prose in a skill has a near-zero hit rate here.
+
+Everything that measurably worked either removed a wrong behaviour or made the
+runtime construct the outcome. Every rule added to a skill file this week was
+inert, and one caused a regression.
+
+### What follows from the answers
+
+- **Our bug** -- fix it, prove red to green.
+- **Tie** -- either make the runtime do it deterministically, or accept it and
+  stop counting it as a defect. Do not add a rule; that has been tried.
+- **Script wrong** -- fix the script. A turn with no verb should not assert a
+  cart change.
+
+### Two standing rules
+
+**Delete a fix that does not measure.** Carrying it costs review attention and
+implies evidence that does not exist.
+
+**Never quote a single run.** The suite moves about +/-7 scenarios on identical
+code -- 25% of turns take a different tool path between two runs at temperature
+0. Only the intersection of repeated runs means anything, and a regression
+scenario repeated ten times is worth more than one full pass.

@@ -29,7 +29,7 @@ import logging
 import os
 from pathlib import Path
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from difflib import SequenceMatcher
 from types import SimpleNamespace
 from typing import Any, Literal
@@ -250,11 +250,12 @@ class CatalogTaxonomyToolInput(BaseModel):
         ),
     )
     subcategory: list[str] = Field(
-        ...,
+        default_factory=list,
         description=(
             "Exact advertised subcategory values required by the shopper. Use an "
             "empty list when category supplies the text-search scope or the search "
-            "is image-only."
+            "is image-only. Omitting it means the whole category, which is what "
+            "'show me some jewellery' asks for."
         ),
     )
 
@@ -368,6 +369,41 @@ def _shopper_stated_requirement(query: str, requirement: str) -> bool:
         )
     }
     return bool(requirement_words) and requirement_words.issubset(query_words)
+
+
+WEATHER_PLACE_NOT_IN_THIS_TURN = (
+    "WEATHER_PLACE_NOT_STATED: no forecast for this turn -- the words you "
+    "quoted are not in it, and a place named on an earlier turn is not where "
+    "the shopper is asking about now.\n"
+    "Carry on and answer them. A forecast was never the request: they asked "
+    "what to wear. If they said what the conditions will be -- \"it's going "
+    "to snow when we get back\" -- that is the answer to the weather "
+    "question, they are the authority on their own trip, and you have "
+    "everything you need. Search for what those conditions call for and show "
+    "it.\n"
+    "Ask only if you cannot tell what they need at all. Do not end the turn "
+    "on a question about a place when they have already told you the weather, "
+    "and do not tell them they can work it out themselves. Do not call this "
+    "tool again for this turn."
+)
+
+
+def a_place_this_turn_named(query: str, quoted: str) -> bool:
+    """Whether the words offered as naming the place are in this turn at all.
+
+    The tool asks the model to quote the words that named the place, and the
+    model quoted "Italy" on a turn reading "it's going to snow when we get
+    back" -- and, in the next run, "Rome", which the shopper never said in any
+    turn. A required field it can fill with anything is a field it will fill
+    with anything.
+
+    So the citation is checked against the record, which is the same thing
+    `expected_display_name` does for a product name: not what the words mean,
+    only whether they were said here. Reusing the constraint-provenance reader
+    so a quotation is judged the same way everywhere.
+    """
+
+    return bool(quoted.strip()) and _shopper_stated_requirement(query, quoted)
 
 
 def _product_scope_key(value: str | None) -> str:
@@ -715,8 +751,18 @@ def _advertised_taxonomy_scope_issue(
                 "taxonomy contains only its advertised children. Keep those "
                 "children together for the shopper's umbrella request."
             )
+        # Naming the category the type binds to, and nothing else, substitutes
+        # nothing -- the type is "jewelry" and the selected category is
+        # jewelry. It was accepted only when the shopper had said the word,
+        # so a turn deriving the category itself was refused for doing exactly
+        # what this refusal instructs: "select that category directly".
+        #
+        # Asked for the most expensive thing in the shop, the assistant read
+        # the published range, went to jewelry at $269.99 -- correctly, the
+        # only department that reaches it -- and was turned back.
         exact_category = (
-            taxonomy_status == "exact_requested_type"
+            taxonomy_status
+            in {"exact_requested_type", "agent_selected_type"}
             and not normalized_selected_subcategories
             and normalized_selected_categories == {normalized_category}
         )
@@ -809,11 +855,22 @@ class SearchCatalogToolArguments(BaseModel):
         description=(
             "One concise, product-agnostic shopper-facing sentence written under "
             "the active skill before search results are known. Connect this "
-            "product role to the shopper's stated goal or direct antecedent. Do "
+            "product role to what the shopper asked for in THIS turn, or its "
+            "direct antecedent. A purpose they gave earlier -- a wedding, a "
+            "trip -- has already been served and does not travel: once they "
+            "move on, so do you. Naming it again on every later turn produced "
+            "'skirts that would work well for your wedding abroad outfit' six "
+            "turns after the wedding, and a bag for someone else described as "
+            "complementing the shopper's own outfit. Do "
             "not name unselected or unavailable product types, name or describe "
             "candidate products, assert product attributes, or mention tools, "
-            "schemas, filters, evidence, or identifiers. Use an empty string only "
-            "for image-only search."
+            "schemas, filters, evidence, or identifiers. Leave it empty when the "
+            "shopper simply named a product type and nothing else -- 'now show "
+            "me some skirts' is a request to see skirts, not a request to see "
+            "skirts for something. Required to say something, the model reached "
+            "back twelve turns for the only purpose in the conversation and "
+            "produced 'skirts that could work well for your wedding abroad "
+            "outfit'. An empty string is also right for an image-only search."
         ),
     )
     requested_product_type: str | None = Field(
@@ -832,50 +889,16 @@ class SearchCatalogToolArguments(BaseModel):
             "only for image-only search."
         ),
     )
-    taxonomy: CatalogTaxonomyToolInput = Field(
-        ...,
-        description=(
-            "Required catalog-derived taxonomy selection. Allowed category and "
-            "subcategory values come from the active catalog capabilities. Every "
-            "selected value must be the requested product type or a child of an "
-            "umbrella the shopper actually named. For a role the shopper did not "
-            "name, select every advertised subcategory that role genuinely covers "
-            "-- a proposed 'top' may select blouses and sweaters together. Do not "
-            "widen a role to types it does not cover. Never select "
-            "a parent or sibling as a substitute for an advertised type. If a "
-            "shopper-named type is not separately advertised but one advertised "
-            "category is its faithful broader parent, select only that category "
-            "and leave subcategory empty; results remain alternatives under their "
-            "actual catalog types. For example, skirts may satisfy bottoms; "
-            "dresses may not."
-        ),
-    )
-    required_constraints: dict[str, Any] = Field(
-        ...,
-        description=(
-            "Every non-taxonomy must-have stated for the target products in the "
-            "current shopper turn, as a structured field and value. Facts about "
-            "an antecedent or anchor guide semantic styling judgment; do not copy "
-            "them onto a complementary product unless the shopper explicitly asks "
-            "for the same value. "
-            "Use exact hard-filter properties and advertised enum values from "
-            "current Catalog capabilities. Put a directly stated requirement "
-            "those capabilities do not advertise in unadvertised_requirements. "
-            "Season, weather, occasion, "
-            "and subjective style/vibe "
-            "context remain semantic direction unless the shopper directly "
-            "requires an objective product attribute. A defining material is a "
-            "must-have: for 'Any denim skirts available?', put 'denim' in "
-            "unadvertised_requirements when composition is not a hard filter. "
-            "Product types never belong in unadvertised_requirements. "
-            "When the shopper names who an item is for, and the catalog "
-            "advertises an audience filter, include it with every advertised "
-            "value that suits that person -- a value covering all genders "
-            "suits anyone. Without it, items that person cannot use stay in "
-            "the results. Omit it entirely when the shopper has not said who "
-            "the item is for."
-        ),
-    )
+    # No description on either field. `_search_catalog_tool_input_model`
+    # redefines both with the active catalog's enums, and a redefined field
+    # replaces the whole `FieldInfo` -- description included. Text written here
+    # never reaches the model. It sat here for months saying things the live
+    # description did not say, which is worse than saying nothing: two
+    # statements of the taxonomy contract, one of them inert, and nothing to
+    # keep them in step. The clauses worth keeping were moved into the live
+    # description; the rest were never tested, because they were never read.
+    taxonomy: CatalogTaxonomyToolInput = Field(...)
+    required_constraints: dict[str, Any] = Field(...)
     scope_complete: bool = Field(
         ...,
         description=(
@@ -907,6 +930,31 @@ class SearchCatalogToolInput(SearchCatalogToolArguments):
         "no_direct_catalog_match",
         "image_only",
     ] = Field(..., description="Server-derived catalog execution mode.")
+
+    def _scoped_by_a_hard_filter(self) -> bool:
+        """Whether an advertised filter narrows this search on its own.
+
+        Taxonomy is one way to say which products are meant; an enforceable
+        filter is another. A ceiling with no product type is a real request --
+        browse the shop under it -- and it belongs to no category, which is the
+        point rather than an omission.
+
+        unadvertised_requirements is excluded deliberately: it is the field for
+        things the catalog cannot enforce, so it narrows nothing and must not
+        license an unscoped search.
+        """
+
+        constraints = (
+            self.required_constraints.model_dump(exclude_none=True)
+            if isinstance(self.required_constraints, BaseModel)
+            else self.required_constraints
+        )
+        if not isinstance(constraints, dict):
+            return False
+        return any(
+            name != "unadvertised_requirements" and value not in (None, "", [], {})
+            for name, value in constraints.items()
+        )
 
     @model_validator(mode="after")
     def text_search_has_taxonomy_scope(self) -> "SearchCatalogToolInput":
@@ -977,9 +1025,30 @@ class SearchCatalogToolInput(SearchCatalogToolArguments):
             raise ValueError(
                 "an umbrella search requires an advertised subcategory"
             )
-        if self.taxonomy_status == "agent_selected_type" and not (
-            self.taxonomy.subcategory
+        if (
+            self.taxonomy_status == "agent_selected_type"
+            and not self.taxonomy.subcategory
+            and not self.taxonomy.category
+            and not self._scoped_by_a_hard_filter()
         ):
+            # The rule exists so a role the model invented -- "loungewear" --
+            # cannot be mapped onto subcategories silently. It fires on an
+            # INVENTED role, not an ABSENT one. "Nothing over $50" invents
+            # nothing: the shopper named no category, no subcategory and no
+            # product type, so clothes, shoes and accessories are all on the
+            # table and the price is the whole scope. Demanding a subcategory
+            # there asks the assistant to narrow a request that was complete,
+            # and it answered "could you clarify the product type" instead of
+            # showing anything.
+            #
+            # An advertised category grounds the scope the same way a filter
+            # does, and nothing is mapped silently onto anything: the category
+            # IS the scope, unlimited by subcategory, and the role only ranks
+            # within it. "It's going to snow when we get back, what should I
+            # wear" reached apparel -- a real category, holding eighteen
+            # sweaters -- and was told to name a subcategory. It asked the
+            # shopper to clarify the product type instead, which is the same
+            # dead turn this rule already learned not to cause.
             raise ValueError(
                 "an open-role search requires an advertised subcategory"
             )
@@ -991,12 +1060,31 @@ class SearchCatalogToolInput(SearchCatalogToolArguments):
                 "a parent-category alternative requires one advertised category "
                 "and no subcategory"
             )
-        if has_query and not has_taxonomy:
+        if has_query and not has_taxonomy and not self._scoped_by_a_hard_filter():
             raise ValueError(
-                "text catalog search requires an advertised category or subcategory"
+                "text catalog search requires an advertised category or "
+                "subcategory, or a hard filter to scope it"
             )
-        if not has_query:
+        if not has_query and not has_taxonomy:
             raise ValueError("text catalog search requires a semantic query")
+        if not has_query:
+            # A browse has no descriptive words and does not need any: "now show
+            # me some skirts" is fully expressed by its taxonomy. Demanding a
+            # semantic query as well refused that search outright, and the
+            # assistant -- holding a plain request for skirts -- asked the
+            # shopper which product type they meant. The taxonomy is the query.
+            object.__setattr__(
+                self,
+                "semantic_query",
+                (self.requested_product_type or "").strip()
+                or " ".join(
+                    str(value)
+                    for value in (
+                        list(self.taxonomy.subcategory or [])
+                        or list(self.taxonomy.category or [])
+                    )
+                ),
+            )
         return self
 
 
@@ -1121,12 +1209,19 @@ def _search_catalog_tool_input_model(
                     "category or subcategory; both arrays may be empty only for "
                     "an image-only search."
                     " Every value must be a kind of the requested scope: skirts "
-                    "may satisfy bottoms; dresses may not. For a broad request "
+                    "may satisfy bottoms; dresses may not. Never select a parent "
+                    "or sibling as a substitute for an advertised type. For a "
+                    "broad request "
                     "that names no product type, choose one exact advertised "
                     "subcategory as the focused starting role. If a shopper-named "
-                    "type is not separately advertised but one faithful broader "
-                    "advertised parent category exists, select only that category "
-                    "and leave subcategory empty."
+                    "type is not separately advertised, select a parent category "
+                    "only when one of its advertised subcategories denotes the "
+                    "same kind of thing, and then leave subcategory empty. Pumps "
+                    "are heels, so footwear qualifies; every garment is apparel, "
+                    "so 'a kind of this category' can never fail and is not the "
+                    "test. When "
+                    "none does, the catalog does not carry the type: name it in "
+                    "not_covered and build no scope for it."
                 ),
             ),
         ),
@@ -1135,9 +1230,30 @@ def _search_catalog_tool_input_model(
             Field(
                 ...,
                 description=(
+                    # The size-2-and-shoes example lives on `scopes`, which is
+                    # where cross-role ownership belongs, and was stated here
+                    # too. Both arrived on 2026-08-20 (#191). Measured across
+                    # the run archive on J01 turn 12 -- "my husband is coming
+                    # too, he needs sunglasses" -- the audience filter was
+                    # correct 3 times in 5 on the build before that day, and
+                    # once in the ~105 runs after it. Nothing was removed in
+                    # between and the audience rule itself has not changed
+                    # since 2026-08-06; 140 characters of size-and-role worked
+                    # example were added to the front of the object where the
+                    # audience value gets chosen. Stated once, on the field
+                    # that owns it.
                     "Catalog hard filters and any defining requirement the active "
-                    "catalog cannot enforce. Apply constraints only when the "
-                    "current turn states them for the target products; an anchor's "
+                    "catalog cannot enforce. When the shopper names a specific "
+                    "product and asks whether it meets some condition -- within a "
+                    "budget, in stock, in a colour, on sale -- do not send that "
+                    "condition as a filter. You are checking one product, not "
+                    "narrowing a category, and a filter can only hide the answer. "
+                    "Asked whether a named bracelet came within a $150 ceiling, a "
+                    "search filtered to $150 could not return the $169.99 bracelet "
+                    "and the shopper was told the shop did not have it. Find the "
+                    "product first, then compare. Apply constraints "
+                    "only when the current turn states them for the target "
+                    "products; an anchor's "
                     "attributes belong in semantic styling context unless the "
                     "shopper explicitly requests the same value. Use only the "
                     "advertised properties "
@@ -1168,6 +1284,92 @@ def _search_catalog_tool_input_model(
             ),
         ),
     )
+
+
+def _scope_content_errors_only(errors: Sequence[Any]) -> bool:
+    """Whether every error is about what is *inside* a scope.
+
+    A location of ``("scopes", 0, "required_constraints", ...)`` is one role's
+    content: the model chose a value this catalog does not advertise. Anything
+    shorter is structural -- too many scopes, a scope that is not an object, a
+    malformed ``not_covered`` -- and remains a hard failure at the boundary.
+    """
+
+    for error in errors:
+        location = tuple(error.get("loc") or ())
+        if len(location) < 3:
+            return False
+        if location[0] != "scopes" or not isinstance(location[1], int):
+            return False
+    return True
+
+
+def _one_scope_is_a_list_of_one(cls: Any, data: Any, handler: Any) -> Any:
+    """Read a single search scope written without its wrapper.
+
+    "add the Xenial Aviator Sunglasses" produced a scope's fields at the top
+    level -- category, subcategory, semantic_query -- with no `scopes` list
+    around them. The whole call was invalid, and the shopper was told "I
+    couldn't complete a valid catalog search for that request" on a turn that
+    named one product plainly.
+
+    A lone scope is one scope however it is wrapped. Every field inside it is
+    still validated exactly as before, so nothing is admitted that a properly
+    wrapped call would not have been.
+    """
+
+    if isinstance(data, dict) and "scopes" not in data:
+        scope_fields = {
+            "taxonomy",
+            "semantic_query",
+            "requested_product_type",
+            "required_constraints",
+            "category",
+            "subcategory",
+            "shopper_guidance",
+        }
+        if scope_fields & set(data):
+            not_covered = data.get("not_covered")
+            scope = {k: v for k, v in data.items() if k != "not_covered"}
+            data = {"scopes": [scope], "not_covered": not_covered}
+    return handler(data)
+
+
+def _admit_scopes_for_adjudication(cls: Any, data: Any, handler: Any) -> Any:
+    """Let the search body judge scope content, one role at a time.
+
+    The tool schema is how the catalog's shape reaches the model: every
+    advertised value is in it, and it must stay exact. But a schema bound as
+    ``args_schema`` also *adjudicates*, and it can only do so for the whole
+    call. One unadvertised colour on a third scope therefore cancelled two
+    valid searches, and the shopper was told the assistant could not search at
+    all -- observed live, `BUGS_OPEN` item 7.
+
+    `search_catalog` already validates each scope against this same model and
+    already reports rejections per role. It was built that way. Nothing reached
+    it, because the boundary answered first.
+
+    So the schema keeps advertising and stops adjudicating scope content: when
+    every complaint is about what is inside a scope, the raw scopes are admitted
+    and the body decides them one at a time -- rejecting the role that is wrong
+    and running the roles that are right. Structural complaints still fail here,
+    where they are the boundary's own business.
+    """
+
+    try:
+        return handler(data)
+    except ValidationError as exc:
+        if not isinstance(data, dict):
+            raise
+        if not _scope_content_errors_only(exc.errors()):
+            raise
+        scopes = data.get("scopes")
+        if not isinstance(scopes, list) or not scopes:
+            raise
+        return cls.model_construct(
+            scopes=list(scopes),
+            not_covered=data.get("not_covered"),
+        )
 
 
 def _search_catalog_scopes_input_model(
@@ -1210,7 +1412,17 @@ def _search_catalog_scopes_input_model(
                 description=(
                     "One search scope per advertised category. Each scope owns "
                     "its own taxonomy and constraints, so a filter for one role "
-                    "can never exclude another role's products."
+                    "can never exclude another role's products -- and equally, a "
+                    "filter the shopper gave for one role must not be repeated "
+                    "onto another. A filter this role was never given empties "
+                    "this role's results: 'a dress in size 2 and shoes' sizes "
+                    "the dress and says nothing about the shoes, so the shoes "
+                    "scope carries no size. Leave a constraint out rather than "
+                    "carry one across. One role gets one scope carrying every "
+                    "faithful advertised type for it; do not spend a spare "
+                    "scope on an adjacent category or a one-piece substitute. "
+                    "A dress is not a bottom and does not satisfy a request "
+                    "for separates."
                 ),
             ),
         ),
@@ -1221,14 +1433,39 @@ def _search_catalog_scopes_input_model(
                 max_length=10,
                 description=(
                     "Product types the shopper asked for that no advertised "
-                    "category covers, in the shopper's own words. Do not search "
+                    "subcategory denotes, in the shopper's own words. Do not search "
                     "for these -- naming them here is what records the request so "
                     "it can be answered. A shopper asking for 'a pan, a shoe and "
                     "a bag' gets scopes for the shoe and the bag, and 'pan' here."
                 ),
             ),
         ),
+        __validators__={
+            "_one_scope_is_a_list_of_one": model_validator(mode="wrap")(
+                classmethod(_one_scope_is_a_list_of_one)
+            ),
+            "_admit_scopes_for_adjudication": model_validator(mode="wrap")(
+                classmethod(_admit_scopes_for_adjudication)
+            ),
+        },
     )
+
+
+def _advertised_range(capability: Any) -> str:
+    """The lowest and highest values the catalog holds for a numeric filter."""
+
+    low = getattr(capability, "min_value", None)
+    high = getattr(capability, "max_value", None)
+    if low is None and high is None:
+        return ""
+
+    def _render(value: Any) -> str:
+        number = float(value)
+        return f"{number:.2f}".rstrip("0").rstrip(".")
+
+    if low is not None and high is not None:
+        return f"{_render(low)} to {_render(high)}"
+    return f"from {_render(low)}" if low is not None else f"up to {_render(high)}"
 
 
 def _taxonomy_list_field(
@@ -1240,18 +1477,36 @@ def _taxonomy_list_field(
     field_name = advertised_field or "not advertised"
     description = (
         f"Exact {role} values advertised through catalog field '{field_name}'. "
-        "Use an empty list when the other taxonomy role supplies the text scope or "
-        "the search is image-only."
+        "Use an empty list, or leave it out, when the other taxonomy role "
+        "supplies the text scope or the search is image-only."
     )
     if role == "category":
-        description += " Select at most one category per catalog search."
+        description += (
+            " Select at most one category per catalog search. Omit it entirely "
+            "when the shopper named no category and no product type -- "
+            "\"nothing over $50\" belongs to every category, and choosing one "
+            "for them shows a fraction of what they asked to see. A search "
+            "with no category needs a hard filter to scope it."
+        )
+    else:
+        description += (
+            " Omit it to search the whole category, which is what 'show me "
+            "some jewellery' asks for: the shopper named no subcategory and "
+            "narrowing to one would be choosing for them."
+        )
     if not values:
-        return list[str], Field(..., max_length=0, description=description)
+        return list[str], Field(
+            default_factory=list, max_length=0, description=description
+        )
 
     literal_type = Literal.__getitem__(tuple(values))
     max_length = 1 if role == "category" else None
+    # Required at the boundary meant "show me some jewellery" -- a category
+    # with no subcategory named -- was rejected outright, and the shopper was
+    # asked to clarify a request that could not have been plainer. It killed
+    # J17 at turn 1 and took the journey with it.
     return list[literal_type], Field(
-        ...,
+        default_factory=list,
         max_length=max_length,
         description=description,
     )
@@ -1264,31 +1519,83 @@ def _taxonomy_list_field(
 #: returned women's sunglasses. The rule below is not new -- it is the one
 #: already written in the system prompt, moved to the channel the model reads.
 _WEARER_AUDIENCE_FILTER_DESCRIPTION = (
-    "Who the products are for. When the shopper names the person this is for, "
-    "send every advertised value that suits them, and a value covering all "
-    "genders always suits anyone, so include it alongside the value for their "
-    "gender. Shoppers name people casually and every one of these counts the "
-    "same as a formal word: hubby, my guy, my man, my other half, my brother, "
-    "my dad, my son, my wife, my girlfriend, my mum, my sister, my daughter, "
-    "the kids. Buying for a woman means the women's value and the all-genders "
-    "value together, because both suit her; buying for a man in a catalog "
-    "that advertises no men's value means the all-genders value alone, "
-    "because the women's pieces genuinely do not suit him. When nobody is "
-    "named, omit this filter entirely -- do not send a covers-everyone value "
-    "to mean unspecified, which would discard everything stocked for one "
-    "audience. If nothing advertised suits the named person, such as a child "
-    "in an adult-only catalog, search for them anyway and let it return "
-    "nothing; never substitute what does not suit them. The person-words "
-    "listed above are for reading what the shopper said. They are not "
-    "audiences to offer back: a reply may name only audiences this catalog "
-    "advertises, and must never suggest looking for one it does not stock. "
-    "Only this turn's "
-    "words count. An audience established earlier in the conversation never "
-    "carries into a request that does not name that person again, however "
-    "obviously they are still around: send no filter and let the shopper "
-    "redirect you. Enumerating the ways a shopper moves on is hopeless, so "
-    "the rule is the reverse -- naming someone is what turns the filter on."
+    # Two halves, learned separately and measured apart.
+    #
+    # The MEANING of the values comes from Catalog capabilities, not from a
+    # table of cases written here. Enumerating them scored a man 0/10 to 11/18
+    # depending on wording, and "shades for hubby" never once: the model had
+    # to infer from the bare string `womens` whether it was a wearability
+    # constraint or a department, and men do shop womenswear. Published as a
+    # fact, hubby went to 4/4 and dad to 4/4.
+    #
+    # The TRIGGER and the ORDER have to stay here. A version that carried only
+    # the meanings sent no filter at all for a wife or a sister, 0/10 -- it
+    # knew what the values meant and never reached for them. So: say plainly
+    # when to send it, and keep the covers-everyone value unconditional so
+    # there is no judgment to lose.
+    "Who the products are for. Send this whenever the shopper names the person "
+    "they are buying for, however casually. Every one of these counts the same "
+    "as a formal word: hubby, my guy, my man, my other half, my brother, my "
+    "dad, my son, my wife, my girlfriend, my mum, my sister, my daughter, the "
+    "kids. Build the list "
+    "in two steps, in this order. First: the value covering all genders is "
+    "always in the list, because it suits everyone -- it is never the thing "
+    "you leave out. Second: add any other value only when its published "
+    "meaning fits the person named. Buying for a woman, the women's value fits "
+    "and is added, so the list holds both. Buying for a man or a child, "
+    "nothing is added and the covers-everyone value goes alone. Being the "
+    "closest value available is not the test and never justifies adding one. "
+    "If nothing published suits the named person, such as a child in a "
+    "catalog whose values are all adult, send what covers everyone, say so "
+    "in the reply, and never substitute what does not suit them. "
+    "The person-words listed above are for reading what the shopper said. "
+    "They are not audiences to offer back: a reply may name only audiences "
+    "this catalog advertises, and must never suggest looking for one it "
+    "does not stock. "
+    "When nobody is named, omit this filter entirely -- do not send a "
+    "covers-everyone value to mean unspecified, which "
+    "discards everything stocked for one audience. Only this turn's words "
+    "count. An audience established earlier never carries into a request that "
+    "does not name that person again, however obviously they are still "
+    "around: send no filter and let the shopper redirect you. Enumerating the "
+    "ways a shopper moves on is hopeless, so the rule is the reverse -- naming "
+    "someone is what turns the filter on."
 )
+
+
+def _an_empty_range_is_no_filter(cls, value: Any) -> Any:
+    """A numeric constraint with no bounds is no constraint.
+
+    "I have a wedding to go to and I need something to wear" sent every
+    advertised filter as null, price among them, as `{"min": null, "max":
+    null}`. That is the model saying it wants no price filter, in the shape the
+    schema gave it. Refusing it cost the turn twice over: the search was turned
+    back, and the repair the model reached for was to invent bounds -- 39.90 to
+    269.99, the whole catalog, which filters nothing -- while dropping the
+    subcategory to make room. That changed the scope, the repair lock refused
+    the changed scope, and the shopper was told no valid search could be built
+    for a wedding outfit.
+
+    An absent filter and an unbounded one ask for the same products, so this
+    reads the second as the first rather than making the model prove it meant
+    the first.
+    """
+
+    if not isinstance(value, dict):
+        return value
+    return {
+        name: (
+            None
+            if (
+                isinstance(entry, dict)
+                and entry
+                and set(entry) <= {"min", "max", "gte", "lte"}
+                and all(bound is None for bound in entry.values())
+            )
+            else entry
+        )
+        for name, entry in value.items()
+    }
 
 
 def _required_constraints_input_model(
@@ -1317,17 +1624,34 @@ def _required_constraints_input_model(
             field_type = _CatalogNumberConstraint | None
         else:
             field_type = str | list[str] | None
-        fields[name] = (
-            field_type,
-            Field(
-                default=None,
-                description=(
-                    _WEARER_AUDIENCE_FILTER_DESCRIPTION
-                    if name and name == wearer_audience_field
-                    else f"Advertised hard filter '{name}'."
-                ),
-            ),
-        )
+        if name and name == wearer_audience_field:
+            description = _WEARER_AUDIENCE_FILTER_DESCRIPTION
+            # The catalog publishes what its values mean; render them onto the
+            # field the model fills, not only into the capabilities block.
+            # Measured: with the meanings in the system prompt alone, "shades
+            # for hubby" went 0/4 to 3/4 -- the fact was doing real work -- but
+            # a wife or sister collapsed to 1/14, because the binding channel
+            # had lost the instruction to the weaker one. The fact belongs
+            # where the decision is made.
+            meanings = getattr(capability, "value_meanings", None) or {}
+            if meanings:
+                description += " What each value means, published by this "
+                description += "catalog: " + "; ".join(
+                    f"{value} -- {text}"
+                    for value, text in sorted(meanings.items())
+                ) + "."
+        else:
+            description = f"Advertised hard filter '{name}'."
+            # The catalog publishes the range of every numeric filter and this
+            # threw it away. Asked for "the most expensive thing you have", the
+            # assistant searched one category and reported its dearest item as
+            # the shop's -- a $189.99 purse in a catalog that runs to $269.99 --
+            # or refused outright. The answer was in capabilities the whole
+            # time; it just never reached the field the model reads.
+            span = _advertised_range(capability)
+            if span:
+                description += f" Advertised range: {span}."
+        fields[name] = (field_type, Field(default=None, description=description))
     fields["unadvertised_requirements"] = (
         list[str],
         Field(
@@ -1343,9 +1667,6 @@ def _required_constraints_input_model(
                 "recommendation adjectives such as comfortable, relaxed, soft, "
                 "breathable, lightweight, casual, dressy, bold, bright, vibrant, "
                 "or sporty always stay semantic; never put them in this field. "
-                "Before calling the tool, include every exact advertised filter "
-                "value that modifies the target product; do not leave this object "
-                "empty when one applies. "
                 "In an 'A or B' request, do not put the "
                 "supported advertised branch here. A product type never belongs "
                 "here."
@@ -1355,63 +1676,188 @@ def _required_constraints_input_model(
     return create_model(
         "CatalogRequiredConstraints",
         __config__=ConfigDict(extra="forbid"),
+        __validators__={
+            "_an_empty_range_is_no_filter": model_validator(mode="before")(
+                classmethod(_an_empty_range_is_no_filter)
+            ),
+        },
         **fields,
     )
 
 
+def _a_list_written_as_json_text(value: Any) -> Any:
+    """Read a list the model encoded as a string.
+
+    "add the Xenial Aviator Sunglasses" found the product, read its details,
+    and then sent `{"items": "[{\\"product_ref\\": \\"generated:9b8...\\"}]"}` --
+    the list JSON-encoded inside a string. The call was rejected whole and the
+    shopper's cart stayed empty on a turn where everything else had gone right.
+
+    The same punctuation cost a cart again through skill activation, where it
+    was not forgiven. A cart tool called without cart-management is refused,
+    and the right recovery is to activate it and try again -- which the model
+    did, as `{"skill_names": "[\\"cart-management\\"]"}`. That errored, the
+    retry never came, and the reply said the dress was in the cart when it was
+    not. Two turns of J01 ended that way in three runs.
+
+    Decoding it changes nothing about what was asked for: the contents are
+    validated against the same model either way, so a malformed item still
+    fails. Only the punctuation around it is forgiven.
+    """
+
+    if not isinstance(value, str):
+        return value
+    try:
+        decoded = json.loads(value)
+    except (TypeError, ValueError):
+        return value
+    return decoded if isinstance(decoded, list) else value
+
+
 class _ShopperSkillActivationInput(BaseModel):
-    """Shared composition rules for dynamic shopper-skill activation."""
+    """Shared composition rules for dynamic shopper-skill activation.
+
+    The composition rule itself lives on the subclass `create_model` builds,
+    because it depends on which skills are registered and what roles they
+    declare. This base carries only what every registry shares.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     skill_names: list[str]
 
-    @model_validator(mode="after")
-    def primary_procedures_are_exclusive(self) -> "_ShopperSkillActivationInput":
-        selected = set(self.skill_names)
-        primary = selected.intersection(
-            {"outfit-styling", "product-discovery"}
-        )
-        if len(primary) > 1:
+    # check_fields, because the real field is declared by the create_model
+    # subclass that narrows it to the registered skill names.
+    _accept_skill_names_as_text = field_validator(
+        "skill_names", mode="before", check_fields=False
+    )(_a_list_written_as_json_text)
+
+
+def primary_skills_by_group(
+    skills: Mapping[str, Any],
+) -> dict[str, tuple[str, ...]]:
+    """Group the registry's primary skills by the group they are exclusive in.
+
+    Read off `role` and `exclusive_group` in the frontmatter, which
+    `_shopper_skill_from_metadata` already requires to agree: a skill is
+    primary if and only if it names a group.
+    """
+
+    groups: dict[str, list[str]] = {}
+    for name, skill in skills.items():
+        if getattr(skill, "role", "") != "primary":
+            continue
+        group = getattr(skill, "exclusive_group", None)
+        if group:
+            groups.setdefault(str(group), []).append(name)
+    return {group: tuple(sorted(names)) for group, names in groups.items()}
+
+
+def _one_primary_per_group(self: Any) -> Any:
+    """Reject two primaries from one exclusive group, or a stranded modifier.
+
+    This used to intersect against the literal set
+    ``{"outfit-styling", "product-discovery"}``. `catalog-questions` shipped on
+    2026-08-25 declaring ``role: primary`` and ``exclusive_group:
+    product_procedure`` -- the same group as the other two -- and the check
+    could not see it. Measured on the shipped registry: selecting it beside
+    product-discovery was *accepted*, two primaries from one group, while
+    selecting it beside budget-shopping was *rejected* as a modifier with no
+    primary, which is the shape of "do you have anything for $5 to $10".
+
+    `ShopperSkill.exclusive_group` was parsed, validated and stored the whole
+    time, and nothing ever read it. So read it.
+    """
+
+    cls = type(self)
+    groups: Mapping[str, tuple[str, ...]] = cls._primary_skills_by_group
+    selected = set(self.skill_names)
+    primaries: list[str] = []
+    for group, names in sorted(groups.items()):
+        chosen = sorted(selected.intersection(names))
+        if len(chosen) > 1:
             raise PydanticCustomError(
                 SKILL_ACTIVATION_MULTIPLE_PRIMARY,
-                "select exactly one primary procedure: outfit-styling or "
-                "product-discovery, never both",
+                "select exactly one primary procedure: {options}, never more "
+                "than one",
+                {"options": " or ".join(chosen)},
             )
-        if "budget-shopping" in selected and len(primary) != 1:
-            raise PydanticCustomError(
-                SKILL_ACTIVATION_MODIFIER_REQUIRES_PRIMARY,
-                "budget-shopping requires exactly one primary procedure: "
-                "outfit-styling or product-discovery",
-            )
-        return self
+        primaries.extend(chosen)
+
+    modifiers: tuple[str, ...] = cls._modifier_skills
+    stranded = sorted(selected.intersection(modifiers))
+    if stranded and not primaries:
+        raise PydanticCustomError(
+            SKILL_ACTIVATION_MODIFIER_REQUIRES_PRIMARY,
+            "{modifier} is a modifier and requires exactly one primary "
+            "procedure: {options}",
+            {
+                "modifier": stranded[0],
+                "options": " or ".join(
+                    name for names in sorted(groups.values()) for name in names
+                ),
+            },
+        )
+    return self
 
 
 def _skill_activation_input_model(
-    skill_names: tuple[str, ...],
+    skills: Mapping[str, Any],
 ) -> type[BaseModel]:
     """Create the semantic skill-selection schema from the active registry."""
 
-    skill_name_type = Literal.__getitem__(skill_names)
-    return create_model(
+    skill_names = tuple(skills)
+    groups = primary_skills_by_group(skills)
+    modifiers = tuple(
+        sorted(
+            name
+            for name, skill in skills.items()
+            if getattr(skill, "role", "") == "modifier"
+        )
+    )
+    # Named here rather than in a literal, so a skill added to the registry is
+    # described to the model without anyone remembering to edit this string.
+    every_primary = [name for names in sorted(groups.values()) for name in names]
+    choose_one = (
+        " Select exactly one primary procedure -- "
+        + ", ".join(every_primary)
+        + " -- and never two."
+        if every_primary
+        else ""
+    )
+    modifier_rule = (
+        " " + ", ".join(modifiers) + " may only accompany a primary, never "
+        "stand alone."
+        if modifiers
+        else ""
+    )
+    model = create_model(
         "ShopperSkillActivationInput",
         __base__=_ShopperSkillActivationInput,
+        __validators__={
+            "_one_primary_per_group": model_validator(mode="after")(
+                _one_primary_per_group
+            ),
+        },
         skill_names=(
-            list[skill_name_type],
+            list[Literal.__getitem__(skill_names)],
             Field(
                 ...,
                 min_length=1,
                 max_length=len(skill_names),
                 description=(
                     "Smallest set of registered shopper skills whose descriptions "
-                    "cover the current turn's complete intent. For product search "
-                    "or styling, select exactly one primary procedure: outfit-"
-                    "styling or product-discovery, never both. Cart and policy "
-                    "intents may select their standalone skill without a primary."
+                    "cover the current turn's complete intent." + choose_one
+                    + modifier_rule
+                    + " Standalone skills may be selected with or without a "
+                    "primary."
                 ),
             ),
         ),
     )
+    model._primary_skills_by_group = groups
+    model._modifier_skills = modifiers
+    return model
 
 
 def _taxonomy_hard_constraints(
@@ -1527,15 +1973,6 @@ class AddCartItemsToolItemInput(BaseModel):
         ge=1,
         description="Quantity of this product to add.",
     )
-    quantity_stated_as: str | None = Field(
-        default=None,
-        max_length=200,
-        description=(
-            "The shopper's own words asking for more than one, quoted from "
-            "their message -- 'two of them', 'add 3'. Required above quantity "
-            "1. One is what 'add it' means; any more is a number they chose."
-        ),
-    )
     expected_display_name: str | None = Field(
         default=None,
         description=(
@@ -1552,17 +1989,6 @@ class AddCartItemsToolItemInput(BaseModel):
             "is 'onesize' -- asking what size handbag someone wants is worse "
             "than not asking. Use only a size that product actually comes in; "
             "the sizes differ per product and are in its details."
-        ),
-    )
-    size_stated_as: str | None = Field(
-        default=None,
-        max_length=200,
-        description=(
-            "The shopper's own words that gave this size, quoted from their "
-            "message -- 'size 8', 'in a 10 as well'. Required with a size "
-            "unless the same size is already on their cart line. A size they "
-            "did not ask for is not their size: when they have not said one, "
-            "leave both empty and ask."
         ),
     )
 
@@ -1645,6 +2071,7 @@ def _empty_agent_diagnostics(final_termination_reason: str) -> dict[str, Any]:
         "product_evidence": [],
         "product_evidence_truncated": False,
         "catalog_scope_outcomes": [],
+        "shopper_sizes": [],
         "final_termination_reason": final_termination_reason,
         "partial_graph_messages": [],
     }
@@ -1784,6 +2211,7 @@ def _collect_agent_diagnostics(
     diagnostics["catalog_scope_outcomes"] = _diagnostic_catalog_scope_outcomes(
         turn_messages
     )
+    diagnostics["shopper_sizes"] = _diagnostic_shopper_sizes(turn_messages)
     if preserve_partial_messages:
         partial, truncated = _serialize_partial_graph_messages(turn_messages)
         diagnostics["partial_graph_messages"] = partial
@@ -2252,6 +2680,39 @@ def _diagnostic_product_evidence(
     return evidence, truncated
 
 
+def _diagnostic_shopper_sizes(messages: list[Any]) -> list[str]:
+    """The sizes the shopper's own searches were filtered by this turn.
+
+    A showing made under a size filter is a size-qualified showing: those four
+    sandals came back *because* they come in a 7. That fact belonged to the
+    turn and was thrown away at the end of it, so "ok, just show me sandals in
+    a 7" followed by "add the first one" asked which size -- the shopper having
+    said it one turn earlier.
+
+    Recorded per turn rather than per shopper. Nothing here says the shopper
+    is a 7; it says this showing was. A later showing carries its own sizes or
+    none, and the two never merge.
+    """
+
+    sizes: list[str] = []
+    for message in messages:
+        if _message_type(message) != "tool":
+            continue
+        payload = evidence_of(message) or {}
+        outcome = payload.get("scope_outcome") or {}
+        if outcome.get("outcome") not in {None, "results"}:
+            continue
+        for scope in (payload.get("products") or []):
+            if not isinstance(scope, dict):
+                continue
+            confirmed = (scope.get("search_scope") or {}).get("confirmed_filters")
+            for value in ((confirmed or {}).get("sizes") or []):
+                text = str(value).strip()
+                if text and text not in sizes:
+                    sizes.append(text)
+    return sizes[:4]
+
+
 def _diagnostic_catalog_scope_outcomes(
     messages: list[Any],
 ) -> list[dict[str, Any]]:
@@ -2363,6 +2824,42 @@ def _audience_assumption_events(
             event_type="audience_assumption_disclosed",
             source_kind="runtime",
             payload={"audience": disclosed[:8]},
+        )
+    ]
+
+
+def _system_identification_events(
+    state: Any,
+    identity: Any,
+) -> list[ConversationEvent]:
+    """Record which products the record itself picked this turn.
+
+    Establishment was scoped to the message that produced it. A shopper chose
+    "the first pairing" in one turn and, three turns later -- having only
+    answered the assistant's own questions -- was still being told the products
+    were not established, because answering a question names nothing. The same
+    add was refused three times and accepted on the fourth, when they finally
+    typed both catalog names. The request never changed.
+
+    The choice itself is durable: it was made against a set of products the
+    record wrote down. So it is recorded here, and the memory service files it
+    against the set it was made from -- which is what makes it lapse when a new
+    set is shown, and nothing else does.
+    """
+
+    refs = [
+        str(ref)
+        for ref in (getattr(state, "system_identified_products", None) or [])
+        if ref
+    ]
+    if not refs:
+        return []
+    return [
+        ConversationEvent(
+            event_key=f"system-identified:{identity.request_id}",
+            event_type="historical_reference_resolved",
+            source_kind="runtime",
+            payload={"product_refs": refs[:16]},
         )
     ]
 
@@ -2518,6 +3015,49 @@ def _append_product_results(state: State, products: list[ProductSummary]) -> Non
         state.product_results.append(payload)
         if product_id:
             existing_ids.add(product_id)
+
+
+def _products_found_receipt(state: Any) -> str:
+    """Answer from the products this turn actually found, or "" if none.
+
+    A turn that fetched a Cancun forecast, had one search refused and its retry
+    succeed, then ran out of budget before writing anything, told the shopper
+    "I could not complete that shopping request. Please try again." The work was
+    done and thrown away, and the shopper was asked to pay for it twice.
+
+    This is not a reply the assistant composed -- it names what was found and
+    nothing more, because everything that would need judgement is exactly what
+    there was no budget left to do.
+    """
+
+    products = [
+        record
+        for record in (getattr(state, "product_results", None) or [])
+        if isinstance(record, dict) and record.get("display_name")
+    ]
+    if not products:
+        return ""
+    lines = ["Here is what I found before I ran out of time on this request:"]
+    seen: set[str] = set()
+    for record in products:
+        name = str(record.get("display_name"))
+        if name in seen:
+            continue
+        seen.add(name)
+        price = record.get("price")
+        amount = (
+            f" -- {price.get('amount')} {price.get('currency')}"
+            if isinstance(price, dict) and price.get("amount") is not None
+            else ""
+        )
+        lines.append(f"- {name}{amount}")
+        if len(seen) >= 6:
+            break
+    lines.append(
+        "Ask me about any of these, or say what to change and I will search "
+        "again."
+    )
+    return "\n".join(lines)
 
 
 def _committed_effect_receipt(
@@ -3314,6 +3854,49 @@ def _customer_safe_search_evidence(payload: dict[str, Any]) -> str:
         relation = _scope_relation_line(payload, has_products=False)
         if relation:
             lines.append(relation)
+        # Zero results told the model what was absent and nothing about what
+        # was present, so it asked. "No green dress in a size 2 -- would you
+        # like size 4 instead?" showed nothing, on a turn where the catalog
+        # held green dresses in a 4 and plenty of size 2 dresses in other
+        # colours. A shopper asked to choose between two things they cannot
+        # see has been given less than nothing.
+        relaxed = payload.get("relaxed_products")
+        if isinstance(relaxed, list) and relaxed:
+            dropped = [str(v) for v in (payload.get("relaxed_dropped") or [])]
+            lines.append(
+                _render_product_evidence_summary(
+                    relaxed,
+                    heading="CUSTOMER_SAFE_RELAXED_SEARCH_EVIDENCE",
+                    note=(
+                        "The same search without "
+                        + (", ".join(dropped) if dropped else "its optional constraints")
+                        + " found these. They are real products and may be "
+                        "shown. Show them in this reply rather than asking "
+                        "whether the shopper would like to widen the search: "
+                        "being offered a choice between two things you cannot "
+                        "see is worse than being shown one of them. Say plainly "
+                        "which requirement could not be met and which you "
+                        "relaxed. "
+                        + (
+                            "The shopper's size was kept -- these are their size."
+                            if payload.get("relaxed_kept_the_size", True)
+                            else "THE SHOPPER'S SIZE WAS NOT KEPT. Nothing they "
+                            "asked for exists in it. Say that first, name the "
+                            "sizes these actually come in, and never present "
+                            "them as the size they asked for."
+                        )
+                    ),
+                    confirmed_filters={},
+                    taxonomy_scope=payload.get("taxonomy") or {},
+                )
+            )
+        else:
+            lines.append(
+                "NEXT: nothing was found with these constraints and nothing "
+                "was found without the optional ones either. Say so plainly, "
+                "name what the catalog does carry in this category, and do "
+                "not answer with a question alone."
+            )
         return "\n".join(lines)
 
     lines = [_summarize_typed_product_evidence(payload)]
@@ -3436,8 +4019,12 @@ def _assumed_audience_line(payload: dict[str, Any]) -> str:
     return (
         "ASSUMED_AUDIENCE: nobody said who these pieces are for; every one "
         "that came back is for " + ", ".join(sorted(audience)) + ". Open by "
-        "naming that as what you have assumed the shopper is looking for -- "
-        "\"assuming you're looking for ... clothes\" -- and invite them to "
+        "naming that as what you have assumed the shopper is looking for, in "
+        "words that fit what they actually asked for -- \"assuming you're "
+        "looking for women's dresses\", \"assuming these are for you\". Never "
+        "describe a bag, a pair of sunglasses or a bracelet as something worn "
+        "-- a reply about tote bags opened by calling them things to put on "
+        "-- and invite them to "
         "correct it. One clause, then get on with the answer. It is an "
         "assumption about what they want, not a note about the shop's style "
         "or about what this reply happened to return. Never turn it into a "
@@ -3692,6 +4279,71 @@ def _tool_search_mode(value: str | None) -> str | None:
 _NON_ATTRIBUTE_SEARCH_KEYS = frozenset({"catalog_text", "similarity", "taxonomy"})
 
 
+def _in_presentation_order(
+    products: list[dict[str, Any]],
+    reply: str,
+) -> list[dict[str, Any]]:
+    """The shown products, ordered as the reply presents them.
+
+    The cards and the words are the same list to a shopper, so "the second one"
+    has to mean one product. They were two orders: the cards followed the
+    catalog's ranking and the sentences followed whatever the model wrote, and
+    across recorded turns they disagreed about half the time.
+
+    The order is settled once, here, where the reply and the products are both
+    in hand -- so every consumer downstream renders one order rather than
+    each choosing its own.
+
+    This looks for the exact display names the service itself produced. It reads
+    nothing else out of the reply, and decides nothing but sequence: a product
+    the reply never names keeps its ranking, after the ones it does.
+    """
+
+    if not products or not reply:
+        return products
+    mentioned: list[tuple[int, int, dict[str, Any]]] = []
+    unmentioned: list[tuple[int, dict[str, Any]]] = []
+    for rank, product in enumerate(products):
+        name = str(product.get("display_name") or "")
+        at = reply.find(name) if name else -1
+        if at >= 0:
+            mentioned.append((at, rank, product))
+        else:
+            unmentioned.append((rank, product))
+    # Rank breaks ties, so two products named in the same breath keep the
+    # catalog's order between them.
+    mentioned.sort(key=lambda item: (item[0], item[1]))
+    return [product for _at, _rank, product in mentioned] + [
+        product for _rank, product in unmentioned
+    ]
+
+
+def _images_in_product_order(
+    images: dict[str, str],
+    products: list[dict[str, Any]],
+) -> dict[str, str]:
+    """The image map, following the product order, keeping every entry.
+
+    The cards render from this map, so it has to agree with the list beside it.
+    Anything it holds that the products do not name is kept at the end rather
+    than dropped: it was shown, and losing it would remove a card rather than
+    move one.
+    """
+
+    if not images:
+        return images
+    named = [
+        str(product.get("display_name") or "")
+        for product in products
+        if str(product.get("display_name") or "") in images
+    ]
+    seen = set(named)
+    return {
+        **{name: images[name] for name in named},
+        **{name: url for name, url in images.items() if name not in seen},
+    }
+
+
 def _search_attribute_facts(product: Any) -> dict[str, str]:
     """Structured attributes the catalog confirmed for one search hit.
 
@@ -3794,19 +4446,11 @@ def _normalize_cart_add_tool_items(
                     if parsed.expected_display_name
                     else ""
                 ),
-                "size_stated_as": (parsed.size_stated_as or "").strip(),
-                "quantity_stated_as": (parsed.quantity_stated_as or "").strip(),
             },
         )
         entry["quantity"] += quantity
         if not entry["expected_display_name"] and parsed.expected_display_name:
             entry["expected_display_name"] = parsed.expected_display_name.strip()
-        # Merged items share one entry, so a quotation on any of them is the
-        # quotation for the size or quantity they merged into. Keeping only the
-        # first item's dropped a later one that carried the shopper's words.
-        for field in ("size_stated_as", "quantity_stated_as"):
-            if not entry[field] and getattr(parsed, field, None):
-                entry[field] = str(getattr(parsed, field)).strip()
     return normalized
 
 
@@ -3814,7 +4458,15 @@ def _cart_add_scope_failures(
     user_query: str,
     requested_products: list[tuple[str, ProductSummary]],
     available_products: Any,
-) -> list[str]:
+) -> list[tuple[str, str]]:
+    """Which requested products fall outside this turn's explicit request.
+
+    Returns the ref beside its message. The ref is what a caller needs to know
+    which item failed, and recovering it by reading the message back would be
+    parsing prose for control state -- which is the thing this codebase refuses
+    to do everywhere else.
+    """
+
     explicitly_named = _explicitly_named_products(user_query, available_products)
     if not explicitly_named:
         return []
@@ -3822,17 +4474,179 @@ def _cart_add_scope_failures(
     explicit_names = {
         _normalize_product_name(product.display_name) for product in explicitly_named
     }
-    failures = []
+    failures: list[tuple[str, str]] = []
     for product_ref, product in requested_products:
         if _normalize_product_name(product.display_name) in explicit_names:
             continue
         failures.append(
-            f"- PRODUCT_REF '{product_ref}': selected '{product.display_name}' is "
-            "outside the current explicit add request. The current request names: "
-            f"{_format_product_refs(explicitly_named)}. Retry with matching "
-            "PRODUCT_REF values only, or ask a clarification."
+            (
+                product_ref,
+                f"- PRODUCT_REF '{product_ref}': selected '{product.display_name}' "
+                "is outside the current explicit add request. The current request "
+                f"names: {_format_product_refs(explicitly_named)}. Retry with "
+                "matching PRODUCT_REF values only, or ask a clarification.",
+            )
         )
     return failures
+
+
+def format_most_recent_subject(state: Any) -> str:
+    """Name what the conversation is about now, so a pronoun has an anchor.
+
+    "Add the Jade Suede Heels in a 6", then "actually make those a 7", resolved
+    to a dress from eight turns earlier. Nothing was missing: the heels were
+    the line directly above the pronoun in the conversation lane, the newest
+    showing in the index, and a line in the cart. The model had to derive the
+    referent from three places and derived it wrongly.
+
+    So the runtime derives it and states what it got. This is not a fourth copy
+    of the conversation -- it is the resolution of it, which is the part that
+    was going wrong. What just happened is state, not interpretation.
+
+    Most recent first: what the last turn did to the cart, then what it showed.
+    Silent when there is neither, so an opening turn gains nothing to ignore.
+    """
+
+    # Only the newest showing for now. What the previous turn did to the cart
+    # is computed at the end of a turn for the grounding editor and never
+    # carried into the next one, so there is no field to read here yet -- and a
+    # line that is always empty is dead code pretending to be a feature.
+    lines: list[str] = []
+    sets = [
+        entry
+        for entry in (getattr(state, "historical_product_sets", None) or [])
+        if isinstance(entry, dict) and isinstance(entry.get("products"), list)
+    ]
+    if sets:
+        newest = max(sets, key=lambda entry: entry.get("turn_seq") or 0)
+        shown = [
+            str(item.get("name"))
+            for item in newest["products"][:4]
+            if isinstance(item, dict) and item.get("name")
+        ]
+        if shown:
+            lines.append(
+                f"last shown (turn {newest.get('turn_seq')}): " + "; ".join(shown)
+            )
+    if not lines:
+        return ""
+    body = "\n".join(f"- {line}" for line in lines)
+    return (
+        "MOST RECENT SUBJECT (what the conversation is about right now):\n"
+        f"{body}\n"
+        'A bare pronoun -- "those", "it", "them", "that one" -- means something '
+        "here unless the shopper names another product. Resolve it here first, "
+        "and look further back only if nothing here fits."
+    )
+
+
+def _identified_in_the_current_showing(state: Any) -> set[str]:
+    """Products the record picked from the set now in front of the shopper.
+
+    An identification is filed against the showing it was made from, so this is
+    simply the newest showing's own list. When a newer set is presented it
+    becomes the newest, carrying its own choices and none of the older set's --
+    which is the lapse, expressed as a consequence of where the fact is kept
+    rather than as a rule that has to be remembered.
+    """
+
+    sets = [
+        entry
+        for entry in (getattr(state, "historical_product_sets", None) or [])
+        if isinstance(entry, dict) and isinstance(entry.get("products"), list)
+    ]
+    if not sets:
+        return set()
+    newest = max(sets, key=lambda entry: entry.get("turn_seq") or 0)
+    return {
+        str(ref) for ref in (newest.get("system_identified") or []) if ref
+    }
+
+
+def _reference_candidates(
+    evidence: ProductEvidence,
+    recently_shown: Sequence[Any] = (),
+) -> list[Any]:
+    """The products a reference in this turn could be pointing at."""
+
+    candidates = list(evidence.values())
+    seen = {candidate.product_id for candidate in candidates}
+    for entry in recently_shown or ():
+        ref = entry.get("ref") if isinstance(entry, dict) else None
+        name = entry.get("name") if isinstance(entry, dict) else None
+        if not ref or not name or ref in seen:
+            continue
+        seen.add(ref)
+        candidates.append(SimpleNamespace(product_id=ref, display_name=name))
+    return candidates
+
+
+def _the_only_one_on_screen_in_that_size(
+    product: Any,
+    size: str | None,
+    recently_shown: Sequence[Any] = (),
+) -> bool:
+    """Whether the size the shopper gave leaves one thing they could have meant.
+
+    "Add the black one in a 2" was refused with ten products in play -- six of
+    them clutches the same turn went and fetched because the sentence also
+    asked for a clutch. Of what was actually on screen when the shopper spoke,
+    the dress runs 2-12, the pumps 5-9 and the necklace is onesize. "In a 2"
+    leaves exactly one.
+
+    Both halves are facts. The shopper typed the size, and which products come
+    in a 2 is published by the catalog and recorded with the showing. Nothing
+    here reads what they meant; it counts what they could have meant.
+
+    Only the showing in front of them counts. Products the turn fetched
+    afterwards, for another role in the same sentence, were not on screen when
+    the reference was spoken and cannot be what it pointed at.
+    """
+
+    from .conversation_products import _same_reference
+
+    wanted = (size or "").strip().casefold()
+    if not wanted:
+        return False
+    fits: list[str] = []
+    for entry in recently_shown or ():
+        if not isinstance(entry, dict):
+            continue
+        ref, sizes = entry.get("ref"), entry.get("sizes")
+        if not ref or not isinstance(sizes, list) or not sizes:
+            # A showing that never recorded its sizes cannot narrow anything,
+            # and guessing from silence is how a wrong dress reaches a cart.
+            return False
+        values = {str(value).strip().casefold() for value in sizes}
+        if values != {_ONE_SIZE} and wanted in values:
+            fits.append(str(ref))
+    return len(fits) == 1 and _same_reference(fits[0], str(product.product_id))
+
+
+def _products_named_exactly(text: str, candidates: Any) -> list[Any]:
+    """Candidates whose full catalog name the shopper actually wrote.
+
+    Narrower than `_explicitly_named_products`, which also matches on token
+    overlap so a shortened or misspelt name still lands. That second half is a
+    reading; out-of-scope detection still wants it, a cart write does not.
+    """
+
+    normalized_text = _normalize_product_name(text)
+    if not normalized_text:
+        return []
+    padded = f" {normalized_text} "
+    named: list[Any] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        name = _normalize_product_name(getattr(candidate, "display_name", ""))
+        if not name or f" {name} " not in padded:
+            continue
+        key = getattr(candidate, "product_id", None) or name
+        if key in seen:
+            continue
+        seen.add(key)
+        named.append(candidate)
+    return named
 
 
 def _explicitly_named_products(
@@ -3910,27 +4724,6 @@ def _shopper_words_this_conversation(state: Any) -> str:
         if text:
             parts.append(str(text))
     return "\n".join(parts)
-
-
-def _shopper_said(stated_as: str | None, shopper_text: str, value: str) -> bool:
-    """Whether the shopper really said this, for this value.
-
-    Two checks, because either alone lets the wrong thing through. The words
-    must be theirs, or the model authorises itself. And the words must carry
-    the value they authorise: "3 of the flats" is a real quotation and it does
-    not say two, yet it opened the gate for a quantity of two.
-    """
-
-    quoted = " ".join((stated_as or "").split()).casefold()
-    wanted = " ".join((value or "").split()).casefold()
-    if not quoted or not wanted:
-        return False
-    # Shoppers write numbers both ways -- "add two of them" is as ordinary as
-    # "add 2". Only the value is spelled out here, never anything about intent.
-    spelled = _SPELLED_NUMBERS.get(wanted)
-    if wanted not in quoted and not (spelled and spelled in quoted):
-        return False
-    return quoted in " ".join(shopper_text.split()).casefold()
 
 
 #: A word carries no identifying weight below this, and the short ones collide
@@ -4028,107 +4821,57 @@ def _most_recently_shown(state: Any) -> list[dict]:
     return [item for item in newest["products"] if isinstance(item, dict)]
 
 
-def _reference_candidates(
-    evidence: ProductEvidence,
-    recently_shown: Sequence[Any] = (),
-) -> list[Any]:
-    """The products a reference in this turn could be pointing at."""
-
-    candidates = list(evidence.values())
-    seen = {candidate.product_id for candidate in candidates}
-    for entry in recently_shown or ():
-        ref = entry.get("ref") if isinstance(entry, dict) else None
-        name = entry.get("name") if isinstance(entry, dict) else None
-        if not ref or not name or ref in seen:
-            continue
-        seen.add(ref)
-        candidates.append(SimpleNamespace(product_id=ref, display_name=name))
-    return candidates
-
-
-def _cart_product_provenance_issue(
+def _cart_product_choice_note(
     product: Any,
     shopper_text: str,
     evidence: ProductEvidence,
     recently_shown: Sequence[Any] = (),
+    already_identified: Sequence[str] = (),
+    size: str | None = None,
 ) -> str:
-    """Say why this product cannot be trusted as the one meant, or "" if it can.
+    """Say when a product reached the cart from a description rather than a name.
 
-    A shopper shown four black dresses says "add the black one in a 2", and the
-    assistant picks one. Every other check passes: the ref was really
-    established, the name matches that ref, the size is sold and they did say
-    "in a 2". The reference resolved correctly to the wrong product -- half the
-    runs of one demo script reached fourteen turns back for a navy dress.
+    This used to refuse. It refused on the ABSENCE of confirmation -- "nothing
+    here proves the shopper meant this one" -- which is a gap in our
+    bookkeeping rather than a fact about the world, and it cost a turn every
+    time it was wrong. It was wrong in both directions inside two days: it
+    turned down a correct resolution the assistant had itself proposed by name
+    on the two previous turns, and its word scorer put a different dress in a
+    cart because `black` happened to sit in that product's title.
 
-    Which product a description means is a judgement, and the model makes it.
-    What can be checked is whether anything confirmed it:
+    So it discloses instead, on the same reasoning that took out the size and
+    quantity gates: a product nobody chose is caught by being visible, not by
+    blocking the turns that got it right. The cart is on screen, a wrong line
+    is one click to remove, and the shopper is told which reading was taken.
 
-    - the shopper named the product, in the words they actually used
-    - the record picked it, from a ref or the coordinates of a showing
-    - there was only one product it could have been
+    Silent when the choice is settled by something checkable:
 
-    None of those, and the model chose between products it was shown without
-    saying so, which is the one thing it must not do silently.
-
-    Naming is read off the shopper's own message rather than a quotation the
-    model supplies, so there is nothing to fabricate and no optional field to
-    forget. The reading is the catalog-name matching this module already does
-    for the same purpose -- names found inside a sentence, so "add the
-    Southwest Bracelet" names one.
+    - only one product it could have been
+    - the shopper wrote the catalog's own name for it
+    - the record picked it, by a ref it minted or a position it wrote down
+    - they chose it earlier and no newer showing has retired that
+    - the size they gave leaves one thing on screen it could be
     """
 
-    # What the shopper could plausibly have meant: what this turn established,
-    # and what they were last shown. Counting only this turn's evidence made
-    # the check vanish exactly when the model had already narrowed to one --
-    # four black dresses were on screen, the model resolved one of them, and
-    # with a single candidate there was nothing left to be ambiguous against.
     candidates = _reference_candidates(evidence, recently_shown)
     if len(candidates) <= 1:
         return ""
-    # Named, not uniquely named: "add the dress and the bag" names two, and
-    # each is still the shopper's own choice. What must never pass is a product
-    # they named nothing about.
-    fits = _products_the_shopper_fits(shopper_text, candidates)
-    if len(fits) == 1 and fits[0].product_id == product.product_id:
+    if _the_only_one_on_screen_in_that_size(product, size, recently_shown):
         return ""
-    if _explicitly_named_products(shopper_text, candidates):
-        # A full catalog name is naming even when several are named at once:
-        # "add the dress and the bag" is two choices, both the shopper's.
-        if any(
-            match.product_id == product.product_id
-            for match in _explicitly_named_products(shopper_text, candidates)
-        ):
-            return ""
+    if any(
+        getattr(match, "product_id", None) == product.product_id
+        for match in _products_named_exactly(shopper_text, candidates)
+    ):
+        return ""
     if evidence.identified_by_the_system(product.product_id):
         return ""
-    return (
-        f"PRODUCT NOT ESTABLISHED: the shopper did not name "
-        f"'{product.display_name}', and {len(candidates)} products are in play "
-        "this turn. Ask which one they mean, naming them, and add it when they "
-        "answer. Nothing was added."
-    )
-
-
-def _cart_quantity_provenance_issue(
-    quantity: int,
-    stated_as: str | None,
-    shopper_text: str,
-) -> str:
-    """Say why this quantity cannot be trusted, or "" if it can.
-
-    The sibling of the size. "Add it" means one, so one needs nothing; any more
-    is a number the shopper chose, and a number they did not choose is theirs to
-    pay for. Nothing else guards it -- quantity is a plain integer on the tool,
-    where the size at least had to be sold by the catalog.
-    """
-
-    if quantity <= 1:
-        return ""
-    if _shopper_said(stated_as, shopper_text, str(quantity)):
+    if str(product.product_id) in {str(ref) for ref in (already_identified or ())}:
         return ""
     return (
-        f"QUANTITY NOT ESTABLISHED: the shopper did not ask for {quantity}. "
-        "Add one, or ask how many they want. Nothing was added."
+        f"CHOSEN FROM A DESCRIPTION: the shopper did not name "
+        f"'{product.display_name}', and {len(candidates)} products were in "
+        "play. It has been added. Say which one you took them to mean and "
+        "offer to change it."
     )
 
 
@@ -4143,49 +4886,6 @@ def _cart_line_size(cart: Any, product_id: str) -> str | None:
             if size:
                 return size
     return None
-
-
-def _cart_size_provenance_issue(
-    product: Any,
-    size: str | None,
-    stated_as: str | None,
-    shopper_text: str,
-    cart_line_size: str | None,
-) -> str:
-    """Say why this size cannot be trusted, or "" if it can.
-
-    The gate below asks whether a size is present and sold. It cannot ask who
-    chose it, so a size the shopper never mentioned passed every check: "add
-    the Office A-line Dress" put a size 6 in the cart, and the shopper left the
-    conversation with three dresses and one they never asked for.
-
-    A size is a want, not a fact. The catalog says which sizes exist; only the
-    shopper says which one they want. So it comes from their words, from the
-    line already in their cart, or it is asked for.
-
-    Not a search of their message for size-like words: that would match the 6 in
-    $69.99. The model quotes them, and the quotation has to be theirs and has to
-    carry the size it authorises.
-    """
-
-    chosen = (size or "").strip()
-    if not chosen:
-        return ""
-    advertised = _advertised_sizes(product)
-    if not advertised or advertised == [_ONE_SIZE]:
-        # The catalog sells this in one size or states none. Nobody chose it,
-        # and asking a shopper what size handbag they want is worse than not
-        # asking -- the same carve-out the sold-size gate makes.
-        return ""
-    if cart_line_size and chosen.casefold() == cart_line_size.casefold():
-        return ""
-    if _shopper_said(stated_as, shopper_text, chosen):
-        return ""
-    return (
-        f"SIZE NOT ESTABLISHED: the shopper did not ask for a size {chosen}. "
-        "Ask which size they want, naming the sizes it is sold in, and add it "
-        "when they answer. Nothing was added."
-    )
 
 
 def _cart_size_issue(product: Any, size: str | None) -> str:

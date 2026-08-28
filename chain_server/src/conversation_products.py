@@ -68,7 +68,35 @@ class ProductReferenceDescriptor(_ConversationProductModel):
     ordinal: int | None = Field(
         default=None,
         ge=1,
-        description="One-based product position within the selected turn or set.",
+        description=(
+            "One-based product position within the selected turn or set. This "
+            "is how a positional reference resolves: 'the first one', 'the "
+            "second', 'the last one you showed' send `ordinal` with the "
+            "`candidate_set_id` or `turn_sequence` they were shown in, never a "
+            "guessed PRODUCT_REF. The index owns the order and you do not: "
+            "asked to add 'the first one' of four sandals, a guessed ref "
+            "picked the fourth, the name did not match it, nothing was added, "
+            "and the shopper was re-shown the same four in a different order."
+            " Sent alone it counts within the most recently shown set, which "
+            "is the one the shopper is looking at."
+        ),
+    )
+    attributes: dict[str, str] | None = Field(
+        default=None,
+        max_length=12,
+        description=(
+            "What the shopper described rather than named, in advertised "
+            "attribute values: 'the black one' is {'primary_color': 'black'}, "
+            "'the black one in a 2' adds {'sizes': '2'}. This is how a "
+            "descriptive reference resolves. It is compared against the "
+            "attributes the catalog confirmed when each product was shown, "
+            "most recently shown first, so it finds what the shopper is "
+            "pointing at rather than what shares a word with their phrase. "
+            "Send it instead of display_name, which is for a product's actual "
+            "name: nothing is called 'black one', so sending that as a name "
+            "found nothing shown, searched the catalog for it, and offered "
+            "four products the shopper had never seen."
+        ),
     )
 
     @model_validator(mode="after")
@@ -79,13 +107,22 @@ class ProductReferenceDescriptor(_ConversationProductModel):
             self.category,
             self.turn_sequence,
             self.candidate_set_id,
+            self.ordinal,
+            self.attributes,
         )
         if not any(value is not None for value in selectors):
-            raise ValueError("at least one product reference selector is required")
-        if self.ordinal is not None and (
-            self.turn_sequence is None and self.candidate_set_id is None
-        ):
-            raise ValueError("ordinal requires turn_sequence or candidate_set_id")
+            # `reference_id` is meant to be a label -- "first_sandals" -- but a
+            # model asked to add the Southwest Bracelet put the product's name
+            # there and nothing anywhere else. The whole call was refused, the
+            # name lookup that exists for exactly this never ran, and the turn
+            # died on "I could not complete that shopping request" with the
+            # product's name sitting one field over.
+            #
+            # A label that is plainly a name is a name. Reading it as one
+            # guesses nothing: it is looked up in the catalog and comes back
+            # labelled as found by name rather than shown before.
+            object.__setattr__(self, "display_name", self.reference_id)
+            return self
         return self
 
 
@@ -278,13 +315,80 @@ class ProductEvidence:
     def identified_by_the_system(self, product_ref: str) -> bool:
         """Whether the record picked this product, rather than the model."""
 
-        return (product_ref or "").strip() in self._system_identified
+        wanted = _reference_identifier(product_ref)
+        if wanted in self._system_identified:
+            return True
+        return any(
+            _same_reference(ref, wanted) for ref in self._system_identified
+        )
+
+    def system_identified(self) -> tuple[str, ...]:
+        """Every product the record picked this turn, in a stable order.
+
+        Read at finalization so the choice can be recorded. A shopper who says
+        "add the first pairing" has chosen, by a coordinate the system itself
+        wrote down -- and that choice used to be forgotten the moment the turn
+        ended, leaving them to say it again, and again, until they typed the
+        catalog's own names.
+        """
+
+        return tuple(sorted(self._system_identified))
 
     def get(self, product_ref: str) -> ProductSummary | None:
-        return self._products.get((product_ref or "").strip())
+        wanted = _reference_identifier(product_ref)
+        if not wanted:
+            return None
+        exact = self._products.get(wanted)
+        if exact is not None:
+            return exact
+        # A model that drops the scheme is still naming what the index stored.
+        # Only when it names exactly one: two matches is a real ambiguity and
+        # must miss, so the shopper is asked rather than guessed at.
+        matches = [
+            product
+            for ref, product in self._products.items()
+            if _same_reference(ref, wanted)
+        ]
+        return matches[0] if len(matches) == 1 else None
 
     def values(self) -> tuple[ProductSummary, ...]:
         return tuple(self._products.values())
+
+
+#: Characters a model may wrap an opaque identifier in. Mirrors the resolver's
+#: own tolerance in `memory_retriever/src/product_references.py`, because a ref
+#: that resolves in one lane and misses in the other is the worst of both.
+_REFERENCE_WRAPPERS = "<>[]{}\"'`"
+
+
+def _reference_identifier(value: str) -> str:
+    """The identifier, without the punctuation a model may wrap it in."""
+
+    return (value or "").strip().strip(_REFERENCE_WRAPPERS).strip()
+
+
+def _same_reference(stored: str, given: str) -> bool:
+    """Whether these name the same product, however the model wrote it.
+
+    Asked to add a tote it had been shown one turn earlier, the model sent
+    `92a114b74aaa39ea` for `generated:92a114b74aaa39ea`, was told the ref did
+    not match, retried the identical value until its budget ran out, and then
+    told the shopper the bag was in their cart.
+
+    A bare identifier names what the index stored just as exactly as the
+    qualified form, so accepting it guesses nothing. Two different schemes are
+    two different references and still do not match.
+    """
+
+    left, right = _reference_identifier(stored), _reference_identifier(given)
+    if left == right:
+        return True
+    for bare, qualified in ((left, right), (right, left)):
+        if ":" in bare or ":" not in qualified:
+            continue
+        if qualified.split(":", 1)[1] == bare:
+            return True
+    return False
 
 
 #: Fields the catalog returns alongside attributes that are not product facts:
@@ -418,11 +522,29 @@ def format_product_resolution(result: ResolveConversationProductsResult) -> str:
         #
         # Which recovery fits depends on whether the shopper named a product or
         # pointed at one, and the model is the only reader that can tell.
+        # What was checked, not what was concluded. Two things were compared:
+        # the PRODUCT_REF, and the display name as a whole string. "Nothing
+        # shown in this conversation matches it" reports far more than that,
+        # and for a reference the shopper pointed with rather than named, it is
+        # simply untrue.
+        #
+        # "Add the black one in a 2" came here. No product is called "black
+        # one", so neither comparison could hit -- and the black dress in a
+        # size 2 was sitting in the index, shown nine turns earlier. Told
+        # nothing shown matched, and handed four catalog products it had never
+        # shown, the assistant stopped believing the index it was already
+        # holding and asked the shopper which black item they meant.
         lines.append(
-            f"REFERENCE {resolution.reference_id}: NOT FOUND. Nothing shown in "
-            "this conversation matches it. If the shopper named a product, "
+            f"REFERENCE {resolution.reference_id}: NOT FOUND. No product shown "
+            "in this conversation carries that PRODUCT_REF or that exact name; "
+            "a description was not compared against what was shown. If the "
+            "shopper pointed at an earlier item rather than naming one -- 'the "
+            "black one', 'the second one' -- read the HISTORICAL PRODUCT INDEX "
+            "in your context, most recently shown first, and use the "
+            "PRODUCT_REF of the one that fits; ask only if more than one does. "
+            "If the shopper named a product, "
             "search the catalog and show the closest matches, then ask which to "
-            "add. If they pointed at an earlier item, ask which one. Never add "
+            "add. Never add "
             "a product the shopper has not been shown, and do not ask for a "
             "product link or a price -- neither identifies a catalog product."
         )
@@ -483,6 +605,7 @@ def _format_reference_set(value: Any) -> str:
     if not isinstance(value, dict):
         return ""
     set_id = _one_line(value.get("candidate_set_id"))
+    shopper_size = _one_line(value.get("shopper_size"))
     turn = value.get("turn_seq")
     products = value.get("products")
     if not set_id or not isinstance(turn, int) or not isinstance(products, list):
@@ -502,7 +625,16 @@ def _format_reference_set(value: Any) -> str:
             if category
             else f"{position}:{name} <{ref}>"
         )
-    return f"- set={set_id} turn={turn}: " + "; ".join(rendered) if rendered else ""
+    if not rendered:
+        return ""
+    # The showing remembers the size it was made under. "Show me sandals in a
+    # 7" then "add the first one" asked which size, with the answer one turn
+    # back. It qualifies this set and nothing else: a later showing carries its
+    # own size or none, so no size follows the shopper from one to the next.
+    qualifier = (
+        f" [shopper asked for size {shopper_size}]" if shopper_size else ""
+    )
+    return f"- set={set_id} turn={turn}{qualifier}: " + "; ".join(rendered)
 
 
 def _one_line(value: Any) -> str:

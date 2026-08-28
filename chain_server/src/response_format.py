@@ -138,19 +138,63 @@ def _format_search_scope_relation_evidence(
     *,
     requested_product_type: str,
     advertised_category: str,
+    advertised_subcategories: list[str] | None = None,
 ) -> str:
-    """Record a model-selected advertised parent for honest response framing."""
+    """Record a model-selected advertised parent for honest response framing.
 
+    The parent alone does not say whether the shopper's kind is here. Asked to
+    match a look containing jeans, the model chose `apparel` -- true of every
+    garment ever made -- and ranked dresses against "dark blue straight-leg
+    jeans". What settles it is the list of subcategories that parent actually
+    holds: blouses, camisoles, dresses, jumpsuits, skirts, sweaters. None is a
+    trouser, and that is a fact rather than a judgement, so it travels with the
+    relation instead of being left to be inferred.
+    """
+
+    payload = {
+        "relation": "model_selected_parent_category",
+        "requested_product_type": requested_product_type,
+        "advertised_category": advertised_category,
+    }
+    if advertised_subcategories:
+        payload["advertised_subcategories"] = list(advertised_subcategories)
     return (
         f"{_SEARCH_SCOPE_RELATION_EVIDENCE_PREFIX} "
-        + json.dumps(
-            {
-                "relation": "model_selected_parent_category",
-                "requested_product_type": requested_product_type,
-                "advertised_category": advertised_category,
-            },
-            sort_keys=True,
-        )
+        + json.dumps(payload, sort_keys=True)
+    )
+
+
+def _format_search_unadvertised_type_evidence(
+    *,
+    requested_product_type: str,
+    searched_types: list[str],
+    advertised_subcategories: list[str] | None = None,
+) -> str:
+    """Record that the shopper's product type is not one this catalog lists.
+
+    Shown a video with jeans in it, the model searched `subcategory: skirts`
+    and presented what came back as the answer. Nothing said the shopper's word
+    had been swapped for another, because the disclosure only fired when a bare
+    parent category was chosen -- a scope naming real subcategories looked like
+    a direct search for exactly what was asked for.
+
+    Whether the swap is sound is a judgement no check here can make: a pump
+    really is a heel, and a jean really is not a skirt. What is certain, and
+    checkable, is that the shopper's type is not advertised. So it is recorded,
+    and the reply has to own it.
+    """
+
+    payload = {
+        "relation": "model_selected_advertised_types",
+        "requested_product_type": requested_product_type,
+        "requested_type_is_advertised": False,
+        "searched_types": list(searched_types),
+    }
+    if advertised_subcategories:
+        payload["advertised_subcategories"] = list(advertised_subcategories)
+    return (
+        f"{_SEARCH_SCOPE_RELATION_EVIDENCE_PREFIX} "
+        + json.dumps(payload, sort_keys=True)
     )
 
 
@@ -253,7 +297,21 @@ def _format_product_refs(products: list[ProductSummary]) -> str:
     )
 
 
-def _format_cart_add_result(added: list[str], failed: list[str], cart: Cart) -> str:
+def _format_cart_add_result(
+    added: list[str],
+    failed: list[str],
+    cart: Cart,
+    ready: list[str] | None = None,
+) -> str:
+    """Report an add, including what was established but not written.
+
+    The add is all or nothing, so one unanswered item holds back the rest. That
+    is deliberate. What was not deliberate is that the held-back items vanished
+    from the result: a shopper who gave a correct size for the boots and a
+    letter size for the sweater was asked for both again, because nothing told
+    the model the boots were already settled.
+    """
+
     lines = ["CART_ADD_RESULT"]
     if added:
         lines.append("Added:")
@@ -261,6 +319,12 @@ def _format_cart_add_result(added: list[str], failed: list[str], cart: Cart) -> 
     if failed:
         lines.append("Failed:")
         lines.extend(failed)
+    if ready:
+        lines.append(
+            "Established, not added -- the add is all or nothing, so these are "
+            "waiting on the item above. Do not ask for these again:"
+        )
+        lines.extend(ready)
     lines.append("Current cart:")
     lines.append(_format_cart_lines(cart))
     lines.append("Cart total:")
@@ -420,6 +484,28 @@ class WeatherForecastInput(BaseModel):
             "One city, town or postal code -- Cancun, Napa CA, 94558. Never a "
             "country, region or coastline: they have no single weather, so ask "
             "the shopper which city instead of calling."
+        ),
+    )
+    #: Where the place came from, as a parameter rather than a rule, for the
+    #: reason above: the prose form said "the shopper named a CITY" without
+    #: saying when, and a city named two turns ago satisfies it. "It's going to
+    #: snow when we get back" names no place, so the assistant reached for the
+    #: wedding city of an earlier turn and answered a shopper describing snow
+    #: with the forecast for Rome at 77-97F.
+    #:
+    #: Nothing to quote is the signal. Ask which place they mean.
+    shopper_words_naming_the_place: str = Field(
+        ...,
+        min_length=1,
+        max_length=200,
+        description=(
+            "Quote the words from THIS turn -- the one you are answering -- "
+            "that name this place. Not an earlier turn: a city they named "
+            "before is not where they are asking about now. If this turn names "
+            "no place, there is nothing to quote and this is not a call to "
+            "make; ask which place they mean instead. And if the shopper has "
+            "said what the weather will be, they are the authority on their "
+            "own trip and no forecast is needed at all."
         ),
     )
     date: CalendarDate | None = Field(
@@ -629,3 +715,133 @@ def _format_media_summary(media: list[dict[str, Any]]) -> str:
         media_type = str(item.get("type") or "unknown")
         counts[media_type] = counts.get(media_type, 0) + 1
     return ", ".join(f"{count} {media_type}(s)" for media_type, count in sorted(counts.items()))
+
+def _cart_line_key(line: dict) -> tuple:
+    """Identity of a cart line for comparison: what a shopper would call
+    'the same line' -- the product and the size, not the opaque line id."""
+    return (
+        str(line.get("item") or line.get("display_name") or ""),
+        str(line.get("size") or ""),
+    )
+
+
+def format_cart_change(before: "Cart | None", after: "Cart | None") -> str:
+    """State what this turn did to the cart, as a fact.
+
+    The editor was already told not to claim a cart action absent from CURRENT
+    CART, and it still passed "I've added the tote bag back" on a turn where the
+    add failed and the cart was unchanged. A prohibition left it comparing two
+    lists and judging; this hands it the answer. Computed from the two
+    snapshots, so it cannot disagree with the cart.
+    """
+
+    if before is None or after is None:
+        return "not known for this turn"
+    b: dict[tuple, int] = {}
+    for line in getattr(before, "contents", []) or []:
+        k = _cart_line_key(line)
+        b[k] = b.get(k, 0) + int(line.get("amount") or 0)
+    a: dict[tuple, int] = {}
+    for line in getattr(after, "contents", []) or []:
+        k = _cart_line_key(line)
+        a[k] = a.get(k, 0) + int(line.get("amount") or 0)
+    changes: list[str] = []
+    for k in sorted(set(a) | set(b), key=lambda x: (x[0], x[1])):
+        name, size = k
+        label = f"{name}" + (f" (size {size})" if size else "")
+        delta = a.get(k, 0) - b.get(k, 0)
+        if delta > 0:
+            changes.append(f"- added {label} x{delta}")
+        elif delta < 0:
+            changes.append(f"- removed {label} x{-delta}")
+    if not changes:
+        return (
+            "NOTHING CHANGED. No item was added, removed, or altered this "
+            "turn. Do not tell the shopper otherwise, whatever the draft says."
+        )
+    return "\n".join(changes)
+
+
+def format_catalog_shape(capabilities: Any) -> str:
+    """What the shop holds, read off the published capabilities.
+
+    A shopper asking "what's the most expensive thing you have" is asking about
+    the shop, not about a product, and nothing could answer it. Measured over
+    five runs the assistant searched one department and reported its ceiling as
+    the catalog's -- a $189.99 purse, a $199.99 crossbody -- in a shop that
+    reaches $269.99, or refused outright. Every wrong answer was a category
+    ceiling, because a search is the only instrument it had.
+
+    Counts and price ranges per category are published and were never exposed.
+    This states them and nothing else: no ranking, no filters, no judgement,
+    so it cannot become a second way to search.
+    """
+
+    taxonomy = getattr(capabilities, "taxonomy", None)
+    categories = getattr(taxonomy, "categories", None) or {}
+    if not categories:
+        return "CATALOG_SHAPE: the catalog publishes no taxonomy."
+
+    def _money(value: Any) -> str:
+        return f"{float(value):.2f}".rstrip("0").rstrip(".") if value is not None else "?"
+
+    lows: list[float] = []
+    highs: list[float] = []
+    lines: list[str] = []
+    for name, category in sorted(categories.items()):
+        price = (getattr(category, "filters", None) or {}).get("price")
+        low = getattr(price, "min_value", None)
+        high = getattr(price, "max_value", None)
+        if low is not None:
+            lows.append(float(low))
+        if high is not None:
+            highs.append(float(high))
+        subcategories = sorted(getattr(category, "subcategories", None) or {})
+        lines.append(
+            f"- {name}: {getattr(category, 'product_count', '?')} products, "
+            f"{_money(low)}-{_money(high)}, "
+            f"subcategories: {', '.join(subcategories) or '(none)'}"
+        )
+
+    header = ["CATALOG_SHAPE (published, not a search result):"]
+    total = getattr(capabilities, "product_count", None)
+    if total is not None:
+        header.append(f"- {total} products in total")
+    if lows and highs:
+        dearest = max(
+            categories.items(),
+            key=lambda item: float(
+                getattr(
+                    (getattr(item[1], "filters", None) or {}).get("price"),
+                    "max_value",
+                    0,
+                )
+                or 0
+            ),
+        )[0]
+        cheapest = min(
+            categories.items(),
+            key=lambda item: float(
+                getattr(
+                    (getattr(item[1], "filters", None) or {}).get("price"),
+                    "min_value",
+                    10**9,
+                )
+                or 10**9
+            ),
+        )[0]
+        header.append(
+            f"- prices run {_money(min(lows))} to {_money(max(highs))}; the "
+            f"dearest things are in {dearest}, the cheapest in {cheapest}"
+        )
+        header.append(
+            "- Nothing exists outside that range. A budget below it is answered "
+            "by saying so and naming where prices start -- never by searching "
+            "and reporting an empty result."
+        )
+        header.append(
+            "- To name the actual dearest or cheapest item, search that "
+            "category at that price bound. A range is not an answer on its own; "
+            "show the shopper the thing."
+        )
+    return "\n".join(header + lines)

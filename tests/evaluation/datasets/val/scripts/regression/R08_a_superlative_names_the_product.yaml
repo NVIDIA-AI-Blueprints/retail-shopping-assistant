@@ -1,0 +1,22 @@
+id: R08_a_superlative_names_the_product
+covers: [honesty, discovery]
+why: >
+  J10 t7, "what's the most expensive thing you have". Measured five times: two
+  refusals, and three confident wrong answers -- a $189.99 purse and a $199.99
+  crossbody named as the catalog's dearest item.
+
+  Every wrong answer was a category ceiling. Apparel, bags and eyewear stop at
+  $199.99 and footwear at $189.99; only jewelry reaches $269.99. The assistant
+  searched one department and reported its maximum as the shop's, because
+  nothing lets it ask what the shop actually holds.
+
+  The answer is two steps: the published shape says which department reaches
+  the ceiling, then one search names the piece. A number alone is not an
+  answer; the shopper should see the thing.
+turns:
+  - say: what's the most expensive thing you have
+    expect:
+      products_min: 1
+      reply_must_not_say:
+        - "$189.99"
+        - "$199.99"

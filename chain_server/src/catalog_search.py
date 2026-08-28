@@ -30,6 +30,7 @@ from pydantic import (
     ValidationError,
 )
 from .agenttypes import State
+from .catalog_capabilities import effective_filter_capabilities
 from .catalog_execution import execute_catalog_search
 from .catalog_request import (
     CatalogSearchIntent,
@@ -55,6 +56,7 @@ from shared.commerce_contracts import (
     CatalogCapabilities,
 )
 from .turn_support import (
+    _ONE_SIZE,
     _SEARCH_BUDGET_EXHAUSTED_NOTE,
     _SEARCH_NO_MATCH_GROUNDING_NOTE,
     _SEARCH_RESULT_GROUNDING_NOTE,
@@ -98,6 +100,7 @@ from .response_format import (
     _format_search_filter_evidence,
     _format_search_guidance_evidence,
     _format_search_composed_role_evidence,
+    _format_search_unadvertised_type_evidence,
     _format_search_scope_relation_evidence,
     _format_search_taxonomy_evidence,
 )
@@ -229,6 +232,10 @@ class _Attempt:
     #: and must not read a miss inside the searched types as the role being
     #: unavailable.
     composed_role: bool = False
+    #: Whether the relaxed retry that found something kept the shopper's size.
+    #: When it did not, the reply must say so: a size is never substituted
+    #: silently, however helpful the alternative looks.
+    relaxed_kept_the_size: bool = True
     constraint_payload: Any = None
     evidence: Any = None
     #: Shopper scopes searched by *earlier calls*, snapshotted at the start
@@ -567,6 +574,25 @@ def _validated_request(ctx: SearchContext, attempt: _Attempt) -> StepResult:
                     "compare two aprons, a catalog with no aprons produced an "
                     "empty taxonomy five turns running rather than saying so."
                 )
+                # The role may not exist at all. "Nothing over $50" names no
+                # product type, so every category the shop has is in scope and
+                # any single one of them is the wrong answer -- but this
+                # refusal only ever described how to narrow, so the model kept
+                # narrowing. It picked apparel four runs in five and the
+                # shopper was asked to clarify a request that was complete.
+                #
+                # Both wider shapes are already legal; neither was ever said
+                # out loud at the point they were needed.
+                if _hard_filter_scopes_this(required_constraints):
+                    repair_guidance += (
+                        " If the shopper named no product type at all -- a "
+                        "budget, a colour, nothing else -- then no category is "
+                        "the right one and choosing one shows a fraction of "
+                        "what they asked for. Either leave the category out "
+                        "entirely and let the filter scope the search, or name "
+                        "every advertised category and it will be split into "
+                        "one search each."
+                    )
                 constraints = (
                     required_constraints.model_dump(exclude_none=True)
                     if isinstance(required_constraints, BaseModel)
@@ -1098,6 +1124,58 @@ def _no_direct_match_outcome(ctx: SearchContext, attempt: _Attempt) -> StepResul
     return None
 
 
+def _size_that_cannot_apply(
+    taxonomy: Any,
+    constraints: Any,
+    capabilities: Any,
+) -> str:
+    """The size asked for, when nothing in the searched scope has sizes at all.
+
+    "Do you have a tote bag in a size 8" spent a turn on: "there aren't any in
+    that size... would you like me to show you tote bags in their standard one
+    size?" Four tote bags were sitting in the result the whole time.
+
+    The assistant was obeying us. The zero-result guidance says a size is never
+    the filter you give up -- right for a garment, where the wrong size is
+    something the shopper cannot wear -- and it says to offer rather than show.
+    A tote bag has no sizes to be wrong about: every bags subcategory
+    advertises `onesize` and nothing else. A number there is not an unmet
+    requirement, it is one that cannot apply.
+
+    Returns the offending size so the caller can drop it and say why. Silent
+    where any searched subcategory really is sold in sizes, so a garment search
+    keeps the size it was given.
+    """
+
+    asked = (constraints or {}).get("sizes") if isinstance(constraints, dict) else None
+    if not isinstance(asked, list) or not asked:
+        return ""
+    wanted = [str(value).strip() for value in asked if str(value).strip()]
+    if not wanted or {value.casefold() for value in wanted} == {_ONE_SIZE}:
+        return ""
+
+    subcategories = list(getattr(taxonomy, "subcategory", None) or [])
+    if not subcategories:
+        return ""
+    categories = getattr(getattr(capabilities, "taxonomy", None), "categories", None) or {}
+    seen_any = False
+    for category in categories.values():
+        for name, advertised in (getattr(category, "subcategories", None) or {}).items():
+            if name not in subcategories:
+                continue
+            sizes = (getattr(advertised, "filters", None) or {}).get("sizes")
+            values = {
+                str(v.value if hasattr(v, "value") else v).strip().casefold()
+                for v in (getattr(sizes, "values", None) or ())
+            }
+            if not values:
+                return ""
+            seen_any = True
+            if values != {_ONE_SIZE}:
+                return ""
+    return ", ".join(wanted) if seen_any else ""
+
+
 def _planned_search(ctx: SearchContext, attempt: _Attempt) -> StepResult:
     """Turn the validated request into a retrieval plan.
 
@@ -1115,6 +1193,19 @@ def _planned_search(ctx: SearchContext, attempt: _Attempt) -> StepResult:
         request.taxonomy,
         capabilities,
     )
+    # A number asked of a scope that has no sizes is not a requirement that
+    # failed; it is one that never applied. Drop it and say so, rather than
+    # returning nothing and offering to look again.
+    inapplicable_size = _size_that_cannot_apply(
+        request.taxonomy, normalized_constraints, capabilities
+    )
+    if inapplicable_size:
+        normalized_constraints = {
+            name: value
+            for name, value in normalized_constraints.items()
+            if name != "sizes"
+        }
+        attempt.normalized_constraints = normalized_constraints
     taxonomy_fields = {
         field_name
         for field_name in (
@@ -1303,6 +1394,117 @@ def _reserved_search_slot(ctx: SearchContext, attempt: _Attempt) -> StepResult:
     return None
 
 
+
+#: Filters a relaxed retry will not drop. A shopper's size is not negotiable --
+#: showing a 4 to someone who asked for a 2 is the one substitution a shop must
+#: never make -- so the relaxation gives on colour, style and price instead.
+_NEVER_RELAXED = frozenset({"sizes", "size"})
+
+
+def _outside_everything_the_shop_sells(
+    ctx: "SearchContext", filters: dict[str, Any]
+) -> bool:
+    """Whether a numeric bound asks for a span the catalog does not reach.
+
+    "$5 to $10" in a shop whose floor is $39.90 is not a search that came back
+    empty; it is a question the published range answered before the search ran.
+    Relaxing it drops the bound and returns whatever the department holds, so a
+    shopper with ten dollars was shown a $139.99 bag under a sentence saying we
+    had nothing for them. There is no near miss to offer when the spans do not
+    touch -- the honest answer is the floor, and the model already has it from
+    the advertised range on the field.
+
+    Only a bound that clears the whole advertised span counts. Asking for $60
+    where the cheapest is $39.90 overlaps, finds nothing in one department, and
+    still has real alternatives a relaxation should go and get.
+    """
+
+    capabilities = effective_filter_capabilities(ctx.capabilities)
+    for name, value in filters.items():
+        capability = capabilities.get(name)
+        if capability is None or not isinstance(value, dict):
+            continue
+        low = getattr(capability, "min_value", None)
+        high = getattr(capability, "max_value", None)
+        if low is None and high is None:
+            continue
+        asked_low = value.get("min", value.get("gte"))
+        asked_high = value.get("max", value.get("lte"))
+        try:
+            if asked_high is not None and low is not None:
+                if float(asked_high) < float(low):
+                    return True
+            if asked_low is not None and high is not None:
+                if float(asked_low) > float(high):
+                    return True
+        except (TypeError, ValueError):
+            continue
+    return False
+
+
+def _relaxed_alternatives(ctx: "SearchContext", attempt: "_Attempt") -> list[Any]:
+    """What this search finds with its optional constraints dropped.
+
+    Zero results used to hand the model an absence and nothing else, so it
+    asked which alternative the shopper wanted and showed none of them: "no
+    green dress in a size 2 -- would you like size 4, or another colour?" on a
+    turn where the catalog held plenty of size 2 dresses in other colours.
+
+    Telling the model to go and look did not hold; a model that has products in
+    hand shows them, and one that has only a prohibition writes a menu. So the
+    search is run again here, once, without the constraints that may give.
+    """
+
+    plan = attempt.plan
+    filters = dict(plan.hard_filters or {})
+    if _outside_everything_the_shop_sells(ctx, filters):
+        return []
+    # Two ways to give, in the order a shop would try them. Keeping the size
+    # and dropping the rest answers "what do you have in my size"; dropping the
+    # size answers "do you have this at all". The second is only reached when
+    # the first finds nothing -- and when it is what comes back, the note says
+    # plainly that these are a different size, because a size is never
+    # substituted silently. "a tote bag in a size 8" needed the second: totes
+    # are one size, so the size was the only filter and nothing could give.
+    relaxations = [
+        {k: v for k, v in filters.items() if k in _NEVER_RELAXED},
+        {k: v for k, v in filters.items() if k not in _NEVER_RELAXED},
+    ]
+    result = None
+    for candidate in relaxations:
+        if candidate == filters:
+            continue
+        try:
+            execution = execute_catalog_search(
+                plan.model_copy(update={"hard_filters": candidate}),
+                ctx.config.retriever_port,
+                image_base64=ctx.state.image,
+                timeout_seconds=ctx.config.catalog_search_timeout_seconds,
+            )
+        except Exception:  # pragma: no cover - a relaxation is best effort
+            continue
+        found = getattr(execution, "result", None)
+        if found is not None and getattr(found, "ok", False) and found.products:
+            result = found
+            attempt.relaxed_kept_the_size = bool(candidate)
+            break
+    if result is None:
+        return []
+    products = list(getattr(result, "products", []) or [])[:4]
+    if not products:
+        return []
+    # Registered exactly as a normal result is. A product the reply names has
+    # been shown, and a shown product must be referenceable and addable: left
+    # out of the index these came back as prose the shopper could not act on,
+    # and "the coral one" would have resolved to nothing on the next turn.
+    ctx.scope.product_evidence.add(products)
+    _append_product_results(ctx.state, products)
+    for product in products:
+        if product.image_url:
+            ctx.scope.retrieved[product.display_name] = product.image_url
+    return [_search_product_record(product) for product in products]
+
+
 def _executed_search(ctx: SearchContext, attempt: _Attempt) -> StepResult:
     """Run the retrieval and record what it cost and returned."""
 
@@ -1384,17 +1586,79 @@ def _rendered_evidence(ctx: SearchContext, attempt: _Attempt) -> StepResult:
         and request.taxonomy.category
         else None
     )
+    # What that parent actually holds. "Apparel" is true of every garment, so
+    # the category alone cannot tell the shopper whether their kind is here;
+    # its advertised subcategories can, and they are already published.
+    advertised_subcategories = (
+        sorted(
+            (
+                getattr(
+                    (attempt.capabilities.taxonomy.categories or {}).get(
+                        advertised_category
+                    ),
+                    "subcategories",
+                    None,
+                )
+                or {}
+            )
+        )
+        if advertised_category and attempt.capabilities.taxonomy
+        else []
+    )
     role_advertised_types = (
         list(request.taxonomy.subcategory or [])
         if attempt.composed_role
+        else []
+    )
+    # The shopper named a type, it is not one this catalog lists, and the model
+    # answered with advertised types of its own choosing. A scope naming real
+    # subcategories was indistinguishable from a direct search for the thing
+    # asked for, so "jeans" came back as skirts with nothing saying so.
+    substituted_types = (
+        [str(value) for value in (request.taxonomy.subcategory or [])]
+        if (
+            not advertised_category
+            and not attempt.composed_role
+            and attempt.shopper_stated_scope
+            and request.requested_product_type
+            and request.taxonomy.subcategory
+            and _advertised_scope_match(
+                request.requested_product_type,
+                attempt.capabilities,
+            )
+            is None
+        )
+        else []
+    )
+    substituted_within = (
+        sorted(
+            (
+                getattr(
+                    (attempt.capabilities.taxonomy.categories or {}).get(
+                        (request.taxonomy.category or [None])[0]
+                    ),
+                    "subcategories",
+                    None,
+                )
+                or {}
+            )
+        )
+        if substituted_types and attempt.capabilities.taxonomy
         else []
     )
     scope_relation_evidence = (
         _format_search_scope_relation_evidence(
             requested_product_type=request.requested_product_type or "",
             advertised_category=advertised_category,
+            advertised_subcategories=advertised_subcategories,
         )
         if advertised_category
+        else _format_search_unadvertised_type_evidence(
+            requested_product_type=request.requested_product_type or "",
+            searched_types=substituted_types,
+            advertised_subcategories=substituted_within,
+        )
+        if substituted_types
         else (
             _format_search_composed_role_evidence(
                 requested_product_type=request.requested_product_type or "",
@@ -1414,8 +1678,16 @@ def _rendered_evidence(ctx: SearchContext, attempt: _Attempt) -> StepResult:
                     attempt.shopper_scope_key
                 )
         # Build the payload first; every line below renders from it.
+        relaxed = _relaxed_alternatives(ctx, attempt)
         evidence = SearchEvidence(
             outcome="zero_results",
+            relaxed_products=relaxed,
+            relaxed_dropped=sorted(
+                key
+                for key in (confirmed_filters or {})
+                if (key not in _NEVER_RELAXED) or not attempt.relaxed_kept_the_size
+            ),
+            relaxed_kept_the_size=attempt.relaxed_kept_the_size,
             taxonomy=taxonomy_constraints,
             confirmed_filters=confirmed_filters,
             requested_product_type=request.requested_product_type,
@@ -1514,6 +1786,18 @@ def _rendered_evidence(ctx: SearchContext, attempt: _Attempt) -> StepResult:
         lines.append(
             _format_search_filter_evidence(evidence.confirmed_filters)
         )
+        # A category the shopper never named, reached because a filter scoped
+        # the search. It is shown rather than refused -- a partial answer beats
+        # "could you clarify", which is what three runs in five used to get --
+        # and it is said out loud, because the shopper asked for everything
+        # under their ceiling and this is one department of it.
+        chosen = _a_category_the_shopper_did_not_name(evidence, attempt)
+        if chosen:
+            lines.append(
+                f"CATEGORY CHOSEN FOR THEM: the shopper named no product type, "
+                f"so these are {chosen} only. Say so, and offer the other "
+                "departments."
+            )
     if evidence.unconfirmed_requirements:
         lines.append(
             _unsupported_requirement_message(
@@ -1608,6 +1892,112 @@ def _planned_scope(ctx: SearchContext, attempt: _Attempt) -> StepResult:
     return None
 
 
+def _a_category_the_shopper_did_not_name(evidence: Any, attempt: Any) -> str:
+    """The department this browse narrowed to without being asked.
+
+    "Nothing over $50" is a request for everything under a ceiling. A search
+    that answers it with one category is answering a fraction, and the shopper
+    cannot tell from the products alone that a choice was made for them.
+    """
+
+    if getattr(attempt, "taxonomy_status", "") != "agent_selected_type":
+        return ""
+    taxonomy = getattr(evidence, "taxonomy", None) or {}
+    if not isinstance(taxonomy, dict):
+        return ""
+    categories = [
+        str(value)
+        for values in taxonomy.values()
+        if isinstance(values, list)
+        for value in values
+    ]
+    return categories[0] if len(categories) == 1 else ""
+
+
+def _hard_filter_scopes_this(required_constraints: Any) -> bool:
+    """Whether an advertised filter narrows the search on its own.
+
+    unadvertised_requirements is excluded: it is the field for what the catalog
+    cannot enforce, so it scopes nothing.
+    """
+
+    constraints = (
+        required_constraints.model_dump(exclude_none=True)
+        if isinstance(required_constraints, BaseModel)
+        else required_constraints
+    )
+    if not isinstance(constraints, dict):
+        return False
+    return any(
+        name != "unadvertised_requirements" and value not in (None, "", [], {})
+        for name, value in constraints.items()
+    )
+
+
+def _one_scope_per_category(ctx: SearchContext, scopes: list[Any]) -> list[Any]:
+    """Fan a several-category browse into one scope each, subcategories filled.
+
+    "I'm shopping on a tight budget, nothing over $50" names no category and no
+    product type, so every category is in scope. The model asks for exactly
+    that -- all five categories with a price ceiling -- and the schema allows
+    one category per scope, so the call is turned back and the shopper is asked
+    to clarify a request that was already complete.
+
+    Each split scope carries the category's own advertised subcategories. That
+    is not a workaround: it is what the refusal asks for in as many words --
+    "for a role the shopper did not name, select every advertised subcategory
+    that role covers". Filling them from the catalog satisfies the open-role
+    rule rather than relaxing it, so a model that invents a role ("loungewear")
+    and names one category is still turned back as it should be.
+
+    Left alone when the split will not fit the call's scope budget, and when
+    only one category was asked for.
+    """
+
+    limit = max(1, int(getattr(ctx.config, "max_search_scopes_per_call", 1) or 1))
+    categories = getattr(getattr(ctx.capabilities, "taxonomy", None), "categories", None) or {}
+
+    fanned: list[Any] = []
+    for raw in scopes:
+        fields = raw if isinstance(raw, dict) else raw.model_dump()
+        taxonomy = fields.get("taxonomy") or {}
+        asked = taxonomy.get("category") if isinstance(taxonomy, dict) else None
+        named = list(taxonomy.get("subcategory") or []) if isinstance(taxonomy, dict) else []
+        # Two or more categories only. One category with no subcategory is
+        # indistinguishable from an invented role: "rainy outfit under $60"
+        # arrives as apparel with a price and nothing else, and filling in
+        # every apparel subcategory would answer it with the whole department.
+        # The open-role rule exists for exactly that and is left alone.
+        #
+        # Naming five categories is not a role. It is "everything", and that is
+        # the shape this fans out.
+        if named or not isinstance(asked, list) or len(asked) < 2:
+            fanned.append(raw)
+            continue
+        if len(scopes) - 1 + len(asked) > limit:
+            fanned.append(raw)
+            continue
+        expanded: list[Any] = []
+        for category in asked:
+            advertised = categories.get(str(category))
+            subcategories = sorted(getattr(advertised, "subcategories", None) or {})
+            if not subcategories:
+                expanded = []
+                break
+            expanded.append(
+                {
+                    **fields,
+                    "taxonomy": {
+                        **taxonomy,
+                        "category": [category],
+                        "subcategory": subcategories,
+                    },
+                }
+            )
+        fanned.extend(expanded or [raw])
+    return fanned
+
+
 def search_catalog(
     ctx: SearchContext,
     scopes: list[dict[str, Any]],
@@ -1632,6 +2022,7 @@ def search_catalog(
     heels and no clutches for a two-category search.
     """
 
+    scopes = _one_scope_per_category(ctx, list(scopes))
     attempts: list[_Attempt] = []
     for index, raw in enumerate(scopes):
         fields = raw if isinstance(raw, dict) else raw.model_dump()

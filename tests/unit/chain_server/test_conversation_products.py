@@ -72,14 +72,30 @@ def _match(product_id: str, display_name: str, position: int) -> dict[str, Any]:
 
 
 def test_reference_descriptors_require_selectors_and_scope_ordinals() -> None:
-    with pytest.raises(ValidationError, match="selector"):
-        ProductReferenceDescriptor(reference_id="bag")
-    with pytest.raises(ValidationError, match="ordinal requires"):
-        ProductReferenceDescriptor(
-            reference_id="bag",
-            display_name="Cobalt Crossbody",
-            ordinal=2,
-        )
+    # A descriptor carrying only a label used to be refused outright. A model
+    # asked to add the Southwest Bracelet put the product's name in that label
+    # and nothing anywhere else; the call died and so did the turn. The label
+    # is now read as the name, which is looked up in the catalog and reported
+    # as found by name rather than shown before.
+    named_only = ProductReferenceDescriptor(reference_id="Southwest Bracelet")
+    assert named_only.display_name == "Southwest Bracelet"
+    assert named_only.product_ref is None
+    # An ordinal used to require a turn or a candidate set. "The second one"
+    # supplies neither, so the model had to invent one, and inventing it is
+    # what put the fourth sandal in the cart. Alone it counts within the most
+    # recent showing.
+    bare_ordinal = ProductReferenceDescriptor(reference_id="second", ordinal=2)
+    assert bare_ordinal.ordinal == 2
+    assert bare_ordinal.turn_sequence is None
+    assert bare_ordinal.candidate_set_id is None
+    # A description resolves on the facts recorded when it was shown, not on
+    # its name: nothing is called "black one".
+    described = ProductReferenceDescriptor(
+        reference_id="black_one",
+        attributes={"primary_color": "black", "sizes": "2"},
+    )
+    assert described.attributes == {"primary_color": "black", "sizes": "2"}
+    assert described.display_name is None
     with pytest.raises(ValidationError):
         ResolveConversationProductsRequest(references=[])
 
@@ -434,5 +450,16 @@ def test_result_formatter_resolves_one_and_requires_clarification_otherwise() ->
     # product that was never shown with no path forward at all.
     assert "Do not guess" in rendered.split("REFERENCE missing")[0]
     assert "search the catalog" in rendered.split("REFERENCE missing")[1]
+    # Not found says what was compared -- the ref and the whole name -- rather
+    # than concluding that nothing shown matches. "Add the black one in a 2"
+    # reached this branch because no product is called "black one", and the
+    # black dress in a size 2 was in the index all along. Told nothing shown
+    # matched, the assistant stopped believing the index it was holding.
+    missing = rendered.split("REFERENCE missing")[1]
+    assert "that PRODUCT_REF or that exact name" in missing
+    assert "a description was not compared against what was shown" in missing
+    assert "HISTORICAL PRODUCT INDEX" in missing
+    assert "most recently shown first" in missing
+    assert "Nothing shown in this conversation matches it" not in rendered
     # Neither may authorise adding something the shopper has not seen.
     assert "Never add a product the shopper has not been shown" in rendered

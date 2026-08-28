@@ -24,6 +24,8 @@ services:
       - GUARDRAILS_ENABLED=${GUARDRAILS_ENABLED:-false}
       - CHECKPOINT_STORE=${CHECKPOINT_STORE-memory}
       - DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS=${DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS:-45}
+      - CHAIN_SERVER_RELOAD=${CHAIN_SERVER_RELOAD:-false}
+      - SHUTDOWN_GRACE_SECONDS=${SHUTDOWN_GRACE_SECONDS:-160}
       - EXPOSE_AGENT_DIAGNOSTICS=${EXPOSE_AGENT_DIAGNOSTICS:-false}
       - RELAY_ENABLED=${RELAY_ENABLED:-false}
       - WEATHER_ENABLED=${WEATHER_ENABLED:-false}
@@ -67,6 +69,35 @@ services:
     networks:
       - shopping-network
 
+  # Postgres for the memory service. Opt-in: `--profile postgres` starts it,
+  # and MEMORY_DATABASE_URL below decides whether anything uses it. SQLite stays
+  # the default so local work and the test suite need nothing running.
+  #
+  # This is what removes the last two ceilings. A SQLite file has one writer, and
+  # the volume holding it can be mounted by one pod, so no amount of CPU or
+  # replicas changes either. Neither is a tuning limit.
+  memory-db:
+    image: postgres:16-alpine
+    container_name: memory-db
+    profiles: ["postgres"]
+    environment:
+      - POSTGRES_USER=${MEMORY_DB_USER:-memory}
+      - POSTGRES_PASSWORD=${MEMORY_DB_PASSWORD:-memory}
+      - POSTGRES_DB=${MEMORY_DB_NAME:-memory}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - memory-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # The service must not start migrating against a database still
+      # initialising; compose has no other way to know the difference.
+      test: ["CMD-SHELL", "pg_isready -U ${MEMORY_DB_USER:-memory}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks:
+      - shopping-network
+
   # Memory Retriever
   memory-retriever:
     build:
@@ -79,6 +110,8 @@ services:
       - MILVUS_PORT=19530
       - MEMORY_DATABASE_URL=${MEMORY_DATABASE_URL:-sqlite:////data/context.db}
       - MEMORY_SQLITE_BUSY_TIMEOUT_MS=${MEMORY_SQLITE_BUSY_TIMEOUT_MS:-5000}
+      - MEMORY_MAX_CONCURRENT_REQUESTS=${MEMORY_MAX_CONCURRENT_REQUESTS:-64}
+      - SHUTDOWN_GRACE_SECONDS=${SHUTDOWN_GRACE_SECONDS:-30}
       - MEMORY_TURN_ABANDON_SECONDS=${MEMORY_TURN_ABANDON_SECONDS:-300}
       - MEMORY_RECENT_TURNS=${MEMORY_RECENT_TURNS:-8}
     volumes:
@@ -264,4 +297,5 @@ networks:
 
 volumes:
   memory-data:
+  memory-pgdata:
   phoenix-data:

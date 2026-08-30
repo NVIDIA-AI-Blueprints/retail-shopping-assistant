@@ -61,9 +61,9 @@ has no red dress".
 
 - It sees prompts, completions and cart contents. That is shopper data leaving
   the process; it belongs in a backend you control.
-- Installing it moves the agent runtime. `nemo-relay[deepagents]` requires
-  `langgraph>=1.2.9` and `requirements.txt` pins `1.2.7`, which is why it is a
-  build argument rather than a normal dependency.
+- It brings its own dependency set, including `langchain-anthropic` and
+  `langchain-google-genai`, and pins `deepagents<0.7.0` -- so taking it means
+  not taking a deepagents 0.7 upgrade until that pin moves.
 - It adds a second OTLP exporter to the process.
 
 **Leave it off for normal running.** Turn it on to study a specific problem,
@@ -107,13 +107,26 @@ three quite different failures:
 docker compose build chain-server && docker compose up -d chain-server
 ```
 
-### A defect this found, and what it means for trusting a trace
+### Why Relay can affect a turn at all, and what stops it
 
-Enabling Relay used to change the agent's behaviour. Its tool wrapper did not
-pass the model's arguments to the tool: it encoded them for the span and handed
-the tool the decoded copy, and the copy was not the original. The codec tries
-`model_dump()` first, which materialises every optional field that was never
-set, so a search sent as:
+A tracing tool should not be able to change what it is tracing. The other
+producer here cannot: `openinference-instrumentation-langchain` registers a
+**callback handler**, so LangChain tells it what happened. It is informed, never
+asked. That is why it costs one line and needs no guards.
+
+Relay attaches differently. Its DeepAgents integration hooks LangGraph
+**middleware** -- `wrap_model_call` and `wrap_tool_call` -- which are execution
+wrappers, not listeners. The agent hands the wrapper a request and takes back
+whatever the wrapper returns. So Relay receives the call, decides what the
+handler is given, and decides what the agent is told came back: three chances to
+change an outcome it is only supposed to record.
+
+This is not a criticism of tracing. It follows from Relay being an agent runtime
+used as a tracing library, where middleware is the only seam available.
+
+One of those chances was taken. Relay's tool wrapper re-encoded the arguments
+and handed the tool a copy in which every unset optional had become an explicit
+null, so a search the model sent as:
 
 ```json
 {"requested_product_type": "dress"}
@@ -130,15 +143,20 @@ own call and the turn answered *"I couldn't complete a valid catalog search"*.
 Measured on journey J01: two failures with tracing on, five passes with it off,
 on the same image, differing only by `RELAY_ENABLED`.
 
-`_relay_must_not_rewrite_arguments` in `deepagents_runtime.py` is the fix. Relay
-still records the call; the tool now receives what the model sent. The property
-is held by tests, not by care.
+`_relay_may_observe_but_not_decide` in `deepagents_runtime.py` removes the vote
+rather than fixing the one path. Three things hold whatever Relay does,
+including raising:
 
-Worth stating plainly because it is the general lesson: **an observability layer
-that can rewrite what it observes can change the outcome it is reporting on.**
-If a turn behaves differently with tracing on, the trace is evidence about a
-system that no longer exists. Reproduce with tracing off before believing a
-finding, and that is cheap here — one build argument apart.
+- the handler is called with the request that arrived, not a copy;
+- it is called **exactly once**, so a wrapper that retries cannot double a cart
+  write, and one that abandons cannot drop it;
+- the agent receives the handler's own return value, not the wrapper's.
+
+Relay is still invoked exactly as before, and the real work still runs inside
+its wrapper, so spans nest and timings stay meaningful. In effect it is plumbed
+as a wrapper and behaves as a callback.
+
+Thirteen tests hold this, one for each way a wrapper could change an outcome.
 
 ## Turning it on
 
@@ -462,15 +480,21 @@ turn, so a warning on that path would otherwise repeat forever.
 
 ### Why the dependency is a build arg
 
-`nemo-relay[deepagents]` requires `langgraph>=1.2.9`; `requirements.txt` pins
-`1.2.7`. Installing Relay therefore **moves the agent runtime**, and the image
-that ships should be the image that was tested. The default image keeps the
-tested pin; `INSTALL_RELAY=true` produces a second image carrying
-`langgraph 1.2.11` and `nemo-relay 0.7.3`.
+It used to be because installing Relay moved the agent runtime: it requires
+`langgraph>=1.2.9` and this service pinned `1.2.7`, so "turn on tracing" and
+"upgrade the framework the agent runs on" were the same action. That is no
+longer true -- the runtime moved to `1.2.11` on its own evidence, in its own
+change, so the two are now separable.
 
-The gap is four patch releases inside `1.2.x` and the unit suite has been
-running against `1.2.11` locally throughout. That is evidence for the bump, not
-proof of it.
+What remains is a reason to keep, and it is about disclosure rather than
+packaging. Relay reads prompts, completions and cart contents. The default image
+does not carry a library that can export those; `INSTALL_RELAY=true` produces
+one that can, and that should be a deliberate act by whoever runs the
+deployment.
+
+It also brings its own dependency set -- `langchain-anthropic`,
+`langchain-google-genai`, `langchain-protocol` -- which a default image has no
+use for.
 
 ### Checking that Relay is doing its job
 

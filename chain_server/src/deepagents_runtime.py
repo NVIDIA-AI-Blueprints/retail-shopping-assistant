@@ -898,46 +898,94 @@ def _relay_turn_scope(config: Any, conversation_id: str):
 
 
 
-def _relay_must_not_rewrite_arguments(middleware: Any) -> None:
-    """Let Relay observe a tool call without deciding what the tool receives.
+def _relay_may_observe_but_not_decide(middleware: Any) -> None:
+    """Put Relay beside the call rather than inside it.
 
-    Relay's tool wrapper does not pass the model's arguments to the tool. It
-    encodes them with ``BestEffortAnyCodec`` for the span and hands the decoded
-    copy onward, and the copy is not the original: the codec tries
-    ``model_dump()`` first, which materialises every optional field that was
-    never set. A search the model sent as::
+    Relay's integration hooks LangGraph middleware, so it wraps every model call
+    and every tool call: it receives the request, decides what the handler is
+    given, and decides what the agent is told came back. That is three chances
+    to change an outcome it is only supposed to record, and one of them has
+    already been taken -- its tool wrapper re-encoded the arguments and handed
+    the tool a copy in which every unset optional had become an explicit null,
+    so a search the model sent as ``{"requested_product_type": "dress"}`` arrived
+    carrying a price constraint the shopper never gave. This service rejects
+    invented constraints, so the tool refused its own call.
 
-        {"requested_product_type": "dress"}
+    Fixing that one path is not enough, because the position is the problem
+    rather than the bug. What follows makes three things true whatever Relay
+    does, including raising:
 
-    reaches the tool as::
+    * the handler is called with the request that arrived, not a copy;
+    * it is called **exactly once**, so a wrapper that retries or abandons
+      cannot double a cart write or drop one;
+    * the agent receives the handler's own return value, not the wrapper's.
 
-        {"requested_product_type": "dress", "price": {"min": null, "max": null}}
+    Relay still sees the call and still writes its span -- it is invoked exactly
+    as before, and the handler it is given runs the real work at the real moment,
+    so nesting and timings are unaffected. It simply no longer has a vote.
 
-    -- a price constraint the shopper never gave and the model never sent. This
-    service rejects invented constraints on purpose, so the tool refuses its own
-    call and the turn answers "I couldn't complete a valid catalog search".
-    Measured: J01 failed twice with tracing on and passed five times with it
-    off, on the same image, differing only by RELAY_ENABLED.
-
-    So the trace keeps its arguments and the tool keeps the model's. Relay still
-    encodes what it likes for the span; the handler simply ignores the copy it
-    is offered and answers the request that actually arrived.
-
-    This is a workaround for behaviour in nemo-relay, not a fix to it, and it is
-    narrow on purpose: it changes which arguments reach the tool and nothing
-    else about the instrumentation.
+    An exception from the wrapper is contained: the work is already done, and the
+    agent gets its result. A trace must never cost a turn.
     """
 
-    for name in ("wrap_tool_call", "awrap_tool_call"):
+    for name in ("wrap_tool_call", "wrap_model_call"):
         wrapped = getattr(middleware, name, None)
-        if wrapped is None:
-            continue
+        if wrapped is not None:
+            setattr(middleware, name, _observing_only(wrapped, name))
 
-        def preserving(request: Any, handler: Any, _wrapped: Any = wrapped) -> Any:
-            # `_rewritten` is Relay's re-encoded copy, deliberately discarded.
-            return _wrapped(request, lambda _rewritten: handler(request))
+    for name in ("awrap_tool_call", "awrap_model_call"):
+        wrapped = getattr(middleware, name, None)
+        if wrapped is not None:
+            setattr(middleware, name, _observing_only_async(wrapped, name))
 
-        setattr(middleware, name, preserving)
+
+def _observing_only(wrapped: Any, name: str) -> Any:
+    """The synchronous half of putting Relay beside the call."""
+
+    def observed(request: Any, handler: Any) -> Any:
+        done: list[Any] = []
+
+        def run_once(_relays_version: Any = None) -> Any:
+            # Relay offers its own copy of the request; the handler answers the
+            # one that actually arrived. Called through Relay so its span still
+            # wraps the real work.
+            if not done:
+                done.append(handler(request))
+            return done[0]
+
+        try:
+            wrapped(request, run_once)
+        except Exception as exc:  # noqa: BLE001 - a trace may not cost a turn
+            _relay_warn_once(f"raised:{name}", "NeMo Relay %s raised: %s", name, exc)
+        if not done:
+            # Relay never reached the handler -- it failed early, or chose not
+            # to. The call still has to happen.
+            done.append(handler(request))
+        return done[0]
+
+    return observed
+
+
+def _observing_only_async(wrapped: Any, name: str) -> Any:
+    """The asynchronous half, which is the live path: the agent runs async."""
+
+    async def observed(request: Any, handler: Any) -> Any:
+        done: list[Any] = []
+
+        async def run_once(_relays_version: Any = None) -> Any:
+            if not done:
+                done.append(await handler(request))
+            return done[0]
+
+        try:
+            await wrapped(request, run_once)
+        except Exception as exc:  # noqa: BLE001 - a trace may not cost a turn
+            _relay_warn_once(f"raised:{name}", "NeMo Relay %s raised: %s", name, exc)
+        if not done:
+            done.append(await handler(request))
+        return done[0]
+
+    return observed
 
 
 def _relay_instrumented(
@@ -995,7 +1043,7 @@ def _relay_instrumented(
             return agent_kwargs
     ours = agent_kwargs["middleware"]
     for added in list(instrumented["middleware"])[len(ours):]:
-        _relay_must_not_rewrite_arguments(added)
+        _relay_may_observe_but_not_decide(added)
     if list(instrumented["middleware"])[: len(ours)] != list(ours):
         _relay_warn_once(
             "middleware-order",

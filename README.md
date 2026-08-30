@@ -430,7 +430,23 @@ The exact published response is documented in
    source .env
    ```
 
-   Set `NVIDIA_API_KEY` in the file. The env file is a sourceable shell file;
+   Set `NVIDIA_API_KEY` in the file.
+
+   Two templates are provided, and they differ by one role:
+
+   | template | app LLM | everything else |
+   |---|---|---|
+   | `.env.example` | hosted endpoint | hosted |
+   | `.env.local-llm.example` | **local NIM**, on your GPUs | hosted |
+
+   Use the second when you need what a hosted endpoint cannot give you: no rate
+   limit, and the model's own metrics. Only the LLM moves, so a run against one
+   and a run against the other differ by the model serving the shopper and
+   nothing else — which is what makes them comparable. See
+   [Running the LLM locally](#running-the-llm-locally) below.
+
+   Copy a template rather than editing it. Every `.env.*` is ignored except the
+   two templates, so your filled-in copy stays out of git along with its keys. The env file is a sourceable shell file;
    sourcing it also sets `COMPOSE_DISABLE_ENV_FILE=1` so Docker Compose uses
    the exported shell environment instead of auto-parsing repo-root `.env`.
    `CHECKPOINT_STORE=memory` is the only supported graph-checkpoint
@@ -506,6 +522,58 @@ The exact published response is documented in
    than an error, and a shopper is told the catalog is empty.
 
 7. **Access the application**: Open your browser to `http://localhost:3000`
+
+### Running the LLM locally
+
+The app LLM can be served from your own GPUs as a NIM instead of a hosted
+endpoint. Nothing else moves: embeddings, the VLM, guardrails, the judge and
+the challenger stay where they were.
+
+```bash
+cp .env.local-llm.example .env.local-llm
+$EDITOR .env.local-llm            # NVIDIA_API_KEY, and LOCAL_NIM_CACHE if not $HOME/.cache/nim
+source .env.local-llm
+
+mkdir -p "$LOCAL_NIM_CACHE" && chmod a+w "$LOCAL_NIM_CACHE"
+docker compose -f docker-compose-nim-local.yaml up -d nemotron
+
+curl -s http://localhost:8000/v1/models     # ready when this answers
+
+docker compose up -d
+docker compose exec catalog-retriever python -m app.index_catalog
+```
+
+The first start pulls roughly 120GB into `LOCAL_NIM_CACHE` and takes a long
+while; later starts read the cache. The NIM reserves two GPUs, `device_ids`
+`'0'` and `'1'` in `docker-compose-nim-local.yaml`. Make the cache writable
+before the first start — the container runs as `${UID}`, and a first start that
+cannot write re-downloads on every restart.
+
+No tracked configuration changes. The environment is read before
+`shared/configs/models.yaml`, so `LLM_BASE_URL` and `LLM_MODEL` are enough and
+`models.yaml` is left alone.
+
+**What this gets you.** The NIM serves vLLM's Prometheus metrics on its own
+port, with nothing to enable:
+
+```bash
+curl -s http://localhost:8000/metrics | grep -E '^vllm:'
+```
+
+Tokens in and out, time to first token, queue depth, KV-cache utilisation, and
+running and waiting sequences. `vllm:num_requests_waiting` is the one that says
+whether the model is the bottleneck rather than the application — a question a
+hosted endpoint cannot answer at all, and one the load tooling otherwise has to
+infer. Nothing scrapes these yet; the collector carries a traces pipeline only.
+
+**Going back to the hosted endpoint** is sourcing the other profile and
+restarting the chain server:
+
+```bash
+source .env
+docker compose up -d --force-recreate chain-server
+docker compose -f docker-compose-nim-local.yaml stop nemotron
+```
 
 8. **Stop the containers**:
 

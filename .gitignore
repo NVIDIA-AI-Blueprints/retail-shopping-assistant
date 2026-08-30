@@ -75,6 +75,7 @@ tests/evaluation/results/*
 .env
 .env.*
 !.env.example
+!.env.local-llm.example
 
 # Next.js build output (the UI is CRA; this appears from stray tooling runs)
 ui/.next/

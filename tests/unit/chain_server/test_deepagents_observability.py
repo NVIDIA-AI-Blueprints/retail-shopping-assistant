@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
+from types import ModuleType, SimpleNamespace
 from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
@@ -1298,3 +1300,349 @@ def test_a_refused_search_over_a_carried_type_still_fails_closed() -> None:
         _rejected_catalog_search_response(messages, request_id="current-request")
         == _REJECTED_CATALOG_SEARCH_RESPONSE
     )
+
+
+class TestRelayInstrumentation:
+    """An observability layer must not change what the agent is."""
+
+    def _kwargs(self):
+        return {
+            "model": object(),
+            "tools": [object()],
+            "system_prompt": "prompt",
+            "middleware": [object(), object()],
+            "backend": object(),
+            "checkpointer": object(),
+        }
+
+    def _instrument(self, kwargs, enabled=True):
+        from chain_server.src.deepagents_runtime import _relay_instrumented
+        from types import SimpleNamespace
+
+        return _relay_instrumented(kwargs, SimpleNamespace(relay_enabled=enabled))
+
+    def _stub_relay(self, monkeypatch, integration) -> None:
+        module = ModuleType("nemo_relay.integrations.deepagents")
+        module.add_nemo_relay_integration = integration
+        monkeypatch.setitem(sys.modules, "nemo_relay", ModuleType("nemo_relay"))
+        monkeypatch.setitem(
+            sys.modules, "nemo_relay.integrations", ModuleType("nemo_relay.integrations")
+        )
+        monkeypatch.setitem(sys.modules, "nemo_relay.integrations.deepagents", module)
+
+    def test_off_by_default_hands_back_exactly_what_it_got(self, monkeypatch) -> None:
+        """Absent configuration must never change behaviour.
+
+        Stubbed as installed and working, so this proves the flag rather than
+        the package being missing -- which it would otherwise pass for.
+        """
+
+        called = []
+        self._stub_relay(
+            monkeypatch,
+            lambda kwargs, **_: called.append(1) or {**kwargs, "middleware": ["relay"]},
+        )
+        kwargs = self._kwargs()
+
+        assert self._instrument(kwargs, enabled=False) is kwargs
+        assert called == []
+
+    def test_a_dropped_argument_is_refused(self, monkeypatch) -> None:
+        """middleware is the tool-loop control and the skill gate; backend is
+        the skills filesystem. A release that dropped one would remove a gate
+        silently, which is worse than having no tracing."""
+
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        module = ModuleType("nemo_relay.integrations.deepagents")
+        module.add_nemo_relay_integration = lambda kwargs, **_: {
+            name: value for name, value in kwargs.items() if name != "backend"
+        }
+        monkeypatch.setitem(sys.modules, "nemo_relay", ModuleType("nemo_relay"))
+        monkeypatch.setitem(
+            sys.modules, "nemo_relay.integrations", ModuleType("nemo_relay.integrations")
+        )
+        monkeypatch.setitem(sys.modules, "nemo_relay.integrations.deepagents", module)
+
+        kwargs = self._kwargs()
+
+        assert self._instrument(kwargs) is kwargs
+
+    def test_replacing_our_middleware_is_refused(self, monkeypatch) -> None:
+        """Appending its own is the behaviour we want. Replacing ours removes
+        both gates, and the agent would look instrumented while being wrong."""
+
+        module = ModuleType("nemo_relay.integrations.deepagents")
+        module.add_nemo_relay_integration = lambda kwargs, **_: {
+            **kwargs,
+            "middleware": ["relay-only"],
+        }
+        monkeypatch.setitem(sys.modules, "nemo_relay", ModuleType("nemo_relay"))
+        monkeypatch.setitem(
+            sys.modules, "nemo_relay.integrations", ModuleType("nemo_relay.integrations")
+        )
+        monkeypatch.setitem(sys.modules, "nemo_relay.integrations.deepagents", module)
+
+        kwargs = self._kwargs()
+
+        assert self._instrument(kwargs) is kwargs
+
+    def test_appending_its_own_middleware_is_accepted(self, monkeypatch) -> None:
+        """What the real package does today: ours first, its own after."""
+
+        module = ModuleType("nemo_relay.integrations.deepagents")
+        module.add_nemo_relay_integration = lambda kwargs, **_: {
+            **kwargs,
+            "middleware": [*kwargs["middleware"], "relay"],
+        }
+        monkeypatch.setitem(sys.modules, "nemo_relay", ModuleType("nemo_relay"))
+        monkeypatch.setitem(
+            sys.modules, "nemo_relay.integrations", ModuleType("nemo_relay.integrations")
+        )
+        monkeypatch.setitem(sys.modules, "nemo_relay.integrations.deepagents", module)
+
+        kwargs = self._kwargs()
+        instrumented = self._instrument(kwargs)
+
+        assert instrumented is not kwargs
+        assert instrumented["middleware"][:2] == kwargs["middleware"]
+        assert instrumented["middleware"][-1] == "relay"
+
+    def test_a_missing_package_is_not_a_failed_turn(self, monkeypatch) -> None:
+        """Enabled but not installed is a warning, not a broken shopper."""
+
+        import builtins
+
+        real_import = builtins.__import__
+
+        def refuse(name, *args, **kwargs):
+            if name.startswith("nemo_relay"):
+                raise ImportError(name)
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", refuse)
+        kwargs = self._kwargs()
+
+        assert self._instrument(kwargs) is kwargs
+
+
+class TestRelayTurnScope:
+    """Relay does not read OpenTelemetry's context, so the turn has to say so."""
+
+    def _scope(self, monkeypatch, *, enabled=True, opened=None):
+        from types import SimpleNamespace
+        from chain_server.src.deepagents_runtime import _relay_turn_scope
+
+        return _relay_turn_scope(SimpleNamespace(relay_enabled=enabled), "convo-7")
+
+    def _stub_relay(self, monkeypatch, opened) -> None:
+        import contextlib
+
+        @contextlib.contextmanager
+        def scope(name, scope_type, **kwargs):
+            opened.append((name, kwargs.get("metadata")))
+            yield
+
+        module = ModuleType("nemo_relay")
+        module.ScopeType = SimpleNamespace(Agent="agent")
+        scope_module = ModuleType("nemo_relay.scope")
+        scope_module.scope = scope
+        module.scope = scope_module
+        monkeypatch.setitem(sys.modules, "nemo_relay", module)
+        monkeypatch.setitem(sys.modules, "nemo_relay.scope", scope_module)
+
+    def test_it_names_the_conversation_so_relay_spans_have_a_session(
+        self, monkeypatch
+    ) -> None:
+        """Without this, Relay's spans carry no conversation at all."""
+
+        opened: list = []
+        self._stub_relay(monkeypatch, opened)
+
+        with self._scope(monkeypatch):
+            pass
+
+        assert opened == [("relay-turn", {"session.id": "convo-7"})]
+
+    def test_off_by_default_opens_nothing(self, monkeypatch) -> None:
+        """Stubbed as installed, so this proves the flag and not the absence."""
+
+        opened: list = []
+        self._stub_relay(monkeypatch, opened)
+
+        with self._scope(monkeypatch, enabled=False):
+            pass
+
+        assert opened == []
+
+    def test_a_scope_that_will_not_open_still_runs_the_turn(self, monkeypatch) -> None:
+        """A trace must never cost a shopper their turn."""
+
+        def explode(*_args, **_kwargs):
+            raise RuntimeError("no runtime")
+
+        module = ModuleType("nemo_relay")
+        module.ScopeType = SimpleNamespace(Agent="agent")
+        scope_module = ModuleType("nemo_relay.scope")
+        scope_module.scope = explode
+        module.scope = scope_module
+        monkeypatch.setitem(sys.modules, "nemo_relay", module)
+        monkeypatch.setitem(sys.modules, "nemo_relay.scope", scope_module)
+
+        ran = []
+        with self._scope(monkeypatch):
+            ran.append(True)
+
+        assert ran == [True]
+
+
+class TestRelayExport:
+    """Attaching the middleware is half of it; the events have to leave."""
+
+    def _configure(self, monkeypatch, *, enabled=True, endpoint="http://collector:4318"):
+        from types import SimpleNamespace
+        from chain_server.src.deepagents_runtime import configure_relay_tracing
+
+        if endpoint is None:
+            monkeypatch.delenv("OTEL_EXPORTER_OTLP_ENDPOINT", raising=False)
+        else:
+            monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", endpoint)
+        return configure_relay_tracing(SimpleNamespace(relay_enabled=enabled))
+
+    def _stub_relay(self, monkeypatch, registered) -> None:
+        """Stand in for the package, recording what it was asked to export.
+
+        Registration is global and refuses a duplicate name, exactly as the real
+        package does -- which is the whole point of one of the tests below.
+        """
+
+        live: set = set()
+
+        class Config:
+            def __init__(self, otel_type, endpoint):
+                self.type, self.endpoint = otel_type, endpoint
+                self.service_name = None
+
+        class Subscriber:
+            def __init__(self, config):
+                self.config = config
+
+            def register(self, name):
+                if name in live:
+                    raise RuntimeError(f"already exists: {name} subscriber already exists")
+                live.add(name)
+                registered.append((name, self.config))
+
+            def deregister(self, name):
+                live.discard(name)
+
+            def force_flush(self):
+                pass
+
+        module = ModuleType("nemo_relay")
+        module.OpenTelemetryConfig = Config
+        module.OpenTelemetrySubscriber = Subscriber
+        monkeypatch.setitem(sys.modules, "nemo_relay", module)
+
+    def test_it_exports_openinference_to_the_configured_collector(
+        self, monkeypatch
+    ) -> None:
+        """Phoenix reads openinference; gen_ai spans would arrive and show nothing.
+
+        The endpoint is the collector's OTLP address plus the traces path, taken
+        from the same variable the app's own exporter uses -- not a second one.
+        """
+
+        registered: list = []
+        self._stub_relay(monkeypatch, registered)
+        monkeypatch.setenv("OTEL_SERVICE_NAME", "chain-server")
+
+        assert self._configure(monkeypatch) is True
+        assert len(registered) == 1
+        name, config = registered[0]
+        assert name == "chain-server"
+        assert config.type == "openinference"
+        assert config.endpoint == "http://collector:4318/v1/traces"
+        assert config.service_name == "chain-server"
+
+    def test_no_endpoint_exports_nothing_rather_than_failing(self, monkeypatch) -> None:
+        """Enabled with nowhere to send is a warning, not a dead service."""
+
+        registered: list = []
+        self._stub_relay(monkeypatch, registered)
+
+        assert self._configure(monkeypatch, endpoint=None) is False
+        assert registered == []
+
+    def test_off_by_default_registers_nothing(self, monkeypatch) -> None:
+        """Stubbed as installed, so this proves the flag and not the absence."""
+
+        registered: list = []
+        self._stub_relay(monkeypatch, registered)
+
+        assert self._configure(monkeypatch, enabled=False) is False
+        assert registered == []
+
+    def test_a_second_runtime_does_not_read_as_broken_tracing(
+        self, monkeypatch
+    ) -> None:
+        """Registration is global and refuses a duplicate name.
+
+        A second runtime built in one process would raise, be swallowed as
+        "could not configure tracing", and report nothing exporting while the
+        first subscriber was exporting perfectly well.
+        """
+
+        registered: list = []
+        self._stub_relay(monkeypatch, registered)
+
+        assert self._configure(monkeypatch) is True
+        assert self._configure(monkeypatch) is True
+        assert [name for name, _ in registered] == ["chain-server", "chain-server"]
+
+    def test_a_missing_package_is_said_once_not_once_a_turn(
+        self, monkeypatch, caplog
+    ) -> None:
+        """The agent is rebuilt every turn, so a build-path warning is per turn."""
+
+        import builtins
+        import logging
+
+        from chain_server.src import deepagents_runtime
+
+        monkeypatch.setattr(deepagents_runtime, "_relay_warnings_said", set())
+        real_import = builtins.__import__
+
+        def refuse(name, *args, **kwargs):
+            if name.startswith("nemo_relay"):
+                raise ImportError(name)
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", refuse)
+        monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4318")
+
+        from types import SimpleNamespace
+
+        enabled = SimpleNamespace(relay_enabled=True)
+        with caplog.at_level(logging.WARNING):
+            for _ in range(5):
+                deepagents_runtime.configure_relay_tracing(enabled)
+
+        said = [r for r in caplog.records if "not installed" in r.getMessage()]
+        assert len(said) == 1
+
+    def test_a_subscriber_that_will_not_start_does_not_stop_the_service(
+        self, monkeypatch
+    ) -> None:
+        """A collector that rejects the config must not take the shop down."""
+
+        module = ModuleType("nemo_relay")
+
+        def explode(*_args, **_kwargs):
+            raise RuntimeError("no exporter")
+
+        module.OpenTelemetryConfig = explode
+        module.OpenTelemetrySubscriber = explode
+        monkeypatch.setitem(sys.modules, "nemo_relay", module)
+
+        assert self._configure(monkeypatch) is False

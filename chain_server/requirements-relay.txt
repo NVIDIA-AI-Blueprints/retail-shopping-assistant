@@ -1,0 +1,22 @@
+# NeMo Relay tracing for the Deep Agents runtime. Optional, and deliberately
+# not in requirements.txt.
+#
+# It needs langgraph>=1.2.9, which requirements.txt now satisfies: the runtime
+# moved to 1.2.11 deliberately and on its own evidence, so installing this no
+# longer drags the framework along with it.
+#
+#   pip install -r requirements.txt -r requirements-relay.txt
+#
+# It stays out of requirements.txt anyway, for the reasons that remain: it reads
+# prompts, completions and cart contents, so it is a disclosure to opt into
+# rather than a default; and it brings its own dependency set, including
+# langchain-anthropic and langchain-google-genai.
+#
+# The code path is safe either way: with RELAY_ENABLED unset nothing is
+# imported, and with it set but the package absent the runtime logs once and
+# runs untouched.
+#
+# It pins deepagents<0.7.0, so this and a deepagents 0.7 upgrade cannot be
+# taken together until that pin moves.
+
+nemo-relay[deepagents]==0.7.3

@@ -7,7 +7,9 @@ services:
     build:
       context: ./chain_server
       args:
-        # false by default: the shipped image carries the tested langgraph pin.
+        # false by default: Relay reads prompts, completions and cart
+        # contents, so the shipped image does not carry a library that can
+        # export them. Installing it is a deliberate act.
         INSTALL_RELAY: ${INSTALL_RELAY:-false}
     container_name: chain-server
     ports:

@@ -34,137 +34,22 @@ chain-server ──┬── our turn span ────────────�
 
 ---
 
-## What Relay gives you, and what it costs
-
-Relay is the third and optional producer. The first two — the `turn` span this
-service writes, and `openinference-instrumentation-langchain` — are always on
-and answer *what happened*. Relay answers *what the agent was thinking while it
-happened*: the prompt as sent, the completion as returned, which skill was
-selected, which subagent ran, and every tool call with its arguments and result.
-
-The practical difference, on a turn that went wrong:
-
-| question | without Relay | with Relay |
-|---|---|---|
-| Which tools ran, in what order | yes | yes |
-| How long each took | yes | yes |
-| **What arguments the tool was called with** | no | **yes** |
-| **What the tool returned** | no | **yes** |
-| **The exact prompt the model saw** | no | **yes** |
-| **Which skill the agent selected and why** | partly | **yes** |
-
-That is the difference between "the search returned nothing" and "the search was
-asked for `taxonomy_level_2=dresses` with `primary_color=red`, and the catalogue
-has no red dress".
-
-**What it costs.** It is not free and it is not merely additive:
-
-- It sees prompts, completions and cart contents. That is shopper data leaving
-  the process; it belongs in a backend you control.
-- It brings its own dependency set, including `langchain-anthropic` and
-  `langchain-google-genai`, and pins `deepagents<0.7.0` -- so taking it means
-  not taking a deepagents 0.7 upgrade until that pin moves.
-- It adds a second OTLP exporter to the process.
-
-**Leave it off for normal running.** Turn it on to study a specific problem,
-then turn it off. It is not a monitoring tool — it produces one detailed trace
-per turn, not metrics.
-
-### Worked example: a shopper says the assistant found nothing
-
-The shopper asked for red dresses under $100 and was told the shop has none.
-Is that true, or did the search go wrong?
-
-**1. Turn Relay on and reproduce the turn.**
-
-```bash
-INSTALL_RELAY=true docker compose build chain-server
-INSTALL_RELAY=true RELAY_ENABLED=true \
-  OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318 \
-  docker compose up -d chain-server
-docker logs chain-server | grep -i relay
-# → Relay tracing enabled, exporting to http://otel-collector:4318
-```
-
-**2. Open Phoenix** at `http://localhost:6006` and find the conversation. Each
-turn is one `turn` span; Relay's events nest under it, so the whole turn reads
-top to bottom in one place.
-
-**3. Open the `search_catalog_tool` call** and read its arguments. This is the
-thing you cannot see any other way. You are looking for the difference between
-three quite different failures:
-
-- The arguments match what the shopper asked for, and the result is genuinely
-  empty → the catalogue has no red dress. The assistant was right.
-- The arguments carry a constraint the shopper never gave → the agent invented
-  one, and the empty result is its own doing.
-- The arguments are right, the result has products, and the reply says
-  otherwise → a grounding failure between the tool and the answer.
-
-**4. Turn it back off** when you have your answer:
-
-```bash
-docker compose build chain-server && docker compose up -d chain-server
-```
-
-### Why Relay can affect a turn at all, and what stops it
-
-A tracing tool should not be able to change what it is tracing. The other
-producer here cannot: `openinference-instrumentation-langchain` registers a
-**callback handler**, so LangChain tells it what happened. It is informed, never
-asked. That is why it costs one line and needs no guards.
-
-Relay attaches differently. Its DeepAgents integration hooks LangGraph
-**middleware** -- `wrap_model_call` and `wrap_tool_call` -- which are execution
-wrappers, not listeners. The agent hands the wrapper a request and takes back
-whatever the wrapper returns. So Relay receives the call, decides what the
-handler is given, and decides what the agent is told came back: three chances to
-change an outcome it is only supposed to record.
-
-This is not a criticism of tracing. It follows from Relay being an agent runtime
-used as a tracing library, where middleware is the only seam available.
-
-One of those chances was taken. Relay's tool wrapper re-encoded the arguments
-and handed the tool a copy in which every unset optional had become an explicit
-null, so a search the model sent as:
-
-```json
-{"requested_product_type": "dress"}
-```
-
-arrived at the tool as:
-
-```json
-{"requested_product_type": "dress", "price": {"min": null, "max": null}}
-```
-
-This service rejects constraints the shopper never gave, so the tool refused its
-own call and the turn answered *"I couldn't complete a valid catalog search"*.
-Measured on journey J01: two failures with tracing on, five passes with it off,
-on the same image, differing only by `RELAY_ENABLED`.
-
-`_relay_may_observe_but_not_decide` in `deepagents_runtime.py` removes the vote
-rather than fixing the one path. Three things hold whatever Relay does,
-including raising:
-
-- the handler is called with the request that arrived, not a copy;
-- it is called **exactly once**, so a wrapper that retries cannot double a cart
-  write, and one that abandons cannot drop it;
-- the agent receives the handler's own return value, not the wrapper's.
-
-Relay is still invoked exactly as before, and the real work still runs inside
-its wrapper, so spans nest and timings stay meaningful. In effect it is plumbed
-as a wrapper and behaves as a callback.
-
-Thirteen tests hold this, one for each way a wrapper could change an outcome.
-
 ## Turning it on
 
-```bash
-docker compose up -d otel-collector phoenix
+Everything here is set in the environment profile the deployment already uses --
+`.env.example` carries all four with their defaults and what each one does. Set
+them there and source it; the compose file reads them, so no command needs a
+prefix and nothing has to be remembered at the shell.
 
-OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318 \
-  docker compose up -d chain-server
+```bash
+# in your .env
+export OTEL_EXPORTER_OTLP_ENDPOINT="http://otel-collector:4318"
+```
+
+```bash
+source .env
+docker compose up -d otel-collector phoenix
+docker compose up -d chain-server
 
 open http://localhost:6006
 ```
@@ -457,17 +342,151 @@ above, with Relay off by default.
 
 ---
 
+## What Relay gives you, and what it costs
+
+Relay is the third and optional producer. The first two — the `turn` span this
+service writes, and `openinference-instrumentation-langchain` — are always on
+and answer *what happened*. Relay answers *what the agent was thinking while it
+happened*: the prompt as sent, the completion as returned, which skill was
+selected, which subagent ran, and every tool call with its arguments and result.
+
+The practical difference, on a turn that went wrong:
+
+| question | without Relay | with Relay |
+|---|---|---|
+| Which tools ran, in what order | yes | yes |
+| How long each took | yes | yes |
+| **What arguments the tool was called with** | no | **yes** |
+| **What the tool returned** | no | **yes** |
+| **The exact prompt the model saw** | no | **yes** |
+| **Which skill the agent selected and why** | partly | **yes** |
+
+That is the difference between "the search returned nothing" and "the search was
+asked for `taxonomy_level_2=dresses` with `primary_color=red`, and the catalogue
+has no red dress".
+
+**What it costs.** It is not free and it is not merely additive:
+
+- It sees prompts, completions and cart contents. That is shopper data leaving
+  the process; it belongs in a backend you control.
+- It brings its own dependency set, including `langchain-anthropic` and
+  `langchain-google-genai`, and pins `deepagents<0.7.0` -- so taking it means
+  not taking a deepagents 0.7 upgrade until that pin moves.
+- It adds a second OTLP exporter to the process.
+
+**Leave it off for normal running.** Turn it on to study a specific problem,
+then turn it off. It is not a monitoring tool — it produces one detailed trace
+per turn, not metrics.
+
+### Worked example: a shopper says the assistant found nothing
+
+The shopper asked for red dresses under $100 and was told the shop has none.
+Is that true, or did the search go wrong?
+
+**1. Turn Relay on and reproduce the turn** — the two commands are under
+[Adding NeMo Relay](#adding-nemo-relay) below. You are ready when the log says:
+
+```
+Relay tracing enabled, exporting to http://otel-collector:4318
+```
+
+**2. Open Phoenix** at `http://localhost:6006` and find the conversation. Each
+turn is one `turn` span; Relay's events nest under it, so the whole turn reads
+top to bottom in one place.
+
+**3. Open the `search_catalog_tool` call** and read its arguments. This is the
+thing you cannot see any other way. You are looking for the difference between
+three quite different failures:
+
+- The arguments match what the shopper asked for, and the result is genuinely
+  empty → the catalogue has no red dress. The assistant was right.
+- The arguments carry a constraint the shopper never gave → the agent invented
+  one, and the empty result is its own doing.
+- The arguments are right, the result has products, and the reply says
+  otherwise → a grounding failure between the tool and the answer.
+
+**4. Turn it back off** when you have your answer. Set both back to `false`
+in your `.env`, then rebuild -- the image itself should stop carrying a library
+that can export prompts and cart contents, not merely stop using it:
+
+```bash
+source .env
+docker compose build chain-server
+docker compose up -d chain-server
+```
+
+### Why Relay can affect a turn at all, and what stops it
+
+A tracing tool should not be able to change what it is tracing. The other
+producer here cannot: `openinference-instrumentation-langchain` registers a
+**callback handler**, so LangChain tells it what happened. It is informed, never
+asked. That is why it costs one line and needs no guards.
+
+Relay attaches differently. Its DeepAgents integration hooks LangGraph
+**middleware** -- `wrap_model_call` and `wrap_tool_call` -- which are execution
+wrappers, not listeners. The agent hands the wrapper a request and takes back
+whatever the wrapper returns. So Relay receives the call, decides what the
+handler is given, and decides what the agent is told came back: three chances to
+change an outcome it is only supposed to record.
+
+This is not a criticism of tracing. It follows from Relay being an agent runtime
+used as a tracing library, where middleware is the only seam available.
+
+One of those chances was taken. Relay's tool wrapper re-encoded the arguments
+and handed the tool a copy in which every unset optional had become an explicit
+null, so a search the model sent as:
+
+```json
+{"requested_product_type": "dress"}
+```
+
+arrived at the tool as:
+
+```json
+{"requested_product_type": "dress", "price": {"min": null, "max": null}}
+```
+
+This service rejects constraints the shopper never gave, so the tool refused its
+own call and the turn answered *"I couldn't complete a valid catalog search"*.
+Measured on journey J01: two failures with tracing on, five passes with it off,
+on the same image, differing only by `RELAY_ENABLED`.
+
+`_relay_may_observe_but_not_decide` in `deepagents_runtime.py` removes the vote
+rather than fixing the one path. Three things hold whatever Relay does,
+including raising:
+
+- the handler is called with the request that arrived, not a copy;
+- it is called **exactly once**, so a wrapper that retries cannot double a cart
+  write, and one that abandons cannot drop it;
+- the agent receives the handler's own return value, not the wrapper's.
+
+Relay is still invoked exactly as before, and the real work still runs inside
+its wrapper, so spans nest and timings stay meaningful. In effect it is plumbed
+as a wrapper and behaves as a callback.
+
+Thirteen tests hold this, one for each way a wrapper could change an outcome.
+
 ## Adding NeMo Relay
 
 Optional, off by default, and it needs two things: a flag, and an image built
 with the package.
 
-```bash
-INSTALL_RELAY=true docker compose build chain-server
+Two variables, both in `.env.example`. `INSTALL_RELAY` puts the library in the
+image and takes effect at build; `RELAY_ENABLED` switches it on at run. Both are
+needed -- setting only the second logs one warning and serves shoppers
+untouched.
 
-INSTALL_RELAY=true RELAY_ENABLED=true \
-  OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318 \
-  docker compose up -d chain-server
+```bash
+# in your .env
+export OTEL_EXPORTER_OTLP_ENDPOINT="http://otel-collector:4318"
+export INSTALL_RELAY=true
+export RELAY_ENABLED=true
+```
+
+```bash
+source .env
+docker compose build chain-server     # INSTALL_RELAY is read here
+docker compose up -d chain-server     # RELAY_ENABLED is read here
 
 docker logs chain-server | grep -i relay
 # → Relay tracing enabled, exporting to http://otel-collector:4318

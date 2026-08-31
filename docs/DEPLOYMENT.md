@@ -125,9 +125,11 @@ Use `shared/configs/models.yaml` to choose the source for each role. Copy
 `.env.local-nim`, edit it, then `source` the profile before running validation,
 deployment, or raw Docker Compose commands.
 
-Set `CATALOG_IMAGE_EMBEDDING_ENABLED=false` in the sourced profile when a
-deployment should skip image embedding clients and image collection population.
-Text retrieval remains enabled.
+Image embedding is off by default: catalog indexing populates the text
+collection only, and needs just the text embedding endpoint. Set
+`CATALOG_IMAGE_EMBEDDING_ENABLED=true` in the sourced profile to also build
+image embedding clients and populate the image collection, which additionally
+requires a reachable `image_embedding` endpoint.
 
 ## 🏠 Local Deployment
 

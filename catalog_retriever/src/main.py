@@ -82,7 +82,7 @@ image_embedding = model_config.get("image_embedding")
 image_enabled = bool(
     image_embedding
     and not image_embedding.disabled
-    and env_flag("CATALOG_IMAGE_EMBEDDING_ENABLED", default=True)
+    and env_flag("CATALOG_IMAGE_EMBEDDING_ENABLED", default=False)
 )
 data.update(
     {

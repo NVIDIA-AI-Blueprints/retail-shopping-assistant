@@ -79,8 +79,9 @@ source product ID and filter metadata so all search modes enforce identical
 hard filters. A missing local image fails startup, and changing its bytes
 changes the internal fingerprint even when its JSONL path stays the same.
 
-Set `CATALOG_IMAGE_EMBEDDING_ENABLED=false` to run text-only. Image query and
-hybrid modes then disappear from `/capabilities`.
+Text-only is the default. Set `CATALOG_IMAGE_EMBEDDING_ENABLED=true` to index
+images as well; until then, image query and hybrid modes are absent from
+`/capabilities`.
 
 ## Replace the Catalog
 

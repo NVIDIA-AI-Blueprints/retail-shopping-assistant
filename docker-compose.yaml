@@ -23,7 +23,9 @@ services:
       - VLM_MODEL=${VLM_MODEL:-}
       - CATALOG_RETRIEVER_URL=http://catalog-retriever:8010
       - MEMORY_RETRIEVER_URL=http://memory-retriever:8011
-      - GUARDRAILS_ENABLED=${GUARDRAILS_ENABLED:-false}
+      # Pass-through, no default here: shared/configs/chain_server/config.yaml
+      # declares it. Empty means unset, so config wins.
+      - GUARDRAILS_ENABLED=${GUARDRAILS_ENABLED:-}
       - CHECKPOINT_STORE=${CHECKPOINT_STORE-memory}
       - DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS=${DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS:-45}
       - CHAIN_SERVER_RELOAD=${CHAIN_SERVER_RELOAD:-false}
@@ -80,7 +82,9 @@ services:
       - IMAGE_EMBED_MODEL=${IMAGE_EMBED_MODEL:-}
       - CATALOG_DATA_SOURCE=${CATALOG_DATA_SOURCE:-}
       - CATALOG_SCHEMA_SOURCE=${CATALOG_SCHEMA_SOURCE:-}
-      - CATALOG_IMAGE_EMBEDDING_ENABLED=${CATALOG_IMAGE_EMBEDDING_ENABLED:-false}
+      # Pass-through, no default here: shared/configs/catalog_retriever/config.yaml
+      # declares it. Empty means unset, so config wins.
+      - CATALOG_IMAGE_EMBEDDING_ENABLED=${CATALOG_IMAGE_EMBEDDING_ENABLED:-}
       - MILVUS_HOST=milvus
       - MILVUS_PORT=19530
     volumes:
@@ -106,7 +110,9 @@ services:
       - IMAGE_EMBED_MODEL=${IMAGE_EMBED_MODEL:-}
       - CATALOG_DATA_SOURCE=${CATALOG_DATA_SOURCE:-}
       - CATALOG_SCHEMA_SOURCE=${CATALOG_SCHEMA_SOURCE:-}
-      - CATALOG_IMAGE_EMBEDDING_ENABLED=${CATALOG_IMAGE_EMBEDDING_ENABLED:-false}
+      # Pass-through, no default here: shared/configs/catalog_retriever/config.yaml
+      # declares it. Empty means unset, so config wins.
+      - CATALOG_IMAGE_EMBEDDING_ENABLED=${CATALOG_IMAGE_EMBEDDING_ENABLED:-}
       - MILVUS_HOST=milvus
       - MILVUS_PORT=19530
     volumes:

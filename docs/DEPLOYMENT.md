@@ -131,6 +131,12 @@ collection only, and needs just the text embedding endpoint. Set
 image embedding clients and populate the image collection, which additionally
 requires a reachable `image_embedding` endpoint.
 
+That default is declared in one place, `shared/configs/catalog_retriever/config.yaml`,
+as `image_embedding_enabled`. Compose and the env profiles pass the environment
+variable through without a default of their own, so an empty value means "not
+set" and the config file decides. Guardrails works the same way, with its
+default in `shared/configs/chain_server/config.yaml`.
+
 ## 🏠 Local Deployment
 
 Use this only when this machine will run local NIM containers.

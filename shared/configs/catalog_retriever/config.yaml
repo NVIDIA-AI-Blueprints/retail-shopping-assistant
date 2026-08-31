@@ -4,5 +4,11 @@ catalog_id: "fashion_products"
 sim_threshold: 0.3
 text_collection: "shopping_advisor_text_db"
 image_collection: "shopping_advisor_image_db"
+# The one place this default is declared. CATALOG_IMAGE_EMBEDDING_ENABLED
+# overrides it when set to a non-empty value; compose and the env profiles pass
+# that variable through without supplying a competing default of their own.
+# On, indexing also embeds every product image and needs a reachable
+# image_embedding endpoint.
+image_embedding_enabled: false
 data_source: "/app/shared/data/enriched_products.jsonl"
 schema_source: "/app/shared/data/enriched_products.schema.yaml"

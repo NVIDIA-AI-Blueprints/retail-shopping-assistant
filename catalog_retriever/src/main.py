@@ -49,8 +49,14 @@ def load_config(base_config_path: str):
     return config
 
 
-def env_flag(name: str, default: bool = True) -> bool:
-    """Read a boolean environment flag."""
+def env_flag(name: str, *, default: bool) -> bool:
+    """Read a boolean environment flag, falling back to a configured default.
+
+    ``default`` is required and keyword-only so that a caller cannot silently
+    inherit a default declared here rather than in config.yaml. An unset or
+    empty value counts as absent, which is what lets compose and the env
+    profiles pass the variable straight through without overriding config.
+    """
 
     value = os.environ.get(name)
     if value is None or not value.strip():
@@ -82,7 +88,10 @@ image_embedding = model_config.get("image_embedding")
 image_enabled = bool(
     image_embedding
     and not image_embedding.disabled
-    and env_flag("CATALOG_IMAGE_EMBEDDING_ENABLED", default=True)
+    and env_flag(
+        "CATALOG_IMAGE_EMBEDDING_ENABLED",
+        default=bool(data.get("image_embedding_enabled", False)),
+    )
 )
 data.update(
     {

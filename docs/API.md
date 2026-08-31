@@ -1596,10 +1596,12 @@ print(f"Timing: {response['timings']}")
 - Image data may be raw base64 or a `data:` URL; video media should include
   `mime_type: "video/mp4"` and is sent through `media[]`
 - The API supports both local and cloud-based NIM deployments
-- The `vlm` model role is enabled by default for image/video media perception
-  and can be set to `disabled`; image embedding search remains separately controlled by the
-  `image_embedding` model role and `CATALOG_IMAGE_EMBEDDING_ENABLED`.
-- Content safety is enabled by default but can be disabled per request
+  - The `vlm` model role is enabled by default for image/video media perception
+    and can be set to `disabled`; image embedding search is separately controlled
+    by the `image_embedding` model role and `CATALOG_IMAGE_EMBEDDING_ENABLED`,
+    which is off by default
+  - Content safety is off by default. Enable it per deployment with
+    `GUARDRAILS_ENABLED`, or per request with the request's own `guardrails` flag
 - `/query/stream` uses SSE framing. Token-level Deep Agents streaming is a
   known follow-up after the harness migration; this slice emits completed turn
   events rather than live model chunks. The stream includes `products` frames

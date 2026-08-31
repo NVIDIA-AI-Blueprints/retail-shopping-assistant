@@ -17,6 +17,25 @@ services:
       # array and object arguments; qwen3_xml returns them as raw strings, which
       # fails validation for every structured tool this app defines.
       - NIM_PASSTHROUGH_ARGS=${NIM_PASSTHROUGH_ARGS:---enable-auto-tool-choice --tool-call-parser qwen3_coder --max-num-seqs 256}
+      # Set explicitly, because unset does not mean "default on" -- it means vLLM
+      # chooses, and vLLM disables prefix caching for every model whose attention
+      # type is hybrid, calling the feature experimental. It does not consult the
+      # model, even though NemotronHForCausalLM declares SupportsMambaPrefixCaching.
+      # This model is hybrid, so it is caught by that blanket rule and the shared
+      # prefix of every agent call is prefilled again from scratch.
+      #
+      # Worth caring about here because an agent turn makes several model calls
+      # that each re-send the same system prompt, tool schemas and conversation,
+      # so most of each prompt is text the engine processed moments earlier.
+      #
+      # Confirm it took effect -- the engine publishes what it resolved, which is
+      # not always what was asked for:
+      #   curl -s localhost:8000/metrics | grep cache_config_info
+      # Expect enable_prefix_caching="True", and mamba_block_size to drop to the
+      # attention block size, which is what makes the recurrent state reusable.
+      #
+      # Set to 0 to compare against, or if a future image regresses here.
+      - NIM_ENABLE_KV_CACHE_REUSE=${NIM_ENABLE_KV_CACHE_REUSE:-1}
     volumes:
       - ${LOCAL_NIM_CACHE}:/opt/nim/.cache
     user: "${NIM_UID:-1000}"

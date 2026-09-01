@@ -1,0 +1,35 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# An overlay for driving load, not a second way to deploy.
+#
+#   docker compose -f docker-compose.yaml -f docker-compose.scale.yaml \
+#       up -d --scale chain-server=4
+#
+# Two things in the base file make one chain-server the only possibility, and
+# both are conveniences rather than decisions:
+#
+#   container_name  Compose refuses to scale a service with a fixed name,
+#                   because the second container would want the same one.
+#   ports 8009:8009 The second container would want the same host port.
+#
+# Removing them here rather than in the base file keeps the ordinary case
+# unchanged -- `docker compose up` still gives one chain-server on 8009, which
+# is what every script and document expects.
+#
+# Replicas get ephemeral host ports. `scripts/journey_load.py` finds them, so
+# there is nothing to configure; `docker compose port chain-server 8009 --index 2`
+# is how to find one by hand.
+#
+# Nothing about the application needed changing for this. A chain-server holds
+# no state between turns, which is what the horizontal-readiness work
+# established, so replicas need no coordination and no affinity.
+
+services:
+  chain-server:
+    container_name: !reset null
+    # A published port with no host side, so Docker assigns a free one per
+    # replica. `expose` is not enough: it opens the port inside the network
+    # only, and a load generator on the host would have nothing to reach.
+    ports: !override
+      - "8009"

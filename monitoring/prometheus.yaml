@@ -1,0 +1,36 @@
+# Scrape config for a locally deployed LLM NIM.
+#
+# The target is the compose service name, not a host port. Prometheus runs on the
+# application's network, so `nemotron:8000` resolves regardless of whether the NIM
+# publishes a host port -- and keeps working if that published port changes.
+#
+# If you serve the app LLM from a different local NIM service, change the target
+# to match its service name in docker-compose-nim-local.yaml.
+
+global:
+  scrape_interval: 5s
+  evaluation_interval: 30s
+
+scrape_configs:
+  - job_name: vllm
+    static_configs:
+      - targets:
+          - 'nemotron:8000'
+
+  # Per-container CPU and memory for every service in the stack, so a ceiling can
+  # be attributed to the component that caused it rather than assumed to be the
+  # GPU. Scraped more slowly than the engine: these move on the scale of seconds,
+  # not milliseconds, and cAdvisor is comparatively expensive to scrape.
+  - job_name: containers
+    scrape_interval: 10s
+    static_configs:
+      - targets:
+          - 'container-stats:9105'
+
+  # GPU-side truth. Needed to tell a saturated GPU apart from an idle one waiting
+  # on something upstream.
+  - job_name: dcgm
+    scrape_interval: 5s
+    static_configs:
+      - targets:
+          - 'dcgm:9400'

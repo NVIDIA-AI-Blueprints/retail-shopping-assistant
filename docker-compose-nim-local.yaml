@@ -36,6 +36,25 @@ services:
       #
       # Set to 0 to compare against, or if a future image regresses here.
       - NIM_ENABLE_KV_CACHE_REUSE=${NIM_ENABLE_KV_CACHE_REUSE:-1}
+      # Left to the NIM by default, because the right profile depends on the
+      # hardware it finds. Pin it when comparing measurements across runs:
+      # selection reads *free* GPU memory at startup, and this image also offers
+      # a BF16 profile it considers runnable, so precision -- and every number
+      # downstream of it -- can otherwise move between runs depending on what
+      # happened to be resident.
+      #
+      #   # FP8, tensor parallel 2, needs >=65GB on each of 2 GPUs
+      #   NIM_MODEL_PROFILE=57d42cc7d33914933427e7f8d8cb1773bc11e5c96826c92095820a8776e6a4f6 \
+      #     docker compose -f docker-compose-nim-local.yaml up -d nemotron
+      #
+      # `list-model-profiles` in the image shows what your hardware offers.
+      #
+      # Declared bare, with no `=`, so it is passed through only when set in the
+      # shell and omitted from the container otherwise. That distinction matters
+      # here: `${NIM_MODEL_PROFILE:-}` would hand the NIM an empty string, and
+      # the profile is looked up as `profile_id in manifest`, so "" reads as a
+      # profile that does not exist rather than as a request to choose one.
+      - NIM_MODEL_PROFILE
     volumes:
       - ${LOCAL_NIM_CACHE}:/opt/nim/.cache
     user: "${NIM_UID:-1000}"

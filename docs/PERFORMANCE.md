@@ -180,6 +180,13 @@ Six steps. Each one answers a question the next step assumes you have answered.
 | 5 | Where does it saturate at *my* workload shape? | `benchmarks/bench.sh sweep` + `SWEEP_*` |
 | 6 | How many concurrent shoppers, end to end? | `benchmarks/shopper_study.py` |
 
+Steps 4 and 5 need two things the rest of the ladder does not: vLLM's benchmark
+CLI and a tokenizer on disk. Both are sizeable downloads and neither is a
+dependency of this repo, so fetch them before you begin — the commands are under
+step 4, and in [`benchmarks/README.md`](../benchmarks/README.md). Steps 1, 2, 3
+and 6 need nothing beyond this repo and a running deployment, which is worth
+knowing because step 6 is the one that answers the capacity question.
+
 ### Step 1 — Prove the instruments work
 
 ```bash

@@ -22,6 +22,28 @@ Start the monitoring stack first, or the resource columns come back blank:
 cd ../monitoring && ./dashboard.sh up
 ```
 
+**The two sweep steps need tooling the rest does not.** `bench.sh sweep` drives
+load with vLLM's own benchmark, so it needs the `vllm` CLI and a tokenizer on
+disk. Neither is a dependency of this repo and neither is a small download, so
+install them before you start rather than meeting them four steps in:
+
+```bash
+# The CLI. A throwaway venv keeps it out of the application's environment.
+python3 -m venv ~/vllm-bench && ~/vllm-bench/bin/pip install vllm==0.17.1
+
+# A tokenizer. The benchmark counts tokens locally, so it needs the tokenizer
+# files -- a few MB -- but not the weights.
+hf download <your-model-repo> \
+  --include 'tokenizer*' 'config.json' --local-dir ~/model-tokenizer
+
+VLLM_BIN=~/vllm-bench/bin TOKENIZER=~/model-tokenizer ./bench.sh sweep
+```
+
+`bench.sh` looks for both on `PATH` and in the usual locations, and prints these
+commands if it cannot find them. Everything else here runs without them,
+including `shopper_study.py`, which is the one that answers the capacity
+question.
+
 ## The tools, by what they drive
 
 Grouped by which layer of the system they exercise, which is also the order you

@@ -11,7 +11,7 @@ waiting properly, N shoppers at once should finish in about the time of one. If
 instead the wall clock grows with N, something on the turn path is holding the
 event loop and every shopper is paying for every other shopper.
 
-    python scripts/concurrent_shoppers.py --shoppers 3
+    python3 benchmarks/concurrent_shoppers.py --shoppers 3
 
 Each shopper gets its own user, session and cart, so nothing is shared and any
 queueing observed is the service's, not the scenario's.

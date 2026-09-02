@@ -21,9 +21,9 @@ search, resolve references, call tools and write carts. A synthetic single-turn
 benchmark stresses the wrong thing and flatters the result -- most of a real
 turn is the agent loop, not one model call.
 
-    python scripts/journey_load.py                          # ramp 1,2,4,8
-    python scripts/journey_load.py --levels 1,4,8,16
-    python scripts/journey_load.py --only J12,J17 --minutes 3
+    python3 benchmarks/journey_load.py                      # ramp 1,2,4,8
+    python3 benchmarks/journey_load.py --levels 1,4,8,16
+    python3 benchmarks/journey_load.py --only J12,J17 --minutes 3
 
 Nothing is judged and nothing is asserted. Checking answers costs further model
 calls, which is the resource under test. Correctness is `replay.py`'s job.

@@ -149,6 +149,7 @@ class Assistant:
                 payload["image_bool"] = True
 
         started = time.monotonic()
+        first_token: float | None = None
         reply, products, diagnostics = "", [], {}
         with requests.post(
             self._url, json=payload, timeout=self._timeout, stream=True
@@ -161,6 +162,15 @@ class Assistant:
                 event = json.loads(line[6:])
                 body = event.get("payload")
                 if event.get("type") == "content":
+                    # First words on screen, which is what a shopper waiting at
+                    # the page actually experiences. The turn keeps running long
+                    # after this -- tools, the grounding pass, the cart -- so
+                    # total seconds describes the system's work and this
+                    # describes the wait. Under load they diverge sharply, and
+                    # sizing against the wrong one either wastes hardware or
+                    # promises a page that sits blank.
+                    if first_token is None and body:
+                        first_token = time.monotonic() - started
                     reply = body or ""
                 elif event.get("type") == "products" and isinstance(body, list):
                     products = body
@@ -188,6 +198,9 @@ class Assistant:
                 for scope in ((call.get("arguments") or {}).get("scopes") or [])
             ],
             "seconds": round(time.monotonic() - started, 1),
+            # None if the turn produced no content at all, which is a failure
+            # worth telling apart from a fast one rather than recording as 0.
+            "ttft": round(first_token, 2) if first_token is not None else None,
         }
 
     def cart(self, user_id: int) -> list[dict[str, Any]]:

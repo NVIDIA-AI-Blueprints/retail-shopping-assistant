@@ -144,21 +144,24 @@ class ChainServerConfig(BaseModel):
         description="Maximum tool evidence characters passed to the grounding editor",
     )
     llm_max_output_tokens: int = Field(
-        default=1024,
+        default=4096,
         description=(
             "Maximum tokens the primary agent model may generate per call. "
-            "Unbounded generation let a single call's output dominate a "
-            "turn's token accounting; this caps it to the agent's own reply, "
-            "not the ceiling the model happens to have."
+            "Unbounded generation let a single call's output run to the "
+            "model's own ceiling instead of the length a reply needs. 1024 "
+            "was tried first and silently truncated a real reply mid-word "
+            "-- 'give me a detailed comparison of every dress' legitimately "
+            "needs more than a few hundred tokens -- so this bounds runaway "
+            "generation without cutting off verbose-but-legitimate answers."
         ),
     )
     grounding_editor_max_output_tokens: int = Field(
-        default=512,
+        default=3072,
         description=(
             "Maximum tokens the grounding editor rewrite may generate per "
-            "call. The editor rewrites an existing draft rather than "
-            "composing from scratch, so it needs a smaller ceiling than the "
-            "primary agent model."
+            "call. It rewrites an existing draft, but the draft can itself "
+            "be long (see llm_max_output_tokens), so this tracks that "
+            "ceiling rather than assuming rewrites are always short."
         ),
     )
     expose_agent_diagnostics: bool = Field(

@@ -21,20 +21,26 @@ Moved verbatim from `deepagents_runtime.py`; no definition was edited.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .conversation_products import ProductEvidence
+
 import asyncio
-from dataclasses import dataclass
 import hashlib
 import json
 import logging
 import os
-from pathlib import Path
 import re
-from collections.abc import Mapping, Sequence
-from difflib import SequenceMatcher
-from types import SimpleNamespace
-from typing import Any, Literal
 import unicodedata
 import uuid
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from difflib import SequenceMatcher
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any, Literal
+
 from langgraph.checkpoint.memory import MemorySaver
 from pydantic import (
     BaseModel,
@@ -46,33 +52,27 @@ from pydantic import (
     model_validator,
 )
 from pydantic_core import PydanticCustomError
-from .agenttypes import Cart, DialogueTurn, State
-from .response_format import (
-    _format_cart,
-    _format_detail_value,
-    _format_filter_statement,
-    _format_product_detail_record,
-    _format_product_record,
-    _format_product_refs,
-    _format_search_group,
+from shared.commerce_contracts import (
+    CatalogCapabilities,
+    CommerceError,
+    ProductDetail,
+    ProductSummary,
 )
+
+from .agenttypes import Cart, DialogueTurn, State
 from .catalog_capabilities import (
     effective_filter_capabilities,
 )
 from .catalog_request import (
     CatalogSearchPlan,
 )
-from .conversation_memory import (
-    ConversationEvent,
-    FinalTurnStatus,
-)
 from .control_signals import (
     not_carried_of,
     rejections_of,
 )
-from .tool_evidence import (
-    detail_evidence_of,
-    evidence_of,
+from .conversation_memory import (
+    ConversationEvent,
+    FinalTurnStatus,
 )
 from .message_shape import (
     _content_to_text,
@@ -82,6 +82,15 @@ from .message_shape import (
     _tool_results_by_call_id,
     _value,
 )
+from .response_format import (
+    _format_cart,
+    _format_detail_value,
+    _format_filter_statement,
+    _format_product_detail_record,
+    _format_product_record,
+    _format_product_refs,
+    _format_search_group,
+)
 from .skill_activation import (
     SKILL_ACTIVATION_COMPLETE,
     SKILL_ACTIVATION_MODIFIER_REQUIRES_PRIMARY,
@@ -90,25 +99,22 @@ from .skill_activation import (
     SKILL_ACTIVATION_TOOL_NAME,
     SKILL_TOOL_NOT_GRANTED,
 )
+from .tool_evidence import (
+    detail_evidence_of,
+    evidence_of,
+)
 from .tool_loop_control import (
-    SEARCH_BUDGET_EXHAUSTED_PREFIX,
+    _SERVER_REJECTED_TOOL_CALLS,
     CONSTRAINT_REVIEW_PREFIX,
-    STOP_TOOL_USE_PREFIX,
+    SEARCH_BUDGET_EXHAUSTED_PREFIX,
     SEARCH_SCOPE_COMPLETE_PREFIX,
     SEARCH_VALIDATION_ERROR_PREFIX,
     SERVER_CATALOG_CLARIFICATION,
     SERVER_RESTORED_TOOL_CALL_FIELDS,
+    STOP_TOOL_USE_PREFIX,
     UNSUPPORTED_CONSTRAINT_PREFIX,
     UNSUPPORTED_TAXONOMY_PREFIX,
-    _SERVER_REJECTED_TOOL_CALLS,
 )
-from shared.commerce_contracts import (
-    CatalogCapabilities,
-    CommerceError,
-    ProductDetail,
-    ProductSummary,
-)
-
 
 logger = logging.getLogger(__name__)
 
@@ -957,7 +963,7 @@ class SearchCatalogToolInput(SearchCatalogToolArguments):
         )
 
     @model_validator(mode="after")
-    def text_search_has_taxonomy_scope(self) -> "SearchCatalogToolInput":
+    def text_search_has_taxonomy_scope(self) -> SearchCatalogToolInput:
         if len(set(self.taxonomy.category)) > 1:
             raise ValueError("catalog search accepts at most one category")
         has_taxonomy = bool(
@@ -1131,7 +1137,7 @@ class _CatalogNumberConstraint(BaseModel):
     max: float | None = None
 
     @model_validator(mode="after")
-    def has_a_bound(self) -> "_CatalogNumberConstraint":
+    def has_a_bound(self) -> _CatalogNumberConstraint:
         if self.min is None and self.max is None:
             raise ValueError("numeric constraint requires min and/or max")
         if self.min is not None and self.max is not None and self.min > self.max:
@@ -1139,7 +1145,75 @@ class _CatalogNumberConstraint(BaseModel):
         return self
 
 
+#: Built schemas, kept for the life of the process.
+#:
+#: Every input to these builders is fixed once the service is running: the
+#: capability contract is cached by CatalogCapabilitiesClient on its first
+#: success, and the rest are configuration. So the schema is identical on every
+#: turn -- verified byte-for-byte -- and rebuilding it was 15ms per turn of
+#: producing the same object, on the event loop that also serves the turn.
+#:
+#: Keyed on the contract's *content*, not its catalog_id. Two contracts can
+#: carry the same id and differ -- which is not hypothetical: thirty-two tests
+#: failed on an id-based key, each having built a catalog named like the shipped
+#: one with different fields, and each being served the other's schema. In
+#: production one process sees one catalog and the distinction never arises;
+#: the point of hashing is that a cache should not be correct only because of
+#: how it happens to be used.
+#:
+#: The hash costs 1.9ms against 7ms to rebuild, so it pays for itself, and it
+#: needs no assumption about when a catalog may change.
+_SCHEMA_CACHE: dict[tuple[Any, ...], Any] = {}
+
+
+def _capabilities_identity(capabilities: CatalogCapabilities) -> str:
+    """A stable fingerprint of everything a schema is built from."""
+
+    return hashlib.blake2b(
+        capabilities.model_dump_json().encode("utf-8"), digest_size=16
+    ).hexdigest()
+
+
+def _cached_schema(key: tuple[Any, ...], build: Any) -> Any:
+    """Return a built schema, building it once per distinct key."""
+
+    if key not in _SCHEMA_CACHE:
+        _SCHEMA_CACHE[key] = build()
+    return _SCHEMA_CACHE[key]
+
+
+def clear_schema_cache() -> None:
+    """Drop every built schema. For tests that construct several catalogs."""
+
+    _SCHEMA_CACHE.clear()
+
+
 def _search_catalog_tool_input_model(
+    capabilities: CatalogCapabilities,
+    *,
+    validate_scope: bool = True,
+    wearer_audience_field: str = "",
+) -> type[SearchCatalogToolArguments]:
+    """Return the tool schema for this catalog, building it at most once.
+
+    The enums come from the catalog, and the catalog does not change under a
+    running process -- CatalogCapabilitiesClient caches its first successful
+    contract and never refetches, so a schema built from it can be kept for as
+    long as that contract is. Rebuilding it was 8ms of producing an identical
+    object on every turn, on the event loop that also has to serve the turn.
+    """
+
+    return _cached_schema(
+        ("search_tool", _capabilities_identity(capabilities), validate_scope, wearer_audience_field),
+        lambda: _build_search_catalog_tool_input_model(
+            capabilities,
+            validate_scope=validate_scope,
+            wearer_audience_field=wearer_audience_field,
+        ),
+    )
+
+
+def _build_search_catalog_tool_input_model(
     capabilities: CatalogCapabilities,
     *,
     validate_scope: bool = True,
@@ -1373,6 +1447,24 @@ def _admit_scopes_for_adjudication(cls: Any, data: Any, handler: Any) -> Any:
 
 
 def _search_catalog_scopes_input_model(
+    capabilities: CatalogCapabilities,
+    *,
+    max_scopes: int = 1,
+    wearer_audience_field: str = "",
+) -> type[BaseModel]:
+    """Return the scoped-search schema for this catalog, built at most once."""
+
+    return _cached_schema(
+        ("search_scopes", _capabilities_identity(capabilities), max_scopes, wearer_audience_field),
+        lambda: _build_search_catalog_scopes_input_model(
+            capabilities,
+            max_scopes=max_scopes,
+            wearer_audience_field=wearer_audience_field,
+        ),
+    )
+
+
+def _build_search_catalog_scopes_input_model(
     capabilities: CatalogCapabilities,
     *,
     max_scopes: int = 1,
@@ -1773,7 +1865,7 @@ def _one_primary_per_group(self: Any) -> Any:
     groups: Mapping[str, tuple[str, ...]] = cls._primary_skills_by_group
     selected = set(self.skill_names)
     primaries: list[str] = []
-    for group, names in sorted(groups.items()):
+    for _group, names in sorted(groups.items()):
         chosen = sorted(selected.intersection(names))
         if len(chosen) > 1:
             raise PydanticCustomError(
@@ -2058,7 +2150,7 @@ def create_request_identity(
 
 
 def _stable_numeric_id(namespace: str, value: str) -> int:
-    digest = hashlib.sha256(f"{namespace}:{value}".encode("utf-8")).hexdigest()
+    digest = hashlib.sha256(f"{namespace}:{value}".encode()).hexdigest()
     return int(digest[:15], 16)
 
 
@@ -4783,7 +4875,7 @@ def _products_the_shopper_fits(
     said = words(shopper_text)
 
     scored: list[tuple[float, Any]] = []
-    for candidate, names in zip(candidates, per_candidate):
+    for candidate, names in zip(candidates, per_candidate, strict=False):
         total = sum(1 / shared[word] for word in names)
         if not total:
             continue

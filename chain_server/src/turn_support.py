@@ -21,20 +21,26 @@ Moved verbatim from `deepagents_runtime.py`; no definition was edited.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .conversation_products import ProductEvidence
+
 import asyncio
-from dataclasses import dataclass
 import hashlib
 import json
 import logging
 import os
-from pathlib import Path
 import re
-from collections.abc import Mapping, Sequence
-from difflib import SequenceMatcher
-from types import SimpleNamespace
-from typing import Any, Literal
 import unicodedata
 import uuid
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from difflib import SequenceMatcher
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any, Literal
+
 from langgraph.checkpoint.memory import MemorySaver
 from pydantic import (
     BaseModel,
@@ -46,33 +52,27 @@ from pydantic import (
     model_validator,
 )
 from pydantic_core import PydanticCustomError
-from .agenttypes import Cart, DialogueTurn, State
-from .response_format import (
-    _format_cart,
-    _format_detail_value,
-    _format_filter_statement,
-    _format_product_detail_record,
-    _format_product_record,
-    _format_product_refs,
-    _format_search_group,
+from shared.commerce_contracts import (
+    CatalogCapabilities,
+    CommerceError,
+    ProductDetail,
+    ProductSummary,
 )
+
+from .agenttypes import Cart, DialogueTurn, State
 from .catalog_capabilities import (
     effective_filter_capabilities,
 )
 from .catalog_request import (
     CatalogSearchPlan,
 )
-from .conversation_memory import (
-    ConversationEvent,
-    FinalTurnStatus,
-)
 from .control_signals import (
     not_carried_of,
     rejections_of,
 )
-from .tool_evidence import (
-    detail_evidence_of,
-    evidence_of,
+from .conversation_memory import (
+    ConversationEvent,
+    FinalTurnStatus,
 )
 from .message_shape import (
     _content_to_text,
@@ -82,6 +82,15 @@ from .message_shape import (
     _tool_results_by_call_id,
     _value,
 )
+from .response_format import (
+    _format_cart,
+    _format_detail_value,
+    _format_filter_statement,
+    _format_product_detail_record,
+    _format_product_record,
+    _format_product_refs,
+    _format_search_group,
+)
 from .skill_activation import (
     SKILL_ACTIVATION_COMPLETE,
     SKILL_ACTIVATION_MODIFIER_REQUIRES_PRIMARY,
@@ -90,25 +99,22 @@ from .skill_activation import (
     SKILL_ACTIVATION_TOOL_NAME,
     SKILL_TOOL_NOT_GRANTED,
 )
+from .tool_evidence import (
+    detail_evidence_of,
+    evidence_of,
+)
 from .tool_loop_control import (
-    SEARCH_BUDGET_EXHAUSTED_PREFIX,
+    _SERVER_REJECTED_TOOL_CALLS,
     CONSTRAINT_REVIEW_PREFIX,
-    STOP_TOOL_USE_PREFIX,
+    SEARCH_BUDGET_EXHAUSTED_PREFIX,
     SEARCH_SCOPE_COMPLETE_PREFIX,
     SEARCH_VALIDATION_ERROR_PREFIX,
     SERVER_CATALOG_CLARIFICATION,
     SERVER_RESTORED_TOOL_CALL_FIELDS,
+    STOP_TOOL_USE_PREFIX,
     UNSUPPORTED_CONSTRAINT_PREFIX,
     UNSUPPORTED_TAXONOMY_PREFIX,
-    _SERVER_REJECTED_TOOL_CALLS,
 )
-from shared.commerce_contracts import (
-    CatalogCapabilities,
-    CommerceError,
-    ProductDetail,
-    ProductSummary,
-)
-
 
 logger = logging.getLogger(__name__)
 
@@ -957,7 +963,7 @@ class SearchCatalogToolInput(SearchCatalogToolArguments):
         )
 
     @model_validator(mode="after")
-    def text_search_has_taxonomy_scope(self) -> "SearchCatalogToolInput":
+    def text_search_has_taxonomy_scope(self) -> SearchCatalogToolInput:
         if len(set(self.taxonomy.category)) > 1:
             raise ValueError("catalog search accepts at most one category")
         has_taxonomy = bool(
@@ -1131,7 +1137,7 @@ class _CatalogNumberConstraint(BaseModel):
     max: float | None = None
 
     @model_validator(mode="after")
-    def has_a_bound(self) -> "_CatalogNumberConstraint":
+    def has_a_bound(self) -> _CatalogNumberConstraint:
         if self.min is None and self.max is None:
             raise ValueError("numeric constraint requires min and/or max")
         if self.min is not None and self.max is not None and self.min > self.max:
@@ -1859,7 +1865,7 @@ def _one_primary_per_group(self: Any) -> Any:
     groups: Mapping[str, tuple[str, ...]] = cls._primary_skills_by_group
     selected = set(self.skill_names)
     primaries: list[str] = []
-    for group, names in sorted(groups.items()):
+    for _group, names in sorted(groups.items()):
         chosen = sorted(selected.intersection(names))
         if len(chosen) > 1:
             raise PydanticCustomError(
@@ -2144,7 +2150,7 @@ def create_request_identity(
 
 
 def _stable_numeric_id(namespace: str, value: str) -> int:
-    digest = hashlib.sha256(f"{namespace}:{value}".encode("utf-8")).hexdigest()
+    digest = hashlib.sha256(f"{namespace}:{value}".encode()).hexdigest()
     return int(digest[:15], 16)
 
 
@@ -4869,7 +4875,7 @@ def _products_the_shopper_fits(
     said = words(shopper_text)
 
     scored: list[tuple[float, Any]] = []
-    for candidate, names in zip(candidates, per_candidate):
+    for candidate, names in zip(candidates, per_candidate, strict=False):
         total = sum(1 / shared[word] for word in names)
         if not total:
             continue

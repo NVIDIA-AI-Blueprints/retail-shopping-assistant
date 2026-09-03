@@ -20,7 +20,7 @@ import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Dict
+from typing import Any
 
 import pytest
 
@@ -63,6 +63,8 @@ def base_config() -> SimpleNamespace:
         max_product_detail_reads_per_turn=2,
         grounding_rewrite_enabled=True,
         grounding_rewrite_max_evidence_chars=12000,
+        llm_max_output_tokens=1024,
+        grounding_editor_max_output_tokens=512,
         expose_agent_diagnostics=False,
         catalog_search_timeout_seconds=None,
         multimodal=True,
@@ -88,7 +90,7 @@ def base_config() -> SimpleNamespace:
 
 
 @pytest.fixture
-def valid_config_dict() -> Dict[str, Any]:
+def valid_config_dict() -> dict[str, Any]:
     """Dict counterpart of :func:`base_config` for testing pydantic validation."""
     return {
         "llm_port": "http://localhost:8000/v1",

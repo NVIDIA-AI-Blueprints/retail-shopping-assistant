@@ -5,181 +5,28 @@
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
-from datetime import date as CalendarDate, datetime, timezone
-
-import logging
-
 import asyncio
 import atexit
 import contextlib
 import json
+import logging
 import os
 import sys
-from pathlib import Path
 import time
-from typing import Any, AsyncIterator, Literal
+from collections.abc import AsyncIterator
+from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime
+from datetime import date as CalendarDate
+from pathlib import Path
+from typing import Any, Literal
 
+import requests
 from langgraph.errors import GraphRecursionError
 from pydantic import (
-    field_validator,
     BaseModel,
     Field,
     ValidationError,
-)
-import requests
-
-from .agenttypes import Cart, ShopperContext, State
-from .catalog_search import SearchContext, search_catalog
-from .response_format import (
-    format_catalog_shape,
-    _format_availability_result,
-    _format_cart,
-    _format_cart_add_result,
-    _format_cart_remove_result,
-    _format_cart_total,
-    _format_media_summary,
-    _format_policy_result,
-    _format_product_detail_record,
-    _format_promotions_result,
-    _format_retrieved_images,
-    _format_shopper_context,
-    _format_store_date,
-    _format_weather_result,
-    WEATHER_BUDGET_EXHAUSTED,
-    WEATHER_NO_DATE,
-    WeatherForecastInput as _WeatherForecastInput,
-    weather_call_needs_a_date,
-    claim_weather_call,
-    _format_wearer_audience,
-    _format_update_cart_result,
-    format_cart_change,
-)
-from .catalog_execution import execute_catalog_search
-from .catalog_request import CatalogSearchPlan
-from .turn_support import (
-    WEATHER_PLACE_NOT_IN_THIS_TURN,
-    a_place_this_turn_named,
-    _a_list_written_as_json_text,
-    _append_product_results,
-    _detail_fields_already_held,
-    _search_catalog_scopes_input_model,
-    _system_identification_events,
-    _turn_audience_events,
-    AddCartItemsToolItemInput,
-    RequestIdentity,
-    _add_model_usage,
-    _cart_size_issue,
-    _cart_line_size,
-    _cart_product_choice_note,
-    format_most_recent_subject,
-    _identified_in_the_current_showing,
-    _most_recently_shown,
-    _images_in_product_order,
-    _in_presentation_order,
-    _shopper_words_this_conversation,
-    _build_checkpointer,
-    _cart_add_scope_failures,
-    _cart_line_by_id,
-    _catalog_repair_clarification_response,
-    _collect_token_usage,
-    _collect_tool_grounding_evidence,
-    _committed_effect_receipt,
-    _conversation_turn_status,
-    _empty_agent_diagnostics,
-    _format_search_only_response,
-    _has_grounding_authority,
-    _has_search_only_tool_evidence,
-    _has_successful_non_search_tool_evidence,
-    _media_failure_response,
-    _merge_token_usage,
-    _no_direct_taxonomy_response,
-    _normalize_cart_add_tool_items,
-    _normalized_token_usage,
-    _partial_graph_messages,
-    _partial_product_results_response,
-    _product_detail_failure_message,
-    _product_detail_record,
-    _record_language_model_failure,
-    _record_media_model_usage,
-    _record_safety_model_usage,
-    _rejected_catalog_search_response,
-    _safe_collect_agent_diagnostics,
-    _same_product_display_name,
-    _scrub_internal_shopper_language,
-    _search_catalog_tool_input_model,
-    _search_guidance_evidence,
-    _should_short_circuit_media_failure,
-    _skill_activation_input_model,
-    _store_policies_path,
-    _products_found_receipt,
-    _advertised_sizes,
-    _ONE_SIZE,
-)
-from .catalog_capabilities import (
-    CatalogCapabilitiesClient,
-    format_catalog_capabilities_for_prompt,
-)
-from .catalog_scope import CATALOG_SEARCH_RULES
-from .commerce_tools import (
-    add_cart_item,
-    check_active_promotions,
-    check_product_availability,
-    get_cart,
-    get_product_details,
-    get_store_policy,
-    remove_cart_item,
-    update_cart_item,
-)
-from .conversation_memory import (
-    ConversationMemoryClient,
-    ConversationMemoryError,
-    FinalTurnStatus,
-    TurnReplayOutput,
-    TurnStartResult,
-    build_dialogue_context,
-)
-from .control_signals import (
-    EFFECTS_KEY,
-    ControlSignal,
-    committed_effect,
-    committed_effects_in,
-    control,
-    normalize_tool_result,
-)
-from .conversation_products import (
-    ConversationProductsClient,
-    ConversationProductsError,
-    ProductReferenceDescriptor,
-    ResolveConversationProductsRequest,
-    format_historical_product_index,
-    format_product_resolution,
-)
-from .tool_evidence import (
-    ProductDetailEvidence,
-)
-from .message_shape import (
-    _content_to_text,
-    _extract_final_text,
-    _result_messages,
-    _value,
-)
-from .media_summary import summarize_media_analysis
-from .media_perception import MediaPerceptionClient
-from .skill_activation import (
-    SKILL_ACTIVATION_COMPLETE,
-    ShopperSkillActivationError,
-    ShopperSkillActivationMiddleware,
-    selected_skill_names_for_turn,
-)
-from .turn_scope import TurnScope
-from .weather import WeatherConfig, WeatherRequest, build_weather_client
-from .tool_policy import (
-    load_shopper_skill_registry as _shopper_skill_registry,
-    validate_registered_tool_names,
-)
-from .tool_loop_control import (
-    ToolLoopControlMiddleware,
+    field_validator,
 )
 from shared.commerce_contracts import (
     AddCartItemInput,
@@ -192,6 +39,162 @@ from shared.commerce_contracts import (
     RemoveCartItemInput,
     UpdateCartItemInput,
 )
+
+from .agenttypes import Cart, ShopperContext, State
+from .catalog_capabilities import (
+    CatalogCapabilitiesClient,
+    format_catalog_capabilities_for_prompt,
+)
+from .catalog_execution import execute_catalog_search
+from .catalog_request import CatalogSearchPlan
+from .catalog_scope import CATALOG_SEARCH_RULES
+from .catalog_search import SearchContext, search_catalog
+from .commerce_tools import (
+    add_cart_item,
+    check_active_promotions,
+    check_product_availability,
+    get_cart,
+    get_product_details,
+    get_store_policy,
+    remove_cart_item,
+    update_cart_item,
+)
+from .control_signals import (
+    EFFECTS_KEY,
+    ControlSignal,
+    committed_effect,
+    committed_effects_in,
+    control,
+    normalize_tool_result,
+)
+from .conversation_memory import (
+    ConversationMemoryClient,
+    ConversationMemoryError,
+    FinalTurnStatus,
+    TurnReplayOutput,
+    TurnStartResult,
+    build_dialogue_context,
+)
+from .conversation_products import (
+    ConversationProductsClient,
+    ConversationProductsError,
+    ProductReferenceDescriptor,
+    ResolveConversationProductsRequest,
+    format_historical_product_index,
+    format_product_resolution,
+)
+from .media_perception import MediaPerceptionClient
+from .media_summary import summarize_media_analysis
+from .message_shape import (
+    _content_to_text,
+    _extract_final_text,
+    _result_messages,
+    _value,
+)
+from .response_format import (
+    WEATHER_BUDGET_EXHAUSTED,
+    WEATHER_NO_DATE,
+    _format_availability_result,
+    _format_cart,
+    _format_cart_add_result,
+    _format_cart_remove_result,
+    _format_cart_total,
+    _format_media_summary,
+    _format_policy_result,
+    _format_product_detail_record,
+    _format_promotions_result,
+    _format_retrieved_images,
+    _format_shopper_context,
+    _format_store_date,
+    _format_update_cart_result,
+    _format_wearer_audience,
+    _format_weather_result,
+    claim_weather_call,
+    format_cart_change,
+    format_catalog_shape,
+    weather_call_needs_a_date,
+)
+from .response_format import (
+    WeatherForecastInput as _WeatherForecastInput,
+)
+from .skill_activation import (
+    SKILL_ACTIVATION_COMPLETE,
+    ShopperSkillActivationError,
+    ShopperSkillActivationMiddleware,
+    selected_skill_names_for_turn,
+)
+from .tool_evidence import (
+    ProductDetailEvidence,
+)
+from .tool_loop_control import (
+    ToolLoopControlMiddleware,
+)
+from .tool_policy import (
+    load_shopper_skill_registry as _shopper_skill_registry,
+)
+from .tool_policy import (
+    validate_registered_tool_names,
+)
+from .turn_scope import TurnScope
+from .turn_support import (
+    _ONE_SIZE,
+    WEATHER_PLACE_NOT_IN_THIS_TURN,
+    AddCartItemsToolItemInput,
+    RequestIdentity,
+    _a_list_written_as_json_text,
+    _add_model_usage,
+    _advertised_sizes,
+    _append_product_results,
+    _build_checkpointer,
+    _cart_add_scope_failures,
+    _cart_line_by_id,
+    _cart_product_choice_note,
+    _cart_size_issue,
+    _catalog_repair_clarification_response,
+    _collect_token_usage,
+    _collect_tool_grounding_evidence,
+    _committed_effect_receipt,
+    _conversation_turn_status,
+    _detail_fields_already_held,
+    _empty_agent_diagnostics,
+    _format_search_only_response,
+    _has_grounding_authority,
+    _has_search_only_tool_evidence,
+    _has_successful_non_search_tool_evidence,
+    _identified_in_the_current_showing,
+    _images_in_product_order,
+    _in_presentation_order,
+    _media_failure_response,
+    _merge_token_usage,
+    _most_recently_shown,
+    _no_direct_taxonomy_response,
+    _normalize_cart_add_tool_items,
+    _normalized_token_usage,
+    _partial_graph_messages,
+    _partial_product_results_response,
+    _product_detail_failure_message,
+    _product_detail_record,
+    _products_found_receipt,
+    _record_language_model_failure,
+    _record_media_model_usage,
+    _record_safety_model_usage,
+    _rejected_catalog_search_response,
+    _safe_collect_agent_diagnostics,
+    _same_product_display_name,
+    _scrub_internal_shopper_language,
+    _search_catalog_scopes_input_model,
+    _search_catalog_tool_input_model,
+    _search_guidance_evidence,
+    _shopper_words_this_conversation,
+    _should_short_circuit_media_failure,
+    _skill_activation_input_model,
+    _store_policies_path,
+    _system_identification_events,
+    _turn_audience_events,
+    a_place_this_turn_named,
+    format_most_recent_subject,
+)
+from .weather import WeatherConfig, WeatherRequest, build_weather_client
 
 logger = logging.getLogger(__name__)
 
@@ -544,7 +547,7 @@ def _today_for_the_shopper() -> str:
     a week would otherwise date every conversation to the day it was built.
     """
 
-    return datetime.now(timezone.utc).strftime("%A %d %B %Y")
+    return datetime.now(UTC).strftime("%A %d %B %Y")
 
 
 #: `read_file` joined this list once the base prompt below stopped being a lie.
@@ -2767,7 +2770,7 @@ class DeepAgentsRuntime:
         allowance = max(budget - reserve, budget / 2)
         return max(5.0, min(_MODEL_REQUEST_TIMEOUT_CEILING_SECONDS, allowance / 2))
 
-    def _create_chat_model(self):
+    def _create_chat_model(self, *, max_tokens: int | None = None):
         from langchain_openai import ChatOpenAI
 
         api_key_env = getattr(self.config, "llm_api_key_env", None)
@@ -2777,6 +2780,11 @@ class DeepAgentsRuntime:
             base_url=self.config.llm_port,
             api_key=api_key or "not-needed",
             temperature=0,
+            # Uncapped output let one call run to the model's own ceiling.
+            # Callers pick a smaller one where that fits; this is the default.
+            max_tokens=(
+                max_tokens if max_tokens is not None else self.config.llm_max_output_tokens
+            ),
             # One request hung for 133.8 seconds and took the whole turn with
             # it: the shopper asked to add a bracelet and got "this request
             # took too long to complete" after two and a quarter minutes, on a
@@ -2915,7 +2923,9 @@ class DeepAgentsRuntime:
             if active_timeout <= 0:
                 raise TimeoutError
             rewrite_result = await asyncio.wait_for(
-                self._create_chat_model().ainvoke(
+                self._create_chat_model(
+                    max_tokens=self.config.grounding_editor_max_output_tokens
+                ).ainvoke(
                     [
                         {
                             "role": "system",

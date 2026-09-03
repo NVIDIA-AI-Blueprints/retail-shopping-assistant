@@ -1,0 +1,17 @@
+# Repo-wide lint policy.
+line-length = 100
+target-version = "py312"
+exclude = ["*.md"]
+src = [
+    "catalog_retriever",
+    "chain_server",
+    "guardrails",
+    "memory_retriever",
+    "shared",
+    "scripts",
+    "tests",
+]
+
+[lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "W291", "W293"]
+ignore = ["E501"]

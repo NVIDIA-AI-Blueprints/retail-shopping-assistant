@@ -3,28 +3,29 @@
 
 """Centralized configuration management for the chain server."""
 
+import logging
 import math
 import os
 from pathlib import Path
+from typing import Any
+
 import yaml
-import logging
-from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field, validator
+from shared.model_config import resolve_model_config, validate_model_config
 
 from .weather import WeatherConfig
-from shared.model_config import resolve_model_config, validate_model_config
 
 logger = logging.getLogger(__name__)
 
 
-def load_config_data(base_config_path: str) -> Dict[str, Any]:
+def load_config_data(base_config_path: str) -> dict[str, Any]:
     """Load a service config YAML file."""
 
     if not os.path.exists(base_config_path):
         logger.error(f"Base config file not found at {base_config_path}")
         raise FileNotFoundError(f"Base config file not found at {base_config_path}")
 
-    with open(base_config_path, "r") as f:
+    with open(base_config_path) as f:
         config = yaml.safe_load(f)
 
     return config
@@ -37,8 +38,8 @@ class MediaInputConfig(BaseModel):
     allow_mixed_media: bool = True
     max_images_per_turn: int = 1
     max_videos_per_turn: int = 1
-    image_mime_types: List[str] = Field(default_factory=lambda: ["image/jpeg", "image/png"])
-    video_mime_types: List[str] = Field(default_factory=lambda: ["video/mp4"])
+    image_mime_types: list[str] = Field(default_factory=lambda: ["image/jpeg", "image/png"])
+    video_mime_types: list[str] = Field(default_factory=lambda: ["video/mp4"])
     max_image_bytes: int = 10 * 1024 * 1024
     max_video_bytes: int = 50 * 1024 * 1024
     max_video_duration_seconds: int = 120
@@ -67,19 +68,26 @@ class MediaInputConfig(BaseModel):
 
 
 class ChainServerConfig(BaseModel):
-    """Configuration class for the chain server application."""
-    
+    """Configuration class for the chain server application.
+
+    Fields tagged (prompt) feed the static system prompt or tool schema
+    built in `deepagents_runtime._system_prompt` / `tool_policy`, so a
+    deployment change to them changes prompt bytes on every turn and can
+    invalidate prompt caching. Untagged fields are runtime-only knobs
+    (timeouts, budgets, call caps) that never reach the prompt text.
+    """
+
     # LLM Configuration
     llm_port: str = Field(..., description="LLM service endpoint URL")
     llm_name: str = Field(..., description="LLM model name")
-    llm_api_key_env: Optional[str] = Field(default="LLM_API_KEY", description="LLM API key environment variable")
+    llm_api_key_env: str | None = Field(default="LLM_API_KEY", description="LLM API key environment variable")
     llm_api_key_required: bool = Field(default=True, description="Whether the LLM key must be present")
-    vlm_port: Optional[str] = Field(default=None, description="Optional VLM service endpoint URL")
-    vlm_name: Optional[str] = Field(default=None, description="Optional VLM model name")
-    vlm_api_key_env: Optional[str] = Field(default=None, description="VLM API key environment variable")
+    vlm_port: str | None = Field(default=None, description="Optional VLM service endpoint URL")
+    vlm_name: str | None = Field(default=None, description="Optional VLM model name")
+    vlm_api_key_env: str | None = Field(default=None, description="VLM API key environment variable")
     vlm_api_key_required: bool = Field(default=False, description="Whether the VLM key must be present")
     vlm_enabled: bool = Field(default=False, description="Whether VLM media perception is enabled")
-    
+
     # Service Endpoints
     retriever_port: str = Field(..., description="Catalog retriever service endpoint")
     memory_port: str = Field(..., description="Memory retriever service endpoint")
@@ -106,7 +114,7 @@ class ChainServerConfig(BaseModel):
     )
     wearer_audience_field: str = Field(
         default="target_audience",
-        description="Catalog filter naming who a product is for",
+        description="Catalog filter naming who a product is for (prompt)",
     )
     max_catalog_searches_per_turn: int = Field(
         default=10,
@@ -135,6 +143,24 @@ class ChainServerConfig(BaseModel):
         default=12000,
         description="Maximum tool evidence characters passed to the grounding editor",
     )
+    llm_max_output_tokens: int = Field(
+        default=1024,
+        description=(
+            "Maximum tokens the primary agent model may generate per call. "
+            "Unbounded generation let a single call's output dominate a "
+            "turn's token accounting; this caps it to the agent's own reply, "
+            "not the ceiling the model happens to have."
+        ),
+    )
+    grounding_editor_max_output_tokens: int = Field(
+        default=512,
+        description=(
+            "Maximum tokens the grounding editor rewrite may generate per "
+            "call. The editor rewrites an existing draft rather than "
+            "composing from scratch, so it needs a smaller ceiling than the "
+            "primary agent model."
+        ),
+    )
     expose_agent_diagnostics: bool = Field(
         default=False,
         description=(
@@ -150,7 +176,7 @@ class ChainServerConfig(BaseModel):
             "prompts, completions and cart contents."
         ),
     )
-    catalog_search_timeout_seconds: Optional[float] = Field(
+    catalog_search_timeout_seconds: float | None = Field(
         default=None,
         description=(
             "Optional HTTP timeout for catalog search requests. None preserves "
@@ -160,7 +186,7 @@ class ChainServerConfig(BaseModel):
     weather: WeatherConfig = Field(default_factory=WeatherConfig)
     multimodal: bool = Field(..., description="Whether multimodal features are enabled")
     media_input: MediaInputConfig = Field(default_factory=MediaInputConfig)
-    
+
     # Safety Configuration
     guardrails_enabled: bool = Field(
         default=False,
@@ -171,7 +197,7 @@ class ChainServerConfig(BaseModel):
         ),
     )
     unsafe_message: str = Field(..., description="Message to display for unsafe content")
-    
+
     @validator('llm_port', 'retriever_port', 'memory_port', 'rails_port')
     def validate_urls(cls, v):
         """Validate that URLs are properly formatted."""
@@ -184,14 +210,14 @@ class ChainServerConfig(BaseModel):
         if v is not None and not v.startswith(("http://", "https://")):
             raise ValueError(f"URL must start with http:// or https://: {v}")
         return v
-    
+
     @validator('memory_length')
     def validate_memory_length(cls, v):
         """Validate memory length is positive."""
         if v <= 0:
             raise ValueError("memory_length must be positive")
         return v
-    
+
     @validator('top_k_retrieve')
     def validate_top_k(cls, v):
         """Validate top_k_retrieve is positive."""
@@ -236,6 +262,13 @@ class ChainServerConfig(BaseModel):
             raise ValueError("grounding_rewrite_max_evidence_chars must be positive")
         return v
 
+    @validator('llm_max_output_tokens', 'grounding_editor_max_output_tokens')
+    def validate_max_output_tokens(cls, v):
+        """Validate output token ceilings are positive."""
+        if v <= 0:
+            raise ValueError("max output token settings must be positive")
+        return v
+
     @validator('catalog_search_timeout_seconds')
     def validate_catalog_search_timeout(cls, v):
         """Validate optional catalog search timeout."""
@@ -249,16 +282,16 @@ class ChainServerConfig(BaseModel):
         validate_assignment = True  # Validate when attributes are set
 
 
-def load_config(config_path: Optional[str] = None) -> ChainServerConfig:
+def load_config(config_path: str | None = None) -> ChainServerConfig:
     """
     Load service configuration and inject the configured app LLM endpoint.
-    
+
     Args:
         config_path: Optional path to config file. If None, uses default path.
-        
+
     Returns:
         ChainServerConfig: The loaded configuration
-        
+
     Raises:
         FileNotFoundError: If config file is not found
         ValueError: If config validation fails
@@ -266,7 +299,7 @@ def load_config(config_path: Optional[str] = None) -> ChainServerConfig:
     if config_path is None:
         config_root = Path(os.environ.get("SHARED_CONFIG_ROOT", "/app/shared/configs"))
         config_path = str(config_root / "chain_server" / "config.yaml")
-    
+
     config_data = load_config_data(config_path)
     env_overrides = {
         "retriever_port": os.environ.get("CATALOG_RETRIEVER_URL"),
@@ -287,6 +320,10 @@ def load_config(config_path: Optional[str] = None) -> ChainServerConfig:
         "grounding_rewrite_enabled": _env_bool("GROUNDING_REWRITE_ENABLED"),
         "grounding_rewrite_max_evidence_chars": os.environ.get(
             "GROUNDING_REWRITE_MAX_EVIDENCE_CHARS"
+        ),
+        "llm_max_output_tokens": os.environ.get("LLM_MAX_OUTPUT_TOKENS"),
+        "grounding_editor_max_output_tokens": os.environ.get(
+            "GROUNDING_EDITOR_MAX_OUTPUT_TOKENS"
         ),
         "expose_agent_diagnostics": _env_bool("EXPOSE_AGENT_DIAGNOSTICS"),
         "relay_enabled": _env_bool("RELAY_ENABLED"),
@@ -329,12 +366,12 @@ def load_config(config_path: Optional[str] = None) -> ChainServerConfig:
             ),
         }
     )
-    
+
     # Create Pydantic config instance
     try:
         return ChainServerConfig(**config_data)
     except Exception as e:
-        raise ValueError(f"Configuration validation failed: {e}")
+        raise ValueError(f"Configuration validation failed: {e}") from e
 
 
 def _env_bool(name: str) -> bool | None:

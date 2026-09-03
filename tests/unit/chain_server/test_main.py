@@ -11,31 +11,19 @@ a lightweight stub before importing the module.
 from __future__ import annotations
 
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
 import importlib
-from pathlib import Path
-import sys
-from types import ModuleType, SimpleNamespace
-from threading import Barrier
-from typing import Any, Dict, Iterator, List
-
 import pathlib
+import sys
+from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from threading import Barrier
+from types import ModuleType, SimpleNamespace
+from typing import Any
 
 import pytest
-from fastapi.testclient import TestClient
-from pydantic import ValidationError
-
-from chain_server.src import catalog_search
-from chain_server.src import tool_loop_control
-from chain_server.src import turn_support
+from chain_server.src import catalog_search, tool_loop_control, turn_support
 from chain_server.src.agenttypes import Cart, ShopperContext, State
-from .tool_evidence_fixtures import (
-    detail_artifact,
-    product,
-    product_detail,
-    search_evidence,
-    search_tool_message,
-)
 from chain_server.src.conversation_memory import (
     ConversationMemoryError,
     ConversationProjection,
@@ -51,6 +39,8 @@ from chain_server.src.shopper_profiles import (
     ShopperProfile,
     ShopperProfilesError,
 )
+from fastapi.testclient import TestClient
+from pydantic import ValidationError
 from shared.commerce_contracts import Cart as CommerceCart
 from shared.commerce_contracts import (
     CartLine,
@@ -68,6 +58,13 @@ from shared.commerce_contracts import (
     SearchCatalogResult,
 )
 
+from .tool_evidence_fixtures import (
+    detail_artifact,
+    product,
+    product_detail,
+    search_evidence,
+    search_tool_message,
+)
 
 
 def tool_text(result):
@@ -84,9 +81,9 @@ class _StubRuntime:
 
     def __init__(self, response_text: str = "ok") -> None:
         self.response_text = response_text
-        self.agent_diagnostics: Dict[str, Any] = {}
-        self.astream_calls: List[Any] = []
-        self.ainvoke_calls: List[Any] = []
+        self.agent_diagnostics: dict[str, Any] = {}
+        self.astream_calls: list[Any] = []
+        self.ainvoke_calls: list[Any] = []
 
     async def astream(self, state: State, identity):
         self.astream_calls.append((state, identity))
@@ -97,7 +94,7 @@ class _StubRuntime:
         self,
         state: State,
         identity,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         self.ainvoke_calls.append((state, identity))
         return {
             "response": self.response_text,
@@ -133,8 +130,8 @@ class _ConversationMemoryStub:
             projection=ConversationProjection(),
             cart=[],
         )
-        self.start_calls: List[Dict[str, Any]] = []
-        self.finalize_calls: List[Dict[str, Any]] = []
+        self.start_calls: list[dict[str, Any]] = []
+        self.finalize_calls: list[dict[str, Any]] = []
 
     def start_turn(self, conversation_id: str, **kwargs):
         self.start_calls.append({"conversation_id": conversation_id, **kwargs})
@@ -445,7 +442,7 @@ class TestStreamEndpoint:
             json={"user_id": 1, "query": "hi"},
         ) as stream_response:
             assert stream_response.status_code == 200
-            chunks: List[str] = []
+            chunks: list[str] = []
             for line in stream_response.iter_lines():
                 if line:
                     chunks.append(line)
@@ -750,8 +747,8 @@ class TestCheckpointerConfiguration:
         monkeypatch: pytest.MonkeyPatch,
         store: str | None,
     ) -> None:
-        from langgraph.checkpoint.memory import MemorySaver
         from chain_server.src import turn_support as runtime_mod_support
+        from langgraph.checkpoint.memory import MemorySaver
 
         if store is None:
             monkeypatch.delenv("CHECKPOINT_STORE", raising=False)
@@ -2951,11 +2948,11 @@ class TestDeepAgentsRuntimeRefs:
         from chain_server.src import deepagents_runtime as runtime_mod
         from chain_server.src import turn_support as runtime_mod_support
 
-        captured: Dict[str, Any] = {}
+        captured: dict[str, Any] = {}
         deepagents_mod = ModuleType("deepagents")
         tools_mod = ModuleType("langchain_core.tools")
         openai_mod = ModuleType("langchain_openai")
-        registered_profile: Dict[str, Any] = {}
+        registered_profile: dict[str, Any] = {}
 
         class FakeProfile:
             def __init__(self, *args, **kwargs) -> None:
@@ -3581,7 +3578,7 @@ class TestDeepAgentsRuntimeRefs:
         from chain_server.src import turn_support as runtime_mod_support
 
         base_config.max_catalog_searches_per_turn = 4
-        captured: Dict[str, Any] = {}
+        captured: dict[str, Any] = {}
         deepagents_mod = ModuleType("deepagents")
         tools_mod = ModuleType("langchain_core.tools")
         openai_mod = ModuleType("langchain_openai")
@@ -4754,7 +4751,7 @@ class TestDeepAgentsRuntimeRefs:
         from chain_server.src import deepagents_runtime as runtime_mod
         from chain_server.src import turn_support as runtime_mod_support
 
-        captured: Dict[str, Any] = {}
+        captured: dict[str, Any] = {}
         deepagents_mod = ModuleType("deepagents")
         tools_mod = ModuleType("langchain_core.tools")
         openai_mod = ModuleType("langchain_openai")
@@ -5357,7 +5354,7 @@ class TestDeepAgentsRuntimeRefs:
         monkeypatch.setattr(
             runtime,
             "_create_chat_model",
-            lambda: FakeEditor(),
+            lambda **_: FakeEditor(),
         )
 
         state = State(
@@ -5450,7 +5447,7 @@ class TestDeepAgentsRuntimeRefs:
         monkeypatch.setattr(
             runtime,
             "_create_chat_model",
-            lambda: FakeEditor(),
+            lambda **_: FakeEditor(),
         )
 
         response = await runtime._rewrite_response_for_grounding(
@@ -5498,7 +5495,7 @@ class TestDeepAgentsRuntimeRefs:
         monkeypatch.setattr(
             runtime,
             "_create_chat_model",
-            lambda: FailingEditor(),
+            lambda **_: FailingEditor(),
         )
         state = State(
             user_id=111,
@@ -5624,7 +5621,7 @@ class TestDeepAgentsRuntimeRefs:
         monkeypatch.setattr(
             runtime,
             "_create_chat_model",
-            lambda: SlowEditor(),
+            lambda **_: SlowEditor(),
         )
 
         output = await runtime._run_turn(
@@ -5670,7 +5667,7 @@ class TestDeepAgentsRuntimeRefs:
         monkeypatch.setattr(
             runtime,
             "_create_chat_model",
-            lambda: FailingEditor(),
+            lambda **_: FailingEditor(),
         )
         result = {
             "messages": [
@@ -5733,7 +5730,7 @@ class TestDeepAgentsRuntimeRefs:
         monkeypatch.setattr(
             runtime,
             "_create_chat_model",
-            lambda: EmptyEditor(),
+            lambda **_: EmptyEditor(),
         )
         result = {
             "messages": [
@@ -5822,7 +5819,7 @@ class TestDeepAgentsRuntimeRefs:
         monkeypatch.setattr(
             runtime,
             "_create_chat_model",
-            lambda: pytest.fail("missing draft must not invoke the editor"),
+            lambda **_: pytest.fail("missing draft must not invoke the editor"),
         )
         state = State(
             user_id=111,
@@ -5879,7 +5876,7 @@ class TestDeepAgentsRuntimeRefs:
         monkeypatch.setattr(
             runtime,
             "_create_chat_model",
-            lambda: pytest.fail("clarification must not invoke the editor"),
+            lambda **_: pytest.fail("clarification must not invoke the editor"),
         )
         state = State(
             user_id=111,
@@ -5948,7 +5945,7 @@ class TestDeepAgentsRuntimeRefs:
         monkeypatch.setattr(
             runtime,
             "_create_chat_model",
-            lambda: pytest.fail("partial clarification must not invoke the editor"),
+            lambda **_: pytest.fail("partial clarification must not invoke the editor"),
         )
         state = State(
             user_id=111,
@@ -6034,7 +6031,7 @@ class TestDeepAgentsRuntimeRefs:
         monkeypatch.setattr(
             runtime,
             "_create_chat_model",
-            lambda: _GroundingModel(),
+            lambda **_: _GroundingModel(),
         )
         state = State(
             user_id=111,
@@ -6111,7 +6108,7 @@ class TestDeepAgentsRuntimeRefs:
         monkeypatch.setattr(
             runtime,
             "_create_chat_model",
-            lambda: pytest.fail("rejected searches must not invoke the editor"),
+            lambda **_: pytest.fail("rejected searches must not invoke the editor"),
         )
         state = State(
             user_id=111,
@@ -6344,7 +6341,7 @@ class TestDeepAgentsRuntimeRefs:
         monkeypatch.setattr(
             runtime,
             "_create_chat_model",
-            lambda: pytest.fail("rejected searches must not invoke the editor"),
+            lambda **_: pytest.fail("rejected searches must not invoke the editor"),
         )
 
         output = await runtime._run_turn(
@@ -6533,7 +6530,7 @@ class TestDeepAgentsRuntimeRefs:
         monkeypatch.setattr(
             runtime,
             "_create_chat_model",
-            lambda: pytest.fail("fallback formatting must not call the model"),
+            lambda **_: pytest.fail("fallback formatting must not call the model"),
         )
         state = State(
             user_id=111,
@@ -6608,7 +6605,7 @@ class TestDeepAgentsRuntimeRefs:
         monkeypatch.setattr(
             runtime,
             "_create_chat_model",
-            lambda: pytest.fail("fallback formatting must not call the model"),
+            lambda **_: pytest.fail("fallback formatting must not call the model"),
         )
         state = State(
             user_id=111,
@@ -6727,7 +6724,7 @@ class TestDeepAgentsRuntimeRefs:
         monkeypatch.setattr(
             runtime,
             "_create_chat_model",
-            lambda: pytest.fail("fallback formatting must not call the model"),
+            lambda **_: pytest.fail("fallback formatting must not call the model"),
         )
         state = State(
             user_id=111,
@@ -7136,7 +7133,7 @@ class TestDeepAgentsRuntimeRefs:
                     ]
                 }
 
-        def fail_chat_model():
+        def fail_chat_model(**_):
             raise AssertionError("grounding editor should not run")
 
         monkeypatch.setattr(runtime._media_perception, "analyze", fake_analyze)
@@ -7534,11 +7531,11 @@ class TestDeepAgentsRuntimeRefs:
         from chain_server.src import turn_support as runtime_mod_support
 
         scrubbed = runtime_mod_support._scrub_internal_shopper_language(
-            (
+
                 "The product detail tool doesn't return fabric composition, "
                 "and the sandals weren't added because the tool requires an "
                 "exact match."
-            )
+
         )
 
         assert "tool" not in scrubbed.lower()
@@ -7561,7 +7558,7 @@ class TestDeepAgentsRuntimeRefs:
         from chain_server.src import deepagents_runtime as runtime_mod
         from chain_server.src import turn_support as runtime_mod_support
 
-        captured: Dict[str, Any] = {}
+        captured: dict[str, Any] = {}
         deepagents_mod = ModuleType("deepagents")
         tools_mod = ModuleType("langchain_core.tools")
         openai_mod = ModuleType("langchain_openai")
@@ -7687,7 +7684,7 @@ class TestDeepAgentsRuntimeRefs:
         from chain_server.src import deepagents_runtime as runtime_mod
         from chain_server.src import turn_support as runtime_mod_support
 
-        captured: Dict[str, Any] = {}
+        captured: dict[str, Any] = {}
         deepagents_mod = ModuleType("deepagents")
         tools_mod = ModuleType("langchain_core.tools")
         openai_mod = ModuleType("langchain_openai")
@@ -7795,7 +7792,7 @@ class TestDeepAgentsRuntimeRefs:
         from chain_server.src import deepagents_runtime as runtime_mod
         from chain_server.src import turn_support as runtime_mod_support
 
-        captured: Dict[str, Any] = {}
+        captured: dict[str, Any] = {}
         deepagents_mod = ModuleType("deepagents")
         tools_mod = ModuleType("langchain_core.tools")
         openai_mod = ModuleType("langchain_openai")
@@ -7936,7 +7933,7 @@ class TestDeepAgentsRuntimeRefs:
         from chain_server.src import deepagents_runtime as runtime_mod
         from chain_server.src import turn_support as runtime_mod_support
 
-        captured: Dict[str, Any] = {}
+        captured: dict[str, Any] = {}
         deepagents_mod = ModuleType("deepagents")
         tools_mod = ModuleType("langchain_core.tools")
         openai_mod = ModuleType("langchain_openai")
@@ -8079,7 +8076,7 @@ class TestDeepAgentsRuntimeRefs:
         from chain_server.src import deepagents_runtime as runtime_mod
         from chain_server.src import turn_support as runtime_mod_support
 
-        captured: Dict[str, Any] = {}
+        captured: dict[str, Any] = {}
         deepagents_mod = ModuleType("deepagents")
         tools_mod = ModuleType("langchain_core.tools")
         openai_mod = ModuleType("langchain_openai")
@@ -8237,7 +8234,7 @@ class TestDeepAgentsRuntimeRefs:
         from chain_server.src import deepagents_runtime as runtime_mod
         from chain_server.src import turn_support as runtime_mod_support
 
-        captured: Dict[str, Any] = {}
+        captured: dict[str, Any] = {}
         deepagents_mod = ModuleType("deepagents")
         tools_mod = ModuleType("langchain_core.tools")
         openai_mod = ModuleType("langchain_openai")
@@ -8337,7 +8334,7 @@ class TestDeepAgentsRuntimeRefs:
         from chain_server.src import deepagents_runtime as runtime_mod
         from chain_server.src import turn_support as runtime_mod_support
 
-        captured: Dict[str, Any] = {}
+        captured: dict[str, Any] = {}
         deepagents_mod = ModuleType("deepagents")
         tools_mod = ModuleType("langchain_core.tools")
         openai_mod = ModuleType("langchain_openai")
@@ -8421,7 +8418,7 @@ class TestDeepAgentsRuntimeRefs:
         from chain_server.src import deepagents_runtime as runtime_mod
         from chain_server.src import turn_support as runtime_mod_support
 
-        captured: Dict[str, Any] = {}
+        captured: dict[str, Any] = {}
         deepagents_mod = ModuleType("deepagents")
         tools_mod = ModuleType("langchain_core.tools")
         openai_mod = ModuleType("langchain_openai")
@@ -8826,7 +8823,7 @@ class TestDeepAgentsRuntimeRefs:
         from chain_server.src import turn_support as runtime_mod_support
 
         base_config.max_product_detail_reads_per_turn = 4
-        captured: Dict[str, Any] = {}
+        captured: dict[str, Any] = {}
         deepagents_mod = ModuleType("deepagents")
         tools_mod = ModuleType("langchain_core.tools")
         openai_mod = ModuleType("langchain_openai")
@@ -8953,7 +8950,7 @@ class TestDeepAgentsRuntimeRefs:
         from chain_server.src import turn_support as runtime_mod_support
 
         base_config.max_product_detail_reads_per_turn = 1
-        captured: Dict[str, Any] = {}
+        captured: dict[str, Any] = {}
         deepagents_mod = ModuleType("deepagents")
         tools_mod = ModuleType("langchain_core.tools")
         openai_mod = ModuleType("langchain_openai")
@@ -9206,9 +9203,8 @@ class TestCommittedMutationReceipt:
         assert "line-9" in receipt
 
     def test_effects_are_read_from_tool_artifacts(self) -> None:
-        from langchain_core.messages import ToolMessage
-
         from chain_server.src.control_signals import committed_effects_in
+        from langchain_core.messages import ToolMessage
 
         messages = [
             ToolMessage(content="unrelated", tool_call_id="a"),
@@ -9229,9 +9225,8 @@ class TestCommittedMutationReceipt:
         assert effects[0]["operation"] == "added to cart"
 
     def test_no_effects_when_nothing_was_committed(self) -> None:
-        from langchain_core.messages import ToolMessage
-
         from chain_server.src.control_signals import committed_effects_in
+        from langchain_core.messages import ToolMessage
 
         assert committed_effects_in([ToolMessage(content="x", tool_call_id="a")]) == []
         assert committed_effects_in([]) == []
@@ -9251,13 +9246,12 @@ class TestCommittedMutationSurvivesTurnFailure:
         which is the same defect this slice exists to close.
         """
 
-        from langchain_core.messages import ToolMessage
-
         from chain_server.src.control_signals import (
             EFFECTS_KEY,
             committed_effect,
             committed_effects_in,
         )
+        from langchain_core.messages import ToolMessage
 
         kinds = [
             ("added to cart", {"product_id": "Work Bag", "quantity": 1}),
@@ -9328,7 +9322,7 @@ class TestEvidenceFreeTurnsStillGetEdited:
                 seen["called"] = True
                 return SimpleNamespace(content="I can help you shop.")
 
-        monkeypatch.setattr(runtime, "_create_chat_model", lambda: RecordingEditor())
+        monkeypatch.setattr(runtime, "_create_chat_model", lambda **_: RecordingEditor())
         state = State(user_id=111, query="what can you do?")
         assert runtime_mod_support._has_grounding_authority(state, "") is False
 
@@ -9363,7 +9357,7 @@ class TestEvidenceFreeTurnsStillGetEdited:
             async def ainvoke(self, messages):
                 raise RuntimeError("editor unavailable")
 
-        monkeypatch.setattr(runtime, "_create_chat_model", lambda: FailingEditor())
+        monkeypatch.setattr(runtime, "_create_chat_model", lambda **_: FailingEditor())
         state = State(user_id=111, query="hello")
         state.agent_diagnostics = {"final_termination_reason": "completed"}
 

@@ -119,9 +119,12 @@ class Fence:
 
 
 #: What a shopper's photo or video was seen to contain. The words are a model's,
-#: written about a file a stranger supplied, and they reach the grounding editor
-#: as a lane it reads. That is the one path in this service today where text
-#: nobody here wrote is quoted to a model.
+#: written about a file a stranger supplied, and they are quoted to a model at
+#: two sites: the agent's own user message, which it reads before choosing
+#: tools, and the grounding editor's media lane. The first matters more -- the
+#: editor only trims a draft, while the agent acts -- and it was the one missed
+#: on the first pass, because the editor is where the lane is named and so the
+#: easier of the two to notice.
 MEDIA_FENCE = Fence(
     label="shopper_media",
     notice=(

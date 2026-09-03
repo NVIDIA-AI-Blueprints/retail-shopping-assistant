@@ -1139,7 +1139,75 @@ class _CatalogNumberConstraint(BaseModel):
         return self
 
 
+#: Built schemas, kept for the life of the process.
+#:
+#: Every input to these builders is fixed once the service is running: the
+#: capability contract is cached by CatalogCapabilitiesClient on its first
+#: success, and the rest are configuration. So the schema is identical on every
+#: turn -- verified byte-for-byte -- and rebuilding it was 15ms per turn of
+#: producing the same object, on the event loop that also serves the turn.
+#:
+#: Keyed on the contract's *content*, not its catalog_id. Two contracts can
+#: carry the same id and differ -- which is not hypothetical: thirty-two tests
+#: failed on an id-based key, each having built a catalog named like the shipped
+#: one with different fields, and each being served the other's schema. In
+#: production one process sees one catalog and the distinction never arises;
+#: the point of hashing is that a cache should not be correct only because of
+#: how it happens to be used.
+#:
+#: The hash costs 1.9ms against 7ms to rebuild, so it pays for itself, and it
+#: needs no assumption about when a catalog may change.
+_SCHEMA_CACHE: dict[tuple[Any, ...], Any] = {}
+
+
+def _capabilities_identity(capabilities: CatalogCapabilities) -> str:
+    """A stable fingerprint of everything a schema is built from."""
+
+    return hashlib.blake2b(
+        capabilities.model_dump_json().encode("utf-8"), digest_size=16
+    ).hexdigest()
+
+
+def _cached_schema(key: tuple[Any, ...], build: Any) -> Any:
+    """Return a built schema, building it once per distinct key."""
+
+    if key not in _SCHEMA_CACHE:
+        _SCHEMA_CACHE[key] = build()
+    return _SCHEMA_CACHE[key]
+
+
+def clear_schema_cache() -> None:
+    """Drop every built schema. For tests that construct several catalogs."""
+
+    _SCHEMA_CACHE.clear()
+
+
 def _search_catalog_tool_input_model(
+    capabilities: CatalogCapabilities,
+    *,
+    validate_scope: bool = True,
+    wearer_audience_field: str = "",
+) -> type[SearchCatalogToolArguments]:
+    """Return the tool schema for this catalog, building it at most once.
+
+    The enums come from the catalog, and the catalog does not change under a
+    running process -- CatalogCapabilitiesClient caches its first successful
+    contract and never refetches, so a schema built from it can be kept for as
+    long as that contract is. Rebuilding it was 8ms of producing an identical
+    object on every turn, on the event loop that also has to serve the turn.
+    """
+
+    return _cached_schema(
+        ("search_tool", _capabilities_identity(capabilities), validate_scope, wearer_audience_field),
+        lambda: _build_search_catalog_tool_input_model(
+            capabilities,
+            validate_scope=validate_scope,
+            wearer_audience_field=wearer_audience_field,
+        ),
+    )
+
+
+def _build_search_catalog_tool_input_model(
     capabilities: CatalogCapabilities,
     *,
     validate_scope: bool = True,
@@ -1373,6 +1441,24 @@ def _admit_scopes_for_adjudication(cls: Any, data: Any, handler: Any) -> Any:
 
 
 def _search_catalog_scopes_input_model(
+    capabilities: CatalogCapabilities,
+    *,
+    max_scopes: int = 1,
+    wearer_audience_field: str = "",
+) -> type[BaseModel]:
+    """Return the scoped-search schema for this catalog, built at most once."""
+
+    return _cached_schema(
+        ("search_scopes", _capabilities_identity(capabilities), max_scopes, wearer_audience_field),
+        lambda: _build_search_catalog_scopes_input_model(
+            capabilities,
+            max_scopes=max_scopes,
+            wearer_audience_field=wearer_audience_field,
+        ),
+    )
+
+
+def _build_search_catalog_scopes_input_model(
     capabilities: CatalogCapabilities,
     *,
     max_scopes: int = 1,

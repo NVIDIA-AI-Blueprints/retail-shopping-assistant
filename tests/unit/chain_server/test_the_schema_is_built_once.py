@@ -18,7 +18,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from catalog_retriever.src.catalog import load_catalog
 from chain_server.src.catalog_capabilities import CatalogCapabilities
 from chain_server.src.turn_support import (
@@ -26,7 +25,6 @@ from chain_server.src.turn_support import (
     _search_catalog_tool_input_model,
     clear_schema_cache,
 )
-
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 

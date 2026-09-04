@@ -25,8 +25,10 @@ written to break it. Three things make it hold:
 * **The label is a source literal.** Built from a runtime value, text that
   influenced that value could reproduce the boundary.
 
-Borrowed from `commerce-agents`, which fences catalog, review, policy, order and
-web content. This is the same mechanism at the scale this service needs it.
+One lane needs this today, because the catalog is our own file and the only text
+here written elsewhere is what a vision model reports about a shopper's upload.
+Merchant-supplied descriptions are the obvious next lane if that changes, and
+adding one is a `Fence` and a notice in the prompt that reads it.
 """
 
 from __future__ import annotations

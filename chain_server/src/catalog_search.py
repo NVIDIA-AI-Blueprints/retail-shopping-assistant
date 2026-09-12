@@ -95,6 +95,7 @@ from .turn_support import (
 )
 from .response_format import (
     _format_catalog_scope_outcome,
+    SEARCH_RESULT_ATTRIBUTE_LIMIT_NOTE,
     _format_product_record,
     _format_search_direction_evidence,
     _format_search_filter_evidence,
@@ -1810,6 +1811,8 @@ def _rendered_evidence(ctx: SearchContext, attempt: _Attempt) -> StepResult:
         lines.append(_SEARCH_BUDGET_EXHAUSTED_NOTE)
     for record in evidence.products:
         lines.append(_format_product_record(record))
+    if evidence.products:
+        lines.append(SEARCH_RESULT_ATTRIBUTE_LIMIT_NOTE)
     prefix = (
         "Image similarity returned no matches; text fallback results:\n\n"
         if execution.fallback_used

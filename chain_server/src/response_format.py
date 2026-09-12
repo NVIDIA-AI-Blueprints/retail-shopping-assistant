@@ -232,6 +232,18 @@ def _format_catalog_scope_outcome(outcome: dict[str, Any]) -> str:
     )
 
 
+#: Said once per search result, not once per product. It is a fact about the
+#: search, identical for every hit, and thirteen hits repeated it thirteen
+#: times -- 2,665 of one result's 13,346 characters, more than the product
+#: facts themselves, re-sent on every later model call of the turn.
+SEARCH_RESULT_ATTRIBUTE_LIMIT_NOTE = (
+    "DETAILS: Any attribute not listed under a product above is not carried by "
+    "this search result. Read it with get_product_details_tool and that "
+    "PRODUCT_REF before stating it; absence here is not evidence that it is "
+    "unknown."
+)
+
+
 def _format_product_record(record: dict[str, Any]) -> str:
     lines = [
         f"PRODUCT_REF: {record['product_ref']}",
@@ -241,8 +253,6 @@ def _format_product_record(record: dict[str, Any]) -> str:
         lines.append(f"CATEGORY: {record['category']}")
     if record.get("price"):
         lines.append(f"PRICE: {record['price']}")
-    if record.get("image_url"):
-        lines.append(f"IMAGE_URL: {record['image_url']}")
     attributes = record.get("attributes") or {}
     if attributes:
         lines.append("CONFIRMED_ATTRIBUTES:")
@@ -250,11 +260,6 @@ def _format_product_record(record: dict[str, Any]) -> str:
             f"- {name.replace('_', ' ')}: {value}"
             for name, value in attributes.items()
         )
-    lines.append(
-        "DETAILS: Any attribute not listed above is not carried by this search "
-        "result. Read it with get_product_details_tool and this PRODUCT_REF "
-        "before stating it; absence here is not evidence that it is unknown."
-    )
     return "\n".join(lines)
 
 

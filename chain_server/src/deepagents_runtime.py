@@ -2682,6 +2682,9 @@ class DeepAgentsRuntime:
                     turn_capabilities
                 ),
             },
+            activation_system_prompt=(
+                MEDIA_FENCE.notice if state.media_analysis else ""
+            ),
         )
         tool_loop_control = ToolLoopControlMiddleware(
             catalog_context=format_catalog_capabilities_for_prompt(

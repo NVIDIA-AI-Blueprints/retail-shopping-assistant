@@ -125,10 +125,12 @@ class ShopperSkillActivationMiddleware(AgentMiddleware):
         skill_tool_grants: Mapping[str, Collection[str]],
         previous_selected_skills: Collection[str] = (),
         granted_tool_context: Mapping[str, str] | None = None,
+        activation_system_prompt: str = "",
     ) -> None:
         self._request_id = request_id
         self._skill_descriptions = dict(skill_descriptions)
         self._granted_tool_context = dict(granted_tool_context or {})
+        self._activation_system_prompt = activation_system_prompt
         self._skill_tool_grants = {
             name: frozenset(tool_names)
             for name, tool_names in skill_tool_grants.items()
@@ -338,13 +340,33 @@ class ShopperSkillActivationMiddleware(AgentMiddleware):
             tool_choice=SKILL_ACTIVATION_TOOL_NAME,
             model_settings={**request.model_settings, "parallel_tool_calls": False},
             system_message=_append_system_text(
-                request.system_message,
+                self._carried_activation_system_message(),
                 _activation_prompt(
                     self._skill_descriptions,
                     previous_skills=self._previous_selected_skills,
                 ),
             ),
         )
+
+    def _carried_activation_system_message(self) -> SystemMessage | None:
+        """What the selection step keeps of the answering prompt: almost none.
+
+        This step is granted one tool and asked one question, and it reads the
+        shopper's words, their cart and the recent discussion from the user
+        message either way. The answering prompt -- how to ground a claim, how
+        to order tool calls, how to word a reply -- cannot change which skill
+        the question has, and it was the whole of this request: roughly four
+        thousand tokens read to emit a dozen.
+
+        What the answering prompt does carry that this step still needs is the
+        rule that fenced text is an observation, because the user message can
+        quote a model's words about a stranger's file. A step that reads it
+        without that rule is the one place a fence would stand unexplained, so
+        the caller passes the notice and nothing else.
+        """
+
+        carried = self._activation_system_prompt.strip()
+        return _append_system_text(None, carried) if carried else None
 
     def _active_turn_prompt(
         self,

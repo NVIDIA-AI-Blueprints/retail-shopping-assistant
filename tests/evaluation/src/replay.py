@@ -22,13 +22,14 @@ import base64
 import concurrent.futures
 import hashlib
 import json
+import subprocess
 import time
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any
 
 import requests
-import subprocess
 import yaml
 
 from .config import EvalConfig, load_eval_config
@@ -222,10 +223,9 @@ class Assistant:
 
 
 def _cart_lines(cart: Any) -> list[dict[str, Any]]:
-    if isinstance(cart, dict):
-        contents = cart.get("cart", cart.get("contents"))
-    else:
-        contents = cart
+    contents = (
+        cart.get("cart", cart.get("contents")) if isinstance(cart, dict) else cart
+    )
     if not isinstance(contents, list):
         return []
     return [line for line in contents if isinstance(line, dict)]

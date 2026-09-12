@@ -69,6 +69,12 @@ class TurnResult:
     scopes: list[dict[str, Any]] = field(default_factory=list)
     attached: str = ""
     checks: list[Check] = field(default_factory=list)
+    #: What the turn cost the model. The stream has always carried this and this
+    #: harness has always dropped it, so a change made to reduce input tokens
+    #: could be replayed twenty-one times and still not be measured. Kept per
+    #: turn rather than summed, because the turns that grow are the ones with
+    #: many tool calls and an average hides them.
+    token_usage: dict[str, Any] = field(default_factory=dict)
 
 
 def scenario_identity(label: str, scenario_id: str, repeat: int) -> dict[str, Any]:
@@ -151,6 +157,7 @@ class Assistant:
         started = time.monotonic()
         first_token: float | None = None
         reply, products, diagnostics = "", [], {}
+        token_usage: dict[str, Any] = {}
         with requests.post(
             self._url, json=payload, timeout=self._timeout, stream=True
         ) as response:
@@ -176,6 +183,8 @@ class Assistant:
                     products = body
                 if isinstance(body, dict) and body.get("agent_diagnostics"):
                     diagnostics = body["agent_diagnostics"]
+                if isinstance(body, dict) and body.get("token_usage"):
+                    token_usage = dict(body["token_usage"])
         return {
             "reply": reply,
             "products": products,
@@ -197,6 +206,7 @@ class Assistant:
                 if call.get("tool_name") == "search_catalog_tool"
                 for scope in ((call.get("arguments") or {}).get("scopes") or [])
             ],
+            "token_usage": token_usage,
             "seconds": round(time.monotonic() - started, 1),
             # None if the turn produced no content at all, which is a failure
             # worth telling apart from a fast one rather than recording as 0.
@@ -514,6 +524,7 @@ def run_scenario(
             tools=answered["tools"],
             scopes=answered.get("scopes") or [],
             seconds=answered["seconds"],
+            token_usage=answered.get("token_usage") or {},
         )
         turn.checks = check_turn(step.get("expect") or {}, turn, previous_cart)
         previous_cart = turn.cart

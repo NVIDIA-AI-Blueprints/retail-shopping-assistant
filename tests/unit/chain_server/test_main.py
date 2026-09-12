@@ -807,7 +807,7 @@ class TestSystemPrompt:
         runtime = runtime_mod.DeepAgentsRuntime(base_config)
         capabilities = CatalogCapabilities(catalog_id="test")
 
-        prompt = runtime._system_prompt(capabilities)
+        prompt = runtime._system_prompt()
 
         assert "SHOPPER CONTEXT" not in prompt
         assert "Representative-shopper precedence and safety" not in prompt
@@ -829,10 +829,7 @@ class TestSystemPrompt:
             zipcode="60601",
         )
         normalized = " ".join(
-            runtime._system_prompt(
-                CatalogCapabilities(catalog_id="test"),
-                shopper_context=shopper_context,
-            ).split()
+            runtime._system_prompt(shopper_context=shopper_context).split()
         )
 
         assert (
@@ -896,10 +893,7 @@ class TestSystemPrompt:
 
         user_message = runtime._build_user_message(state, identity)
         system_prompt = " ".join(
-            runtime._system_prompt(
-                CatalogCapabilities(catalog_id="test"),
-                shopper_context=state.shopper_context,
-            ).split()
+            runtime._system_prompt(shopper_context=state.shopper_context).split()
         )
 
         assert "USER QUERY: Show me a dress." in user_message
@@ -3229,19 +3223,35 @@ class TestDeepAgentsRuntimeRefs:
             ).read_text()
 
         for phrase in (
-            "Retrieval modes: text",
-            "values dress",
-            "Call search_catalog_tool when exact advertised",
-            "Different wording is not a reason to ask",
             "One normalized taxonomy-and-required-constraint scope",
-            "denotes the same kind of thing",
-            "it in `not_covered`",
             "Do not upgrade shopper assumptions",
             "Do not group leather, rubber, metal",
             "Shopper wording is not product evidence",
             "making unsupported whole-outfit claims",
         ):
             assert phrase in base, f"{phrase!r} must stay in the always-on prompt"
+
+        # The catalog's schema and the rules for filling a search are not what
+        # every turn needs: they are what a turn that searches needs. They are
+        # handed to the skill gate and reach only a request granted the search
+        # tool, so the activation step -- granted nothing -- and a cart or
+        # policy turn stop paying for a search they cannot run.
+        catalog_section = skill_gate._granted_tool_context["search_catalog_tool"]
+        for phrase in (
+            "Retrieval modes: text",
+            "values dress",
+            "Call search_catalog_tool when exact advertised",
+            "Different wording is not a reason to ask",
+            "denotes the same kind of thing",
+            "it in `not_covered`",
+        ):
+            assert phrase in catalog_section, (
+                f"{phrase!r} unreachable on a turn granted the search tool"
+            )
+            assert phrase not in base, (
+                f"{phrase!r} is catalog-search context and must not ride on "
+                "every turn"
+            )
 
         # Procedure belongs to the skill that performs it. The phrases below
         # are the ones still carried by a skill body rather than by a tool
@@ -9575,7 +9585,7 @@ class TestAudienceAwareSearch:
 
         runtime = runtime_mod.DeepAgentsRuntime(base_config)
 
-        prompt = runtime._system_prompt(CatalogCapabilities(catalog_id="test"))
+        prompt = runtime._system_prompt()
 
         for value in ("womens", "adult_all_genders", "menswear", "womenswear"):
             assert value not in prompt

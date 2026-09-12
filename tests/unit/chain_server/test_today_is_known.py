@@ -59,18 +59,16 @@ def _prompts_either_way(base_config) -> tuple[str, str]:
     """
 
     from chain_server.src import deepagents_runtime as runtime_mod
-    from shared.commerce_contracts import CatalogCapabilities
 
     from types import SimpleNamespace
 
     runtime = runtime_mod.DeepAgentsRuntime(base_config)
     original = getattr(runtime.config, "weather", None)
-    capabilities = CatalogCapabilities(catalog_id="test")
     try:
         runtime.config.weather = SimpleNamespace(enabled=True)
-        on = runtime._system_prompt(capabilities)
+        on = runtime._system_prompt()
         runtime.config.weather = SimpleNamespace(enabled=False)
-        off = runtime._system_prompt(capabilities)
+        off = runtime._system_prompt()
     finally:
         runtime.config.weather = original
     return on, off

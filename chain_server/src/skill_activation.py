@@ -124,9 +124,11 @@ class ShopperSkillActivationMiddleware(AgentMiddleware):
         skill_descriptions: Mapping[str, str],
         skill_tool_grants: Mapping[str, Collection[str]],
         previous_selected_skills: Collection[str] = (),
+        granted_tool_context: Mapping[str, str] | None = None,
     ) -> None:
         self._request_id = request_id
         self._skill_descriptions = dict(skill_descriptions)
+        self._granted_tool_context = dict(granted_tool_context or {})
         self._skill_tool_grants = {
             name: frozenset(tool_names)
             for name, tool_names in skill_tool_grants.items()
@@ -309,7 +311,7 @@ class ShopperSkillActivationMiddleware(AgentMiddleware):
                 },
                 system_message=_append_system_text(
                     request.system_message,
-                    _active_skills_prompt(skill_files),
+                    self._active_turn_prompt(skill_files, granted_tools),
                 ),
             )
         if status == "failed":
@@ -343,6 +345,28 @@ class ShopperSkillActivationMiddleware(AgentMiddleware):
                 ),
             ),
         )
+
+    def _active_turn_prompt(
+        self,
+        skill_files: Mapping[str, str],
+        granted_tools: Collection[str],
+    ) -> str:
+        """The selected skills, behind the context only granted tools can use.
+
+        A request that was not granted a tool cannot call it, so that tool's
+        schema and rules are unreadable cost. The activation step is granted
+        nothing and paid for the catalog's every time; a cart read and a policy
+        question paid on every model call of the turn for a search they cannot
+        run.
+        """
+
+        sections = [
+            text
+            for name, text in self._granted_tool_context.items()
+            if name in granted_tools and text.strip()
+        ]
+        sections.append(_active_skills_prompt(skill_files))
+        return "\n\n".join(sections)
 
     def _clarification_model_response(self) -> ModelResponse | None:
         with self._lock:

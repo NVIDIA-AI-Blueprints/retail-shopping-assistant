@@ -394,21 +394,51 @@ class TestNothingIsLostWhenAStepFails:
 
 
 class TestAOneSizeLineHasNoSizeToChange:
-    def test_a_one_size_product_takes_the_size_it_is_sold_in(
-        self, cart_tools
-    ) -> None:
-        """`onesize` is a real value in this catalog, so it is not refused."""
+    def test_a_one_size_line_is_refused_a_size(self, cart_tools) -> None:
+        """J06 t9: "make those a 7" arrived with the tote bag's line id.
+
+        The add path is permissive about a product the catalog states one size
+        for, because refusing there would block a cart on missing data. A
+        resize cannot be: a tote sold in one size has no second size to move
+        to, and it became "size 7" while the heels the shopper meant stayed a
+        6. Which line they meant is the model's to read, so the refusal sends
+        it to the cart rather than guessing for it.
+        """
 
         cart_tools.catalog["result"] = GetProductDetailsResult(
-            ok=True, product=_heels(sizes="onesize")
+            ok=True,
+            product=ProductDetail(
+                product_id="prod_tote",
+                display_name="Linen Canvas Tote Bag",
+                category="bags",
+                price=Money(amount=59.99),
+                attributes={"sizes": "onesize"},
+            ),
         )
         cart_tools.cart.lines = [_line(None)]
         cart_tools.state.cart = cart_tools.cart.read(222)
 
         result = _text(
-            cart_tools.update(
-                cart_line_id="line_heels_7", quantity=1, size="onesize"
-            )
+            cart_tools.update(cart_line_id="line_heels_7", quantity=1, size="7")
         )
 
-        assert not result.startswith("CART_UPDATE_REFUSED")
+        assert result.startswith("CART_UPDATE_REFUSED")
+        assert "sold in one size" in result
+        assert "get_cart_tool" in result
+        assert all(line.get("size") is None for line in cart_tools.cart.lines)
+
+    def test_a_product_with_no_stated_sizes_is_refused_too(
+        self, cart_tools
+    ) -> None:
+        """Nothing in this catalog is sizeless, so a blank run is a bad read."""
+
+        cart_tools.catalog["result"] = GetProductDetailsResult(
+            ok=True, product=_heels(sizes="")
+        )
+
+        result = _text(
+            cart_tools.update(cart_line_id="line_heels_7", quantity=1, size="8")
+        )
+
+        assert result.startswith("CART_UPDATE_REFUSED")
+        assert [line.get("size") for line in cart_tools.cart.lines] == ["7"]

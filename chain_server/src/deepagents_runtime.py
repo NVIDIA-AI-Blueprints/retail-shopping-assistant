@@ -152,6 +152,7 @@ from .turn_support import (
     _cart_add_scope_failures,
     _cart_line_by_id,
     _cart_product_choice_note,
+    _cart_resize_issue,
     _cart_size_issue,
     _catalog_repair_clarification_response,
     _collect_token_usage,
@@ -2418,11 +2419,11 @@ class DeepAgentsRuntime:
                     detail.error,
                     cart_validation=True,
                 )
-            # Whether the catalog sells the new size is a fact, and it is the
-            # same fact the add path checks. A resize that skipped the check
-            # would seat a size the shop does not sell by a route the add
-            # refuses -- and this is the route a shopper naming a size reaches.
-            size_issue = _cart_size_issue(detail.product, size)
+            # Whether the catalog sells the new size is a fact, and mostly the
+            # same fact the add path checks. A resize that skipped it would
+            # seat a size the shop does not sell by a route the add refuses --
+            # and this is the route a shopper naming a size reaches.
+            size_issue = _cart_resize_issue(detail.product, size)
             if size_issue:
                 return f"CART_UPDATE_REFUSED: {size_issue}"
 

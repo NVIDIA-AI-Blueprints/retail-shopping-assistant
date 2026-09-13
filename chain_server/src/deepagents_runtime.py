@@ -710,17 +710,16 @@ class _UpdateCartItemsInput(BaseModel):
     quantity: int = Field(
         ge=0,
         description=(
-            "The total quantity to end up with. With `size`, the quantity to "
-            "keep in the new size. Use remove_cart_item_tool to remove a line."
+            "Total quantity to end up with; with `size`, in the new size. "
+            "Removing a line is remove_cart_item_tool, not quantity 0."
         ),
     )
     size: str | None = Field(
         default=None,
         description=(
-            "Set only when the shopper is changing the size of this line, to "
-            "the size they now want. Omit for a quantity change. A size the "
-            "catalog does not sell for this product is refused with the sizes "
-            "it does sell."
+            "The size the shopper now wants for this line. Omit for a "
+            "quantity change. A size this product is not sold in is refused, "
+            "naming the ones it is."
         ),
     )
 
@@ -2584,10 +2583,9 @@ class DeepAgentsRuntime:
             quantity: int,
             size: str | None = None,
         ):
-            """Change one cart line: its quantity, its size, or both. Use this
-            for either change instead of removing and re-adding — a size
-            change is one call here, and this tool moves the line. Requires
-            CART_LINE_ID from get_cart_tool.
+            """Change one cart line: its quantity, its size, or both. One call
+            moves the line, so never add a size and remove a line to change
+            one. Requires CART_LINE_ID from get_cart_tool.
             """
 
             return normalize_tool_result(

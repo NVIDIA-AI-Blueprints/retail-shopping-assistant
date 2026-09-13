@@ -89,5 +89,5 @@ def test_the_update_schema_accepts_a_size_so_it_can_be_acted_on() -> None:
         "a change the schema never offered is a change the model cannot ask for"
     )
     description = schema["properties"]["size"]["description"]
-    assert "changing the size of this line" in description
+    assert "The size the shopper now wants for this line" in description
     assert "Omit for a quantity change" in description

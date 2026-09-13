@@ -16,15 +16,16 @@ move; the runtime imports these names back, so behaviour is unchanged.
 
 from __future__ import annotations
 
-from datetime import date as CalendarDate, datetime, timezone
+import json
+from datetime import UTC, datetime
+from datetime import date as CalendarDate
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
-
-from typing import Any
-import json
-
 from shared.commerce_contracts import (
     Cart as CommerceCart,
+)
+from shared.commerce_contracts import (
     CartMutationResult,
     CheckActivePromotionsResult,
     CheckProductAvailabilityResult,
@@ -232,6 +233,18 @@ def _format_catalog_scope_outcome(outcome: dict[str, Any]) -> str:
     )
 
 
+#: Said once per search result, not once per product. It is a fact about the
+#: search, identical for every hit, and thirteen hits repeated it thirteen
+#: times -- 2,665 of one result's 13,346 characters, more than the product
+#: facts themselves, re-sent on every later model call of the turn.
+SEARCH_RESULT_ATTRIBUTE_LIMIT_NOTE = (
+    "DETAILS: Any attribute not listed under a product above is not carried by "
+    "this search result. Read it with get_product_details_tool and that "
+    "PRODUCT_REF before stating it; absence here is not evidence that it is "
+    "unknown."
+)
+
+
 def _format_product_record(record: dict[str, Any]) -> str:
     lines = [
         f"PRODUCT_REF: {record['product_ref']}",
@@ -241,8 +254,6 @@ def _format_product_record(record: dict[str, Any]) -> str:
         lines.append(f"CATEGORY: {record['category']}")
     if record.get("price"):
         lines.append(f"PRICE: {record['price']}")
-    if record.get("image_url"):
-        lines.append(f"IMAGE_URL: {record['image_url']}")
     attributes = record.get("attributes") or {}
     if attributes:
         lines.append("CONFIRMED_ATTRIBUTES:")
@@ -250,11 +261,6 @@ def _format_product_record(record: dict[str, Any]) -> str:
             f"- {name.replace('_', ' ')}: {value}"
             for name, value in attributes.items()
         )
-    lines.append(
-        "DETAILS: Any attribute not listed above is not carried by this search "
-        "result. Read it with get_product_details_tool and this PRODUCT_REF "
-        "before stating it; absence here is not evidence that it is unknown."
-    )
     return "\n".join(lines)
 
 
@@ -635,7 +641,7 @@ def _format_store_date(now: datetime | None = None) -> str:
     the licence to invent exactly the facts the shopper-context rules forbid.
     """
 
-    stamp = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    stamp = (now or datetime.now(UTC)).astimezone(UTC)
     return (
         "TODAY (store's current date, server-resolved):\n"
         f"{stamp:%Y-%m-%d}, a {stamp:%A}, UTC\n"
@@ -701,10 +707,7 @@ def _format_wearer_audience(audience: list[str] | None) -> str:
 def _format_retrieved_images(retrieved: dict[str, str] | None) -> str:
     if not retrieved:
         return "(none)"
-    lines = []
-    for name, image_url in retrieved.items():
-        lines.append(f"- {name}: image available")
-    return "\n".join(lines)
+    return "\n".join(f"- {name}: image available" for name in retrieved)
 
 
 def _format_media_summary(media: list[dict[str, Any]]) -> str:
@@ -725,7 +728,7 @@ def _cart_line_key(line: dict) -> tuple:
     )
 
 
-def format_cart_change(before: "Cart | None", after: "Cart | None") -> str:
+def format_cart_change(before: Cart | None, after: Cart | None) -> str:
     """State what this turn did to the cart, as a fact.
 
     The editor was already told not to claim a cart action absent from CURRENT

@@ -20,9 +20,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
-from chain_server.src import response_format
 import pytest
-
+from chain_server.src import response_format
 from chain_server.src import turn_support as runtime_mod_support
 from chain_server.src.tool_evidence import (
     DETAIL_EVIDENCE_KEY,
@@ -34,11 +33,10 @@ from chain_server.src.tool_evidence import (
 )
 from shared.commerce_contracts import Money, ProductDetail, ProductSummary
 
-_SEARCH_DETAILS_LINE = (
-    "DETAILS: Any attribute not listed above is not carried by this search "
-    "result. Read it with get_product_details_tool and this PRODUCT_REF "
-    "before stating it; absence here is not evidence that it is unknown."
-)
+# A product record carries the product and nothing else. The attribute-limit
+# note is a fact about the search, so it is said once per result rather than
+# once per hit, and the image URL is not said at all -- the model cannot open
+# it and the UI reads it from the typed artifact.
 
 
 class _StubToolMessage:
@@ -73,15 +71,14 @@ class _StubToolMessage:
             "PRODUCT_REF: prod_1\n"
             "NAME: Ravenna Crossbody Bag\n"
             "CATEGORY: Bags\n"
-            "PRICE: $49.99 USD\n"
-            "IMAGE_URL: https://example.invalid/a.jpg\n" + _SEARCH_DETAILS_LINE,
+            "PRICE: $49.99 USD",
             id="all-fields",
         ),
         pytest.param(
             ProductSummary(
                 product_id="prod_2", display_name="Plain Tee", description=""
             ),
-            "PRODUCT_REF: prod_2\nNAME: Plain Tee\n" + _SEARCH_DETAILS_LINE,
+            "PRODUCT_REF: prod_2\nNAME: Plain Tee",
             id="no-optional-fields",
         ),
         pytest.param(
@@ -95,7 +92,7 @@ class _StubToolMessage:
             "PRODUCT_REF: prod_3\n"
             "NAME: Café Blazer — élan\n"
             "CATEGORY: Outerwear\n"
-            "PRICE: $1234.50 EUR\n" + _SEARCH_DETAILS_LINE,
+            "PRICE: $1234.50 EUR",
             id="non-ascii-name-and-currency",
         ),
         pytest.param(
@@ -108,8 +105,7 @@ class _StubToolMessage:
             ),
             "PRODUCT_REF: prod_4\n"
             "NAME: Rounding Check\n"
-            "PRICE: $7.00 USD\n"
-            "IMAGE_URL: https://example.invalid/b.png\n" + _SEARCH_DETAILS_LINE,
+            "PRICE: $7.00 USD",
             id="price-keeps-two-decimals",
         ),
     ],

@@ -4340,7 +4340,7 @@ class TestDeepAgentsRuntimeRefs:
         )
         assert '"department"' not in result.split("SEARCH_FILTER_EVIDENCE:", 1)[1].splitlines()[0]
         assert '"product_type"' not in result.split("SEARCH_FILTER_EVIDENCE:", 1)[1].splitlines()[0]
-        assert "get_product_details_tool and this PRODUCT_REF" in result
+        assert "get_product_details_tool and that PRODUCT_REF" in result
         assert "PRODUCT_REF: prod_1" in result
         assert state.retrieved == {"Work Bag": "bag.jpg"}
         assert [product["product_id"] for product in state.product_results] == ["prod_1"]
@@ -9068,9 +9068,11 @@ class TestDeepAgentsRuntimeRefs:
         assert "PRODUCT_REF: prod_456" in formatted
         assert "Leather Bag" in formatted
         assert "structured tote" not in formatted
-        assert "get_product_details_tool and this PRODUCT_REF" in formatted
-        # Absence from a search result is not evidence the attribute is unknown.
-        assert "absence here is not evidence" in formatted
+        # A record carries the product only. The attribute-limit note is a fact
+        # about the search, said once per result by the caller, and the image
+        # URL is not said at all -- the model cannot open one.
+        assert "absence here is not evidence" not in formatted
+        assert "IMAGE_URL" not in formatted
 
     def test_format_product_details_warns_against_performance_overclaims(self) -> None:
         from chain_server.src import turn_support as runtime_mod_support

@@ -18,17 +18,21 @@ what to preserve and what to change, or the repair loops.
 
 from __future__ import annotations
 
+import json
+import time
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from dataclasses import dataclass, field
-
-import json
-import time
 from typing import Any
+
 from pydantic import (
     BaseModel,
     ValidationError,
 )
+from shared.commerce_contracts import (
+    CatalogCapabilities,
+)
+
 from .agenttypes import State
 from .catalog_capabilities import effective_filter_capabilities
 from .catalog_execution import execute_catalog_search
@@ -37,32 +41,41 @@ from .catalog_request import (
     build_catalog_search_plan,
 )
 from .control_signals import (
-    ControlSignal,
     NOT_CARRIED_KEY,
     REJECTIONS_KEY,
+    ControlSignal,
     SearchRejection,
     control,
+)
+from .response_format import (
+    SEARCH_RESULT_ATTRIBUTE_LIMIT_NOTE,
+    _format_catalog_scope_outcome,
+    _format_product_record,
+    _format_search_composed_role_evidence,
+    _format_search_direction_evidence,
+    _format_search_filter_evidence,
+    _format_search_guidance_evidence,
+    _format_search_scope_relation_evidence,
+    _format_search_taxonomy_evidence,
+    _format_search_unadvertised_type_evidence,
 )
 from .tool_evidence import (
     EVIDENCE_KEY,
     SearchEvidence,
 )
-from .turn_scope import CatalogRepairState, TurnScope
 from .tool_loop_control import (
     CONSTRAINT_REVIEW_PREFIX,
     SEARCH_VALIDATION_ERROR_PREFIX,
 )
-from shared.commerce_contracts import (
-    CatalogCapabilities,
-)
+from .turn_scope import CatalogRepairState, TurnScope
 from .turn_support import (
     _ONE_SIZE,
     _SEARCH_BUDGET_EXHAUSTED_NOTE,
     _SEARCH_NO_MATCH_GROUNDING_NOTE,
     _SEARCH_RESULT_GROUNDING_NOTE,
     _SEARCH_SCOPE_COMPLETE_NOTE,
-    SearchCatalogToolArguments,
     _UNSUPPORTED_SEARCH_MODE_MESSAGE,
+    SearchCatalogToolArguments,
     _advertised_scope_match,
     _advertised_subcategories_for_selection,
     _advertised_taxonomy_scope_issue,
@@ -87,24 +100,12 @@ from .turn_support import (
     _selected_advertised_subcategories,
     _shopper_stated_product_scope,
     _shopper_stated_requirement,
-    stated_media_terms,
     _taxonomy_hard_constraints,
     _text_mentions_product_type,
     _tool_search_mode,
     _unsupported_requirement_message,
+    stated_media_terms,
 )
-from .response_format import (
-    _format_catalog_scope_outcome,
-    _format_product_record,
-    _format_search_direction_evidence,
-    _format_search_filter_evidence,
-    _format_search_guidance_evidence,
-    _format_search_composed_role_evidence,
-    _format_search_unadvertised_type_evidence,
-    _format_search_scope_relation_evidence,
-    _format_search_taxonomy_evidence,
-)
-
 
 #: What a search step hands back: nothing, meaning the search continues, or the
 #: text the model reads -- paired with the evidence artifact behind it when the
@@ -680,7 +681,6 @@ def _reviewed_provenance(ctx: SearchContext, attempt: _Attempt) -> StepResult:
     a role, or a requirement whose provenance in this turn cannot be established.
     """
 
-    advertised_choices = attempt.advertised_choices
     candidate_scope_key = attempt.candidate_scope_key
     capabilities = attempt.capabilities
     request = attempt.request
@@ -1402,7 +1402,7 @@ _NEVER_RELAXED = frozenset({"sizes", "size"})
 
 
 def _outside_everything_the_shop_sells(
-    ctx: "SearchContext", filters: dict[str, Any]
+    ctx: SearchContext, filters: dict[str, Any]
 ) -> bool:
     """Whether a numeric bound asks for a span the catalog does not reach.
 
@@ -1431,18 +1431,20 @@ def _outside_everything_the_shop_sells(
         asked_low = value.get("min", value.get("gte"))
         asked_high = value.get("max", value.get("lte"))
         try:
-            if asked_high is not None and low is not None:
-                if float(asked_high) < float(low):
-                    return True
-            if asked_low is not None and high is not None:
-                if float(asked_low) > float(high):
-                    return True
+            if asked_high is not None and low is not None and (
+                float(asked_high) < float(low)
+            ):
+                return True
+            if asked_low is not None and high is not None and (
+                float(asked_low) > float(high)
+            ):
+                return True
         except (TypeError, ValueError):
             continue
     return False
 
 
-def _relaxed_alternatives(ctx: "SearchContext", attempt: "_Attempt") -> list[Any]:
+def _relaxed_alternatives(ctx: SearchContext, attempt: _Attempt) -> list[Any]:
     """What this search finds with its optional constraints dropped.
 
     Zero results used to hand the model an absence and nothing else, so it
@@ -1591,7 +1593,7 @@ def _rendered_evidence(ctx: SearchContext, attempt: _Attempt) -> StepResult:
     # its advertised subcategories can, and they are already published.
     advertised_subcategories = (
         sorted(
-            (
+
                 getattr(
                     (attempt.capabilities.taxonomy.categories or {}).get(
                         advertised_category
@@ -1600,7 +1602,7 @@ def _rendered_evidence(ctx: SearchContext, attempt: _Attempt) -> StepResult:
                     None,
                 )
                 or {}
-            )
+
         )
         if advertised_category and attempt.capabilities.taxonomy
         else []
@@ -1632,7 +1634,7 @@ def _rendered_evidence(ctx: SearchContext, attempt: _Attempt) -> StepResult:
     )
     substituted_within = (
         sorted(
-            (
+
                 getattr(
                     (attempt.capabilities.taxonomy.categories or {}).get(
                         (request.taxonomy.category or [None])[0]
@@ -1641,7 +1643,7 @@ def _rendered_evidence(ctx: SearchContext, attempt: _Attempt) -> StepResult:
                     None,
                 )
                 or {}
-            )
+
         )
         if substituted_types and attempt.capabilities.taxonomy
         else []
@@ -1810,6 +1812,8 @@ def _rendered_evidence(ctx: SearchContext, attempt: _Attempt) -> StepResult:
         lines.append(_SEARCH_BUDGET_EXHAUSTED_NOTE)
     for record in evidence.products:
         lines.append(_format_product_record(record))
+    if evidence.products:
+        lines.append(SEARCH_RESULT_ATTRIBUTE_LIMIT_NOTE)
     prefix = (
         "Image similarity returned no matches; text fallback results:\n\n"
         if execution.fallback_used
@@ -2024,7 +2028,7 @@ def search_catalog(
 
     scopes = _one_scope_per_category(ctx, list(scopes))
     attempts: list[_Attempt] = []
-    for index, raw in enumerate(scopes):
+    for raw in scopes:
         fields = raw if isinstance(raw, dict) else raw.model_dump()
         attempt = _Attempt(
             semantic_query=fields.get("semantic_query", ""),
@@ -2096,6 +2100,7 @@ def search_catalog(
             for index, outcome in zip(
                 runnable,
                 pool.map(lambda i: _EXECUTE_STEP(ctx, attempts[i]), runnable),
+                strict=True,
             ):
                 outcomes[index] = outcome
 

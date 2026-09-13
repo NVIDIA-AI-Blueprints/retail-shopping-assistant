@@ -20,9 +20,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
-from chain_server.src import response_format
 import pytest
-
+from chain_server.src import response_format
 from chain_server.src import turn_support as runtime_mod_support
 from chain_server.src.tool_evidence import (
     DETAIL_EVIDENCE_KEY,

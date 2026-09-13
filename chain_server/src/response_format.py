@@ -16,15 +16,16 @@ move; the runtime imports these names back, so behaviour is unchanged.
 
 from __future__ import annotations
 
-from datetime import date as CalendarDate, datetime, timezone
+import json
+from datetime import UTC, datetime
+from datetime import date as CalendarDate
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
-
-from typing import Any
-import json
-
 from shared.commerce_contracts import (
     Cart as CommerceCart,
+)
+from shared.commerce_contracts import (
     CartMutationResult,
     CheckActivePromotionsResult,
     CheckProductAvailabilityResult,
@@ -640,7 +641,7 @@ def _format_store_date(now: datetime | None = None) -> str:
     the licence to invent exactly the facts the shopper-context rules forbid.
     """
 
-    stamp = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    stamp = (now or datetime.now(UTC)).astimezone(UTC)
     return (
         "TODAY (store's current date, server-resolved):\n"
         f"{stamp:%Y-%m-%d}, a {stamp:%A}, UTC\n"
@@ -706,10 +707,7 @@ def _format_wearer_audience(audience: list[str] | None) -> str:
 def _format_retrieved_images(retrieved: dict[str, str] | None) -> str:
     if not retrieved:
         return "(none)"
-    lines = []
-    for name, image_url in retrieved.items():
-        lines.append(f"- {name}: image available")
-    return "\n".join(lines)
+    return "\n".join(f"- {name}: image available" for name in retrieved)
 
 
 def _format_media_summary(media: list[dict[str, Any]]) -> str:
@@ -730,7 +728,7 @@ def _cart_line_key(line: dict) -> tuple:
     )
 
 
-def format_cart_change(before: "Cart | None", after: "Cart | None") -> str:
+def format_cart_change(before: Cart | None, after: Cart | None) -> str:
     """State what this turn did to the cart, as a fact.
 
     The editor was already told not to claim a cart action absent from CURRENT

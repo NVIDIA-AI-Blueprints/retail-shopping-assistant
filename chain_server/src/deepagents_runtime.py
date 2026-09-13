@@ -13,7 +13,7 @@ import logging
 import os
 import sys
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Collection
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from datetime import date as CalendarDate
@@ -131,10 +131,11 @@ from .tool_loop_control import (
     ToolLoopControlMiddleware,
 )
 from .tool_policy import (
-    load_shopper_skill_registry as _shopper_skill_registry,
+    SHOPPING_TOOL_POLICIES,
+    validate_registered_tool_names,
 )
 from .tool_policy import (
-    validate_registered_tool_names,
+    load_shopper_skill_registry as _shopper_skill_registry,
 )
 from .turn_scope import TurnScope
 from .turn_support import (
@@ -2726,6 +2727,42 @@ class DeepAgentsRuntime:
                 *(turn.shopper_text for turn in state.dialogue),
             ),
         )
+        def _widen_for_tool(
+            tool_name: str,
+            selected: Collection[str],
+        ) -> tuple[list[str], dict[str, str]] | None:
+            """Name a legal selection that grants this tool, or nothing.
+
+            The gate asks this when a turn is refused a tool for the grant.
+            The registry and the selection model both live here, so the two
+            things the answer needs -- which skills grant the tool, and
+            whether adding one is a selection the model would have been
+            allowed to make -- are answered in one place.
+
+            `skill_activation_input` is the same model the activation tool
+            validates against, so a widening that would seat two primaries
+            from one exclusive group, or strand a modifier, is rejected here
+            for exactly the reason it would have been rejected there.
+            """
+
+            policy = SHOPPING_TOOL_POLICIES.get(tool_name)
+            if policy is None:
+                return None
+            current = list(dict.fromkeys(selected))
+            for candidate in sorted(policy.allowed_skills_any_of):
+                if candidate in current or candidate not in skill_registry:
+                    continue
+                names = [*current, candidate]
+                try:
+                    skill_activation_input(skill_names=names)
+                except ValidationError:
+                    continue
+                return names, {
+                    skill_registry[name].path: skill_registry[name].content
+                    for name in names
+                }
+            return None
+
         skill_gate = ShopperSkillActivationMiddleware(
             request_id=identity.request_id,
             skill_descriptions={
@@ -2744,6 +2781,7 @@ class DeepAgentsRuntime:
                 "get_weather_forecast_tool": self._forecast_prompt_section(),
             },
             spent_tool_context=tool_loop_control.spent_tool_context,
+            widen_for_tool=_widen_for_tool,
             activation_system_prompt=(
                 MEDIA_FENCE.notice if state.media_analysis else ""
             ),

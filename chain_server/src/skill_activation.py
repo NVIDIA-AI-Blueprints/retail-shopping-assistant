@@ -125,6 +125,13 @@ class ShopperSkillActivationMiddleware(AgentMiddleware):
         previous_selected_skills: Collection[str] = (),
         granted_tool_context: Mapping[str, str] | None = None,
         spent_tool_context: Callable[[], Collection[str]] | None = None,
+        widen_for_tool: (
+            Callable[
+                [str, Collection[str]],
+                tuple[Sequence[str], Mapping[str, str]] | None,
+            ]
+            | None
+        ) = None,
         activation_system_prompt: str = "",
     ) -> None:
         self._request_id = request_id
@@ -134,6 +141,10 @@ class ShopperSkillActivationMiddleware(AgentMiddleware):
         # still act on changes as the turn runs, and the answer is only correct
         # for the request being prepared.
         self._spent_tool_context = spent_tool_context or (lambda: ())
+        # Which skill grants a tool, and whether adding it to this selection
+        # is a legal selection, is answered where the registry and the
+        # selection model live. This asks the question; it does not answer it.
+        self._widen_for_tool = widen_for_tool or (lambda _tool, _selected: None)
         self._activation_system_prompt = activation_system_prompt
         self._skill_tool_grants = {
             name: frozenset(tool_names)
@@ -424,8 +435,61 @@ class ShopperSkillActivationMiddleware(AgentMiddleware):
             selected_skills,
             granted_tools,
         ):
+            if status == "active" and self._widen_to_grant(
+                tool_name,
+                selected_skills,
+            ):
+                return None
             return _tool_not_granted(tool_name, selected_skills)
         return None
+
+    def _widen_to_grant(
+        self,
+        tool_name: str,
+        selected_skills: Collection[str],
+    ) -> bool:
+        """Add the skill that grants this tool, rather than asking for it.
+
+        A turn selects its skills at its first token, and the prompt that asks
+        for them asks which task the turn continues -- "an outfit-building or
+        styling thread continues with the styling procedure", "keep the same
+        primary skill when the current request continues that task". Both are
+        there because the model used to abandon a styling thread the moment a
+        turn named one product. So on turn seven of a capsule, "add the Ombre
+        Canvas Tote Bag" keeps `outfit-styling`, exactly as instructed -- and
+        is then refused the cart tool, for obeying.
+
+        The task answer was right. It was read as a tool answer, which it is
+        not: continuing a styling task says nothing about whether the turn
+        will need the cart. The refusal then asked the model to name the
+        granting skill -- which this code already knows, having just used
+        `allowed_skills_any_of` to write the message naming it. Recovery cost
+        a model call to be told what the caller had computed, and could spin:
+        refused for the cart grant six turns into a capsule, it re-selected,
+        was told the selection was already complete, and was refused twelve
+        times until the turn died on the recursion limit.
+
+        So the call is its own request. A tool the turn was refused names the
+        skill that grants it, and if adding that skill is a legal selection it
+        is added and the call proceeds in the same step. Nothing is
+        negotiated, so there is no round to repeat.
+
+        What still refuses: a granting skill that would be a second primary in
+        one exclusive group, because the selection model rejects it and the
+        one-primary invariant is not this function's to break; a turn past the
+        activation cap, because `activate` refuses past it and a turn that
+        cannot find its tool should hear an honest no; and a tool outside the
+        policy table, which never reached here.
+        """
+
+        widened = self._widen_for_tool(tool_name, sorted(selected_skills))
+        if widened is None:
+            return False
+        names, files = widened
+        try:
+            return self.activate(dict(files), list(names))
+        except (KeyError, ValueError):
+            return False
 
     def _validate_model_response(self, response: ModelResponse) -> ModelResponse:
         with self._lock:

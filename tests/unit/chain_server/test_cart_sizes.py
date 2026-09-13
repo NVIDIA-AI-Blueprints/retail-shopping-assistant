@@ -15,14 +15,13 @@ wrong once it is.
 from __future__ import annotations
 
 import pathlib
-
-from chain_server.src.turn_support import _normalize_cart_add_tool_items
 from types import SimpleNamespace
+
 from chain_server.src.turn_support import (
     _cart_size_issue,
+    _normalize_cart_add_tool_items,
     _the_same_product_in_two_sizes,
 )
-import inspect
 
 
 def test_two_sizes_of_one_product_are_two_lines() -> None:
@@ -526,8 +525,9 @@ class TestAtomicRefusalSaysWhatWasReady:
     """The add is all or nothing; the refusal must still carry what was settled."""
 
     def _result(self, ready=None):
-        from chain_server.src.response_format import _format_cart_add_result
         from types import SimpleNamespace
+
+        from chain_server.src.response_format import _format_cart_add_result
 
         cart = SimpleNamespace(contents=[], lines=[], total=None)
         failed = [
@@ -561,8 +561,9 @@ class TestAtomicRefusalSaysWhatWasReady:
         thing that failed -- a contradiction inside one message.
         """
 
-        from chain_server.src.turn_support import _cart_add_scope_failures
         from types import SimpleNamespace
+
+        from chain_server.src.turn_support import _cart_add_scope_failures
 
         dress = SimpleNamespace(
             product_id="ref_dress", display_name="Office A-line Dress"

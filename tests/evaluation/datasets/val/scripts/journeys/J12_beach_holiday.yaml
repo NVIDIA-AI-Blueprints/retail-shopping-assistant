@@ -6,7 +6,11 @@ why: >
   sun does not make a fabric breathable.
 turns:
   - say: I'm going to Cancun next week, what's the weather like
-    expect: {}
+    # A city, a window, and inside the horizon, with nothing to search. This
+    # was unchecked, and every run answered it with "I don't have a live
+    # weather forecast" followed by a description of a typical Cancun
+    # September -- a refusal and the invention the refusal exists to prevent.
+    expect: {tools_used: [get_weather_forecast_tool]}
   - say: what should I pack
     expect: {products_min: 1}
   - say: I need sandals for the beach
@@ -26,7 +30,11 @@ turns:
         - {name: Xenial Aviator Sunglasses, qty: 1}
         - {name: Linen Canvas Tote Bag, qty: 1}
   - say: will I need a jacket in the evening
-    expect: {}
+    # Nine turns into one trip to one city: the place and the dates are both
+    # known, so there is no honest sense in which a forecast is unavailable.
+    # Also unchecked, and also answered with "I don't have a live forecast for
+    # Cancun" and then a description of the evenings there.
+    expect: {tools_used: [get_weather_forecast_tool]}
   - say: what's in my cart
     expect:
       cart:

@@ -377,25 +377,32 @@ def _shopper_stated_requirement(query: str, requirement: str) -> bool:
     return bool(requirement_words) and requirement_words.issubset(query_words)
 
 
-WEATHER_PLACE_NOT_IN_THIS_TURN = (
-    "WEATHER_PLACE_NOT_STATED: no forecast for this turn -- the words you "
-    "quoted are not in it, and a place named on an earlier turn is not where "
-    "the shopper is asking about now.\n"
-    "Carry on and answer them. A forecast was never the request: they asked "
-    "what to wear. If they said what the conditions will be -- \"it's going "
-    "to snow when we get back\" -- that is the answer to the weather "
-    "question, they are the authority on their own trip, and you have "
-    "everything you need. Search for what those conditions call for and show "
-    "it.\n"
-    "Ask only if you cannot tell what they need at all. Do not end the turn "
-    "on a question about a place when they have already told you the weather, "
-    "and do not tell them they can work it out themselves. Do not call this "
-    "tool again for this turn."
+WEATHER_PLACE_NOT_STATED = (
+    "WEATHER_PLACE_NOT_STATED: no forecast -- the words you quoted as naming "
+    "the place are not in anything the shopper has said, in this turn or any "
+    "earlier one.\n"
+    "If they did name a place, here or on an earlier turn of this same trip, "
+    "quote their actual words and call again.\n"
+    "Carry on and answer them either way -- a forecast was not the whole "
+    "request. If they said what the conditions will be -- \"it's going to "
+    "snow when we get back\" -- that is the answer to the weather question, "
+    "they are the authority on their own trip, and you have everything you "
+    "need. Search for what those conditions call for and show it.\n"
+    "Ask only if you cannot tell what they need at all, and then ask for the "
+    "one thing you are missing. Do not end the turn on a question about a "
+    "place when they have already told you the weather, and do not tell them "
+    "they can work it out themselves. Above all, do not describe conditions "
+    "you did not fetch: typical, seasonal, usually and this time of year are "
+    "not forecasts, and a reply that says the weather is unavailable and then "
+    "supplies some is worse than either half alone."
 )
 
 
-def a_place_this_turn_named(query: str, quoted: str) -> bool:
-    """Whether the words offered as naming the place are in this turn at all.
+def a_place_the_shopper_named(
+    shopper_statements: Sequence[str],
+    quoted: str,
+) -> bool:
+    """Whether the words offered as naming the place were ever actually said.
 
     The tool asks the model to quote the words that named the place, and the
     model quoted "Italy" on a turn reading "it's going to snow when we get
@@ -405,11 +412,31 @@ def a_place_this_turn_named(query: str, quoted: str) -> bool:
 
     So the citation is checked against the record, which is the same thing
     `expected_display_name` does for a product name: not what the words mean,
-    only whether they were said here. Reusing the constraint-provenance reader
-    so a quotation is judged the same way everywhere.
+    only whether they were said. Reusing the constraint-provenance reader so a
+    quotation is judged the same way everywhere.
+
+    The record is every turn the shopper has spoken, not only the current one.
+    Checking the current turn alone was narrower than the defect and cost the
+    behaviour it was meant to protect: nine turns into planning one trip to
+    one city, "will I need a jacket in the evening" names no place, so the
+    call was refused -- and the reply then said no forecast was available for
+    Cancun and described a typical Cancun September anyway. Earlier runs had
+    fetched that forecast and cited the provider.
+
+    What made Rome wrong is not something this function can see. The shopper
+    had stated the conditions, and "when we get back" is home rather than the
+    city of the trip; both are judgments about meaning, and both are stated on
+    the field the quotation comes from. What a substring check can establish is
+    that the words were said by the shopper at all, which is what stopped the
+    invented "Rome", and that is all it claims to establish.
     """
 
-    return bool(quoted.strip()) and _shopper_stated_requirement(query, quoted)
+    if not quoted.strip():
+        return False
+    return any(
+        _shopper_stated_requirement(statement, quoted)
+        for statement in shopper_statements
+    )
 
 
 def _product_scope_key(value: str | None) -> str:

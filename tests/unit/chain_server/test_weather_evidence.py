@@ -356,7 +356,13 @@ def test_the_tool_says_when_not_to_call_it() -> None:
     assert "named a CITY, town or postal code" in source
     assert "prefer asking which city over" in source
     assert "never present them as the weather where the shopper will be" in source
-    assert "No place, or nothing they are dressing for" in source
+    # A place is the one input nothing else can supply. This used to refuse
+    # "nothing they are dressing for" as well, which made a bare conditions
+    # question -- "going to Cancun next week, what's the weather like" -- read
+    # as a turn not to call on, and it was answered from memory of the
+    # climate instead.
+    assert "No place at all" in source
+    assert "nothing they are dressing for" not in source
     # Travel date is not the dressing date.
     assert "not the one they travel on" in source
 

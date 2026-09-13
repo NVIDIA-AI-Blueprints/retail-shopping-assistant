@@ -204,6 +204,7 @@ outcomes from diagnostics.
 | `budget-shopping` | `chain_server/skills/shopper/budget-shopping/SKILL.md` | Registered | `modifier` | None | Stated price ceilings and budget bundles; combine with cart management for cart-total checks |
 | `catalog-questions` | `chain_server/skills/shopper/catalog-questions/SKILL.md` | Registered | `primary` | Questions about the shop | The most or least expensive thing, whether anything falls in a price range, what departments exist |
 | `store-policy-answers` | `chain_server/skills/shopper/store-policy-answers/SKILL.md` | Registered | `standalone` | Policy lookup | Returns, shipping, sizing, payment, price matching, and gift cards |
+| `destination-weather` | `chain_server/skills/shopper/destination-weather/SKILL.md` | Registered | `standalone` | Daily forecast | What conditions will be like at a named place and time, when the turn asks for no product or outfit |
 
 ## `product-discovery`
 
@@ -313,6 +314,23 @@ Purpose: controlled answers for the six supported store-policy topics.
   knowledge.
 - Relays unavailable topics honestly and directs the shopper to the retailer's
   help center.
+
+## `destination-weather`
+
+Purpose: answer a question about the conditions at a place and time when the
+turn asks for no product. Standalone rather than part of a product procedure,
+because the grant decides which turns can fetch a forecast at all: held by
+`outfit-styling` alone, "going to Cancun next week, what's the weather like"
+selected no styling procedure and so could not see the tool.
+
+- Fetches, then reports the numbers with the city and dates they cover.
+- Never describes weather it did not fetch. When it cannot fetch -- no date, a
+  window past the horizon, a region with no single weather -- it names the one
+  thing it is missing and asks, rather than supplying the climate from memory.
+- Grants one tool, so a weather-only turn loads a fraction of what a product
+  procedure costs.
+- Not selected when the same turn asks what to wear or pack; `outfit-styling`
+  covers that and holds the same grant.
 
 ## `outfit-styling`
 

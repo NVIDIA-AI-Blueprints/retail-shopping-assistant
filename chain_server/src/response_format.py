@@ -488,10 +488,19 @@ class WeatherForecastInput(BaseModel):
     )
     #: Where the place came from, as a parameter rather than a rule, for the
     #: reason above: the prose form said "the shopper named a CITY" without
-    #: saying when, and a city named two turns ago satisfies it. "It's going to
-    #: snow when we get back" names no place, so the assistant reached for the
-    #: wedding city of an earlier turn and answered a shopper describing snow
-    #: with the forecast for Rome at 77-97F.
+    #: saying when. "It's going to snow when we get back" names no place, so
+    #: the assistant reached for the wedding city of an earlier turn and
+    #: answered a shopper describing snow with the forecast for Rome at 77-97F.
+    #:
+    #: This asked for the current turn's words and nothing else, which is one
+    #: turn narrower than the bug. Two things made Rome wrong and neither was
+    #: the age of the citation: the shopper had said what the conditions would
+    #: be, and "when we get back" is home rather than the city of the trip.
+    #: Meanwhile "will I need a jacket in the evening", nine turns into
+    #: planning one trip to one city, names no place either -- and was refused,
+    #: then answered with invented weather, which is the outcome the refusal
+    #: exists to prevent. So the field asks which place they are asking about
+    #: now, and names the two things that disqualify a carried-over one.
     #:
     #: Nothing to quote is the signal. Ask which place they mean.
     shopper_words_naming_the_place: str = Field(
@@ -499,13 +508,21 @@ class WeatherForecastInput(BaseModel):
         min_length=1,
         max_length=200,
         description=(
-            "Quote the words from THIS turn -- the one you are answering -- "
-            "that name this place. Not an earlier turn: a city they named "
-            "before is not where they are asking about now. If this turn names "
-            "no place, there is nothing to quote and this is not a call to "
-            "make; ask which place they mean instead. And if the shopper has "
-            "said what the weather will be, they are the authority on their "
-            "own trip and no forecast is needed at all."
+            "Quote the shopper's own words naming the place they are asking "
+            "about NOW. If they have already said what the weather will be, "
+            "they are the authority on their own trip, no forecast is needed "
+            "at all, and this is not a call to make -- dress what they told "
+            "you. Usually from THIS turn. Words from an earlier turn count "
+            "only when this turn carries that same trip forward and puts no "
+            "other place in play: nine turns into planning one trip, \"will "
+            "I need a jacket in the evening\" is asking about that city. What "
+            "never counts is a place they have moved off -- \"when we get "
+            "back\" is home, not the city of the trip, and the trip's "
+            "forecast contradicts them; served exactly that, the assistant "
+            "recommended a satin dress and ballet flats for snow. If you "
+            "cannot tell which place they mean, there is nothing to quote: "
+            "ask which place they mean instead, and do not describe "
+            "conditions you have not fetched."
         ),
     )
     date: CalendarDate | None = Field(

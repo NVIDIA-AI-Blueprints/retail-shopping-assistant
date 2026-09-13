@@ -93,17 +93,23 @@ def test_weather_tool_is_registered_on_every_serving_surface() -> None:
     assert "get_weather_forecast_tool" in policy
 
 
-def test_only_the_styling_skill_may_reach_a_paid_external_service() -> None:
-    """A forecast is styling input and establishes no product fact, so nothing
-    else has a use for it. A shopper asking about returns must not be able to
-    spend a provider call.
+def test_only_skills_that_use_a_forecast_reach_a_paid_external_service() -> None:
+    """Two skills have a use for a forecast, and a shopper asking about
+    returns must not be able to spend a provider call.
 
-    This rule and its enumeration disagreed: product-discovery, the non-styling
-    procedure, also held the grant. It cost every call that procedure covered
-    4,270 characters of schema -- the second largest in the system -- for a tool
-    called on 1.8% of turns. A browse that turns out to be dressing for
-    conditions re-selects for the styling procedure, the same recovery any
-    missing grant uses.
+    The grant is not free: 4,270 characters of schema -- the second largest in
+    the system -- on every call a granting skill covers, for a tool called on
+    1.8% of turns. product-discovery held it and should not have; a browse is
+    the non-styling procedure.
+
+    Narrowing it to outfit-styling alone was wrong in the other direction,
+    because the grant decides which turns *can* fetch a forecast and not only
+    which turns pay for the schema. "Going to Cancun next week, what's the
+    weather like" asks for no outfit, selects no styling procedure, and so
+    could not see the tool at all -- the reply said no forecast was available
+    and then described the climate from memory. A bare conditions question is
+    its own task and holds this one tool, which is also the cheapest place for
+    it: such a turn loads a fifth of what the browse procedure costs.
     """
 
     granted = {
@@ -112,5 +118,5 @@ def test_only_the_styling_skill_may_reach_a_paid_external_service() -> None:
         if "get_weather_forecast_tool" in path.read_text()
     }
 
-    assert granted == {"outfit-styling"}
+    assert granted == {"destination-weather", "outfit-styling"}
     assert SHOPPING_TOOL_POLICIES["get_weather_forecast_tool"].risk == "read"

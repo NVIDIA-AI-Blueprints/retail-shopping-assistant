@@ -3080,6 +3080,7 @@ class TestDeepAgentsRuntimeRefs:
             "budget-shopping",
             "cart-management",
             "catalog-questions",
+            "destination-weather",
             "outfit-styling",
             "product-discovery",
             "store-policy-answers",
@@ -3372,9 +3373,12 @@ class TestDeepAgentsRuntimeRefs:
         # "Stop and synthesize" fired before the forecast was ever considered:
         # the same sentence fetched weather alone and skipped it once it read
         # as an outfit request mid-conversation.
-        # The forecast-ordering rule is now conditional on the tool existing,
-        # and this fixture has weather off -- which is the shipped default. It
-        # is asserted for both branches in test_today_is_known.
+        # The forecast-ordering rule has left the system prompt entirely. It
+        # ships with the grant now, beside the tool's own schema, so only a
+        # request that may actually call it reads it -- and so it no longer
+        # has to be a sub-bullet of the fan-out rule, which is what made it
+        # unreadable on a turn with nothing to search. Asserted where it now
+        # lives in test_today_is_known.
         assert "look the weather" not in captured["system_prompt"]
         assert "the forecast never gets asked for" not in captured["system_prompt"]
         product_discovery = " ".join(skill("product-discovery").split())

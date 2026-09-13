@@ -67,6 +67,7 @@ SKILL_TOOL_GRANTS = {
             "view_cart_total_tool",
         }
     ),
+    "destination-weather": frozenset({"get_weather_forecast_tool"}),
     "outfit-styling": frozenset(
         {
             "check_active_promotions_tool",

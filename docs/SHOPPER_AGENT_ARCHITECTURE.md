@@ -425,6 +425,7 @@ and mutation preconditions.
 | [`budget-shopping`](../chain_server/skills/shopper/budget-shopping/SKILL.md) | `modifier` | Add budget procedure when the shopper states a price ceiling or bundle budget | None; combine with the applicable product or cart skill |
 | [`cart-management`](../chain_server/skills/shopper/cart-management/SKILL.md) | `standalone` | Cart reads, adds, removals, and quantity changes, alone or beside product work | `get_cart_tool`, `view_cart_total_tool`, `add_cart_items_tool`, `remove_cart_item_tool`, `update_cart_items_tool`, `resolve_conversation_products_tool` |
 | [`store-policy-answers`](../chain_server/skills/shopper/store-policy-answers/SKILL.md) | `standalone` | Returns, shipping, sizing, payment, price matching, and gift cards | `get_store_policy_tool` |
+| [`destination-weather`](../chain_server/skills/shopper/destination-weather/SKILL.md) | `standalone` | Conditions at a named place and time, when the turn asks for no product | `get_weather_forecast_tool` |
 
 `product-discovery` and `outfit-styling` are mutually exclusive primary
 procedures. `budget-shopping` modifies the applicable primary only when the

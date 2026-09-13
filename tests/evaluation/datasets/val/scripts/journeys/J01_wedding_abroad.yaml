@@ -62,7 +62,13 @@ turns:
   - say: and there's another wedding in Cancun in about three months
     expect: {}
   - say: it's going to snow when we get back, what should I wear
-    expect: {}
+    # The shopper is the authority on their own trip, so this turn has no
+    # forecast to look up -- and "when we get back" is home, which is not a
+    # place the assistant knows. Unchecked, it silently regressed: a run that
+    # let a place carry over from an earlier turn fetched the wedding city
+    # from two turns before, reported rain at 65-82F, and recommended a satin
+    # sheath dress and blush ballet flats to a shopper heading into snow.
+    expect: {tools_not_used: [get_weather_forecast_tool], products_min: 1}
   # The hardest reference in this journey: a bare description, nine turns after
   # the thing it points at, with a clutch request riding along behind it.
   #

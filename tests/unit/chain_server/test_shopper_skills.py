@@ -15,6 +15,7 @@ REGISTERED_SKILL_PATHS = {
     for name in (
         "budget-shopping",
         "cart-management",
+        "destination-weather",
         "outfit-styling",
         "product-discovery",
         "catalog-questions",
@@ -78,6 +79,15 @@ EXPECTED_SKILL_POLICY = {
         "role": "standalone",
         "exclusive_group": None,
         "tools_granted": ["get_store_policy_tool"],
+    },
+    # A bare conditions question is its own task, not a product procedure with
+    # a forecast attached. Standalone, because it composes: the same turn may
+    # also be a cart read, and when it asks what to wear as well, the styling
+    # procedure owns the forecast and this is not selected.
+    "destination-weather": {
+        "role": "standalone",
+        "exclusive_group": None,
+        "tools_granted": ["get_weather_forecast_tool"],
     },
 }
 

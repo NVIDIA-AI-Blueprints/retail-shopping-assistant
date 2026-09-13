@@ -116,23 +116,29 @@ SHOPPING_TOOL_POLICIES: Mapping[str, ToolPolicy] = MappingProxyType(
             allowed_skills_any_of=frozenset({"store-policy-answers"}),
             risk="read",
         ),
-        # Granted to the styling skill only. A forecast is styling input -- it
-        # never establishes a product fact, so nothing else has a use for it,
-        # and a shopper asking about returns should not be able to reach a paid
-        # external service.
-        #
-        # This rule said "styling skills only" while granting product-discovery,
-        # which is the non-styling procedure. The grant was not free: this is
+        # Granted to the two skills that have a use for a forecast, and no
+        # others: a shopper asking about returns should not be able to reach a
+        # paid external service. The grant is not free either way -- this is
         # the second-largest schema in the system, 4,270 characters on every
-        # call a broad grant covers, and it is called on 1.8% of turns. A browse
-        # paid for it on every model call.
+        # call a granting skill covers, and it is called on 1.8% of turns. A
+        # browse used to pay for it on every model call.
         #
-        # Dressing for conditions is a styling task and selects the styling
-        # procedure. A browse that turns out to need a forecast re-selects for
-        # it, which is the same recovery any missing grant uses and only became
-        # reachable once the activation tool stayed visible on an active turn.
+        # Narrowing it to outfit-styling alone was too narrow, and in the one
+        # way that matters: it decided which turns *can* fetch a forecast, not
+        # just which turns pay for the schema. "I'm going to Cancun next week,
+        # what's the weather like" asks for no outfit, so it selects no styling
+        # procedure, so the tool was not in context -- and the reply said the
+        # forecast was unavailable and then described the climate from memory.
+        #
+        # A bare conditions question is its own task, so it gets its own
+        # standalone skill rather than a grant bolted onto a product procedure.
+        # It carries this one tool: a weather-only turn loads a fifth of what
+        # the browse procedure costs, which is why this is the cheap answer as
+        # well as the correct one.
         "get_weather_forecast_tool": ToolPolicy(
-            allowed_skills_any_of=frozenset({"outfit-styling"}),
+            allowed_skills_any_of=frozenset(
+                {"destination-weather", "outfit-styling"}
+            ),
             risk="read",
         ),
     }

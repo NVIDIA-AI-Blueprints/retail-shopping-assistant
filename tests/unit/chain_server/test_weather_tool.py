@@ -93,10 +93,18 @@ def test_weather_tool_is_registered_on_every_serving_surface() -> None:
     assert "get_weather_forecast_tool" in policy
 
 
-def test_only_the_styling_skills_may_reach_a_paid_external_service() -> None:
+def test_only_the_styling_skill_may_reach_a_paid_external_service() -> None:
     """A forecast is styling input and establishes no product fact, so nothing
     else has a use for it. A shopper asking about returns must not be able to
-    spend a provider call."""
+    spend a provider call.
+
+    This rule and its enumeration disagreed: product-discovery, the non-styling
+    procedure, also held the grant. It cost every call that procedure covered
+    4,270 characters of schema -- the second largest in the system -- for a tool
+    called on 1.8% of turns. A browse that turns out to be dressing for
+    conditions re-selects for the styling procedure, the same recovery any
+    missing grant uses.
+    """
 
     granted = {
         path.parent.name
@@ -104,5 +112,5 @@ def test_only_the_styling_skills_may_reach_a_paid_external_service() -> None:
         if "get_weather_forecast_tool" in path.read_text()
     }
 
-    assert granted == {"outfit-styling", "product-discovery"}
+    assert granted == {"outfit-styling"}
     assert SHOPPING_TOOL_POLICIES["get_weather_forecast_tool"].risk == "read"

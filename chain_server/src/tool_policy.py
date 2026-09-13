@@ -116,14 +116,23 @@ SHOPPING_TOOL_POLICIES: Mapping[str, ToolPolicy] = MappingProxyType(
             allowed_skills_any_of=frozenset({"store-policy-answers"}),
             risk="read",
         ),
-        # Granted to the styling skills only. A forecast is styling input --
-        # it never establishes a product fact, so nothing else has a use for
-        # it, and a shopper asking about returns should not be able to reach a
-        # paid external service.
+        # Granted to the styling skill only. A forecast is styling input -- it
+        # never establishes a product fact, so nothing else has a use for it,
+        # and a shopper asking about returns should not be able to reach a paid
+        # external service.
+        #
+        # This rule said "styling skills only" while granting product-discovery,
+        # which is the non-styling procedure. The grant was not free: this is
+        # the second-largest schema in the system, 4,270 characters on every
+        # call a broad grant covers, and it is called on 1.8% of turns. A browse
+        # paid for it on every model call.
+        #
+        # Dressing for conditions is a styling task and selects the styling
+        # procedure. A browse that turns out to need a forecast re-selects for
+        # it, which is the same recovery any missing grant uses and only became
+        # reachable once the activation tool stayed visible on an active turn.
         "get_weather_forecast_tool": ToolPolicy(
-            allowed_skills_any_of=frozenset(
-                {"outfit-styling", "product-discovery"}
-            ),
+            allowed_skills_any_of=frozenset({"outfit-styling"}),
             risk="read",
         ),
     }

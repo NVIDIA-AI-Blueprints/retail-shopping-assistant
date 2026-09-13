@@ -2666,6 +2666,19 @@ class DeepAgentsRuntime:
             },
             disabled=("get_weather_forecast_tool",) if weather_off else (),
         )
+        # Built before the skill gate because the gate asks it, at each model
+        # call, which tools the turn has finished with. `tool_loop_control` is
+        # the outer middleware and owns that fact; the gate is what writes the
+        # prompt, so the answer has to travel from here to there.
+        tool_loop_control = ToolLoopControlMiddleware(
+            catalog_context=format_catalog_capabilities_for_prompt(
+                turn_capabilities
+            ),
+            shopper_statements=(
+                state.query,
+                *(turn.shopper_text for turn in state.dialogue),
+            ),
+        )
         skill_gate = ShopperSkillActivationMiddleware(
             request_id=identity.request_id,
             skill_descriptions={
@@ -2682,17 +2695,9 @@ class DeepAgentsRuntime:
                     turn_capabilities
                 ),
             },
+            spent_tool_context=tool_loop_control.spent_tool_context,
             activation_system_prompt=(
                 MEDIA_FENCE.notice if state.media_analysis else ""
-            ),
-        )
-        tool_loop_control = ToolLoopControlMiddleware(
-            catalog_context=format_catalog_capabilities_for_prompt(
-                turn_capabilities
-            ),
-            shopper_statements=(
-                state.query,
-                *(turn.shopper_text for turn in state.dialogue),
             ),
         )
 

@@ -247,6 +247,53 @@ def test_completed_scoped_no_match_removes_tools_from_next_model_step() -> None:
     assert "## Search Complete" in prepared.system_prompt
 
 
+def test_a_closed_search_reports_the_catalog_context_as_spent() -> None:
+    """The saving the skill gate spends, reported by the middleware that knows.
+
+    Closure is owned here; the prompt is written by the skill gate, which asks
+    this before each model call. Only the search's context is spent -- the
+    grant is untouched, and a forecast the turn still owes keeps its own.
+    """
+
+    middleware = ToolLoopControlMiddleware()
+    assert middleware.spent_tool_context() == frozenset()
+
+    _capture_model_request(
+        middleware,
+        _messages_with_result(
+            _tool_result(
+                "SEARCH_RESULT_GROUNDING_NOTE: grounded candidates\n\n"
+                "SEARCH_SCOPE_COMPLETE: every requested role is covered."
+            )
+        ),
+    )
+
+    assert middleware.spent_tool_context() == frozenset({"search_catalog_tool"})
+
+
+def test_an_exhausted_budget_keeps_the_catalog_for_the_repair_that_needs_it() -> None:
+    """Exhaustion removes the tool, and the two withdrawals must not overlap.
+
+    Budget exhaustion already drops `search_catalog_tool` from the request, so
+    the skill gate withholds its context for the grant alone. Reporting it
+    spent here as well would be the same saving claimed twice, and it would
+    read as though a second rule were doing work.
+    """
+
+    middleware = ToolLoopControlMiddleware()
+    _capture_model_request(
+        middleware,
+        _messages_with_result(
+            _tool_result(
+                "SEARCH_RESULT_GROUNDING_NOTE: grounded candidates\n\n"
+                f"{SEARCH_BUDGET_EXHAUSTED_PREFIX} no searches remain"
+            )
+        ),
+    )
+
+    assert middleware.spent_tool_context() == frozenset()
+
+
 def test_partial_search_scope_keeps_tools_available() -> None:
     middleware = ToolLoopControlMiddleware()
     result = _tool_result("SEARCH_RESULT_GROUNDING_NOTE: grounded candidates")

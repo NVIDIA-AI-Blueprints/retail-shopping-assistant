@@ -125,11 +125,16 @@ class ShopperSkillActivationMiddleware(AgentMiddleware):
         skill_tool_grants: Mapping[str, Collection[str]],
         previous_selected_skills: Collection[str] = (),
         granted_tool_context: Mapping[str, str] | None = None,
+        spent_tool_context: Callable[[], Collection[str]] | None = None,
         activation_system_prompt: str = "",
     ) -> None:
         self._request_id = request_id
         self._skill_descriptions = dict(skill_descriptions)
         self._granted_tool_context = dict(granted_tool_context or {})
+        # Read at each model call rather than at construction: what a turn can
+        # still act on changes as the turn runs, and the answer is only correct
+        # for the request being prepared.
+        self._spent_tool_context = spent_tool_context or (lambda: ())
         self._activation_system_prompt = activation_system_prompt
         self._skill_tool_grants = {
             name: frozenset(tool_names)
@@ -380,12 +385,18 @@ class ShopperSkillActivationMiddleware(AgentMiddleware):
         nothing and paid for the catalog's every time; a cart read and a policy
         question paid on every model call of the turn for a search they cannot
         run.
+
+        Being granted a tool is necessary but not sufficient. A tool the turn
+        has finished with is still granted, and its instructions are as
+        unreadable then as an ungranted tool's -- the turn has been told not to
+        take the action they describe. `spent_tool_context` names those.
         """
 
+        spent = frozenset(self._spent_tool_context())
         sections = [
             text
             for name, text in self._granted_tool_context.items()
-            if name in granted_tools and text.strip()
+            if name in granted_tools and name not in spent and text.strip()
         ]
         sections.append(_active_skills_prompt(skill_files))
         return "\n\n".join(sections)

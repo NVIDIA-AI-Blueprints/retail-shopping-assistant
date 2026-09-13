@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Collection, Sequence
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -207,8 +207,16 @@ def add_cart_items_tool(product_ref: str) -> str:
 def _middleware(
     *,
     previous_selected_skills: Sequence[str] = (),
+    spent_tool_context: Callable[[], Collection[str]] | None = None,
 ) -> ShopperSkillActivationMiddleware:
     return ShopperSkillActivationMiddleware(
+        granted_tool_context={
+            "search_catalog_tool": (
+                "Catalog capabilities:\nRetrieval modes: text, dense"
+            ),
+            "get_product_details_tool": "Read a product before quoting its price.",
+        },
+        spent_tool_context=spent_tool_context,
         request_id=REQUEST_ID,
         skill_descriptions={
             "budget-shopping": "Use as a budget modifier.",
@@ -626,6 +634,75 @@ def test_active_phase_injects_complete_skill_and_exposes_commerce() -> None:
     assert "# Outfit Styling" in prepared.system_prompt
     assert "## Conversational Mid-Browse" in prepared.system_prompt
     assert "## Unsupported Commerce Details" in prepared.system_prompt
+
+
+def test_a_closed_search_stops_paying_for_the_catalog_it_cannot_query() -> None:
+    """The largest block in the prompt leaves when the turn is done searching.
+
+    The catalog context is the advertised taxonomy, every hard filter's exact
+    enum, and the per-category field availability -- about 2,900 tokens whose
+    only use is composing a search. Once the search closes the turn is told
+    not to search again, and 389 of 1,302 measured work calls were carrying
+    the block anyway. The grant is unchanged, so this is not a capability
+    being removed; it is instructions for an action already forbidden.
+    """
+
+    spent: set[str] = set()
+    middleware = _middleware(spent_tool_context=lambda: frozenset(spent))
+    middleware.activate(
+        {"/shopper/outfit-styling/SKILL.md": "# Outfit Styling"},
+        ["outfit-styling"],
+    )
+
+    while_open = _capture_request(
+        middleware, _model_request(_activated_messages())
+    ).system_prompt
+    assert "Retrieval modes" in while_open
+    assert "before quoting its price" in while_open
+
+    spent.add("search_catalog_tool")
+    once_closed = _capture_request(
+        middleware, _model_request(_activated_messages())
+    ).system_prompt
+
+    assert "Retrieval modes" not in once_closed
+    # Only the finished tool's context goes. A turn that closed its search
+    # may still owe a detail read, and taking one withdrawal as a general
+    # purge is how a cheap saving becomes a capability loss.
+    assert "before quoting its price" in once_closed
+    # The skill still has to arrive, or the turn loses the procedure it is
+    # midway through performing.
+    assert "# Outfit Styling" in once_closed
+
+
+def test_the_catalog_returns_to_a_turn_that_reopens_its_search() -> None:
+    """Withdrawal tracks the current request, not a one-way latch."""
+
+    closed = False
+    middleware = _middleware(
+        spent_tool_context=lambda: (
+            frozenset({"search_catalog_tool"}) if closed else frozenset()
+        )
+    )
+    middleware.activate(
+        {"/shopper/product-discovery/SKILL.md": "# Product Discovery"},
+        ["product-discovery"],
+    )
+
+    closed = True
+    assert (
+        "Retrieval modes"
+        not in _capture_request(
+            middleware, _model_request(_activated_messages())
+        ).system_prompt
+    )
+    closed = False
+    assert (
+        "Retrieval modes"
+        in _capture_request(
+            middleware, _model_request(_activated_messages())
+        ).system_prompt
+    )
 
 
 def test_active_phase_rejects_multiple_shopping_tools_in_one_model_step() -> None:

@@ -3160,6 +3160,13 @@ class TestDeepAgentsRuntimeRefs:
             tool_loop_control,
             runtime_mod.ToolLoopControlMiddleware,
         )
+        # The gate writes the prompt; the loop control knows what the turn has
+        # finished with. Asserting the wiring rather than the behaviour,
+        # because two correct halves and no wire between them is silent: the
+        # catalog block would simply go on being paid for.
+        assert (
+            skill_gate._spent_tool_context == tool_loop_control.spent_tool_context
+        )
         assert skill_gate._skill_tool_grants["outfit-styling"] == {
             "search_catalog_tool",
             "get_product_details_tool",

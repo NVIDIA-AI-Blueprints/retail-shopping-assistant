@@ -33,9 +33,8 @@ has spoken, which is what stops an invented place and nothing more.
 from __future__ import annotations
 
 import pytest
-from pydantic import ValidationError
-
 from chain_server.src.response_format import WeatherForecastInput
+from pydantic import ValidationError
 
 
 def test_the_words_that_named_the_place_are_required() -> None:
@@ -136,7 +135,7 @@ def _weather_tool(
     from chain_server.src.turn_support import RequestIdentity
     from chain_server.src.weather import WeatherConfig
 
-    setattr(base_config, "weather", WeatherConfig(enabled=True))
+    base_config.weather = WeatherConfig(enabled=True)
     runtime = DeepAgentsRuntime(base_config)
     captured: dict = {}
 

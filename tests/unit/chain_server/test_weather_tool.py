@@ -12,7 +12,6 @@ from chain_server.src.tool_policy import SHOPPING_TOOL_POLICIES
 from chain_server.src.weather import WeatherRequest, weather_failure
 from chain_server.src.weather_tool import get_weather_forecast_tool
 
-
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 

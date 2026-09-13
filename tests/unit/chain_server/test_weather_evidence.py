@@ -15,9 +15,9 @@ degrade into styling the occasion, never into failing the turn.
 
 from __future__ import annotations
 
+import contextlib
 import pathlib
-
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 
 from chain_server.src.response_format import (
     WEATHER_BUDGET_EXHAUSTED,
@@ -35,7 +35,7 @@ from chain_server.src.weather import (
 
 def _result() -> WeatherResult:
     return WeatherResult(
-        fetched_at=datetime(2026, 8, 6, 12, tzinfo=timezone.utc),
+        fetched_at=datetime(2026, 8, 6, 12, tzinfo=UTC),
         requested_window=WeatherRequestedWindow(
             start_date=date(2026, 8, 15), end_date=date(2026, 8, 15)
         ),
@@ -221,7 +221,6 @@ def test_switching_one_tool_off_does_not_switch_the_guard_off() -> None:
     be activated together. Making one tool optional must not weaken it."""
 
     import pytest
-
     from chain_server.src.tool_policy import (
         SHOPPING_TOOL_POLICIES,
         validate_registered_tool_names,
@@ -266,7 +265,7 @@ def test_a_plainly_out_of_range_date_costs_no_provider_call() -> None:
             calls.append(url)
             raise AssertionError("a provider call was made for an impossible date")
 
-    now = datetime(2026, 8, 6, 12, tzinfo=timezone.utc)
+    now = datetime(2026, 8, 6, 12, tzinfo=UTC)
     client = VisualCrossingWeatherClient(
         WeatherConfig(enabled=True),
         "key",
@@ -302,7 +301,7 @@ def test_a_date_inside_the_horizon_still_reaches_the_provider() -> None:
             reached.append(url)
             raise RuntimeError("stop here; reaching the provider is the assertion")
 
-    now = datetime(2026, 8, 6, 12, tzinfo=timezone.utc)
+    now = datetime(2026, 8, 6, 12, tzinfo=UTC)
     client = VisualCrossingWeatherClient(
         WeatherConfig(enabled=True),
         "key",
@@ -311,10 +310,8 @@ def test_a_date_inside_the_horizon_still_reaches_the_provider() -> None:
     )
 
     soon = (now.date() + timedelta(days=5)).isoformat()
-    try:
+    with contextlib.suppress(RuntimeError):
         client.get_forecast(WeatherRequest(location="Cancun", date=soon))
-    except RuntimeError:
-        pass
 
     assert len(reached) == 1
 

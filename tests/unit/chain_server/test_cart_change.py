@@ -69,14 +69,14 @@ def test_an_unknown_snapshot_does_not_claim_nothing_changed() -> None:
     assert "NOTHING CHANGED" not in format_cart_change(None, _cart(TOTE))
 
 
-def test_the_update_schema_accepts_a_size_so_it_can_be_refused() -> None:
+def test_the_update_schema_accepts_a_size_so_it_can_be_acted_on() -> None:
     """J07 turn 6: the model sent quantity 1 with size 8.
 
     `size` was absent from the tool's args_schema, so pydantic dropped it
     before the function ran, the quantity was set 1 -> 1, and the assistant
     reported a size change that never happened. The field has to exist on the
-    schema for the refusal to be reachable at all -- declaring it on the
-    function signature alone leaves the wrapper silently discarding it.
+    schema for the size to arrive at all -- declaring it on the function
+    signature alone leaves the wrapper silently discarding it.
     """
 
     from chain_server.src.deepagents_runtime import _UpdateCartItemsInput
@@ -86,6 +86,8 @@ def test_the_update_schema_accepts_a_size_so_it_can_be_refused() -> None:
 
     schema = _UpdateCartItemsInput.model_json_schema()
     assert "size" in schema["properties"], (
-        "the model cannot be refused for a field its schema never offered"
+        "a change the schema never offered is a change the model cannot ask for"
     )
-    assert "Do not use" in schema["properties"]["size"]["description"]
+    description = schema["properties"]["size"]["description"]
+    assert "changing the size of this line" in description
+    assert "Omit for a quantity change" in description

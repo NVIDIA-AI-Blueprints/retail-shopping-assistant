@@ -3555,12 +3555,12 @@ class TestDeepAgentsRuntimeRefs:
         assert "CART_LINE_ID: Silk Dress" in update_response
         assert update_requests[0][0].quantity == 2
 
-        # A size is a different line, not a different quantity, and the cart has
-        # no operation for changing one. Asked for a size 8 against a line added
-        # as a size 2, the model reached for quantity 0 -- the only move
-        # available -- which deleted the line, and never added the replacement.
-        # Live, the cart went from one line to empty and the shopper was asked
-        # whether they would like the size 8 added.
+        # Deleting is a different intent from setting a quantity. Asked for a
+        # size 8 against a line added as a size 2, the model reached for
+        # quantity 0 -- once the only move available -- which deleted the line
+        # and never added the replacement: live, the cart went from one line to
+        # empty and the shopper was asked whether they would like the size 8
+        # added. A size has its own route now, which this refusal names.
         calls_before_zero = len(update_requests)
         zero_response = tool_text(
             tools_by_name["update_cart_items_tool"](
@@ -3568,8 +3568,8 @@ class TestDeepAgentsRuntimeRefs:
             )
         )
         assert zero_response.startswith("CART_UPDATE_REFUSED")
-        assert "add the new size with" in zero_response
         assert "remove_cart_item_tool" in zero_response
+        assert "send the new size in `size`" in zero_response
         # and nothing was sent to the cart service
         assert len(update_requests) == calls_before_zero
         assert update_requests[0][1] == base_config.memory_port

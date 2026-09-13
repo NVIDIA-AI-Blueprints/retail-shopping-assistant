@@ -3,25 +3,24 @@
 
 """J06 t9, "actually make those a 7".
 
-`update_cart_items_tool` declares a `size` field for one reason: to turn a size
-change into the add-then-remove sequence instead of a silent no-op. The model
-sent `size: 7` rather than `size: "7"`, and pydantic refused the call on the
-type before that guidance could run:
+The `size` field on `update_cart_items_tool` is how a size change is asked for,
+and the model sent `size: 7` rather than `size: "7"`. Pydantic refused the call
+on the type before any of it ran:
 
     size: 8   -> "Input should be a valid string"     (no mention of carts)
-    size: "8" -> CART_UPDATE_REFUSED: add the new size first, confirm it,
-                 then remove the old line...
+    size: "8" -> the line moves to the size they asked for
 
 Three attempts, three type errors, and then it gave up, sent the quantity
 alone, and told the shopper it had updated a dress it was never asked about.
-The one message that would have told it what to do was never delivered.
+Sizes are "2" and "onesize" in this catalog, so a bare number is the obvious
+slip, and coercing it costs nothing.
 """
 
 from __future__ import annotations
 
 import pytest
-
 from chain_server.src.deepagents_runtime import _UpdateCartItemsInput
+from pydantic import ValidationError
 
 
 def _size(value):
@@ -52,5 +51,5 @@ def test_no_size_stays_absent() -> None:
 def test_a_boolean_is_not_a_size() -> None:
     """True would otherwise coerce to "1", which is a plausible-looking size."""
 
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         _size(True)

@@ -87,9 +87,11 @@ change the cart, and what the shopper is told afterwards.
   holds one of each. Raising the quantity of the size already there adds the
   wrong garment twice and looks, to a shopper reading it back, like you agreed
   to something you did not do.
-- To change a size: add the new size first, confirm it is in the cart, then
-  remove the old line. Never remove first -- a failure between the two must
-  leave the shopper with an extra line, never with nothing.
+- To change a size: one `update_cart_items_tool` call with the `CART_LINE_ID`,
+  the size they now want, and the quantity to keep. The tool moves the line and
+  reports the cart it left. Do not add the new size and remove the old line
+  yourself -- that is what the tool does, and doing it by hand is where a
+  shopper ends up paying for the size they replaced.
 - For an explicit swap, finish the whole swap before replying: remove the
   rejected line, add the replacement when a valid `PRODUCT_REF` is already
   available, then summarise the updated cart. Resolve a replacement from an

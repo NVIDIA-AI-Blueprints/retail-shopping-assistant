@@ -819,18 +819,20 @@ Current limitations:
 
 ### `update_cart_items_tool`
 
-Purpose: Change the total quantity of one existing cart line, including
-removing it when the requested quantity is `0`.
+Purpose: Change one existing cart line — its total quantity, its size, or
+both.
 
 Inputs:
 
 - `cart_line_id`: A `CART_LINE_ID` from `get_cart_tool`.
-- `quantity`: New total quantity. `0` removes the line.
+- `quantity`: The total quantity to end up with. With `size`, the quantity to
+  keep in the new size.
+- `size` (optional): The size the shopper now wants for this line. Omitted for
+  a quantity change.
 
 Preconditions:
 
-- Shopper must explicitly ask to change the quantity or remove the item by
-  quantity.
+- Shopper must explicitly ask for the change.
 - The agent must read the current cart first and must not derive a line ID from
   a product name.
 
@@ -841,9 +843,14 @@ Outputs:
 
 Side effects:
 
-- Sends one absolute-quantity `PUT` for the current `CART_LINE_ID`.
-- A positive quantity updates the row in one transaction; `0` deletes it.
-- Commits the mutation and its idempotency record together. Repeating the same
+- Without `size`: one absolute-quantity `PUT` for the current `CART_LINE_ID`.
+  A positive quantity updates the row in one transaction.
+- With a new `size`: the cart has no operation that changes a size, because a
+  size is a separate line. The tool adds the new size and then removes the old
+  line — in that order, so a failure between the two leaves the shopper an
+  extra line rather than nothing, and reports both lines with the
+  `CART_LINE_ID` still to be removed.
+- Commits each mutation and its idempotency record together. Repeating the same
   key and mutation replays the stored result; conflicting key reuse is rejected
   without a remove-then-add sequence.
 - Mutation replay records currently persist for the SQLite database lifetime;
@@ -855,6 +862,9 @@ Failure behavior:
   non-retryable `cart_update_failed` for a rejected client request, retryable
   `cart_update_failed` for transport/server failure, and
   `cart_response_invalid` for malformed service output.
+- Refuses a size the catalog does not sell for that product, naming the sizes
+  it does sell; refuses `quantity: 0` (deletion is `remove_cart_item_tool`);
+  refuses a size change against a line this cart does not hold.
 
 Skills that grant this tool:
 

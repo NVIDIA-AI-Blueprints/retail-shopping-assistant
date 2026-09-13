@@ -18,7 +18,10 @@ import pathlib
 
 from chain_server.src.turn_support import _normalize_cart_add_tool_items
 from types import SimpleNamespace
-from chain_server.src.turn_support import _cart_size_issue
+from chain_server.src.turn_support import (
+    _cart_size_issue,
+    _the_same_product_in_two_sizes,
+)
 import inspect
 
 
@@ -221,6 +224,91 @@ class TestCartSizeGate:
         assert _cart_size_issue(self._product("2, 4, 6"), "4") == ""
         assert "SIZE REQUIRED" in _cart_size_issue(self._product("2, 4, 6"), None)
 
+
+class TestASizeChangeFinishes:
+    """An add that replaces a size has a second half, and it was never run.
+
+    J07 turn 6, "change the heels to an 8": the size 7 pair stayed in the cart
+    beside the new 8, the reply narrated both and asked whether to remove the
+    7, and turns 7, 8 and 9 all failed on the extra line. Persistent, 0/3 in
+    the stability run.
+    """
+
+    def _cart(self, *lines):
+        return SimpleNamespace(contents=list(lines))
+
+    def _line(self, product_id, name, size, cart_line_id):
+        return {
+            "product_id": product_id,
+            "item": name,
+            "size": size,
+            "cart_line_id": cart_line_id,
+        }
+
+    def test_the_add_names_the_old_line_and_the_id_to_remove_it_with(self) -> None:
+        """Without the id there was nothing to act on, only something to ask."""
+
+        note = _the_same_product_in_two_sizes(
+            self._cart(
+                self._line("p1", "Jade Suede Heels", "7", "L7"),
+                self._line("p1", "Jade Suede Heels", "8", "L8"),
+            ),
+            [("p1", "8")],
+        )
+
+        assert "Jade Suede Heels" in note
+        assert "CART_LINE_ID: L7" in note
+        assert "L8" not in note
+        assert "remove_cart_item_tool" in note
+        assert "Do not ask them whether to remove it" in note
+
+    def test_both_readings_of_the_turn_are_answered(self) -> None:
+        """A shopper may want two sizes, so the cart is reported, not the intent."""
+
+        note = _the_same_product_in_two_sizes(
+            self._cart(
+                self._line("p1", "Jade Suede Heels", "7", "L7"),
+                self._line("p1", "Jade Suede Heels", "8", "L8"),
+            ),
+            [("p1", "8")],
+        )
+
+        assert "asked to CHANGE the size" in note
+        assert "asked for both sizes" in note
+
+    def test_one_size_of_one_product_says_nothing(self) -> None:
+        note = _the_same_product_in_two_sizes(
+            self._cart(self._line("p1", "Jade Suede Heels", "8", "L8")),
+            [("p1", "8")],
+        )
+
+        assert note == ""
+
+    def test_a_second_product_is_not_a_second_size(self) -> None:
+        """Two lines, two products: the ordinary shape of a cart."""
+
+        note = _the_same_product_in_two_sizes(
+            self._cart(
+                self._line("p1", "Jade Suede Heels", "8", "L8"),
+                self._line("p2", "Ombre Canvas Tote Bag", "", "L9"),
+            ),
+            [("p2", None)],
+        )
+
+        assert note == ""
+
+    def test_an_unsized_product_is_never_two_sizes(self) -> None:
+        """79 accessories are one-size; every one of them shares a blank size."""
+
+        note = _the_same_product_in_two_sizes(
+            self._cart(
+                self._line("p2", "Ombre Canvas Tote Bag", "", "L9"),
+                self._line("p3", "Linen Canvas Tote Bag", "", "L10"),
+            ),
+            [("p2", "")],
+        )
+
+        assert note == ""
 
 
 class TestProductProvenance:

@@ -191,6 +191,7 @@ from .turn_support import (
     _skill_activation_input_model,
     _store_policies_path,
     _system_identification_events,
+    _the_same_product_in_two_sizes,
     _turn_audience_events,
     a_place_this_turn_named,
     format_most_recent_subject,
@@ -2266,6 +2267,15 @@ class DeepAgentsRuntime:
             rendered = _format_cart_add_result(added, failed, state.cart)
             if choices_from_a_description:
                 rendered += "\n\n" + "\n".join(choices_from_a_description)
+            two_sizes = _the_same_product_in_two_sizes(
+                state.cart,
+                [
+                    (product.product_id, size)
+                    for _ref, product, _quantity, size in resolved
+                ],
+            )
+            if two_sizes:
+                rendered += "\n\n" + two_sizes
             if not committed:
                 return rendered
             return rendered, {EFFECTS_KEY: committed}

@@ -4980,6 +4980,82 @@ def _cart_line_size(cart: Any, product_id: str) -> str | None:
     return None
 
 
+def _the_same_product_in_two_sizes(
+    cart: Any,
+    added: Sequence[tuple[str, str | None]],
+) -> str:
+    """Name the older line when an add has left one product in two sizes.
+
+    A size is a separate cart line, so there is no operation that changes one:
+    `update_cart_items_tool` refuses a size argument on purpose, and the
+    protocol it names is add the new size first, confirm it, then remove the
+    old line -- in that order, so a failure between the two leaves an extra
+    line rather than nothing.
+
+    The protocol was stated only in that refusal, which a turn going straight
+    to the add never reads. Asked to "change the heels to an 8", the model
+    added the 8, narrated that the cart now held both, and asked the shopper
+    whether to remove the 7 -- ending the turn with a pair they had just
+    replaced still in their cart, and every later turn of that journey failing
+    on the extra line. It had no CART_LINE_ID to remove with either, having
+    had no reason to call `get_cart_tool`.
+
+    So the add says what it has left behind, and carries the id that finishes
+    the job. It does not decide the intent: a shopper may want both sizes, and
+    both readings are answered here, because the words are the model's to read
+    and the cart is this function's to report.
+    """
+
+    lines = [
+        line
+        for line in (getattr(cart, "contents", None) or [])
+        if isinstance(line, dict)
+    ]
+
+    def _size_of(line: dict) -> str:
+        return str(line.get("size") or "").strip()
+
+    def _name_of(line: dict) -> str:
+        return str(line.get("item") or line.get("display_name") or "")
+
+    notes: list[str] = []
+    for product_id, size in added:
+        new_size = str(size or "").strip()
+        if not new_size:
+            continue
+        same_product = [
+            line
+            for line in lines
+            if str(line.get("product_id") or "") == str(product_id)
+        ]
+        older = [
+            line
+            for line in same_product
+            if _size_of(line) and _size_of(line) != new_size
+        ]
+        if not older:
+            continue
+        name = _name_of(next(iter(same_product), {})) or str(product_id)
+        held = "; ".join(
+            f"size {_size_of(line)} (CART_LINE_ID: {line.get('cart_line_id')})"
+            for line in older
+        )
+        notes.append(
+            f"- {name} is now in the cart in more than one size: the size "
+            f"{new_size} just added, and {held}.\n"
+            "  If the shopper asked to CHANGE the size, the old line is still "
+            "theirs to pay for: remove it with remove_cart_item_tool in this "
+            "same turn, using the CART_LINE_ID above. Do not ask them whether "
+            "to remove it -- they have already said which size they want -- "
+            "and do not end the turn with both lines in the cart.\n"
+            "  If they asked for both sizes, both lines are correct: say so "
+            "and leave them."
+        )
+    if not notes:
+        return ""
+    return "CART_HOLDS_MORE_THAN_ONE_SIZE:\n" + "\n".join(notes)
+
+
 def _cart_size_issue(product: Any, size: str | None) -> str:
     """Say why this size cannot be added, or "" if it can.
 

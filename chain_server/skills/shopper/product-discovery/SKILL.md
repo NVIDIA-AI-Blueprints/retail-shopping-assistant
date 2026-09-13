@@ -11,7 +11,6 @@ tools_granted:
   - check_product_availability_tool
   - check_active_promotions_tool
   - resolve_conversation_products_tool
-  - get_weather_forecast_tool
 ---
 
 # Product Discovery

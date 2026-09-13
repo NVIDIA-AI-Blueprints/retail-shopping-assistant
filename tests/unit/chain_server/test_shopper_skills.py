@@ -7,7 +7,6 @@ from pathlib import Path
 
 import yaml
 
-
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SHOPPER_SKILLS_ROOT = REPO_ROOT / "chain_server" / "skills" / "shopper"
 REGISTERED_SKILL_PATHS = {
@@ -15,6 +14,7 @@ REGISTERED_SKILL_PATHS = {
     for name in (
         "budget-shopping",
         "cart-management",
+        "destination-weather",
         "outfit-styling",
         "product-discovery",
         "catalog-questions",
@@ -50,7 +50,6 @@ EXPECTED_SKILL_POLICY = {
             "check_product_availability_tool",
             "check_active_promotions_tool",
             "resolve_conversation_products_tool",
-            "get_weather_forecast_tool",
         ],
     },
     "product-discovery": {
@@ -63,7 +62,6 @@ EXPECTED_SKILL_POLICY = {
             "check_product_availability_tool",
             "check_active_promotions_tool",
             "resolve_conversation_products_tool",
-            "get_weather_forecast_tool",
         ],
     },
     "catalog-questions": {
@@ -79,6 +77,18 @@ EXPECTED_SKILL_POLICY = {
         "role": "standalone",
         "exclusive_group": None,
         "tools_granted": ["get_store_policy_tool"],
+    },
+    # A bare conditions question is its own task, not a product procedure with
+    # a forecast attached. Standalone, because it composes: it is neither a
+    # second primary nor a stranded modifier, so it may be selected beside a
+    # procedure. It now owns the forecast outright -- the styling grant was
+    # removed because this schema is 1,914 tokens on every call of the
+    # most-selected procedure in the suite, for a tool used on 1.8% of turns,
+    # and a styling turn that needs conditions selects this skill too.
+    "destination-weather": {
+        "role": "standalone",
+        "exclusive_group": None,
+        "tools_granted": ["get_weather_forecast_tool"],
     },
 }
 

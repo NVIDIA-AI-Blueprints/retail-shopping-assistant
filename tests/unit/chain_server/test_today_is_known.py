@@ -91,8 +91,38 @@ def test_the_forecast_window_is_stated_only_when_the_tool_exists(
 
     assert "fifteen days" in on
     assert "fifteen days" not in off
-    assert "look the weather" in on
+
+
+def test_the_ordering_rule_ships_with_the_grant_rather_than_the_prompt(
+    base_config,
+) -> None:
+    """A flag that approximates "was this request granted the tool" is worse
+    than the grant, which answers it exactly.
+
+    The ordering rule was a sub-bullet of the search fan-out rule, gated on
+    the deployment flag. That kept it off a deployment with no weather tool,
+    and still sent it to every request on a weather deployment that was not
+    granted one -- the activation step, a cart read, a policy question. Worse,
+    a turn that fans out to no product roles has no fan-out to go before, so
+    the only statement of when to call read as inapplicable to the shape that
+    most needs it: "going to Cancun next week, what's the weather like".
+    """
+
+    from chain_server.src.deepagents_runtime import DeepAgentsRuntime
+
+    on, off = _prompts_either_way(base_config)
+    section = DeepAgentsRuntime._forecast_prompt_section()
+
+    assert "look the weather" not in on
     assert "look the weather" not in off
+    assert "look the weather" in section
+    assert "the forecast never gets asked for" in section
+    # And the half the fan-out bullet could not say: a turn with nothing to
+    # search is still a turn that should fetch.
+    assert "whether the turn also asks for products" in section
+    # And the rule that outranks all of it: a shopper who states the
+    # conditions has answered the question, so there is nothing to look up.
+    assert "told you the conditions has already answered" in section
 
 
 def test_a_country_is_forecast_and_disclosed_rather_than_refused() -> None:
@@ -100,7 +130,12 @@ def test_a_country_is_forecast_and_disclosed_rather_than_refused() -> None:
     instead, which is worse than either asking or calling."""
 
     source = (_REPO_ROOT / "chain_server/src/deepagents_runtime.py").read_text()
-    weather = source[source.index("def get_weather_forecast_tool") :][:3000]
+    # The docstring grew when a bare conditions question became a call, when a
+    # carried-over place stopped being disqualified by its age, and again when
+    # the shopper's own statement of the conditions moved to the top as the
+    # rule that outranks the rest. The window has to reach past all of that to
+    # the country paragraph it is actually about.
+    weather = source[source.index("def get_weather_forecast_tool") :][:6500]
     assert "capital or\n            largest city" in weather
     assert "never do is describe weather you did not fetch" in weather
     assert "Anything broader than a city, per above. Ask which city." not in weather

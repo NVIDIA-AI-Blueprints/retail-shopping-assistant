@@ -13,7 +13,6 @@ from typing import Literal
 
 import yaml
 
-
 ToolRisk = Literal["read", "mutating"]
 
 
@@ -116,14 +115,33 @@ SHOPPING_TOOL_POLICIES: Mapping[str, ToolPolicy] = MappingProxyType(
             allowed_skills_any_of=frozenset({"store-policy-answers"}),
             risk="read",
         ),
-        # Granted to the styling skills only. A forecast is styling input --
-        # it never establishes a product fact, so nothing else has a use for
-        # it, and a shopper asking about returns should not be able to reach a
-        # paid external service.
+        # Granted to one skill, and no others: a shopper asking about returns
+        # should not be able to reach a paid external service. The grant is
+        # not free either way -- measured from a live trace this is the
+        # second-largest schema in the system at 1,914 tokens, and it is
+        # called on 1.8% of turns.
+        #
+        # A grant decides which turns *can* fetch a forecast, not only which
+        # turns pay for the schema, so narrowing it is a behaviour change
+        # before it is a cost one. Narrowing to `outfit-styling` alone failed
+        # on exactly that: "I'm going to Cancun next week, what's the weather
+        # like" asks for no outfit, so it selects no styling procedure, so the
+        # tool was absent -- and the reply said the forecast was unavailable
+        # and then described the climate from memory.
+        #
+        # So a bare conditions question gets its own standalone skill rather
+        # than a grant bolted onto a product procedure. Once that skill
+        # existed the styling grant was pure cost, shipping on every model
+        # call of the most-selected procedure in the suite. A styling turn
+        # that does need conditions selects `destination-weather` beside
+        # `outfit-styling`: that skill is `standalone`, so it is neither a
+        # second primary nor a stranded modifier, and `_one_primary_per_group`
+        # already permits the pair.
+        #
+        # Same rule as the catalog one level down: spend nothing on carrying a
+        # capability, spend only when the capability is asked for.
         "get_weather_forecast_tool": ToolPolicy(
-            allowed_skills_any_of=frozenset(
-                {"outfit-styling", "product-discovery"}
-            ),
+            allowed_skills_any_of=frozenset({"destination-weather"}),
             risk="read",
         ),
     }

@@ -1316,6 +1316,17 @@ def _build_search_catalog_tool_input_model(
                     # example were added to the front of the object where the
                     # audience value gets chosen. Stated once, on the field
                     # that owns it.
+                    #
+                    # The same lesson, applied again to what was still here.
+                    # Four rules about what belongs in
+                    # `unadvertised_requirements` -- the water-resistant bags
+                    # example, the eleven-adjective list, the product-type ban,
+                    # and the season-and-weather rule -- were stated on that
+                    # field and restated here. Only the destination differed,
+                    # and two of them genuinely have two destinations, so those
+                    # two keep one compact statement each for this object and
+                    # the worked example and the list stay on the field they
+                    # are about.
                     "Catalog hard filters and any defining requirement the active "
                     "catalog cannot enforce. When the shopper names a specific "
                     "product and asks whether it meets some condition -- within a "
@@ -1332,20 +1343,16 @@ def _build_search_catalog_tool_input_model(
                     "shopper explicitly requests the same value. Use only the "
                     "advertised properties "
                     "in this object; put unsupported must-haves in "
-                    "unadvertised_requirements instead of weakening them. For "
-                    "'Do you have water-resistant bags?', use "
-                    "{'unadvertised_requirements': ['water resistance']}. Do not "
-                    "put broad season, weather, occasion, or subjective style/vibe "
-                    "context here unless the shopper directly requires a product "
-                    "attribute. 'Rainy day outfit' does not require water "
-                    "resistance; 'water-resistant bags' does. Recommendation "
-                    "adjectives such as comfortable, relaxed, soft, breathable, "
-                    "lightweight, casual, dressy, bold, bright, vibrant, or "
-                    "sporty are always semantic ranking preferences, not "
-                    "objective hard filters. Before calling the tool, compare "
+                    "unadvertised_requirements instead of weakening them, under "
+                    "the rules stated on that field. Broad season, weather, "
+                    "occasion or subjective style context is not a hard filter "
+                    "and does not belong in this object unless the shopper "
+                    "directly requires a product attribute; neither do "
+                    "recommendation adjectives, which are always semantic "
+                    "ranking preferences. Before calling the tool, "
+                    "compare "
                     "every target-product modifier with this advertised schema "
-                    "and include every exact matching filter value. A product type "
-                    "never belongs in unadvertised_requirements. Use an empty "
+                    "and include every exact matching filter value. Use an empty "
                     "object for image-only search."
                 ),
             ),

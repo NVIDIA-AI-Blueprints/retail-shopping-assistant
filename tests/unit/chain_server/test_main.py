@@ -2341,12 +2341,23 @@ class TestDeepAgentsRuntimeRefs:
         assert schema["properties"]["taxonomy_status"]["description"] == (
             "Server-derived catalog execution mode."
         )
-        assert "Do you have water-resistant bags?" in schema["properties"][
-            "required_constraints"
-        ]["description"]
-        assert "A product type never belongs in unadvertised_requirements" in (
-            schema["properties"]["required_constraints"]["description"]
-        )
+        # Each rule on the field it is about, and nowhere else. The worked
+        # example and the product-type ban are about what goes in
+        # `unadvertised_requirements`, and were also stated on the object that
+        # contains it -- where the audience value gets chosen, and where an
+        # unrelated worked example has already been measured collapsing
+        # audience correctness from 3-in-5 to 1-in-105. Asserting their
+        # absence so the duplication cannot come back.
+        constraints_prose = schema["properties"]["required_constraints"][
+            "description"
+        ]
+        unadvertised_prose = schema["$defs"]["CatalogRequiredConstraints"][
+            "properties"
+        ]["unadvertised_requirements"]["description"]
+        assert "water-resistant bags" in unadvertised_prose
+        assert "A product type never belongs here" in unadvertised_prose
+        assert "water-resistant bags" not in constraints_prose
+        assert "unadvertised_requirements" in constraints_prose
         assert "cart action still must run" in schema["properties"][
             "scope_complete"
         ]["description"]

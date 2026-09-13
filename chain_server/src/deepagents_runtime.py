@@ -2666,6 +2666,19 @@ class DeepAgentsRuntime:
             },
             disabled=("get_weather_forecast_tool",) if weather_off else (),
         )
+        # Built before the skill gate because the gate asks it, at each model
+        # call, which tools the turn has finished with. `tool_loop_control` is
+        # the outer middleware and owns that fact; the gate is what writes the
+        # prompt, so the answer has to travel from here to there.
+        tool_loop_control = ToolLoopControlMiddleware(
+            catalog_context=format_catalog_capabilities_for_prompt(
+                turn_capabilities
+            ),
+            shopper_statements=(
+                state.query,
+                *(turn.shopper_text for turn in state.dialogue),
+            ),
+        )
         skill_gate = ShopperSkillActivationMiddleware(
             request_id=identity.request_id,
             skill_descriptions={
@@ -2677,14 +2690,14 @@ class DeepAgentsRuntime:
                 for name, skill in skill_registry.items()
             },
             previous_selected_skills=state.previous_selected_skill_names,
-        )
-        tool_loop_control = ToolLoopControlMiddleware(
-            catalog_context=format_catalog_capabilities_for_prompt(
-                turn_capabilities
-            ),
-            shopper_statements=(
-                state.query,
-                *(turn.shopper_text for turn in state.dialogue),
+            granted_tool_context={
+                "search_catalog_tool": self._catalog_prompt_section(
+                    turn_capabilities
+                ),
+            },
+            spent_tool_context=tool_loop_control.spent_tool_context,
+            activation_system_prompt=(
+                MEDIA_FENCE.notice if state.media_analysis else ""
             ),
         )
 
@@ -2743,7 +2756,6 @@ class DeepAgentsRuntime:
             "model": self._create_chat_model(),
             "tools": [activate_shopper_skills_tool, *shopping_tools],
             "system_prompt": self._system_prompt(
-                turn_capabilities,
                 shopper_context=state.shopper_context,
                 media=bool(state.media),
             ),
@@ -3145,14 +3157,31 @@ class DeepAgentsRuntime:
             getattr(getattr(self.config, "weather", None), "enabled", False)
         )
 
+    @staticmethod
+    def _catalog_prompt_section(capabilities: CatalogCapabilities) -> str:
+        """The catalog's schema and the rules for searching it, as one block.
+
+        Held out of the static prompt and handed to the skill gate instead, so
+        it reaches only a model request that was granted `search_catalog_tool`.
+        The activation step is granted nothing and paid for this every call; a
+        cart read and a policy question paid too, for a search they cannot run.
+
+        The two travel together because the rules are only true beside the
+        capabilities: they say a filter value comes from the enum above them.
+        """
+
+        return (
+            "Catalog capabilities:\n"
+            f"{format_catalog_capabilities_for_prompt(capabilities)}\n"
+            f"{CATALOG_SEARCH_RULES}"
+        )
+
     def _system_prompt(
         self,
-        capabilities: CatalogCapabilities,
         *,
         shopper_context: ShopperContext | None = None,
         media: bool = False,
     ) -> str:
-        catalog_context = format_catalog_capabilities_for_prompt(capabilities)
         # Media rules are only reachable on a turn that carries media, so they
         # are only assembled then.
         media_rules = _MEDIA_TURN_RULES if media else ""
@@ -3251,9 +3280,6 @@ best-in-category performance claims unless those claims are directly supported
 by product details.
 {shopper_context_rules}
 
-Catalog capabilities:
-{catalog_context}
-
 Rules:
 - Every turn begins with shopper-skill activation. Select the smallest set of
   registered skills that covers the complete current intent, then follow the
@@ -3339,7 +3365,6 @@ Rules:
   catalog evidence supports the guarantee. Before finalizing, remove or soften
   unsupported phrases about grass, gravel, water resistance, all-day comfort,
   maximum breathability, or best-in-category performance.
-{CATALOG_SEARCH_RULES}
 {media_rules}
 """
         return prompt

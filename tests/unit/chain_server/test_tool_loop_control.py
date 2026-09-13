@@ -6,30 +6,28 @@
 from __future__ import annotations
 
 from pathlib import Path
-
 from typing import Any, cast
 
 import pytest
-from langchain.agents.middleware.types import ModelRequest, ModelResponse
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
-from langchain_core.tools import tool
-
+from chain_server.src.skill_activation import ShopperSkillActivationMiddleware
 from chain_server.src.tool_loop_control import (
     CONSTRAINT_REVIEW_PREFIX,
     SEARCH_BUDGET_EXHAUSTED_PREFIX,
+    SEARCH_TOOL_NAME,
     SEARCH_VALIDATION_ERROR_PREFIX,
     SERVER_CATALOG_CLARIFICATION,
+    STOP_TOOL_USE_PREFIX,
     UNSUPPORTED_CONSTRAINT_PREFIX,
     UNSUPPORTED_TAXONOMY_PREFIX,
-    SEARCH_TOOL_NAME,
-    STOP_TOOL_USE_PREFIX,
     ToolLoopControlMiddleware,
     _normalize_scope,
-    _tool_name,
     _shopper_stated_scope,
+    _tool_name,
 )
-from chain_server.src.skill_activation import ShopperSkillActivationMiddleware
 from chain_server.src.tool_policy import SHOPPING_TOOL_POLICIES
+from langchain.agents.middleware.types import ModelRequest, ModelResponse
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.tools import tool
 
 
 @tool
@@ -245,6 +243,156 @@ def test_completed_scoped_no_match_removes_tools_from_next_model_step() -> None:
 
     assert prepared.tools == TOOLS
     assert "## Search Complete" in prepared.system_prompt
+
+
+def test_a_closed_search_reports_the_catalog_context_as_spent() -> None:
+    """The saving the skill gate spends, reported by the middleware that knows.
+
+    Closure is owned here; the prompt is written by the skill gate, which asks
+    this before each model call. Only the search's context is spent -- the
+    grant is untouched, and a forecast the turn still owes keeps its own.
+    """
+
+    middleware = ToolLoopControlMiddleware()
+    assert middleware.spent_tool_context() == frozenset()
+
+    _capture_model_request(
+        middleware,
+        _messages_with_result(
+            _tool_result(
+                "SEARCH_RESULT_GROUNDING_NOTE: grounded candidates\n\n"
+                "SEARCH_SCOPE_COMPLETE: every requested role is covered."
+            )
+        ),
+    )
+
+    assert middleware.spent_tool_context() == frozenset({"search_catalog_tool"})
+
+
+def test_an_exhausted_budget_keeps_the_catalog_for_the_repair_that_needs_it() -> None:
+    """Exhaustion removes the tool, and the two withdrawals must not overlap.
+
+    Budget exhaustion already drops `search_catalog_tool` from the request, so
+    the skill gate withholds its context for the grant alone. Reporting it
+    spent here as well would be the same saving claimed twice, and it would
+    read as though a second rule were doing work.
+    """
+
+    middleware = ToolLoopControlMiddleware()
+    _capture_model_request(
+        middleware,
+        _messages_with_result(
+            _tool_result(
+                "SEARCH_RESULT_GROUNDING_NOTE: grounded candidates\n\n"
+                f"{SEARCH_BUDGET_EXHAUSTED_PREFIX} no searches remain"
+            )
+        ),
+    )
+
+    assert middleware.spent_tool_context() == frozenset()
+
+
+def _policy_skill_tool_grants() -> dict[str, frozenset[str]]:
+    """The real grant map, because the gate validates against the real policy."""
+
+    return {
+        skill_name: frozenset(
+            tool_name
+            for tool_name, policy in SHOPPING_TOOL_POLICIES.items()
+            if skill_name in policy.allowed_skills_any_of
+        )
+        for skill_name in {
+            skill_name
+            for policy in SHOPPING_TOOL_POLICIES.values()
+            for skill_name in policy.allowed_skills_any_of
+        }
+    }
+
+
+def _catalog_pair() -> tuple[
+    ToolLoopControlMiddleware,
+    ShopperSkillActivationMiddleware,
+]:
+    """The two middlewares wired as the runtime wires them."""
+
+    loop_control = ToolLoopControlMiddleware(catalog_context="advertised boots")
+    skill_gate = ShopperSkillActivationMiddleware(
+        request_id="request-a",
+        skill_descriptions={"outfit-styling": "Style an outfit."},
+        skill_tool_grants=_policy_skill_tool_grants(),
+        granted_tool_context={
+            "search_catalog_tool": "CATALOG-CAPABILITIES-BLOCK",
+        },
+        spent_tool_context=loop_control.spent_tool_context,
+    )
+    skill_gate.activate(
+        {"/shopper/outfit-styling/SKILL.md": "STYLE-SPECIFIC-INSTRUCTION"},
+        ["outfit-styling"],
+    )
+    return loop_control, skill_gate
+
+
+_CLOSING_SEARCH_RESULT = (
+    "SEARCH_RESULT_GROUNDING_NOTE: grounded candidates\n\n"
+    "SEARCH_SCOPE_COMPLETE: every requested role is covered."
+)
+
+
+def test_the_catalog_is_dropped_on_the_call_that_closes_the_search() -> None:
+    """Order is load-bearing, so it is asserted rather than assumed.
+
+    Closure is recorded by `_observe_tool_results`, which runs inside the loop
+    control's own `wrap_model_call`. The gate reads `spent_tool_context` while
+    writing the prompt. So the loop control has to be the outer middleware for
+    the gate to see this turn's answer instead of the previous call's.
+    """
+
+    loop_control, skill_gate = _catalog_pair()
+    captured: list[ModelRequest] = []
+
+    def capture(prepared: ModelRequest) -> ModelResponse:
+        captured.append(prepared)
+        return ModelResponse(result=[AIMessage(content="answer")])
+
+    def apply_skill(prepared: ModelRequest) -> ModelResponse:
+        return skill_gate.wrap_model_call(prepared, capture)
+
+    loop_control.wrap_model_call(
+        _model_request(_messages_with_result(_tool_result(_CLOSING_SEARCH_RESULT))),
+        apply_skill,
+    )
+
+    prompt = captured[0].system_prompt
+    assert "CATALOG-CAPABILITIES-BLOCK" not in prompt
+    assert "STYLE-SPECIFIC-INSTRUCTION" in prompt
+
+
+def test_nesting_the_gate_outside_would_pay_for_one_more_catalog() -> None:
+    """What the order buys, shown by composing it the wrong way round.
+
+    Reversed, the gate writes the prompt before the loop control has read the
+    result that closed the search, so the block ships on the call that should
+    have been the first to save it -- a saving late by one call on every turn,
+    and nothing failing to say so. This test is the reason the runtime's
+    middleware list is not free to be reordered.
+    """
+
+    loop_control, skill_gate = _catalog_pair()
+    captured: list[ModelRequest] = []
+
+    def capture(prepared: ModelRequest) -> ModelResponse:
+        captured.append(prepared)
+        return ModelResponse(result=[AIMessage(content="answer")])
+
+    def apply_loop_control(prepared: ModelRequest) -> ModelResponse:
+        return loop_control.wrap_model_call(prepared, capture)
+
+    skill_gate.wrap_model_call(
+        _model_request(_messages_with_result(_tool_result(_CLOSING_SEARCH_RESULT))),
+        apply_loop_control,
+    )
+
+    assert "CATALOG-CAPABILITIES-BLOCK" in captured[0].system_prompt
 
 
 def test_partial_search_scope_keeps_tools_available() -> None:

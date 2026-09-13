@@ -5,14 +5,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Sequence
 import json
 import re
+import unicodedata
+from collections.abc import Awaitable, Callable, Sequence
 from threading import Lock
 from typing import Any
-import unicodedata
 
-from .control_signals import ControlSignal, signals_of
 from langchain.agents.middleware.types import AgentMiddleware, ModelRequest, ModelResponse
 from langchain_core.messages import (
     ContentBlock,
@@ -21,6 +20,7 @@ from langchain_core.messages import (
     ToolMessage,
 )
 
+from .control_signals import ControlSignal, signals_of
 
 SEARCH_TOOL_NAME = "search_catalog_tool"
 SEARCH_VALIDATION_ERROR_PREFIX = (
@@ -103,6 +103,35 @@ class ToolLoopControlMiddleware(AgentMiddleware):
         self._search_scope_closed = False
         self._observed_tool_results: set[str] = set()
         self._lock = Lock()
+
+    def spent_tool_context(self) -> frozenset[str]:
+        """Tools whose prompt context this turn can no longer act on.
+
+        A granted tool carries an explanation of how to use it, and the
+        catalog's is the largest block in the prompt: its advertised taxonomy,
+        every hard filter's exact enum, and which fields each category
+        supports. All of it exists so one search can be composed correctly.
+
+        Once the search is closed, `_SEARCH_CLOSED_PROMPT` tells the model not
+        to search again -- and the same request went on spending about 2,900
+        tokens teaching it how to. Measured across a full suite, 389 of 1,302
+        work calls were in this state and every one of them carried the block,
+        which also made them the most expensive calls in the run.
+
+        A rule that forbids the action and the instructions for performing it
+        cannot both be load-bearing, so the instructions go. The tool itself
+        stays, for the reason given below: closure is the model's prediction,
+        not a report. Nothing is lost if the prediction was wrong, because the
+        repair path re-attaches these same capabilities to the request that
+        needs them -- a search whose arguments did not validate. The data is
+        withdrawn from every call that cannot use it and returns to the one
+        that can.
+        """
+
+        with self._lock:
+            if self._search_scope_closed and not self._search_budget_exhausted:
+                return frozenset({SEARCH_TOOL_NAME})
+        return frozenset()
 
     def wrap_model_call(
         self,

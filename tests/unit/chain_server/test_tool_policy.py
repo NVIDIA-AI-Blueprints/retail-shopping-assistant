@@ -105,7 +105,6 @@ def test_selected_skills_receive_only_their_declared_union() -> None:
             "check_active_promotions_tool",
             "check_product_availability_tool",
             "get_product_details_tool",
-            "get_weather_forecast_tool",
             "resolve_conversation_products_tool",
             "search_catalog_tool",
         }

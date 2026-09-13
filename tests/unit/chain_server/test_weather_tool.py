@@ -118,5 +118,5 @@ def test_only_skills_that_use_a_forecast_reach_a_paid_external_service() -> None
         if "get_weather_forecast_tool" in path.read_text()
     }
 
-    assert granted == {"destination-weather", "outfit-styling"}
+    assert granted == {"destination-weather"}
     assert SHOPPING_TOOL_POLICIES["get_weather_forecast_tool"].risk == "read"

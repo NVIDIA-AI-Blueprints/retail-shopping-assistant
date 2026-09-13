@@ -3180,7 +3180,6 @@ class TestDeepAgentsRuntimeRefs:
             "get_product_details_tool",
             "check_product_availability_tool",
             "check_active_promotions_tool",
-            "get_weather_forecast_tool",
             "resolve_conversation_products_tool",
         }
         assert skill_gate._skill_tool_grants["cart-management"] == {
@@ -3201,12 +3200,13 @@ class TestDeepAgentsRuntimeRefs:
         assert set(skill_gate._skill_files) == {
             "/shopper/outfit-styling/SKILL.md"
         }
+        # Styling dresses; it no longer fetches conditions, and a turn that
+        # needs them selects `destination-weather` as well.
         assert skill_gate._granted_tools == {
             "search_catalog_tool",
             "get_product_details_tool",
             "check_product_availability_tool",
             "check_active_promotions_tool",
-            "get_weather_forecast_tool",
             "resolve_conversation_products_tool",
         }
         selected = runtime_mod._shopper_skill_registry(

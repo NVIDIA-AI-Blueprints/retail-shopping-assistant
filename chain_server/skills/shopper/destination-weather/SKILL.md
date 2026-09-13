@@ -1,6 +1,6 @@
 ---
 name: destination-weather
-description: What conditions will be like at a place and time. Use when the shopper asks about the weather, heat, rain, or temperature at a destination and the turn asks for no product or outfit, including a follow-up about conditions on a trip already under discussion. When the same turn also asks what to wear or what to pack, outfit-styling covers it and owns the forecast.
+description: What conditions will be like at a place and time. Use whenever the turn needs a forecast. That covers the shopper asking about the weather, heat, rain, or temperature at a destination, including a follow-up about conditions on a trip already under discussion. It also covers a shopper asking what to wear or pack for a named place and date -- then select it together with outfit-styling, which does the dressing but cannot fetch conditions. This is the only skill that can.
 response_guidance: Conditions come from the fetched forecast only, named with the city and the dates it covers. Weather that was not fetched is not reported.
 role: standalone
 tools_granted:
@@ -25,6 +25,11 @@ without calling.
 - A conditions question does not need a product request attached to deserve an
   answer. There is nothing to search and nothing to show, and the forecast on
   its own is a complete reply here.
+- Selected beside `outfit-styling`, the forecast is not the reply on its own:
+  fetch first, then dress what it says. This skill carries no search, so the
+  pieces come from the styling procedure and the numbers come from here. "A
+  wedding in Rome in June, what should I wear" is one turn that needs both,
+  which is why both are selected.
 
 ## Never Describe Weather You Did Not Fetch
 

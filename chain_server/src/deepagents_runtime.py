@@ -2774,6 +2774,16 @@ class DeepAgentsRuntime:
             composition rule about two specific skills, not a list of the
             members of a group, so it does not go stale when a skill is
             registered; a test asserts both are still registered.
+
+            The second such rule, for the same reason. Dressing for a named
+            place and date needs the conditions there, and `outfit-styling`
+            cannot fetch them: select `destination-weather` with it whenever
+            the turn turns on the weather. "A wedding in Rome in June, what
+            should I wear" needs both. It is a standalone skill, neither a
+            second primary nor a modifier, so selecting it beside a procedure
+            is allowed. Leave it out and the turn has no way to know the
+            weather -- and the failure that follows is not a refusal, it is a
+            reply describing a climate it never fetched.
             """
 
             selected_names = list(dict.fromkeys(skill_names))

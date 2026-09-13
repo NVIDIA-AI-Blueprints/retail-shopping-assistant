@@ -135,10 +135,21 @@ SHOPPING_TOOL_POLICIES: Mapping[str, ToolPolicy] = MappingProxyType(
         # It carries this one tool: a weather-only turn loads a fifth of what
         # the browse procedure costs, which is why this is the cheap answer as
         # well as the correct one.
+        # Once that skill existed, the styling grant was pure cost. Measured
+        # from a live trace this schema is 1,914 tokens -- the second largest
+        # in the system -- and it shipped on every model call of every styling
+        # turn, the most-selected procedure in the suite, for a tool called on
+        # 1.8% of turns. A styling turn that does need conditions selects
+        # `destination-weather` beside `outfit-styling`: that skill is
+        # `standalone`, so it is neither a second primary nor a stranded
+        # modifier, and `_one_primary_per_group` already permits the pair.
+        #
+        # This is A2 one level down. A2 stopped calls that cannot search from
+        # carrying the catalog; this stops turns that are not about the
+        # weather from carrying the forecast. Neither spends anything on
+        # capability -- both spend on when the capability is asked for.
         "get_weather_forecast_tool": ToolPolicy(
-            allowed_skills_any_of=frozenset(
-                {"destination-weather", "outfit-styling"}
-            ),
+            allowed_skills_any_of=frozenset({"destination-weather"}),
             risk="read",
         ),
     }

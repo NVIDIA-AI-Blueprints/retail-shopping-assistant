@@ -1,10 +1,3 @@
-
-from pathlib import Path
-
-# Resolved from this file, not the working directory: CI runs pytest with
-# `working-directory: tests`, where a path relative to the repo root does not
-# exist. The rest of the suite already does this.
-_REPO_ROOT = Path(__file__).resolve().parents[3]
 """The assistant must know what day it is.
 
 The weather tool may only be called for a window "within about 15 days of
@@ -15,10 +8,15 @@ and the reply asserted warm weather anyway.
 """
 
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from pathlib import Path
 
 from chain_server.src.deepagents_runtime import _today_for_the_shopper
 
+# Resolved from this file, not the working directory: CI runs pytest with
+# `working-directory: tests`, where a path relative to the repo root does not
+# exist. The rest of the suite already does this.
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 def test_today_is_the_real_date_not_the_build_date() -> None:
@@ -26,7 +24,7 @@ def test_today_is_the_real_date_not_the_build_date() -> None:
     every conversation to the day it was built."""
 
     rendered = _today_for_the_shopper()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     assert now.strftime("%d") in rendered
     assert now.strftime("%B") in rendered
     assert now.strftime("%Y") in rendered
@@ -38,7 +36,7 @@ def test_it_reads_like_a_person_wrote_it() -> None:
 
 
 def test_the_prompt_states_the_date_and_what_it_is_for() -> None:
-    source = open(_REPO_ROOT / "chain_server/src/deepagents_runtime.py").read()
+    source = (_REPO_ROOT / "chain_server/src/deepagents_runtime.py").read_text()
     assert "TODAY IS {_today_for_the_shopper()}" in source
     block = source[source.index("TODAY IS") :][:600]
     assert "only date you know" in block
@@ -58,9 +56,9 @@ def _prompts_either_way(base_config) -> tuple[str, str]:
     weather client. Toggle in place and put it back.
     """
 
-    from chain_server.src import deepagents_runtime as runtime_mod
-
     from types import SimpleNamespace
+
+    from chain_server.src import deepagents_runtime as runtime_mod
 
     runtime = runtime_mod.DeepAgentsRuntime(base_config)
     original = getattr(runtime.config, "weather", None)
@@ -101,7 +99,7 @@ def test_a_country_is_forecast_and_disclosed_rather_than_refused() -> None:
     """Refusing to call for a country left the model asserting the weather
     instead, which is worse than either asking or calling."""
 
-    source = open(_REPO_ROOT / "chain_server/src/deepagents_runtime.py").read()
+    source = (_REPO_ROOT / "chain_server/src/deepagents_runtime.py").read_text()
     weather = source[source.index("def get_weather_forecast_tool") :][:3000]
     assert "capital or\n            largest city" in weather
     assert "never do is describe weather you did not fetch" in weather

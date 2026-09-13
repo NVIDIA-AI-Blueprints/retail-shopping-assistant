@@ -29,7 +29,6 @@ from .tool_policy import (
     validate_skill_tool_grants,
 )
 
-
 SKILL_ACTIVATION_TOOL_NAME = "activate_shopper_skills_tool"
 SKILL_ACTIVATION_COMPLETE = "SHOPPER_SKILL_ACTIVATION_COMPLETE:"
 SKILL_ACTIVATION_INVALID = "SHOPPER_SKILL_ACTIVATION_INVALID:"

@@ -5,14 +5,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Sequence
 import json
 import re
+import unicodedata
+from collections.abc import Awaitable, Callable, Sequence
 from threading import Lock
 from typing import Any
-import unicodedata
 
-from .control_signals import ControlSignal, signals_of
 from langchain.agents.middleware.types import AgentMiddleware, ModelRequest, ModelResponse
 from langchain_core.messages import (
     ContentBlock,
@@ -21,6 +20,7 @@ from langchain_core.messages import (
     ToolMessage,
 )
 
+from .control_signals import ControlSignal, signals_of
 
 SEARCH_TOOL_NAME = "search_catalog_tool"
 SEARCH_VALIDATION_ERROR_PREFIX = (

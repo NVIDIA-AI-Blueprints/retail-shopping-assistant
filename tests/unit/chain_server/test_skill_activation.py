@@ -11,8 +11,29 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
-from langchain_core.language_models.chat_models import BaseChatModel
+from chain_server.src import catalog_search
+from chain_server.src.agenttypes import Cart, State
+from chain_server.src.catalog_execution import CatalogSearchExecution
+from chain_server.src.deepagents_runtime import (
+    DeepAgentsRuntime,
+)
+from chain_server.src.fencing import MEDIA_FENCE
+from chain_server.src.skill_activation import (
+    SKILL_ACTIVATION_COMPLETE,
+    SKILL_ACTIVATION_REQUIRED,
+    SKILL_ACTIVATION_TOOL_NAME,
+    SKILL_TOOL_NOT_GRANTED,
+    ShopperSkillActivationError,
+    ShopperSkillActivationMiddleware,
+    selected_skill_names_for_turn,
+)
+from chain_server.src.tool_loop_control import SERVER_CATALOG_CLARIFICATION
+from chain_server.src.turn_support import (
+    RequestIdentity,
+    _skill_activation_input_model,
+)
 from langchain.agents.middleware.types import ModelRequest, ModelResponse
+from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import (
     AIMessage,
     BaseMessage,
@@ -24,28 +45,6 @@ from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.tools import BaseTool, tool
 from langgraph.prebuilt.tool_node import ToolCallRequest
 from pydantic import Field, PrivateAttr
-
-from chain_server.src import catalog_search
-from chain_server.src.agenttypes import Cart, State
-from chain_server.src.catalog_execution import CatalogSearchExecution
-from chain_server.src.fencing import MEDIA_FENCE
-from chain_server.src.deepagents_runtime import (
-    DeepAgentsRuntime,
-)
-from chain_server.src.turn_support import (
-    RequestIdentity,
-    _skill_activation_input_model,
-)
-from chain_server.src.skill_activation import (
-    SKILL_ACTIVATION_COMPLETE,
-    SKILL_ACTIVATION_REQUIRED,
-    SKILL_ACTIVATION_TOOL_NAME,
-    SKILL_TOOL_NOT_GRANTED,
-    ShopperSkillActivationError,
-    ShopperSkillActivationMiddleware,
-    selected_skill_names_for_turn,
-)
-from chain_server.src.tool_loop_control import SERVER_CATALOG_CLARIFICATION
 from shared.commerce_contracts import (
     CatalogCapabilities,
     CatalogFilterCapability,
@@ -54,7 +53,6 @@ from shared.commerce_contracts import (
     CatalogTaxonomySubcategory,
     SearchCatalogResult,
 )
-
 
 REQUEST_ID = "request-a"
 SKILL_TOOL_GRANTS = {
@@ -354,7 +352,7 @@ def test_enforcement_matches_the_shipped_frontmatter() -> None:
     for name in declared:
         assert name in description, f"{name} is invisible to the model"
 
-    for group, names in groups.items():
+    for names in groups.values():
         for first in names:
             for second in names:
                 if first == second:

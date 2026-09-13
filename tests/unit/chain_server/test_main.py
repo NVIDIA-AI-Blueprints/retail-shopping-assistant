@@ -805,7 +805,6 @@ class TestSystemPrompt:
         from chain_server.src import deepagents_runtime as runtime_mod
 
         runtime = runtime_mod.DeepAgentsRuntime(base_config)
-        capabilities = CatalogCapabilities(catalog_id="test")
 
         prompt = runtime._system_prompt()
 
@@ -3155,10 +3154,18 @@ class TestDeepAgentsRuntimeRefs:
         assert tools_by_name["check_active_promotions_tool"].return_direct is False
         assert "skills" not in captured
         assert len(captured["middleware"]) == 2
+        # Order, not just membership: the loop control records closure inside
+        # its own model call, and the gate reads it while writing the prompt,
+        # so the loop control has to be the outer one. What reordering would
+        # cost is pinned in test_tool_loop_control.py.
         tool_loop_control, skill_gate = captured["middleware"]
         assert isinstance(
             tool_loop_control,
             runtime_mod.ToolLoopControlMiddleware,
+        )
+        assert isinstance(
+            skill_gate,
+            runtime_mod.ShopperSkillActivationMiddleware,
         )
         # The gate writes the prompt; the loop control knows what the turn has
         # finished with. Asserting the wiring rather than the behaviour,

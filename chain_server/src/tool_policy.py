@@ -13,7 +13,6 @@ from typing import Literal
 
 import yaml
 
-
 ToolRisk = Literal["read", "mutating"]
 
 
@@ -116,38 +115,31 @@ SHOPPING_TOOL_POLICIES: Mapping[str, ToolPolicy] = MappingProxyType(
             allowed_skills_any_of=frozenset({"store-policy-answers"}),
             risk="read",
         ),
-        # Granted to the two skills that have a use for a forecast, and no
-        # others: a shopper asking about returns should not be able to reach a
-        # paid external service. The grant is not free either way -- this is
-        # the second-largest schema in the system, 4,270 characters on every
-        # call a granting skill covers, and it is called on 1.8% of turns. A
-        # browse used to pay for it on every model call.
+        # Granted to one skill, and no others: a shopper asking about returns
+        # should not be able to reach a paid external service. The grant is
+        # not free either way -- measured from a live trace this is the
+        # second-largest schema in the system at 1,914 tokens, and it is
+        # called on 1.8% of turns.
         #
-        # Narrowing it to outfit-styling alone was too narrow, and in the one
-        # way that matters: it decided which turns *can* fetch a forecast, not
-        # just which turns pay for the schema. "I'm going to Cancun next week,
-        # what's the weather like" asks for no outfit, so it selects no styling
-        # procedure, so the tool was not in context -- and the reply said the
-        # forecast was unavailable and then described the climate from memory.
+        # A grant decides which turns *can* fetch a forecast, not only which
+        # turns pay for the schema, so narrowing it is a behaviour change
+        # before it is a cost one. Narrowing to `outfit-styling` alone failed
+        # on exactly that: "I'm going to Cancun next week, what's the weather
+        # like" asks for no outfit, so it selects no styling procedure, so the
+        # tool was absent -- and the reply said the forecast was unavailable
+        # and then described the climate from memory.
         #
-        # A bare conditions question is its own task, so it gets its own
-        # standalone skill rather than a grant bolted onto a product procedure.
-        # It carries this one tool: a weather-only turn loads a fifth of what
-        # the browse procedure costs, which is why this is the cheap answer as
-        # well as the correct one.
-        # Once that skill existed, the styling grant was pure cost. Measured
-        # from a live trace this schema is 1,914 tokens -- the second largest
-        # in the system -- and it shipped on every model call of every styling
-        # turn, the most-selected procedure in the suite, for a tool called on
-        # 1.8% of turns. A styling turn that does need conditions selects
-        # `destination-weather` beside `outfit-styling`: that skill is
-        # `standalone`, so it is neither a second primary nor a stranded
-        # modifier, and `_one_primary_per_group` already permits the pair.
+        # So a bare conditions question gets its own standalone skill rather
+        # than a grant bolted onto a product procedure. Once that skill
+        # existed the styling grant was pure cost, shipping on every model
+        # call of the most-selected procedure in the suite. A styling turn
+        # that does need conditions selects `destination-weather` beside
+        # `outfit-styling`: that skill is `standalone`, so it is neither a
+        # second primary nor a stranded modifier, and `_one_primary_per_group`
+        # already permits the pair.
         #
-        # This is A2 one level down. A2 stopped calls that cannot search from
-        # carrying the catalog; this stops turns that are not about the
-        # weather from carrying the forecast. Neither spends anything on
-        # capability -- both spend on when the capability is asked for.
+        # Same rule as the catalog one level down: spend nothing on carrying a
+        # capability, spend only when the capability is asked for.
         "get_weather_forecast_tool": ToolPolicy(
             allowed_skills_any_of=frozenset({"destination-weather"}),
             risk="read",

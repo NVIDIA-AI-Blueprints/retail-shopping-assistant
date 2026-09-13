@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Collection, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -205,8 +205,16 @@ def _middleware(
     *,
     previous_selected_skills: Sequence[str] = (),
     spent_tool_context: Callable[[], Collection[str]] | None = None,
+    widen_for_tool: (
+        Callable[
+            [str, Collection[str]],
+            tuple[Sequence[str], Mapping[str, str]] | None,
+        ]
+        | None
+    ) = None,
 ) -> ShopperSkillActivationMiddleware:
     return ShopperSkillActivationMiddleware(
+        widen_for_tool=widen_for_tool,
         granted_tool_context={
             "search_catalog_tool": (
                 "Catalog capabilities:\nRetrieval modes: text, dense"
@@ -892,6 +900,165 @@ def test_browse_only_product_discovery_rejects_cart_mutation() -> None:
     assert str(result.content).startswith(SKILL_TOOL_NOT_GRANTED)
 
 
+def _widening(
+    granting: Mapping[str, str],
+) -> Callable[
+    [str, Collection[str]],
+    tuple[Sequence[str], Mapping[str, str]] | None,
+]:
+    """Stand in for the runtime's answer: a legal selection, or nothing.
+
+    The gate asks which skill grants a refused tool and whether adding it is
+    a selection the model could have made. Both halves are the runtime's to
+    answer, because the registry and the selection model live there, so a
+    tool absent from `granting` here is how this states the runtime's no --
+    a second primary from one exclusive group, or a skill off the registry.
+    """
+
+    def widen(
+        tool_name: str,
+        selected: Collection[str],
+    ) -> tuple[Sequence[str], Mapping[str, str]] | None:
+        candidate = granting.get(tool_name)
+        if candidate is None:
+            return None
+        names = [*dict.fromkeys(selected), candidate]
+        return names, {
+            f"/shopper/{name}/SKILL.md": f"# {name}" for name in names
+        }
+
+    return widen
+
+
+def test_a_refused_call_gains_the_skill_that_grants_it() -> None:
+    """The cart add runs, in the step that asked for it.
+
+    A turn selects its skills at its first token, and the prompt asking for
+    them asks which task the turn continues -- so turn seven of a capsule,
+    "add the Ombre Canvas Tote Bag", keeps `outfit-styling` as instructed and
+    grants no cart tool. The refusal that followed named `cart-management`,
+    which this code looked up to write the message with, and then asked the
+    model to say it back.
+    """
+
+    middleware = _middleware(
+        widen_for_tool=_widening({"add_cart_items_tool": "cart-management"}),
+    )
+    middleware.activate(
+        {"/shopper/outfit-styling/SKILL.md": "# Outfit Styling"},
+        ["outfit-styling"],
+    )
+    messages = _activated_messages(query="add the Ombre Canvas Tote Bag")
+    request = _tool_request(
+        "add_cart_items_tool",
+        messages,
+        {"items": [{"product_ref": "tote-a"}]},
+    )
+    handled: list[ToolCallRequest] = []
+
+    result = middleware.wrap_tool_call(request, handled.append)
+
+    assert handled == [request]
+    assert result is None
+    # The grant outlives the call that earned it: the rest of the turn can
+    # read back what it just changed, which a cart add is answered with.
+    prepared = _capture_request(middleware, _model_request(messages))
+    visible = [candidate.name for candidate in prepared.tools]
+    assert "add_cart_items_tool" in visible
+    assert "search_catalog_tool" in visible
+
+
+def test_a_selection_the_model_could_not_make_is_not_made_for_it() -> None:
+    """No widening means the honest refusal, not a tool taken anyway.
+
+    `check_active_promotions_tool` is granted by `outfit-styling` and
+    `product-discovery` alone, two primaries in one exclusive group. A turn
+    holding the third, `catalog-questions`, cannot be widened into either
+    without seating two primaries, so the runtime answers nothing and the
+    turn hears what it heard before.
+    """
+
+    middleware = _middleware(
+        widen_for_tool=_widening({"add_cart_items_tool": "cart-management"}),
+    )
+    middleware.activate(
+        {"/shopper/product-discovery/SKILL.md": "# Product Discovery"},
+        ["product-discovery"],
+    )
+    messages = _activated_messages(skill_name="product-discovery")
+    request = _tool_request("get_product_details_tool", messages)
+    handled: list[ToolCallRequest] = []
+
+    # Granted already, so nothing is widened and the call simply runs.
+    assert middleware.wrap_tool_call(request, handled.append) is None
+    assert handled == [request]
+
+    refused = _tool_request("update_cart_items_tool", messages)
+    unhandled: list[ToolCallRequest] = []
+    result = middleware.wrap_tool_call(refused, unhandled.append)
+
+    assert unhandled == []
+    assert isinstance(result, ToolMessage)
+    assert str(result.content).startswith(SKILL_TOOL_NOT_GRANTED)
+
+
+def test_a_turn_past_the_activation_cap_still_hears_no() -> None:
+    """The cap bounds widening too, or a turn could walk the whole registry."""
+
+    middleware = _middleware(
+        widen_for_tool=_widening({"add_cart_items_tool": "cart-management"}),
+    )
+    for skill in ("outfit-styling", "product-discovery", "outfit-styling"):
+        middleware.activate({f"/shopper/{skill}/SKILL.md": f"# {skill}"}, [skill])
+
+    request = _tool_request(
+        "add_cart_items_tool",
+        _activated_messages(),
+        {"items": [{"product_ref": "tote-a"}]},
+    )
+    handled: list[ToolCallRequest] = []
+    result = middleware.wrap_tool_call(request, handled.append)
+
+    assert handled == []
+    assert isinstance(result, ToolMessage)
+    assert str(result.content).startswith(SKILL_TOOL_NOT_GRANTED)
+
+
+def test_a_granted_call_is_never_asked_what_would_grant_it() -> None:
+    """What the turns that need nothing pay for this: nothing.
+
+    Widening is reached from the refusal branch alone, so a turn that never
+    calls past its grants never consults the runtime and never loads a skill
+    it did not select.
+    """
+
+    asked: list[str] = []
+
+    def widen(
+        tool_name: str,
+        selected: Collection[str],
+    ) -> tuple[Sequence[str], Mapping[str, str]] | None:
+        asked.append(tool_name)
+        return None
+
+    middleware = _middleware(widen_for_tool=widen)
+    middleware.activate(
+        {"/shopper/outfit-styling/SKILL.md": "# Outfit Styling"},
+        ["outfit-styling"],
+    )
+    messages = _activated_messages()
+    handled: list[ToolCallRequest] = []
+
+    for tool_name in ("search_catalog_tool", "get_product_details_tool"):
+        middleware.wrap_tool_call(
+            _tool_request(tool_name, messages),
+            handled.append,
+        )
+
+    assert len(handled) == 2
+    assert asked == []
+
+
 @pytest.mark.xfail(
     strict=True,
     raises=AssertionError,
@@ -1064,7 +1231,7 @@ async def test_compiled_agent_bounds_repeated_invalid_budget_activation(
 
 
 @pytest.mark.asyncio
-async def test_compiled_agent_loads_skill_and_blocks_ungranted_tool(
+async def test_compiled_agent_loads_skill_and_grants_what_the_call_names(
     base_config: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1186,14 +1353,20 @@ async def test_compiled_agent_loads_skill_and_blocks_ungranted_tool(
     # the base prompt can now truthfully say there is no filesystem.
     assert "read_file" not in shopping_call["tools"]
     assert "## Active Shopper Skills" in shopping_call["system_prompt"]
-    rejected = [
+    # The turn selected `outfit-styling`, which grants no cart tool, and read
+    # the cart anyway. That used to be answered with a refusal naming the
+    # skill the model should select instead -- a skill this code had just
+    # looked up to write the message with. It adds it instead, so the read
+    # runs in the step that asked for it.
+    cart_reads = [
         message
         for message in result["messages"]
         if isinstance(message, ToolMessage)
         and message.name == "get_cart_tool"
     ]
-    assert len(rejected) == 1
-    assert str(rejected[0].content).startswith(SKILL_TOOL_NOT_GRANTED)
+    assert len(cart_reads) == 1
+    assert not str(cart_reads[0].content).startswith(SKILL_TOOL_NOT_GRANTED)
+    assert str(cart_reads[0].content) == "(empty)"
     assert result["messages"][-1].content == (
         "I can help with products for this outfit."
     )
@@ -1305,6 +1478,97 @@ async def test_compiled_agent_answers_promotions_without_catalog_search(
         for message in result["messages"]
     )
     assert result["messages"][-1].content == expected
+
+
+@pytest.mark.asyncio
+async def test_compiled_agent_will_not_seat_a_second_primary_to_grant_a_tool(
+    base_config: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The one-primary invariant outranks granting the call what it asked for.
+
+    `check_active_promotions_tool` is granted by `outfit-styling` and
+    `product-discovery` alone, and this turn holds `catalog-questions`: all
+    three are primaries in `product_procedure`, so every widening available
+    would seat two. The runtime validates a candidate against the same model
+    the activation tool validates against, so it offers none and the turn
+    hears the refusal rather than a selection it could not have made.
+    """
+
+    model_name = "compiled-second-primary-test"
+    base_config.llm_name = model_name
+    model = _RecordingToolModel(
+        model_name=model_name,
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "id": "activate-catalog-questions",
+                        "name": SKILL_ACTIVATION_TOOL_NAME,
+                        "args": {"skill_names": ["catalog-questions"]},
+                    }
+                ],
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "id": "check-promotions",
+                        "name": "check_active_promotions_tool",
+                        "args": {},
+                    }
+                ],
+            ),
+            AIMessage(content="Here is what the shop carries."),
+        ],
+    )
+    runtime = DeepAgentsRuntime(base_config)
+    monkeypatch.setattr(runtime, "_create_chat_model", lambda: model)
+    identity = RequestIdentity(
+        session_id="session-second-primary",
+        conversation_id="conversation-second-primary",
+        cart_id="cart-second-primary",
+        context_user_id=1,
+        cart_user_id=1,
+        request_id=REQUEST_ID,
+    )
+    agent = runtime._create_agent(
+        State(user_id=1, query="What kinds of shoes do you carry?"),
+        identity,
+        CatalogCapabilities(
+            catalog_id="test-catalog",
+            retrieval_modes=["text"],
+            filters={},
+        ),
+    )
+
+    result = await agent.ainvoke(
+        {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": (
+                        f"REQUEST ID: {REQUEST_ID}\n"
+                        "USER QUERY: What kinds of shoes do you carry?"
+                    ),
+                }
+            ]
+        },
+        config={"configurable": {"thread_id": identity.conversation_id}},
+    )
+
+    refused = [
+        message
+        for message in result["messages"]
+        if isinstance(message, ToolMessage)
+        and message.name == "check_active_promotions_tool"
+    ]
+    assert len(refused) == 1
+    content = str(refused[0].content)
+    assert content.startswith(SKILL_TOOL_NOT_GRANTED)
+    assert "outfit-styling" in content
+    assert "product-discovery" in content
 
 
 @pytest.mark.asyncio

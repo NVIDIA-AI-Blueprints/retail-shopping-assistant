@@ -2334,12 +2334,23 @@ class TestDeepAgentsRuntimeRefs:
         assert schema["properties"]["taxonomy_status"]["description"] == (
             "Server-derived catalog execution mode."
         )
-        assert "Do you have water-resistant bags?" in schema["properties"][
-            "required_constraints"
-        ]["description"]
-        assert "A product type never belongs in unadvertised_requirements" in (
-            schema["properties"]["required_constraints"]["description"]
-        )
+        # Each rule on the field it is about, and nowhere else. The worked
+        # example and the product-type ban are about what goes in
+        # `unadvertised_requirements`, and were also stated on the object that
+        # contains it -- where the audience value gets chosen, and where an
+        # unrelated worked example has already been measured collapsing
+        # audience correctness from 3-in-5 to 1-in-105. Asserting their
+        # absence so the duplication cannot come back.
+        constraints_prose = schema["properties"]["required_constraints"][
+            "description"
+        ]
+        unadvertised_prose = schema["$defs"]["CatalogRequiredConstraints"][
+            "properties"
+        ]["unadvertised_requirements"]["description"]
+        assert "water-resistant bags" in unadvertised_prose
+        assert "A product type never belongs here" in unadvertised_prose
+        assert "water-resistant bags" not in constraints_prose
+        assert "unadvertised_requirements" in constraints_prose
         assert "cart action still must run" in schema["properties"][
             "scope_complete"
         ]["description"]
@@ -4357,7 +4368,7 @@ class TestDeepAgentsRuntimeRefs:
         )
         assert '"department"' not in result.split("SEARCH_FILTER_EVIDENCE:", 1)[1].splitlines()[0]
         assert '"product_type"' not in result.split("SEARCH_FILTER_EVIDENCE:", 1)[1].splitlines()[0]
-        assert "get_product_details_tool and this PRODUCT_REF" in result
+        assert "get_product_details_tool and that PRODUCT_REF" in result
         assert "PRODUCT_REF: prod_1" in result
         assert state.retrieved == {"Work Bag": "bag.jpg"}
         assert [product["product_id"] for product in state.product_results] == ["prod_1"]
@@ -9085,9 +9096,11 @@ class TestDeepAgentsRuntimeRefs:
         assert "PRODUCT_REF: prod_456" in formatted
         assert "Leather Bag" in formatted
         assert "structured tote" not in formatted
-        assert "get_product_details_tool and this PRODUCT_REF" in formatted
-        # Absence from a search result is not evidence the attribute is unknown.
-        assert "absence here is not evidence" in formatted
+        # A record carries the product only. The attribute-limit note is a fact
+        # about the search, said once per result by the caller, and the image
+        # URL is not said at all -- the model cannot open one.
+        assert "absence here is not evidence" not in formatted
+        assert "IMAGE_URL" not in formatted
 
     def test_format_product_details_warns_against_performance_overclaims(self) -> None:
         from chain_server.src import turn_support as runtime_mod_support

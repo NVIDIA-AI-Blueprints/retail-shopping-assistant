@@ -291,6 +291,7 @@ class ShopperSkillActivationMiddleware(AgentMiddleware):
                     _tool_name(candidate),
                     selected_skills,
                     granted_tools,
+                    activation_visible=True,
                 )
             ]
             tool_choice = request.tool_choice
@@ -298,6 +299,7 @@ class ShopperSkillActivationMiddleware(AgentMiddleware):
                 tool_choice,
                 selected_skills,
                 granted_tools,
+                activation_visible=True,
             ):
                 tool_choice = None
             return request.override(
@@ -602,9 +604,28 @@ def _tool_is_visible(
     tool_name: str,
     selected_skills: Collection[str],
     granted_tools: Collection[str],
+    *,
+    activation_visible: bool = False,
 ) -> bool:
+    """Whether this model request may see the tool at all.
+
+    The activation tool is hidden while the turn is pending nothing and shown
+    while a turn is active, which is the opposite of how it reads. The pending
+    step is given this tool alone under a forced choice, so visibility there is
+    not in question. What was in question is the correction: `activate` accepts
+    a replacement selection up to the cap, `_tool_call_rejection` lets the
+    activation tool through, and the not-granted message tells the model to
+    "call activate_shopper_skills_tool again with the skill that grants it" --
+    and then this returned False, so the tool named in the instruction was not
+    in the list the model could choose from.
+
+    That is the refusal loop the cart case records: refused for the grant, told
+    to re-select, unable to see how, refused again. Recovery now costs the one
+    corrective call the message asks for.
+    """
+
     if tool_name == SKILL_ACTIVATION_TOOL_NAME:
-        return False
+        return activation_visible
     return tool_is_granted(tool_name, selected_skills, granted_tools)
 
 

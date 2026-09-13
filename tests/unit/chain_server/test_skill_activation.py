@@ -559,7 +559,12 @@ def test_active_phase_injects_complete_skill_and_exposes_commerce() -> None:
 
     prepared = _capture_request(middleware, _model_request(_activated_messages()))
 
+    # The activation tool stays on an active turn so the selection can be
+    # corrected: the not-granted message tells the model to call it again, and
+    # it has to be choosable for that to be an instruction rather than a dead
+    # end. The cap in `activate` is what bounds it.
     assert [candidate.name for candidate in prepared.tools] == [
+        SKILL_ACTIVATION_TOOL_NAME,
         "search_catalog_tool",
         "get_product_details_tool",
     ]
@@ -745,6 +750,7 @@ def test_browse_only_product_discovery_rejects_cart_mutation() -> None:
     prepared = _capture_request(middleware, _model_request(messages))
 
     assert [candidate.name for candidate in prepared.tools] == [
+        SKILL_ACTIVATION_TOOL_NAME,
         "search_catalog_tool",
         "get_product_details_tool",
     ]
@@ -797,7 +803,8 @@ def test_cart_management_exposes_cart_mutation_but_not_catalog_search() -> None:
     prepared = _capture_request(middleware, _model_request(messages))
 
     assert [candidate.name for candidate in prepared.tools] == [
-        "add_cart_items_tool"
+        SKILL_ACTIVATION_TOOL_NAME,
+        "add_cart_items_tool",
     ]
     request = _tool_request("add_cart_items_tool", messages)
     expected = ToolMessage(content="cart updated", tool_call_id="add-call")
@@ -1042,7 +1049,10 @@ async def test_compiled_agent_loads_skill_and_blocks_ungranted_tool(
 
     assert retry_call["tools"] == [SKILL_ACTIVATION_TOOL_NAME]
     assert retry_call["tool_choice"] == SKILL_ACTIVATION_TOOL_NAME
-    assert SKILL_ACTIVATION_TOOL_NAME not in shopping_call["tools"]
+    # This turn is the refusal case: `get_cart_tool` is rejected for the grant
+    # and the rejection tells the model to re-select. It is offered the means
+    # to, rather than being told to call a tool it cannot see.
+    assert SKILL_ACTIVATION_TOOL_NAME in shopping_call["tools"]
     assert "search_catalog_tool" in shopping_call["tools"]
     assert "get_product_details_tool" in shopping_call["tools"]
     assert "check_product_availability_tool" in shopping_call["tools"]
@@ -1490,6 +1500,14 @@ def test_a_turn_may_correct_the_skills_it_opened_with() -> None:
         _tool_request("add_cart_items_tool", _activated_messages()), lambda r: r
     )
     assert str(refused.content).startswith(SKILL_TOOL_NOT_GRANTED)
+
+    # The refusal names the tool to call. Calling `activate` here proves the
+    # grants can move; it does not prove the model was offered the means to
+    # move them, which is the step it actually has to take.
+    prepared = _capture_request(middleware, _model_request(_activated_messages()))
+    assert SKILL_ACTIVATION_TOOL_NAME in [
+        candidate.name for candidate in prepared.tools
+    ]
 
     corrected = middleware.activate(
         {"/shopper/cart-management/SKILL.md": "# Cart"}, ["cart-management"]

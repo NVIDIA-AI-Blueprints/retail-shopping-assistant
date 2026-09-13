@@ -419,6 +419,44 @@ def _format_update_cart_result(
     return "\n".join(lines)
 
 
+def _format_size_change_result(
+    *,
+    display_name: str,
+    from_size: str,
+    to_size: str,
+    quantity: int,
+    cart: Cart | CommerceCart | None,
+    old_line_removed: bool,
+    old_line_id: str,
+) -> str:
+    """Report a size change as the one change it is, or say what is left over.
+
+    The add runs before the remove, so that a failure between them leaves the
+    shopper an extra line rather than nothing. That is also why there are two
+    reports: on the unhappy path the cart really does hold both sizes, and the
+    turn has to say so and carry the id that finishes the job, rather than
+    announce a replacement that only half happened.
+    """
+
+    held = from_size or "onesize"
+    if old_line_removed:
+        lines = [
+            f"CART SIZE CHANGED: {display_name} is now qty {quantity}, size "
+            f"{to_size}. The size {held} line was removed."
+        ]
+    else:
+        lines = [
+            f"CART SIZE PARTIALLY CHANGED: size {to_size} was added for "
+            f"{display_name}, but the size {held} line could not be removed, "
+            "so the cart holds both. Remove it with remove_cart_item_tool "
+            f"using CART_LINE_ID {old_line_id}. Tell the shopper what the "
+            "cart actually holds, not what was asked for."
+        ]
+    if cart is not None:
+        lines.append(_format_cart_lines(cart))
+    return "\n".join(lines)
+
+
 def _format_policy_result(result: GetStorePolicyResult) -> str:
     if not result.ok or result.policy is None:
         message = result.error.message if result.error else "unknown error"

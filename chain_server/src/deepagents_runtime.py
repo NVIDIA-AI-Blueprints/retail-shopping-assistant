@@ -106,6 +106,7 @@ from .response_format import (
     _format_promotions_result,
     _format_retrieved_images,
     _format_shopper_context,
+    _format_size_change_result,
     _format_store_date,
     _format_update_cart_result,
     _format_wearer_audience,
@@ -151,6 +152,7 @@ from .turn_support import (
     _cart_add_scope_failures,
     _cart_line_by_id,
     _cart_product_choice_note,
+    _cart_resize_issue,
     _cart_size_issue,
     _catalog_repair_clarification_response,
     _collect_token_usage,
@@ -708,28 +710,29 @@ class _UpdateCartItemsInput(BaseModel):
     )
     quantity: int = Field(
         ge=0,
-        description="New total quantity. Set to 0 to remove the line.",
+        description=(
+            "Total quantity to end up with; with `size`, in the new size. "
+            "Removing a line is remove_cart_item_tool, not quantity 0."
+        ),
     )
     size: str | None = Field(
         default=None,
         description=(
-            "Do not use. A size is a different cart line, not a property of "
-            "one, and this tool cannot change it. Declared here only so the "
-            "attempt is refused with the correct sequence rather than "
-            "silently ignored."
+            "The size the shopper now wants for this line. Omit for a "
+            "quantity change. A size this product is not sold in is refused, "
+            "naming the ones it is."
         ),
     )
 
     @field_validator("size", mode="before")
     @classmethod
     def _a_number_is_a_size_too(cls, value: Any) -> Any:
-        """Take a size written as a number, so the refusal can be reached.
+        """Take a size written as a number, so the change can be reached.
 
-        This field exists for one reason: to turn "change it to a 7" into the
-        add-then-remove sequence instead of a silent no-op. A model that sent
-        `size: 7` rather than `size: "7"` never got there -- pydantic refused
-        the call for the type, three times running, with a validation error
-        that says nothing about carts. It then gave up, sent the quantity
+        This field is how "change it to a 7" is asked for, and a model that
+        sent `size: 7` rather than `size: "7"` never got that far -- pydantic
+        refused the call for the type, three times running, with a validation
+        error that says nothing about carts. It then gave up, sent the quantity
         alone, and told the shopper it had updated a dress it had never been
         asked about.
 
@@ -2352,51 +2355,193 @@ class DeepAgentsRuntime:
                 _remove_cart_item_impl(cart_line_id, quantity)
             )
 
+        def _change_a_line_size_impl(
+            cart_line_id: str,
+            quantity: int,
+            size: str,
+        ):
+            """Move a cart line to another size, in the call that asked for it.
+
+            A size is a separate cart line rather than a property of one, and
+            the cart has no operation that changes it, so the change is an add
+            followed by a remove -- in that order, because a failure between
+            the two must leave the shopper an extra line rather than nothing.
+
+            That protocol used to be prose in this tool's own refusal: send a
+            size and it told the model to add the new size, confirm it, then
+            remove the old line. Two readers never got it right. A turn that
+            went straight to `add_cart_items_tool` never saw the refusal at
+            all, so "change the heels to an 8" added the 8, narrated that the
+            cart now held both, and asked the shopper which to keep -- ending
+            with a pair they had just replaced still in the cart, and no
+            CART_LINE_ID to remove it with, having had no reason to read the
+            cart. A turn that did see it had three calls to sequence, each of
+            which could be the one that dropped.
+
+            Nothing in that sequence needed the model. It had already said
+            everything there is to say -- this line, that size, that many --
+            and the rest is bookkeeping this code can do without asking. So it
+            does, and reports the cart it actually left behind.
+            """
+
+            line = _cart_line_by_id(cart_line_id, state.cart)
+            if line is None:
+                return (
+                    "CART_UPDATE_REFUSED: no line with CART_LINE_ID "
+                    f"'{cart_line_id}' is in this cart. Call get_cart_tool and "
+                    "use a CART_LINE_ID it reports. Nothing was changed."
+                )
+
+            held = str(line.get("size") or "").strip()
+            if held and size.casefold() == held.casefold():
+                # The size asked for is the size they have, so this is a
+                # quantity change that happens to name a size. Answering it as
+                # one keeps the cart to a single line: routing it through the
+                # add below would put a second line on the same size.
+                return _update_cart_items_impl(cart_line_id, quantity)
+            if quantity == 0:
+                return (
+                    "CART_UPDATE_REFUSED: quantity 0 and a new size contradict "
+                    "each other -- one deletes the line, the other replaces it. "
+                    "Send the quantity the shopper is keeping to change the "
+                    "size, or use remove_cart_item_tool to remove the line. "
+                    "Nothing was changed."
+                )
+
+            product_id = str(line.get("product_id") or "")
+            detail = get_product_details(
+                GetProductDetailsInput(product_id=product_id),
+                self.config.retriever_port,
+                timeout_seconds=self.config.catalog_search_timeout_seconds,
+            )
+            if not detail.ok or detail.product is None:
+                return "CART_UPDATE_FAILED: " + _product_detail_failure_message(
+                    detail.error,
+                    cart_validation=True,
+                )
+            # Whether the catalog sells the new size is a fact, and mostly the
+            # same fact the add path checks. A resize that skipped it would
+            # seat a size the shop does not sell by a route the add refuses --
+            # and this is the route a shopper naming a size reaches.
+            size_issue = _cart_resize_issue(detail.product, size)
+            if size_issue:
+                return f"CART_UPDATE_REFUSED: {size_issue}"
+
+            product = detail.product
+            add = add_cart_item(
+                AddCartItemInput(
+                    user_id=str(identity.cart_user_id),
+                    product_id=product_id,
+                    display_name=product.display_name,
+                    quantity=quantity,
+                    size=size,
+                    unit_price=product.price,
+                    image_url=product.image_url,
+                    idempotency_key=(
+                        f"{identity.request_id}:resize:add:{product_id}"
+                        f":{size}:{quantity}"
+                    ),
+                ),
+                self.config.memory_port,
+            )
+            if not add.ok:
+                # Adding first is what makes this failure safe: the line the
+                # shopper has is untouched, so there is nothing half-done to
+                # explain and nothing lost.
+                message = add.error.message if add.error else "Cart add failed."
+                return (
+                    f"CART_UPDATE_FAILED: {message} The cart still holds "
+                    f"{product.display_name} in size {held or 'onesize'}, and "
+                    "nothing was removed."
+                )
+
+            remove = remove_cart_item(
+                RemoveCartItemInput(
+                    user_id=str(identity.cart_user_id),
+                    cart_line_id=cart_line_id,
+                    quantity=int(line.get("amount") or 1),
+                    product_id=product_id,
+                    display_name=product.display_name,
+                    idempotency_key=(
+                        f"{identity.request_id}:resize:remove:{cart_line_id}"
+                    ),
+                ),
+                self.config.memory_port,
+            )
+
+            state.cart = self._read_cart(identity.cart_user_id)
+            self._append_product_images(
+                scope.retrieved,
+                state.cart,
+                scope.product_evidence.values(),
+            )
+            # Two mutations, recorded as two. A turn that dies after this still
+            # has to be able to say what the cart holds, and on the unhappy
+            # path what it holds is both sizes.
+            committed: list[dict[str, Any]] = [
+                {
+                    "operation": "added to cart",
+                    "idempotency_key": (
+                        f"{identity.request_id}:resize:add:{product_id}"
+                        f":{size}:{quantity}"
+                    ),
+                    "product_id": product.display_name,
+                    "quantity": quantity,
+                }
+            ]
+            if remove.ok:
+                committed.append(
+                    {
+                        "operation": "removed from cart",
+                        "idempotency_key": (
+                            f"{identity.request_id}:resize:remove:{cart_line_id}"
+                        ),
+                        "cart_line_id": cart_line_id,
+                        "product_id": product.display_name,
+                    }
+                )
+            rendered = _format_size_change_result(
+                display_name=product.display_name,
+                from_size=held,
+                to_size=size,
+                quantity=quantity,
+                cart=state.cart,
+                old_line_removed=remove.ok,
+                old_line_id=cart_line_id,
+            )
+            return rendered, {EFFECTS_KEY: committed}
+
         def _update_cart_items_impl(
             cart_line_id: str,
             quantity: int,
             size: str | None = None,
         ):
-            """Change the quantity of an item already in the cart. Use ONLY when
-            the shopper explicitly asks to change a quantity. Do NOT use for
-            initial adds — use add_cart_items_tool. Do NOT guess the
+            """Change the quantity or the size of an item already in the cart.
+            Use ONLY when the shopper explicitly asks for the change. Do NOT
+            use for initial adds — use add_cart_items_tool. Do NOT guess the
             CART_LINE_ID; call get_cart_tool first if you do not have one.
             """
 
-            if size is not None:
-                # `size` is accepted only so it can be refused. The parameter
-                # does not exist on the cart, and there is no route behind it:
-                # asked to "change the heels to an 8" the model sent
-                # quantity 1 with size 8, the argument went nowhere, the
-                # quantity was set 1 -> 1, and the assistant told the shopper
-                # the size had changed while the cart kept the old one. A
-                # silently dropped argument is worse than a rejected one.
-                return (
-                    "CART_UPDATE_REFUSED: this tool changes quantities only, and "
-                    "a size is a different line rather than a property of one. "
-                    "To change a size: add the new size with add_cart_items_tool "
-                    "FIRST, confirm it is in the cart, then remove the old line "
-                    "with remove_cart_item_tool. Never the other way round -- a "
-                    "failure between the two must leave the shopper with an "
-                    "extra line, never with nothing."
+            if size is not None and str(size).strip():
+                return _change_a_line_size_impl(
+                    cart_line_id,
+                    quantity,
+                    str(size).strip(),
                 )
 
             if quantity == 0:
-                # A size is a different line, not a different quantity, and the
-                # cart has no operation for changing one. Asked for a size 8
-                # against a line added as a size 2, the model reached for the
-                # only move available -- quantity 0 -- which deleted the line,
-                # and then never added the replacement. The shopper corrected
-                # their size and lost the item.
+                # Deleting is a different intent from setting a quantity, and
+                # it has its own tool. The size case used to be routed through
+                # here too, and the model reached for the only move available
+                # -- quantity 0 -- which deleted the line and never added the
+                # replacement: the shopper corrected their size and lost the
+                # item. A size now has a route of its own, above.
                 return (
                     "CART_UPDATE_REFUSED: quantity 0 would delete this line, and "
-                    "this tool changes quantities. If the shopper is changing a "
-                    "SIZE, a size is a different line: add the new size with "
-                    "add_cart_items_tool FIRST, confirm it is in the cart, then "
-                    "remove the old line with remove_cart_item_tool. Never the "
-                    "other way round -- a failure between the two must leave the "
-                    "shopper with an extra line, never with nothing. If they "
-                    "simply want the line gone, use remove_cart_item_tool."
+                    "this tool sets quantities. If the shopper wants the line "
+                    "gone, use remove_cart_item_tool. If they are changing a "
+                    "SIZE, send the new size in `size` with the quantity to "
+                    "keep, and this tool makes the change."
                 )
 
             result = update_cart_item(
@@ -2439,9 +2584,9 @@ class DeepAgentsRuntime:
             quantity: int,
             size: str | None = None,
         ):
-            """Set the exact quantity for one cart line. Use for quantity
-            changes instead of removing and re-adding. Requires CART_LINE_ID
-            from get_cart_tool.
+            """Change one cart line: its quantity, its size, or both. One call
+            moves the line, so never add a size and remove a line to change
+            one. Requires CART_LINE_ID from get_cart_tool.
             """
 
             return normalize_tool_result(

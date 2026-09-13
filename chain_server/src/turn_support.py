@@ -5053,6 +5053,33 @@ def _cart_size_issue(product: Any, size: str | None) -> str:
     return ""
 
 
+def _cart_resize_issue(product: Any, size: str) -> str:
+    """Say why this line cannot move to this size, or "" if it can.
+
+    The add path above is deliberately permissive about a product the catalog
+    states one size for, or no sizes at all: refusing there would block a cart
+    on missing data rather than on a real disagreement. A resize is the other
+    way round. A product sold in one size has no second size to move to, so a
+    size against it is a line the model has misread rather than a size the
+    catalog is quiet about.
+
+    J06 t9 is that turn. Asked to "make those a 7" with heels in a 6 and a tote
+    bag in the cart, it sent the tote's CART_LINE_ID without reading the cart
+    first -- and the tote, onesize, became "size 7" while the heels stayed a 6.
+    Which line the shopper meant is the model's to read; that this one has no
+    size to change is the catalog's to say.
+    """
+
+    sizes = _advertised_sizes(product)
+    if not sizes or sizes == [_ONE_SIZE]:
+        return (
+            f"'{product.display_name}' is sold in one size, so this line has "
+            "no size to change. If the shopper meant a different item, call "
+            "get_cart_tool and use that line's CART_LINE_ID."
+        )
+    return _cart_size_issue(product, size)
+
+
 def _advertised_sizes(product: Any) -> list[str]:
     """Read the sizes the catalog states for a product."""
 

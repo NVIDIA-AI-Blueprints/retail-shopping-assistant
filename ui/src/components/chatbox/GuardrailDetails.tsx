@@ -26,6 +26,21 @@ const checkNames = (check: GuardrailCheckResult): string => {
   return names.join(" · ");
 };
 
+const blockedBy = (check: GuardrailCheckResult): string => {
+  if (check.status !== "block") return "";
+  if (check.violated_categories.includes("non_retail")) return "Topic control";
+  if (check.violated_categories.includes("content_safety")) {
+    return "Content safety";
+  }
+  const called = Object.keys(check.model_calls).filter(
+    (name) => check.model_calls[name] > 0
+  );
+  if (called.length === 1 && called[0] === "multimodal_safety") {
+    return "Video safety";
+  }
+  return "Safety policy";
+};
+
 const GuardrailDetails: React.FC<{ report?: GuardrailReport }> = ({
   report,
 }) => {
@@ -34,6 +49,18 @@ const GuardrailDetails: React.FC<{ report?: GuardrailReport }> = ({
   const summaryStatus = report.checks.some((check) => check.status !== "allow")
     ? "attention"
     : "passed";
+  const summary = report.checks
+    .map((check) => {
+      const blocker = blockedBy(check);
+      return `${check.stage} ${statusLabel(check).toLowerCase()}${
+        blocker ? ` by ${blocker}` : ""
+      }`;
+    })
+    .join(" · ");
+  const totalLatency = report.checks.reduce(
+    (total, check) => total + check.latency_ms,
+    0
+  );
 
   return (
     <details
@@ -41,7 +68,7 @@ const GuardrailDetails: React.FC<{ report?: GuardrailReport }> = ({
     >
       <summary>
         <span className="guardrail-details__marker" aria-hidden="true" />
-        Safety
+        Safety · {summary} · {Math.round(totalLatency)} ms
       </summary>
       <div className="guardrail-details__body">
         {report.checks.map((check) => {

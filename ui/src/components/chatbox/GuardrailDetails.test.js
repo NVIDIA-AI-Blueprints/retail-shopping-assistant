@@ -46,12 +46,14 @@ describe("GuardrailDetails", () => {
     container.remove();
   });
 
-  test("stays collapsed until the subtle safety summary is opened", () => {
+  test("shows the result in the quiet summary while details stay collapsed", () => {
     React.act(() => root.render(<GuardrailDetails report={report} />));
 
     const details = container.querySelector("details");
     expect(details.open).toBe(false);
-    expect(container.querySelector("summary").textContent).toContain("Safety");
+    expect(container.querySelector("summary").textContent).toContain(
+      "Safety · input passed · output passed · 975 ms"
+    );
     expect(container.textContent).toContain("Content safety · Topic control");
     expect(container.textContent).toContain("625 ms");
 
@@ -66,5 +68,29 @@ describe("GuardrailDetails", () => {
     );
 
     expect(container.firstChild).toBeNull();
+  });
+
+  test.each([
+    ["non_retail", { content_safety: 1, topic_control: 1 }, "Topic control"],
+    ["content_safety", { content_safety: 1 }, "Content safety"],
+    ["unsafe_video", { multimodal_safety: 1 }, "Video safety"],
+  ])("names the rail that blocked %s", (category, modelCalls, expected) => {
+    const blocked = {
+      ...report,
+      checks: [
+        {
+          ...report.checks[0],
+          status: "block",
+          violated_categories: [category],
+          model_calls: modelCalls,
+        },
+      ],
+    };
+
+    React.act(() => root.render(<GuardrailDetails report={blocked} />));
+
+    expect(container.querySelector("summary").textContent).toContain(
+      `input blocked by ${expected}`
+    );
   });
 });

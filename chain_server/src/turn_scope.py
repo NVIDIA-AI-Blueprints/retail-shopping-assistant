@@ -59,6 +59,11 @@ class TurnScope:
     catalog_searches: int = 0
     searched_catalog_scopes: list[dict[str, Any]] = field(default_factory=list)
     searched_shopper_scopes: set[tuple[str, str]] = field(default_factory=set)
+    #: Roles already answered as a type this shop does not carry. Told once,
+    #: then refused outright: handed the advertised list a second time, the
+    #: model reads another name off it and tries that instead, which is how
+    #: one jeans role became a walk through all six apparel subcategories.
+    roles_not_advertised: set[str] = field(default_factory=set)
 
     # Forecast budget. A paid external call, and one turn never needs many:
     # a shopper is at one event, on one date. Guarded because roles can run

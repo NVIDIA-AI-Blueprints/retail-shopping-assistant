@@ -933,6 +933,66 @@ def _reviewed_provenance(ctx: SearchContext, attempt: _Attempt) -> StepResult:
         request.taxonomy_status == "agent_selected_type"
         and not agent_selected_shopper_scope
     )
+    if attempt.composed_role:
+        # A composed role is the model covering a garment this shop has no
+        # single word for: "a top" across blouses and sweaters, "shoes" across
+        # flats and heels and boots. That is honest, and it is plural -- the
+        # role is wider than any one advertised name, so it names several.
+        #
+        # Exactly one name is the other thing. Asked to shop a look whose
+        # jeans this shop does not carry, the model filed them under a single
+        # subcategory -- jumpsuits on one turn, skirts on the next -- and both
+        # are real subcategories, so nothing refused them. A navy fitted skirt
+        # came back as the dark bottom, disclosed as a stand-in for a garment
+        # the shopper had named. Something else to wear is not the thing.
+        #
+        # Told once. Handed the advertised list again the model reads another
+        # name off it, which is how one jeans role became a walk through all
+        # six of this department's subcategories at 19k of prompt apiece.
+        selected_subcategories = (
+            request.taxonomy.model_dump().get("subcategory") or []
+        )
+        if len(selected_subcategories) == 1 and (
+            _advertised_scope_match(
+                request.requested_product_type,
+                capabilities,
+            )
+            is None
+        ):
+            with ctx.scope.catalog_lock:
+                already_told = (
+                    candidate_scope_key in ctx.scope.roles_not_advertised
+                )
+                if candidate_scope_key is not None:
+                    ctx.scope.roles_not_advertised.add(candidate_scope_key)
+            if already_told:
+                return _rejected(
+                    attempt,
+                    SearchRejection.TAXONOMY_NOT_ADVERTISED_FOR_SCOPE,
+                    control(
+                        "STOP_TOOL_USE: "
+                        f"'{request.requested_product_type}' is not carried "
+                        "here and that was already said this turn. Do not try "
+                        "another subcategory for it. Leave the role out and "
+                        "tell the shopper plainly which part of the look this "
+                        "shop cannot cover.",
+                        ControlSignal.STOP_TOOL_USE,
+                    ),
+                )
+            return _rejected(
+                attempt,
+                SearchRejection.TAXONOMY_NOT_ADVERTISED_FOR_SCOPE,
+                SEARCH_VALIDATION_ERROR_PREFIX
+                + f"'{request.requested_product_type}' is not an advertised "
+                "product type, and "
+                + json.dumps(selected_subcategories)
+                + " is a different garment rather than this shop's word for "
+                "it. If several advertised subcategories ARE the same garment "
+                "-- shoes are flats and heels and boots -- name all of them. "
+                "Otherwise leave this role out of `scopes` and name it in "
+                "`not_covered`. Do not offer something else to wear as though "
+                "it were the thing asked for.",
+            )
     if (
         request.taxonomy_status == "agent_selected_type"
         and agent_selected_shopper_scope

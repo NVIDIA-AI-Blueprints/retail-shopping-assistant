@@ -12,13 +12,13 @@ one code -- fails here rather than quietly making refusals uncountable again.
 
 from __future__ import annotations
 
-from collections import Counter
-from types import SimpleNamespace
-from typing import Any, Callable
-
 import json
-import pytest
+from collections import Counter
+from collections.abc import Callable
+from types import SimpleNamespace
+from typing import Any
 
+import pytest
 from chain_server.src import catalog_search as catalog_search_mod
 from chain_server.src.agenttypes import State
 from chain_server.src.catalog_search import SearchContext, search_catalog
@@ -916,7 +916,9 @@ def _sized(name, values):
 
 def _catalog_with_sizes():
     from shared.commerce_contracts import (
-        CatalogCapabilities, CatalogTaxonomyCapabilities, CatalogTaxonomyCategory,
+        CatalogCapabilities,
+        CatalogTaxonomyCapabilities,
+        CatalogTaxonomyCategory,
     )
     bags = dict([_sized("tote_bags", ["onesize"]), _sized("clutches", ["onesize"])])
     apparel = dict([_sized("dresses", ["2", "4", "6", "8", "10", "12"])])
@@ -941,6 +943,7 @@ def _catalog_with_sizes():
 
 def _asked(subcategories, sizes):
     from types import SimpleNamespace
+
     from chain_server.src.catalog_search import _size_that_cannot_apply
     return _size_that_cannot_apply(
         SimpleNamespace(subcategory=subcategories),

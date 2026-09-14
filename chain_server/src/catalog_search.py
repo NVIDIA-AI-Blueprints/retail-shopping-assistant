@@ -102,7 +102,6 @@ from .turn_support import (
     _shopper_stated_product_scope,
     _shopper_stated_requirement,
     _taxonomy_hard_constraints,
-    _text_mentions_product_type,
     _tool_search_mode,
     _unsupported_requirement_message,
     stated_media_terms,

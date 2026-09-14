@@ -6,13 +6,11 @@
 from __future__ import annotations
 
 import json
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 import pytest
 import requests
-from pydantic import ValidationError
-
 from chain_server.src.weather import (
     MAX_PROVIDER_RESPONSE_BYTES,
     VISUAL_CROSSING_ATTRIBUTION_URL,
@@ -23,9 +21,9 @@ from chain_server.src.weather import (
     WeatherResult,
     build_weather_client,
 )
+from pydantic import ValidationError
 
-
-NOW = datetime(2026, 7, 27, 18, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 7, 27, 18, 0, tzinfo=UTC)
 TODAY = date(2026, 7, 27)
 ZIPCODE = "98101"
 SECRET = "weather-provider-secret"
@@ -752,6 +750,30 @@ class TestVisualCrossingFailures:
         outcome = client.get_forecast(WeatherRequest(location=ZIPCODE))
 
         assert_failure(outcome, "weather_response_invalid", False)
+
+    def test_a_forecast_that_omits_precipitation_odds_is_still_a_forecast(
+        self,
+    ) -> None:
+        """The provider sends this as null routinely, and the rest is sound.
+
+        Requiring it threw away entire responses. Asked for Cancun a week
+        out, Visual Crossing answered with five days of highs near 87F and
+        rain in the preciptype -- and every one of them carried a null
+        precipprob, so the lookup was reported as unavailable and the shopper
+        got no forecast at all for a place and a date that had been answered
+        in full. Temperature has always been allowed to be absent here; this
+        is the same latitude for the same reason.
+        """
+
+        day = raw_day(TODAY, source="comb")
+        day["precipprob"] = None
+        client, _ = client_for(FakeResponse(payload([day])))
+
+        outcome = client.get_forecast(WeatherRequest(location=ZIPCODE))
+
+        assert isinstance(outcome, WeatherResult)
+        assert outcome.days[0].precipitation_probability_pct is None
+        assert outcome.days[0].temperature_high_f is not None
 
     def test_configured_range_cap_is_enforced(self) -> None:
         days = [TODAY + timedelta(days=offset) for offset in range(4)]

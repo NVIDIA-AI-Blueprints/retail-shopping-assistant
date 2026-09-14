@@ -59,6 +59,7 @@ from .commerce_tools import (
     remove_cart_item,
     update_cart_item,
 )
+from .config import ChainServerConfig
 from .control_signals import (
     EFFECTS_KEY,
     ControlSignal,
@@ -776,11 +777,30 @@ class _AvailabilityItemInput(BaseModel):
     )
 
 
+"""Ceiling on one availability batch, tied to what one search hands over.
+
+These are two halves of one rule and were two independent numbers. A search
+returns up to `search_products_per_call` products; the field below asks for
+every product in one call. When the ceiling was the smaller of the two, the
+call that obeyed the instruction was the call that failed validation.
+
+It cost a turn. A shopper dressing for a wedding got twenty-one products back,
+the model batched all twenty-one exactly as asked, and pydantic refused it for
+holding one more than twenty. Recovering, the model split the batch and then
+re-sent one half eighteen times until the graph hit its recursion limit and
+the turn died before composing -- so a search that had found four dresses and
+confirmed every one of them in stock returned a fallback with no dresses in it.
+"""
+_MAX_AVAILABILITY_ITEMS: int = int(
+    ChainServerConfig.model_fields["search_products_per_call"].default
+)
+
+
 class _CheckAvailabilityInput(BaseModel):
     items: list[_AvailabilityItemInput] = Field(
         ...,
         min_length=1,
-        max_length=20,
+        max_length=_MAX_AVAILABILITY_ITEMS,
         description=(
             "Every product the shopper asked about, in one call. They are "
             "checked together, so four products cost one round trip, not four."
@@ -2143,15 +2163,18 @@ class DeepAgentsRuntime:
                         "the new PRODUCT_REF before adding it."
                     )
                     continue
-                # Whether the catalog sells this size is a fact and is still
-                # checked. Whether the shopper chose it is a reading, and the
-                # model reads the conversation better than any matcher here
-                # could: it resolved the right heel and picked size 7 from "add
-                # the Jade Suede Heels in a 7", then was refused for not also
-                # quoting the shopper back into a field. The size and quantity
-                # now travel into the result instead, where a wrong one is
-                # visible on the turn it happens.
-                size_issue = _cart_size_issue(active_detail.product, size)
+                # Whether the catalog sells this size is a fact. Whether the
+                # shopper settled on it is answered from their own words, all
+                # of them, this turn and every turn before -- so "add the Jade
+                # Suede Heels in a 7" passes on the 7 they typed, and a 7 they
+                # gave five turns ago for something else still counts as said.
+                # What does not pass is a size that appears nowhere they spoke,
+                # which is the only way one nobody picked reaches the cart.
+                size_issue = _cart_size_issue(
+                    active_detail.product,
+                    size,
+                    _shopper_words_this_conversation(state),
+                )
                 if size_issue:
                     blocked.append(f"- PRODUCT_REF '{product_ref}': {size_issue}")
                     continue
@@ -2799,7 +2822,7 @@ class DeepAgentsRuntime:
             # the shopper got an answer.
             if len(requests) == 1:
                 return _one(requests[0])
-            with ThreadPoolExecutor(max_workers=len(requests)) as pool:
+            with ThreadPoolExecutor(max_workers=min(len(requests), 8)) as pool:
                 return "\n\n".join(pool.map(_one, requests))
 
         @tool(return_direct=False)

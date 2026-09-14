@@ -753,6 +753,30 @@ class TestVisualCrossingFailures:
 
         assert_failure(outcome, "weather_response_invalid", False)
 
+    def test_a_forecast_that_omits_precipitation_odds_is_still_a_forecast(
+        self,
+    ) -> None:
+        """The provider sends this as null routinely, and the rest is sound.
+
+        Requiring it threw away entire responses. Asked for Cancun a week
+        out, Visual Crossing answered with five days of highs near 87F and
+        rain in the preciptype -- and every one of them carried a null
+        precipprob, so the lookup was reported as unavailable and the shopper
+        got no forecast at all for a place and a date that had been answered
+        in full. Temperature has always been allowed to be absent here; this
+        is the same latitude for the same reason.
+        """
+
+        day = raw_day(TODAY, source="comb")
+        day["precipprob"] = None
+        client, _ = client_for(FakeResponse(payload([day])))
+
+        outcome = client.get_forecast(WeatherRequest(location=ZIPCODE))
+
+        assert isinstance(outcome, WeatherResult)
+        assert outcome.days[0].precipitation_probability_pct is None
+        assert outcome.days[0].temperature_high_f is not None
+
     def test_configured_range_cap_is_enforced(self) -> None:
         days = [TODAY + timedelta(days=offset) for offset in range(4)]
         client, session = client_for(

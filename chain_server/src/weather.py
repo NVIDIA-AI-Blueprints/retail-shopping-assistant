@@ -252,7 +252,15 @@ class WeatherDay(BaseModel):
 
     date: CalendarDate
     condition: WeatherCondition
-    precipitation_probability_pct: float = Field(ge=0, le=100)
+    #: Absent on plenty of sound forecasts. Visual Crossing sends it as null
+    #: for days it will not put a number on, and it did so for every day of
+    #: every forecast this shop asked for -- so requiring it discarded whole
+    #: usable responses, temperatures and all, and the shopper flying to
+    #: Cancun was told no forecast was available for a place and a date the
+    #: provider had answered in full.
+    precipitation_probability_pct: float | None = Field(
+        default=None, ge=0, le=100
+    )
     precipitation_types: list[PrecipitationType]
     temperature_low_f: float | None = None
     temperature_high_f: float | None = None
@@ -624,8 +632,12 @@ def _normalize_day(
             return weather_failure("weather_outside_forecast_horizon")
         return weather_failure("weather_response_invalid")
 
-    probability = _finite_number(raw_day.get("precipprob"))
-    if probability is None or not 0 <= probability <= 100:
+    # Missing is allowed, out of range is not -- the same treatment the
+    # temperatures below already get.
+    probability = _optional_finite_number(raw_day.get("precipprob"))
+    if isinstance(probability, WeatherFailure):
+        return weather_failure("weather_response_invalid")
+    if probability is not None and not 0 <= probability <= 100:
         return weather_failure("weather_response_invalid")
 
     precipitation_types = _normalize_precipitation_types(raw_day.get("preciptype"))

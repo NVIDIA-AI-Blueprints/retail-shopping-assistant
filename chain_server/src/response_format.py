@@ -653,7 +653,10 @@ def _format_weather_result(result: Any) -> str:
             parts.append(
                 f"{day.temperature_low_f:.0f}-{day.temperature_high_f:.0f}F"
             )
-        parts.append(f"precipitation {day.precipitation_probability_pct:.0f}%")
+        if day.precipitation_probability_pct is not None:
+            parts.append(
+                f"precipitation {day.precipitation_probability_pct:.0f}%"
+            )
         if day.precipitation_types:
             parts.append("as " + ", ".join(day.precipitation_types))
         lines.append("  " + "; ".join(parts))

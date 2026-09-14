@@ -368,6 +368,57 @@ def test_repeated_shopper_scope_is_attributed_to_the_shopper_scope_gate(
     ]
 
 
+def test_a_role_the_shopper_never_typed_is_still_searched_only_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The rule above holds for a role read off a video, not just a typed one.
+
+    It did not. The key it turns on was set only when the shopper's own words
+    held the product type, so a look lifted from a video had no key at all and
+    no retry of one of its roles was ever a duplicate.
+
+    That is the whole of a reported failure. Sent a video of a sweater, jeans
+    and boots, the model searched a role for jeans -- which this catalog does
+    not carry -- under one advertised subcategory after another, five of them,
+    every search succeeding because each was a correct hard-filtered slice of
+    a catalog with no jeans in it. Nine model calls and 122k tokens of prompt
+    to end up where the first search already was.
+
+    Identical to its sibling above but for the one thing that matters: the
+    shopper said nothing about the type.
+    """
+
+    def _with_products(plan, *_args, **_kwargs):
+        return SimpleNamespace(
+            result=SearchCatalogResult(
+                ok=True,
+                products=[
+                    ProductSummary(
+                        product_id="p1",
+                        display_name="A Tote",
+                        price=Money(amount=49.0),
+                        category="tote_bags",
+                    )
+                ],
+            ),
+            fallback_attempted=False,
+            fallback_used=False,
+        )
+
+    monkeypatch.setattr(
+        catalog_search_mod, "execute_catalog_search", _with_products
+    )
+    ctx = _context("I want to shop this look")
+
+    first = search_catalog(ctx, [_scope()])
+    second = search_catalog(ctx, [_scope(semantic_query="roomy tote bags")])
+
+    assert _rejection_codes(first) == []
+    assert _rejection_codes(second) == [
+        SearchRejection.DUPLICATE_SHOPPER_SCOPE
+    ]
+
+
 def test_an_empty_scope_may_be_searched_again_with_a_filter_relaxed() -> None:
     """"No green dress in a 2" must be able to look again without the size.
 

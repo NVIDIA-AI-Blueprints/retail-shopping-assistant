@@ -701,6 +701,56 @@ def test_a_look_with_a_role_this_shop_does_not_stock_still_shops(
     assert "jeans" in text
 
 
+def test_a_carried_type_over_an_uncarried_query_is_not_the_garment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Relabelling the role does not make a skirt into the jeans.
+
+    Checking the declaration caught the model filing jeans under one
+    subcategory, so it stopped declaring jeans. Live, a look whose jeans this
+    shop does not carry came back as ``requested_product_type: "skirts"`` with
+    ``subcategory: ["skirts"]`` -- every field advertised, every field
+    agreeing -- against ``semantic_query: "dark wash straight-leg jeans"``.
+    The substitution had already happened in the model's own head, and the
+    garment the shopper had named survived only in the ranking text. A navy
+    fitted skirt was offered as the dark bottom.
+
+    So the query is read too: a scope may not answer a garment this shop has
+    no value for with one advertised name that is a different garment.
+    """
+
+    searched: list[str] = []
+
+    def _record(plan: Any, *_args: Any, **_kwargs: Any) -> Any:
+        searched.extend(plan.semantic_queries)
+        return SimpleNamespace(
+            result=SearchCatalogResult(ok=True, products=[]),
+            fallback_attempted=False,
+            fallback_used=False,
+        )
+
+    monkeypatch.setattr(catalog_search_mod, "execute_catalog_search", _record)
+
+    ctx = _context("I want to shop this look")
+    result = search_catalog(
+        ctx,
+        [
+            _scope(
+                semantic_query="dark wash straight leg jeans",
+                requested_product_type="dresses",
+                taxonomy={"category": ["apparel"], "subcategory": ["dresses"]},
+            ),
+            _scope(semantic_query="roomy tote bags"),
+        ],
+    )
+
+    assert "dark wash straight leg jeans" not in searched
+    assert "roomy tote bags" in searched
+    assert SearchRejection.TAXONOMY_NOT_ADVERTISED_FOR_SCOPE in (
+        _rejection_codes(result)
+    )
+
+
 def test_the_same_request_twice_is_not_run_a_second_time() -> None:
     """A repair that changed nothing is not a repair, and stops here.
 

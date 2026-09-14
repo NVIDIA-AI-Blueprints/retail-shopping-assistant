@@ -87,6 +87,7 @@ from .turn_support import (
     _catalog_search_scope,
     _duplicates_unavailable_product_type,
     _exact_taxonomy_issue,
+    _garment_with_no_advertised_value,
     _generic_shopper_guidance,
     _multi_subcategory_candidate_limit,
     _normalize_product_text,
@@ -945,12 +946,26 @@ def _reviewed_provenance(ctx: SearchContext, attempt: _Attempt) -> StepResult:
         # flats and heels and boots. That is honest, and it is plural -- the
         # role is wider than any one advertised name, so it names several.
         #
-        # Exactly one name is the other thing. Asked to shop a look whose
-        # jeans this shop does not carry, the model filed them under a single
-        # subcategory -- jumpsuits on one turn, skirts on the next -- and both
-        # are real subcategories, so nothing refused them. A navy fitted skirt
+        # Exactly one name is the other thing, and the query says which. Asked
+        # to shop a look whose jeans this shop does not carry, the model sent a
+        # scope reading `subcategory: ["skirts"]` against `semantic_query:
+        # "dark wash straight-leg jeans"`. Every declared field was advertised
+        # and self-consistent, so checking the declaration could not catch it:
+        # the substitution had already happened, and the garment the shopper
+        # actually named survived only in the ranking text. A navy fitted skirt
         # came back as the dark bottom, disclosed as a stand-in for a garment
         # the shopper had named. Something else to wear is not the thing.
+        #
+        # So the rule is the model's own two fields agreeing: search the
+        # garment you typed. "sweater" is in "cream cable-knit sweater" and
+        # "boot" is in "brown leather block-heel boots", both of which passed
+        # this same turn; "skirt" is nowhere in the jeans query. A real skirt
+        # search written without the word costs one retry to say it again,
+        # which is the safe direction to be wrong in.
+        #
+        # Plural is the honest composed role -- "shoes" as flats and heels and
+        # boots -- and is left alone, because no one word was going to be in
+        # the query.
         #
         # Told once. Handed the advertised list again the model reads another
         # name off it, which is how one jeans role became a walk through all
@@ -958,46 +973,67 @@ def _reviewed_provenance(ctx: SearchContext, attempt: _Attempt) -> StepResult:
         selected_subcategories = (
             request.taxonomy.model_dump().get("subcategory") or []
         )
-        if len(selected_subcategories) == 1 and (
-            _advertised_scope_match(
-                request.requested_product_type,
+        # Two shapes, one answer. The type is unadvertised and one advertised
+        # name was filed under it, or every declared field is advertised and
+        # the query is about a garment this shop has no value for at all.
+        advertised_request = _advertised_scope_match(
+            request.requested_product_type,
+            capabilities,
+        )
+        uncarried_garment = (
+            _garment_with_no_advertised_value(
+                attempt.semantic_query,
                 capabilities,
             )
-            is None
+            if advertised_request is not None
+            else None
+        )
+        if len(selected_subcategories) == 1 and (
+            advertised_request is None or uncarried_garment is not None
         ):
+            # Keyed on the query, not on the declared type: the declared type
+            # is the part that changes when the model tries again, and the
+            # role the shopper named is what has to be remembered.
+            role_key = _normalize_product_text(attempt.semantic_query)
             with ctx.scope.catalog_lock:
-                already_told = (
-                    candidate_scope_key in ctx.scope.roles_not_advertised
-                )
-                if candidate_scope_key is not None:
-                    ctx.scope.roles_not_advertised.add(candidate_scope_key)
+                already_told = role_key in ctx.scope.roles_not_advertised
+                ctx.scope.roles_not_advertised.add(role_key)
             if already_told:
                 return _rejected(
                     attempt,
                     SearchRejection.TAXONOMY_NOT_ADVERTISED_FOR_SCOPE,
                     control(
-                        "STOP_TOOL_USE: "
-                        f"'{request.requested_product_type}' is not carried "
-                        "here and that was already said this turn. Do not try "
-                        "another subcategory for it. Leave the role out and "
-                        "tell the shopper plainly which part of the look this "
-                        "shop cannot cover.",
+                        "STOP_TOOL_USE: this role was already refused this "
+                        "turn. Do not try another subcategory for it. Leave it "
+                        "out and tell the shopper plainly which part of the "
+                        "look this shop cannot cover.",
                         ControlSignal.STOP_TOOL_USE,
                     ),
                 )
+            mismatch = (
+                f"selects {json.dumps(selected_subcategories)} but asks for "
+                f'"{attempt.semantic_query}", and this shop has no '
+                f"'{uncarried_garment}'"
+                if uncarried_garment is not None
+                else f"gives '{request.requested_product_type}', which is not "
+                "an advertised product type, and files it under "
+                + json.dumps(selected_subcategories)
+                + ", which is a different garment rather than this shop's "
+                "word for it"
+            )
             return _rejected(
                 attempt,
                 SearchRejection.TAXONOMY_NOT_ADVERTISED_FOR_SCOPE,
                 SEARCH_VALIDATION_ERROR_PREFIX
-                + f"'{request.requested_product_type}' is not an advertised "
-                "product type, and "
-                + json.dumps(selected_subcategories)
-                + " is a different garment rather than this shop's word for "
-                "it. If several advertised subcategories ARE the same garment "
-                "-- shoes are flats and heels and boots -- name all of them. "
-                "Otherwise leave this role out of `scopes` and name it in "
-                "`not_covered`. Do not offer something else to wear as though "
-                "it were the thing asked for.",
+                + "This scope "
+                + mismatch
+                + ". Search the garment that was asked for, not another one "
+                "standing in for it. If several advertised subcategories ARE "
+                "that garment -- shoes are flats and heels and boots -- name "
+                "all of them. If this shop has no word for it, it is not "
+                "carried: leave the role out of `scopes`, name it in "
+                "`not_covered`, and say so plainly. Do not offer something "
+                "else to wear as though it were the thing asked for.",
             )
     if (
         request.taxonomy_status == "agent_selected_type"

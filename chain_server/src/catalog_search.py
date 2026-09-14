@@ -1064,13 +1064,26 @@ def _no_direct_match_outcome(ctx: SearchContext, attempt: _Attempt) -> StepResul
     lines = attempt.lines
     request = attempt.request
 
+    # A role is a role whoever named it. This key is what stops the same role
+    # being searched twice in a turn, and it used to be set only when the
+    # shopper's typed words contained the product type -- so a look lifted
+    # from a video had no key at all, and no retry of it was ever a duplicate.
+    #
+    # That is how "I love this look" cost nine model calls and 122k tokens of
+    # prompt. The video's jeans are not carried here, so the model filed them
+    # under jumpsuits, and every search succeeded: jumpsuits came back, then
+    # skirts, then blouses, then camisoles, then dresses, each a correct
+    # hard-filtered slice of a catalog that has no jeans, each told to answer
+    # now and none of them a duplicate of the last. Five searches and four
+    # round trips to learn what the first one had already shown.
+    #
+    # Keyed on the role alone, the second of those is a duplicate and says so.
+    # What this does not catch is the first -- one search is the price of
+    # finding out -- and what it does not block is a retry after an empty
+    # result, because the key is withdrawn below when nothing came back.
     shopper_scope_key = (
         (_normalize_product_text(ctx.state.query), candidate_scope_key)
         if candidate_scope_key
-        and _text_mentions_product_type(
-            ctx.state.query,
-            candidate_scope_key,
-        )
         else None
     )
 

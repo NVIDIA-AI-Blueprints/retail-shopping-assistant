@@ -775,6 +775,61 @@ def test_a_word_the_catalog_cannot_filter_on_does_not_cost_the_role(
     assert "tan" in text
 
 
+def test_half_an_advertised_colour_list_is_not_a_narrower_search(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Keeping the advertised half of a disjunction answers a question the
+    model left open, and answers it wrong.
+
+    Shown a video of a cream cable-knit sweater, the model offered "cream or
+    white" because it did not know which word this shop uses. This shop's
+    cream is beige. Keeping only the advertised half filtered to white,
+    excluded all four beige cashmere sweaters, and returned one white lace
+    blouse -- a result narrower than anything anyone asked for.
+
+    So the field goes entirely and the words are ranked on instead. This is
+    the only case whose behaviour changes: a list with nothing advertised in
+    it was already dropped, and one with everything advertised was already
+    left alone.
+    """
+
+    filters: list[dict[str, Any]] = []
+
+    def _record(plan: Any, *_args: Any, **_kwargs: Any) -> Any:
+        filters.append(dict(plan.hard_filters))
+        return SimpleNamespace(
+            result=SearchCatalogResult(ok=True, products=[]),
+            fallback_attempted=False,
+            fallback_used=False,
+        )
+
+    monkeypatch.setattr(catalog_search_mod, "execute_catalog_search", _record)
+
+    # This catalog advertises black and blue, so "black" is the half that
+    # survives the vocabulary check and "cream" is the half that cannot.
+    ctx = _context("I want to shop this look, the cream sweater")
+    result = search_catalog(
+        ctx,
+        [
+            _scope(
+                semantic_query="cream cable-knit sweater",
+                required_constraints={"color": ["cream", "black"]},
+            )
+        ],
+    )
+
+    # The advertised half is not a filter either. Keeping it is the narrowing:
+    # it would have promised every result is black, which is neither what the
+    # shopper asked for nor what the model meant by offering two.
+    assert filters
+    assert all("color" not in sent for sent in filters)
+    assert _rejection_codes(result) == []
+
+    text = result[0] if isinstance(result, tuple) else result
+    assert "SEARCH_WORDS_RANKED_NOT_FILTERED" in text
+    assert "cream" in text
+
+
 def test_a_type_the_catalog_does_not_list_is_disclosed_not_swapped_silently(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

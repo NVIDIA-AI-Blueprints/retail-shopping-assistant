@@ -6,13 +6,11 @@
 from __future__ import annotations
 
 import json
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 import pytest
 import requests
-from pydantic import ValidationError
-
 from chain_server.src.weather import (
     MAX_PROVIDER_RESPONSE_BYTES,
     VISUAL_CROSSING_ATTRIBUTION_URL,
@@ -23,9 +21,9 @@ from chain_server.src.weather import (
     WeatherResult,
     build_weather_client,
 )
+from pydantic import ValidationError
 
-
-NOW = datetime(2026, 7, 27, 18, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 7, 27, 18, 0, tzinfo=UTC)
 TODAY = date(2026, 7, 27)
 ZIPCODE = "98101"
 SECRET = "weather-provider-secret"

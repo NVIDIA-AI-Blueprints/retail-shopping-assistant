@@ -8,7 +8,6 @@ from pathlib import Path
 
 import pytest
 import requests
-
 from chain_server.src import commerce_tools as commerce_tools_mod
 from chain_server.src.commerce_tools import (
     add_cart_item,

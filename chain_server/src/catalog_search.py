@@ -429,11 +429,6 @@ def _reconciled_with_what_is_advertised(
             for advertised_value in advertised_values
         }
         offered = value if isinstance(value, (list, tuple)) else [value]
-        kept = [
-            advertised[str(item).casefold()]
-            for item in offered
-            if str(item).casefold() in advertised
-        ]
         dropped = [
             str(item)
             for item in offered
@@ -442,12 +437,22 @@ def _reconciled_with_what_is_advertised(
         if not dropped:
             continue
         set_aside[name] = dropped
-        if kept:
-            constraints[name] = kept if isinstance(value, (list, tuple)) else kept[0]
-        else:
-            # A filter with nothing left to filter on is not a narrower
-            # search, it is an empty one. The words stay in the query.
-            del constraints[name]
+        # The whole field goes, not just the word that could not be honoured.
+        #
+        # A list here is a disjunction -- cream *or* white -- so keeping
+        # whichever half happens to be advertised makes it narrower, not
+        # safer, and settles a question the model was deliberately leaving
+        # open. Shown a video of a cream cable-knit sweater, it offered
+        # `["cream", "white"]` because it did not know which word this shop
+        # uses. This shop's cream is beige. Keeping the advertised half
+        # filtered to white, excluded all four beige cashmere sweaters, and
+        # returned one white lace blouse.
+        #
+        # Ranking is the weaker promise and the right one: every word is
+        # still in `semantic_query`, beige comes back at the top of it, and
+        # the disclosure says the colour was ranked rather than filtered so
+        # the shopper can judge it themselves.
+        del constraints[name]
 
     attempt.taxonomy = taxonomy
     attempt.required_constraints = constraints

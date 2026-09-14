@@ -366,22 +366,28 @@ def _reconciled_with_what_is_advertised(
         if not dropped:
             continue
         set_aside[name] = dropped
-        # The whole field goes, not just the word that could not be honoured.
+        # What this catalog can honour stays. Only the word it cannot goes.
         #
-        # A list here is a disjunction -- cream *or* white -- so keeping
-        # whichever half happens to be advertised makes it narrower, not
-        # safer, and settles a question the model was deliberately leaving
-        # open. Shown a video of a cream cable-knit sweater, it offered
-        # `["cream", "white"]` because it did not know which word this shop
-        # uses. This shop's cream is beige. Keeping the advertised half
-        # filtered to white, excluded all four beige cashmere sweaters, and
-        # returned one white lace blouse.
+        # Dropping the whole field was tried first and is worse, because the
+        # field *is* the filter: losing it leaves no colour constraint at all.
+        # Asked for a cream sweater as `["cream", "beige"]`, the search ranked
+        # on "cable-knit" alone and returned sweaters in any colour, red among
+        # them. Keeping `["beige"]` returns beige ones.
         #
-        # Ranking is the weaker promise and the right one: every word is
-        # still in `semantic_query`, beige comes back at the top of it, and
-        # the disclosure says the colour was ranked rather than filtered so
-        # the shopper can judge it themselves.
-        del constraints[name]
+        # Keeping half can still be narrower than the model meant -- `["cream",
+        # "white"]` filters to white in a shop whose cream is beige. That is
+        # why the scope prompt asks for every advertised value the shopper's
+        # word could be rather than the single nearest, and why the disclosure
+        # below names what was set aside either way.
+        kept = [
+            advertised[str(item).casefold()]
+            for item in offered
+            if str(item).casefold() in advertised
+        ]
+        if kept:
+            constraints[name] = kept
+        else:
+            del constraints[name]
 
     attempt.required_constraints = constraints
     attempt.set_aside = set_aside

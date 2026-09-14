@@ -829,22 +829,22 @@ def test_a_word_the_catalog_cannot_filter_on_does_not_cost_the_role(
     assert "tan" in text
 
 
-def test_half_an_advertised_colour_list_is_not_a_narrower_search(
+def test_the_advertised_half_of_a_colour_list_still_filters(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Keeping the advertised half of a disjunction answers a question the
-    model left open, and answers it wrong.
+    """Only the word this shop does not use goes; the rest stays a filter.
 
-    Shown a video of a cream cable-knit sweater, the model offered "cream or
-    white" because it did not know which word this shop uses. This shop's
-    cream is beige. Keeping only the advertised half filtered to white,
-    excluded all four beige cashmere sweaters, and returned one white lace
-    blouse -- a result narrower than anything anyone asked for.
+    Dropping the whole field was tried here first, and it is worse. The field
+    *is* the filter, so losing it leaves no colour constraint at all: asked
+    for a cream sweater as `["cream", "beige"]`, the search ranked on
+    "cable-knit" alone and came back with sweaters in any colour, red among
+    them.
 
-    So the field goes entirely and the words are ranked on instead. This is
-    the only case whose behaviour changes: a list with nothing advertised in
-    it was already dropped, and one with everything advertised was already
-    left alone.
+    Keeping half can still be narrower than the model meant -- `["cream",
+    "white"]` filters to white in a shop whose cream is beige -- which is why
+    the scope prompt asks for every advertised value the shopper's word could
+    be rather than the single nearest, and why what could not be honoured is
+    disclosed either way.
     """
 
     filters: list[dict[str, Any]] = []
@@ -872,11 +872,16 @@ def test_half_an_advertised_colour_list_is_not_a_narrower_search(
         ],
     )
 
-    # The advertised half is not a filter either. Keeping it is the narrowing:
-    # it would have promised every result is black, which is neither what the
-    # shopper asked for nor what the model meant by offering two.
+    # The first search is the one this test is about. A later entry is the
+    # relaxed retry the tool runs on its own when a scope finds nothing, and
+    # dropping the filter is the whole point of that one.
     assert filters
-    assert all("color" not in sent for sent in filters)
+    first = filters[0]
+    # Black is advertised, so it still filters -- which is the point: without
+    # it the colour stops constraining anything at all.
+    assert "black" in str(first.get("color"))
+    # Cream is not, so it never reaches the database.
+    assert "cream" not in str(first.get("color")).casefold()
     assert _rejection_codes(result) == []
 
     text = result[0] if isinstance(result, tuple) else result

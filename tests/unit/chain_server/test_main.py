@@ -1036,6 +1036,29 @@ class TestCartFormatting:
 
 
 class TestDeepAgentsRuntimeScopes:
+    def test_chat_model_supports_tool_calls_on_nvidia_build(
+        self, monkeypatch: pytest.MonkeyPatch, base_config
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        captured: dict[str, Any] = {}
+
+        class FakeChatOpenAI:
+            def __init__(self, **kwargs) -> None:
+                captured.update(kwargs)
+
+        monkeypatch.setattr("langchain_openai.ChatOpenAI", FakeChatOpenAI)
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+
+        runtime._create_chat_model()
+
+        assert captured["extra_body"] == {
+            "chat_template_kwargs": {
+                "enable_thinking": False,
+                "force_nonempty_content": True,
+            }
+        }
+
     def test_selected_shopper_context_is_one_current_turn_only_block(
         self,
         base_config,

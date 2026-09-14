@@ -3283,7 +3283,12 @@ class DeepAgentsRuntime:
             # answered in forty seconds is not going to; failing it leaves time
             # to ask again and still finish inside the turn.
             timeout=self._model_request_timeout(),
-            extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+            extra_body={
+                "chat_template_kwargs": {
+                    "enable_thinking": False,
+                    "force_nonempty_content": True,
+                }
+            },
         )
 
     async def _rewrite_response_for_grounding(
@@ -4365,7 +4370,6 @@ Rules:
 #: lane. catalog_text is the prose serialisation of the same attributes and is
 #: deliberately not forwarded -- it carries a marketing summary, and separating
 #: the two would mean parsing prose.
-
 
 
 

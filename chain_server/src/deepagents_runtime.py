@@ -59,6 +59,7 @@ from .commerce_tools import (
     remove_cart_item,
     update_cart_item,
 )
+from .config import ChainServerConfig
 from .control_signals import (
     EFFECTS_KEY,
     ControlSignal,
@@ -776,11 +777,30 @@ class _AvailabilityItemInput(BaseModel):
     )
 
 
+"""Ceiling on one availability batch, tied to what one search hands over.
+
+These are two halves of one rule and were two independent numbers. A search
+returns up to `search_products_per_call` products; the field below asks for
+every product in one call. When the ceiling was the smaller of the two, the
+call that obeyed the instruction was the call that failed validation.
+
+It cost a turn. A shopper dressing for a wedding got twenty-one products back,
+the model batched all twenty-one exactly as asked, and pydantic refused it for
+holding one more than twenty. Recovering, the model split the batch and then
+re-sent one half eighteen times until the graph hit its recursion limit and
+the turn died before composing -- so a search that had found four dresses and
+confirmed every one of them in stock returned a fallback with no dresses in it.
+"""
+_MAX_AVAILABILITY_ITEMS: int = int(
+    ChainServerConfig.model_fields["search_products_per_call"].default
+)
+
+
 class _CheckAvailabilityInput(BaseModel):
     items: list[_AvailabilityItemInput] = Field(
         ...,
         min_length=1,
-        max_length=20,
+        max_length=_MAX_AVAILABILITY_ITEMS,
         description=(
             "Every product the shopper asked about, in one call. They are "
             "checked together, so four products cost one round trip, not four."
@@ -2799,7 +2819,7 @@ class DeepAgentsRuntime:
             # the shopper got an answer.
             if len(requests) == 1:
                 return _one(requests[0])
-            with ThreadPoolExecutor(max_workers=len(requests)) as pool:
+            with ThreadPoolExecutor(max_workers=min(len(requests), 8)) as pool:
                 return "\n\n".join(pool.map(_one, requests))
 
         @tool(return_direct=False)

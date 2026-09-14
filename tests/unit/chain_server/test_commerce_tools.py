@@ -887,6 +887,34 @@ def test_check_product_availability_reports_one_size_for_other_categories() -> N
     )
 
 
+def test_one_search_worth_of_products_fits_in_one_availability_call() -> None:
+    """The batch the tool asks for has to be a batch the tool accepts.
+
+    The field says to pass every product in one call and the search hands over
+    up to `search_products_per_call` of them. While the ceiling was the lower
+    number, obeying the instruction was what failed: twenty-one products came
+    back, twenty-one went out in one call, and pydantic refused it for holding
+    one too many. The turn went to the recursion limit recovering and the
+    shopper's dresses never got written.
+    """
+
+    from chain_server.src.config import ChainServerConfig
+    from chain_server.src.deepagents_runtime import _CheckAvailabilityInput
+
+    one_search = int(
+        ChainServerConfig.model_fields["search_products_per_call"].default
+    )
+
+    accepted = _CheckAvailabilityInput(
+        items=[
+            {"product_ref": f"generated:{index}", "variant_hint": "onesize"}
+            for index in range(one_search)
+        ]
+    )
+
+    assert len(accepted.items) == one_search
+
+
 LEGACY_AGENT_MODULES = frozenset(
     {
         "graph",

@@ -91,7 +91,7 @@ class ChainServerConfig(BaseModel):
     # Service Endpoints
     retriever_port: str = Field(..., description="Catalog retriever service endpoint")
     memory_port: str = Field(..., description="Memory retriever service endpoint")
-    rails_port: str = Field(..., description="Guardrails service endpoint")
+    guardrails_url: str = Field(..., description="Guardrail service endpoint URL")
 
     # Performance Configuration
     memory_length: int = Field(..., description="Maximum memory length for context")
@@ -228,7 +228,7 @@ class ChainServerConfig(BaseModel):
         description="Closed-mode response when a required safety check fails.",
     )
 
-    @validator('llm_port', 'retriever_port', 'memory_port', 'rails_port')
+    @validator('llm_port', 'retriever_port', 'memory_port', 'guardrails_url')
     def validate_urls(cls, v):
         """Validate that URLs are properly formatted."""
         if not v.startswith(('http://', 'https://')):
@@ -340,7 +340,7 @@ def load_config(config_path: str | None = None) -> ChainServerConfig:
     env_overrides = {
         "retriever_port": os.environ.get("CATALOG_RETRIEVER_URL"),
         "memory_port": os.environ.get("MEMORY_RETRIEVER_URL"),
-        "rails_port": os.environ.get("RAILS_URL"),
+        "guardrails_url": os.environ.get("GUARDRAILS_URL"),
         "catalog_search_timeout_seconds": os.environ.get("CATALOG_SEARCH_TIMEOUT_SECONDS"),
         "deepagents_recursion_limit": os.environ.get("DEEPAGENTS_RECURSION_LIMIT"),
         "grounding_editor_reserve_seconds": os.environ.get(

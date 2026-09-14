@@ -2409,12 +2409,12 @@ class TestDeepAgentsRuntimeModelUsage:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         import httpx
-        from chain_server.src.guardrails import NemoGuardrailProvider
+        from chain_server.src.guardrails import GuardrailServiceClient
 
         async def unavailable(_request):
             raise httpx.ConnectError("rails down")
 
-        provider = NemoGuardrailProvider("http://rails", timeout_seconds=1)
+        provider = GuardrailServiceClient("http://rails", timeout_seconds=1)
         await provider._client.aclose()
         provider._client = httpx.AsyncClient(
             transport=httpx.MockTransport(unavailable), timeout=1

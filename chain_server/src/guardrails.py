@@ -67,8 +67,8 @@ class GuardrailProvider(Protocol):
     async def check_output(self, *, text: str) -> GuardrailDecision: ...
 
 
-class NemoGuardrailProvider:
-    """HTTP provider for the independently deployed NeMo guardrails service."""
+class GuardrailServiceClient:
+    """HTTP client for the independently deployed guardrail service."""
 
     def __init__(self, base_url: str, *, timeout_seconds: float) -> None:
         self._url = f"{base_url.rstrip('/')}/v1/checks"

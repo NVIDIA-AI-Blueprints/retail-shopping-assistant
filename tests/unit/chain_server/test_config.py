@@ -29,7 +29,7 @@ def _clear_model_and_service_env(monkeypatch: pytest.MonkeyPatch) -> None:
     for key in (
         "CATALOG_RETRIEVER_URL",
         "MEMORY_RETRIEVER_URL",
-        "RAILS_URL",
+        "GUARDRAILS_URL",
         "CATALOG_SEARCH_TIMEOUT_SECONDS",
         "DEEPAGENTS_RECURSION_LIMIT",
         "DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS",
@@ -105,7 +105,7 @@ class TestChainServerConfigValidation:
             "llm_name",
             "retriever_port",
             "memory_port",
-            "rails_port",
+            "guardrails_url",
             "memory_length",
             "top_k_retrieve",
             "multimodal",
@@ -122,7 +122,7 @@ class TestChainServerConfigValidation:
 
     @pytest.mark.parametrize(
         "url_field",
-        ["llm_port", "retriever_port", "memory_port", "rails_port"],
+        ["llm_port", "retriever_port", "memory_port", "guardrails_url"],
     )
     def test_url_validator_rejects_non_http_schemes(
         self, valid_config_dict: dict, url_field: str
@@ -277,6 +277,19 @@ class TestLoadConfig:
         assert config.guardrails_enabled is True
         assert config.llm_name == "nvidia/nemotron-3-super-120b-a12b"
         assert config.vlm_enabled is True
+
+    def test_guardrails_url_env_override(
+        self, write_yaml, valid_config_dict: dict, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _clear_model_and_service_env(monkeypatch)
+        monkeypatch.setenv("SHARED_CONFIG_ROOT", str(REPO_ROOT / "shared/configs"))
+        monkeypatch.setenv("LLM_API_KEY", "test-key")
+        monkeypatch.setenv("GUARDRAILS_URL", "https://guardrails.example.test")
+        path = write_yaml("config.yaml", valid_config_dict)
+
+        config = load_config(str(path))
+
+        assert config.guardrails_url == "https://guardrails.example.test"
 
     @pytest.mark.parametrize(
         "raw_value,expected",

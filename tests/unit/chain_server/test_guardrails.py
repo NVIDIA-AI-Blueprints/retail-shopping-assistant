@@ -6,7 +6,7 @@ import httpx
 import pytest
 from chain_server.src.guardrails import (
     GuardrailDecision,
-    NemoGuardrailProvider,
+    GuardrailServiceClient,
     stops_turn,
 )
 
@@ -41,7 +41,7 @@ async def test_input_contract_includes_every_normalized_attachment():
             "modalities": ["text", "image", "video"],
         })
 
-    provider = NemoGuardrailProvider("http://rails", timeout_seconds=1)
+    provider = GuardrailServiceClient("http://rails", timeout_seconds=1)
     await provider._client.aclose()
     provider._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     decision = await provider.check_input(
@@ -67,7 +67,7 @@ async def test_input_contract_includes_every_normalized_attachment():
 
 @pytest.mark.asyncio
 async def test_invalid_provider_payload_is_a_sanitized_error():
-    provider = NemoGuardrailProvider("http://rails", timeout_seconds=1)
+    provider = GuardrailServiceClient("http://rails", timeout_seconds=1)
     await provider._client.aclose()
     provider._client = httpx.AsyncClient(
         transport=httpx.MockTransport(

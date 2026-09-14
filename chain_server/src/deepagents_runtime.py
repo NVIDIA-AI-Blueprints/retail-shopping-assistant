@@ -83,7 +83,7 @@ from .conversation_products import (
     format_product_resolution,
 )
 from .fencing import MEDIA_FENCE
-from .guardrails import NemoGuardrailProvider, stops_turn
+from .guardrails import GuardrailServiceClient, stops_turn
 from .media_perception import MEDIA_ONLY_QUERY, MediaPerceptionClient
 from .message_shape import (
     _content_to_text,
@@ -1140,8 +1140,8 @@ class DeepAgentsRuntime:
         self._checkpointer = _build_checkpointer()
         self._profile_registered = False
         self._media_perception = MediaPerceptionClient(config)
-        self._guardrails = guardrails or NemoGuardrailProvider(
-            config.rails_port,
+        self._guardrails = guardrails or GuardrailServiceClient(
+            config.guardrails_url,
             timeout_seconds=config.guardrails_timeout_seconds,
         )
         self._catalog_capabilities = CatalogCapabilitiesClient(
@@ -4365,7 +4365,6 @@ Rules:
 #: lane. catalog_text is the prose serialisation of the same attributes and is
 #: deliberately not forwarded -- it carries a marketing summary, and separating
 #: the two would mean parsing prose.
-
 
 
 

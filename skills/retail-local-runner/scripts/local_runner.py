@@ -275,7 +275,7 @@ def base_env() -> dict[str, str]:
     env["SHARED_CONFIG_ROOT"] = str(REPO_ROOT / "shared" / "configs")
     env["CATALOG_RETRIEVER_URL"] = "http://localhost:8010"
     env["MEMORY_RETRIEVER_URL"] = "http://localhost:8011"
-    env["RAILS_URL"] = "http://localhost:8012"
+    env["GUARDRAILS_URL"] = "http://localhost:8012"
     env["CATALOG_DB_PORT"] = "http://localhost:19530"
     set_if_empty(
         env,

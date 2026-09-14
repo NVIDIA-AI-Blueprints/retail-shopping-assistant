@@ -353,7 +353,7 @@ data:
     llm_name: "meta/llama-3.1-70b-instruct"
     retriever_port: "https://api.nvcf.nvidia.com/v1/embeddings"
     memory_port: "http://memory-retriever:8011"
-    rails_port: "https://api.nvcf.nvidia.com/v1/chat/completions"
+    guardrails_url: "http://rails:8012"
     memory_length: 16384
     top_k_retrieve: 4
     deepagents_recursion_limit: 24
@@ -419,6 +419,7 @@ docker stack deploy -c docker-compose.prod.yaml retail-assistant
 | `VLM_API_KEY` | Optional VLM media perception API key; Compose falls back to `NVIDIA_API_KEY` when unset | When `vlm` uses an authenticated endpoint and `NVIDIA_API_KEY` is unset | `NVIDIA_API_KEY` |
 | `EMBED_API_KEY` | Embedding model API key | Yes | - |
 | `RAIL_API_KEY` | Guardrails API key | Yes | - |
+| `GUARDRAILS_URL` | Chain-server URL for the guardrail service | No | `http://rails:8012` |
 | `RAILS_CONTENT_BASE_URL` / `RAILS_CONTENT_MODEL` | Endpoint and model for current text/image content safety | No | `nvidia/nemotron-3.5-content-safety` |
 | `RAILS_TOPIC_BASE_URL` / `RAILS_TOPIC_MODEL` | Topic-control endpoint and model. The dedicated Topic Control model is preferred; selecting Content Safety applies the configured retail policy through `custom_policy` | No | `nvidia/llama-3.1-nemoguard-8b-topic-control` |
 | `MULTIMODAL_SAFETY_API_KEY` | Key for the independently routed video safety judge; Compose falls back to the VLM/NVIDIA key | When the video safety endpoint requires authentication | `VLM_API_KEY` |
@@ -606,7 +607,7 @@ configured separately in `shared/configs/models.yaml`:
 ```yaml
 retriever_port: "http://localhost:8010"
 memory_port: "http://localhost:8011"
-rails_port: "http://localhost:8012"
+guardrails_url: "http://localhost:8012"
 memory_length: 16384
 deepagents_recursion_limit: 24
 max_catalog_searches_per_turn: 3

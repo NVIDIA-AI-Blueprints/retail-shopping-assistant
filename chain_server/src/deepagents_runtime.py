@@ -2798,8 +2798,18 @@ class DeepAgentsRuntime:
                 )
             )
 
-        @tool(args_schema=_CheckAvailabilityInput, return_direct=False)
-        def check_product_availability_tool(items) -> str:
+        # ``content_and_artifact`` because a repeat is refused with a typed
+        # control signal, and a signal rides on the artifact. Returning the
+        # tuple from a tool declared without it put the pair in the content
+        # instead: the model read ``["STOP_TOOL_USE: ...", {...}]``, the
+        # runtime saw no signal at all, and one turn made this call sixteen
+        # times.
+        @tool(
+            args_schema=_CheckAvailabilityInput,
+            return_direct=False,
+            response_format="content_and_artifact",
+        )
+        def check_product_availability_tool(items):
             """Check whether products are available or in stock. Use ONLY when
             the shopper explicitly asks about availability, stock, or a specific
             size. Requires a PRODUCT_REF established by search or
@@ -2819,7 +2829,7 @@ class DeepAgentsRuntime:
                 asked,
             )
             if held is not None:
-                return held
+                return normalize_tool_result(held)
 
             def _one(entry: dict[str, Any]) -> str:
                 product_ref = entry.get("product_ref") or ""
@@ -2856,10 +2866,10 @@ class DeepAgentsRuntime:
                 asked,
                 answer,
             )
-            return answer
+            return normalize_tool_result(answer)
 
-        @tool(return_direct=False)
-        def check_active_promotions_tool() -> str:
+        @tool(return_direct=False, response_format="content_and_artifact")
+        def check_active_promotions_tool():
             """Check whether a sale, discount, or promotion is currently active.
             Use ONLY when the shopper explicitly asks about promotion status. Do
             NOT use for ordinary affordable browsing, a price ceiling, price
@@ -2869,10 +2879,10 @@ class DeepAgentsRuntime:
 
             held = scope.answer_already_given("check_active_promotions_tool", "")
             if held is not None:
-                return held
+                return normalize_tool_result(held)
             answer = _format_promotions_result(check_active_promotions())
             scope.remember_answer("check_active_promotions_tool", "", answer)
-            return answer
+            return normalize_tool_result(answer)
 
         @tool(return_direct=False)
         def view_cart_total_tool() -> str:

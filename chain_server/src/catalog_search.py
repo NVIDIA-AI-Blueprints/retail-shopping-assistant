@@ -316,101 +316,31 @@ def _reconciled_with_what_is_advertised(
     ctx: SearchContext,
     attempt: _Attempt,
 ) -> StepResult:
-    """Set aside the words this catalog cannot filter on, and search anyway.
+    """Set aside a filter value this catalog cannot honour, and search anyway.
 
-    The advertised vocabulary is loaded, finite, and right here. Until now a
-    value outside it failed schema validation and the scope was handed back to
-    the model to repair -- a round trip through a full prompt to resolve what
-    a set membership test answers.
+    The advertised vocabulary is loaded, finite, and right here. A value
+    outside it failed schema validation and the scope was handed back to the
+    model to repair -- a round trip through a full prompt to resolve what a
+    set membership test answers. "cream" is not one of the colours this shop
+    advertises, so it cannot be a filter; it does not have to be, because it
+    is already in `semantic_query` where the index can rank on it.
 
-    It also cost more than the round trip. A rejected scope is a scope in
-    repair, and repair is policed by locks that can only remember one scope at
-    a time, so a call with two bad values deadlocks: asked to shop a look of a
-    cream sweater, blue jeans and brown boots, the boots were found and the
-    other two spent thirty-one identical attempts each being judged against
-    the other's lock, until the turn died.
+    Filter values only, and product types deliberately not. Set aside a
+    colour and what remains is still a search for the right garment, ranked
+    rather than filtered. Set aside a type and what remains is the
+    department -- and a department is not a family. Every member of footwear
+    is a shoe, but apparel here is 39 skirts, 33 dresses, 18 sweaters, 9
+    blouses, 2 camisoles and 1 jumpsuit, so ranking "dark blue straight leg
+    jeans" across it returns the skirts. A type this shop does not sell stays
+    a schema error, which is the earliest and plainest place to say so.
 
-    Neither word needed the model. "cream" is not one of the sixteen colours
-    this catalog advertises and "jeans" is not one of its twenty
-    subcategories, so neither can be a filter -- and neither has to be. They
-    are already in `semantic_query`, where the index can rank on them. So the
-    filter keeps what the catalog can honour, the rest is set aside and said
-    out loud, and the search runs.
-
-    What this deliberately does not do is guess. Nothing here maps cream to
-    beige or jeans to skirts: a word this catalog cannot filter on is dropped,
-    not translated, and the results are ranked by description instead. Whether
-    what came back is what the shopper asked for is a reading, and the model
-    makes it with the products in front of it rather than from a taxonomy
-    error.
+    Nothing here translates. Cream is not mapped to beige. The words stay in
+    the query, the index ranks on them, and the disclosure says the value was
+    ranked rather than filtered so the shopper can judge it themselves.
     """
 
     capabilities = ctx.capabilities
     set_aside: dict[str, list[str]] = {}
-
-    advertised_categories: dict[str, str] = {}
-    advertised_subcategories: dict[str, str] = {}
-    for category_name, category in capabilities.taxonomy.categories.items():
-        advertised_categories[category_name.casefold()] = category_name
-        for subcategory_name in getattr(category, "subcategories", ()) or ():
-            advertised_subcategories[subcategory_name.casefold()] = (
-                subcategory_name
-            )
-
-    taxonomy = attempt.taxonomy
-    taxonomy = (
-        taxonomy.model_dump() if isinstance(taxonomy, BaseModel) else dict(taxonomy or {})
-    )
-    for field_name, advertised in (
-        ("category", advertised_categories),
-        ("subcategory", advertised_subcategories),
-    ):
-        values = taxonomy.get(field_name) or []
-        if not isinstance(values, (list, tuple)):
-            continue
-        kept = [
-            advertised[str(value).casefold()]
-            for value in values
-            if str(value).casefold() in advertised
-        ]
-        dropped = [
-            str(value)
-            for value in values
-            if str(value).casefold() not in advertised
-        ]
-        if dropped:
-            set_aside[field_name] = dropped
-            taxonomy[field_name] = kept
-
-    if set_aside:
-        # Dropping is only half an answer when the catalog knows the right
-        # one. "show me tote bags" filed under a subcategory named hatboxes
-        # leaves, once hatboxes is gone, a request for tote bags with no
-        # tote bags in it -- which the scope-relation gate then refuses, and
-        # the vocabulary round trip is back by another door.
-        #
-        # The shopper's own words bind to an advertised subcategory exactly,
-        # so the catalog fills it in. This is a lookup, not a guess: a type
-        # that binds to nothing, which is what "jeans" does here, gets
-        # nothing filled in and is ranked on instead.
-        binding = _advertised_scope_match(
-            attempt.requested_product_type,
-            capabilities,
-        )
-        if binding is not None:
-            scope_kind, advertised_name, category_name, _ = binding
-            if scope_kind == "subcategory" and not taxonomy.get("subcategory"):
-                taxonomy["subcategory"] = [advertised_name]
-                taxonomy["category"] = [category_name]
-                # Filled from the shopper's own words, so the search is the
-                # one they asked for and there is nothing to tell them. The
-                # disclosure below is for words that could not be honoured;
-                # this one was.
-                set_aside.pop("subcategory", None)
-                set_aside.pop("category", None)
-            elif scope_kind == "category" and not taxonomy.get("category"):
-                taxonomy["category"] = [category_name]
-                set_aside.pop("category", None)
 
     constraints = attempt.required_constraints
     constraints = (
@@ -453,7 +383,6 @@ def _reconciled_with_what_is_advertised(
         # the shopper can judge it themselves.
         del constraints[name]
 
-    attempt.taxonomy = taxonomy
     attempt.required_constraints = constraints
     attempt.set_aside = set_aside
     return None

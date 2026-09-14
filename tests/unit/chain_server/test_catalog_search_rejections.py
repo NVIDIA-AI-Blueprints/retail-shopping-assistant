@@ -630,20 +630,22 @@ def test_an_advertised_type_rejected_on_its_taxonomy_is_not_called_uncarried() -
 def test_a_look_with_a_role_this_shop_does_not_stock_still_shops(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The reported failure: a look of three, and only one of them searched.
+    """A look of three where one role names a garment this shop does not sell.
 
     Shown a video of a sweater, jeans and boots and asked to shop it, the
-    reply came back with boots alone. The jeans role carried a subcategory
-    this catalog does not have, and the sweater role a colour it does not
-    advertise, so both were refused -- and then spent thirty-one identical
-    retries each, deadlocked against one another's repair lock, while the
-    boots sat finished and unmentioned.
+    reply came back with boots alone: the sweater role carried a colour this
+    catalog does not advertise, so it was refused alongside the jeans, and one
+    role of three survived.
 
-    Both roles search now. The jeans keep their category and lose only the
-    subcategory that does not exist, which is not a substitution: the words
-    are still in the query, the index ranks on them, and whether what comes
-    back is jeans is the model's call to make with the products in front of
-    it.
+    The sweater searches now. Its colour is set aside and ranked on, because
+    what remains is a search for the right garment.
+
+    The jeans do not, and that is the point of this test as much as the
+    sweater is. Setting a type aside would leave the department, and a
+    department is not a family -- ranking "dark blue straight leg jeans"
+    across 39 skirts and 33 dresses returns skirts, and offering those as the
+    jeans substitutes a garment the shopper named. So the type stays a
+    vocabulary error, said at once and not searched around.
     """
 
     searched: list[str] = []
@@ -682,10 +684,11 @@ def test_a_look_with_a_role_this_shop_does_not_stock_still_shops(
         ],
     )
 
+    # The colour was set aside, so the garment is still searched for.
     assert "cream knit sweater" in searched
-    assert "dark blue straight leg jeans" in searched
     assert "brown ankle boots" in searched
-    assert _rejection_codes(result) == []
+    # The type was not: no skirt is offered as the jeans.
+    assert "dark blue straight leg jeans" not in searched
 
     # Twice each at most, not thirty-two: the second is the relaxed retry of
     # a role that found nothing here, which is the tool looking again on its

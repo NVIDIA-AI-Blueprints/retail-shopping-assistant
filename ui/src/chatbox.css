@@ -1406,13 +1406,9 @@ below the composer.
   font-weight: 600;
 }
 
-/* What the vision model saw. Arrives while the turn is still running {
+.messages__item--media-analysis {
   padding: 0 18px 12px;
 }
-
-/* What the vision model saw. Led by its own sentence: it already writes the
-   readable version, and four labelled rows of comma-separated values read like
-   a database record rather than a description of a picture. */
 
 .media-analysis {
   background: linear-gradient(
@@ -1435,7 +1431,6 @@ below the composer.
   text-transform: uppercase;
 }
 
-/* The hero. This is the sentence a person would say. */
 .media-analysis__summary {
   color: var(--ink);
   font-size: 1.02rem;
@@ -1472,7 +1467,6 @@ below the composer.
   margin: 0 0 8px;
 }
 
-/* Colours, materials, style and occasion, folded into one quiet line. */
 .media-analysis__detail {
   color: var(--muted);
   font-size: 0.78rem;

@@ -65,8 +65,12 @@ media_input:
   max_image_bytes: 10485760
   max_video_bytes: 52428800
   max_video_duration_seconds: 120
-# Opt-in. Guardrails is a separate feature, enabled deliberately per deployment
-# rather than assumed on: a rails service that is down fails open and silently
-# costs an input and an output round trip per turn.
+# Deployment default; an explicit request value overrides it.
 guardrails_enabled: false
+guardrails_failure_mode: closed
+guardrails_timeout_seconds: 15.0
+# Overlap text input rails with the first model step; tools still wait for allow.
+guardrails_speculative_main_model_enabled: false
+guardrails_supported_modalities: [text, image, video]
 unsafe_message: "Sorry, I am a shopping assistant that specializes in apparel. Do you have any questions that align better with my expertise?"
+guardrails_unavailable_message: "I cannot safely validate this request right now. Please retry. If it involved a cart change, check your cart first."

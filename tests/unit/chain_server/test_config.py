@@ -11,17 +11,16 @@ validation contract directly, without touching the real container layout.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 import pytest
 import yaml
-from pydantic import ValidationError
-
 from chain_server.src.config import (
     ChainServerConfig,
     load_config,
     load_config_data,
 )
+from pydantic import ValidationError
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -40,6 +39,10 @@ def _clear_model_and_service_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "GROUNDING_REWRITE_MAX_EVIDENCE_CHARS",
         "EXPOSE_AGENT_DIAGNOSTICS",
         "GUARDRAILS_ENABLED",
+        "GUARDRAILS_FAILURE_MODE",
+        "GUARDRAILS_TIMEOUT_SECONDS",
+        "GUARDRAILS_SPECULATIVE_MAIN_MODEL_ENABLED",
+        "GUARDRAILS_SUPPORTED_MODALITIES",
         "WEATHER_ENABLED",
         "WEATHER_API_KEY",
         "LLM_BASE_URL",
@@ -54,7 +57,7 @@ def _clear_model_and_service_env(monkeypatch: pytest.MonkeyPatch) -> None:
 def write_yaml(tmp_path: Path):
     """Helper to drop a YAML config into a temporary directory."""
 
-    def _write(name: str, data: Dict[str, Any]) -> Path:
+    def _write(name: str, data: dict[str, Any]) -> Path:
         path = tmp_path / name
         path.write_text(yaml.safe_dump(data))
         return path
@@ -84,6 +87,7 @@ class TestChainServerConfigValidation:
         assert config.multimodal is True
         assert config.vlm_enabled is False
         assert config.guardrails_enabled is True
+        assert config.guardrails_failure_mode == "closed"
         assert config.grounding_rewrite_enabled is True
         assert config.expose_agent_diagnostics is False
         assert config.weather.enabled is False
@@ -319,6 +323,89 @@ class TestLoadConfig:
         silent.pop("guardrails_enabled")
 
         assert ChainServerConfig(**silent).guardrails_enabled is False
+
+    @pytest.mark.parametrize("raw_value", ["open", "closed"])
+    def test_guardrails_failure_mode_env_override(
+        self,
+        write_yaml,
+        valid_config_dict: dict,
+        monkeypatch: pytest.MonkeyPatch,
+        raw_value: str,
+    ) -> None:
+        _clear_model_and_service_env(monkeypatch)
+        monkeypatch.setenv("SHARED_CONFIG_ROOT", str(REPO_ROOT / "shared/configs"))
+        monkeypatch.setenv("LLM_API_KEY", "test-key")
+        monkeypatch.setenv("GUARDRAILS_FAILURE_MODE", raw_value)
+        path = write_yaml("config.yaml", valid_config_dict)
+
+        config = load_config(str(path))
+
+        assert config.guardrails_failure_mode == raw_value
+
+    def test_guardrails_failure_mode_defaults_closed(
+        self, valid_config_dict: dict
+    ) -> None:
+        silent = dict(valid_config_dict)
+        silent.pop("guardrails_failure_mode", None)
+
+        assert ChainServerConfig(**silent).guardrails_failure_mode == "closed"
+
+    def test_guardrails_failure_mode_rejects_unknown_value(
+        self,
+        write_yaml,
+        valid_config_dict: dict,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _clear_model_and_service_env(monkeypatch)
+        monkeypatch.setenv("SHARED_CONFIG_ROOT", str(REPO_ROOT / "shared/configs"))
+        monkeypatch.setenv("LLM_API_KEY", "test-key")
+        monkeypatch.setenv("GUARDRAILS_FAILURE_MODE", "sometimes")
+        path = write_yaml("config.yaml", valid_config_dict)
+
+        with pytest.raises(
+            ValueError,
+            match="Input should be 'open' or 'closed'",
+        ):
+            load_config(str(path))
+
+    @pytest.mark.parametrize(
+        "raw_value,expected",
+        [
+            ("true", True),
+            ("false", False),
+        ],
+    )
+    def test_speculative_main_model_env_override_accepts_explicit_bools(
+        self,
+        write_yaml,
+        valid_config_dict: dict,
+        monkeypatch: pytest.MonkeyPatch,
+        raw_value: str,
+        expected: bool,
+    ) -> None:
+        _clear_model_and_service_env(monkeypatch)
+        monkeypatch.setenv("SHARED_CONFIG_ROOT", str(REPO_ROOT / "shared/configs"))
+        monkeypatch.setenv("LLM_API_KEY", "test-key")
+        monkeypatch.setenv(
+            "GUARDRAILS_SPECULATIVE_MAIN_MODEL_ENABLED",
+            raw_value,
+        )
+        path = write_yaml("config.yaml", valid_config_dict)
+
+        config = load_config(str(path))
+
+        assert config.guardrails_speculative_main_model_enabled is expected
+
+    def test_speculative_main_model_is_default_off(
+        self,
+        valid_config_dict: dict,
+    ) -> None:
+        assert (
+            ChainServerConfig(
+                **valid_config_dict
+            ).guardrails_speculative_main_model_enabled
+            is False
+        )
 
     def test_guardrails_enabled_env_override_rejects_invalid_bool(
         self, write_yaml, valid_config_dict: dict, monkeypatch: pytest.MonkeyPatch

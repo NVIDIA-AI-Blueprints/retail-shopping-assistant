@@ -12,6 +12,8 @@ ui/public/images
 
 # Memory retriever runtime SQLite database (created at module import time)
 **/context.db
+**/context.db-shm
+**/context.db-wal
 
 # Python
 __pycache__/

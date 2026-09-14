@@ -1,100 +1,21 @@
+# NeMo validates that model-backed built-in flows have prompt definitions at
+# load time. The service overrides their actions with the current Nemotron 3.5
+# request contract before any check runs; these definitions are never used for
+# a serving decision.
 prompts:
   - task: content_safety_check_input $model=content_safety
     content: |
-      Task: Check if there is unsafe content in the user or agent messages in the below conversation in accordance with our safety policy with the below categories. Provide a 'safe' or 'unsafe' rating for both the user message and the agent response. If there is unsafe content, please also provide a list of violated categories according to our safety policy below.
-
-      <BEGIN UNSAFE CONTENT CATEGORIES>
-      S1: Violence.
-      S2: Sexual.
-      S3: Criminal Planning/Confessions.
-      S4: Guns and Illegal Weapons.
-      S5: Controlled/Regulated Substances.
-      S6: Suicide and Self Harm.
-      S7: Sexual (minor).
-      S8: Hate/Identity Hate.
-      S9: PII/Privacy.
-      S10: Harassment.
-      S11: Threat.
-      S12: Profanity.
-      S13: Needs Caution.
-      S14: Other.
-      S15: Manipulation.
-      S16: Fraud/Deception.
-      S17: Malware.
-      S18: High Risk Gov Decision Making.
-      S19: Political/Misinformation/Conspiracy.
-      S20: Copyright/Trademark/Plagiarism.
-      S21: Unauthorized Advice.
-      S22: Illegal Activity.
-      S23: Immoral/Unethical.
-      <END UNSAFE CONTENT CATEGORIES>
-
-      <BEGIN CONVERSATION>
-
-      user: {{ user_input }}
-
-      <END CONVERSATION>
-
-      Provide your safety assessment for the above conversation in the below output JSON format:
-      {"User Safety": safe or unsafe rating for the user message, "Response Safety": safe or unsafe rating for the agent response. Omit if no agent response present. "Safety Categories": a comma-separated list of applicable safety categories from the provided taxonomy. Omit if all safe.}
-
-      Do not include anything other than the output JSON in your response.
-      Output JSON:
+      {{ user_input }}
     output_parser: nemoguard_parse_prompt_safety
-    max_tokens: 50
- 
+    max_tokens: 100
+
   - task: content_safety_check_output $model=content_safety
     content: |
-      Task: Check if there is unsafe content in the user or agent messages in the below conversation in accordance with our safety policy with the below categories. Provide a 'safe' or 'unsafe' rating for both the user message and the agent response. If there is unsafe content, please also provide a list of violated categories according to our safety policy below.
-
-      <BEGIN UNSAFE CONTENT CATEGORIES>
-      S1: Violence.
-      S2: Sexual.
-      S3: Criminal Planning/Confessions.
-      S4: Guns and Illegal Weapons.
-      S5: Controlled/Regulated Substances.
-      S6: Suicide and Self Harm.
-      S7: Sexual (minor).
-      S8: Hate/Identity Hate.
-      S9: PII/Privacy.
-      S10: Harassment.
-      S11: Threat.
-      S12: Profanity.
-      S13: Needs Caution.
-      S14: Other.
-      S15: Manipulation.
-      S16: Fraud/Deception.
-      S17: Malware.
-      S18: High Risk Gov Decision Making.
-      S19: Political/Misinformation/Conspiracy.
-      S20: Copyright/Trademark/Plagiarism.
-      S21: Unauthorized Advice.
-      S22: Illegal Activity.
-      S23: Immoral/Unethical.
-      <END UNSAFE CONTENT CATEGORIES>
-
-      <BEGIN CONVERSATION>
-
-      user: {{ user_input }}
-
-      response: agent: {{ bot_response }}
-
-      <END CONVERSATION>
-
-      Provide your safety assessment for the above conversation in the below output JSON format:
-      {"User Safety": safe or unsafe rating for the user message, "Response Safety": safe or unsafe rating for the agent response. Omit if no agent response present. "Safety Categories": a comma-separated list of applicable safety categories from the provided taxonomy. Omit if all safe.}
-
-      Do not include anything other than the output JSON in your response.
-      Output JSON:
+      User request: Evaluate the following assistant response for safety.
+      Assistant response: {{ bot_response }}
     output_parser: nemoguard_parse_response_safety
-    max_tokens: 50
+    max_tokens: 100
 
   - task: topic_safety_check_input $model=topic_control
     content: |
-      You are a retail shopping assistant for a store whose sellable products come from the loaded catalog. Your primary function is to help customers browse, compare, and purchase catalog products. Customers may ask about specific products, compare products, ask about product attributes, request updates to their shopping cart, ask for recommendations, or ask follow-up questions about items they have discussed earlier in the conversation. Please allow for conversational context to better assist them.
-
-      Available Specialists and their functions are as follows. Visualizer (visualizer): Use for customer requests related to trying on products or visualizing items in a scene. Cart Manager (cart_node): Use for any queries about purchasing, adding items to the cart, or removing items from the cart. Product Finder (search): Use for all searches regarding product availability, specific product information, or finding new items. General Assistant (chatter): Use for general conversation, small talk, and any queries that do not fall into the above categories.
-
-      Content guidelines:
-      - ON-TOPIC (always engage): greetings and small talk; questions about products we sell; product attributes such as material, size, color, style, fit, price, durability, quality, and care instructions; side-by-side comparisons between products (including questions about which product is better, more durable, higher quality, or a better value); product recommendations based on occasion, style, or preference; cart and checkout operations; follow-up questions about products previously mentioned in the conversation.
-      - OFF-TOPIC (refuse): personal opinions or beliefs unrelated to products, non-shopping topics, personal details about the assistant or its creators, politics, religion, medical or legal advice, or anything clearly unrelated to retail shopping.
+      Determine whether the shopper request is within retail shopping scope.

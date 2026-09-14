@@ -3716,33 +3716,40 @@ def _record_language_model_failure(state: State) -> None:
     )
 
 
-def _record_safety_model_usage(state: State, mode: str, *, ok: bool = True) -> None:
+def _record_safety_model_usage(
+    state: State,
+    mode: str,
+    *,
+    model_calls: dict[str, int],
+    ok: bool = True,
+) -> None:
     status = "used" if ok else "failed"
-    detail = "Input and output safety checks" if ok else "Guardrails check failed open"
-    if mode == "input":
+    calls = {role: max(0, int(count)) for role, count in model_calls.items()}
+    if not calls and not ok:
+        calls = (
+            {"content_safety": 1, "topic_control": 1}
+            if mode == "input"
+            else {"content_safety": 1}
+        )
+    details = {
+        "content_safety": "Content safety check",
+        "topic_control": "Retail topic check",
+        "multimodal_safety": "Video safety and retail relevance",
+    }
+    for role, count in calls.items():
+        if count <= 0:
+            continue
         _add_model_usage(
             state,
-            "content_safety",
+            role,
             status=status,
-            calls=1,
-            detail=detail,
+            calls=count,
+            detail=(
+                details.get(role, "Guardrail model check")
+                if ok
+                else "Guardrails check failed"
+            ),
         )
-        _add_model_usage(
-            state,
-            "topic_control",
-            status=status,
-            calls=1,
-            detail="Input topic check" if ok else "Guardrails topic check failed open",
-        )
-        return
-
-    _add_model_usage(
-        state,
-        "content_safety",
-        status=status,
-        calls=1,
-        detail=detail,
-    )
 
 
 def _add_model_usage(
@@ -4474,6 +4481,29 @@ def _images_in_product_order(
         **{name: images[name] for name in named},
         **{name: url for name, url in images.items() if name not in seen},
     }
+
+
+def _trusted_catalog_images(
+    images: dict[str, str], products: list[dict[str, Any]]
+) -> dict[str, str]:
+    """Keep only curated local catalog assets belonging to emitted products."""
+
+    product_names = {
+        str(product.get("display_name") or product.get("name") or "")
+        for product in products
+    }
+    trusted: dict[str, str] = {}
+    for name, url in images.items():
+        normalized = str(url or "")
+        if name not in product_names:
+            continue
+        if not re.fullmatch(r"/images/[A-Za-z0-9][A-Za-z0-9._/-]*", normalized):
+            continue
+        relative = normalized.removeprefix("/images/")
+        if not relative or ".." in relative.split("/"):
+            continue
+        trusted[name] = normalized
+    return trusted
 
 
 def _search_attribute_facts(product: Any) -> dict[str, str]:

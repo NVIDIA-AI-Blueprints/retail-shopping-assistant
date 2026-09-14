@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from threading import Lock
 from typing import Any
@@ -87,6 +88,48 @@ class ShopperSkillActivationError(RuntimeError):
     """Raised when a turn tries to finish before required skill activation."""
 
 
+class SpeculativeToolExecutionBlocked(RuntimeError):
+    """Raised when speculative agent work reaches a tool before input approval."""
+
+
+class InputGuardrailToolGate:
+    """Keep every tool behind the input-guardrail decision.
+
+    The speculative path may run the first model step while input guardrails are
+    still pending. Deep Agents must execute the activation tool before it can
+    take a second model step, so gating all tools bounds ordinary speculative
+    work to that first model request. A denied gate never calls the wrapped
+    handler, including for activation, catalog, and cart tools.
+    """
+
+    def __init__(self) -> None:
+        self._decision = "pending"
+        self._ready = asyncio.Event()
+
+    def allow(self) -> None:
+        if self._decision == "pending":
+            self._decision = "allow"
+            self._ready.set()
+
+    def deny(self) -> None:
+        if self._decision == "pending":
+            self._decision = "deny"
+            self._ready.set()
+
+    async def wait(self) -> None:
+        await self._ready.wait()
+        if self._decision != "allow":
+            raise SpeculativeToolExecutionBlocked(
+                "Input guardrails did not approve tool execution."
+            )
+
+    def require_allowed(self) -> None:
+        if self._decision != "allow":
+            raise SpeculativeToolExecutionBlocked(
+                "Input guardrails have not approved tool execution."
+            )
+
+
 _ACTIVATION_PROMPT = f"""## Required Shopper Skill Selection
 
 Before answering this turn or using any shopping tool, call
@@ -133,6 +176,7 @@ class ShopperSkillActivationMiddleware(AgentMiddleware):
             | None
         ) = None,
         activation_system_prompt: str = "",
+        input_guardrail_tool_gate: InputGuardrailToolGate | None = None,
     ) -> None:
         self._request_id = request_id
         self._skill_descriptions = dict(skill_descriptions)
@@ -165,6 +209,7 @@ class ShopperSkillActivationMiddleware(AgentMiddleware):
                 if name in self._skill_descriptions
             )
         )
+        self._input_guardrail_tool_gate = input_guardrail_tool_gate
         self._lock = Lock()
 
     def activate(
@@ -279,6 +324,9 @@ class ShopperSkillActivationMiddleware(AgentMiddleware):
     ) -> Any:
         """Reject a synchronous shopping call without prior activation."""
 
+        if self._input_guardrail_tool_gate is not None:
+            self._input_guardrail_tool_gate.require_allowed()
+
         rejection = self._tool_call_rejection(request)
         if rejection is None:
             return handler(request)
@@ -290,6 +338,9 @@ class ShopperSkillActivationMiddleware(AgentMiddleware):
         handler: Callable[[ToolCallRequest], Awaitable[Any]],
     ) -> Any:
         """Reject an asynchronous shopping call without prior activation."""
+
+        if self._input_guardrail_tool_gate is not None:
+            await self._input_guardrail_tool_gate.wait()
 
         rejection = self._tool_call_rejection(request)
         if rejection is None:

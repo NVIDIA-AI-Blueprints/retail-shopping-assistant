@@ -131,9 +131,6 @@ const ChatMessage = React.forwardRef<HTMLDivElement, ChatMessageProps>(
       }
     }
 
-    // What the vision model saw. In the message stream rather than beside it,
-    // so it sits above the results it precedes: it arrives seconds after the
-    // upload and the products land a minute later.
     if (role === "media_analysis") {
       return (
         <div className="messages__item messages__item--media-analysis" ref={ref}>

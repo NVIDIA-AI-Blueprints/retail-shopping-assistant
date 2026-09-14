@@ -549,6 +549,12 @@ while; later starts read the cache. The NIM reserves two GPUs, `device_ids`
 before the first start — the container runs as `${UID}`, and a first start that
 cannot write re-downloads on every restart.
 
+The complete four-GPU profile keeps Nemotron 3 Super on GPUs 0-1, places Omni
+and Content Safety under explicit memory caps on GPU 2, and places Topic Control
+with the smaller embedding NIMs on GPU 3. See the
+[deployment guide](docs/DEPLOYMENT.md#step-2-verify-gpu-setup) before starting
+all local roles together.
+
 No tracked configuration changes. The environment is read before
 `shared/configs/models.yaml`, so `LLM_BASE_URL` and `LLM_MODEL` are enough and
 `models.yaml` is left alone.

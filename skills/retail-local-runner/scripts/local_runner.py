@@ -8,6 +8,7 @@ the Milvus infrastructure services from docker-compose.yaml.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import os
 import shlex
@@ -16,13 +17,12 @@ import socket
 import subprocess
 import sys
 import time
+from collections.abc import Iterable, Mapping
 from http.client import HTTPException
 from pathlib import Path
-from typing import Iterable, Mapping
 from urllib.error import URLError
 from urllib.parse import urlparse
 from urllib.request import urlopen
-
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 RUN_DIR = REPO_ROOT / ".local-run"
@@ -54,7 +54,7 @@ PYTHON_SERVICES = {
         "requirements": REPO_ROOT / "guardrails" / "src" / "requirements.txt",
         "module": "src.main:app",
         "port": 8012,
-        "health_url": None,
+        "health_url": "http://localhost:8012/health",
         "pythonpath": [REPO_ROOT / "guardrails" / "src", REPO_ROOT / "guardrails"],
     },
     "catalog-retriever": {
@@ -230,6 +230,7 @@ def configure(args: argparse.Namespace) -> None:
     image_embed_url = nim_endpoint(nim_host, 8002)
     content_url = nim_endpoint(nim_host, 8003)
     topic_url = nim_endpoint(nim_host, 8004)
+    vlm_url = nim_endpoint(nim_host, 8005)
     write_text(
         MODEL_ENV,
         "\n".join(
@@ -242,7 +243,13 @@ def configure(args: argparse.Namespace) -> None:
                 f'export IMAGE_EMBED_BASE_URL="{image_embed_url}"',
                 'export IMAGE_EMBED_MODEL="nvidia/nvclip"',
                 f'export RAILS_CONTENT_BASE_URL="{content_url}"',
+                'export RAILS_CONTENT_MODEL="nvidia/nemotron-3.5-content-safety"',
                 f'export RAILS_TOPIC_BASE_URL="{topic_url}"',
+                'export RAILS_TOPIC_MODEL="nvidia/llama-3.1-nemoguard-8b-topic-control"',
+                f'export VLM_BASE_URL="{vlm_url}"',
+                'export VLM_MODEL="nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"',
+                f'export MULTIMODAL_SAFETY_BASE_URL="{vlm_url}"',
+                'export MULTIMODAL_SAFETY_MODEL="nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"',
                 "",
             ]
         ),
@@ -259,6 +266,8 @@ def base_env() -> dict[str, str]:
         set_if_empty(env, "LLM_API_KEY", default_key)
         set_if_empty(env, "EMBED_API_KEY", default_key)
         set_if_empty(env, "RAIL_API_KEY", default_key)
+        set_if_empty(env, "VLM_API_KEY", default_key)
+        set_if_empty(env, "MULTIMODAL_SAFETY_API_KEY", default_key)
         set_if_empty(env, "NVIDIA_API_KEY", default_key)
     if env.get("RAIL_API_KEY") and not env.get("NVIDIA_API_KEY"):
         env["NVIDIA_API_KEY"] = env["RAIL_API_KEY"]
@@ -486,10 +495,8 @@ def stop_process(service: str, timeout: int = 15) -> None:
         time.sleep(0.5)
 
     print(f"{service}: SIGTERM timed out; sending SIGKILL")
-    try:
+    with contextlib.suppress(ProcessLookupError):
         os.killpg(pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
     pid_file(service).unlink(missing_ok=True)
 
 
@@ -568,8 +575,8 @@ def start(args: argparse.Namespace) -> None:
         raise SystemExit(f"memory-retriever did not become healthy.\n{last_log_lines('memory-retriever')}")
 
     start_python_service("guardrails", PYTHON_SERVICES["guardrails"], skip_install=args.skip_install)
-    if not wait_port("guardrails", 8012, 120):
-        raise SystemExit(f"guardrails did not open port 8012.\n{last_log_lines('guardrails')}")
+    if not wait_http("guardrails", "http://localhost:8012/health", 120):
+        raise SystemExit(f"guardrails did not become healthy.\n{last_log_lines('guardrails')}")
 
     start_python_service("catalog-retriever", PYTHON_SERVICES["catalog-retriever"], skip_install=args.skip_install)
     if not wait_http("catalog-retriever", "http://localhost:8010/health", args.catalog_timeout):

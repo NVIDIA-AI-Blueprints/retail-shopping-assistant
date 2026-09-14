@@ -120,3 +120,11 @@ test("Guest query payload omits shopper_profile_id", () => {
 
   expect(payload).not.toHaveProperty("shopper_profile_id");
 });
+
+test("Query payload overrides guardrails only after an explicit toggle", () => {
+  const session = getOrCreateUserSession();
+
+  expect(createApiRequest(session, "safe", "", true).guardrails).toBe(true);
+  expect(createApiRequest(session, "bypass", "", false).guardrails).toBe(false);
+  expect(createApiRequest(session, "default")).not.toHaveProperty("guardrails");
+});

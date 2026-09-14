@@ -3,6 +3,10 @@
 
 services:
 
+  # Four-GPU layout: the app LLM owns 0-1; Omni and Content Safety share 2
+  # under explicit memory caps; Topic Control and the small embedders share 3.
+  # Content and Topic remain on separate GPUs because input rails run in parallel.
+
   nemotron:
     image: nvcr.io/nim/nvidia/nemotron-3-super-120b-a12b:2.0.4
     ports:
@@ -83,7 +87,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ['2']
+              device_ids: ['3']
               capabilities: [gpu]
     restart: "no"
     networks:
@@ -96,11 +100,16 @@ services:
       start_period: 60s
 
   nemotron-omni:
-    image: nvcr.io/nim/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:latest
+    image: nvcr.io/nim/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:2.0.4-variant
     ports:
       - "8005:8000"
     environment:
       - NGC_API_KEY=${NGC_API_KEY}
+      - NIM_PASSTHROUGH_ARGS=${OMNI_NIM_PASSTHROUGH_ARGS:---gpu-memory-utilization 0.40}
+      # Safety favors coverage over throughput. The request still uses the
+      # model's documented temporal frame sampling, but EVS must not discard
+      # another fraction of the resulting video tokens.
+      - NIM_VIDEO_PRUNING_RATE=${OMNI_NIM_VIDEO_PRUNING_RATE:-0}
     volumes:
       - ${LOCAL_NIM_CACHE}:/opt/nim/.cache
     user: "${NIM_UID:-1000}"
@@ -110,7 +119,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ['0','1']
+              device_ids: ['2']
               capabilities: [gpu]
     restart: "no"
     networks:
@@ -133,18 +142,19 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ['2']
+              device_ids: ['3']
               capabilities: [gpu]
     restart: "no"
     networks:
       - shopping-network
-  content:
-    image: nvcr.io/nim/nvidia/llama-3.1-nemoguard-8b-content-safety:1.10.1
+  content-safety:
+    image: nvcr.io/nim/nvidia/nemotron-3.5-content-safety:2.0.5-variant
+    shm_size: "32gb"
     ports:
       - "8003:8000"
     environment:
       - NGC_API_KEY=${NGC_API_KEY}
-      - NIM_KVCACHE_PERCENT=.4
+      - NIM_PASSTHROUGH_ARGS=${CONTENT_SAFETY_NIM_PASSTHROUGH_ARGS:---gpu-memory-utilization 0.50}
     volumes:
       - ${LOCAL_NIM_CACHE}:/opt/nim/.cache
     user: "${NIM_UID:-1000}"
@@ -159,13 +169,14 @@ services:
     networks:
       - shopping-network
 
-  topic_control:
-    image: nvcr.io/nim/nvidia/llama-3.1-nemoguard-8b-topic-control:1.0.0
+  topic-control:
+    image: nvcr.io/nim/nvidia/llama-3.1-nemoguard-8b-topic-control:1.10.1
+    shm_size: "16gb"
     ports:
       - "8004:8000"
     environment:
       - NGC_API_KEY=${NGC_API_KEY}
-      - NIM_KVCACHE_PERCENT=.4
+      - NIM_KVCACHE_PERCENT=${TOPIC_CONTROL_NIM_KVCACHE_PERCENT:-0.65}
     volumes:
       - ${LOCAL_NIM_CACHE}:/opt/nim/.cache
     user: "${NIM_UID:-1000}"

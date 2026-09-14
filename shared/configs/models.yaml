@@ -32,14 +32,14 @@ local_nims:
 
     content_safety_nim:
       compose_file: docker-compose-nim-local.yaml
-      compose_service: content
-      base_url: "http://content:8000/v1"
-      model: "nvidia/llama-3.1-nemoguard-8b-content-safety"
+      compose_service: content-safety
+      base_url: "http://content-safety:8000/v1"
+      model: "nvidia/nemotron-3.5-content-safety"
 
     topic_control_nim:
       compose_file: docker-compose-nim-local.yaml
-      compose_service: topic_control
-      base_url: "http://topic_control:8000/v1"
+      compose_service: topic-control
+      base_url: "http://topic-control:8000/v1"
       model: "nvidia/llama-3.1-nemoguard-8b-topic-control"
 
 models:
@@ -80,18 +80,36 @@ models:
     model: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"
     api_key_env: VLM_API_KEY
 
+  # This role receives complete video objects for safety evaluation. Images use
+  # the purpose-built content_safety model, which does not accept video.
+  multimodal_safety:
+    source: endpoint
+    provider: openai_compatible
+    local_service: nemotron_omni
+    base_url_env: MULTIMODAL_SAFETY_BASE_URL
+    base_url: "https://integrate.api.nvidia.com/v1"
+    model_env: MULTIMODAL_SAFETY_MODEL
+    model: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"
+    api_key_env: MULTIMODAL_SAFETY_API_KEY
+
   content_safety:
     source: endpoint
     provider: nim_guardrails
+    local_service: content_safety_nim
     base_url_env: RAILS_CONTENT_BASE_URL
     base_url: "https://integrate.api.nvidia.com/v1"
-    model: "nvidia/llama-3.1-nemoguard-8b-content-safety"
+    model_env: RAILS_CONTENT_MODEL
+    model: "nvidia/nemotron-3.5-content-safety"
     api_key_env: RAIL_API_KEY
 
+  # Prefer the dedicated Topic Control model. Point this role at Content Safety
+  # to use the same retail policy through chat_template_kwargs.custom_policy.
   topic_control:
     source: endpoint
     provider: nim_guardrails
+    local_service: topic_control_nim
     base_url_env: RAILS_TOPIC_BASE_URL
     base_url: "https://integrate.api.nvidia.com/v1"
+    model_env: RAILS_TOPIC_MODEL
     model: "nvidia/llama-3.1-nemoguard-8b-topic-control"
     api_key_env: RAIL_API_KEY

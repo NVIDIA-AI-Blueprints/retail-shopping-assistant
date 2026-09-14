@@ -2163,15 +2163,18 @@ class DeepAgentsRuntime:
                         "the new PRODUCT_REF before adding it."
                     )
                     continue
-                # Whether the catalog sells this size is a fact and is still
-                # checked. Whether the shopper chose it is a reading, and the
-                # model reads the conversation better than any matcher here
-                # could: it resolved the right heel and picked size 7 from "add
-                # the Jade Suede Heels in a 7", then was refused for not also
-                # quoting the shopper back into a field. The size and quantity
-                # now travel into the result instead, where a wrong one is
-                # visible on the turn it happens.
-                size_issue = _cart_size_issue(active_detail.product, size)
+                # Whether the catalog sells this size is a fact. Whether the
+                # shopper settled on it is answered from their own words, all
+                # of them, this turn and every turn before -- so "add the Jade
+                # Suede Heels in a 7" passes on the 7 they typed, and a 7 they
+                # gave five turns ago for something else still counts as said.
+                # What does not pass is a size that appears nowhere they spoke,
+                # which is the only way one nobody picked reaches the cart.
+                size_issue = _cart_size_issue(
+                    active_detail.product,
+                    size,
+                    _shopper_words_this_conversation(state),
+                )
                 if size_issue:
                     blocked.append(f"- PRODUCT_REF '{product_ref}': {size_issue}")
                     continue

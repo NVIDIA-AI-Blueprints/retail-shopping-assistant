@@ -5020,7 +5020,11 @@ def _cart_line_size(cart: Any, product_id: str) -> str | None:
     return None
 
 
-def _cart_size_issue(product: Any, size: str | None) -> str:
+def _cart_size_issue(
+    product: Any,
+    size: str | None,
+    shopper_words: str = "",
+) -> str:
     """Say why this size cannot be added, or "" if it can.
 
     Every product in the catalog states its sizes -- 136 carry a real range and
@@ -5028,6 +5032,20 @@ def _cart_size_issue(product: Any, size: str | None) -> str:
     rather than trusting the caller to have asked. Left to prose alone, "always
     confirm the size" held three times in four: a dress with six sizes reached
     the cart with no size at all.
+
+    Sending no size is not the only way to add one nobody picked. Asked plainly
+    to "add the Jade Suede Heels", the model read the range off the product
+    detail, sent a 5, and passed a check that only asks whether the shop sells
+    a 5 -- so the empty-size gate held and the shopper still got a size they
+    had never mentioned, announced to them as "the smallest size they come in".
+    A rule they never gave.
+
+    So the size has to be one the conversation settles. Named is enough,
+    whenever it was named: "dresses in a 2" five turns back still settles "add
+    the lace one". A superlative is enough too, because it names a size by
+    description -- but it has to be the shopper's superlative, not one the
+    model supplies to fill the gap. Anything else is not a size to check, it
+    is a size to ask for.
     """
 
     sizes = _advertised_sizes(product)
@@ -5050,7 +5068,43 @@ def _cart_size_issue(product: Any, size: str | None) -> str:
             f"Available: {', '.join(sizes)}. Ask the shopper which of those "
             "they want. Nothing was added."
         )
+    if shopper_words and not _size_the_conversation_settles(
+        chosen, sizes, shopper_words
+    ):
+        return (
+            f"SIZE NOT CHOSEN. The shopper has not said what size, so "
+            f"'{chosen}' is yours rather than theirs. "
+            f"'{product.display_name}' is sold in {', '.join(sizes)}. Ask "
+            "which one. Nothing was added."
+        )
     return ""
+
+
+#: The shopper's own way of naming a size without saying the number.
+_SMALLEST_WORDS = ("smallest", "littlest", "tiniest")
+_LARGEST_WORDS = ("largest", "biggest")
+
+
+def _size_the_conversation_settles(
+    chosen: str,
+    sizes: list[str],
+    shopper_words: str,
+) -> bool:
+    """Whether the shopper's own words settle on this size.
+
+    Word boundaries matter more than they look: a bare `in` match puts "5"
+    inside "$159.99" and turns a price the assistant quoted into a size the
+    shopper chose.
+    """
+
+    if re.search(rf"\b{re.escape(chosen)}\b", shopper_words, flags=re.IGNORECASE):
+        return True
+    spoken = shopper_words.casefold()
+    if any(word in spoken for word in _SMALLEST_WORDS):
+        return chosen.casefold() == sizes[0].casefold()
+    if any(word in spoken for word in _LARGEST_WORDS):
+        return chosen.casefold() == sizes[-1].casefold()
+    return False
 
 
 def _cart_resize_issue(product: Any, size: str) -> str:

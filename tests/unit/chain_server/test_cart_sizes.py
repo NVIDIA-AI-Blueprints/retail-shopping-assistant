@@ -221,6 +221,63 @@ class TestCartSizeGate:
         assert _cart_size_issue(self._product("2, 4, 6"), "4") == ""
         assert "SIZE REQUIRED" in _cart_size_issue(self._product("2, 4, 6"), None)
 
+    def test_a_size_the_shopper_never_mentioned_is_not_theirs_to_add(self) -> None:
+        """Sending no size is not the only way to add one nobody picked.
+
+        Asked plainly to "add the Jade Suede Heels", the model read the range
+        off the product detail and sent the smallest, which the sold-here
+        check waves through -- so the shopper got a 5 they had never mentioned,
+        announced as "the smallest size they come in", a rule they never gave.
+        """
+
+        issue = _cart_size_issue(
+            self._product(["2", "4", "6"]),
+            "2",
+            "add the Jade Suede Heels to my cart",
+        )
+
+        assert "SIZE NOT CHOSEN" in issue
+        assert "Nothing was added" in issue
+
+    def test_a_size_named_turns_ago_is_still_the_shopper_s_size(self) -> None:
+        """"dresses in a 2" settles "add the lace one" five turns later."""
+
+        assert (
+            _cart_size_issue(
+                self._product(["2", "4", "6"]),
+                "2",
+                "show me dresses in size 2\nadd the lace one",
+            )
+            == ""
+        )
+
+    def test_the_shopper_may_name_a_size_by_describing_it(self) -> None:
+        """"the smallest one" names a size without saying the number."""
+
+        assert (
+            _cart_size_issue(
+                self._product(["2", "4", "6"]), "2", "add the smallest one"
+            )
+            == ""
+        )
+        assert "SIZE NOT CHOSEN" in _cart_size_issue(
+            self._product(["2", "4", "6"]), "6", "add the smallest one"
+        )
+
+    def test_a_number_in_a_price_is_not_a_size_the_shopper_chose(self) -> None:
+        """Without word boundaries, "2" hides inside "$129.99"."""
+
+        assert "SIZE NOT CHOSEN" in _cart_size_issue(
+            self._product(["2", "4", "6"]), "2", "I like the one at $129.99"
+        )
+
+    def test_a_onesize_product_never_reaches_the_chosen_check(self) -> None:
+        """Bracelets are `onesize`; there is no size for anyone to choose."""
+
+        assert _cart_size_issue(self._product(["onesize"]), None, "add it") == ""
+        assert _cart_size_issue(self._product(["onesize"]), "6", "add it") == ""
+        assert _cart_size_issue(self._product(None), "6", "add it") == ""
+
 
 
 class TestProductProvenance:

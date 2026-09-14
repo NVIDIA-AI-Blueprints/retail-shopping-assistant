@@ -20,7 +20,7 @@ Top-level orchestration is via `docker-compose.yaml`; optional local NIM model c
 2. Nginx routes `/api/*` to `chain-server:8009`.
 3. Chain server request flow:
    - `DeepAgentsRuntime` first starts a durable turn in the memory service, which returns bounded model-context-eligible raw turns, the prior turn's selected skill names, the authoritative cart, and an optional server-resolved representative-shopper snapshot. Blocked turns remain durable and exactly replayable but are excluded from both the service projection and chain prompt formatter. Graph working state uses a request-scoped pair of `conversation_id` and `request_id`. A selected profile ID is bound immutably to that conversation and renders one compact current-turn context block containing only type, behavior, and saved ZIP. Profile precedence and non-authority rules are also present only for selected-profile turns; Guest receives neither the block nor profile-specific prompt rules. The block is soft guidance: current explicit instructions and recent explicit preferences take precedence, and it cannot establish budget, product constraints or facts, cart intent, skill selection, or tool grants. Unknown caller fields remain backward-compatibly ignored, and caller-supplied persona objects are never injected.
-   - Optional input guardrails run before model/tool work; attached media is analyzed through the configured perception client.
+   - Optional input guardrails normally run before model/tool work. A default-off, text-only speculative mode may overlap the first app-model step with those rails, but every tool waits for the input allow decision; blocked turns discard/cancel the model work and can still incur its provider cost. Media remains sequential and is analyzed through the configured perception client.
    - Deep Agents graph execution has a configurable deadline (`deepagents_execution_timeout_seconds` in `config.py`/`config.yaml`). A timeout captures bounded partial graph messages, clears unsent products, finalizes the durable turn as failed, and deletes the request checkpoint only after that finalization succeeds.
    - Every turn begins with a required model step that semantically selects the smallest applicable set from five registered shopper skills. The latest durable selected names are supplied as a read-only continuity hint; they never authorize tools or replace the fresh selection. Product work uses exactly one primary procedure: product discovery or outfit styling. Budget shopping is a modifier only when the shopper states a budget; cart and policy requests may use their standalone skills. An invalid composition receives its typed reason and one correction attempt; a second invalid composition ends with a deterministic clarification and runs no shopping tool. Multiple activation calls in one response execute none and clarify immediately. The runtime injects the complete selected files and exposes only the union of their declared `tools_granted`; dispatch independently rechecks the selected skills, grant union, and immutable tool policy. Pre-activation, same-batch, and ungranted shopping calls are execution-blocked.
    - Catalog capabilities generate `search_catalog_tool`'s flat schema with exact taxonomy values and non-taxonomy required-constraint properties. The model may call it with a direct advertised scope or, when a shopper-named type is not separately advertised, one model-selected faithful advertised parent category. In the parent path, the shopper's type stays in `requested_product_type` and the semantic query, the category is the only taxonomy filter, and returned products remain closest alternatives under their actual catalog types. Model-authored catalog absence is not exposed. If neither a direct type nor one faithful parent can be selected, the assistant asks one concise clarification directly without a tool call or absence claim. Deterministic code validates and maps search values but does not interpret shopper language. Each text search carries `requested_product_type`: the shortest product noun or true umbrella from the shopper's current turn or direct antecedent, excluding color, material, fit, occasion, weather, and style modifiers. For a role the shopper did not name, it is the model's own role noun, and taxonomy carries every advertised subcategory that role covers; the evidence records the role as model-composed so the reply presents it as a suggestion and never reads a miss inside those types as the role being unavailable. It is provenance, not taxonomy or ranking text, and is `null` only for image-only search. Each call has at most one category.
@@ -122,7 +122,9 @@ python scripts/model_config.py deploy --build
 
 ### Local NIM mode (requires multi-GPU setup)
 
-Brings up the local LLM (`nemotron` service, image `nvcr.io/nim/nvidia/nemotron-3-super-120b-a12b`), `nvclip`, `embedqa`, and the two NemoGuard guardrail containers.
+Brings up Nemotron 3 Super on GPUs 0-1, Omni and Content Safety on GPU 2,
+and the preferred dedicated Topic Control NIM plus embedding NIMs on GPU 3.
+Co-located services have explicit memory caps in `docker-compose-nim-local.yaml`.
 
 ```bash
 cp .env.example .env.local-nim
@@ -134,11 +136,10 @@ python scripts/model_config.py deploy --build
 ```
 
 Before running full local NIM mode, edit the relevant roles in
-`shared/configs/models.yaml` to `source: local_nim`. The `nemotron` service is
-launched with `NIM_PASSTHROUGH_ARGS=--enable-auto-tool-choice --tool-call-parser
-llama3_json` so vLLM accepts `tool_choice="auto"`. Reasoning output is
-suppressed via `extra_body={"chat_template_kwargs": {"enable_thinking": False}}`
-on the chain-server side so streamed tokens flow eagerly.
+`shared/configs/models.yaml` to `source: local_nim`. The `nemotron` service uses
+the `qwen3_coder` tool parser so vLLM accepts `tool_choice="auto"`. Reasoning
+output is suppressed on the chain-server side so response tokens are generated
+eagerly.
 
 ### Local app-code mode (recommended for iterative development)
 
@@ -218,6 +219,8 @@ Key env vars:
 - `TEXT_EMBED_BASE_URL`, `TEXT_EMBED_MODEL`
 - `IMAGE_EMBED_BASE_URL`, `IMAGE_EMBED_MODEL`
 - `RAILS_BASE_URL`, `RAILS_CONTENT_BASE_URL`, `RAILS_TOPIC_BASE_URL`
+- `GUARDRAILS_URL`
+- `GUARDRAILS_SPECULATIVE_MAIN_MODEL_ENABLED` (default-off text-only latency/cost tradeoff; tools still wait for input allow)
 - `CHECKPOINT_STORE` (currently supports only `memory`)
 - `DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS`
 - `EXPOSE_AGENT_DIAGNOSTICS` (trusted operator/evaluation deployments only)

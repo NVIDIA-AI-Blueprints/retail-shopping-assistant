@@ -8,33 +8,33 @@ This module provides the main API endpoints for the shopping assistant,
 including query processing and streaming responses.
 """
 import asyncio
-
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import StreamingResponse
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
-from typing import Optional, Dict, List, Literal, Any
 import base64
+import json
 import logging
 import os
+import re
 import sys
 import time
-import json
-import re
+from typing import Any, Literal
 
-from .agenttypes import SHOPPER_PROFILE_ID_PATTERN, State, Cart
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
+from shared.commerce_contracts import GetCartInput, UpdateCartItemInput
+from shared.model_config import resolve_model_config
+
+from .agenttypes import SHOPPER_PROFILE_ID_PATTERN, Cart, State
+from .commerce_tools import get_cart, update_cart_item
 from .config import load_config
 from .deepagents_runtime import DeepAgentsRuntime
-from .turn_support import create_request_identity
 from .media_perception import MEDIA_ONLY_QUERY
 from .shopper_profiles import (
     ShopperProfile,
     ShopperProfilesClient,
     ShopperProfilesError,
 )
-from .commerce_tools import get_cart, update_cart_item
-from shared.commerce_contracts import GetCartInput, UpdateCartItemInput
-from shared.model_config import resolve_model_config
+from .turn_support import create_request_identity
 
 # Configure logging
 logging.basicConfig(
@@ -121,7 +121,7 @@ class MediaItem(BaseModel):
     type: Literal["image", "video"]
     data: str
     mime_type: str = ""
-    filename: Optional[str] = None
+    filename: str | None = None
 
 
 class QueryRequest(BaseModel):
@@ -129,37 +129,38 @@ class QueryRequest(BaseModel):
     user_id: int
     query: str
     image: str = ""
-    media: List[MediaItem] = Field(default_factory=list)
-    session_id: Optional[str] = None
-    conversation_id: Optional[str] = None
-    cart_id: Optional[str] = None
-    shopper_profile_id: Optional[str] = Field(
+    media: list[MediaItem] = Field(default_factory=list)
+    session_id: str | None = None
+    conversation_id: str | None = None
+    cart_id: str | None = None
+    shopper_profile_id: str | None = Field(
         default=None,
         min_length=1,
         max_length=64,
         pattern=SHOPPER_PROFILE_ID_PATTERN,
     )
-    request_id: Optional[str] = Field(
+    request_id: str | None = Field(
         default=None,
         max_length=128,
         pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$",
     )
-    context: Optional[str] = ""
-    cart: Optional[Cart] = None
-    retrieved: Optional[Dict[str, str]] = {}
-    guardrails: Optional[bool] = None
+    context: str | None = ""
+    cart: Cart | None = None
+    retrieved: dict[str, str] | None = {}
+    guardrails: bool | None = None
     image_bool: bool = False
 
 
 class QueryResponse(BaseModel):
     """Response model for shopping queries."""
     response: str
-    images: Dict[str, str] = {}
+    images: dict[str, str] = {}
     cart: Cart = Field(default_factory=Cart)
-    timings: Dict[str, float] = {}
-    token_usage: Dict[str, int] = Field(default_factory=dict)
-    model_usage: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
-    agent_diagnostics: Dict[str, Any] = Field(default_factory=dict)
+    timings: dict[str, float] = {}
+    token_usage: dict[str, int] = Field(default_factory=dict)
+    model_usage: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    guardrail_report: dict[str, Any] = Field(default_factory=dict)
+    agent_diagnostics: dict[str, Any] = Field(default_factory=dict)
 
 
 _MODEL_LABELS = {
@@ -169,6 +170,7 @@ _MODEL_LABELS = {
     "image_embedding": "Image embedding",
     "content_safety": "Content safety",
     "topic_control": "Topic control",
+    "multimodal_safety": "Multimodal safety",
 }
 
 
@@ -194,20 +196,20 @@ def create_initial_state(request: QueryRequest) -> State:
 async def process_query_stream(request: QueryRequest):
     """
     Stream responses to user queries in real-time.
-    
+
     This endpoint provides streaming responses for responsive UIs
     and chat-like experiences.
     """
     try:
         logger.info(f"chain-server | /query/stream | Processing streaming query for user {request.user_id}: {request.query}")
-        
+
         media = _normalized_media(request)
         _validate_media(media)
 
         # Handle media-only queries
         if media and not request.query:
             request.query = MEDIA_ONLY_QUERY
-        
+
         # Create initial state
         state = create_initial_state(request)
         identity = create_request_identity(
@@ -218,7 +220,7 @@ async def process_query_stream(request: QueryRequest):
             request_id=request.request_id,
             shopper_profile_id=request.shopper_profile_id,
         )
-        
+
         async def send_updates():
             """Generator function for streaming updates."""
             try:
@@ -233,23 +235,23 @@ async def process_query_stream(request: QueryRequest):
                 yield f"data: {json.dumps({'type': 'error', 'payload': str(e)})}\n\n"
 
         return StreamingResponse(send_updates(), media_type="text/event-stream")
-        
+
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error processing streaming query: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 @app.post("/query/timing", response_model=QueryResponse)
 async def process_query_timing(request: QueryRequest):
     """
     Process a query and return detailed timing information.
-    
+
     This endpoint is useful for performance analysis and debugging.
     """
     try:
         logger.info(f"chain-server | /query/timing | Processing timing query for user {request.user_id}: {request.query}")
-        
+
         media = _normalized_media(request)
         _validate_media(media)
         if media and not request.query:
@@ -265,7 +267,7 @@ async def process_query_timing(request: QueryRequest):
             request_id=request.request_id,
             shopper_profile_id=request.shopper_profile_id,
         )
-        
+
         # Process query and collect timing data
         start_time = time.monotonic()
         out_state_dict = await assistant_runtime.ainvoke(
@@ -273,7 +275,7 @@ async def process_query_timing(request: QueryRequest):
             identity,
         )
         end_time = time.monotonic()
-        
+
         logger.info(f"chain-server | /query/timing | Collected state: {out_state_dict}")
 
         total_time = end_time - start_time
@@ -286,6 +288,7 @@ async def process_query_timing(request: QueryRequest):
             timings=out_state_dict["timings"],
             token_usage=out_state_dict.get("token_usage", {}),
             model_usage=out_state_dict.get("model_usage", {}),
+            guardrail_report=out_state_dict.get("guardrail_report", {}),
             agent_diagnostics=out_state_dict.get("agent_diagnostics", {}),
         )
         response.timings["total"] = total_time
@@ -297,8 +300,8 @@ async def process_query_timing(request: QueryRequest):
         raise
     except Exception as e:
         logger.error(f"Error processing timing query: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-        
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
 @app.get("/ready")
 async def readiness_check():
     """Readiness, which here is honestly the same as liveness.
@@ -349,6 +352,16 @@ async def capabilities():
             "vlm_enabled": config.vlm_enabled,
         },
         "models": _model_capabilities(),
+        "guardrails": {
+            "default_enabled": config.guardrails_enabled,
+            "failure_mode": config.guardrails_failure_mode,
+            "speculative_main_model_enabled": (
+                config.guardrails_speculative_main_model_enabled
+            ),
+            "speculative_main_model_scope": "text_only",
+            "supported_modalities": config.guardrails_supported_modalities,
+            "request_override_supported": True,
+        },
         "catalog": catalog.model_dump(),
     }
 
@@ -376,13 +389,13 @@ class CartLineResponse(BaseModel):
     product_id: str
     display_name: str
     quantity: int
-    size: Optional[str] = None
-    unit_price: Optional[float] = None
+    size: str | None = None
+    unit_price: float | None = None
 
 
 class CartReadResponse(BaseModel):
-    lines: List[CartLineResponse] = Field(default_factory=list)
-    subtotal: Optional[float] = None
+    lines: list[CartLineResponse] = Field(default_factory=list)
+    subtotal: float | None = None
 
 
 class CartQuantityRequest(BaseModel):
@@ -531,9 +544,9 @@ def _shopper_profiles_status(error: ShopperProfilesError) -> int:
 _DATA_URL_RE = re.compile(r"^data:([^;]+);base64,(.*)$", re.IGNORECASE | re.DOTALL)
 
 
-def _normalized_media(request: QueryRequest) -> List[Dict[str, str]]:
+def _normalized_media(request: QueryRequest) -> list[dict[str, str]]:
     """Normalize legacy image and media[] into one internal media list."""
-    normalized: List[Dict[str, str]] = []
+    normalized: list[dict[str, str]] = []
     if request.image.strip():
         image_data = request.image.strip()
         image_mime_type = _mime_from_data_url(image_data) or "image/jpeg"
@@ -569,10 +582,10 @@ def _normalized_media(request: QueryRequest) -> List[Dict[str, str]]:
     return normalized
 
 
-def _model_capabilities() -> Dict[str, Dict[str, Any]]:
+def _model_capabilities() -> dict[str, dict[str, Any]]:
     """Return non-secret model metadata suitable for UI display."""
 
-    models: Dict[str, Dict[str, Any]] = {
+    models: dict[str, dict[str, Any]] = {
         "app_llm": {
             "label": _MODEL_LABELS["app_llm"],
             "model": config.llm_name,
@@ -616,7 +629,7 @@ def _model_capabilities() -> Dict[str, Dict[str, Any]]:
     return models
 
 
-def _validate_media(media: List[Dict[str, str]]) -> None:
+def _validate_media(media: list[dict[str, str]]) -> None:
     if not media:
         return
 
@@ -663,9 +676,9 @@ def _validate_media(media: List[Dict[str, str]]) -> None:
 
 
 def _validate_media_item(
-    item: Dict[str, str],
+    item: dict[str, str],
     *,
-    allowed_mime_types: List[str],
+    allowed_mime_types: list[str],
     max_bytes: int,
     fallback_label: str,
 ) -> None:
@@ -698,10 +711,7 @@ def _mime_from_data_url(data: str) -> str:
 
 def _data_url_byte_count(data: str) -> int:
     match = _DATA_URL_RE.match((data or "").strip())
-    if not match:
-        encoded = (data or "").strip()
-    else:
-        encoded = match.group(2).strip()
+    encoded = (data or "").strip() if not match else match.group(2).strip()
     encoded += "=" * (-len(encoded) % 4)
     try:
         return len(base64.b64decode(encoded, validate=True))

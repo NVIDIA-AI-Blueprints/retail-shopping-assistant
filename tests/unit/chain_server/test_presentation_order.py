@@ -94,3 +94,22 @@ def test_an_image_the_products_do_not_name_is_kept_at_the_end() -> None:
 
     assert list(ordered) == ["Alpha Dress", "Orphan Dress"]
     assert ordered["Orphan Dress"] == "/o.jpg"
+
+
+def test_only_catalog_owned_local_images_cross_the_final_boundary() -> None:
+    from chain_server.src.turn_support import _trusted_catalog_images
+
+    products = [
+        {"display_name": "Alpha Dress"},
+        {"display_name": "Beta Dress"},
+    ]
+    images = {
+        "Alpha Dress": "/images/alpha.jpg",
+        "Beta Dress": "https://external.example/beta.jpg",
+        "Orphan Dress": "/images/orphan.jpg",
+        "Traversal": "/images/../private.txt",
+    }
+
+    assert _trusted_catalog_images(images, products) == {
+        "Alpha Dress": "/images/alpha.jpg"
+    }

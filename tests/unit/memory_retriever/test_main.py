@@ -11,18 +11,16 @@ against that engine. Every test gets a fresh database through the
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from itertools import count
 from pathlib import Path
-from typing import Iterator
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import QueuePool, StaticPool
-
 from memory_retriever.src import main as memory_main
-
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import QueuePool, StaticPool
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -119,7 +117,7 @@ class TestHealth:
         assert body["version"] == "1.0.0"
 
 
-def test_database_sessions_return_connections_after_each_request(
+def test_every_database_backed_endpoint_closes_its_request_session(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     test_engine = create_engine(
@@ -130,16 +128,24 @@ def test_database_sessions_return_connections_after_each_request(
         max_overflow=0,
         pool_timeout=0.05,
     )
-    session_factory = sessionmaker(bind=test_engine)
-    retained_sessions = []
+    created_sessions: list[TrackingSession] = []
 
-    def retained_session():
+    class TrackingSession(Session):
+        close_calls = 0
+
+        def close(self) -> None:
+            self.close_calls += 1
+            super().close()
+
+    session_factory = sessionmaker(bind=test_engine, class_=TrackingSession)
+
+    def tracked_session() -> TrackingSession:
         session = session_factory()
-        retained_sessions.append(session)
+        created_sessions.append(session)
         return session
 
     monkeypatch.setattr(memory_main, "engine", test_engine)
-    monkeypatch.setattr(memory_main, "SessionLocal", retained_session)
+    monkeypatch.setattr(memory_main, "SessionLocal", tracked_session)
     monkeypatch.setenv(
         "SHARED_CONFIG_ROOT",
         str(REPO_ROOT / "shared" / "configs"),
@@ -147,21 +153,161 @@ def test_database_sessions_return_connections_after_each_request(
     memory_main.Base.metadata.create_all(bind=test_engine)
 
     with TestClient(memory_main.app) as request_client:
-        requests = [
-            request_client.get("/user/1/context"),
-            request_client.get("/user/1/cart"),
-            request_client.post(
-                "/user/1/context/replace",
-                json={"new_context": "request scoped"},
+        # Ignore lifespan sessions; each request below must create and close
+        # exactly one session of its own before the response is returned.
+        created_sessions.clear()
+        exercised_paths: set[str] = set()
+
+        def request(
+            method: str,
+            path: str,
+            *,
+            route_path: str | None = None,
+            json: dict | None = None,
+        ):
+            before = len(created_sessions)
+            response = request_client.request(method, path, json=json)
+            request_sessions = created_sessions[before:]
+            assert len(request_sessions) == 1, (method, path)
+            assert request_sessions[0].close_calls == 1, (method, path)
+            assert test_engine.pool.checkedout() == 0, (method, path)
+            exercised_paths.add(route_path or path)
+            return response
+
+        request(
+            "POST",
+            "/user/1/context/replace",
+            route_path="/user/{user_id}/context/replace",
+            json={"new_context": "request scoped"},
+        )
+        request("GET", "/user/1", route_path="/user/{user_id}")
+        request("GET", "/user/1/cart", route_path="/user/{user_id}/cart")
+        request("GET", "/user/1/context", route_path="/user/{user_id}/context")
+
+        first_add = request(
+            "POST",
+            "/user/1/cart/add",
+            route_path="/user/{user_id}/cart/add",
+            json={
+                "product_id": "test:first",
+                "item": "First item",
+                "amount": 1,
+                "idempotency_key": "session-test-add-first",
+            },
+        )
+        first_line_id = first_add.json()["cart_line"]["cart_line_id"]
+        request(
+            "PUT",
+            f"/user/1/cart/{first_line_id}/quantity",
+            route_path="/user/{user_id}/cart/{cart_line_id}/quantity",
+            json={"quantity": 2, "idempotency_key": "session-test-quantity"},
+        )
+
+        second_add = request(
+            "POST",
+            "/user/1/cart/add",
+            route_path="/user/{user_id}/cart/add",
+            json={
+                "product_id": "test:second",
+                "item": "Second item",
+                "amount": 1,
+                "idempotency_key": "session-test-add-second",
+            },
+        )
+        second_line_id = second_add.json()["cart_line"]["cart_line_id"]
+        request(
+            "POST",
+            "/user/1/cart/remove",
+            route_path="/user/{user_id}/cart/remove",
+            json={
+                "cart_line_id": second_line_id,
+                "amount": 1,
+                "idempotency_key": "session-test-remove",
+            },
+        )
+        request(
+            "POST",
+            "/user/1/cart/clear",
+            route_path="/user/{user_id}/cart/clear",
+        )
+        request(
+            "POST",
+            "/user/1/context/add",
+            route_path="/user/{user_id}/context/add",
+            json={"new_context": "more context"},
+        )
+        request(
+            "POST",
+            "/user/1/context/clear",
+            route_path="/user/{user_id}/context/clear",
+        )
+        request(
+            "POST",
+            "/user/1/context/add",
+            route_path="/user/{user_id}/context/add",
+            json={"new_context": "new user"},
+        )
+        request("POST", "/user/1/clear", route_path="/user/{user_id}/clear")
+        request("GET", "/ready")
+        request("GET", "/shopper-profiles")
+        request(
+            "GET",
+            "/shopper-profiles/shopper_morgan",
+            route_path="/shopper-profiles/{shopper_profile_id}",
+        )
+
+        started = request(
+            "POST",
+            "/conversations/session-test/turn/start",
+            route_path="/conversations/{conversation_id}/turn/start",
+            json={
+                "request_id": "session-test-turn",
+                "shopper_text": "Show me a bag",
+                "cart_user_id": 1,
+                "request_digest": "session-test-digest",
+                "catalog_revision": "catalog-v1",
+            },
+        ).json()
+        request(
+            "POST",
+            f"/conversations/session-test/turns/{started['turn_id']}/finalize",
+            route_path=(
+                "/conversations/{conversation_id}/turns/{turn_id}/finalize"
             ),
-            request_client.get("/user/404"),
-        ]
+            json={
+                "request_id": "session-test-turn",
+                "attempt_id": started["attempt_id"],
+                "assistant_text": "Here is a bag.",
+                "status": "completed",
+                "termination_reason": "completed",
+                "events": [],
+            },
+        )
+        request(
+            "POST",
+            "/conversations/session-test/products/resolve",
+            route_path="/conversations/{conversation_id}/products/resolve",
+            json={
+                "references": [
+                    {"reference_id": "missing", "display_name": "Missing bag"}
+                ]
+            },
+        )
+        request(
+            "DELETE",
+            "/conversations/session-test",
+            route_path="/conversations/{conversation_id}",
+        )
 
-    assert [response.status_code for response in requests] == [200, 200, 200, 404]
-    assert test_engine.pool.checkedout() == 0
+        database_backed_paths = {
+            route.path
+            for route in memory_main.app.routes
+            if getattr(route, "endpoint", None)
+            and route.endpoint.__module__.startswith("memory_retriever.src")
+            and route.path != "/health"
+        }
+        assert exercised_paths == database_backed_paths
 
-    for session in retained_sessions:
-        session.close()
     test_engine.dispose()
 
 

@@ -157,6 +157,21 @@ chmod a+w "$LOCAL_NIM_CACHE"
 Then edit `shared/configs/models.yaml` and set each local role to
 `source: local_nim` with the matching `local_service`.
 
+The four-GPU Compose layout keeps the parallel text guardrails isolated:
+
+| GPU | NIMs | Rationale |
+|-----|------|-----------|
+| 0-1 | Nemotron 3 Super | Its FP8 TP2 profile needs both GPUs. |
+| 2 | Nemotron Omni and Content Safety | Their configured 40% and 50% memory budgets leave room for concurrent text-plus-video input checks. |
+| 3 | Topic Control, text embedding, and NVCLIP | Topic Control is capped at 65%; embedding calls occur after input topic control. |
+
+The percentages are conservative defaults for four H100 NVL GPUs and can be
+adjusted with `OMNI_NIM_PASSTHROUGH_ARGS`,
+`CONTENT_SAFETY_NIM_PASSTHROUGH_ARGS`, and
+`TOPIC_CONTROL_NIM_KVCACHE_PERCENT`. Confirm the selected profiles and actual
+VRAM use with NIM startup logs and `nvidia-smi`; do not raise co-located budgets
+until both containers remain healthy under concurrent requests.
+
 ### Step 2: Verify GPU Setup
 
 ```bash
@@ -338,7 +353,7 @@ data:
     llm_name: "meta/llama-3.1-70b-instruct"
     retriever_port: "https://api.nvcf.nvidia.com/v1/embeddings"
     memory_port: "http://memory-retriever:8011"
-    rails_port: "https://api.nvcf.nvidia.com/v1/chat/completions"
+    guardrails_url: "http://rails:8012"
     memory_length: 16384
     top_k_retrieve: 4
     deepagents_recursion_limit: 24
@@ -404,7 +419,20 @@ docker stack deploy -c docker-compose.prod.yaml retail-assistant
 | `VLM_API_KEY` | Optional VLM media perception API key; Compose falls back to `NVIDIA_API_KEY` when unset | When `vlm` uses an authenticated endpoint and `NVIDIA_API_KEY` is unset | `NVIDIA_API_KEY` |
 | `EMBED_API_KEY` | Embedding model API key | Yes | - |
 | `RAIL_API_KEY` | Guardrails API key | Yes | - |
-| `GUARDRAILS_ENABLED` | Default chain-server guardrails setting for requests that omit `guardrails`; accepts true/false, yes/no, on/off, or 1/0. Guardrails is opt-in: set this to enable it | No | `false` |
+| `GUARDRAILS_URL` | Chain-server URL for the guardrail service | No | `http://rails:8012` |
+| `RAILS_CONTENT_BASE_URL` / `RAILS_CONTENT_MODEL` | Endpoint and model for current text/image content safety | No | `nvidia/nemotron-3.5-content-safety` |
+| `RAILS_TOPIC_BASE_URL` / `RAILS_TOPIC_MODEL` | Topic-control endpoint and model. The dedicated Topic Control model is preferred; selecting Content Safety applies the configured retail policy through `custom_policy` | No | `nvidia/llama-3.1-nemoguard-8b-topic-control` |
+| `MULTIMODAL_SAFETY_API_KEY` | Key for the independently routed video safety judge; Compose falls back to the VLM/NVIDIA key | When the video safety endpoint requires authentication | `VLM_API_KEY` |
+| `MULTIMODAL_SAFETY_BASE_URL` | OpenAI-compatible endpoint for the video safety judge | No | model configuration |
+| `MULTIMODAL_SAFETY_MODEL` | Video safety model override, independent of perception | No | model configuration |
+| `MULTIMODAL_SAFETY_MODALITIES` | Media modalities covered by configured judges; unsupported video fails closed | No | `image,video` |
+| `MULTIMODAL_SAFETY_VIDEO_FPS` | Temporal sampling rate sent to Nemotron Omni. The complete video object and embedded audio are submitted, but the model evaluates sampled frames | No | `2.0` |
+| `GUARDRAILS_INPUT_EXECUTION_MODE` | Run the content and topic input rails in `parallel` or `sequential` mode | No | `parallel` |
+| `GUARDRAILS_ENABLED` | Default chain-server setting only when a request omits `guardrails`; an explicit request value is authoritative | No | `false` pending live validation |
+| `GUARDRAILS_FAILURE_MODE` | Required-check error/timeout behavior: `open` bypasses and `closed` stops the turn. Explicit unsafe decisions always block in either mode | No | `closed` |
+| `GUARDRAILS_TIMEOUT_SECONDS` | Timeout for each isolated guardrail service decision | No | `15` |
+| `GUARDRAILS_SPECULATIVE_MAIN_MODEL_ENABLED` | For guarded text-only turns, overlap the first app-model step with input guardrails while holding every tool behind the allow decision. Reduces latency but blocked turns can still incur one app-model request. Media remains sequential | No | `false` |
+| `GUARDRAILS_SUPPORTED_MODALITIES` | Modalities advertised to clients as covered by configured guardrails | No | `text,image,video` |
 | `DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS` | Shared deadline for the Deep Agents graph and grounding editor before the durable turn fails cleanly | No | `45` |
 | `EXPOSE_AGENT_DIAGNOSTICS` | Expose detailed agent/tool traces in query responses; enable only behind a trusted operator or evaluation surface | No | `false` |
 | `CATALOG_SEARCH_TIMEOUT_SECONDS` | Optional chain-server timeout for catalog search requests | No | no timeout |
@@ -418,6 +446,9 @@ docker stack deploy -c docker-compose.prod.yaml retail-assistant
 | `WEATHER_ENABLED` | Permits explicit direct construction of the dormant weather client/tool; does not register it with the shopper agent | No | `false` |
 | `WEATHER_API_KEY` | Visual Crossing server-side credential, read indirectly from the variable named by chain-server weather config | Only when directly constructing an enabled weather client | empty |
 | `LOCAL_NIM_CACHE` | NIM cache directory | Local only | `~/.cache/nim` |
+| `OMNI_NIM_PASSTHROUGH_ARGS` | Override Omni NIM passthrough arguments, including its GPU memory fraction | Local NIM only | `--gpu-memory-utilization 0.40` |
+| `CONTENT_SAFETY_NIM_PASSTHROUGH_ARGS` | Override Content Safety NIM passthrough arguments, including its GPU memory fraction | Local NIM only | `--gpu-memory-utilization 0.50` |
+| `TOPIC_CONTROL_NIM_KVCACHE_PERCENT` | Fraction of Topic Control GPU memory reserved for its KV cache | Local NIM only | `0.65` |
 | `LOG_LEVEL` | Logging level | No | `INFO` |
 | `NODE_ENV` | Node environment | No | `production` |
 
@@ -576,12 +607,16 @@ configured separately in `shared/configs/models.yaml`:
 ```yaml
 retriever_port: "http://localhost:8010"
 memory_port: "http://localhost:8011"
-rails_port: "http://localhost:8012"
+guardrails_url: "http://localhost:8012"
 memory_length: 16384
 deepagents_recursion_limit: 24
 max_catalog_searches_per_turn: 3
 max_product_detail_reads_per_turn: 2
 guardrails_enabled: false
+guardrails_failure_mode: closed
+guardrails_timeout_seconds: 15.0
+guardrails_speculative_main_model_enabled: false
+guardrails_supported_modalities: [text, image, video]
 ```
 
 The legacy routing and chatter prompt keys remain in that file for compatibility

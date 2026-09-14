@@ -9,6 +9,15 @@ from shared.model_config import resolve_model_config, validate_model_config
 logger = logging.getLogger(__name__)
 
 
+def resolve_guardrail_model_config(role: str):
+    """Resolve one independently configurable guardrail model role."""
+
+    config_root = os.environ.get("SHARED_CONFIG_ROOT", "/app/shared/configs")
+    model_config = resolve_model_config(config_root=config_root)
+    validate_model_config(model_config, roles=(role,))
+    return model_config.require(role)
+
+
 def apply_model_config(config, config_dir: str = "/app/shared/configs/rails"):
     """Apply shared model endpoint config to a RailsConfig object."""
 

@@ -139,7 +139,7 @@ interface QueryRequest {
   context?: string;                   // Previous conversation context
   cart?: Cart;                        // Current shopping cart state
   retrieved?: Record<string, string>; // Previously retrieved products
-  guardrails?: boolean;               // Enable content safety (default: chain-server config; true by default)
+  guardrails?: boolean;               // Explicit per-request override; omitted uses server default
   image_bool?: boolean;               // Indicate if image is provided (default: false)
 }
 
@@ -243,6 +243,36 @@ video uploads. The bundled UI calls `/capabilities` on load and enforces the
 configured media counts, MIME types, byte limits, and video duration limit. That
 same endpoint also exposes non-secret model names and catalog filter metadata
 for future UI controls.
+
+When `guardrails` is enabled, the chain server sends the original shopper text
+and every normalized attachment to the isolated guardrails service after the
+durable turn starts. By default, this completes before media perception, Deep
+Agents, models, or tools. An operator may enable
+`GUARDRAILS_SPECULATIVE_MAIN_MODEL_ENABLED` to overlap the first Deep Agents
+model step on text-only turns. Every tool, including shopper-skill activation,
+still waits for the input allow decision, so no catalog or cart operation can
+run speculatively. If input is blocked, the model task is discarded and
+cancelled; its in-flight request may still be billed. Media turns always retain
+the sequential order.
+Text and each image are checked with `nvidia/nemotron-3.5-content-safety`.
+Retail topic control prefers the dedicated
+`nvidia/llama-3.1-nemoguard-8b-topic-control` model. A deployment can instead
+route the topic role to Nemotron Content Safety, in which case the same retail
+policy is supplied through `chat_template_kwargs.custom_policy`. Videos are
+submitted as complete video objects, including embedded audio, to the separately
+configured `multimodal_safety` role because Content Safety accepts text and images,
+not video. Nemotron Omni evaluates frames at the explicit
+`MULTIMODAL_SAFETY_VIDEO_FPS` rate; the local NIM disables additional video-token
+pruning. Unsupported video returns a typed error. The final grounded text
+is checked before durable finalization or any SSE result event. Catalog images
+are limited to curated local assets associated with an emitted product.
+
+`guardrails=true` and `guardrails=false` are authoritative even when they differ
+from `GUARDRAILS_ENABLED`; the environment variable is only the default for an
+omitted field. Provider errors follow `GUARDRAILS_FAILURE_MODE` (`closed` by
+default). Closed output errors suppress unvalidated response text and product
+media, while the fallback tells the shopper to verify their cart because a
+commerce effect may already have committed.
 
 ### Multi-modal Input
 
@@ -704,6 +734,14 @@ turns are not cut off before the SSE response is emitted.
       "source": "endpoint",
       "enabled": true
     }
+  },
+  "guardrails": {
+    "default_enabled": false,
+    "failure_mode": "closed",
+    "speculative_main_model_enabled": false,
+    "speculative_main_model_scope": "text_only",
+    "supported_modalities": ["text", "image", "video"],
+    "request_override_supported": true
   },
   "catalog": {
     "catalog_id": "fashion_products",

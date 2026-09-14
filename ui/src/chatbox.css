@@ -668,6 +668,85 @@ html {
   text-decoration: underline;
 }
 
+.guardrail-details {
+  color: var(--muted);
+  font-size: 0.72rem;
+  margin-top: 9px;
+}
+
+.guardrail-details summary {
+  align-items: center;
+  cursor: pointer;
+  display: inline-flex;
+  gap: 5px;
+  list-style: none;
+  opacity: 0.72;
+  user-select: none;
+}
+
+.guardrail-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.guardrail-details summary::after {
+  content: "›";
+  font-size: 0.9rem;
+  transition: transform 120ms ease;
+}
+
+.guardrail-details[open] summary::after {
+  transform: rotate(90deg);
+}
+
+.guardrail-details__marker {
+  background: var(--primary);
+  border-radius: 50%;
+  height: 6px;
+  width: 6px;
+}
+
+.guardrail-details--attention .guardrail-details__marker {
+  background: #c77700;
+}
+
+.guardrail-details__body {
+  border-left: 1px solid var(--line);
+  display: grid;
+  gap: 6px;
+  margin: 7px 0 1px 3px;
+  padding: 2px 0 2px 10px;
+}
+
+.guardrail-details__check {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+
+.guardrail-details__stage {
+  color: var(--ink);
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.guardrail-details__status {
+  font-weight: 600;
+}
+
+.guardrail-details__status--allow {
+  color: #3f6400;
+}
+
+.guardrail-details__status--block,
+.guardrail-details__status--error {
+  color: #9b5700;
+}
+
+.guardrail-details__mode {
+  opacity: 0.82;
+}
+
 .messages__item--user_image,
 .messages__item--user_video {
   align-self: flex-end;
@@ -1406,13 +1485,9 @@ below the composer.
   font-weight: 600;
 }
 
-/* What the vision model saw. Arrives while the turn is still running {
+.messages__item--media-analysis {
   padding: 0 18px 12px;
 }
-
-/* What the vision model saw. Led by its own sentence: it already writes the
-   readable version, and four labelled rows of comma-separated values read like
-   a database record rather than a description of a picture. */
 
 .media-analysis {
   background: linear-gradient(
@@ -1435,7 +1510,6 @@ below the composer.
   text-transform: uppercase;
 }
 
-/* The hero. This is the sentence a person would say. */
 .media-analysis__summary {
   color: var(--ink);
   font-size: 1.02rem;
@@ -1472,7 +1546,6 @@ below the composer.
   margin: 0 0 8px;
 }
 
-/* Colours, materials, style and occasion, folded into one quiet line. */
 .media-analysis__detail {
   color: var(--muted);
   font-size: 0.78rem;

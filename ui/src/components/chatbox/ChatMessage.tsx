@@ -24,6 +24,7 @@ import Showdown from "showdown";
 import SafeHTML from "./SafeHTML";
 import Loader from "./Loader";
 import MediaAnalysisCard from "./MediaAnalysisCard";
+import GuardrailDetails from "./GuardrailDetails";
 import {
   ChatMessageProps,
   ImageContent,
@@ -34,7 +35,7 @@ import { isFashionMode } from "../../config/config";
 import nvinfo from "../../assets/nvinfo.jpg";
 
 const ChatMessage = React.forwardRef<HTMLDivElement, ChatMessageProps>(
-  ({ role, content, productName, selectedProductName, onProductSelect }, ref) => {
+  ({ role, content, productName, selectedProductName, onProductSelect, guardrailReport }, ref) => {
     
     // CSS class mapping for markdown elements
     const classMap: Record<string, string> = {
@@ -101,6 +102,7 @@ const ChatMessage = React.forwardRef<HTMLDivElement, ChatMessageProps>(
           <img src={nvinfo} alt="Assistant" style={{ width: 28, height: 28, borderRadius: "50%", objectFit: "cover" }} />
           <div className={`messages__item messages__item--${role}`}>
             <SafeHTML html={processedContent} />
+            <GuardrailDetails report={guardrailReport} />
           </div>
         </div>
       );
@@ -131,9 +133,6 @@ const ChatMessage = React.forwardRef<HTMLDivElement, ChatMessageProps>(
       }
     }
 
-    // What the vision model saw. In the message stream rather than beside it,
-    // so it sits above the results it precedes: it arrives seconds after the
-    // upload and the products land a minute later.
     if (role === "media_analysis") {
       return (
         <div className="messages__item messages__item--media-analysis" ref={ref}>

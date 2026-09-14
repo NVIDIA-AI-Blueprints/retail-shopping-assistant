@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pytest
 import yaml
-
 from shared.model_config import (
     ModelConfigError,
     model_config_snapshot,
@@ -12,6 +11,8 @@ from shared.model_config import (
     validate_local_nim_env,
     validate_model_config,
 )
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 def _write_models(root: Path) -> Path:
@@ -114,3 +115,14 @@ def test_snapshot_does_not_include_secret_value(
 
     assert "secret-value" not in repr(snapshot)
     assert snapshot["models"]["app_llm"]["api_key_present"] is True
+
+
+def test_repository_config_prefers_dedicated_local_topic_control() -> None:
+    data = yaml.safe_load((REPO_ROOT / "shared/configs/models.yaml").read_text())
+
+    topic_service = data["local_nims"]["services"]["topic_control_nim"]
+    topic_role = data["models"]["topic_control"]
+    assert topic_service["compose_service"] == "topic-control"
+    assert topic_service["base_url"] == "http://topic-control:8000/v1"
+    assert topic_role["local_service"] == "topic_control_nim"
+    assert topic_role["model"] == "nvidia/llama-3.1-nemoguard-8b-topic-control"

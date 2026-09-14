@@ -53,7 +53,7 @@ def base_config() -> SimpleNamespace:
         llm_api_key_required=False,
         retriever_port="http://localhost:8010",
         memory_port="http://localhost:8011",
-        rails_port="http://localhost:8012",
+        guardrails_url="http://localhost:8012",
         memory_length=16384,
         top_k_retrieve=4,
         deepagents_recursion_limit=24,
@@ -85,7 +85,15 @@ def base_config() -> SimpleNamespace:
         vlm_api_key_env="VLM_API_KEY",
         vlm_api_key_required=True,
         guardrails_enabled=True,
+        guardrails_failure_mode="closed",
+        guardrails_timeout_seconds=15.0,
+        guardrails_speculative_main_model_enabled=False,
+        guardrails_supported_modalities=["text", "image", "video"],
         unsafe_message="Sorry, I can only help with shopping questions.",
+        guardrails_unavailable_message=(
+            "I cannot safely validate this request right now. Please retry. "
+            "If it involved a cart change, check your cart first."
+        ),
     )
 
 
@@ -99,7 +107,7 @@ def valid_config_dict() -> dict[str, Any]:
         "llm_api_key_required": False,
         "retriever_port": "http://localhost:8010",
         "memory_port": "http://localhost:8011",
-        "rails_port": "http://localhost:8012",
+        "guardrails_url": "http://localhost:8012",
         "memory_length": 16384,
         "top_k_retrieve": 4,
         "deepagents_recursion_limit": 24,
@@ -113,6 +121,7 @@ def valid_config_dict() -> dict[str, Any]:
         "catalog_search_timeout_seconds": None,
         "multimodal": True,
         "guardrails_enabled": True,
+        "guardrails_failure_mode": "closed",
         "unsafe_message": "Sorry, I can only help with shopping questions.",
     }
 

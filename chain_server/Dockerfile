@@ -29,7 +29,7 @@ ENV PYTHONPATH=/app
 ENV LLM_API_KEY=${LLM_API_KEY}
 ENV CATALOG_RETRIEVER_URL=http://catalog-retriever:8010
 ENV MEMORY_RETRIEVER_URL=http://memory-retriever:8011
-ENV RAILS_URL=http://rails:8012
+ENV GUARDRAILS_URL=http://rails:8012
 
 # Expose the port the app runs on
 EXPOSE 8009

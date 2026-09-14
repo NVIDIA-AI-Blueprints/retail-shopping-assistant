@@ -20,7 +20,6 @@ from datetime import date as CalendarDate
 from pathlib import Path
 from typing import Any, Literal
 
-import requests
 from langgraph.errors import GraphRecursionError
 from pydantic import (
     BaseModel,
@@ -85,8 +84,8 @@ from .conversation_products import (
     format_product_resolution,
 )
 from .fencing import MEDIA_FENCE
-from .media_perception import MediaPerceptionClient
-from .media_summary import summarize_media_analysis
+from .guardrails import GuardrailDecision, GuardrailServiceClient, stops_turn
+from .media_perception import MEDIA_ONLY_QUERY, MediaPerceptionClient
 from .message_shape import (
     _content_to_text,
     _extract_final_text,
@@ -122,6 +121,7 @@ from .response_format import (
 )
 from .skill_activation import (
     SKILL_ACTIVATION_COMPLETE,
+    InputGuardrailToolGate,
     ShopperSkillActivationError,
     ShopperSkillActivationMiddleware,
     selected_skill_names_for_turn,
@@ -195,6 +195,7 @@ from .turn_support import (
     _skill_activation_input_model,
     _store_policies_path,
     _system_identification_events,
+    _trusted_catalog_images,
     _turn_audience_events,
     a_place_the_shopper_named,
     format_most_recent_subject,
@@ -204,31 +205,37 @@ from .weather import WeatherConfig, WeatherRequest, build_weather_client
 logger = logging.getLogger(__name__)
 
 
-def _emit_media_analysis(on_progress: Any, state: State) -> None:
-    """Send what the vision model saw, if anything and if anyone is listening.
+def _record_guardrail_result(state: State, decision: GuardrailDecision) -> None:
+    """Keep only the provider's sanitized decision metadata for the UI."""
 
-    Failing here must never cost a turn: this is a progress message, and a turn
-    that answered correctly but could not describe its own perception step is
-    still a turn that answered correctly.
-    """
+    state.guardrail_results.append(
+        {
+            "stage": decision.stage,
+            "status": decision.status,
+            "violated_categories": decision.violated_categories,
+            "latency_ms": decision.latency_ms,
+            "model_calls": decision.model_calls,
+        }
+    )
+
+
+def _emit_media_progress(on_progress: Any, state: State) -> None:
+    """Emit non-sensitive progress without exposing VLM-derived observations."""
 
     if on_progress is None or not getattr(state, "media", None):
         return
     try:
-        summary = summarize_media_analysis(state.media_analysis or "")
-        if not summary:
-            return
         on_progress(
             json.dumps(
                 {
-                    "type": "media_analysis",
-                    "payload": summary,
+                    "type": "progress",
+                    "payload": {"stage": "media_perception", "status": "completed"},
                     "timestamp": time.time(),
                 }
             )
         )
     except Exception as exc:  # noqa: BLE001 - progress never breaks a turn.
-        logger.warning("Could not emit media analysis: %s", type(exc).__name__)
+        logger.warning("Could not emit media progress: %s", type(exc).__name__)
 
 
 def _turn_trace_session(identity: RequestIdentity):
@@ -1091,6 +1098,66 @@ def _relay_instrumented(
     return instrumented
 
 
+async def _cancel_task(task: asyncio.Task[Any] | None) -> None:
+    """Cancel and drain a request-local task without masking the caller outcome."""
+
+    if task is None:
+        return
+    if not task.done():
+        task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+
+
+def _guardrail_conversation(state: State) -> list[dict[str, str]]:
+    """Return a small dialogue-only topic-classification context."""
+
+    messages: list[dict[str, str]] = []
+    for turn in state.dialogue[-4:]:
+        for role, content in (
+            ("user", turn.shopper_text),
+            ("assistant", turn.assistant_text),
+        ):
+            if content:
+                messages.append({"role": role, "content": content[:1_000]})
+    return messages
+
+
+def _record_discarded_speculative_usage(
+    state: State,
+    task: asyncio.Task[Any] | None,
+) -> None:
+    """Expose cost evidence for model work discarded by an input block."""
+
+    usage: dict[str, int] = {}
+    detail = (
+        "Input guardrails stopped the turn; in-flight speculative model work "
+        "was cancelled and may still be billed by the provider"
+    )
+    if task is not None and task.done() and not task.cancelled():
+        try:
+            result = task.result()
+        except BaseException:
+            detail = (
+                "Speculative model work failed before the input-guardrail "
+                "decision; provider billing is unknown"
+            )
+        else:
+            usage = _collect_token_usage(result)
+            detail = (
+                "Completed speculative model output was discarded because "
+                "input guardrails stopped the turn"
+            )
+            state.token_usage = _merge_token_usage(state.token_usage, usage)
+    _add_model_usage(
+        state,
+        "app_llm",
+        status="failed",
+        calls=max(1, int(usage.get("model_calls") or 0)),
+        detail=detail,
+        tokens=int(usage.get("total_tokens") or 0),
+    )
+
+
 class DeepAgentsRuntime:
     """Small adapter around the Deep Agents SDK.
 
@@ -1099,7 +1166,7 @@ class DeepAgentsRuntime:
     profiles, prices, inventory, or session identity.
     """
 
-    def __init__(self, config: Any) -> None:
+    def __init__(self, config: Any, *, guardrails: Any = None) -> None:
         self.config = config
         # Before the first agent is built, so the subscriber is registered by the
         # time any middleware has an event to emit.
@@ -1107,6 +1174,10 @@ class DeepAgentsRuntime:
         self._checkpointer = _build_checkpointer()
         self._profile_registered = False
         self._media_perception = MediaPerceptionClient(config)
+        self._guardrails = guardrails or GuardrailServiceClient(
+            config.guardrails_url,
+            timeout_seconds=config.guardrails_timeout_seconds,
+        )
         self._catalog_capabilities = CatalogCapabilitiesClient(
             config.retriever_port,
             timeout_seconds=config.catalog_search_timeout_seconds,
@@ -1130,6 +1201,13 @@ class DeepAgentsRuntime:
         if not getattr(self.config, "expose_agent_diagnostics", False):
             return {}
         return output.agent_diagnostics
+
+    def _guardrail_report(self, output: State) -> dict[str, Any]:
+        return {
+            "enabled": output.guardrails,
+            "failure_mode": self.config.guardrails_failure_mode,
+            "checks": output.guardrail_results,
+        }
 
     async def astream(
         self,
@@ -1188,6 +1266,7 @@ class DeepAgentsRuntime:
                     "total_seconds": sum(output.timings.values()),
                     "token_usage": _normalized_token_usage(output.token_usage),
                     "model_usage": output.model_usage,
+                    "guardrail_report": self._guardrail_report(output),
                     "agent_diagnostics": self._exposed_agent_diagnostics(output),
                 },
                 "timestamp": time.time(),
@@ -1207,6 +1286,7 @@ class DeepAgentsRuntime:
             "timings": output.timings,
             "token_usage": _normalized_token_usage(output.token_usage),
             "model_usage": output.model_usage,
+            "guardrail_report": self._guardrail_report(output),
             "agent_diagnostics": self._exposed_agent_diagnostics(output),
         }
 
@@ -1307,60 +1387,177 @@ class DeepAgentsRuntime:
         on_progress: Any = None,
     ) -> State:
         start = time.monotonic()
+        turn_capabilities: CatalogCapabilities | None = None
+        invoke_config: dict[str, Any] | None = None
+        agent = None
+        execution_deadline: float | None = None
+        grounding_reserve: float | None = None
+        speculative_agent_task: asyncio.Task[Any] | None = None
+        speculative_gate: InputGuardrailToolGate | None = None
+        speculative_agent_started_at: float | None = None
+        speculative_agent_finished_at: float | None = None
 
         if state.guardrails:
             safety_start = time.monotonic()
-            input_safe, input_check_ok = self._check_safety(
-                "input",
-                identity.context_user_id,
-                state.query,
+            guardrail_conversation = _guardrail_conversation(state)
+            speculative_enabled = (
+                self.config.guardrails_speculative_main_model_enabled
+                and not state.media
             )
+            input_guardrail_task: asyncio.Task[Any] | None = None
+            if speculative_enabled:
+                speculative_gate = InputGuardrailToolGate()
+                input_guardrail_task = asyncio.create_task(
+                    self._guardrails.check_input(
+                        text="" if state.query == MEDIA_ONLY_QUERY else state.query,
+                        media=state.media,
+                        conversation=guardrail_conversation,
+                    )
+                )
+                try:
+                    turn_capabilities = await asyncio.to_thread(
+                        self._catalog_capabilities.get
+                    )
+                    invoke_config = self._agent_invoke_config(identity)
+                    execution_deadline = (
+                        time.monotonic()
+                        + self.config.deepagents_execution_timeout_seconds
+                    )
+                    grounding_reserve = self._grounding_reserve()
+                    agent = self._create_agent(
+                        state,
+                        identity,
+                        turn_capabilities,
+                        input_guardrail_tool_gate=speculative_gate,
+                    )
+                    input_message = self._build_user_message(state, identity)
+                    agent_timeout = max(
+                        0.0,
+                        execution_deadline
+                        - time.monotonic()
+                        - grounding_reserve,
+                    )
+                    if agent_timeout <= 0:
+                        raise TimeoutError
+
+                    async def invoke_speculatively() -> Any:
+                        nonlocal speculative_agent_finished_at
+                        try:
+                            with _relay_turn_scope(
+                                self.config, identity.conversation_id
+                            ):
+                                return await asyncio.wait_for(
+                                    agent.ainvoke(
+                                        {
+                                            "messages": [
+                                                {
+                                                    "role": "user",
+                                                    "content": input_message,
+                                                }
+                                            ]
+                                        },
+                                        config=invoke_config,
+                                    ),
+                                    timeout=agent_timeout,
+                                )
+                        finally:
+                            speculative_agent_finished_at = time.monotonic()
+
+                    speculative_agent_started_at = time.monotonic()
+                    speculative_agent_task = asyncio.create_task(
+                        invoke_speculatively()
+                    )
+                    input_decision = await input_guardrail_task
+                except BaseException:
+                    speculative_gate.deny()
+                    await _cancel_task(speculative_agent_task)
+                    await _cancel_task(input_guardrail_task)
+                    raise
+            else:
+                input_decision = await self._guardrails.check_input(
+                    text="" if state.query == MEDIA_ONLY_QUERY else state.query,
+                    media=state.media,
+                    conversation=guardrail_conversation,
+                )
             state.timings["safety_input"] = time.monotonic() - safety_start
-            _record_safety_model_usage(state, "input", ok=input_check_ok)
-            if not input_safe:
-                state.response = self.config.unsafe_message
+            if speculative_agent_started_at is not None:
+                overlap_end = min(
+                    time.monotonic(),
+                    speculative_agent_finished_at or time.monotonic(),
+                )
+                state.timings["input_guardrail_model_overlap"] = max(
+                    0.0,
+                    overlap_end - speculative_agent_started_at,
+                )
+            _record_safety_model_usage(
+                state,
+                "input",
+                model_calls=input_decision.model_calls,
+                ok=input_decision.status != "error",
+            )
+            _record_guardrail_result(state, input_decision)
+            if stops_turn(
+                input_decision,
+                self.config.guardrails_failure_mode,
+            ):
+                if speculative_gate is not None:
+                    speculative_gate.deny()
+                    _record_discarded_speculative_usage(
+                        state,
+                        speculative_agent_task,
+                    )
+                    await _cancel_task(speculative_agent_task)
+                state.response = (
+                    self.config.unsafe_message
+                    if input_decision.status == "block"
+                    else self.config.guardrails_unavailable_message
+                )
                 state.timings["deepagents"] = time.monotonic() - start
                 state.agent_diagnostics = _empty_agent_diagnostics(
                     "input_guardrail_blocked"
+                    if input_decision.status == "block"
+                    else "input_guardrail_error"
                 )
                 return state
+            if speculative_gate is not None:
+                speculative_gate.allow()
 
         media_start = time.monotonic()
-        state.media_analysis = await self._media_perception.analyze(state)
+        try:
+            state.media_analysis = await self._media_perception.analyze(state)
+        except BaseException:
+            # Text-only perception is normally a no-op, but a provider/client
+            # regression here must not orphan a speculative graph task.
+            await _cancel_task(speculative_agent_task)
+            raise
         if state.media:
             state.timings["media_perception"] = time.monotonic() - media_start
             _record_media_model_usage(state, self.config)
-        # Emitted here rather than with the rest of the turn: the analysis is
-        # complete and the catalog work has not started, so a shopper sees what
-        # was seen in their media seconds before the products arrive.
-        _emit_media_analysis(on_progress, state)
+        _emit_media_progress(on_progress, state)
         if _should_short_circuit_media_failure(state):
             state.response = _media_failure_response(state.media_analysis)
             state.timings["deepagents"] = time.monotonic() - start
             state.agent_diagnostics = _empty_agent_diagnostics("media_failure")
             return state
 
-        turn_capabilities = await asyncio.to_thread(self._catalog_capabilities.get)
-        invoke_config = {
-            "configurable": {"thread_id": identity.checkpoint_thread_id},
-            "recursion_limit": self.config.deepagents_recursion_limit,
-            # Trace-only. The checkpoint thread is deliberately request-scoped,
-            # so a tracer left to infer a session from it files every turn as
-            # its own conversation. This names the conversation for spans raised
-            # inside the graph; it is read by tracing and by nothing else.
-            "metadata": {"session_id": identity.conversation_id},
-        }
-        agent = None
+        if turn_capabilities is None:
+            turn_capabilities = await asyncio.to_thread(
+                self._catalog_capabilities.get
+            )
+        if invoke_config is None:
+            invoke_config = self._agent_invoke_config(identity)
         try:
-            execution_deadline = (
-                time.monotonic()
-                + self.config.deepagents_execution_timeout_seconds
-            )
-            agent = self._create_agent(
-                state,
-                identity,
-                turn_capabilities,
-            )
+            if execution_deadline is None:
+                execution_deadline = (
+                    time.monotonic()
+                    + self.config.deepagents_execution_timeout_seconds
+                )
+            if agent is None:
+                agent = self._create_agent(
+                    state,
+                    identity,
+                    turn_capabilities,
+                )
             input_message = self._build_user_message(state, identity)
             # The grounding editor is not optional, so its budget is reserved
             # before the agent loop runs rather than taken from what the loop
@@ -1370,31 +1567,29 @@ class DeepAgentsRuntime:
             # Never take more than half the turn: a deployment with a short
             # budget must still get an agent loop, and a reserve larger than the
             # budget would fail every turn before any work happened.
-            grounding_reserve = min(
-                max(
-                    0.0,
-                    float(
-                        getattr(
-                            self.config, "grounding_editor_reserve_seconds", 0.0
-                        )
-                    ),
-                ),
-                max(0.0, float(self.config.deepagents_execution_timeout_seconds)) / 2,
-            )
+            if grounding_reserve is None:
+                grounding_reserve = self._grounding_reserve()
             agent_timeout = max(
                 0.0,
                 execution_deadline - time.monotonic() - grounding_reserve,
             )
             if agent_timeout <= 0:
                 raise TimeoutError
-            with _relay_turn_scope(self.config, identity.conversation_id):
-                result = await asyncio.wait_for(
-                    agent.ainvoke(
-                        {"messages": [{"role": "user", "content": input_message}]},
-                        config=invoke_config,
-                    ),
-                    timeout=agent_timeout,
-                )
+            if speculative_agent_task is not None:
+                result = await speculative_agent_task
+            else:
+                with _relay_turn_scope(self.config, identity.conversation_id):
+                    result = await asyncio.wait_for(
+                        agent.ainvoke(
+                            {
+                                "messages": [
+                                    {"role": "user", "content": input_message}
+                                ]
+                            },
+                            config=invoke_config,
+                        ),
+                        timeout=agent_timeout,
+                    )
             result_messages = _result_messages(result)
             state.selected_skill_names = list(
                 selected_skill_names_for_turn(
@@ -1523,18 +1718,37 @@ class DeepAgentsRuntime:
 
         if state.guardrails:
             safety_start = time.monotonic()
-            output_safe, output_check_ok = self._check_safety(
-                "output",
-                identity.context_user_id,
-                state.response,
-            )
+            output_decision = await self._guardrails.check_output(text=state.response)
             state.timings["safety_output"] = time.monotonic() - safety_start
-            _record_safety_model_usage(state, "output", ok=output_check_ok)
-            if not output_safe:
-                state.response = self.config.unsafe_message
+            _record_safety_model_usage(
+                state,
+                "output",
+                model_calls=output_decision.model_calls,
+                ok=output_decision.status != "error",
+            )
+            _record_guardrail_result(state, output_decision)
+            if stops_turn(
+                output_decision,
+                self.config.guardrails_failure_mode,
+            ):
+                state.product_results = []
+                state.retrieved = {}
+                state.response = (
+                    self.config.unsafe_message
+                    if output_decision.status == "block"
+                    else self.config.guardrails_unavailable_message
+                )
+                state.response += (
+                    " If this request may have changed your cart, please check "
+                    "the cart before retrying."
+                )
                 state.agent_diagnostics[
                     "final_termination_reason"
-                ] = "output_guardrail_blocked"
+                ] = (
+                    "output_guardrail_blocked"
+                    if output_decision.status == "block"
+                    else "output_guardrail_error"
+                )
 
         state.timings["deepagents"] = time.monotonic() - start
         return state
@@ -1544,6 +1758,8 @@ class DeepAgentsRuntime:
         state: State,
         identity: RequestIdentity,
         turn_capabilities: CatalogCapabilities | None = None,
+        *,
+        input_guardrail_tool_gate: InputGuardrailToolGate | None = None,
     ):
         from deepagents import (
             GeneralPurposeSubagentProfile,
@@ -2953,6 +3169,7 @@ class DeepAgentsRuntime:
             activation_system_prompt=(
                 MEDIA_FENCE.notice if state.media_analysis else ""
             ),
+            input_guardrail_tool_gate=input_guardrail_tool_gate,
         )
 
         @tool(args_schema=skill_activation_input, return_direct=False)
@@ -3029,6 +3246,36 @@ class DeepAgentsRuntime:
         }
         return create_deep_agent(**_relay_instrumented(agent_kwargs, self.config))
 
+    def _agent_invoke_config(self, identity: RequestIdentity) -> dict[str, Any]:
+        return {
+            "configurable": {"thread_id": identity.checkpoint_thread_id},
+            "recursion_limit": self.config.deepagents_recursion_limit,
+            # Trace-only. The checkpoint thread is deliberately request-scoped,
+            # so a tracer left to infer a session from it files every turn as
+            # its own conversation. This names the conversation for spans raised
+            # inside the graph; it is read by tracing and by nothing else.
+            "metadata": {"session_id": identity.conversation_id},
+        }
+
+    def _grounding_reserve(self) -> float:
+        return min(
+            max(
+                0.0,
+                float(
+                    getattr(
+                        self.config,
+                        "grounding_editor_reserve_seconds",
+                        0.0,
+                    )
+                ),
+            ),
+            max(
+                0.0,
+                float(self.config.deepagents_execution_timeout_seconds),
+            )
+            / 2,
+        )
+
     async def _delete_turn_checkpoint(self, identity: RequestIdentity) -> None:
         try:
             delete_thread = getattr(self._checkpointer, "adelete_thread", None)
@@ -3084,7 +3331,12 @@ class DeepAgentsRuntime:
             # answered in forty seconds is not going to; failing it leaves time
             # to ask again and still finish inside the turn.
             timeout=self._model_request_timeout(),
-            extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+            extra_body={
+                "chat_template_kwargs": {
+                    "enable_thinking": False,
+                    "force_nonempty_content": True,
+                }
+            },
         )
 
     async def _rewrite_response_for_grounding(
@@ -3927,6 +4179,9 @@ Rules:
         state.retrieved = _images_in_product_order(
             state.retrieved or {}, state.product_results
         )
+        state.retrieved = _trusted_catalog_images(
+            state.retrieved, state.product_results
+        )
 
         reason = termination_reason or str(
             state.agent_diagnostics.get("final_termination_reason") or "completed"
@@ -3995,36 +4250,6 @@ Rules:
                 time.monotonic() - start
             )
         return finalized
-
-    def _check_safety(self, mode: str, user_id: int, text: str) -> tuple[bool, bool]:
-        endpoint = "input" if mode == "input" else "output"
-        try:
-            response = requests.post(
-                f"{self.config.rails_port}/rail/{endpoint}/check",
-                json={"user_id": user_id, "query": text},
-                timeout=10,
-            )
-            response.raise_for_status()
-            payload = response.json()
-        except requests.RequestException as exc:
-            logger.error("Guardrails %s check failed: %s", mode, exc)
-            return True, False
-
-        responses = payload.get("response") or []
-        if not responses:
-            return True, True
-        return responses[0].get("content") == text, True
-
-
-
-
-
-
-
-
-
-
-
 
 
 
@@ -4193,27 +4418,6 @@ Rules:
 #: lane. catalog_text is the prose serialisation of the same attributes and is
 #: deliberately not forwarded -- it carries a marketing summary, and separating
 #: the two would mean parsing prose.
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 

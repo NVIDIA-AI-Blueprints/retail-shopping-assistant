@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable, Collection, Mapping, Sequence
 from pathlib import Path
 from types import SimpleNamespace
@@ -23,8 +24,10 @@ from chain_server.src.skill_activation import (
     SKILL_ACTIVATION_REQUIRED,
     SKILL_ACTIVATION_TOOL_NAME,
     SKILL_TOOL_NOT_GRANTED,
+    InputGuardrailToolGate,
     ShopperSkillActivationError,
     ShopperSkillActivationMiddleware,
+    SpeculativeToolExecutionBlocked,
     selected_skill_names_for_turn,
 )
 from chain_server.src.tool_loop_control import SERVER_CATALOG_CLARIFICATION
@@ -212,6 +215,7 @@ def _middleware(
         ]
         | None
     ) = None,
+    input_guardrail_tool_gate: InputGuardrailToolGate | None = None,
 ) -> ShopperSkillActivationMiddleware:
     return ShopperSkillActivationMiddleware(
         widen_for_tool=widen_for_tool,
@@ -234,6 +238,7 @@ def _middleware(
         },
         skill_tool_grants=SKILL_TOOL_GRANTS,
         previous_selected_skills=previous_selected_skills,
+        input_guardrail_tool_gate=input_guardrail_tool_gate,
     )
 
 
@@ -1111,6 +1116,150 @@ def test_activation_tool_is_always_allowed() -> None:
     result = _middleware().wrap_tool_call(request, lambda _: expected)
 
     assert result is expected
+
+
+@pytest.mark.asyncio
+async def test_speculative_tool_gate_waits_for_input_allow() -> None:
+    gate = InputGuardrailToolGate()
+    middleware = _middleware(input_guardrail_tool_gate=gate)
+    request = _tool_request(SKILL_ACTIVATION_TOOL_NAME, [])
+    expected = ToolMessage(content="loaded", tool_call_id="activation-call")
+    handled: list[ToolCallRequest] = []
+
+    async def handler(prepared: ToolCallRequest) -> ToolMessage:
+        handled.append(prepared)
+        return expected
+
+    pending = asyncio.create_task(middleware.awrap_tool_call(request, handler))
+    await asyncio.sleep(0)
+
+    assert handled == []
+    assert not pending.done()
+
+    gate.allow()
+
+    assert await pending is expected
+    assert handled == [request]
+
+
+@pytest.mark.asyncio
+async def test_speculative_tool_gate_denial_executes_no_tool() -> None:
+    gate = InputGuardrailToolGate()
+    middleware = _middleware(input_guardrail_tool_gate=gate)
+    request = _tool_request(SKILL_ACTIVATION_TOOL_NAME, [])
+    handled: list[ToolCallRequest] = []
+
+    async def handler(prepared: ToolCallRequest) -> ToolMessage:
+        handled.append(prepared)
+        return ToolMessage(content="loaded", tool_call_id="activation-call")
+
+    pending = asyncio.create_task(middleware.awrap_tool_call(request, handler))
+    await asyncio.sleep(0)
+    gate.deny()
+
+    with pytest.raises(SpeculativeToolExecutionBlocked):
+        await pending
+    assert handled == []
+
+
+def test_speculative_tool_gate_fails_closed_on_sync_path() -> None:
+    gate = InputGuardrailToolGate()
+    middleware = _middleware(input_guardrail_tool_gate=gate)
+    request = _tool_request(SKILL_ACTIVATION_TOOL_NAME, [])
+    handled: list[ToolCallRequest] = []
+
+    with pytest.raises(SpeculativeToolExecutionBlocked):
+        middleware.wrap_tool_call(request, handled.append)
+
+    assert handled == []
+
+
+@pytest.mark.asyncio
+async def test_compiled_agent_stops_at_activation_tool_until_input_allow(
+    base_config: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Prove the real async graph uses the guardrail-aware tool wrapper."""
+
+    model_name = "compiled-speculative-guardrail-gate-test"
+    base_config.llm_name = model_name
+    model = _RecordingToolModel(
+        model_name=model_name,
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "id": "activate-skill",
+                        "name": SKILL_ACTIVATION_TOOL_NAME,
+                        "args": {"skill_names": ["product-discovery"]},
+                    }
+                ],
+            ),
+            AIMessage(content="Ready to shop."),
+        ],
+    )
+    runtime = DeepAgentsRuntime(base_config)
+    monkeypatch.setattr(runtime, "_create_chat_model", lambda: model)
+    identity = RequestIdentity(
+        session_id="session-gate",
+        conversation_id="conversation-gate",
+        cart_id="cart-gate",
+        context_user_id=1,
+        cart_user_id=1,
+        request_id="request-gate",
+    )
+    gate = InputGuardrailToolGate()
+    agent = runtime._create_agent(
+        State(user_id=1, query="Show me dresses."),
+        identity,
+        CatalogCapabilities(
+            catalog_id="test-catalog",
+            retrieval_modes=["text"],
+            filters={},
+        ),
+        input_guardrail_tool_gate=gate,
+    )
+
+    pending = asyncio.create_task(
+        agent.ainvoke(
+            {
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": (
+                            "REQUEST ID: request-gate\n"
+                            "USER QUERY: Show me dresses."
+                        ),
+                    }
+                ]
+            },
+            config={"configurable": {"thread_id": identity.conversation_id}},
+        )
+    )
+    for _ in range(100):
+        if model.calls:
+            break
+        await asyncio.sleep(0.01)
+
+    assert len(model.calls) == 1
+    assert not pending.done()
+
+    gate.allow()
+    result = await asyncio.wait_for(pending, timeout=2)
+
+    assert len(model.calls) == 2
+    activation_results = [
+        message
+        for message in result["messages"]
+        if isinstance(message, ToolMessage)
+        and message.name == SKILL_ACTIVATION_TOOL_NAME
+    ]
+    assert len(activation_results) == 1
+    assert str(activation_results[0].content).startswith(
+        SKILL_ACTIVATION_COMPLETE
+    )
+    assert result["messages"][-1].content == "Ready to shop."
 
 
 def test_pending_phase_rejects_multiple_activation_calls() -> None:

@@ -12,6 +12,7 @@ one code -- fails here rather than quietly making refusals uncountable again.
 
 from __future__ import annotations
 
+from collections import Counter
 from types import SimpleNamespace
 from typing import Any, Callable
 
@@ -191,7 +192,11 @@ GATE_CASES: tuple[GateCase, ...] = (
         "show me tote bags",
         None,
         lambda ctx: None,
-        _scope(taxonomy={"category": ["bags"], "subcategory": ["hatboxes"]}),
+        # Shaped wrongly, rather than worded wrongly. A value outside the
+        # advertised vocabulary no longer reaches this gate -- it is set aside
+        # before validation and the search runs -- so the case that proves the
+        # gate is one no reconciliation can rescue.
+        _scope(required_constraints={"unadvertised_requirements": "waterproof"}),
     ),
     (
         SearchRejection.REPAIR_CHANGED_CONSTRAINTS,
@@ -437,7 +442,11 @@ def test_a_scope_that_runs_records_no_code_beside_one_that_was_refused() -> None
     result = search_catalog(
         ctx,
         [
-            _scope(taxonomy={"category": ["bags"], "subcategory": ["hatboxes"]}),
+            _scope(
+                required_constraints={
+                    "unadvertised_requirements": "waterproof",
+                }
+            ),
             _scope(
                 semantic_query="dresses",
                 requested_product_type="dress",
@@ -567,15 +576,162 @@ def test_an_advertised_type_rejected_on_its_taxonomy_is_not_called_uncarried() -
     assert "NOT_CARRIED" not in text
 
 
-def test_one_rejected_scope_does_not_cancel_the_scopes_beside_it(
+def test_a_look_with_a_role_this_shop_does_not_stock_still_shops(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The reported failure: a look of three, and only one of them searched.
+
+    Shown a video of a sweater, jeans and boots and asked to shop it, the
+    reply came back with boots alone. The jeans role carried a subcategory
+    this catalog does not have, and the sweater role a colour it does not
+    advertise, so both were refused -- and then spent thirty-one identical
+    retries each, deadlocked against one another's repair lock, while the
+    boots sat finished and unmentioned.
+
+    Both roles search now. The jeans keep their category and lose only the
+    subcategory that does not exist, which is not a substitution: the words
+    are still in the query, the index ranks on them, and whether what comes
+    back is jeans is the model's call to make with the products in front of
+    it.
+    """
+
+    searched: list[str] = []
+
+    def _record(plan: Any, *_args: Any, **_kwargs: Any) -> Any:
+        searched.extend(plan.semantic_queries)
+        return SimpleNamespace(
+            result=SearchCatalogResult(ok=True, products=[]),
+            fallback_attempted=False,
+            fallback_used=False,
+        )
+
+    monkeypatch.setattr(catalog_search_mod, "execute_catalog_search", _record)
+
+    ctx = _context("I want to shop this look")
+    result = search_catalog(
+        ctx,
+        [
+            _scope(
+                semantic_query="cream knit sweater",
+                requested_product_type="sweater",
+                taxonomy={"category": ["apparel"], "subcategory": []},
+                required_constraints={"color": ["cream"]},
+            ),
+            _scope(
+                semantic_query="dark blue straight leg jeans",
+                requested_product_type="jeans",
+                taxonomy={"category": ["apparel"], "subcategory": ["jeans"]},
+                required_constraints={"color": ["blue"]},
+            ),
+            _scope(
+                semantic_query="brown ankle boots",
+                requested_product_type="tote bags",
+                taxonomy={"category": ["bags"], "subcategory": ["tote_bags"]},
+            ),
+        ],
+    )
+
+    assert "cream knit sweater" in searched
+    assert "dark blue straight leg jeans" in searched
+    assert "brown ankle boots" in searched
+    assert _rejection_codes(result) == []
+
+    # Twice each at most, not thirty-two: the second is the relaxed retry of
+    # a role that found nothing here, which is the tool looking again on its
+    # own rather than the model being sent back to rewrite its arguments.
+    assert max(Counter(searched).values()) <= 2
+
+    text = result[0] if isinstance(result, tuple) else result
+    assert "SEARCH_WORDS_RANKED_NOT_FILTERED" in text
+    assert "cream" in text
+    assert "jeans" in text
+
+
+def test_the_same_request_twice_is_not_run_a_second_time() -> None:
+    """A repair that changed nothing is not a repair, and stops here.
+
+    The locks that police a repair compare scope keys and constraints, so a
+    retry identical to the call they turned back reads to them as a faithful
+    repair and is judged again -- to the same verdict, for the same reason.
+    That is the shape the look failure took: the same two payloads, over and
+    over, until the turn ran out of recursion.
+
+    Reconciliation removes the reason those two were rejected at all. This
+    removes the loop, which was never specific to them.
+    """
+
+    ctx = _context("show me tote bags")
+    scope = _scope(required_constraints={"unadvertised_requirements": "wet"})
+
+    first = search_catalog(ctx, [scope])
+    assert _rejection_codes(first) == [
+        SearchRejection.CAPABILITIES_SCHEMA_MISMATCH
+    ]
+
+    second = search_catalog(ctx, [scope])
+    text = second[0] if isinstance(second, tuple) else second
+    assert "SEARCH_NOT_REPAIRED" in text
+    assert _rejection_codes(second) == []
+
+
+def test_a_repair_that_changed_something_is_judged_on_its_merits() -> None:
+    """The backstop ends identical retries, not repair itself."""
+
+    ctx = _context("show me tote bags")
+
+    search_catalog(
+        ctx,
+        [_scope(required_constraints={"unadvertised_requirements": "wet"})],
+    )
+    repaired = search_catalog(ctx, [_scope()])
+
+    text = repaired[0] if isinstance(repaired, tuple) else repaired
+    assert "SEARCH_NOT_REPAIRED" not in text
+
+
+def test_a_payload_the_catalog_can_honour_is_left_exactly_as_it_came() -> None:
+    """Nothing is set aside, and nothing is disclosed, on the ordinary path.
+
+    The disclosure is only true when a word could not be honoured. Emitting it
+    on a search that filtered on everything it was given would tell the model
+    its own filters had not been applied, and cost every turn tokens for the
+    privilege.
+    """
+
+    ctx = _context("show me black dresses")
+
+    result = search_catalog(
+        ctx,
+        [
+            _scope(
+                semantic_query="black dresses",
+                requested_product_type="dresses",
+                taxonomy={"category": ["apparel"], "subcategory": ["dresses"]},
+                required_constraints={"color": ["black"]},
+            )
+        ],
+    )
+
+    text = result[0] if isinstance(result, tuple) else result
+    assert "SEARCH_WORDS_RANKED_NOT_FILTERED" not in text
+    assert _rejection_codes(result) == []
+
+
+def test_a_word_the_catalog_cannot_filter_on_does_not_cost_the_role(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A shopper asked for a look and got nothing, over one word.
 
-    The model composed three roles and wrote an unadvertised colour on the
-    third. The whole call was refused at the tool boundary, so the two sound
-    roles never reached this function -- which had been built all along to judge
-    each role on its own and run the ones that stand up.
+    The model composed the roles and wrote an unadvertised colour on one of
+    them. That role was refused, and a refused role is a role in repair --
+    policed by locks that hold one scope at a time, so with two bad roles the
+    retries were judged against each other's lock and the turn spent its whole
+    budget on them.
+
+    Nothing about "tan" needed the model. It is not one of the colours this
+    catalog advertises, so it cannot be a filter, and it is already in the
+    query where the index can rank on it. So the filter drops it, the search
+    runs, and the result says the word was ranked on rather than filtered by.
     """
 
     searched: list[str] = []
@@ -607,12 +763,16 @@ def test_one_rejected_scope_does_not_cancel_the_scopes_beside_it(
         ],
     )
 
-    # The sound role ran; the unsound one did not. The repeat is that role's
-    # relaxed retry: it found nothing, so the same search runs again without
-    # the constraints that may give, and the reply shows what the shop has.
-    assert searched[0] == "black dresses"
-    assert set(searched) == {"black dresses"}
-    assert SearchRejection.CAPABILITIES_SCHEMA_MISMATCH in _rejection_codes(result)
+    # Both roles ran, and neither was refused.
+    assert set(searched) == {"black dresses", "tan tote bags"}
+    assert _rejection_codes(result) == []
+
+    # The colour could not be honoured as a filter, so the results do not
+    # promise it. That difference is said out loud rather than left for the
+    # shopper to find on a product page.
+    text = result[0] if isinstance(result, tuple) else result
+    assert "SEARCH_WORDS_RANKED_NOT_FILTERED" in text
+    assert "tan" in text
 
 
 def test_a_type_the_catalog_does_not_list_is_disclosed_not_swapped_silently(

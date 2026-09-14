@@ -30,6 +30,13 @@ class CatalogRepairState:
     pending_taxonomy_constraints: dict[str, Any] | None = None
     pending_no_direct_constraint_clear: bool = False
     pending_schema_requirements: list[str] = field(default_factory=list)
+    #: The last scope this turn was turned back on, as sent. A repair that
+    #: comes back identical has not repaired anything, and the locks above
+    #: cannot tell the difference -- asked to shop a look of three, two roles
+    #: were rejected thirty-one times each, unchanged every time, until the
+    #: turn hit its recursion limit with nothing to show. Remembered here so
+    #: the second identical attempt is the last one.
+    last_rejected_scope: str | None = None
 
 
 @dataclass

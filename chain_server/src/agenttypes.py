@@ -168,6 +168,10 @@ class State(BaseModel):
         default_factory=dict,
         description="Per-role model usage summary for the current turn"
     )
+    guardrail_results: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Sanitized input and output guardrail decisions for the current turn"
+    )
     agent_diagnostics: Dict[str, Any] = Field(
         default_factory=dict,
         description="Ordered Deep Agents tool and termination diagnostics"

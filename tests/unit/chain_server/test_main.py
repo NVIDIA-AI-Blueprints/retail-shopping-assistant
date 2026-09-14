@@ -413,6 +413,7 @@ class TestTimingEndpoint:
         assert "total" in body["timings"]
         assert body["timings"]["total"] > 0
         assert body["model_usage"] == {}
+        assert body["guardrail_report"] == {}
         assert body["agent_diagnostics"] == {}
 
     def test_returns_agent_diagnostics_additively(
@@ -1724,6 +1725,16 @@ class TestDeepAgentsRuntimeScopes:
             assert output.agent_diagnostics["final_termination_reason"] == (
                 "input_guardrail_error"
             )
+        assert output.guardrail_results[0] == {
+            "stage": "input",
+            "status": "error",
+            "violated_categories": [],
+            "latency_ms": 0.0,
+            "model_calls": {},
+        }
+        assert [result["stage"] for result in output.guardrail_results] == (
+            ["input", "output"] if failure_mode == "open" else ["input"]
+        )
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("failure_mode", ["open", "closed"])

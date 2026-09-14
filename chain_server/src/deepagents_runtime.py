@@ -83,7 +83,7 @@ from .conversation_products import (
     format_product_resolution,
 )
 from .fencing import MEDIA_FENCE
-from .guardrails import GuardrailServiceClient, stops_turn
+from .guardrails import GuardrailDecision, GuardrailServiceClient, stops_turn
 from .media_perception import MEDIA_ONLY_QUERY, MediaPerceptionClient
 from .message_shape import (
     _content_to_text,
@@ -202,6 +202,20 @@ from .turn_support import (
 from .weather import WeatherConfig, WeatherRequest, build_weather_client
 
 logger = logging.getLogger(__name__)
+
+
+def _record_guardrail_result(state: State, decision: GuardrailDecision) -> None:
+    """Keep only the provider's sanitized decision metadata for the UI."""
+
+    state.guardrail_results.append(
+        {
+            "stage": decision.stage,
+            "status": decision.status,
+            "violated_categories": decision.violated_categories,
+            "latency_ms": decision.latency_ms,
+            "model_calls": decision.model_calls,
+        }
+    )
 
 
 def _emit_media_progress(on_progress: Any, state: State) -> None:
@@ -1168,6 +1182,13 @@ class DeepAgentsRuntime:
             return {}
         return output.agent_diagnostics
 
+    def _guardrail_report(self, output: State) -> dict[str, Any]:
+        return {
+            "enabled": output.guardrails,
+            "failure_mode": self.config.guardrails_failure_mode,
+            "checks": output.guardrail_results,
+        }
+
     async def astream(
         self,
         state: State,
@@ -1225,6 +1246,7 @@ class DeepAgentsRuntime:
                     "total_seconds": sum(output.timings.values()),
                     "token_usage": _normalized_token_usage(output.token_usage),
                     "model_usage": output.model_usage,
+                    "guardrail_report": self._guardrail_report(output),
                     "agent_diagnostics": self._exposed_agent_diagnostics(output),
                 },
                 "timestamp": time.time(),
@@ -1244,6 +1266,7 @@ class DeepAgentsRuntime:
             "timings": output.timings,
             "token_usage": _normalized_token_usage(output.token_usage),
             "model_usage": output.model_usage,
+            "guardrail_report": self._guardrail_report(output),
             "agent_diagnostics": self._exposed_agent_diagnostics(output),
         }
 
@@ -1452,6 +1475,7 @@ class DeepAgentsRuntime:
                 model_calls=input_decision.model_calls,
                 ok=input_decision.status != "error",
             )
+            _record_guardrail_result(state, input_decision)
             if stops_turn(
                 input_decision,
                 self.config.guardrails_failure_mode,
@@ -1682,6 +1706,7 @@ class DeepAgentsRuntime:
                 model_calls=output_decision.model_calls,
                 ok=output_decision.status != "error",
             )
+            _record_guardrail_result(state, output_decision)
             if stops_turn(
                 output_decision,
                 self.config.guardrails_failure_mode,
@@ -4370,9 +4395,6 @@ Rules:
 #: lane. catalog_text is the prose serialisation of the same attributes and is
 #: deliberately not forwarded -- it carries a marketing summary, and separating
 #: the two would mean parsing prose.
-
-
-
 
 
 

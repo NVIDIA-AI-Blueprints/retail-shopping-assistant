@@ -159,6 +159,7 @@ class QueryResponse(BaseModel):
     timings: dict[str, float] = {}
     token_usage: dict[str, int] = Field(default_factory=dict)
     model_usage: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    guardrail_report: dict[str, Any] = Field(default_factory=dict)
     agent_diagnostics: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -287,6 +288,7 @@ async def process_query_timing(request: QueryRequest):
             timings=out_state_dict["timings"],
             token_usage=out_state_dict.get("token_usage", {}),
             model_usage=out_state_dict.get("model_usage", {}),
+            guardrail_report=out_state_dict.get("guardrail_report", {}),
             agent_diagnostics=out_state_dict.get("agent_diagnostics", {}),
         )
         response.timings["total"] = total_time

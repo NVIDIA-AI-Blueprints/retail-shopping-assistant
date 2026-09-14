@@ -711,6 +711,24 @@ const Chatbox: React.FC<ChatboxProps> = ({
               );
               setModelUsage(sessionModelUsageRef.current);
               setSessionUsage(sessionUsageRef.current);
+              if (metricsPayload.guardrail_report?.enabled) {
+                setMessages((previous) => {
+                  const updated = [...previous];
+                  for (let index = updated.length - 1; index >= 0; index -= 1) {
+                    if (
+                      updated[index].role === "assistant" &&
+                      updated[index].content !== "loader"
+                    ) {
+                      updated[index] = {
+                        ...updated[index],
+                        guardrailReport: metricsPayload.guardrail_report,
+                      };
+                      break;
+                    }
+                  }
+                  return updated;
+                });
+              }
               continue;
             }
 
@@ -933,6 +951,7 @@ const Chatbox: React.FC<ChatboxProps> = ({
               productName={msg.productName}
               selectedProductName={selectedProduct?.productName}
               onProductSelect={onProductSelect}
+              guardrailReport={msg.guardrailReport}
               ref={messageRefs.current[messages.length - 1 - index]}
             />
           ))}

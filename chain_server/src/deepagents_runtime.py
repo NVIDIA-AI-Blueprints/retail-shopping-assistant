@@ -175,6 +175,7 @@ from .turn_support import (
     _no_direct_taxonomy_response,
     _normalize_cart_add_tool_items,
     _normalized_token_usage,
+    _one_size_note,
     _partial_graph_messages,
     _partial_product_results_response,
     _product_detail_failure_message,
@@ -1656,6 +1657,12 @@ class DeepAgentsRuntime:
             returned.
             """
 
+            held = scope.answer_already_given(
+                "get_product_details_tool",
+                product_ref,
+            )
+            if held is not None:
+                return held
             if (
                 scope.product_detail_reads
                 >= self.config.max_product_detail_reads_per_turn
@@ -1681,10 +1688,13 @@ class DeepAgentsRuntime:
                 # carries identity only, so it fails this check and still reads.
                 record = _product_detail_record(cached_product)
                 evidence = ProductDetailEvidence(products=[record])
-                return (
-                    _format_product_detail_record(record),
-                    evidence.as_artifact(),
+                answer = _format_product_detail_record(record)
+                scope.remember_answer(
+                    "get_product_details_tool",
+                    product_ref,
+                    answer,
                 )
+                return (answer, evidence.as_artifact())
             scope.product_detail_reads += 1
             detail_result = get_product_details(
                 GetProductDetailsInput(product_id=cached_product.product_id),
@@ -1709,10 +1719,13 @@ class DeepAgentsRuntime:
                 scope.retrieved[product.display_name] = product.image_url
             record = _product_detail_record(product)
             evidence = ProductDetailEvidence(products=[record])
-            return (
-                _format_product_detail_record(record),
-                evidence.as_artifact(),
+            answer = _format_product_detail_record(record)
+            scope.remember_answer(
+                "get_product_details_tool",
+                product_ref,
+                answer,
             )
+            return (answer, evidence.as_artifact())
 
         @tool(return_direct=False, response_format="content_and_artifact")
         def get_product_details_tool(product_ref: str):
@@ -2178,6 +2191,10 @@ class DeepAgentsRuntime:
                 if size_issue:
                     blocked.append(f"- PRODUCT_REF '{product_ref}': {size_issue}")
                     continue
+                one_size_note = _one_size_note(active_detail.product, size)
+                if one_size_note:
+                    size = None
+                    choices_from_a_description.append(one_size_note)
                 # Disclosed, not refused. A description the model read one way
                 # is added and said out loud, because the cart is on screen and
                 # a wrong line is one click away -- where a refusal costs a
@@ -2796,6 +2813,13 @@ class DeepAgentsRuntime:
                 item if isinstance(item, dict) else item.model_dump()
                 for item in items
             ]
+            asked = json.dumps(requests, sort_keys=True)
+            held = scope.answer_already_given(
+                "check_product_availability_tool",
+                asked,
+            )
+            if held is not None:
+                return held
 
             def _one(entry: dict[str, Any]) -> str:
                 product_ref = entry.get("product_ref") or ""
@@ -2821,9 +2845,18 @@ class DeepAgentsRuntime:
             # roughly 8.7s each -- enough to exhaust a turn's step budget before
             # the shopper got an answer.
             if len(requests) == 1:
-                return _one(requests[0])
-            with ThreadPoolExecutor(max_workers=min(len(requests), 8)) as pool:
-                return "\n\n".join(pool.map(_one, requests))
+                answer = _one(requests[0])
+            else:
+                with ThreadPoolExecutor(
+                    max_workers=min(len(requests), 8)
+                ) as pool:
+                    answer = "\n\n".join(pool.map(_one, requests))
+            scope.remember_answer(
+                "check_product_availability_tool",
+                asked,
+                answer,
+            )
+            return answer
 
         @tool(return_direct=False)
         def check_active_promotions_tool() -> str:
@@ -2834,7 +2867,12 @@ class DeepAgentsRuntime:
             sale status.
             """
 
-            return _format_promotions_result(check_active_promotions())
+            held = scope.answer_already_given("check_active_promotions_tool", "")
+            if held is not None:
+                return held
+            answer = _format_promotions_result(check_active_promotions())
+            scope.remember_answer("check_active_promotions_tool", "", answer)
+            return answer
 
         @tool(return_direct=False)
         def view_cart_total_tool() -> str:

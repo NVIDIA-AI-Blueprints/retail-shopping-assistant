@@ -5,10 +5,12 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass, field
 from threading import Lock
 from typing import Any
 
+from .control_signals import ControlSignal, control
 from .conversation_products import ProductEvidence
 
 
@@ -75,6 +77,25 @@ class TurnScope:
     # behavior; the search counter above is guarded and this one never was.
     product_detail_reads: int = 0
 
+    # Answers already given this turn, keyed by tool name and arguments.
+    #
+    # Nothing stopped a tool being called with arguments it had already been
+    # called with. Asked which of four dresses was the better value, the model
+    # ran the same block three times -- availability for the same four refs
+    # with the same size hints, promotions with no arguments at all, then the
+    # same product details -- with every previous result still in front of it
+    # and the prompt growing 13.3k to 17.5k as it went. It emitted no
+    # reasoning between the repeats, so this is not deliberation, and the turn
+    # ended at 19 tool calls and 95 seconds only because the product-detail
+    # cap happened to fire.
+    #
+    # A repeat is answered from here. The second repeat of the same arguments
+    # stops tool use outright, because a note saying "already answered" is
+    # itself something to loop against.
+    repeat_lock: Lock = field(default_factory=Lock)
+    answers_given: dict[str, str] = field(default_factory=dict)
+    repeats_refused: Counter[str] = field(default_factory=Counter)
+
     # Historical product resolution. Guarded by ``resolution_lock``.
     resolution_lock: Lock = field(default_factory=Lock)
     #: Set when a call actually resolved something. A call that resolved
@@ -86,3 +107,42 @@ class TurnScope:
     product_resolution_attempts: int = 0
 
     repair: CatalogRepairState = field(default_factory=CatalogRepairState)
+
+    def answer_already_given(
+        self,
+        tool_name: str,
+        arguments: str,
+    ) -> str | tuple[str, dict[str, Any]] | None:
+        """Return this turn's answer for these arguments, or None if new."""
+
+        key = f"{tool_name}({arguments})"
+        with self.repeat_lock:
+            held = self.answers_given.get(key)
+            if held is None:
+                return None
+            self.repeats_refused[key] += 1
+            repeats = self.repeats_refused[key]
+        if repeats == 1:
+            return (
+                f"ALREADY_ANSWERED_THIS_TURN: {tool_name} was called with "
+                "these same arguments earlier this turn, and nothing since "
+                "could have changed the answer. It was:\n\n" + held
+            )
+        # Saying "you already asked" is itself something to loop against.
+        return control(
+            f"STOP_TOOL_USE: {tool_name} has been called three times this "
+            "turn with the same arguments. Do not call any more tools. "
+            "Answer the shopper from the evidence already gathered.",
+            ControlSignal.STOP_TOOL_USE,
+        )
+
+    def remember_answer(
+        self,
+        tool_name: str,
+        arguments: str,
+        answer: str,
+    ) -> None:
+        """Record what these arguments answered, for the rest of the turn."""
+
+        with self.repeat_lock:
+            self.answers_given.setdefault(f"{tool_name}({arguments})", answer)

@@ -8976,6 +8976,13 @@ class TestDeepAgentsRuntimeRefs:
                 ),
             ),
         )
+        # On a fresh turn, because within one turn a ref already read is
+        # answered from what that read returned rather than read again.
+        runtime._create_agent(State(user_id=111, query="tell me more"), identity)
+        tools_by_name = {fn.__name__: fn for fn in captured["tools"]}
+        tools_by_name["resolve_conversation_products_tool"](
+            references=[{"reference_id": "prod_123", "product_ref": "prod_123"}]
+        )
         transient = tool_text(tools_by_name["get_product_details_tool"]("prod_123"))
         assert "temporarily unavailable" in transient
         assert "no longer available" not in transient

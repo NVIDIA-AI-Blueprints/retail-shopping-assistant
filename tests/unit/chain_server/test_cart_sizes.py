@@ -17,7 +17,11 @@ from __future__ import annotations
 import pathlib
 from types import SimpleNamespace
 
-from chain_server.src.turn_support import _cart_size_issue, _normalize_cart_add_tool_items
+from chain_server.src.turn_support import (
+    _cart_size_issue,
+    _normalize_cart_add_tool_items,
+    _one_size_note,
+)
 
 
 def test_two_sizes_of_one_product_are_two_lines() -> None:
@@ -275,6 +279,31 @@ class TestCartSizeGate:
         assert _cart_size_issue(self._product(["onesize"]), None, "add it") == ""
         assert _cart_size_issue(self._product(["onesize"]), "6", "add it") == ""
         assert _cart_size_issue(self._product(None), "6", "add it") == ""
+
+    def test_a_size_a_onesize_product_lacks_is_dropped_and_disclosed(self) -> None:
+        """Passing it is not the same as applying it.
+
+        Live, "add the black one in a size 8" put a one-size purse in the cart
+        and told the shopper it was a size 8 -- a size that product has never
+        had. There is only one thing to add, so this is not a refusal; the
+        size just cannot survive into the line or the sentence.
+        """
+
+        note = _one_size_note(self._product(["onesize"]), "8")
+
+        assert "added as one size" in note
+        assert "'8' was not applied" in note
+        assert "must not be described to the shopper as its size" in note
+
+    def test_a_onesize_product_given_no_size_needs_no_note(self) -> None:
+        assert _one_size_note(self._product(["onesize"]), None) == ""
+        assert _one_size_note(self._product(["onesize"]), "onesize") == ""
+
+    def test_a_sized_product_keeps_the_size_it_was_given(self) -> None:
+        """The note is for one-size products alone; 4 is a real size here."""
+
+        assert _one_size_note(self._product(["2", "4", "6"]), "4") == ""
+        assert _one_size_note(self._product(None), "8") == ""
 
 
 

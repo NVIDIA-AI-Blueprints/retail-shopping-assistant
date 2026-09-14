@@ -5123,6 +5123,29 @@ def _cart_size_issue(
     return ""
 
 
+def _one_size_note(product: Any, size: str | None) -> str:
+    """Say a size was dropped because this product comes in only one.
+
+    A size cannot be wrong on a product that has one -- there is nothing else
+    to have added -- so this is not a refusal. But it cannot be repeated back
+    either. Asked to "add the black one in a size 8", the assistant added a
+    one-size purse and told the shopper it was in size 8, a size that product
+    has never had. Dropping it keeps the cart line honest; saying so here is
+    what keeps the sentence honest too.
+    """
+
+    chosen = (size or "").strip()
+    if not chosen or _advertised_sizes(product) != [_ONE_SIZE]:
+        return ""
+    if chosen.casefold() == _ONE_SIZE:
+        return ""
+    return (
+        f"- {product.display_name}: added as one size. This product is sold "
+        f"in one size only, so the '{chosen}' was not applied and must not be "
+        "described to the shopper as its size."
+    )
+
+
 #: The shopper's own way of naming a size without saying the number.
 _SMALLEST_WORDS = ("smallest", "littlest", "tiniest")
 _LARGEST_WORDS = ("largest", "biggest")

@@ -751,6 +751,98 @@ def test_a_carried_type_over_an_uncarried_query_is_not_the_garment(
     )
 
 
+def test_naming_many_subcategories_does_not_buy_the_uncarried_garment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Widening the list does not make a skirt into the jeans.
+
+    The refusal above tells the model that several advertised subcategories may
+    be named when they genuinely are the garment -- shoes are flats and heels
+    and boots. Live, it took that route out: refused once on
+    ``subcategory: ["jeans"]``, it re-sent the identical
+    ``"dark wash straight leg jeans"`` over six subcategories at once, including
+    jumpsuits. The check only read single-subcategory scopes, so it skipped, the
+    search ran, and a navy fitted skirt and two dresses came back under a
+    heading that still read "Bottoms -- dark blue jeans".
+
+    Nothing in this taxonomy is jeans at any width, so width is not the thing
+    that makes it allowed.
+    """
+
+    searched: list[str] = []
+
+    def _record(plan: Any, *_args: Any, **_kwargs: Any) -> Any:
+        searched.extend(plan.semantic_queries)
+        return SimpleNamespace(
+            result=SearchCatalogResult(ok=True, products=[]),
+            fallback_attempted=False,
+            fallback_used=False,
+        )
+
+    monkeypatch.setattr(catalog_search_mod, "execute_catalog_search", _record)
+
+    ctx = _context("I want to shop this look")
+    result = search_catalog(
+        ctx,
+        [
+            _scope(
+                semantic_query="dark wash straight leg jeans",
+                requested_product_type="tote bags",
+                taxonomy={
+                    "category": ["bags"],
+                    "subcategory": ["tote_bags", "crossbody_bags"],
+                },
+            ),
+            _scope(semantic_query="roomy tote bags"),
+        ],
+    )
+
+    assert "dark wash straight leg jeans" not in searched
+    assert "roomy tote bags" in searched
+    assert SearchRejection.TAXONOMY_NOT_ADVERTISED_FOR_SCOPE in (
+        _rejection_codes(result)
+    )
+
+
+def test_the_uncarried_refusal_does_not_invite_a_wider_selection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The way out offered is `not_covered`, not another subcategory.
+
+    What the model is told is the whole of what it has to go on, and the
+    "name all of them" sentence is what it reached for when it widened. A
+    garment this shop has no word for has no wider selection to try, so saying
+    there is one is the bug that stays fixed here.
+    """
+
+    monkeypatch.setattr(
+        catalog_search_mod,
+        "execute_catalog_search",
+        lambda *_a, **_k: SimpleNamespace(
+            result=SearchCatalogResult(ok=True, products=[]),
+            fallback_attempted=False,
+            fallback_used=False,
+        ),
+    )
+
+    ctx = _context("I want to shop this look")
+    result = search_catalog(
+        ctx,
+        [
+            _scope(
+                semantic_query="dark wash straight leg jeans",
+                requested_product_type="dresses",
+                taxonomy={"category": ["apparel"], "subcategory": ["dresses"]},
+            )
+        ],
+    )
+
+    told = result if isinstance(result, str) else str(result)
+    assert "no wider selection to try" in told
+    assert "not_covered" in told
+    assert "name all of them" not in told
+
+
 def test_the_same_request_twice_is_not_run_a_second_time() -> None:
     """A repair that changed nothing is not a repair, and stops here.
 

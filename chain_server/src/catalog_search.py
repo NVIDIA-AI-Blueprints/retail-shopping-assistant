@@ -113,6 +113,19 @@ from .turn_support import (
 #: step produced one.
 StepResult = str | tuple[str, dict[str, Any]] | None
 
+#: Said wherever a role is reported uncoverable.
+#
+#: Refusing the search was only ever half of it. Told this shop has no jeans,
+#: the assistant said so plainly and then offered a navy skirt, two dresses and
+#: a blouse as "the closest dark-blue bottoms I found" -- disclosure and
+#: substitution in the same breath, under a heading that still read "Bottoms --
+#: dark blue jeans". Nothing had forbidden the second half.
+_NO_STAND_IN = (
+    "Show nothing for it and offer no other garment as the closest version of "
+    "it. Offering to look for a different kind of piece is fine if the shopper "
+    "is asked first."
+)
+
 
 @dataclass(frozen=True)
 class SearchContext:
@@ -988,8 +1001,16 @@ def _reviewed_provenance(ctx: SearchContext, attempt: _Attempt) -> StepResult:
             if advertised_request is not None
             else None
         )
-        if len(selected_subcategories) == 1 and (
-            advertised_request is None or uncarried_garment is not None
+        # Widening the list does not make a skirt into the jeans. Told once that
+        # a single-subcategory scope may name several when they genuinely are
+        # the garment -- shoes are flats and heels and boots -- the model
+        # re-sent "dark wash straight leg jeans" over six subcategories at once
+        # and slipped the check, and a navy skirt and two dresses came back as
+        # the dark bottom. So a garment this shop has no word for is refused at
+        # any width; the one-subcategory rule still governs the merely
+        # unadvertised type, which is what a composed role declares.
+        if uncarried_garment is not None or (
+            len(selected_subcategories) == 1 and advertised_request is None
         ):
             # Keyed on the query, not on the declared type: the declared type
             # is the part that changes when the model tries again, and the
@@ -1010,30 +1031,41 @@ def _reviewed_provenance(ctx: SearchContext, attempt: _Attempt) -> StepResult:
                         ControlSignal.STOP_TOOL_USE,
                     ),
                 )
-            mismatch = (
-                f"selects {json.dumps(selected_subcategories)} but asks for "
-                f'"{attempt.semantic_query}", and this shop has no '
-                f"'{uncarried_garment}'"
-                if uncarried_garment is not None
-                else f"gives '{request.requested_product_type}', which is not "
-                "an advertised product type, and files it under "
-                + json.dumps(selected_subcategories)
-                + ", which is a different garment rather than this shop's "
-                "word for it"
-            )
+            if uncarried_garment is not None:
+                # No invitation to widen here: nothing in this taxonomy is the
+                # garment, so offering the "several subcategories" route is
+                # what produced six of them on the retry.
+                guidance = (
+                    f"This scope selects {json.dumps(selected_subcategories)} "
+                    f'but asks for "{attempt.semantic_query}", and this shop '
+                    f"has no '{uncarried_garment}'. No advertised subcategory "
+                    f"is '{uncarried_garment}', so there is no wider selection "
+                    "to try. It is not carried: leave this role out of "
+                    f"`scopes`, name '{uncarried_garment}' in `not_covered`, "
+                    "and say plainly that this part of the look cannot be "
+                    "covered. Do not offer another garment in its place, and "
+                    "do not present one as the closest version of it."
+                )
+            else:
+                guidance = (
+                    "This scope gives "
+                    f"'{request.requested_product_type}', which is not an "
+                    "advertised product type, and files it under "
+                    + json.dumps(selected_subcategories)
+                    + ", which is a different garment rather than this shop's "
+                    "word for it. Search the garment that was asked for, not "
+                    "another one standing in for it. If several advertised "
+                    "subcategories ARE that garment -- shoes are flats and "
+                    "heels and boots -- name all of them. If this shop has no "
+                    "word for it, it is not carried: leave the role out of "
+                    "`scopes`, name it in `not_covered`, and say so plainly. "
+                    "Do not offer something else to wear as though it were the "
+                    "thing asked for."
+                )
             return _rejected(
                 attempt,
                 SearchRejection.TAXONOMY_NOT_ADVERTISED_FOR_SCOPE,
-                SEARCH_VALIDATION_ERROR_PREFIX
-                + "This scope "
-                + mismatch
-                + ". Search the garment that was asked for, not another one "
-                "standing in for it. If several advertised subcategories ARE "
-                "that garment -- shoes are flats and heels and boots -- name "
-                "all of them. If this shop has no word for it, it is not "
-                "carried: leave the role out of `scopes`, name it in "
-                "`not_covered`, and say so plainly. Do not offer something "
-                "else to wear as though it were the thing asked for.",
+                SEARCH_VALIDATION_ERROR_PREFIX + guidance,
             )
     if (
         request.taxonomy_status == "agent_selected_type"
@@ -2364,7 +2396,9 @@ def search_catalog(
         notices.append(
             "NOT_CARRIED: this catalog advertises nothing of these kinds, so "
             "no search of it can succeed. Tell the shopper plainly that it is "
-            "not carried: " + ", ".join(dict.fromkeys(not_carried))
+            "not carried: "
+            + ", ".join(dict.fromkeys(not_carried))
+            + ". " + _NO_STAND_IN
         )
     rendered: list[str] = list(notices)
     if not_covered:
@@ -2375,7 +2409,9 @@ def search_catalog(
         rendered.append(
             "NOT_COVERED: this catalog carries nothing of these kinds, so they "
             "were not searched. Tell the shopper plainly rather than omitting "
-            "them: " + ", ".join(str(item) for item in not_covered)
+            "them: "
+            + ", ".join(str(item) for item in not_covered)
+            + ". " + _NO_STAND_IN
         )
     artifacts: list[dict[str, Any]] = []
     for index, attempt in enumerate(attempts):

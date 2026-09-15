@@ -497,6 +497,20 @@ html {
   overflow-y: auto;
 }
 
+/* A heading inside the scrolling list, so the list stays the one scroll box. */
+.product-detail-panel__recent-group {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* Air above each heading but not the first, which the title already spaces. */
+.product-detail-panel__recent-group:not(:first-child) {
+  margin-top: 6px;
+}
+
 .product-detail-panel__recent-item {
   align-items: center;
   background: var(--panel);

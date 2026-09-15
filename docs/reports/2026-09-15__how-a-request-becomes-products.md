@@ -52,18 +52,49 @@ until the server is rebuilt.
 
 ### 1.1 Storage
 
-Products live in **Milvus**, in **two separate collections** (`catalog_retriever/src/retriever.py`):
+Products live in **Milvus**. The code provides for two collections
+(`catalog_retriever/src/retriever.py`), but only one is built here:
 
-| Collection | Holds | Metric |
-|---|---|---|
-| `text_collection` | text embeddings of product prose | `COSINE` |
-| `image_collection` | image embeddings | `COSINE` |
+| Collection | Holds | Metric | Live? |
+|---|---|---|---|
+| `text_collection` | text embeddings of product prose | `COSINE` | **yes** — `shopping_advisor_text_db`, 215 rows |
+| `image_collection` | image embeddings | `COSINE` | **no** — `self.image_db = None` unless `image_enabled` |
+
+Verified against the running database: `list_collections()` returns
+`shopping_advisor_text_db` alone, and `/capabilities` reports
+`retrieval_modes: ['text']` with `image_search_enabled: False`. So image search is
+built but switched off, and every retrieval in this deployment is text.
 
 Both are created with `index_params={"metric_type": "COSINE"}`, and the relevance
 score follows `langchain-milvus`'s COSINE contract (there is a comment at
 `retriever.py:323` pinning this deliberately). A search is a vector query with an
 optional Milvus **boolean filter expression** (`expr=...`) applied as a hard
 pre-filter, so metadata filters are exact set membership, not ranking hints.
+
+### 1.1a Where the metadata actually lives
+
+The declared schema has **three columns only** — `pk`, `text` (the embedded prose)
+and `vector` (2048 dims). Every product attribute is a key in Milvus's **dynamic
+field**, the collection being created with `enable_dynamic_field: True`. That is why
+`subcategory in ["dresses"]` is a legal expression against a column no schema
+declares. One real dress, read back from the live collection:
+
+| Key | Value | Shape |
+|---|---|---|
+| `category`, `subcategory` | `apparel`, `dresses` | the taxonomy filters |
+| `primary_color` | `pink` | **one scalar per product**, not a list |
+| `sizes` | `["2","4","6","8","10","12"]` | list → `json_contains_any` |
+| `price` | `"119.99"` | **string**, so it cannot push down |
+| `pattern`, `silhouette`, `neckline`, `sleeve_length`, `closure`, `composition`, `target_audience` | `solid`, `a_line`, `v_neck`, `long`, `button`, `cotton`, `womens` | filterable attributes |
+| `description`, `enriched_description`, `text` | prose | `text` is the embedded one |
+| `image`, `url` | `/images/Pastel_Pink_Peasant_Dress.jpg` | |
+| `pk`, `record_id`, `source_row`, `catalog_fingerprint` | | index bookkeeping |
+
+Two consequences worth carrying into the colour discussion in 4.1. `price` being
+text is exactly why numbers are decided in Python rather than by the database. And
+`primary_color` being a single scalar means a garment is filed under **one**
+advertised colour — so `primary_color in ["beige","white"]` is membership against
+that one value, and a wrong mapping does not rank the product lower, it excludes it.
 
 ### 1.2 There is no hand-authored taxonomy
 

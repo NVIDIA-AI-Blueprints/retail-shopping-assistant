@@ -14,9 +14,13 @@ turns:
     expect:
       cart: [{name: Southwest Bracelet, qty: 1}]
   - say: show me necklaces too
-    expect: {products_min: 1}
+    expect:
+      products_min: 1
+      every_product: {subcategory: necklaces}
   - say: and earrings
-    expect: {products_min: 1}
+    expect:
+      products_min: 1
+      every_product: {subcategory: earrings}
   - say: add two of the Xenial Aviator Sunglasses as well
     expect:
       cart:

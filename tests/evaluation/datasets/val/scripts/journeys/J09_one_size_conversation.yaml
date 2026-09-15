@@ -25,7 +25,9 @@ turns:
         - {name: Vivid Rose Gold Aviator Sunglasses, qty: 1}
         - {name: Southwest Bracelet, qty: 1}
   - say: and a tote bag
-    expect: {products_min: 1}
+    expect:
+      products_min: 1
+      every_product: {subcategory: tote_bags}
   - say: add the Jade Tone Canvas Tote Bag
     expect:
       cart:

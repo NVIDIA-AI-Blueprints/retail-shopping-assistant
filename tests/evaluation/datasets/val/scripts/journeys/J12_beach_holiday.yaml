@@ -18,12 +18,19 @@ turns:
   - say: something for dinner in the evening
     expect: {products_min: 1}
   - say: and sunglasses
-    expect: {products_min: 1}
+    expect:
+      products_min: 1
+      every_product: {subcategory: sunglasses}
   - say: add the Xenial Aviator Sunglasses
     expect:
       cart: [{name: Xenial Aviator Sunglasses, qty: 1}]
   - say: a bag I can carry to the beach
-    expect: {products_min: 1}
+    # A bag, not a kind of bag, so which kinds come back is the model's call
+    # and has varied run to run. What may not vary is that they are bags.
+    expect:
+      products_min: 1
+      products_within:
+        [tote_bags, crossbody_bags, shoulder_bags, satchels, travel_bags]
   - say: add the Linen Canvas Tote Bag too
     expect:
       cart:

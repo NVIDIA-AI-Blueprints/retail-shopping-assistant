@@ -39,7 +39,13 @@ turns:
         - {name: Jade Suede Heels, size: "7", qty: 1}
         - {name: Jade Suede Heels, size: "8", qty: 1}
   - say: do you have a green dress in a size 2
-    expect: {}
+    # No green dress in a 2, so the colour gives and size 2 dresses come back.
+    # What came back was a skirt and three sweaters, under a sentence reading
+    # "here are the dresses that do come in a size 2": the retry dropped the
+    # garment along with the colour. Not asserting a count -- "we have none"
+    # is an honest answer to this -- only that a dress is what a near miss is.
+    expect:
+      products_within: [dresses]
   # High-neck, because "the black one" nine turns later has to mean one dress.
   # Plain "black dresses in a size 2" shows four, and pinning one of them in the
   # cart assertion below measured whether the model guessed right out of four --
@@ -50,11 +56,22 @@ turns:
       products_min: 1
       every_product: {primary_color: black}
   - say: do you have a tote bag in a size 8
-    expect: {}
+    # Totes are one size, so the size is the only filter here that can give.
+    # Giving it up and keeping the size instead returned boots and heels --
+    # footwear runs 5 to 9, so a size 8 exists there and nowhere else.
+    expect:
+      products_within: [tote_bags]
   - say: my husband is coming too, he needs sunglasses
-    expect: {products_min: 1}
+    expect:
+      products_min: 1
+      every_product: {subcategory: sunglasses}
   - say: he also wants a bag for the trip
-    expect: {products_min: 1}
+    # A bag, not a kind of bag, so which kinds come back is the model's call
+    # and has varied run to run. What may not vary is that they are bags.
+    expect:
+      products_min: 1
+      products_within:
+        [tote_bags, crossbody_bags, shoulder_bags, satchels, travel_bags]
   - say: now show me some skirts
     expect: {products_min: 2}
   - say: we're going to Italy first, what do I wear at the weekend

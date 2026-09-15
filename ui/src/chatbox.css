@@ -715,6 +715,25 @@ html {
   width: 100%;
 }
 
+/* Heading over each kind of thing in a reply's results. */
+.product-result-group {
+  align-self: stretch;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  margin-top: 18px;
+  padding-bottom: 4px;
+  text-transform: uppercase;
+  width: 100%;
+}
+
+/* The grid already carries the gap under a heading, so drop its top margin. */
+.product-result-group + .product-result-grid {
+  margin-top: 8px;
+}
+
 .product-result-card {
   background: var(--panel);
   border: 1px solid rgba(23, 23, 23, 0.06);

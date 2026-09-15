@@ -23,6 +23,7 @@ import React from "react";
 import Showdown from "showdown";
 import SafeHTML from "./SafeHTML";
 import Loader from "./Loader";
+import { groupedByCategory } from "../../utils";
 import MediaAnalysisCard from "./MediaAnalysisCard";
 import {
   ChatMessageProps,
@@ -145,38 +146,48 @@ const ChatMessage = React.forwardRef<HTMLDivElement, ChatMessageProps>(
     // Image row message (multiple products)
     if (role === "image_row") {
       const images = content as ImageRowContent;
-      
+
+      // One grid per kind of thing, because a whole-outfit reply arrives
+      // interleaved and read as a jumble: the shopper looking for the dresses
+      // the reply described found a dress, a heel, another dress.
       return (
-        <div className="product-result-grid" ref={ref}>
-          {images.map((image: ImageContent, index: number) => (
-            <div key={`${image.productName}-${index}`} className="messages__item messages__item--image">
-              <button
-                type="button"
-                className={`product-result-card${
-                  image.productName === selectedProductName ? " is-selected" : ""
-                }`}
-                onClick={() => onProductSelect?.(image)}
-              >
-                <img
-                  className="product-result-card__image"
-                  src={image.productUrl}
-                  alt={image.productName}
-                />
-                <span
-                  className="product-result-card__name"
-                  style={{
-                    maxWidth: isFashionMode() ? "200px" : "none",
-                  }}
-                >
-                  {image.productName}
-                </span>
-                {image.price && (
-                  <span className="product-result-card__price">
-                    {formatCardPrice(image.price)}
-                  </span>
-                )}
-              </button>
-            </div>
+        <div ref={ref}>
+          {groupedByCategory(images).map(([label, group]) => (
+            <React.Fragment key={label}>
+              {label && <div className="product-result-group">{label}</div>}
+              <div className="product-result-grid">
+                {group.map((image: ImageContent, index: number) => (
+                  <div key={`${image.productName}-${index}`} className="messages__item messages__item--image">
+                    <button
+                      type="button"
+                      className={`product-result-card${
+                        image.productName === selectedProductName ? " is-selected" : ""
+                      }`}
+                      onClick={() => onProductSelect?.(image)}
+                    >
+                      <img
+                        className="product-result-card__image"
+                        src={image.productUrl}
+                        alt={image.productName}
+                      />
+                      <span
+                        className="product-result-card__name"
+                        style={{
+                          maxWidth: isFashionMode() ? "200px" : "none",
+                        }}
+                      >
+                        {image.productName}
+                      </span>
+                      {image.price && (
+                        <span className="product-result-card__price">
+                          {formatCardPrice(image.price)}
+                        </span>
+                      )}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </React.Fragment>
           ))}
         </div>
       );

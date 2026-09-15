@@ -8,6 +8,7 @@
 import React, { useCallback, useRef, useState } from "react";
 import { ProductDetailPanelProps, ProductPrice, ProductSummary } from "../types";
 import { getDefaultImage } from "../config/config";
+import { groupedByCategory } from "../utils";
 
 /** Neither half of the panel may be driven to nothing by a drag. */
 const MIN_DETAIL_HEIGHT = 140;
@@ -131,7 +132,9 @@ const ProductDetailPanel: React.FC<ProductDetailPanelProps> = ({
           <div className="product-detail-panel__recent-list">
             {groupedByCategory(products).map(([label, items]) => (
               <React.Fragment key={label}>
-                <div className="product-detail-panel__recent-group">{label}</div>
+                {label && (
+                  <div className="product-detail-panel__recent-group">{label}</div>
+                )}
                 {items.map((product) => (
                   <button
                     key={product.productId || product.productName}
@@ -166,42 +169,6 @@ const formatPrice = (price: ProductPrice): string => {
   } catch {
     return `$${price.amount.toFixed(2)}`;
   }
-};
-
-/**
- * Group the panel by the kind of thing each product is -- boots with boots,
- * dresses with dresses.
- *
- * A whole-look reply returns several roles at once, and ungrouped they
- * interleaved: the shopper reading about a sweater scrolled past two bags to
- * find the second sweater. Groups appear in the order their first product did,
- * which is the catalog's ranking, so the best match still leads the panel and
- * is what gets auto-selected.
- *
- * Grouped on the product's own category rather than a display taxonomy of our
- * own, because that field is what the catalog published for it.
- */
-const groupedByCategory = (
-  products: ProductSummary[]
-): [string, ProductSummary[]][] => {
-  const groups = new Map<string, ProductSummary[]>();
-  products.forEach((product) => {
-    const label = categoryLabel(product.category);
-    const group = groups.get(label);
-    if (group) {
-      group.push(product);
-    } else {
-      groups.set(label, [product]);
-    }
-  });
-  return Array.from(groups.entries());
-};
-
-/** "tote_bags" reads as "Tote Bags"; an unlabelled product still gets a home. */
-const categoryLabel = (category?: string): string => {
-  const name = (category || "").trim().replace(/[_-]+/g, " ");
-  if (!name) return "Other";
-  return name.replace(/\b\p{L}/gu, (letter) => letter.toUpperCase());
 };
 
 const getCatalogFacts = (product: ProductSummary | null): string[] => {

@@ -23,6 +23,44 @@ const SHOPPER_TYPE_PATTERN = /^[a-z][a-z0-9_]*$/;
 const ZIPCODE_PATTERN = /^[0-9]{5}$/;
 
 /**
+ * Group products by the kind of thing each one is, so shoes sit with shoes and
+ * dresses with dresses.
+ *
+ * A reply that covers a whole outfit returns several roles at once and arrives
+ * interleaved, so a shopper reading about dresses met a dress, a heel, another
+ * dress. Groups keep the order their first product appeared in, which is the
+ * catalog's ranking, so the best match still leads.
+ *
+ * Grouped on the product's own category rather than a display taxonomy of our
+ * own, because that is what the catalog published for it. Products arrive by
+ * two routes and only one carries a category, so a product without one is
+ * returned under an empty label for the caller to render unheaded -- a heading
+ * reading "Other" would be labelling our gap rather than the shopper's clothes.
+ */
+export const groupedByCategory = <T extends { category?: string }>(
+  products: T[]
+): [string, T[]][] => {
+  const groups = new Map<string, T[]>();
+  products.forEach((product) => {
+    const label = categoryLabel(product.category);
+    const group = groups.get(label);
+    if (group) {
+      group.push(product);
+    } else {
+      groups.set(label, [product]);
+    }
+  });
+  return Array.from(groups.entries());
+};
+
+/** "tote_bags" reads as "Tote Bags"; no category reads as no heading. */
+export const categoryLabel = (category?: string): string =>
+  (category || "")
+    .trim()
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\p{L}/gu, (letter) => letter.toUpperCase());
+
+/**
  * Convert a file to base64 string
  */
 export const convertToBase64 = (file: File): Promise<string> => {

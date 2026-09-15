@@ -485,7 +485,12 @@ const Chatbox: React.FC<ChatboxProps> = ({
     // because a turn that returns no products -- adding to the cart, answering
     // a question, asking one -- is still about what is already on screen, and
     // emptying the panel under it loses the shopper's place.
-    if (!panelReplacedThisTurn.current) {
+    //
+    // An empty arrival is not an arrival. The images event is sent on every
+    // turn whether or not it has anything in it, so keying the handover on the
+    // event rather than its contents cleared the panel on exactly the turns
+    // this is meant to leave alone.
+    if (products.length > 0 && !panelReplacedThisTurn.current) {
       panelReplacedThisTurn.current = true;
       productsByNameRef.current.clear();
       productOrderRef.current = [];

@@ -344,15 +344,27 @@ def test_composer_summary_for_zero_results() -> None:
         # on the server, and kept the size while dropping the product type --
         # boots, for a tote bag in a size 8. So the retry is named as the
         # model's to make, along with which filter may give and which may not.
+        #
+        # "Keep the size" then had to earn an exception. Asked for a tote in a
+        # size 8, the model had no optional filter to give up and obeyed: it
+        # showed nothing and asked whether to show the totes it had. A size
+        # that is the whole request is the one thing left to relax, and the
+        # sizes actually stocked are what the shopper is owed instead.
         "NEXT: nothing in the catalog matched all of these at once. Search "
         "again yourself, now, with one optional requirement dropped -- colour, "
         "pattern, style or price. Keep the product type and keep the size: a "
         "shopper asking for a dress is not answered with a skirt, and a size "
         "is a fact about a body, not a preference. Then show what that finds "
-        "and say plainly which requirement could not be met. If the product "
-        "type itself is one this shop does not carry, say that instead and "
-        "search no further. Do not answer with a question alone, and never "
-        "offer a choice between things the shopper cannot see."
+        "and say plainly which requirement could not be met. If the size is "
+        "the only requirement there is, drop the size instead and search "
+        "again: say first that nothing comes in the size they asked for, name "
+        "the sizes these do come in -- one size, or a range that excludes "
+        "theirs -- and never present them as the size they asked for. If the "
+        "product type itself is one this shop does not carry, say that instead "
+        "and search no further. Do not answer with a question alone, and never "
+        "offer a choice between things the shopper cannot see: asking \"shall "
+        "I show you the ones we do have\" is that refusal wearing a question "
+        "mark. Show them."
     )
 
 

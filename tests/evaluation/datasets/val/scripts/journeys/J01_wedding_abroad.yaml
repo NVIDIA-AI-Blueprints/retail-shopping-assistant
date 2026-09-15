@@ -42,9 +42,11 @@ turns:
     # No green dress in a 2, so the colour gives and size 2 dresses come back.
     # What came back was a skirt and three sweaters, under a sentence reading
     # "here are the dresses that do come in a size 2": the retry dropped the
-    # garment along with the colour. Not asserting a count -- "we have none"
-    # is an honest answer to this -- only that a dress is what a near miss is.
+    # garment along with the colour. A dress is what a near miss is, and at
+    # least one has to arrive: the shop does stock size 2 dresses, so an empty
+    # turn here is not the honest "we have none" it looks like.
     expect:
+      products_min: 1
       products_within: [dresses]
   # High-neck, because "the black one" nine turns later has to mean one dress.
   # Plain "black dresses in a size 2" shows four, and pinning one of them in the
@@ -57,9 +59,16 @@ turns:
       every_product: {primary_color: black}
   - say: do you have a tote bag in a size 8
     # Totes are one size, so the size is the only filter here that can give.
-    # Giving it up and keeping the size instead returned boots and heels --
+    # Giving it up and keeping the type instead returned boots and heels --
     # footwear runs 5 to 9, so a size 8 exists there and nowhere else.
+    #
+    # Both bounds, because either alone passes a broken turn: products_within
+    # has no floor, so showing nothing satisfied it while the reply asked
+    # "shall I show you the tote bags we do have?" -- the menu-instead-of-
+    # products failure, passing green. products_min alone is what let the
+    # boots through.
     expect:
+      products_min: 1
       products_within: [tote_bags]
   - say: my husband is coming too, he needs sunglasses
     expect:

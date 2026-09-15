@@ -57,6 +57,7 @@ turns:
   - say: and a tote bag to go with it
     expect:
       products_min: 1
+      every_product: {subcategory: tote_bags}
 
   # 10. The catalog has no waterproof rating. It says so, and still helps.
   - say: do you have waterproof sandals

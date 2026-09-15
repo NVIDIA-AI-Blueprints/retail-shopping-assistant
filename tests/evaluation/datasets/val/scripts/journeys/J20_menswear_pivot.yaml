@@ -11,7 +11,9 @@ turns:
   - say: nothing for men at all?
     expect: {}
   - say: what about sunglasses, would those work for him
-    expect: {products_min: 1}
+    expect:
+      products_min: 1
+      every_product: {subcategory: sunglasses}
   - say: add the Kaleidoscope Aviator Sunglasses
     expect:
       cart: [{name: Kaleidoscope Aviator Sunglasses, qty: 1}]

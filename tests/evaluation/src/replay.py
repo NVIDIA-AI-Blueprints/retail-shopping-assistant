@@ -627,6 +627,27 @@ def write_transcript(
             f"> {turn['seconds']}s · {len(turn['products'])} products · "
             f"tools {turn['tools'] or '—'}"
         )
+        # Named, not counted. A turn answering "do you have a tote bag in a
+        # size 8" wrote four tote bags into its reply and handed the shopper
+        # eight products: two ankle boots and two pairs of heels came along
+        # with them, on the screen and into the index that resolves "the red
+        # one" later. The reply disowned them and the transcript said "8
+        # products", so every human who read that turn read it as correct.
+        if turn["products"]:
+            by_type: dict[str, list[str]] = {}
+            for product in turn["products"]:
+                kind = str(_attribute(product, "subcategory") or "?")
+                name = (
+                    product.get("display_name") or product.get("name") or "?"
+                )
+                by_type.setdefault(kind, []).append(str(name))
+            lines.append(
+                "> shown: "
+                + "; ".join(
+                    f"{kind} — {', '.join(names)}"
+                    for kind, names in by_type.items()
+                )
+            )
         for check in turn["checks"]:
             mark = {"pass": "ok", "fail": "**FAILED**", "error": "error"}[check["outcome"]]
             detail = f" — {check['detail']}" if check["outcome"] != "pass" else ""

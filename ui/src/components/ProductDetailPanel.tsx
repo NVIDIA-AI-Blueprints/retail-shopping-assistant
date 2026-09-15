@@ -8,6 +8,7 @@
 import React, { useCallback, useRef, useState } from "react";
 import { ProductDetailPanelProps, ProductPrice, ProductSummary } from "../types";
 import { getDefaultImage } from "../config/config";
+import { groupedByCategory } from "../utils";
 
 /** Neither half of the panel may be driven to nothing by a drag. */
 const MIN_DETAIL_HEIGHT = 140;
@@ -127,22 +128,29 @@ const ProductDetailPanel: React.FC<ProductDetailPanelProps> = ({
 
       {products.length > 0 && (
         <div className="product-detail-panel__recent" aria-label="Recent catalog results">
-          <div className="product-detail-panel__recent-title">Recent results</div>
+          <div className="product-detail-panel__recent-title">In this reply</div>
           <div className="product-detail-panel__recent-list">
-            {products.map((product) => (
-              <button
-                key={product.productId || product.productName}
-                type="button"
-                className={`product-detail-panel__recent-item${
-                  product.productName === selectedProduct?.productName ? " is-selected" : ""
-                }`}
-                onClick={() => onProductSelect(product)}
-              >
-                {product.productUrl && (
-                  <img src={product.productUrl} alt="" aria-hidden="true" />
+            {groupedByCategory(products).map(([label, items]) => (
+              <React.Fragment key={label}>
+                {label && (
+                  <div className="product-detail-panel__recent-group">{label}</div>
                 )}
-                <span>{product.productName}</span>
-              </button>
+                {items.map((product) => (
+                  <button
+                    key={product.productId || product.productName}
+                    type="button"
+                    className={`product-detail-panel__recent-item${
+                      product.productName === selectedProduct?.productName ? " is-selected" : ""
+                    }`}
+                    onClick={() => onProductSelect(product)}
+                  >
+                    {product.productUrl && (
+                      <img src={product.productUrl} alt="" aria-hidden="true" />
+                    )}
+                    <span>{product.productName}</span>
+                  </button>
+                ))}
+              </React.Fragment>
             ))}
           </div>
         </div>

@@ -245,6 +245,7 @@ _SUPPORTED_EXPECTATIONS = {
     "product_named",
     "products_max",
     "products_min",
+    "products_within",
     "reply_asks",
     "reply_must_not_say",
     "tools_not_used",
@@ -370,6 +371,36 @@ def check_turn(
                 not offenders,
                 f"not {value}: {offenders[:4]}",
             )
+
+    if "products_within" in expect:
+        # A role this shop cannot cover is disclosed and then answered anyway,
+        # with whatever ranked nearest presented as the closest version of the
+        # thing asked for. Every check a turn like that runs stays true --
+        # the covered roles are found, the uncovered one is named -- so the
+        # substitution has never been able to fail a journey. Naming the
+        # subcategories a turn is allowed to show is what makes it able to.
+        allowed = {
+            " ".join(str(value).casefold().split())
+            for value in expect["products_within"] or []
+        }
+        offenders = sorted(
+            {
+                f"{_attribute(product, 'subcategory')}:"
+                f" {product.get('display_name') or product.get('name') or '?'}"
+                for product in turn.products
+                if " ".join(
+                    str(_attribute(product, "subcategory") or "")
+                    .casefold()
+                    .split()
+                )
+                not in allowed
+            }
+        )
+        record(
+            "products_within",
+            not offenders,
+            f"outside {sorted(allowed)}: {offenders[:5]}",
+        )
 
     for name in expect.get("no_product_named", []) or []:
         shown = [

@@ -12,12 +12,13 @@ one code -- fails here rather than quietly making refusals uncountable again.
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-from typing import Any, Callable
-
 import json
-import pytest
+from collections import Counter
+from collections.abc import Callable
+from types import SimpleNamespace
+from typing import Any
 
+import pytest
 from chain_server.src import catalog_search as catalog_search_mod
 from chain_server.src.agenttypes import State
 from chain_server.src.catalog_search import SearchContext, search_catalog
@@ -191,7 +192,11 @@ GATE_CASES: tuple[GateCase, ...] = (
         "show me tote bags",
         None,
         lambda ctx: None,
-        _scope(taxonomy={"category": ["bags"], "subcategory": ["hatboxes"]}),
+        # Shaped wrongly, rather than worded wrongly. A value outside the
+        # advertised vocabulary no longer reaches this gate -- it is set aside
+        # before validation and the search runs -- so the case that proves the
+        # gate is one no reconciliation can rescue.
+        _scope(required_constraints={"unadvertised_requirements": "waterproof"}),
     ),
     (
         SearchRejection.REPAIR_CHANGED_CONSTRAINTS,
@@ -363,6 +368,57 @@ def test_repeated_shopper_scope_is_attributed_to_the_shopper_scope_gate(
     ]
 
 
+def test_a_role_the_shopper_never_typed_is_still_searched_only_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The rule above holds for a role read off a video, not just a typed one.
+
+    It did not. The key it turns on was set only when the shopper's own words
+    held the product type, so a look lifted from a video had no key at all and
+    no retry of one of its roles was ever a duplicate.
+
+    That is the whole of a reported failure. Sent a video of a sweater, jeans
+    and boots, the model searched a role for jeans -- which this catalog does
+    not carry -- under one advertised subcategory after another, five of them,
+    every search succeeding because each was a correct hard-filtered slice of
+    a catalog with no jeans in it. Nine model calls and 122k tokens of prompt
+    to end up where the first search already was.
+
+    Identical to its sibling above but for the one thing that matters: the
+    shopper said nothing about the type.
+    """
+
+    def _with_products(plan, *_args, **_kwargs):
+        return SimpleNamespace(
+            result=SearchCatalogResult(
+                ok=True,
+                products=[
+                    ProductSummary(
+                        product_id="p1",
+                        display_name="A Tote",
+                        price=Money(amount=49.0),
+                        category="tote_bags",
+                    )
+                ],
+            ),
+            fallback_attempted=False,
+            fallback_used=False,
+        )
+
+    monkeypatch.setattr(
+        catalog_search_mod, "execute_catalog_search", _with_products
+    )
+    ctx = _context("I want to shop this look")
+
+    first = search_catalog(ctx, [_scope()])
+    second = search_catalog(ctx, [_scope(semantic_query="roomy tote bags")])
+
+    assert _rejection_codes(first) == []
+    assert _rejection_codes(second) == [
+        SearchRejection.DUPLICATE_SHOPPER_SCOPE
+    ]
+
+
 def test_an_empty_scope_may_be_searched_again_with_a_filter_relaxed() -> None:
     """"No green dress in a 2" must be able to look again without the size.
 
@@ -437,7 +493,11 @@ def test_a_scope_that_runs_records_no_code_beside_one_that_was_refused() -> None
     result = search_catalog(
         ctx,
         [
-            _scope(taxonomy={"category": ["bags"], "subcategory": ["hatboxes"]}),
+            _scope(
+                required_constraints={
+                    "unadvertised_requirements": "waterproof",
+                }
+            ),
             _scope(
                 semantic_query="dresses",
                 requested_product_type="dress",
@@ -567,15 +627,307 @@ def test_an_advertised_type_rejected_on_its_taxonomy_is_not_called_uncarried() -
     assert "NOT_CARRIED" not in text
 
 
-def test_one_rejected_scope_does_not_cancel_the_scopes_beside_it(
+def test_a_look_with_a_role_this_shop_does_not_stock_still_shops(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A look of three where one role names a garment this shop does not sell.
+
+    Shown a video of a sweater, jeans and boots and asked to shop it, the
+    reply came back with boots alone: the sweater role carried a colour this
+    catalog does not advertise, so it was refused alongside the jeans, and one
+    role of three survived.
+
+    The sweater searches now. Its colour is set aside and ranked on, because
+    what remains is a search for the right garment.
+
+    The jeans do not, and that is the point of this test as much as the
+    sweater is. Setting a type aside would leave the department, and a
+    department is not a family -- ranking "dark blue straight leg jeans"
+    across 39 skirts and 33 dresses returns skirts, and offering those as the
+    jeans substitutes a garment the shopper named. So the type stays a
+    vocabulary error, said at once and not searched around.
+    """
+
+    searched: list[str] = []
+
+    def _record(plan: Any, *_args: Any, **_kwargs: Any) -> Any:
+        searched.extend(plan.semantic_queries)
+        return SimpleNamespace(
+            result=SearchCatalogResult(ok=True, products=[]),
+            fallback_attempted=False,
+            fallback_used=False,
+        )
+
+    monkeypatch.setattr(catalog_search_mod, "execute_catalog_search", _record)
+
+    ctx = _context("I want to shop this look")
+    result = search_catalog(
+        ctx,
+        [
+            _scope(
+                semantic_query="cream knit sweater",
+                requested_product_type="sweater",
+                taxonomy={"category": ["apparel"], "subcategory": []},
+                required_constraints={"color": ["cream"]},
+            ),
+            _scope(
+                semantic_query="dark blue straight leg jeans",
+                requested_product_type="jeans",
+                taxonomy={"category": ["apparel"], "subcategory": ["jeans"]},
+                required_constraints={"color": ["blue"]},
+            ),
+            _scope(
+                semantic_query="brown ankle boots",
+                requested_product_type="tote bags",
+                taxonomy={"category": ["bags"], "subcategory": ["tote_bags"]},
+            ),
+        ],
+    )
+
+    # The colour was set aside, so the garment is still searched for.
+    assert "cream knit sweater" in searched
+    assert "brown ankle boots" in searched
+    # The type was not: no skirt is offered as the jeans.
+    assert "dark blue straight leg jeans" not in searched
+
+    # Twice each at most, not thirty-two: the second is the relaxed retry of
+    # a role that found nothing here, which is the tool looking again on its
+    # own rather than the model being sent back to rewrite its arguments.
+    assert max(Counter(searched).values()) <= 2
+
+    text = result[0] if isinstance(result, tuple) else result
+    assert "SEARCH_WORDS_RANKED_NOT_FILTERED" in text
+    assert "cream" in text
+    assert "jeans" in text
+
+
+def test_a_carried_type_over_an_uncarried_query_is_not_the_garment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Relabelling the role does not make a skirt into the jeans.
+
+    Checking the declaration caught the model filing jeans under one
+    subcategory, so it stopped declaring jeans. Live, a look whose jeans this
+    shop does not carry came back as ``requested_product_type: "skirts"`` with
+    ``subcategory: ["skirts"]`` -- every field advertised, every field
+    agreeing -- against ``semantic_query: "dark wash straight-leg jeans"``.
+    The substitution had already happened in the model's own head, and the
+    garment the shopper had named survived only in the ranking text. A navy
+    fitted skirt was offered as the dark bottom.
+
+    So the query is read too: a scope may not answer a garment this shop has
+    no value for with one advertised name that is a different garment.
+    """
+
+    searched: list[str] = []
+
+    def _record(plan: Any, *_args: Any, **_kwargs: Any) -> Any:
+        searched.extend(plan.semantic_queries)
+        return SimpleNamespace(
+            result=SearchCatalogResult(ok=True, products=[]),
+            fallback_attempted=False,
+            fallback_used=False,
+        )
+
+    monkeypatch.setattr(catalog_search_mod, "execute_catalog_search", _record)
+
+    ctx = _context("I want to shop this look")
+    result = search_catalog(
+        ctx,
+        [
+            _scope(
+                semantic_query="dark wash straight leg jeans",
+                requested_product_type="dresses",
+                taxonomy={"category": ["apparel"], "subcategory": ["dresses"]},
+            ),
+            _scope(semantic_query="roomy tote bags"),
+        ],
+    )
+
+    assert "dark wash straight leg jeans" not in searched
+    assert "roomy tote bags" in searched
+    assert SearchRejection.TAXONOMY_NOT_ADVERTISED_FOR_SCOPE in (
+        _rejection_codes(result)
+    )
+
+
+def test_naming_many_subcategories_does_not_buy_the_uncarried_garment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Widening the list does not make a skirt into the jeans.
+
+    The refusal above tells the model that several advertised subcategories may
+    be named when they genuinely are the garment -- shoes are flats and heels
+    and boots. Live, it took that route out: refused once on
+    ``subcategory: ["jeans"]``, it re-sent the identical
+    ``"dark wash straight leg jeans"`` over six subcategories at once, including
+    jumpsuits. The check only read single-subcategory scopes, so it skipped, the
+    search ran, and a navy fitted skirt and two dresses came back under a
+    heading that still read "Bottoms -- dark blue jeans".
+
+    Nothing in this taxonomy is jeans at any width, so width is not the thing
+    that makes it allowed.
+    """
+
+    searched: list[str] = []
+
+    def _record(plan: Any, *_args: Any, **_kwargs: Any) -> Any:
+        searched.extend(plan.semantic_queries)
+        return SimpleNamespace(
+            result=SearchCatalogResult(ok=True, products=[]),
+            fallback_attempted=False,
+            fallback_used=False,
+        )
+
+    monkeypatch.setattr(catalog_search_mod, "execute_catalog_search", _record)
+
+    ctx = _context("I want to shop this look")
+    result = search_catalog(
+        ctx,
+        [
+            _scope(
+                semantic_query="dark wash straight leg jeans",
+                requested_product_type="tote bags",
+                taxonomy={
+                    "category": ["bags"],
+                    "subcategory": ["tote_bags", "crossbody_bags"],
+                },
+            ),
+            _scope(semantic_query="roomy tote bags"),
+        ],
+    )
+
+    assert "dark wash straight leg jeans" not in searched
+    assert "roomy tote bags" in searched
+    assert SearchRejection.TAXONOMY_NOT_ADVERTISED_FOR_SCOPE in (
+        _rejection_codes(result)
+    )
+
+
+def test_the_uncarried_refusal_does_not_invite_a_wider_selection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The way out offered is `not_covered`, not another subcategory.
+
+    What the model is told is the whole of what it has to go on, and the
+    "name all of them" sentence is what it reached for when it widened. A
+    garment this shop has no word for has no wider selection to try, so saying
+    there is one is the bug that stays fixed here.
+    """
+
+    monkeypatch.setattr(
+        catalog_search_mod,
+        "execute_catalog_search",
+        lambda *_a, **_k: SimpleNamespace(
+            result=SearchCatalogResult(ok=True, products=[]),
+            fallback_attempted=False,
+            fallback_used=False,
+        ),
+    )
+
+    ctx = _context("I want to shop this look")
+    result = search_catalog(
+        ctx,
+        [
+            _scope(
+                semantic_query="dark wash straight leg jeans",
+                requested_product_type="dresses",
+                taxonomy={"category": ["apparel"], "subcategory": ["dresses"]},
+            )
+        ],
+    )
+
+    told = result if isinstance(result, str) else str(result)
+    assert "no wider selection to try" in told
+    assert "not_covered" in told
+    assert "name all of them" not in told
+
+
+def test_the_same_request_twice_is_not_run_a_second_time() -> None:
+    """A repair that changed nothing is not a repair, and stops here.
+
+    The locks that police a repair compare scope keys and constraints, so a
+    retry identical to the call they turned back reads to them as a faithful
+    repair and is judged again -- to the same verdict, for the same reason.
+    That is the shape the look failure took: the same two payloads, over and
+    over, until the turn ran out of recursion.
+
+    Reconciliation removes the reason those two were rejected at all. This
+    removes the loop, which was never specific to them.
+    """
+
+    ctx = _context("show me tote bags")
+    scope = _scope(required_constraints={"unadvertised_requirements": "wet"})
+
+    first = search_catalog(ctx, [scope])
+    assert _rejection_codes(first) == [
+        SearchRejection.CAPABILITIES_SCHEMA_MISMATCH
+    ]
+
+    second = search_catalog(ctx, [scope])
+    text = second[0] if isinstance(second, tuple) else second
+    assert "SEARCH_NOT_REPAIRED" in text
+    assert _rejection_codes(second) == []
+
+
+def test_a_repair_that_changed_something_is_judged_on_its_merits() -> None:
+    """The backstop ends identical retries, not repair itself."""
+
+    ctx = _context("show me tote bags")
+
+    search_catalog(
+        ctx,
+        [_scope(required_constraints={"unadvertised_requirements": "wet"})],
+    )
+    repaired = search_catalog(ctx, [_scope()])
+
+    text = repaired[0] if isinstance(repaired, tuple) else repaired
+    assert "SEARCH_NOT_REPAIRED" not in text
+
+
+def test_a_payload_the_catalog_can_honour_is_left_exactly_as_it_came() -> None:
+    """Nothing is set aside, and nothing is disclosed, on the ordinary path.
+
+    The disclosure is only true when a word could not be honoured. Emitting it
+    on a search that filtered on everything it was given would tell the model
+    its own filters had not been applied, and cost every turn tokens for the
+    privilege.
+    """
+
+    ctx = _context("show me black dresses")
+
+    result = search_catalog(
+        ctx,
+        [
+            _scope(
+                semantic_query="black dresses",
+                requested_product_type="dresses",
+                taxonomy={"category": ["apparel"], "subcategory": ["dresses"]},
+                required_constraints={"color": ["black"]},
+            )
+        ],
+    )
+
+    text = result[0] if isinstance(result, tuple) else result
+    assert "SEARCH_WORDS_RANKED_NOT_FILTERED" not in text
+    assert _rejection_codes(result) == []
+
+
+def test_a_word_the_catalog_cannot_filter_on_does_not_cost_the_role(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A shopper asked for a look and got nothing, over one word.
 
-    The model composed three roles and wrote an unadvertised colour on the
-    third. The whole call was refused at the tool boundary, so the two sound
-    roles never reached this function -- which had been built all along to judge
-    each role on its own and run the ones that stand up.
+    The model composed the roles and wrote an unadvertised colour on one of
+    them. That role was refused, and a refused role is a role in repair --
+    policed by locks that hold one scope at a time, so with two bad roles the
+    retries were judged against each other's lock and the turn spent its whole
+    budget on them.
+
+    Nothing about "tan" needed the model. It is not one of the colours this
+    catalog advertises, so it cannot be a filter, and it is already in the
+    query where the index can rank on it. So the filter drops it, the search
+    runs, and the result says the word was ranked on rather than filtered by.
     """
 
     searched: list[str] = []
@@ -607,12 +959,76 @@ def test_one_rejected_scope_does_not_cancel_the_scopes_beside_it(
         ],
     )
 
-    # The sound role ran; the unsound one did not. The repeat is that role's
-    # relaxed retry: it found nothing, so the same search runs again without
-    # the constraints that may give, and the reply shows what the shop has.
-    assert searched[0] == "black dresses"
-    assert set(searched) == {"black dresses"}
-    assert SearchRejection.CAPABILITIES_SCHEMA_MISMATCH in _rejection_codes(result)
+    # Both roles ran, and neither was refused.
+    assert set(searched) == {"black dresses", "tan tote bags"}
+    assert _rejection_codes(result) == []
+
+    # The colour could not be honoured as a filter, so the results do not
+    # promise it. That difference is said out loud rather than left for the
+    # shopper to find on a product page.
+    text = result[0] if isinstance(result, tuple) else result
+    assert "SEARCH_WORDS_RANKED_NOT_FILTERED" in text
+    assert "tan" in text
+
+
+def test_the_advertised_half_of_a_colour_list_still_filters(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only the word this shop does not use goes; the rest stays a filter.
+
+    Dropping the whole field was tried here first, and it is worse. The field
+    *is* the filter, so losing it leaves no colour constraint at all: asked
+    for a cream sweater as `["cream", "beige"]`, the search ranked on
+    "cable-knit" alone and came back with sweaters in any colour, red among
+    them.
+
+    Keeping half can still be narrower than the model meant -- `["cream",
+    "white"]` filters to white in a shop whose cream is beige -- which is why
+    the scope prompt asks for every advertised value the shopper's word could
+    be rather than the single nearest, and why what could not be honoured is
+    disclosed either way.
+    """
+
+    filters: list[dict[str, Any]] = []
+
+    def _record(plan: Any, *_args: Any, **_kwargs: Any) -> Any:
+        filters.append(dict(plan.hard_filters))
+        return SimpleNamespace(
+            result=SearchCatalogResult(ok=True, products=[]),
+            fallback_attempted=False,
+            fallback_used=False,
+        )
+
+    monkeypatch.setattr(catalog_search_mod, "execute_catalog_search", _record)
+
+    # This catalog advertises black and blue, so "black" is the half that
+    # survives the vocabulary check and "cream" is the half that cannot.
+    ctx = _context("I want to shop this look, the cream sweater")
+    result = search_catalog(
+        ctx,
+        [
+            _scope(
+                semantic_query="cream cable-knit sweater",
+                required_constraints={"color": ["cream", "black"]},
+            )
+        ],
+    )
+
+    # The first search is the one this test is about. A later entry is the
+    # relaxed retry the tool runs on its own when a scope finds nothing, and
+    # dropping the filter is the whole point of that one.
+    assert filters
+    first = filters[0]
+    # Black is advertised, so it still filters -- which is the point: without
+    # it the colour stops constraining anything at all.
+    assert "black" in str(first.get("color"))
+    # Cream is not, so it never reaches the database.
+    assert "cream" not in str(first.get("color")).casefold()
+    assert _rejection_codes(result) == []
+
+    text = result[0] if isinstance(result, tuple) else result
+    assert "SEARCH_WORDS_RANKED_NOT_FILTERED" in text
+    assert "cream" in text
 
 
 def test_a_type_the_catalog_does_not_list_is_disclosed_not_swapped_silently(
@@ -701,7 +1117,9 @@ def _sized(name, values):
 
 def _catalog_with_sizes():
     from shared.commerce_contracts import (
-        CatalogCapabilities, CatalogTaxonomyCapabilities, CatalogTaxonomyCategory,
+        CatalogCapabilities,
+        CatalogTaxonomyCapabilities,
+        CatalogTaxonomyCategory,
     )
     bags = dict([_sized("tote_bags", ["onesize"]), _sized("clutches", ["onesize"])])
     apparel = dict([_sized("dresses", ["2", "4", "6", "8", "10", "12"])])
@@ -726,6 +1144,7 @@ def _catalog_with_sizes():
 
 def _asked(subcategories, sizes):
     from types import SimpleNamespace
+
     from chain_server.src.catalog_search import _size_that_cannot_apply
     return _size_that_cannot_apply(
         SimpleNamespace(subcategory=subcategories),

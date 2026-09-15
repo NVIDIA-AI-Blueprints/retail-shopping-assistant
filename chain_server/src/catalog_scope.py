@@ -61,13 +61,16 @@ CATALOG_SEARCH_RULES = """- Call search_catalog_tool when exact advertised
   filter value.** What they said -- typed, or seen by the camera -- decides
   *that* they have a constraint. It never decides which token goes in
   `required_constraints`; that token comes from Catalog capabilities above.
-  When their word is not advertised, choose the closest advertised value or
-  values, keep their own word in `semantic_query`, and say in the reply it is
-  not an exact match. A shopper who asks for a cream sweater is searched as
-  beige, and told so.
-  An unadvertised value is rejected before the search runs, and it takes every
-  other scope in the same call down with it -- one unadvertised colour on a
-  sweater costs the shopper their jeans and their boots too.
+  When their word is not advertised, name every advertised value it could
+  reasonably be, generously rather than the single nearest: cream is beige
+  *and* white, so send both. One value hides half the shade the shopper
+  described.
+  Their own word must not appear in `required_constraints` at all. A value
+  that is not advertised sets the whole field aside, and the field is the
+  filter -- asked for a cream sweater as `["cream", "beige"]`, the colour
+  stopped filtering entirely and sweaters came back in any colour, red
+  included, ranked on "cable-knit" alone. Keep their word in `semantic_query`,
+  where ranking can use it, and say in the reply it is not an exact match.
   Do not drop the constraint, and do not move the word into
   `unadvertised_requirements` when an advertised value is close: that field is
   for qualities the catalog cannot filter on at all, such as "cable-knit". If

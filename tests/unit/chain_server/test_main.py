@@ -3433,7 +3433,9 @@ class TestDeepAgentsRuntimeRefs:
         policy_response = tools_by_name["get_store_policy_tool"](topic="returns")
         assert policy_response.startswith("POLICY NOT AVAILABLE:")
         assert "not configured for this deployment" in policy_response
-        promotions_response = tools_by_name["check_active_promotions_tool"]()
+        promotions_response = tool_text(
+            tools_by_name["check_active_promotions_tool"]()
+        )
         assert promotions_response.startswith("ACTIVE PROMOTIONS:")
         assert (
             "No active sale or promotion is available through the assistant right now."
@@ -3443,14 +3445,14 @@ class TestDeepAgentsRuntimeRefs:
             "resolve_conversation_products_tool"
         ](references=[{"reference_id": "dress", "product_ref": "prod_123"}]))
         assert "REFERENCE dress: RESOLVED" in resolution_response
-        availability_response = tools_by_name[
+        availability_response = tool_text(tools_by_name[
             "check_product_availability_tool"
-        ](items=[dict(product_ref="prod_123", variant_hint="size medium")])
+        ](items=[dict(product_ref="prod_123", variant_hint="size medium")]))
         assert availability_response.startswith("AVAILABILITY (prod_123):")
         assert "Silk Dress is available in size medium" in availability_response
-        missing_availability_response = tools_by_name[
+        missing_availability_response = tool_text(tools_by_name[
             "check_product_availability_tool"
-        ](items=[dict(product_ref="missing_ref")])
+        ](items=[dict(product_ref="missing_ref")]))
         assert "PRODUCT_REF 'missing_ref' is unknown in this conversation" in (
             missing_availability_response
         )
@@ -8975,6 +8977,13 @@ class TestDeepAgentsRuntimeRefs:
                     retryable=True,
                 ),
             ),
+        )
+        # On a fresh turn, because within one turn a ref already read is
+        # answered from what that read returned rather than read again.
+        runtime._create_agent(State(user_id=111, query="tell me more"), identity)
+        tools_by_name = {fn.__name__: fn for fn in captured["tools"]}
+        tools_by_name["resolve_conversation_products_tool"](
+            references=[{"reference_id": "prod_123", "product_ref": "prod_123"}]
         )
         transient = tool_text(tools_by_name["get_product_details_tool"]("prod_123"))
         assert "temporarily unavailable" in transient

@@ -126,6 +126,32 @@ def _format_search_guidance_evidence(shopper_guidance: str) -> str:
     )
 
 
+def _format_words_this_catalog_cannot_filter_on(
+    set_aside: dict[str, list[str]],
+) -> str:
+    """Say which words were ranked on rather than filtered by, and what that means.
+
+    A filter this catalog does not advertise is dropped rather than refused,
+    and the words stay in the query where the index can rank on them. That is
+    a weaker promise than a filter: a colour filter guarantees every result is
+    that colour, ranking only makes them likelier to be near it. The
+    difference is the shopper's to know about, so it is said here rather than
+    left for them to find in a product page.
+    """
+
+    if not set_aside:
+        return ""
+    return (
+        "SEARCH_WORDS_RANKED_NOT_FILTERED: "
+        + json.dumps(set_aside, sort_keys=True, default=str)
+        + " -- this catalog does not advertise these, so they could not be "
+        "filters. The results were ranked on the words instead, which does "
+        "not guarantee any of them match. Check the results against what was "
+        "asked for, and if none of them is it, say so plainly rather than "
+        "offering the nearest thing as though it were."
+    )
+
+
 def _format_search_taxonomy_evidence(taxonomy: dict[str, Any]) -> str:
     """Format the advertised taxonomy scope used by a successful search."""
 

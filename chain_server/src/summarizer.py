@@ -37,7 +37,12 @@ class SummaryAgent:
         self.memory_length = config.memory_length
         self.memory_port = config.memory_port
         
-        self.model = OpenAI(base_url=config.llm_port, api_key=os.environ["LLM_API_KEY"])
+        self.model = OpenAI(
+            base_url=config.llm_port,
+            api_key=os.environ["LLM_API_KEY"],
+            timeout=45.0,
+            max_retries=4,
+        )
         logging.info(f"SummaryAgent.__init__() | Initialization complete")
 
     def invoke(

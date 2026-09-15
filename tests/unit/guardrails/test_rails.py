@@ -24,6 +24,7 @@ from types import ModuleType, SimpleNamespace
 from typing import Any, Dict, List
 
 import pytest
+import yaml
 
 
 # ---------------------------------------------------------------------------
@@ -33,6 +34,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 GUARDRAILS_SRC = str(REPO_ROOT / "guardrails" / "src")
+PROMPTS_PATH = REPO_ROOT / "shared" / "configs" / "rails" / "prompts.yml"
 
 
 def _install_fake_nemoguardrails(
@@ -64,6 +66,10 @@ def _install_fake_nemoguardrails(
 
         def configure_result(self, result: Dict[str, Any]) -> None:
             self._generate_result = result
+
+        def register_output_parser(self, output_parser, name: str):
+            created.setdefault("output_parsers", {})[name] = output_parser
+            return self
 
         async def generate_async(
             self, messages: List[Dict[str, Any]], options: Dict[str, Any]
@@ -146,6 +152,27 @@ class TestModuleImportWiring:
         # Singleton is built in the module body with this hardcoded path.
         assert created["from_path_arg"] == "/app/shared/configs/rails"
 
+    def test_content_safety_output_parsers_are_registered(
+        self, rails_module
+    ) -> None:
+        parsers = rails_module._test_created["output_parsers"]
+        assert parsers == {
+            "retail_parse_user_safety": rails_module.parse_user_safety,
+            "retail_parse_response_safety": rails_module.parse_response_safety,
+        }
+
+    def test_content_safety_prompts_use_registered_parsers(
+        self, rails_module
+    ) -> None:
+        prompt_config = yaml.safe_load(PROMPTS_PATH.read_text(encoding="utf-8"))
+        parser_names = {
+            prompt["output_parser"]
+            for prompt in prompt_config["prompts"]
+            if prompt["task"].startswith("content_safety_check_")
+        }
+
+        assert parser_names == set(rails_module._test_created["output_parsers"])
+
 
 class TestBaseRails:
     async def test_base_rails_methods_are_noops(self, rails_module) -> None:
@@ -198,3 +225,57 @@ class TestGuardRails:
 
         result = await rails.call_input_content_rails("prompt injection attempt")
         assert result["response"][0]["content"] == "I can't help with that."
+
+
+class TestContentSafetyParsers:
+    @pytest.mark.parametrize(
+        ("parser_name", "response"),
+        [
+            ("parse_user_safety", '{"User Safety": "safe"}'),
+            ("parse_response_safety", '{"Response Safety": "safe"}'),
+            ("parse_user_safety", "User Safety: safe"),
+            ("parse_response_safety", "Response Safety: safe"),
+        ],
+    )
+    def test_accepts_safe_json_and_plain_text(
+        self, rails_module, parser_name: str, response: str
+    ) -> None:
+        parser = getattr(rails_module, parser_name)
+        assert parser(response) == [True]
+
+    @pytest.mark.parametrize(
+        ("parser_name", "response"),
+        [
+            (
+                "parse_user_safety",
+                '{"User Safety": "unsafe", "Safety Categories": "S1, S10"}',
+            ),
+            (
+                "parse_response_safety",
+                "Response Safety: unsafe\nSafety Categories: S1, S10",
+            ),
+        ],
+    )
+    def test_preserves_unsafe_categories(
+        self, rails_module, parser_name: str, response: str
+    ) -> None:
+        parser = getattr(rails_module, parser_name)
+        assert parser(response) == [False, "S1", "S10"]
+
+    @pytest.mark.parametrize(
+        ("parser_name", "response"),
+        [
+            ("parse_user_safety", "not a safety response"),
+            ("parse_user_safety", "User Safety: maybe"),
+            ("parse_user_safety", '{"Response Safety": "safe"}'),
+            (
+                "parse_response_safety",
+                "Response Safety: safe\nResponse Safety: unsafe",
+            ),
+        ],
+    )
+    def test_malformed_or_ambiguous_output_fails_closed(
+        self, rails_module, parser_name: str, response: str
+    ) -> None:
+        parser = getattr(rails_module, parser_name)
+        assert parser(response)[0] is False

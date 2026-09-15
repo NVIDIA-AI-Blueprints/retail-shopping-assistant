@@ -92,7 +92,7 @@ docker compose -f docker-compose-nim-local.yaml up -d
 docker compose -f docker-compose.yaml up -d --build
 ```
 
-The `nemotron` service is launched with `NIM_PASSTHROUGH_ARGS=--enable-auto-tool-choice --tool-call-parser llama3_json` so vLLM accepts `tool_choice="auto"`. Reasoning output is suppressed via `extra_body={"chat_template_kwargs": {"enable_thinking": False}}` on the chain-server side so streamed tokens flow eagerly.
+The `nemotron` service is launched with `NIM_PASSTHROUGH_ARGS=--enable-auto-tool-choice --tool-call-parser pythonic` so vLLM accepts `tool_choice="auto"`. Reasoning output is suppressed via `extra_body={"chat_template_kwargs": {"enable_thinking": False}}` on the chain-server side so streamed tokens flow eagerly.
 
 ### Local app-code mode (recommended for iterative development)
 
@@ -106,6 +106,7 @@ python skills/retail-local-runner/scripts/local_runner.py stop
 
 The local runner:
 - Starts app services as local processes and uses Docker only for Milvus infra (`etcd`, `minio`, `milvus`).
+- Binds every local app listener to `127.0.0.1`; remote exposure requires an authenticated ingress and the controls in `SECURITY.md`.
 - Uses ignored `config-local.yaml` overrides under `shared/configs/*/`.
 - Sets `CONFIG_OVERRIDE=config-local.yaml`, `SHARED_ROOT`, `SHARED_CONFIG_ROOT`, `REACT_APP_API_BASE_URL=http://localhost:8009`, and `BROWSER=none`.
 - Creates runtime files under ignored `.local-run/` and links ignored `ui/public/images -> shared/images`.
@@ -115,10 +116,13 @@ If `config-local.yaml` files are missing, ask for the remote NIM host URL and ru
 ### Health checks
 
 ```bash
-curl -sS http://localhost:3000            # UI via nginx
-curl -sS http://localhost:8009/health     # chain server
-curl -sS http://localhost:8010/health     # catalog retriever
-curl -sS http://localhost:8011/health     # memory retriever
+curl -sS http://localhost:3000             # Docker UI via nginx
+curl -sS http://localhost:3000/api/health  # Docker chain server via nginx
+
+# Direct ports are available only when using the local runner:
+curl -sS http://localhost:8009/health      # chain server
+curl -sS http://localhost:8010/health      # catalog retriever
+curl -sS http://localhost:8011/health      # memory retriever
 ```
 
 ## 5) Testing and Validation
@@ -146,7 +150,7 @@ Integration outputs are generated under `tests/integration/conversations/<TEST_P
 ## 6) Configuration Rules
 
 - Services load configs from `SHARED_CONFIG_ROOT` when set, otherwise `/app/shared/configs`.
-- Chain server loads `chain_server/config.yaml` and optionally merges `CONFIG_OVERRIDE` from the same directory.
+- Chain server loads `shared/configs/chain_server/config.yaml` and optionally merges `CONFIG_OVERRIDE` from the same directory.
 - Catalog retriever and guardrails use the same override pattern.
 - Catalog image helpers read assets from `SHARED_ROOT` when set, otherwise `/app/shared`.
 - UI API base URL defaults to `/api` for nginx, but local development can set `REACT_APP_API_BASE_URL` to the chain-server URL.
@@ -173,8 +177,10 @@ Key env vars:
 - Cart add/remove uses catalog name matching (with normalization + Jaccard fallback) before memory mutation; pure semantic similarity on descriptions is no longer used.
 - The cart agent deterministically resolves pronouns (`it`, `this`) against the most recent product in `RECENT DISCUSSION` and overrides the LLM's `item_name` if they disagree.
 - For image search, catalog retriever bypasses category filtering and relies on similarity ranking. Top-k is applied before price filters, so a tight budget on a high-priced image-similarity cluster can legitimately return zero matches.
-- Local LLM service is named `nemotron` (was `llama`); chain-server reaches it at `http://nemotron:8000/v1` per `shared/configs/chain_server/config.yaml`. Cloud override `config-build.yaml` now uses the same `nvidia/nemotron-3-super-120b-a12b` model on `build.nvidia.com`.
-- Tool calling against the local NIM requires `--enable-auto-tool-choice --tool-call-parser llama3_json` passthrough args. Without them, requests with `tool_choice="auto"` 400.
+- Cloud mode uses `nvidia/llama-nemotron-embed-vl-1b-v2` for image embeddings with `input_type=passage` and `modality=image`; local NIM mode uses NV-CLIP. Their image-vector dimensions differ, so reset the bind-mounted Milvus state when switching modes.
+- Cloud guardrails use `nvidia/llama-3.1-nemotron-safety-guard-8b-v3` for text content checks and `nvidia/nemotron-3.5-lightning-30b-a3b` as the topic classifier with thinking disabled so the public endpoint returns the strict topic label; local NIM mode keeps the dedicated guardrail models.
+- Local LLM service is named `nemotron` (was `llama`); chain-server reaches it at `http://nemotron:8000/v1` per `shared/configs/chain_server/config.yaml`. Cloud override `config-build.yaml` uses `nvidia/nemotron-3-super-120b-a12b` on `integrate.api.nvidia.com`.
+- Tool calling against the local NIM requires `--enable-auto-tool-choice --tool-call-parser pythonic` passthrough args. Without them, requests with `tool_choice="auto"` 400.
 - Nemotron sometimes returns tool calls as XML/JSON inside the assistant `content` field instead of `message.tool_calls`. `chain_server/src/functions.py::parse_tool_call_fallback` handles both shapes; `_coerce_value` parses stringified Python literals (`"[]"`, `"{'k':'v'}"`) so list/dict args don't reach downstream code as strings.
 - Planner LLM input is prefixed with `IMAGE ATTACHED: yes/no`. With an image attached, deictic queries ("do you have this under $X", "find similar") route to `retriever`, not `chatter`. Only explicit cart operations (`add this`, `buy this`) still go to `cart_node`.
 - Without an image, broad constraint-only browse requests ("show me anything under $100", "anything on sale") should route to `chatter` for clarification rather than running retrieval over generic terms.

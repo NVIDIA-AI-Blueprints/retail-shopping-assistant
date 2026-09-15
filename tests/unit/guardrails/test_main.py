@@ -19,6 +19,7 @@ from typing import Any, Dict, Iterator, List
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import BaseModel
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -26,6 +27,9 @@ GUARDRAILS_SRC = str(REPO_ROOT / "guardrails" / "src")
 
 
 def _install_fake_nemoguardrails(recorded: Dict[str, Any]) -> None:
+    class _GenerationResponse(BaseModel):
+        response: List[Dict[str, Any]]
+
     class _RailsConfig:
         def __init__(self, path: str) -> None:
             self.config_path = path
@@ -39,20 +43,27 @@ def _install_fake_nemoguardrails(recorded: Dict[str, Any]) -> None:
         def __init__(self, config: Any) -> None:
             self._config = config
 
+        def register_output_parser(self, output_parser, name: str):
+            recorded.setdefault("output_parsers", {})[name] = output_parser
+            return self
+
         async def generate_async(
             self, messages: List[Dict[str, Any]], options: Dict[str, Any]
-        ) -> Dict[str, Any]:
+        ) -> Any:
             recorded.setdefault("calls", []).append(
                 {"messages": messages, "options": options}
             )
             # Default behaviour: echo the last message as assistant content
             # (i.e. treat input/output as safe).
             last = messages[-1]
-            return {
+            payload = {
                 "response": [
                     {"role": "assistant", "content": last["content"]}
                 ]
             }
+            if recorded.get("return_generation_response"):
+                return _GenerationResponse(**payload)
+            return payload
 
     fake = ModuleType("nemoguardrails")
     fake.RailsConfig = _RailsConfig
@@ -139,6 +150,25 @@ class TestGuardrailsEndpoints:
         body = response.json()
         assert "timings" in body
         assert isinstance(body["timings"], list)
+
+    @pytest.mark.parametrize("endpoint", ["input", "output"])
+    def test_timing_normalizes_generation_response(
+        self, endpoint: str, guardrails_app, client: TestClient
+    ) -> None:
+        guardrails_app._test_recorded["return_generation_response"] = True
+
+        response = client.post(
+            f"/rail/{endpoint}/timing",
+            json={"user_id": 1, "query": "hello"},
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["response"][0]["content"] == "hello"
+        assert [list(entry) for entry in body["timings"]] == [
+            ["rails"],
+            ["total"],
+        ]
 
     def test_missing_fields_returns_422(
         self, guardrails_app, client: TestClient

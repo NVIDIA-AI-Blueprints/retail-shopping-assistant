@@ -146,10 +146,10 @@ class TestState:
 
 
 class TestRail:
-    def test_rail_defaults_to_safe_with_empty_timings(self) -> None:
+    def test_rail_defaults_to_unsafe_with_empty_timings(self) -> None:
         rail = Rail()
 
-        assert rail.is_safe is True
+        assert rail.is_safe is False
         assert rail.rail_timings == {}
         assert rail.get_total_rail_time() == 0.0
 

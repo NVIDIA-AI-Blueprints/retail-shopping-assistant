@@ -1,8 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
 from typing import AsyncGenerator
-from openai import AsyncOpenAI
+
+import httpx
+from openai import AsyncOpenAI, OpenAIError
 from langgraph.config import get_stream_writer
 from .agenttypes import State
 import json
@@ -10,6 +13,11 @@ import os
 import logging
 import sys
 import time
+
+
+STREAM_MAX_ATTEMPTS = 5
+STREAM_RETRY_BASE_SECONDS = 0.25
+STREAM_RETRY_MAX_SECONDS = 1.0
 
 
 def setup_logging():
@@ -36,8 +44,10 @@ class ChatterAgent:
         self.config = config
         
         self.model = AsyncOpenAI(
-            base_url=config.llm_port, 
-            api_key=os.environ["LLM_API_KEY"]
+            base_url=config.llm_port,
+            api_key=os.environ["LLM_API_KEY"],
+            timeout=45.0,
+            max_retries=2,
         )
         logging.info(f"ChatterAgent.__init__() | Initialization complete")
 
@@ -139,35 +149,55 @@ class ChatterAgent:
 
         logging.info(f"ChatterAgent.invoke() | Context length is less than memory length")
         full_response = ""
-        ftr = False
+        content_received = False
 
         writer = get_stream_writer()
 
         # Send our 'retrieved' dictionary.
         writer(f"{json.dumps({'type' : 'images' , 'payload' : state.retrieved, 'timestamp' : time.time()})}")
 
-        stream = await self.model.chat.completions.create(
-            model=self.llm_name,
-            messages=messages,
-            stream=True,
-            temperature=0.0,
-            max_tokens=self.config.memory_length,
-            extra_body={"chat_template_kwargs": {"enable_thinking": False}}
-        )
+        for attempt in range(1, STREAM_MAX_ATTEMPTS + 1):
+            try:
+                stream = await self.model.chat.completions.create(
+                    model=self.llm_name,
+                    messages=messages,
+                    stream=True,
+                    temperature=0.0,
+                    max_tokens=self.config.memory_length,
+                    extra_body={"chat_template_kwargs": {"enable_thinking": False}}
+                )
 
-        async for chunk in stream:
-            if chunk.choices[0].delta.content:
-                content = chunk.choices[0].delta.content
-                full_response += content
-                output_state.response = full_response
+                async for chunk in stream:
+                    if chunk.choices[0].delta.content:
+                        content = chunk.choices[0].delta.content
+                        full_response += content
+                        output_state.response = full_response
 
-                if not ftr:
-                    ftr = True
-                    ftt = time.monotonic() - start
-                    logging.info(f"ChatterAgent.invoke() | First token time: {ftt}")
-                    output_state.timings["first_token"] = ftt
+                        if not content_received:
+                            content_received = True
+                            ftt = time.monotonic() - start
+                            logging.info(f"ChatterAgent.invoke() | First token time: {ftt}")
+                            output_state.timings["first_token"] = ftt
 
-                writer(f"{json.dumps({'type' : 'content', 'payload' : content, 'timestamp' : time.time()})}")
+                        writer(f"{json.dumps({'type' : 'content', 'payload' : content, 'timestamp' : time.time()})}")
+                break
+            except (OpenAIError, httpx.HTTPError) as exc:
+                if content_received or attempt == STREAM_MAX_ATTEMPTS:
+                    raise
+
+                delay = min(
+                    STREAM_RETRY_BASE_SECONDS * (2 ** (attempt - 1)),
+                    STREAM_RETRY_MAX_SECONDS,
+                )
+                logging.warning(
+                    "ChatterAgent.invoke() | Stream attempt %d/%d failed before "
+                    "content; retrying in %.2fs: %s",
+                    attempt,
+                    STREAM_MAX_ATTEMPTS,
+                    delay,
+                    exc,
+                )
+                await asyncio.sleep(delay)
 
         output_state.response = full_response
         output_state.context = f"{state.context}\n{full_response}"

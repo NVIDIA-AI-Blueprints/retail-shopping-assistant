@@ -86,6 +86,10 @@ The runner starts these local app processes:
 - chain server: `http://localhost:8009`
 - UI: `http://localhost:3000`
 
+All local app listeners bind to `127.0.0.1`. Do not change them to
+`0.0.0.0` unless an authenticated ingress and the other controls documented in
+`SECURITY.md` protect the deployment.
+
 Only Milvus infra remains containerized:
 
 ```bash

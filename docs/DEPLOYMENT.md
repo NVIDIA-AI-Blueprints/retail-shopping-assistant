@@ -14,7 +14,10 @@
 
 ## 🎯 Overview
 
-This guide covers deploying the Retail Shopping Assistant in various environments, from local development to production. The application supports multiple deployment strategies to accommodate different hardware configurations and use cases.
+This guide covers local development and evaluation deployments of the Retail
+Shopping Assistant. The supplied artifacts are a reference blueprint, not a
+production-ready or multi-tenant service. Host ports bind to loopback by default;
+see [SECURITY.md](../SECURITY.md) before introducing any remote access.
 
 ## 📋 Prerequisites
 
@@ -38,14 +41,15 @@ This guide covers deploying the Retail Shopping Assistant in various environment
 ### Software Dependencies
 
 #### Required Software
-- **Docker**: Version 20.10+ with Docker Compose plugin
+- **Docker Engine**: Version 28.3.3+ with Docker Compose plugin (required for
+  reliable loopback-only port publishing)
 - **NVIDIA Container Toolkit**: For GPU acceleration
 - **NVIDIA Drivers**: Latest compatible drivers
 - **Git**: For repository cloning
 
 #### Optional Software
-- **Kubernetes**: For production orchestration
-- **Helm**: For Kubernetes deployments
+- **Kubernetes**: For downstream product adaptation (not supplied here)
+- **Helm**: For downstream Kubernetes adaptation (not supplied here)
 - **Prometheus**: For monitoring
 - **Grafana**: For visualization
 
@@ -68,7 +72,7 @@ This guide covers deploying the Retail Shopping Assistant in various environment
 
 ### Option 1: Local NIM Deployment (Recommended)
 
-**Best for**: Development, testing, production with GPU resources
+**Best for**: Local development and evaluation with GPU resources
 
 **Pros**:
 - Maximum performance and low latency
@@ -83,7 +87,7 @@ This guide covers deploying the Retail Shopping Assistant in various environment
 
 ### Option 2: Cloud NIM Deployment
 
-**Best for**: Development, testing, production without local GPUs
+**Best for**: Local development and evaluation without local GPUs
 
 **Pros**:
 - No local GPU requirements
@@ -97,7 +101,8 @@ This guide covers deploying the Retail Shopping Assistant in various environment
 - Data privacy considerations
 - API rate limits
 
-> **⚠️ `nvclip` is deprecated.** Its hosted endpoint on the NVIDIA API Catalog (`api.build.nvidia.com`) is no longer available, so image (visual) search does **not** work under Cloud NIM Deployment as-is. **Workaround:** run `nvclip` as a local NIM (from `docker-compose-nim-local.yaml`) and point `image_embed_port` at the local container, even when other endpoints stay on the cloud.
+Cloud mode uses `nvidia/llama-nemotron-embed-vl-1b-v2` for image embeddings.
+Local NIM mode continues to use NV-CLIP.
 
 > **⚠️ Embedding model migration — existing deployments must reset Milvus.**
 > The text embedder is now `nvidia/nemotron-3-embed-1b`, which emits **2048-dim**
@@ -106,18 +111,20 @@ This guide covers deploying the Retail Shopping Assistant in various environment
 > `vector dimension mismatch, expected vector size(byte) 4096, actual 8192`.
 >
 > `docker compose down -v` is **not** sufficient: Milvus data here lives in a host
-> bind-mount (`./catalog_retriever/volumes/milvus`), which survives `-v`. Remove the
-> directory to force a re-seed at the new dimension:
+> bind-mount (`./catalog_retriever/volumes/milvus`), which survives `-v`. Preserve
+> the directory and force a re-seed at the new dimension:
 > ```bash
 > docker compose -f docker-compose.yaml down -v
-> sudo rm -rf ./catalog_retriever/volumes
+> mv ./catalog_retriever/volumes ./catalog_retriever/volumes.previous
 > ```
-> Fresh checkouts are unaffected. Only the *text* collection changes dimension; the
-> image collection stays 1024-dim (`nvclip` is unchanged).
+> Fresh checkouts are unaffected. The text collection is 2048-dimensional in
+> both modes. The image collection is 1024-dimensional with local NV-CLIP and
+> 2048-dimensional with the public vision embedder, so switching modes also
+> requires fresh Milvus state.
 
 ### Option 3: Hybrid Deployment
 
-**Best for**: Production with mixed requirements
+**Best for**: Advanced local evaluation with mixed model-hosting requirements
 
 **Pros**:
 - Flexibility in resource allocation
@@ -201,8 +208,8 @@ docker compose -f docker-compose.yaml logs -f
 docker compose -f docker-compose.yaml ps
 
 # Test API endpoints
-curl http://localhost:8000/health
 curl http://localhost:3000
+curl http://localhost:3000/api/health
 
 # Check NIM status
 docker compose -f docker-compose-nim-local.yaml ps
@@ -252,85 +259,16 @@ docker compose -f docker-compose.yaml ps
 
 ## 🏭 Production Deployment
 
-### Kubernetes Deployment
+The repository does not ship a supported production deployment. Kubernetes,
+Docker Swarm, public ingress, and multi-user operation require a separate
+security architecture and deployment implementation.
 
-#### Prerequisites
-- Kubernetes cluster (1.24+)
-- Helm (3.0+)
-- NVIDIA GPU Operator installed
-- Ingress controller configured
-
-#### Step 1: Create Namespace
-
-```bash
-kubectl create namespace retail-assistant
-kubectl config set-context --current --namespace=retail-assistant
-```
-
-#### Step 2: Create ConfigMap
-
-```yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: retail-assistant-config
-data:
-  config.yaml: |
-    llm_port: "https://api.nvcf.nvidia.com/v1/chat/completions"
-    llm_name: "nvidia/nemotron-3-super-120b-a12b"
-    retriever_port: "https://api.nvcf.nvidia.com/v1/embeddings"
-    memory_port: "http://memory-retriever:8011"
-    rails_port: "https://api.nvcf.nvidia.com/v1/chat/completions"
-    memory_length: 16384
-    top_k_retrieve: 4
-    multimodal: true
-```
-
-#### Step 3: Create Secret
-
-```bash
-kubectl create secret generic nvidia-api-keys \
-  --from-literal=ngc-api-key=your_nvapi_key_here \
-  --from-literal=llm-api-key=your_nvapi_key_here \
-  --from-literal=embed-api-key=your_nvapi_key_here \
-  --from-literal=rail-api-key=your_nvapi_key_here
-```
-
-#### Step 4: Deploy with Helm
-
-```bash
-# Add Helm repository (if using a chart)
-helm repo add retail-assistant https://charts.example.com
-helm repo update
-
-# Deploy the application
-helm install retail-assistant retail-assistant/retail-assistant \
-  --namespace retail-assistant \
-  --set nvidiaApiKey=your_nvapi_key_here
-```
-
-### Docker Swarm Deployment
-
-#### Step 1: Initialize Swarm
-
-```bash
-docker swarm init
-```
-
-#### Step 2: Create Secrets
-
-```bash
-echo "your_nvapi_key_here" | docker secret create ngc-api-key -
-echo "your_nvapi_key_here" | docker secret create llm-api-key -
-echo "your_nvapi_key_here" | docker secret create embed-api-key -
-echo "your_nvapi_key_here" | docker secret create rail-api-key -
-```
-
-#### Step 3: Deploy Stack
-
-```bash
-docker stack deploy -c docker-compose.prod.yaml retail-assistant
-```
+At minimum, production adopters must provide authenticated TLS ingress,
+server-derived identity, per-user authorization, tenant isolation, private
+service networking, secrets management, rate limiting, audit logging, monitoring,
+data-retention controls, dependency and image maintenance, backup/recovery, and a
+deployment-specific threat analysis. Do not adapt the loopback reference Compose
+file by merely publishing its ports.
 
 ## ⚙️ Configuration
 
@@ -348,15 +286,15 @@ docker stack deploy -c docker-compose.prod.yaml retail-assistant
 
 ### Configuration File
 
-The main configuration is in `chain_server/config/config.yaml`:
+The main configuration is in `shared/configs/chain_server/config.yaml`:
 
 ```yaml
 # NIM Endpoints
-llm_port: "http://localhost:8000/v1"  # or cloud endpoint
+llm_port: "http://nemotron:8000/v1"  # or cloud endpoint
 llm_name: "nvidia/nemotron-3-super-120b-a12b"
-retriever_port: "http://localhost:8010"
-memory_port: "http://localhost:8011"
-rails_port: "http://localhost:8012"
+retriever_port: "http://catalog-retriever:8010"
+memory_port: "http://memory-retriever:8011"
+rails_port: "http://rails:8012"
 
 # Agent Prompts
 routing_prompt: |
@@ -413,7 +351,8 @@ The application supports a flexible configuration override system that allows yo
 
 #### How It Works
 
-1. **Base Configuration**: The application loads the base `config.yaml` file from each service's `config/` folder
+1. **Base Configuration**: Services load their base file from
+   `shared/configs/<service>/`
 2. **Override Detection**: If the `CONFIG_OVERRIDE` environment variable is set, the system looks for an override file
 3. **Merge Process**: The override file values are merged into the base configuration, with override values taking precedence
 
@@ -433,38 +372,38 @@ docker compose -f docker-compose-nim-local.yaml up -d
 docker compose -f docker-compose.yaml up -d --build
 ```
 
-**Chain Server Default** (`chain_server/config/config.yaml`):
+**Chain Server Default** (`shared/configs/chain_server/config.yaml`):
 ```yaml
 # LLM endpoint for local NIM deployment
-llm_port: "http://localhost:8000/v1"
+llm_port: "http://nemotron:8000/v1"
 llm_name: "nvidia/nemotron-3-super-120b-a12b"
 ```
 
-**Catalog Retriever Default** (`catalog_retriever/config/config.yaml`):
+**Catalog Retriever Default** (`shared/configs/catalog_retriever/config.yaml`):
 ```yaml
 # Text embedding endpoint for local NIM deployment
-text_embed_port: "http://localhost:8001/v1"
+text_embed_port: "http://embedqa:8000/v1"
 text_model_name: "nvidia/nemotron-3-embed-1b"
 
 # Image embedding endpoint for local NIM deployment
-image_embed_port: "http://localhost:8002/v1"
+image_embed_port: "http://nvclip:8000/v1"
 image_model_name: "nvidia/nvclip"
 ```
 
-**Guardrails Default** (`guardrails/config/config.yml`):
+**Guardrails Default** (`shared/configs/rails/config.yml`):
 ```yaml
 models:
   - type: content_safety
     engine: nim
     model: nvidia/llama-3.1-nemoguard-8b-content-safety
     parameters:
-      base_url: http://localhost:8003/v1
+      base_url: http://content:8000/v1
 
   - type: topic_control
     engine: nim
     model: nvidia/llama-3.1-nemoguard-8b-topic-control
     parameters:
-      base_url: http://localhost:8004/v1
+      base_url: http://topic_control:8000/v1
 ```
 
 #### Cloud NIM Deployment (`config-build.yaml`)
@@ -479,41 +418,50 @@ export CONFIG_OVERRIDE=config-build.yaml
 docker compose -f docker-compose.yaml up -d --build
 ```
 
-**Chain Server Override** (`chain_server/config/config-build.yaml`):
+**Chain Server Override** (`shared/configs/chain_server/config-build.yaml`):
 ```yaml
-# LLM endpoint for build.nvidia.com
-llm_port: "https://api.build.nvidia.com/v1"
+# Public NVIDIA API endpoint
+llm_port: "https://integrate.api.nvidia.com/v1"
 llm_name: "nvidia/nemotron-3-super-120b-a12b"
 ```
 
-**Catalog Retriever Override** (`catalog_retriever/config/config-build.yaml`):
+**Catalog Retriever Override** (`shared/configs/catalog_retriever/config-build.yaml`):
 ```yaml
-# Text embedding endpoint for build.nvidia.com
-text_embed_port: "https://api.build.nvidia.com/v1"
+# Public NVIDIA API endpoint
+text_embed_port: "https://integrate.api.nvidia.com/v1"
 text_model_name: "nvidia/nemotron-3-embed-1b"
 
 # Image embedding endpoint for build.nvidia.com
-image_embed_port: "https://api.build.nvidia.com/v1"
-image_model_name: "nvidia/nvclip"
+image_embed_port: "https://integrate.api.nvidia.com/v1"
+image_model_name: "nvidia/llama-nemotron-embed-vl-1b-v2"
 ```
 
-> **⚠️ `nvclip` is deprecated.** The hosted `api.build.nvidia.com` endpoint for `nvclip` is no longer available, so the cloud image-embedding config above will not work as-is. **Workaround:** deploy `nvclip` as a local NIM (from `docker-compose-nim-local.yaml`) and set `image_embed_port` to the local container (e.g. `http://nvclip:8000/v1`).
+The public vision embedder requires image inputs to be sent with
+`input_type: passage` and `modality: image`; the catalog retriever adds those
+parameters automatically for this model.
 
-**Guardrails Override** (`guardrails/config/config-build.yml`):
+**Guardrails Override** (`shared/configs/rails/config-build.yaml`):
 ```yaml
 models:
   - type: content_safety
     engine: nim
-    model: nvidia/llama-3.1-nemoguard-8b-content-safety
+    model: nvidia/llama-3.1-nemotron-safety-guard-8b-v3
     parameters:
-      base_url: https://api.build.nvidia.com/v1
+      base_url: https://integrate.api.nvidia.com/v1
 
   - type: topic_control
     engine: nim
-    model: nvidia/llama-3.1-nemoguard-8b-topic-control
+    model: nvidia/nemotron-3.5-lightning-30b-a3b
     parameters:
-      base_url: https://api.build.nvidia.com/v1
+      base_url: https://integrate.api.nvidia.com/v1
+      chat_template_kwargs:
+        enable_thinking: false
 ```
+
+Cloud mode uses Llama 3.1 Nemotron Safety Guard 8B V3 plus Nemotron 3.5
+Lightning as the topic classifier. Reasoning is disabled for topic control so
+the rail receives the required `on-topic` or `off-topic` label. Local NIM mode
+continues to use the dedicated content-safety and topic-control NIMs.
 
 #### Creating Custom Override Files
 
@@ -522,13 +470,13 @@ You can create your own override files for custom configurations:
 1. **Create the override file** in the same directory as the base config:
    ```bash
    # For chain server
-   cp chain_server/config/config.yaml chain_server/config/config-custom.yaml
+   cp shared/configs/chain_server/config.yaml shared/configs/chain_server/config-custom.yaml
    
    # For catalog retriever
-   cp catalog_retriever/config/config.yaml catalog_retriever/config/config-custom.yaml
+   cp shared/configs/catalog_retriever/config.yaml shared/configs/catalog_retriever/config-custom.yaml
    
    # For guardrails
-   cp guardrails/config/config.yml guardrails/config/config-custom.yml
+   cp shared/configs/rails/config.yml shared/configs/rails/config-custom.yaml
    ```
 
 2. **Modify the override file** with your custom values:
@@ -558,20 +506,21 @@ You can create your own override files for custom configurations:
 
 #### Switching Between Configurations
 
-To switch between different configurations:
+Changing `CONFIG_OVERRIDE` requires Compose to recreate the affected containers;
+`docker compose restart` does not apply changed environment values.
 
 ```bash
 # Use local NIMs (default - no environment variable needed)
 unset CONFIG_OVERRIDE
-docker compose -f docker-compose.yaml restart
+docker compose -f docker-compose.yaml up -d
 
 # Switch to cloud NIMs
 export CONFIG_OVERRIDE=config-build.yaml
-docker compose -f docker-compose.yaml restart
+docker compose -f docker-compose.yaml up -d
 
 # Use custom configuration
 export CONFIG_OVERRIDE=config-custom.yaml
-docker compose -f docker-compose.yaml restart
+docker compose -f docker-compose.yaml up -d
 ```
 
 #### Docker Compose Integration
@@ -591,7 +540,7 @@ services:
   
   rails:
     environment:
-      - CONFIG_OVERRIDE=${CONFIG_OVERRIDE:-config-local.yml}
+      - CONFIG_OVERRIDE=${CONFIG_OVERRIDE:-config-local.yaml}
 ```
 
 Then use it:
@@ -633,13 +582,17 @@ deploy:
 ### Health Checks
 
 ```bash
-# Check service health
-curl http://localhost:8000/health
+# Docker Compose: check the public entrypoint and routed chain-server health
+curl http://localhost:3000
+curl http://localhost:3000/api/health
 
-# Check individual services
-curl http://localhost:8010/health  # Catalog retriever
-curl http://localhost:8011/health  # Memory retriever
-curl http://localhost:8012/health  # Guardrails
+# Inspect internal container health without publishing service ports
+docker compose -f docker-compose.yaml exec chain-server \
+  python -c 'import urllib.request; print(urllib.request.urlopen("http://localhost:8009/health").read().decode())'
+docker compose -f docker-compose.yaml exec catalog-retriever \
+  python -c 'import urllib.request; print(urllib.request.urlopen("http://localhost:8010/health").read().decode())'
+docker compose -f docker-compose.yaml exec memory-retriever \
+  python -c 'import urllib.request; print(urllib.request.urlopen("http://localhost:8011/health").read().decode())'
 ```
 
 ### Logging
@@ -655,38 +608,11 @@ docker compose -f docker-compose-nim-local.yaml logs -f
 docker compose -f docker-compose.yaml logs -f chain-server
 ```
 
-### Metrics Collection
+### Metrics and Alerting
 
-#### Prometheus Configuration
-
-```yaml
-# prometheus.yml
-global:
-  scrape_interval: 15s
-
-scrape_configs:
-  - job_name: 'retail-assistant'
-    static_configs:
-      - targets: ['localhost:8000', 'localhost:8010', 'localhost:8011']
-```
-
-#### Grafana Dashboard
-
-Create a Grafana dashboard with the following metrics:
-- Request rate and latency
-- GPU utilization
-- Memory usage
-- Error rates
-- Response times by agent
-
-### Alerting
-
-Set up alerts for:
-- Service health status
-- High error rates
-- GPU memory usage
-- Response time degradation
-- API key expiration
+The blueprint does not expose Prometheus `/metrics` endpoints or ship Grafana
+dashboards and alerts. Downstream deployments must add application
+instrumentation and monitoring appropriate to their environment.
 
 ## 🛠️ Troubleshooting
 
@@ -698,8 +624,8 @@ Set up alerts for:
 
 **Solutions**:
 ```bash
-# Verify NGC API key
-echo $NGC_API_KEY
+# Verify that the NGC API key is present without printing it
+test -n "$NGC_API_KEY" && echo "NGC_API_KEY is set" || echo "NGC_API_KEY is missing"
 
 # Re-authenticate
 docker login nvcr.io
@@ -761,11 +687,11 @@ nvidia-smi -l 1
 # Monitor system resources
 htop
 
-# Check network latency (for cloud deployment)
-ping api.nvcf.nvidia.com
+# Check public endpoint reachability
+curl -sS -o /dev/null -w 'HTTP %{http_code}\n' https://integrate.api.nvidia.com/v1/models
 
 # Optimize configuration
-# Edit chain_server/app/config.yaml
+# Edit shared/configs/chain_server/config.yaml
 top_k_retrieve: 2  # Reduce for faster responses
 ```
 
@@ -775,15 +701,12 @@ top_k_retrieve: 2  # Reduce for faster responses
 
 **Solutions**:
 ```bash
-# Verify API key format
-echo $NGC_API_KEY | head -c 10
-
 # Check key permissions
 # Ensure key has access to required NIMs
 
 # Test API key
 curl -H "Authorization: Bearer $NGC_API_KEY" \
-  https://api.nvcf.nvidia.com/v1/models
+  https://integrate.api.nvidia.com/v1/models
 ```
 
 ### Debug Mode
@@ -819,23 +742,22 @@ docker compose -f docker-compose.yaml up -d --build
 #### Data Recovery
 
 ```bash
-# Backup volumes
-docker run --rm -v retail-shopping-assistant_milvus_data:/data \
-  -v $(pwd):/backup alpine tar czf /backup/milvus_backup.tar.gz -C /data .
+# Back up the host bind-mounted Milvus state
+tar -czf milvus_backup.tar.gz -C catalog_retriever volumes
 
-# Restore volumes
-docker run --rm -v retail-shopping-assistant_milvus_data:/data \
-  -v $(pwd):/backup alpine tar xzf /backup/milvus_backup.tar.gz -C /data
+# Restore it only while the stack is stopped
+tar -xzf milvus_backup.tar.gz -C catalog_retriever
 ```
 
 ## 🔒 Security Considerations
 
 ### Network Security
 
-- Use HTTPS in production
-- Implement API authentication
-- Configure firewall rules
-- Use VPN for remote access
+- Keep the supplied loopback bindings and private service network intact
+- Never bind internal application, database, object-store, or model ports to a
+  non-loopback address or place them behind a remote link
+- Add authenticated TLS ingress before any remote or multi-user access
+- Derive user identity and authorization server-side
 
 ### Data Security
 
@@ -853,52 +775,10 @@ docker run --rm -v retail-shopping-assistant_milvus_data:/data \
 
 ## 📈 Scaling
 
-### Horizontal Scaling
-
-```yaml
-# In docker-compose.yaml
-deploy:
-  replicas: 3
-  resources:
-    limits:
-      memory: 4G
-      cpus: '2.0'
-```
-
-### Load Balancing
-
-```yaml
-# nginx.conf
-upstream retail_assistant {
-    server chain-server:8000;
-    server chain-server:8001;
-    server chain-server:8002;
-}
-```
-
-### Auto-scaling
-
-```yaml
-# Kubernetes HPA
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
-metadata:
-  name: retail-assistant-hpa
-spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: retail-assistant
-  minReplicas: 2
-  maxReplicas: 10
-  metrics:
-  - type: Resource
-    resource:
-      name: cpu
-      target:
-        type: Utilization
-        averageUtilization: 70
-```
+Scaling is outside the supplied reference deployment. It requires the production
+controls described above, including authenticated ingress, server-derived
+identity, shared-state and tenant-isolation design, network policy, and a
+deployment-specific threat analysis.
 
 ---
 

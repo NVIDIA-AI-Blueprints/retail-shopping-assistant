@@ -101,7 +101,7 @@ class Rail(BaseModel):
         is_safe: Whether the content passed safety checks
         rail_timings: Timing information for the safety check
     """
-    is_safe: bool = Field(default=True, description="Whether content passed safety checks")
+    is_safe: bool = Field(default=False, description="Whether content passed safety checks")
     rail_timings: Dict[str, float] = Field(
         default_factory=dict,
         description="Timing information for safety checks"

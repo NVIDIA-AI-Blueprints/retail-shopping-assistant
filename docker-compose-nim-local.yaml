@@ -1,14 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-version: '3.8'
-
 services:
 
   nemotron:
     image: nvcr.io/nim/nvidia/nemotron-3-super-120b-a12b:3.0.0
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     environment:
       - NGC_API_KEY=${NGC_API_KEY}
       - NIM_PASSTHROUGH_ARGS=--enable-auto-tool-choice --tool-call-parser pythonic --max-num-seqs 256
@@ -30,7 +28,7 @@ services:
   nvclip:
     image: nvcr.io/nim/nvidia/nvclip:2.0.0
     ports:
-      - "8002:8000"
+      - "127.0.0.1:8002:8000"
     environment:
       - NGC_API_KEY=${NGC_API_KEY}
     volumes:
@@ -55,7 +53,7 @@ services:
   embedqa:
     image: nvcr.io/nim/nvidia/nemotron-3-embed-1b:2.2.0
     ports:
-      - "8001:8000"
+      - "127.0.0.1:8001:8000"
     environment:
       - NGC_API_KEY=${NGC_API_KEY}
     volumes:
@@ -78,7 +76,7 @@ services:
   content:
     image: nvcr.io/nim/nvidia/llama-3.1-nemoguard-8b-content-safety:1.10.1
     ports:
-      - "8003:8000"
+      - "127.0.0.1:8003:8000"
     environment:
       - NGC_API_KEY=${NGC_API_KEY}
       - NIM_KVCACHE_PERCENT=.4
@@ -99,7 +97,7 @@ services:
   topic_control:
     image: nvcr.io/nim/nvidia/llama-3.1-nemoguard-8b-topic-control:1.0.0
     ports:
-      - "8004:8000"
+      - "127.0.0.1:8004:8000"
     environment:
       - NGC_API_KEY=${NGC_API_KEY}
       - NIM_KVCACHE_PERCENT=.4
@@ -121,4 +119,3 @@ networks:
   shopping-network:
     driver: bridge
     name: retail-shopping-assistant_shopping-network
-

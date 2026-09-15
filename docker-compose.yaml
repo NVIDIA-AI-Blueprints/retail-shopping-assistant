@@ -1,16 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-version: "3.8"
-
 services:
-  # Chain Server - using bridge networking with port mapping
+  # Chain Server - internal only; nginx is the application entrypoint
   chain-server:
     build:
       context: ./chain_server
-    container_name: chain-server
-    ports:
-      - "8009:8009"
     environment:
       - LLM_API_KEY=${LLM_API_KEY:-${NVIDIA_API_KEY}}
       - CATALOG_RETRIEVER_URL=http://catalog-retriever:8010
@@ -29,9 +24,6 @@ services:
   catalog-retriever:
     build:
       context: ./catalog_retriever
-    container_name: catalog-retriever
-    ports:
-      - "8010:8010"
     environment:
       - EMBED_API_KEY=${EMBED_API_KEY:-${NVIDIA_API_KEY}}
       - MILVUS_HOST=milvus
@@ -49,9 +41,6 @@ services:
   memory-retriever:
     build:
       context: ./memory_retriever
-    container_name: memory-retriever
-    ports:
-      - "8011:8011"
     environment:
       - MILVUS_HOST=milvus
       - MILVUS_PORT=19530
@@ -70,9 +59,6 @@ services:
     environment:
       - NVIDIA_API_KEY=${RAIL_API_KEY:-${NVIDIA_API_KEY}}
       - CONFIG_OVERRIDE=${CONFIG_OVERRIDE}
-    container_name: rails
-    ports:
-      - "8012:8012"
     volumes:
       - ./shared:/app/shared
     networks:
@@ -82,10 +68,6 @@ services:
   frontend:
     build:
       context: ./ui
-    container_name: shopping-frontend
-    # Remove the ports section - nginx will handle external access
-    # ports:
-    #   - "3000:3000"
     volumes:
       - ./shared:/app/shared
     depends_on:
@@ -95,10 +77,7 @@ services:
 
   # etcd - using bridge networking
   etcd:
-    container_name: milvus-etcd
     image: quay.io/coreos/etcd:v3.5.5
-    ports:
-      - "2379:2379"
     environment:
       - ETCD_AUTO_COMPACTION_MODE=revision
       - ETCD_AUTO_COMPACTION_RETENTION=1000
@@ -122,11 +101,7 @@ services:
 
   # Minio - using bridge networking
   minio:
-    container_name: milvus-minio
     image: minio/minio:RELEASE.2023-03-20T20-16-18Z
-    ports:
-      - "9000:9000"
-      - "9001:9001"
     environment:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
@@ -143,14 +118,13 @@ services:
 
   # Milvus - bridge mode, talking to etcd and minio via service names
   milvus:
-    container_name: milvus-standalone
     image: milvusdb/milvus:v2.4.13-hotfix
     command: ["milvus", "run", "standalone"]
     security_opt:
       - seccomp:unconfined
     ports:
-      - "19530:19530"
-      - "9091:9091"
+      - "127.0.0.1:19530:19530"
+      - "127.0.0.1:9091:9091"
     environment:
       ETCD_ENDPOINTS: http://etcd:2379
       MINIO_ADDRESS: minio:9000
@@ -175,9 +149,10 @@ services:
   # Nginx Proxy
   nginx:
     image: nginx:1.25.3-alpine
-    container_name: nginx-proxy
     ports:
-      - "3000:80"  # Brev will expose this port
+      # The reference deployment is local-only. Use an authenticated ingress
+      # before changing this binding for remote access.
+      - "127.0.0.1:3000:80"
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf
     depends_on:

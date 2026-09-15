@@ -32,6 +32,9 @@ The runner:
 - Runs unit tests from `tests/` so `tests/pytest.ini` is applied.
 - Runs integration scripts from `tests/integration/` so their relative `conversations/<TEST_PATH>` paths resolve correctly.
 - Targets the chain-server timing endpoint at `http://localhost:8009/query/timing` by default.
+- For the Docker Compose deployment, target the loopback nginx entrypoint with
+  `--host 127.0.0.1 --port 3000 --uri api/query/timing`; backend service ports
+  are intentionally not published.
 - Sets `TEST_PATH` for integration runs.
 
 ## Unit Tests
@@ -57,9 +60,14 @@ cd tests
 
 The integration suite lives under `tests/integration` and drives live HTTP endpoints. Before running it:
 
-- Ensure the chain server is running and reachable at `http://localhost:8009`.
+- Ensure the chain server is reachable at `http://localhost:8009` when using the
+  local runner, or through `http://127.0.0.1:3000/api` when using Docker Compose.
 - Choose an existing scenario directory under `tests/integration/conversations/`, usually `shopping` or `rails`.
 - Put `NVIDIA_API_KEY` in the repo-root `.env` or export it in the launching shell, unless using `--skip-quality`; `response_quality.py` requires it for LLM-as-judge scoring.
+- Shared hosted NIM endpoints can return transient 429/503 responses during
+  sustained evaluations. Use `--request-delay <seconds>` to pace application
+  requests (for example, `--request-delay 10`) and inspect service logs for
+  exhausted retries before calling a run clean.
 
 The runner preflights the selected conversation directory and service URL. Use `--no-preflight` only when intentionally testing a nonstandard setup.
 

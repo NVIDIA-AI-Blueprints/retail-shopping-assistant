@@ -32,6 +32,24 @@ logger = logging.getLogger(__name__)
 
 # Global configuration variable
 _config = None
+RAILS_REQUEST_TIMEOUT_SECONDS = 60
+
+
+def _is_canonical_rails_echo(response_data: Any, expected_content: str) -> bool:
+    """Return true only when guardrails explicitly echoes approved content."""
+    if not isinstance(response_data, dict):
+        return False
+
+    messages = response_data.get("response")
+    if not isinstance(messages, list) or len(messages) != 1:
+        return False
+
+    message = messages[0]
+    return (
+        isinstance(message, dict)
+        and message.get("role") == "assistant"
+        and message.get("content") == expected_content
+    )
 
 
 class GraphNodes:
@@ -91,16 +109,12 @@ class GraphNodes:
             response = requests.post(
                 f"{_config.rails_port}/rail/input/check",
                 json={"user_id": state.user_id, "query": state.query},
-                timeout=10
+                timeout=RAILS_REQUEST_TIMEOUT_SECONDS,
             )
             response.raise_for_status()
             
             response_data = response.json()
-            # Rails returns {"response": [{"role": "assistant", "content": "..."}], ...}
-            if "response" in response_data and len(response_data["response"]) > 0:
-                is_safe = response_data["response"][0]["content"] == state.query
-            else:
-                is_safe = True  # Default to safe if structure is unexpected
+            is_safe = _is_canonical_rails_echo(response_data, state.query)
             end = time.monotonic()
             
             return {
@@ -108,11 +122,10 @@ class GraphNodes:
                 "rail_timings": {"rails_input_check": end - start}
             }
             
-        except requests.RequestException as e:
-            logger.error(f"Failed to check input safety: {e}")
-            # Default to safe on failure
+        except (requests.RequestException, ValueError) as e:
+            logger.error(f"Failed to check input safety; blocking request: {e}")
             return {
-                "is_safe": True,
+                "is_safe": False,
                 "rail_timings": {"rails_input_check": time.monotonic() - start}
             }
     
@@ -128,16 +141,12 @@ class GraphNodes:
             response = requests.post(
                 f"{_config.rails_port}/rail/output/check",
                 json={"user_id": state.user_id, "query": state.response},
-                timeout=10
+                timeout=RAILS_REQUEST_TIMEOUT_SECONDS,
             )
             response.raise_for_status()
             
             response_data = response.json()
-            # Rails returns {"response": [{"role": "assistant", "content": "..."}], ...}
-            if "response" in response_data and len(response_data["response"]) > 0:
-                is_safe = response_data["response"][0]["content"] == state.response
-            else:
-                is_safe = True  # Default to safe if structure is unexpected
+            is_safe = _is_canonical_rails_echo(response_data, state.response)
             end = time.monotonic()
             
             return {
@@ -145,11 +154,10 @@ class GraphNodes:
                 "rail_timings": {"rails_output_check": end - start}
             }
             
-        except requests.RequestException as e:
-            logger.error(f"Failed to check output safety: {e}")
-            # Default to safe on failure
+        except (requests.RequestException, ValueError) as e:
+            logger.error(f"Failed to check output safety; blocking response: {e}")
             return {
-                "is_safe": True,
+                "is_safe": False,
                 "rail_timings": {"rails_output_check": time.monotonic() - start}
             }
     

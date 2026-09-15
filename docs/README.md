@@ -12,12 +12,12 @@ Welcome to the Retail Shopping Assistant documentation! This hub provides compre
 ### 🔧 Technical Documentation
 - **[API Documentation](API.md)** - Complete API reference
 - **[Architecture Overview](../README.md#architecture)** - System design and components
-- **[Configuration Guide](../README.md#configuration)** - Settings and customization
+- **[Configuration Guide](DEPLOYMENT.md#%EF%B8%8F-configuration)** - Settings and customization
 
 ### 🛠️ Development & Operations
-- **[Troubleshooting](../README.md#troubleshooting)** - Common issues and solutions
-- **[Customization](../README.md#customization)** - Modifying the application
-- **[Contributing](../README.md#contributing)** - Development guidelines
+- **[Troubleshooting](DEPLOYMENT.md#%EF%B8%8F-troubleshooting)** - Common issues and solutions
+- **[Custom Catalog Data](EMBEDDING_MANAGEMENT.md#custom-data-source)** - Replacing the sample catalog
+- **[Contributing](../CONTRIBUTING.md)** - Development guidelines
 
 ## 📖 Documentation Index
 
@@ -26,8 +26,8 @@ Welcome to the Retail Shopping Assistant documentation! This hub provides compre
 | Document | Description | Audience |
 |----------|-------------|----------|
 | [User Guide](USER_GUIDE.md) | Complete guide to using the shopping assistant | End users, customers |
-| [Main README](../README.md#usage-examples) | Quick usage examples and sample prompts | New users |
-| [FAQ](USER_GUIDE.md#faq) | Frequently asked questions | All users |
+| [Chat Examples](USER_GUIDE.md#chat-examples) | Sample shopping prompts | New users |
+| [FAQ](USER_GUIDE.md#-faq) | Frequently asked questions | All users |
 
 ### For Developers
 
@@ -36,85 +36,85 @@ Welcome to the Retail Shopping Assistant documentation! This hub provides compre
 | [API Documentation](API.md) | Complete API reference with examples | Developers, integrators |
 | [Deployment Guide](DEPLOYMENT.md) | Installation and deployment instructions | DevOps, system administrators |
 | [Architecture Overview](../README.md#architecture) | System design and component details | Architects, developers |
-| [Configuration Guide](../README.md#configuration) | Settings and customization options | Developers, administrators |
+| [Configuration Guide](DEPLOYMENT.md#%EF%B8%8F-configuration) | Settings and customization options | Developers, administrators |
 
 ### For Administrators
 
 | Document | Description | Audience |
 |----------|-------------|----------|
-| [Deployment Guide](DEPLOYMENT.md) | Production deployment instructions | System administrators |
-| [Troubleshooting](../README.md#troubleshooting) | Common issues and solutions | Support teams, administrators |
-| [Monitoring](../README.md#monitoring) | Health checks and monitoring | Operations teams |
-| [Security](../README.md#security) | Security considerations | Security teams |
+| [Deployment Guide](DEPLOYMENT.md) | Local and evaluation deployment instructions | System administrators |
+| [Troubleshooting](DEPLOYMENT.md#%EF%B8%8F-troubleshooting) | Common issues and solutions | Support teams, administrators |
+| [Monitoring](DEPLOYMENT.md#-monitoring) | Health checks and monitoring | Operations teams |
+| [Security Policy](../SECURITY.md) | Supported boundary and security assumptions | Security teams |
 
 ## 🎯 Quick Start Paths
 
 ### I'm a New User
 1. **[User Guide](USER_GUIDE.md)** - Learn how to use the application
 2. **[Main README](../README.md)** - Understand what the application does
-3. **[FAQ](USER_GUIDE.md#faq)** - Find answers to common questions
+3. **[FAQ](USER_GUIDE.md#-faq)** - Find answers to common questions
 
 ### I'm a Developer
 1. **[Main README](../README.md)** - Project overview and architecture
 2. **[API Documentation](API.md)** - Understand the API
 3. **[Deployment Guide](DEPLOYMENT.md)** - Set up development environment
-4. **[Configuration Guide](../README.md#configuration)** - Customize the application
+4. **[Configuration Guide](DEPLOYMENT.md#%EF%B8%8F-configuration)** - Customize the application
 
-### I'm Deploying to Production
-1. **[Deployment Guide](DEPLOYMENT.md)** - Production deployment instructions
-2. **[Architecture Overview](../README.md#architecture)** - Understand system requirements
-3. **[Troubleshooting](../README.md#troubleshooting)** - Common deployment issues
-4. **[Monitoring](../README.md#monitoring)** - Set up monitoring and alerts
+### I'm Adapting the Blueprint
+1. **[Security Policy](../SECURITY.md)** - Understand the supported boundary
+2. **[Deployment Guide](DEPLOYMENT.md)** - Set up local evaluation
+3. **[Architecture Overview](../README.md#architecture)** - Understand system requirements
+4. **[Troubleshooting](DEPLOYMENT.md#%EF%B8%8F-troubleshooting)** - Common deployment issues
 
 ## 🔍 Search Documentation
 
 ### By Topic
 
 #### Product Search
-- [User Guide - Product Search](USER_GUIDE.md#product-search)
+- [User Guide - Product Search](USER_GUIDE.md#-product-search)
 - [API - Product Search Examples](API.md#product-search)
-- [Main README - Usage Examples](../README.md#usage-examples)
+- [User Guide - Chat Examples](USER_GUIDE.md#chat-examples)
 
 #### Shopping Cart
-- [User Guide - Shopping Cart Management](USER_GUIDE.md#shopping-cart-management)
+- [User Guide - Shopping Cart Management](USER_GUIDE.md#-shopping-cart-management)
 - [API - Cart Operations](API.md#shopping-cart-operations)
 - [Data Models - Cart](API.md#cart)
 
 #### Image Upload
-- [User Guide - Image Upload Feature](USER_GUIDE.md#image-upload-feature)
+- [User Guide - Image Upload Feature](USER_GUIDE.md#%EF%B8%8F-image-upload-feature)
 - [API - Image-based Search](API.md#image-based-search)
 - [Troubleshooting - Image Issues](USER_GUIDE.md#image-upload-fails)
 
 #### Deployment
-- [Deployment Guide - Local Deployment](DEPLOYMENT.md#local-deployment)
-- [Deployment Guide - Cloud Deployment](DEPLOYMENT.md#cloud-deployment)
-- [Deployment Guide - Production Deployment](DEPLOYMENT.md#production-deployment)
+- [Deployment Guide - Local Deployment](DEPLOYMENT.md#-local-deployment)
+- [Deployment Guide - Cloud Deployment](DEPLOYMENT.md#%EF%B8%8F-cloud-deployment)
+- [Deployment Guide - Production Boundary](DEPLOYMENT.md#-production-deployment)
 
 #### Configuration
-- [Main README - Configuration](../README.md#configuration)
-- [Deployment Guide - Configuration](DEPLOYMENT.md#configuration)
-- [API - Environment Variables](API.md#environment-variables)
+- [Deployment Guide - Environment Variables](DEPLOYMENT.md#environment-variables)
+- [Deployment Guide - Configuration](DEPLOYMENT.md#%EF%B8%8F-configuration)
+- [Embedding Management - Custom Data](EMBEDDING_MANAGEMENT.md#custom-data-source)
 
 #### Troubleshooting
-- [Main README - Troubleshooting](../README.md#troubleshooting)
-- [User Guide - Troubleshooting](USER_GUIDE.md#troubleshooting)
-- [Deployment Guide - Troubleshooting](DEPLOYMENT.md#troubleshooting)
+- [Deployment Guide - Common Issues](DEPLOYMENT.md#common-issues)
+- [User Guide - Troubleshooting](USER_GUIDE.md#%EF%B8%8F-troubleshooting)
+- [Deployment Guide - Troubleshooting](DEPLOYMENT.md#%EF%B8%8F-troubleshooting)
 
 ### By Issue Type
 
 #### Performance Issues
 - [Deployment Guide - Performance Tuning](DEPLOYMENT.md#performance-tuning)
 - [User Guide - Performance Issues](USER_GUIDE.md#performance-issues)
-- [Main README - Limitations](../README.md#limitations)
+- [Deployment Guide - Monitoring](DEPLOYMENT.md#-monitoring)
 
 #### Authentication Issues
-- [Deployment Guide - Authentication Issues](DEPLOYMENT.md#authentication-issues)
-- [API - Authentication](API.md#authentication)
+- [Deployment Guide - Authentication Issues](DEPLOYMENT.md#5-authentication-issues)
+- [API - Authentication](API.md#-authentication)
 - [Main README - Prerequisites](../README.md#prerequisites)
 
 #### Service Failures
-- [Deployment Guide - Service Startup Failures](DEPLOYMENT.md#service-startup-failures)
-- [Main README - Troubleshooting](../README.md#troubleshooting)
+- [Deployment Guide - Service Startup Failures](DEPLOYMENT.md#3-service-startup-failures)
+- [Deployment Guide - Troubleshooting](DEPLOYMENT.md#%EF%B8%8F-troubleshooting)
 - [Deployment Guide - Recovery Procedures](DEPLOYMENT.md#recovery-procedures)
 
 ## 📝 Documentation Standards
@@ -204,5 +204,3 @@ We welcome feedback on the documentation:
 **Maintainer**: NVIDIA AI Blueprints Team
 
 For the latest updates, check the [GitHub repository](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant).
-
-

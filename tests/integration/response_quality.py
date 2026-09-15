@@ -8,16 +8,19 @@ import json
 import yaml
 
 # Configuration
-LLM_NAME = "nvdev/nvidia/nemotron-3-super-120b-a12b"
-#LLM_NAME = "nvdev/nv-mistralai/mistral-nemo-12b-instruct"
-EMBED_NAME = "nvdev/nvidia/nemotron-3-embed-1b"
+LLM_NAME = "nvidia/nemotron-3.5-lightning-30b-a3b"
+EMBED_NAME = "nvidia/nemotron-3-embed-1b"
 LLM_CLIENT = OpenAI(
-    base_url= "https://integrate.api.nvidia.com/v1", #"http://pdx-tme-018:8000/v1", #"https://integrate.api.nvidia.com/v1",
-    api_key=os.environ["NVIDIA_API_KEY"]
+    base_url="https://integrate.api.nvidia.com/v1",
+    api_key=os.environ["NVIDIA_API_KEY"],
+    timeout=45.0,
+    max_retries=2,
 )
 EMBED_CLIENT = OpenAI(
     base_url="https://integrate.api.nvidia.com/v1",
-    api_key=os.environ["NVIDIA_API_KEY"]
+    api_key=os.environ["NVIDIA_API_KEY"],
+    timeout=45.0,
+    max_retries=2,
 )
 
 def judge_test(
@@ -85,7 +88,8 @@ RAG Answer: {answer}
         ],
         temperature=0.0,
         tools=[judge_function],
-        tool_choice="required"
+        tool_choice="required",
+        extra_body={"chat_template_kwargs": {"enable_thinking": False}},
     )
 
     parsed_output = json.loads(response.choices[0].message.tool_calls[0].function.arguments)
@@ -150,4 +154,3 @@ if __name__ == "__main__":
         # Write YAML output per file
         with open(f"{OUTPUT_PATH}/{filename}", 'w') as out_file:
             yaml.dump(results_per_file, out_file, sort_keys=False, allow_unicode=True)
-

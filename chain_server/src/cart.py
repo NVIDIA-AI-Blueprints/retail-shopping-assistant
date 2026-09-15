@@ -163,7 +163,12 @@ class CartAgent():
         
         # Store configuration
         self.memory_retriever_url = config.memory_port
-        self.model = OpenAI(base_url=config.llm_port, api_key=os.environ["LLM_API_KEY"])
+        self.model = OpenAI(
+            base_url=config.llm_port,
+            api_key=os.environ["LLM_API_KEY"],
+            timeout=45.0,
+            max_retries=4,
+        )
         self.catalog_retriever_port = config.retriever_port
         self.categories = config.categories
         self.retry_strategy = Retry(
@@ -803,5 +808,3 @@ class CartAgent():
         logging.info(f"CartAgent.invoke() | Returning final state with response: {output_state.response}")
 
         return output_state
-
-

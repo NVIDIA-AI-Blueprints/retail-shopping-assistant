@@ -4,7 +4,14 @@ This comprehensive guide provides step-by-step instructions for deploying the Re
 
 ## Overview
 
-NVIDIA Brev provides GPU Environment Templates called "Launchables" that enable one-click deployment of GPU-accelerated applications. Launchables include pre-configured compute resources, containers, and secure networking accessible via shareable URLs.
+NVIDIA Brev provides GPU Environment Templates called "Launchables" that enable one-click deployment of GPU-accelerated applications. Launchables include pre-configured compute resources, containers, and authenticated Secure Links for remote access.
+
+> **Security scope:** This blueprint has no application-level user
+> authentication or multi-tenant isolation. Use the Brev deployment only as a
+> single-operator demonstration, keep Secure Link access restricted to trusted
+> users, use sample data, and create a link only for port 3000. Never create
+> links for backend, data-service, or local model ports. See
+> [SECURITY.md](../SECURITY.md).
 
 ## Prerequisites
 
@@ -69,7 +76,9 @@ Configure your development environment and network access for the retail shoppin
 
 ![Step 4: Jupyter and Network Configuration](images/step4.png)
 
-> **Important**: Port 3000 is the default port for the retail shopping assistant's React frontend. The secure tunnel provides external access to the application.
+> **Important**: Port 3000 is the only supported Secure Link target. Brev access
+> controls protect the link, but the blueprint itself does not identify or
+> authorize application users. Restrict it to a single trusted operator.
 
 ### Step 5: Select Compute Resources
 
@@ -108,7 +117,8 @@ Review your selected configuration and pricing information.
 
 ![Step 6: Configuration Review](images/step6.png)
 
-> **Cost Warning**: Note the hourly rate. Brev instances cannot be stopped/restarted—only deleted. Plan your usage accordingly.
+> **Cost Warning**: Note the hourly rate. Stop the instance when it is not in
+> use; capacity may not be immediately available when you restart it.
 
 ### Step 7: Create Your Launchable Template
 
@@ -214,12 +224,15 @@ Access the retail shopping assistant through your secure tunnel.
 
 1. **Complete Notebook**: Execute all cells until reaching the "Access the Web UI" section
 2. **Return to Brev Console**: Navigate back to your instance management page
-3. **Use Secure Tunnel**: Click the **shareable URL for port 3000** (e.g., `https://tunnel-xx.brevlab.com:3000`)
+3. **Use Secure Link**: Open the authenticated Brev Secure Link for port 3000
+   (for example, `https://tunnel-xx.brevlab.com:3000`)
 4. **Open Application**: The retail shopping assistant web interface opens in your browser
 
 ![Step 14: Access Shareable link](images/step14.png)
 
-> **Important**: Use the Brev secure tunnel URL, not `http://localhost:3000` mentioned in the notebook.
+> **Important**: Use the Brev Secure Link rather than publishing a container
+> port. Do not share access with untrusted users: the application is a
+> single-operator demonstration and does not provide user authorization.
 
 ### Step 15: Wait for System Initialization
 

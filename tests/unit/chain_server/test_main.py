@@ -4714,9 +4714,12 @@ class TestDeepAgentsRuntimeRefs:
         assert "SEARCH_SCOPE_COMPLETE" not in no_result
         assert "search again without it" in no_result
         assert "PRODUCT_REF:" not in no_result
-        # Two more than before: each zero-result scope is re-run once without
-        # its optional constraints, so the reply has products to show.
-        assert captured_plan["calls"] == 9
+        # One retrieval per scope and no more. Re-running each zero-result
+        # scope here without its optional constraints cost two extra searches
+        # and returned what the reply then disowned -- boots, for a tote bag in
+        # a size 8. The model issues that retry itself, so this is the count
+        # the shopper pays for.
+        assert captured_plan["calls"] == 7
 
         image_state = State(
             user_id=111,
@@ -4738,7 +4741,7 @@ class TestDeepAgentsRuntimeRefs:
         assert "SEARCH_FILTER_EVIDENCE:" not in image_result
         assert "PRODUCT_REF: prod_1" in image_result
         assert captured_plan["plan"].search_mode == "hybrid"
-        assert captured_plan["calls"] == 10
+        assert captured_plan["calls"] == 8
         assert image_state.model_usage["text_embedding"]["status"] == "used"
         assert image_state.model_usage["text_embedding"]["calls"] == 1
         assert image_state.model_usage["image_embedding"]["status"] == "used"
@@ -4782,7 +4785,7 @@ class TestDeepAgentsRuntimeRefs:
             scrubbed_schema_repair
         )
         assert "waterproof dress" not in scrubbed_schema_repair
-        assert captured_plan["calls"] == 11
+        assert captured_plan["calls"] == 9
 
     def test_search_catalog_tool_enforces_per_turn_cap(
         self,

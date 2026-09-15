@@ -4032,46 +4032,32 @@ def _customer_safe_search_evidence(payload: dict[str, Any]) -> str:
         # Zero results told the model what was absent and nothing about what
         # was present, so it asked. "No green dress in a size 2 -- would you
         # like size 4 instead?" showed nothing, on a turn where the catalog
-        # held green dresses in a 4 and plenty of size 2 dresses in other
-        # colours. A shopper asked to choose between two things they cannot
-        # see has been given less than nothing.
-        relaxed = payload.get("relaxed_products")
-        if isinstance(relaxed, list) and relaxed:
-            dropped = [str(v) for v in (payload.get("relaxed_dropped") or [])]
-            lines.append(
-                _render_product_evidence_summary(
-                    relaxed,
-                    heading="CUSTOMER_SAFE_RELAXED_SEARCH_EVIDENCE",
-                    note=(
-                        "The same search without "
-                        + (", ".join(dropped) if dropped else "its optional constraints")
-                        + " found these. They are real products and may be "
-                        "shown. Show them in this reply rather than asking "
-                        "whether the shopper would like to widen the search: "
-                        "being offered a choice between two things you cannot "
-                        "see is worse than being shown one of them. Say plainly "
-                        "which requirement could not be met and which you "
-                        "relaxed. "
-                        + (
-                            "The shopper's size was kept -- these are their size."
-                            if payload.get("relaxed_kept_the_size", True)
-                            else "THE SHOPPER'S SIZE WAS NOT KEPT. Nothing they "
-                            "asked for exists in it. Say that first, name the "
-                            "sizes these actually come in, and never present "
-                            "them as the size they asked for."
-                        )
-                    ),
-                    confirmed_filters={},
-                    taxonomy_scope=payload.get("taxonomy") or {},
-                )
-            )
-        else:
-            lines.append(
-                "NEXT: nothing was found with these constraints and nothing "
-                "was found without the optional ones either. Say so plainly, "
-                "name what the catalog does carry in this category, and do "
-                "not answer with a question alone."
-            )
+        # held plenty of size 2 dresses in other colours. A shopper asked to
+        # choose between two things they cannot see has been given less than
+        # nothing.
+        #
+        # This used to be answered by running the search again here, without
+        # the optional filters, and handing the results over. That retry kept
+        # only the size and dropped the product type with everything else, so
+        # "a tote bag in a size 8" searched the whole catalog for size 8 --
+        # which bags, being one size, are excluded from -- and four boots and
+        # heels came back and were registered under a reply about tote bags.
+        # Across every zero-result turn in the suite the model had already
+        # issued the correct retry itself, keeping the garment and dropping the
+        # colour, so the second search only ever added what the reply disowned.
+        # What it knew that an instruction did not is said here instead.
+        lines.append(
+            "NEXT: nothing in the catalog matched all of these at once. Search "
+            "again yourself, now, with one optional requirement dropped -- "
+            "colour, pattern, style or price. Keep the product type and keep "
+            "the size: a shopper asking for a dress is not answered with a "
+            "skirt, and a size is a fact about a body, not a preference. Then "
+            "show what that finds and say plainly which requirement could not "
+            "be met. If the product type itself is one this shop does not "
+            "carry, say that instead and search no further. Do not answer with "
+            "a question alone, and never offer a choice between things the "
+            "shopper cannot see."
+        )
         return "\n".join(lines)
 
     lines = [_summarize_typed_product_evidence(payload)]

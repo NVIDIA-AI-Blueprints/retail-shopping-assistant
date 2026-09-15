@@ -339,13 +339,20 @@ def test_composer_summary_for_zero_results() -> None:
         "The broader advertised category Bags returned zero products for this "
         "search, so do not claim that the requested type is absent from the "
         "whole catalog.\n"
-        # Absence alone made the model ask which alternative the shopper wanted,
-        # showing none of them. When the relaxed retry also finds nothing there
-        # is still no menu to offer -- say so and name what the shop carries.
-        "NEXT: nothing was found with these constraints and nothing was found "
-        "without the optional ones either. Say so plainly, name what the "
-        "catalog does carry in this category, and do not answer with a "
-        "question alone."
+        # Absence alone made the model ask which alternative the shopper
+        # wanted, showing none of them. The retry that answered that ran here,
+        # on the server, and kept the size while dropping the product type --
+        # boots, for a tote bag in a size 8. So the retry is named as the
+        # model's to make, along with which filter may give and which may not.
+        "NEXT: nothing in the catalog matched all of these at once. Search "
+        "again yourself, now, with one optional requirement dropped -- colour, "
+        "pattern, style or price. Keep the product type and keep the size: a "
+        "shopper asking for a dress is not answered with a skirt, and a size "
+        "is a fact about a body, not a preference. Then show what that finds "
+        "and say plainly which requirement could not be met. If the product "
+        "type itself is one this shop does not carry, say that instead and "
+        "search no further. Do not answer with a question alone, and never "
+        "offer a choice between things the shopper cannot see."
     )
 
 
@@ -489,13 +496,16 @@ def test_every_search_summary_tells_the_composer_to_drop_the_jargon() -> None:
     assert "pieces anyone can wear" in summary
 
 
-def test_a_zero_result_scope_shows_what_it_found_without_the_optional_filters() -> None:
+def test_a_zero_result_tells_the_model_to_relax_its_own_search() -> None:
     """Absence alone produced a menu of things the shopper could not see.
 
     "No green dress in a size 2 -- would you like size 4, or another colour?"
     on a turn where the catalog held plenty of size 2 dresses in other
-    colours. Telling the model to go and look did not hold; a model with
-    products in hand shows them.
+    colours. That was answered by running the search again on the server and
+    handing over what it found -- a retry that kept the size and dropped the
+    product type with everything else, so a tote bag in a size 8 came back as
+    boots. The model issues this retry correctly itself; what it needed was
+    to be told to, and told which filter may give.
     """
 
     from chain_server.src.turn_support import _customer_safe_search_evidence
@@ -505,28 +515,20 @@ def test_a_zero_result_scope_shows_what_it_found_without_the_optional_filters() 
             "outcome": "zero_results",
             "taxonomy": {"subcategory": ["dresses"]},
             "confirmed_filters": {"primary_color": ["green"], "sizes": ["2"]},
-            "relaxed_dropped": ["primary_color"],
-            "relaxed_products": [
-                {
-                    "name": "Black Satin Lace-Up Dress",
-                    "product_ref": "generated:abc",
-                    "price": "$69.99 USD",
-                    "category": "dresses",
-                }
-            ],
         }
     )
 
-    assert "CUSTOMER_SAFE_RELAXED_SEARCH_EVIDENCE" in summary
-    assert "Black Satin Lace-Up Dress" in summary
-    assert "primary_color" in summary
-    assert "these are their size" in summary, "the kept size must be stated"
+    assert "Search again yourself" in summary
+    assert "Keep the product type and keep the size" in summary
+    assert "do not answer with a question alone" in summary.casefold()
+    # The two substitutions this exists to prevent, named rather than implied.
+    assert "not answered with a skirt" in summary
+    assert "not a preference" in summary
 
 
-def test_a_relaxation_that_had_to_drop_the_size_says_so_first() -> None:
-    """"a tote bag in a size 8": totes are one size, so the size was the only
-    filter and nothing else could give. Showing them is right; showing them as
-    though they were a size 8 is not."""
+def test_a_zero_result_does_not_hand_over_products_of_its_own() -> None:
+    """No second search runs here, so nothing can arrive that the reply
+    disowns. The heading its results used to land under is gone with it."""
 
     from chain_server.src.turn_support import _customer_safe_search_evidence
 
@@ -535,35 +537,10 @@ def test_a_relaxation_that_had_to_drop_the_size_says_so_first() -> None:
             "outcome": "zero_results",
             "taxonomy": {"subcategory": ["tote_bags"]},
             "confirmed_filters": {"sizes": ["8"]},
-            "relaxed_dropped": ["sizes"],
-            "relaxed_kept_the_size": False,
-            "relaxed_products": [
-                {
-                    "name": "Ombre Canvas Tote Bag",
-                    "product_ref": "generated:abc",
-                    "price": "$49.99 USD",
-                    "category": "tote_bags",
-                }
-            ],
-        }
-    )
-
-    assert "Ombre Canvas Tote Bag" in summary
-    assert "SIZE WAS NOT KEPT" in summary
-    assert "never present" in summary
-
-
-def test_a_zero_result_with_no_alternatives_still_refuses_to_answer_with_a_question() -> None:
-    from chain_server.src.turn_support import _customer_safe_search_evidence
-
-    summary = _customer_safe_search_evidence(
-        {
-            "outcome": "zero_results",
-            "taxonomy": {"subcategory": ["dresses"]},
-            "confirmed_filters": {"sizes": ["2"]},
-            "relaxed_products": [],
         }
     )
 
     assert "CUSTOMER_SAFE_RELAXED_SEARCH_EVIDENCE" not in summary
-    assert "do not answer with a question alone" in summary
+    # An uncarried type is not a filter to relax, and saying so here is what
+    # keeps "dark blue jeans" from becoming a navy skirt on the retry.
+    assert "search no further" in summary

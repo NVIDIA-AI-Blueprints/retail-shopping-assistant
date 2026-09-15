@@ -683,7 +683,37 @@ def _validated_request(ctx: SearchContext, attempt: _Attempt) -> StepResult:
         if shopper_stated_scope or canonical_agent_selected_scope:
             attempt.repair.failed_repair_scope_key = candidate_scope_key
         if candidate_scope_key and taxonomy_error:
-            if (
+            # Asked before the advertised list is offered, and asked whoever
+            # named the garment. A subcategory enum this shop has no value for
+            # is the earliest point the answer is already known, and the list
+            # is the wrong thing to say here: told to "select every advertised
+            # subcategory that role covers", the model selected all six in the
+            # department and the jeans role came back as a blouse, a dress and
+            # a turtleneck. Saying it now also spares the widening round trip,
+            # which cost a further model call at full prompt each time.
+            enum_uncarried_garment = _garment_with_no_advertised_value(
+                " ".join(
+                    part
+                    for part in (
+                        requested_product_type,
+                        attempt.semantic_query,
+                    )
+                    if part
+                ),
+                capabilities,
+            )
+            if enum_uncarried_garment is not None:
+                repair_guidance = (
+                    f" This shop has no '{enum_uncarried_garment}': no "
+                    "advertised subcategory denotes it, so there is no "
+                    "taxonomy that would make this scope valid and no wider "
+                    "selection to try. Leave this role out of `scopes`, name "
+                    f"'{enum_uncarried_garment}' in `not_covered`, and tell "
+                    "the shopper plainly that this part of the request cannot "
+                    "be covered. Do not file it under another garment and do "
+                    "not offer one as the closest version of it."
+                )
+            elif (
                 taxonomy_status == "agent_selected_type"
                 and not shopper_stated_scope
             ):
@@ -988,13 +1018,31 @@ def _reviewed_provenance(ctx: SearchContext, attempt: _Attempt) -> StepResult:
             request.requested_product_type,
             capabilities,
         )
-        uncarried_garment = (
-            _garment_with_no_advertised_value(
-                attempt.semantic_query,
-                capabilities,
-            )
-            if advertised_request is not None
-            else None
+        # Asked unconditionally, because whether this shop carries a garment is
+        # a fact about the catalog and not about who said the word. Gated on an
+        # advertised declared type, this never ran for the case it was written
+        # for: "jeans" matches nothing advertised, so the gate skipped it and
+        # left the width rule below, which wanted one subcategory against the
+        # six that had been sent. Both arms missed.
+        #
+        # Provenance is why that gate looked safe and exactly why it was not.
+        # The shopper typed "I want to shop this look" and never a garment
+        # word, so every garment the video named arrived as the model's own
+        # composed role -- the one path allowed width, and the only one that
+        # was not asking whether the thing is sold here.
+        #
+        # The declared type is read alongside the query. Either one naming the
+        # garment is enough, so a paraphrase in one still trips on the other.
+        uncarried_garment = _garment_with_no_advertised_value(
+            " ".join(
+                part
+                for part in (
+                    request.requested_product_type,
+                    attempt.semantic_query,
+                )
+                if part
+            ),
+            capabilities,
         )
         # Widening the list does not make a skirt into the jeans. Told once that
         # a single-subcategory scope may name several when they genuinely are

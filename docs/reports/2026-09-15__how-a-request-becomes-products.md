@@ -338,7 +338,7 @@ the only thing that separates two cases the taxonomy cannot distinguish:
 | `jeans` → [skirts, dresses, ...] | no | **yes** | **refuse** |
 
 Delete the list without first giving the catalog an umbrella vocabulary and `shoes`
-and `tops` start being refused. See [7.6](#76-umbrella-vocabulary-as-data).
+and `tops` start being refused. See [8.6](#86-umbrella-vocabulary-as-data).
 
 Repair locks also live in this step: a role already refused this turn returns
 `STOP_TOOL_USE` rather than a second explanation, keyed on the **semantic query**
@@ -674,7 +674,7 @@ The chain, in order:
    the turn showed nothing.
 
 So: **the injected sweaters went to the screen and not to the counter.** Every
-analysis I have done from `products_shown` — including the 25% figure in 7.5 and the
+analysis I have done from `products_shown` — including the 25% figure in 8.2 and the
 `> shown:` line I added to the transcripts — is blind to products that arrive by
 this path. That is why I kept telling you J01 looked clean.
 
@@ -689,37 +689,37 @@ anything here, because the answer changes whether 7.6 is one bug or two.
 
 Recorded while reading. **None applied.**
 
-### 7.1 No prefill caching at all
+### 8.1 No prefill caching at all
 Every LLM span on every traced turn reports
 `llm.token_count.prompt_details.cache_read = 0`. With 4–9 calls per turn at
 7k–23k prompt each, the same prefix is paid for every time. Largest single ISL
 lever available and it is a serving-side change, not an application one.
 
-### 7.2 A quarter of emitted products are never named
+### 8.2 A quarter of emitted products are never named
 Across all 53 scenarios of the `2026-09-14__no-stand-in` run, **240 of 979** emitted
 products (25%) never appear in the reply text. Cause is structural: a search
 registers its **entire** result set, then the model names a subset. Selection
 happens after registration.
 
-### 7.3 Availability and promotions are stubs
+### 8.3 Availability and promotions are stubs
 `check_product_availability` always returns in-stock; `check_active_promotions`
 always returns none. Every call is pure cost, and worse than free — 6.3 shows the
 stub actively producing a wrong answer. Sizes are already present in search
 evidence and in the event store, so a size question is answerable with **no tool
 call**.
 
-### 7.4 The widening round trip
+### 8.4 The widening round trip
 Pre-`c7aa66d`, an uncarried garment cost: enum rejection → model widens → search
 runs → wrong products. Answering at the rejection saves a full model call at full
 prompt. Already fixed on this branch; noted because the same pattern (a refusal that
 invites a retry it could have pre-empted) may exist elsewhere.
 
-### 7.5 `search_products_per_call = 36`
+### 8.5 `search_products_per_call = 36`
 36 products of rendered attributes per scope is a large share of the prompt on a
 multi-scope turn. Worth measuring what a smaller number costs in answer quality,
-especially given 7.2.
+especially given 8.2.
 
-### 7.6 Umbrella vocabulary as data
+### 8.6 Umbrella vocabulary as data
 If the catalog advertised its umbrella words — `footwear ← shoes`,
 `{blouses,camisoles,sweaters} ← tops`, `{skirts} ← bottoms` — then
 `_advertised_scope_match` would resolve them, "resolves to nothing" would genuinely
@@ -728,7 +728,7 @@ rules could be deleted. It also makes the covering the *shop's*, not the model's
 which structurally prevents jeans→dresses. This is the clean endpoint; it is data,
 not another condition.
 
-### 7.7 Provenance helper applied at six sites
+### 8.7 Provenance helper applied at six sites
 Passing `_stated_shopper_text(ctx.state)` instead of `ctx.state.query` at the six
 product-type gates (3.2) closes the video/jeans class at its source. Small, but it
 changes behaviour on the trusted path, so it needs a journey run.

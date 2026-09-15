@@ -15,6 +15,9 @@ on:
       - "tests/**/*.py"
       - "tests/pytest.ini"
       - "tests/requirements-dev.txt"
+      - "docker-compose.yaml"
+      - "docker-compose-nim-local.yaml"
+      - "skills/retail-local-runner/**/*.py"
   workflow_dispatch:
 
 permissions:

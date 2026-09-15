@@ -28,12 +28,21 @@ The Retail Shopping Assistant API provides a comprehensive interface for an AI-p
 ## 🌐 Base URL
 
 ```
-http://localhost:8000
+http://localhost:3000/api
 ```
 
 ## 🔐 Authentication
 
-Currently, the API does not require authentication for local deployments. For production deployments, consider implementing API key authentication or OAuth2.
+The reference API does not implement end-user authentication or authorization.
+It is available through the loopback-bound nginx entrypoint for local,
+single-operator evaluation only; internal service APIs are not published to the
+host. The client-provided `user_id` separates demo state but is not an
+authenticated identity.
+
+Do not expose this API to untrusted or multiple users. A broader deployment must
+place authenticated TLS ingress in front of nginx and derive user identity and
+authorization server-side. See [SECURITY.md](../SECURITY.md) for the supported
+deployment boundary.
 
 ## 📊 Data Models
 
@@ -93,10 +102,7 @@ interface QueryResponse {
 ```json
 {
   "response": "I found several red dresses under $100 that might interest you...",
-  "images": {
-    "product1": "https://cdn.shop.com/dress1.jpg",
-    "product2": "https://cdn.shop.com/dress2.jpg"
-  },
+  "images": {},
   "timings": {
     "total": 3.48,
     "planner": 0.12,
@@ -151,7 +157,7 @@ Accept: text/event-stream
 
 **Example Request:**
 ```bash
-curl -X POST "http://localhost:8000/query/stream" \
+curl -X POST "http://localhost:3000/api/query/stream" \
   -H "Content-Type: application/json" \
   -H "Accept: text/event-stream" \
   -d '{
@@ -181,7 +187,7 @@ Processes a query and returns detailed timing information for performance analys
 
 **Example Request:**
 ```bash
-curl -X POST "http://localhost:8000/query/timing" \
+curl -X POST "http://localhost:3000/api/query/timing" \
   -H "Content-Type: application/json" \
   -d '{
     "user_id": 123,
@@ -193,10 +199,7 @@ curl -X POST "http://localhost:8000/query/timing" \
 ```json
 {
   "response": "I found several red dresses under $100 that might interest you...",
-  "images": {
-    "product1": "https://cdn.shop.com/dress1.jpg",
-    "product2": "https://cdn.shop.com/dress2.jpg"
-  },
+  "images": {},
   "timings": {
     "total": 3.48,
     "planner": 0.12,
@@ -216,13 +219,7 @@ Health check endpoint to verify service status.
 {
   "status": "healthy",
   "timestamp": 1716400000.0,
-  "version": "1.0.0",
-  "services": {
-    "chain_server": "healthy",
-    "catalog_retriever": "healthy",
-    "memory_retriever": "healthy",
-    "guardrails": "healthy"
-  }
+  "version": "1.0.0"
 }
 ```
 
@@ -241,14 +238,7 @@ Root endpoint with API information.
     "timing": "/query/timing",
     "health": "/health",
     "docs": "/docs"
-  },
-  "agents": [
-    "planner",
-    "retriever",
-    "cart",
-    "chatter",
-    "summary"
-  ]
+  }
 }
 ```
 
@@ -258,33 +248,38 @@ Root endpoint with API information.
 
 ```typescript
 interface ErrorResponse {
-  detail: string;                     // Error message
-  status_code: number;                // HTTP status code
-  timestamp: string;                  // Error timestamp
+  detail: string | Array<Record<string, unknown>>;
 }
 ```
+
+FastAPI validation failures return a list in `detail`; processing failures
+raised before streaming begins return a string. A failure after an SSE stream
+has started is sent as `{"type":"error","payload":"..."}` within the stream.
 
 ### Common Error Codes
 
 | Status Code | Description | Example |
 |-------------|-------------|---------|
-| 400 | Bad Request | Invalid request format |
 | 422 | Validation Error | Missing required fields |
-| 500 | Internal Server Error | Service unavailable |
-| 503 | Service Unavailable | NIM containers not ready |
+| 500 | Internal Server Error | Query processing failed |
 
 **Example Error Response:**
 ```json
 {
-  "detail": "Invalid request format: missing required field 'user_id'",
-  "status_code": 422,
-  "timestamp": "2024-01-15T10:30:00Z"
+  "detail": [
+    {
+      "type": "missing",
+      "loc": ["body", "user_id"],
+      "msg": "Field required"
+    }
+  ]
 }
 ```
 
 ## ⚡ Rate Limiting
 
-Currently, the API does not implement rate limiting. For production deployments, consider implementing rate limiting based on:
+The blueprint does not implement rate limiting. Do not expose it to untrusted
+clients. Any broader deployment must implement limits such as:
 
 - Requests per minute per user
 - Concurrent connections per user
@@ -296,7 +291,7 @@ Currently, the API does not implement rate limiting. For production deployments,
 
 **Find dresses by description:**
 ```bash
-curl -X POST "http://localhost:8000/query/stream" \
+curl -X POST "http://localhost:3000/api/query/stream" \
   -H "Content-Type: application/json" \
   -d '{
     "user_id": 123,
@@ -306,7 +301,7 @@ curl -X POST "http://localhost:8000/query/stream" \
 
 **Search by price range:**
 ```bash
-curl -X POST "http://localhost:8000/query/stream" \
+curl -X POST "http://localhost:3000/api/query/stream" \
   -H "Content-Type: application/json" \
   -d '{
     "user_id": 123,
@@ -318,7 +313,7 @@ curl -X POST "http://localhost:8000/query/stream" \
 
 **Add item to cart:**
 ```bash
-curl -X POST "http://localhost:8000/query/stream" \
+curl -X POST "http://localhost:3000/api/query/stream" \
   -H "Content-Type: application/json" \
   -d '{
     "user_id": 123,
@@ -331,7 +326,7 @@ curl -X POST "http://localhost:8000/query/stream" \
 
 **View cart contents:**
 ```bash
-curl -X POST "http://localhost:8000/query/stream" \
+curl -X POST "http://localhost:3000/api/query/stream" \
   -H "Content-Type: application/json" \
   -d '{
     "user_id": 123,
@@ -349,7 +344,7 @@ curl -X POST "http://localhost:8000/query/stream" \
 
 **Remove item from cart:**
 ```bash
-curl -X POST "http://localhost:8000/query/stream" \
+curl -X POST "http://localhost:3000/api/query/stream" \
   -H "Content-Type: application/json" \
   -d '{
     "user_id": 123,
@@ -369,7 +364,7 @@ curl -X POST "http://localhost:8000/query/stream" \
 
 **Search by uploaded image:**
 ```bash
-curl -X POST "http://localhost:8000/query/stream" \
+curl -X POST "http://localhost:3000/api/query/stream" \
   -H "Content-Type: application/json" \
   -d '{
     "user_id": 123,
@@ -383,7 +378,7 @@ curl -X POST "http://localhost:8000/query/stream" \
 
 **General questions:**
 ```bash
-curl -X POST "http://localhost:8000/query/stream" \
+curl -X POST "http://localhost:3000/api/query/stream" \
   -H "Content-Type: application/json" \
   -d '{
     "user_id": 123,
@@ -394,7 +389,7 @@ curl -X POST "http://localhost:8000/query/stream" \
 
 **Style advice:**
 ```bash
-curl -X POST "http://localhost:8000/query/stream" \
+curl -X POST "http://localhost:3000/api/query/stream" \
   -H "Content-Type: application/json" \
   -d '{
     "user_id": 123,
@@ -406,7 +401,7 @@ curl -X POST "http://localhost:8000/query/stream" \
 
 **Get detailed timing information:**
 ```bash
-curl -X POST "http://localhost:8000/query/timing" \
+curl -X POST "http://localhost:3000/api/query/timing" \
   -H "Content-Type: application/json" \
   -d '{
     "user_id": 123,
@@ -422,7 +417,7 @@ curl -X POST "http://localhost:8000/query/timing" \
 class ShoppingAssistantAPI {
   private baseUrl: string;
 
-  constructor(baseUrl: string = 'http://localhost:8000') {
+  constructor(baseUrl: string = 'http://localhost:3000/api') {
     this.baseUrl = baseUrl;
   }
 
@@ -492,7 +487,7 @@ import json
 import sseclient
 
 class ShoppingAssistantAPI:
-    def __init__(self, base_url: str = "http://localhost:8000"):
+    def __init__(self, base_url: str = "http://localhost:3000/api"):
         self.base_url = base_url
 
     def stream_query(self, request: dict):
@@ -551,7 +546,7 @@ print(f"Timing: {response['timings']}")
 ## 📝 Notes
 
 - All timestamps are in Unix timestamp format (seconds since epoch)
-- Image data should be base64 encoded without the data URL prefix
+- Image data may be a base64 data URI (as sent by the bundled UI) or raw base64
 - The API supports both local and cloud-based NIM deployments
 - Content safety is enabled by default but can be disabled per request
 - Streaming responses provide real-time feedback for better user experience

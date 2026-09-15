@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import os
 import subprocess
 import sys
@@ -15,6 +16,16 @@ from urllib.request import urlopen
 REPO_ROOT = Path(__file__).resolve().parents[3]
 TESTS_DIR = REPO_ROOT / "tests"
 INTEGRATION_DIR = TESTS_DIR / "integration"
+
+
+def _nonnegative_float(value: str) -> float:
+    try:
+        parsed = float(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be a nonnegative number") from exc
+    if not math.isfinite(parsed) or parsed < 0:
+        raise argparse.ArgumentTypeError("must be a finite, nonnegative number")
+    return parsed
 
 
 def load_env_file(path: Path) -> None:
@@ -143,6 +154,14 @@ def run_integration(args: argparse.Namespace, python_bin: str, env: dict[str, st
 
     integration_env = env.copy()
     integration_env["TEST_PATH"] = args.test_path
+    plot_cache_root = REPO_ROOT / ".local-run" / "test-cache"
+    matplotlib_config_dir = plot_cache_root / "matplotlib"
+    xdg_cache_dir = plot_cache_root / "xdg"
+    matplotlib_config_dir.mkdir(parents=True, exist_ok=True)
+    xdg_cache_dir.mkdir(parents=True, exist_ok=True)
+    integration_env.setdefault("MPLBACKEND", "Agg")
+    integration_env.setdefault("MPLCONFIGDIR", str(matplotlib_config_dir))
+    integration_env.setdefault("XDG_CACHE_HOME", str(xdg_cache_dir))
 
     stages: list[list[str]] = [
         [
@@ -156,6 +175,8 @@ def run_integration(args: argparse.Namespace, python_bin: str, env: dict[str, st
             args.uri,
             "--result_directory",
             args.result_directory,
+            "--request-delay",
+            str(args.request_delay),
         ],
         [python_bin, "time_breakdown.py"],
     ]
@@ -196,6 +217,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--port", type=int, default=8009, help="Integration target port.")
     parser.add_argument("--uri", default="query/timing", help="Integration API URI.")
     parser.add_argument("--result-directory", default="results", help="Integration result folder name.")
+    parser.add_argument(
+        "--request-delay",
+        type=_nonnegative_float,
+        default=0.5,
+        help="Seconds to wait between integration requests. Defaults to 0.5.",
+    )
     parser.add_argument(
         "--skip-quality",
         action="store_true",

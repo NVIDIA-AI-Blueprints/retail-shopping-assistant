@@ -32,6 +32,8 @@ logging.basicConfig(
     stream=sys.stdout
 )
 
+PUBLIC_VISION_EMBED_MODEL = "nvidia/llama-nemotron-embed-vl-1b-v2"
+
 # Defines a type for configuring the Retriever.
 class RetrieverConfig(BaseModel):
     text_embed_port: str
@@ -273,11 +275,15 @@ class Retriever:
 
         self.text_client = OpenAI(
             api_key=embed_key,
-            base_url=self.text_embed_port
+            base_url=self.text_embed_port,
+            timeout=45.0,
+            max_retries=2,
         )
         self.image_client = OpenAI(
             api_key=embed_key,
-            base_url=self.image_embed_port
+            base_url=self.image_embed_port,
+            timeout=45.0,
+            max_retries=2,
         )
 
         # Create embedding classes
@@ -503,10 +509,19 @@ class Retriever:
             
             try:
                 if valid_inputs:
+                    request_args: Dict[str, Any] = {
+                        "input": valid_inputs,
+                        "model": self.image_model_name,
+                        "encoding_format": "float",
+                    }
+                    if self.image_model_name == PUBLIC_VISION_EMBED_MODEL:
+                        request_args["extra_body"] = {
+                            "input_type": "passage",
+                            "modality": "image",
+                        }
+
                     response = self.image_client.embeddings.create(
-                        input=valid_inputs,
-                        model=self.image_model_name,
-                        encoding_format="float",
+                        **request_args,
                     )
                     batch_embeddings = iter([d.embedding for d in response.data])
                 else:

@@ -16,6 +16,7 @@ import json
 from types import SimpleNamespace
 from typing import AsyncIterator, Iterable, List
 
+import httpx
 import pytest
 
 from chain_server.src import chatter as chatter_mod
@@ -144,6 +145,19 @@ class _FakeStream:
         )
 
 
+class _FailingStream(_FakeStream):
+    """Emit any configured pieces, then raise a transport stream error."""
+
+    def __init__(self, pieces: Iterable[str], error: Exception) -> None:
+        super().__init__(pieces)
+        self._error = error
+
+    async def __anext__(self):
+        if self._pieces:
+            return await super().__anext__()
+        raise self._error
+
+
 def _install_async_stream(
     chatter_agent: ChatterAgent, pieces: Iterable[str]
 ) -> None:
@@ -204,6 +218,123 @@ class TestChatterInvoke:
         assert out.response == ""
         # No timings for first_token since nothing streamed.
         assert "first_token" not in out.timings
+
+    async def test_retries_stream_failure_before_first_content(
+        self,
+        chatter_agent: ChatterAgent,
+        stream_writer_capture: list,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        streams = iter(
+            [
+                _FailingStream([], chatter_mod.OpenAIError("first attempt stalled")),
+                _FakeStream(["Recovered"]),
+            ]
+        )
+        create_calls = 0
+
+        async def _create(**_: object):
+            nonlocal create_calls
+            create_calls += 1
+            return next(streams)
+
+        delays: list[float] = []
+
+        async def _sleep(delay: float) -> None:
+            delays.append(delay)
+
+        chatter_agent.model = SimpleNamespace(
+            chat=SimpleNamespace(completions=SimpleNamespace(create=_create))
+        )
+        monkeypatch.setattr(chatter_mod.asyncio, "sleep", _sleep)
+
+        out = await chatter_agent.invoke(State(user_id=1, query="hello"), verbose=False)
+
+        assert create_calls == 2
+        assert delays == [chatter_mod.STREAM_RETRY_BASE_SECONDS]
+        assert out.response == "Recovered"
+        frames = [json.loads(event) for event in stream_writer_capture]
+        assert [frame["type"] for frame in frames] == ["images", "content"]
+        assert frames[1]["payload"] == "Recovered"
+
+    async def test_does_not_retry_after_partial_content(
+        self,
+        chatter_agent: ChatterAgent,
+        stream_writer_capture: list,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        create_calls = 0
+
+        async def _create(**_: object):
+            nonlocal create_calls
+            create_calls += 1
+            return _FailingStream(
+                ["Partial"],
+                httpx.ReadTimeout("stream stalled after content"),
+            )
+
+        async def _unexpected_sleep(_: float) -> None:
+            pytest.fail("a partial response must not be retried")
+
+        chatter_agent.model = SimpleNamespace(
+            chat=SimpleNamespace(completions=SimpleNamespace(create=_create))
+        )
+        monkeypatch.setattr(chatter_mod.asyncio, "sleep", _unexpected_sleep)
+
+        state = State(user_id=1, query="hello")
+        with pytest.raises(httpx.ReadTimeout, match="after content"):
+            await chatter_agent.invoke(state, verbose=False)
+
+        assert create_calls == 1
+        assert state.response == "Partial"
+        frames = [json.loads(event) for event in stream_writer_capture]
+        assert [frame["type"] for frame in frames] == ["images", "content"]
+        assert frames[1]["payload"] == "Partial"
+
+    async def test_raises_after_five_pre_content_failures(
+        self,
+        chatter_agent: ChatterAgent,
+        stream_writer_capture: list,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        streams = iter(
+            [
+                _FailingStream([], httpx.ReadTimeout("attempt 1")),
+                _FailingStream([], httpx.ReadTimeout("attempt 2")),
+                _FailingStream([], httpx.ReadTimeout("attempt 3")),
+                _FailingStream([], httpx.ReadTimeout("attempt 4")),
+                _FailingStream([], httpx.ReadTimeout("attempt 5")),
+            ]
+        )
+        create_calls = 0
+
+        async def _create(**_: object):
+            nonlocal create_calls
+            create_calls += 1
+            return next(streams)
+
+        delays: list[float] = []
+
+        async def _sleep(delay: float) -> None:
+            delays.append(delay)
+
+        chatter_agent.model = SimpleNamespace(
+            chat=SimpleNamespace(completions=SimpleNamespace(create=_create))
+        )
+        monkeypatch.setattr(chatter_mod.asyncio, "sleep", _sleep)
+
+        with pytest.raises(httpx.ReadTimeout, match="attempt 5"):
+            await chatter_agent.invoke(State(user_id=1, query="hello"), verbose=False)
+
+        assert create_calls == chatter_mod.STREAM_MAX_ATTEMPTS
+        assert delays == [
+            chatter_mod.STREAM_RETRY_BASE_SECONDS,
+            chatter_mod.STREAM_RETRY_BASE_SECONDS * 2,
+            chatter_mod.STREAM_RETRY_MAX_SECONDS,
+            chatter_mod.STREAM_RETRY_MAX_SECONDS,
+        ]
+        frames = [json.loads(event) for event in stream_writer_capture]
+        assert [frame["type"] for frame in frames] == ["images"]
 
     async def test_invoke_skips_empty_delta_chunks(
         self,

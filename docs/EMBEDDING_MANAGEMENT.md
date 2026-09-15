@@ -64,8 +64,8 @@ If using Docker Compose, you can restart with a fresh Milvus database:
 # Stop the services
 docker compose down
 
-# Remove Milvus volume to start fresh
-docker volume rm retail-shopping-assistant_milvus_data
+# Preserve the bind-mounted data, then let Compose create a fresh directory
+mv catalog_retriever/volumes catalog_retriever/volumes.backup
 
 # Restart services
 docker compose up -d
@@ -90,12 +90,16 @@ Your custom CSV file should include the following columns:
 
 | Column | Description | Required | Example |
 |--------|-------------|----------|---------|
-| `item_name` | Product name | Yes | "Classic Black Patent Leather Purse" |
-| `item_description` | Product description | Yes | "Elegant black patent leather purse..." |
+| `name` | Product name | Yes | "Classic Black Patent Leather Purse" |
+| `description` | Product description | Yes | "Elegant black patent leather purse..." |
 | `category` | Product category | Yes | "bag" |
-| `brand` | Product brand | No | "Fashion Brand" |
-| `price` | Product price | No | "89.99" |
-| `image_url` | Product image URL or filename | No | "purse_image.jpg" |
+| `subcategory` | Product subcategory | Yes | "handbag" |
+| `url` | Product page or display URL | No | "/images/purse_image.jpg" |
+| `price` | Numeric product price | Yes | "89.99" |
+| `image` | Image URL or path under `shared/` | Yes | "/images/purse_image.jpg" |
+
+Additional columns are preserved as product metadata, but the required column
+names above must match exactly.
 
 ### Step-by-Step Guide
 
@@ -104,9 +108,9 @@ Your custom CSV file should include the following columns:
 1. **Create your CSV file** with your product data:
    ```bash
    # Example: my_products.csv
-   item_name,item_description,category,brand,price,image_url
-   "Custom Product 1","Description of product 1","shoes","Brand A","99.99","product1.jpg"
-   "Custom Product 2","Description of product 2","bag","Brand B","149.99","product2.jpg"
+   category,subcategory,name,description,url,price,image
+   "shoes","sneakers","Custom Product 1","Description of product 1","/images/product1.jpg",99.99,"/images/product1.jpg"
+   "bags","handbags","Custom Product 2","Description of product 2","/images/product2.jpg",149.99,"/images/product2.jpg"
    ```
 
 2. **Add the CSV file** to the shared data directory:
@@ -130,13 +134,13 @@ Your custom CSV file should include the following columns:
 
 #### Step 3: Clear Vector Database Cache
 
-1. **Remove the existing vector database volumes**:
+1. **Preserve the existing vector database and start with empty state**:
    ```bash
    # Stop the services first
    docker compose -f docker-compose.yaml down
    
-   # Remove the catalog retriever volumes to force re-indexing
-   rm -rf catalog_retriever/volumes/
+   # Move the bind-mounted state so it can be recovered if needed
+   mv catalog_retriever/volumes catalog_retriever/volumes.previous
    ```
 
 #### Step 4: Restart Services
@@ -162,13 +166,15 @@ If your products have images:
 
 2. **Update image URLs** in your CSV to reference the filenames:
    ```csv
-   item_name,item_description,category,image_url
-   "Product 1","Description","shoes","product1.jpg"
+   category,subcategory,name,description,url,price,image
+   "shoes","sneakers","Product 1","Description","/images/product1.jpg",99.99,"/images/product1.jpg"
    ```
 
-3. **Restart services** to index the new images:
+3. **Clear the existing collections or move the bind-mounted database state**, as
+   described under [Force Repopulation](#force-repopulation), then start the
+   application to rebuild both text and image embeddings:
    ```bash
-   docker compose -f docker-compose.yaml restart catalog-retriever
+   docker compose -f docker-compose.yaml up -d --build
    ```
 
 ### Configuration for Different Environments
@@ -193,11 +199,11 @@ docker compose -f docker-compose.yaml up -d --build
 After restarting, verify your custom data is loaded:
 
 ```bash
-# Check catalog retriever health
-curl http://localhost:8010/health
+# Check catalog retriever health inside its private container network
+docker compose -f docker-compose.yaml exec catalog-retriever \
+  python -c 'import urllib.request; print(urllib.request.urlopen("http://localhost:8010/health").read().decode())'
 
 # Check if your products are searchable
-curl -X POST http://localhost:8010/search \
-  -H "Content-Type: application/json" \
-  -d '{"query": "your_product_name", "top_k": 5}'
+docker compose -f docker-compose.yaml exec catalog-retriever \
+  python -c 'import json, urllib.request; data=json.dumps({"text":["your_product_name"],"k":5}).encode(); req=urllib.request.Request("http://localhost:8010/query/text",data=data,headers={"Content-Type":"application/json"}); print(urllib.request.urlopen(req).read().decode())'
 ```

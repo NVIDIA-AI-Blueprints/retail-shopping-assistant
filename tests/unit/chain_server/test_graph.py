@@ -35,11 +35,19 @@ class _HttpRecorder:
 
 
 class _FakeResponse:
-    def __init__(self, payload: Dict[str, Any], status: int = 200) -> None:
+    def __init__(
+        self,
+        payload: Any,
+        status: int = 200,
+        json_error: Exception | None = None,
+    ) -> None:
         self._payload = payload
         self.status_code = status
+        self._json_error = json_error
 
-    def json(self) -> Dict[str, Any]:
+    def json(self) -> Any:
+        if self._json_error is not None:
+            raise self._json_error
         return self._payload
 
     def raise_for_status(self) -> None:
@@ -147,6 +155,7 @@ class TestRailsNodes:
 
         assert result["is_safe"] is True
         assert "rails_input_check" in result["rail_timings"]
+        assert http_recorder.posts[-1]["timeout"] == 60
 
     async def test_input_check_flags_mismatched_response_as_unsafe(
         self,
@@ -174,20 +183,6 @@ class TestRailsNodes:
 
         assert result == {"is_safe": True}
 
-    async def test_input_check_defaults_to_safe_on_http_error(
-        self, install_config, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        def _boom(*_: Any, **__: Any) -> None:
-            raise requests.exceptions.ConnectionError("down")
-
-        monkeypatch.setattr(graph_mod.requests, "post", _boom)
-        state = State(user_id=1, query="q")
-
-        result = await GraphNodes.check_input_safety(state)
-
-        assert result["is_safe"] is True
-        assert "rails_input_check" in result["rail_timings"]
-
     async def test_output_check_matches_response(
         self, install_config, http_recorder: _HttpRecorder
     ) -> None:
@@ -196,19 +191,116 @@ class TestRailsNodes:
         result = await GraphNodes.check_output_safety(state)
 
         assert result["is_safe"] is True
+        assert http_recorder.posts[-1]["timeout"] == 60
 
-    async def test_output_check_missing_response_structure_defaults_safe(
-        self, install_config, monkeypatch: pytest.MonkeyPatch
+    @pytest.mark.parametrize(
+        ("method_name", "state_kwargs", "timing_key"),
+        [
+            ("check_input_safety", {"user_id": 1, "query": "q"}, "rails_input_check"),
+            (
+                "check_output_safety",
+                {"user_id": 1, "query": "q", "response": "answer"},
+                "rails_output_check",
+            ),
+        ],
+    )
+    @pytest.mark.parametrize("status", [429, 500])
+    async def test_checks_fail_closed_on_http_status_error(
+        self,
+        method_name: str,
+        state_kwargs: Dict[str, Any],
+        timing_key: str,
+        status: int,
+        install_config,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        def _post(url: str, json: Dict[str, Any], timeout: int = 10, **_: Any):
-            return _FakeResponse({})
+        monkeypatch.setattr(
+            graph_mod.requests,
+            "post",
+            lambda *_args, **_kwargs: _FakeResponse({}, status=status),
+        )
 
-        monkeypatch.setattr(graph_mod.requests, "post", _post)
-        state = State(user_id=1, query="q", response="anything")
+        result = await getattr(GraphNodes, method_name)(State(**state_kwargs))
 
-        result = await GraphNodes.check_output_safety(state)
+        assert result["is_safe"] is False
+        assert timing_key in result["rail_timings"]
+        assert result["rail_timings"][timing_key] >= 0
 
-        assert result["is_safe"] is True
+    @pytest.mark.parametrize(
+        ("method_name", "state_kwargs", "timing_key"),
+        [
+            ("check_input_safety", {"user_id": 1, "query": "q"}, "rails_input_check"),
+            (
+                "check_output_safety",
+                {"user_id": 1, "query": "q", "response": "answer"},
+                "rails_output_check",
+            ),
+        ],
+    )
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            {},
+            {"response": []},
+            {"response": [{}]},
+            {"response": [{"role": "user", "content": "q"}]},
+            [],
+        ],
+    )
+    async def test_checks_fail_closed_on_malformed_or_empty_payload(
+        self,
+        method_name: str,
+        state_kwargs: Dict[str, Any],
+        timing_key: str,
+        payload: Any,
+        install_config,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(
+            graph_mod.requests,
+            "post",
+            lambda *_args, **_kwargs: _FakeResponse(payload),
+        )
+
+        result = await getattr(GraphNodes, method_name)(State(**state_kwargs))
+
+        assert result["is_safe"] is False
+        assert timing_key in result["rail_timings"]
+        assert result["rail_timings"][timing_key] >= 0
+
+    @pytest.mark.parametrize(
+        ("method_name", "state_kwargs", "timing_key"),
+        [
+            ("check_input_safety", {"user_id": 1, "query": "q"}, "rails_input_check"),
+            (
+                "check_output_safety",
+                {"user_id": 1, "query": "q", "response": "answer"},
+                "rails_output_check",
+            ),
+        ],
+    )
+    async def test_checks_fail_closed_on_json_decode_error(
+        self,
+        method_name: str,
+        state_kwargs: Dict[str, Any],
+        timing_key: str,
+        install_config,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(
+            graph_mod.requests,
+            "post",
+            lambda *_args, **_kwargs: _FakeResponse(
+                None,
+                json_error=ValueError("invalid JSON"),
+            ),
+        )
+
+        result = await getattr(GraphNodes, method_name)(State(**state_kwargs))
+
+        assert result["is_safe"] is False
+        assert timing_key in result["rail_timings"]
+        assert result["rail_timings"][timing_key] >= 0
 
 
 # ---------------------------------------------------------------------------

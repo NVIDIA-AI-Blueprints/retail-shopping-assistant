@@ -495,6 +495,29 @@ class TestImageEmbeddings:
         assert embeddings[0] == [0.1, 0.2]
         assert captured["model"] == retriever.image_model_name
         assert captured["input"] == [b64, b64]
+        assert "extra_body" not in captured
+
+    def test_public_vision_model_sets_image_passage_parameters(
+        self, retriever: Retriever
+    ) -> None:
+        captured: Dict[str, Any] = {}
+
+        def _create(**kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(data=[SimpleNamespace(embedding=[0.1, 0.2])])
+
+        retriever.image_model_name = retriever_mod.PUBLIC_VISION_EMBED_MODEL
+        retriever.image_client = SimpleNamespace(
+            embeddings=SimpleNamespace(create=_create)
+        )
+
+        embeddings = retriever.image_embeddings(["data:image/jpeg;base64,AAA"])
+
+        assert embeddings == [[0.1, 0.2]]
+        assert captured["extra_body"] == {
+            "input_type": "passage",
+            "modality": "image",
+        }
 
     def test_url_input_fetched_and_encoded(
         self, retriever: Retriever, monkeypatch: pytest.MonkeyPatch

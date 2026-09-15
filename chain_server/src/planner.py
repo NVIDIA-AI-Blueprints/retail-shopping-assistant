@@ -58,7 +58,9 @@ class PlannerAgent:
         try:
             self.model = OpenAI(
                 base_url=self.llm_port,
-                api_key=os.environ.get("LLM_API_KEY")
+                api_key=os.environ.get("LLM_API_KEY"),
+                timeout=45.0,
+                max_retries=4,
             )
             logger.info("PlannerAgent.__init__() | initialization complete")
         except Exception as e:

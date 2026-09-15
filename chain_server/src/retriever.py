@@ -45,7 +45,12 @@ class RetrieverAgent():
         self.k_value = config.top_k_retrieve
         self.categories = config.categories
         
-        self.model = OpenAI(base_url=config.llm_port, api_key=os.environ["LLM_API_KEY"])
+        self.model = OpenAI(
+            base_url=config.llm_port,
+            api_key=os.environ["LLM_API_KEY"],
+            timeout=45.0,
+            max_retries=4,
+        )
         logging.info(f"RetrieverAgent.__init__() | Initialization complete")
 
     async def invoke(

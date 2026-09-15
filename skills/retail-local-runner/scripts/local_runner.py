@@ -507,7 +507,7 @@ def start_python_service(name: str, spec: dict[str, object], *, skip_install: bo
         "uvicorn",
         module,
         "--host",
-        "0.0.0.0",
+        "127.0.0.1",
         "--port",
         str(port),
     ]
@@ -520,6 +520,7 @@ def start_ui(*, skip_install: bool) -> None:
         ensure_ui_deps()
     env = os.environ.copy()
     env["PORT"] = "3000"
+    env["HOST"] = "127.0.0.1"
     env["BROWSER"] = "none"
     env["REACT_APP_API_BASE_URL"] = "http://localhost:8009"
     env.setdefault("CI", "true")

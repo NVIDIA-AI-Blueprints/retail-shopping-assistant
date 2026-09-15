@@ -30,6 +30,7 @@ def _make_config(model_entries: List[Dict[str, Any]]) -> SimpleNamespace:
     models = [
         SimpleNamespace(
             type=entry["type"],
+            model=entry.get("model"),
             parameters=dict(entry.get("parameters", {})),
         )
         for entry in model_entries
@@ -99,6 +100,49 @@ class TestApplyEndpointOverrides:
             == "https://integrate.api.nvidia.com/v1"
         )
 
+    def test_override_updates_model_and_merges_parameters(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        override_path = tmp_path / "override.yaml"
+        override_path.write_text(
+            yaml.safe_dump(
+                {
+                    "models": [
+                        {
+                            "type": "topic_control",
+                            "model": "nvidia/nemotron-3-super-120b-a12b",
+                            "parameters": {
+                                "base_url": "https://integrate.api.nvidia.com/v1",
+                                "chat_template_kwargs": {
+                                    "enable_thinking": False,
+                                },
+                            },
+                        }
+                    ]
+                }
+            )
+        )
+        monkeypatch.setenv("CONFIG_OVERRIDE", "override.yaml")
+        config = _make_config(
+            [
+                {
+                    "type": "topic_control",
+                    "model": "nvidia/local-topic-model",
+                    "parameters": {"base_url": "http://topic-control:8000/v1"},
+                }
+            ]
+        )
+
+        apply_endpoint_overrides(config, config_dir=str(tmp_path))
+
+        assert config.models[0].model == "nvidia/nemotron-3-super-120b-a12b"
+        assert config.models[0].parameters == {
+            "base_url": "https://integrate.api.nvidia.com/v1",
+            "chat_template_kwargs": {"enable_thinking": False},
+        }
+
     def test_override_of_non_matching_type_is_ignored(
         self,
         monkeypatch: pytest.MonkeyPatch,
@@ -127,7 +171,7 @@ class TestApplyEndpointOverrides:
         # No matching type → nothing to update.
         assert config.models[0].parameters["base_url"] == "http://default"
 
-    def test_override_without_base_url_is_skipped(
+    def test_override_without_base_url_merges_other_parameters(
         self,
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
@@ -152,7 +196,10 @@ class TestApplyEndpointOverrides:
 
         apply_endpoint_overrides(config, config_dir=str(tmp_path))
 
-        assert config.models[0].parameters["base_url"] == "http://default"
+        assert config.models[0].parameters == {
+            "base_url": "http://default",
+            "other_param": "x",
+        }
 
     def test_override_without_models_key_is_noop(
         self,

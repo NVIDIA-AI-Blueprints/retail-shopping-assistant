@@ -41,9 +41,12 @@ export const base64ToBlob = (base64: string): Blob => {
 export const getOrCreateUserId = (): number => {
   const storedId = sessionStorage.getItem('shopping_user_id');
   if (storedId) return parseInt(storedId, 10);
-  
-  // Use timestamp + random component to avoid collisions
-  const newId = Date.now() * 1000 + Math.floor(Math.random() * 1000);
+
+  // This ID separates local demo sessions; it is not an authentication token.
+  // Use the browser CSPRNG so another session's identifier is not predictable.
+  const words = new Uint32Array(2);
+  crypto.getRandomValues(words);
+  const newId = (words[0] & 0x001fffff) * 0x100000000 + words[1];
   sessionStorage.setItem('shopping_user_id', String(newId));
   return newId;
 };
@@ -278,4 +281,4 @@ export const showCartNotification = (
       }
     }
   }
-}; 
+};

@@ -5,10 +5,10 @@
 text_embed_port: "https://integrate.api.nvidia.com/v1"
 text_model_name: "nvidia/nemotron-3-embed-1b"
 
-# Image embedding endpoint for build.nvidia.com
+# Public multimodal image embedding endpoint
 image_embed_port: "https://integrate.api.nvidia.com/v1"
-image_model_name: "nvidia/nvclip"
+image_model_name: "nvidia/llama-nemotron-embed-vl-1b-v2"
 
 # Note: This override will be applied when CONFIG_OVERRIDE=config-build.yaml
 # The base config.yaml will be loaded first, then these values will override
-# the corresponding fields in the base configuration. 
+# the corresponding fields in the base configuration.

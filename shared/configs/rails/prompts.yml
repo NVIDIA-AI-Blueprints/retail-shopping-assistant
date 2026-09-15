@@ -40,7 +40,7 @@ prompts:
 
       Do not include anything other than the output JSON in your response.
       Output JSON:
-    output_parser: nemoguard_parse_prompt_safety
+    output_parser: retail_parse_user_safety
     max_tokens: 50
  
   - task: content_safety_check_output $model=content_safety
@@ -86,7 +86,7 @@ prompts:
 
       Do not include anything other than the output JSON in your response.
       Output JSON:
-    output_parser: nemoguard_parse_response_safety
+    output_parser: retail_parse_response_safety
     max_tokens: 50
 
   - task: topic_safety_check_input $model=topic_control

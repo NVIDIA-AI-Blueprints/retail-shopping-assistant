@@ -56,13 +56,15 @@ The application follows a microservices architecture with specialized agents for
 - **Guardrails**: Content safety and moderation
 - **UI**: React-based frontend interface
 
-For detailed architecture information, see [Architecture Overview](docs/README.md#architecture-overview).
+For service and request-flow details, see
+[Architecture and Request Flow](AGENTS.md#2-architecture-and-request-flow).
 
 ## Get Started
 
 ### Prerequisites
 
-- **Docker**: Version 20.10+ with Docker Compose plugin
+- **Docker Engine**: Version 28.3.3+ with Docker Compose plugin (required for
+  reliable loopback-only port publishing)
 - **NVIDIA NGC Account**: For API access ([Get API Key](https://ngc.nvidia.com/))
 - **Hardware**: 4x H100 GPUs (preferred) or 4x A100 GPUs (minimum) for local deployment, or cloud access
 
@@ -111,9 +113,15 @@ For detailed architecture information, see [Architecture Overview](docs/README.m
    docker compose -f docker-compose.yaml up -d --build
    ```
 
-   > **⚠️ `nvclip` is deprecated.** Its hosted endpoint on the NVIDIA API Catalog (`api.build.nvidia.com`) is no longer available, so image (visual) search does **not** work under Option B as-is. **Workaround:** deploy `nvclip` as a local NIM (from `docker-compose-nim-local.yaml`) and point `image_embed_port` at it — see the [Deployment Guide](docs/DEPLOYMENT.md).
+   Cloud mode uses `nvidia/llama-nemotron-embed-vl-1b-v2` for image
+   embeddings. Local NIM mode continues to use NV-CLIP.
 
 5. **Access the application**: Open your browser to `http://localhost:3000`
+
+   > **Security boundary:** The supplied deployment is a local, single-operator
+   > blueprint and binds its host ports to loopback. It has no built-in end-user
+   > authentication. Do not expose it to untrusted users or use real customer or
+   > sensitive data. See [SECURITY.md](SECURITY.md) before enabling remote access.
 
 6. **Stop the containers**:
    
@@ -181,14 +189,17 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 
 ### Related Projects
 - [Nemotron 3 Embed 1B](https://catalog.ngc.nvidia.com/orgs/nim/teams/nvidia/containers/nemotron-3-embed-1b): Embedding model for semantic search (2048-dim)
-- [NV-CLIP](https://catalog.ngc.nvidia.com/orgs/nim/teams/nvidia/containers/nvclip): Visual understanding model _(deprecated — hosted/cloud endpoint no longer available; run as a local NIM)_
-- [Nemotron 3 Super](https://catalog.ngc.nvidia.com/orgs/nim/teams/nvidia/containers/nemotron-3-super-120b-a12b): Large language model
+- [NV-CLIP](https://catalog.ngc.nvidia.com/orgs/nim/teams/nvidia/containers/nvclip): Visual embedding model for local NIM mode
+- [Llama Nemotron Embed VL 1B v2](https://build.nvidia.com/nvidia/llama-nemotron-embed-vl-1b-v2): Public image-embedding model for cloud mode (2048-dim)
+- [Llama 3.1 Nemotron Safety Guard 8B v3](https://build.nvidia.com/nvidia/llama-3_1-nemotron-safety-guard-8b-v3): Public text content-safety model for cloud mode
+- [Nemotron 3.5 Lightning](https://build.nvidia.com/nvidia/nemotron-3_5-lightning-30b-a3b): Public topic-control model for cloud guardrails and integration evaluation
+- [Nemotron 3 Super](https://catalog.ngc.nvidia.com/orgs/nim/teams/nvidia/containers/nemotron-3-super-120b-a12b): Main language model for public-endpoint and local NIM modes
 
 ## License
 
 GOVERNING TERMS: Use of the blueprint software and materials and NIM containers are governed by the [NVIDIA Software License Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement/) and [Product-specific Terms for AI products](https://www.nvidia.com/en-us/agreements/enterprise-software/product-specific-terms-for-ai-products/);  and the use of models is governed by the [NVIDIA Community Model License](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-community-models-license/).
  
-ADDITIONAL INFORMATION: [Llama 3.1 Community License Agreement](https://www.llama.com/llama3_1/license/) for Llama 3.1 NemoGuard 8B - Content Safety and Llama 3.1 NemoGuard 8B - Topic Control models, built with Llama. Use of the Nemotron 3 Super 120B A12B and Nemotron 3 Embed 1B models is governed by the terms published on their respective NGC model cards.
+ADDITIONAL INFORMATION: [Llama 3.1 Community License Agreement](https://www.llama.com/llama3_1/license/) for the Llama 3.1 NemoGuard models. Use of Llama 3.1 Nemotron Safety Guard 8B v3, Nemotron 3.5 Lightning, Nemotron 3 Super 120B A12B, and Nemotron 3 Embed 1B is governed by the terms published on their respective model cards.
  
 This project will download and install additional third-party open source software projects. Review the license terms of these open source projects before use, found in [License-3rd-party.txt](/LICENSE-3rd-party.txt).
  
@@ -201,5 +212,3 @@ Use of the product catalog data in the retail shopping assistant is governed by 
 [Back to Top](#top)
 
 </div>
-
-

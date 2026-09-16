@@ -546,7 +546,8 @@ print(f"Timing: {response['timings']}")
 ## 📝 Notes
 
 - All timestamps are in Unix timestamp format (seconds since epoch)
-- Image data may be a base64 data URI (as sent by the bundled UI) or raw base64
+- Image data may be a base64 data URI (as sent by the bundled UI) or raw base64;
+  remote URLs and filesystem paths are rejected
 - The API supports both local and cloud-based NIM deployments
 - Content safety is enabled by default but can be disabled per request
 - Streaming responses provide real-time feedback for better user experience

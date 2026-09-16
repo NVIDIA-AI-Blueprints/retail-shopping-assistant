@@ -26,6 +26,7 @@ from catalog_retriever.src.utils import (
     image_url_to_base64,
     is_path,
     is_url,
+    normalize_runtime_image_input,
     resize_base64_image,
 )
 
@@ -84,6 +85,43 @@ class TestIsPath:
     )
     def test_path_detection(self, value: str, expected: bool) -> None:
         assert is_path(value) is expected
+
+
+class TestNormalizeRuntimeImageInput:
+    def test_accepts_image_data_uri(self) -> None:
+        payload = base64.b64encode(_build_png_bytes()).decode()
+        value = f"data:image/png;base64,{payload}"
+
+        assert normalize_runtime_image_input(value) == value
+
+    def test_normalizes_raw_base64(self) -> None:
+        payload = base64.b64encode(_build_jpeg_bytes()).decode()
+
+        assert normalize_runtime_image_input(payload) == (
+            f"data:image/jpeg;base64,{payload}"
+        )
+
+    def test_preserves_raw_image_format(self) -> None:
+        payload = base64.b64encode(_build_png_bytes()).decode()
+
+        assert normalize_runtime_image_input(payload) == (
+            f"data:image/png;base64,{payload}"
+        )
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "http://169.254.169.254/latest/meta-data/",
+            "https://example.com/image.jpg",
+            "/etc/passwd",
+            "not base64 image data",
+            "data:text/plain;base64,SGVsbG8=",
+            "",
+        ],
+    )
+    def test_rejects_non_image_sources(self, value: str) -> None:
+        with pytest.raises(ValueError, match="image_base64"):
+            normalize_runtime_image_input(value)
 
 
 # --------------------------------------------------------------------------->

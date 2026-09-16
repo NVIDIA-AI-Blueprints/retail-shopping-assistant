@@ -200,6 +200,7 @@ from .turn_support import (
     a_place_the_shopper_named,
     format_most_recent_subject,
 )
+from .vocabulary_judge import CatalogVocabularyJudge
 from .weather import WeatherConfig, WeatherRequest, build_weather_client
 
 logger = logging.getLogger(__name__)
@@ -1108,6 +1109,9 @@ class DeepAgentsRuntime:
         self._checkpointer = _build_checkpointer()
         self._profile_registered = False
         self._media_perception = MediaPerceptionClient(config)
+        # Built once with the runtime, like the perception client: it holds an
+        # endpoint and no turn state, so a per-turn instance would buy nothing.
+        self._vocabulary_judge = CatalogVocabularyJudge(config)
         self._catalog_capabilities = CatalogCapabilitiesClient(
             config.retriever_port,
             timeout_seconds=config.catalog_search_timeout_seconds,
@@ -1605,6 +1609,7 @@ class DeepAgentsRuntime:
             capabilities=turn_capabilities,
             search_input_model=search_input_model,
             constraint_input_model=constraint_input_model,
+            vocabulary_judge=self._vocabulary_judge,
         )
 
         def _search_catalog_impl(scopes, not_covered=None):

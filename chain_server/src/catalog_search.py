@@ -106,6 +106,7 @@ from .turn_support import (
     _unsupported_requirement_message,
     stated_media_terms,
 )
+from .vocabulary_judge import ScopeQuestion
 
 #: What a search step hands back: nothing, meaning the search continues, or the
 #: text the model reads -- paired with the evidence artifact behind it when the
@@ -143,6 +144,9 @@ class SearchContext:
     capabilities: CatalogCapabilities
     search_input_model: type[BaseModel]
     constraint_input_model: type[BaseModel]
+    #: Optional, and absent in tests that build a context by hand. A scope the
+    #: judge never saw is decided by the gates that decided it before.
+    vocabulary_judge: Any = None
 
 
 def _lock_taxonomy_constraint_values(
@@ -246,6 +250,11 @@ class _Attempt:
     #: and must not read a miss inside the searched types as the role being
     #: unavailable.
     composed_role: bool = False
+    #: Subcategories the vocabulary judge said are not kinds of the requested
+    #: type, and whether it ruled on this scope at all. Unjudged is not the same
+    #: as approved: it means the older gates below are the ones deciding.
+    judged_not_a_kind: tuple[str, ...] = ()
+    judge_ruled: bool = False
     constraint_payload: Any = None
     evidence: Any = None
     #: Shopper scopes searched by *earlier calls*, snapshotted at the start
@@ -2064,12 +2073,99 @@ def _assumed_audience(
 #: Everything a scope decides before it touches the network. Each step either
 #: ends that scope -- returning the text the model reads -- or leaves what it
 #: worked out on the attempt for the next one.
+def _judged_vocabulary(ctx: SearchContext, attempt: _Attempt) -> StepResult:
+    """Hold the scope to the words it used: is each subcategory a kind of it?
+
+    The one question that covers every shape of this bug. A subcategory enum
+    keeps a scope *valid* -- `skirts` is a real value -- but says nothing about
+    whether a skirt is the jeans the shopper asked for, and across the run
+    archive the model filed jeans under skirts 106 times, trousers under skirts
+    51, blazers under blouses 48 and belts under blouses 39. The last of those
+    is in no denylist and has never been caught. Every one fails this question,
+    while `shoes -> [flats, heels, sandals]`, `jewelry -> [bracelets, earrings,
+    necklaces]`, `pumps -> heels` and `booties -> boots` all pass it, so one
+    test replaces both a word list and the rules that guessed at width.
+
+    A partly wrong scope keeps what it got right. Asked for footwear as flats,
+    heels and skirts, the judge returns the skirt alone and the role searches
+    its two real members rather than losing all three.
+
+    Unjudged scopes fall through untouched. The judge is a single call for the
+    whole turn and it can fail; when it has not ruled, the older gates below
+    decide as they did before, which is what makes this safe to add before they
+    are removed.
+    """
+
+    if not attempt.judge_ruled or not attempt.judged_not_a_kind:
+        return None
+
+    payload = (
+        attempt.taxonomy.model_dump()
+        if isinstance(attempt.taxonomy, BaseModel)
+        else dict(attempt.taxonomy or {})
+    )
+    selected = list(dict.fromkeys(payload.get("subcategory") or []))
+    surviving = [value for value in selected if value not in attempt.judged_not_a_kind]
+
+    if surviving:
+        payload["subcategory"] = surviving
+        attempt.taxonomy = payload
+        return None
+
+    # Nothing the scope named is the thing it asked for.
+    #
+    # The refusal has to carry the memory of the last one. A plain "no" is not
+    # enough on its own: told once that jeans are not skirts, the model tried
+    # jumpsuits, then dresses, blouses, camisoles and sweaters, then began the
+    # same cycle again -- 22 refusals in one turn, brute-forcing the enum five
+    # values at a time until it hit the tool-call ceiling. So this reuses the
+    # role lock and the same escalation the unadvertised-type refusal below
+    # uses, keyed on the query rather than the declared type because the
+    # declared type is the part that changes when the model tries again.
+    requested = attempt.requested_product_type or attempt.semantic_query
+    role_key = _normalize_product_text(attempt.semantic_query)
+    with ctx.scope.catalog_lock:
+        already_told = role_key in ctx.scope.roles_not_advertised
+        ctx.scope.roles_not_advertised.add(role_key)
+    if already_told:
+        return _rejected(
+            attempt,
+            SearchRejection.TAXONOMY_NOT_ADVERTISED_FOR_SCOPE,
+            control(
+                "STOP_TOOL_USE: this role was already refused this turn. Do "
+                "not try another subcategory for it. Leave it out and tell the "
+                "shopper plainly which part of the look this shop cannot "
+                "cover.",
+                ControlSignal.STOP_TOOL_USE,
+            ),
+        )
+    return _rejected(
+        attempt,
+        SearchRejection.TAXONOMY_NOT_ADVERTISED_FOR_SCOPE,
+        SEARCH_VALIDATION_ERROR_PREFIX
+        + (
+            f"This scope asks for '{requested}' and files it under "
+            f"{json.dumps(selected)}, which is a different garment rather "
+            "than this shop's word for it. No advertised subcategory is "
+            f"'{requested}', so there is no wider selection to try: it is not "
+            f"carried. Leave this role out of `scopes`, name '{requested}' in "
+            "`not_covered`, and say plainly that this part of the request "
+            "cannot be covered. Do not offer another garment in its place, "
+            "and do not present one as the closest version of it."
+        ),
+    )
+
+
 _PLAN_STEPS = (
     # First, because every step after it is entitled to a request this catalog
     # can actually answer. A word it cannot filter on is set aside here rather
     # than refused six steps later.
     _reconciled_with_what_is_advertised,
     _admit_search,
+    # After the repair locks, so a retry that was already turned back costs no
+    # further reasoning, and before the validation below, whose enum rejection
+    # is what used to hand the model a list of twenty garments to choose from.
+    _judged_vocabulary,
     _classify_requirements,
     _validated_request,
     _reviewed_provenance,
@@ -2204,6 +2300,73 @@ def _one_scope_per_category(ctx: SearchContext, scopes: list[Any]) -> list[Any]:
     return fanned
 
 
+def _judge_this_call(ctx: SearchContext, attempts: list[_Attempt]) -> None:
+    """Ask the vocabulary question once for every role in this call.
+
+    Batched deliberately. A shopper saying "I want to shop this look" sends
+    three roles in one call, and asking per role would triple both the latency
+    and the token cost of a question that fits in one request -- thirteen scopes
+    and four colour words together measured 3.7s and roughly 400 tokens, against
+    a 47,753-token median turn.
+
+    Nothing is raised out of here. A judge that cannot be reached leaves every
+    scope unruled, and an unruled scope is decided by the gates that decided it
+    before this existed.
+    """
+
+    judge = getattr(ctx, "vocabulary_judge", None)
+    if judge is None:
+        return
+
+    questions: list[ScopeQuestion] = []
+    for attempt in attempts:
+        payload = (
+            attempt.taxonomy.model_dump()
+            if isinstance(attempt.taxonomy, BaseModel)
+            else dict(attempt.taxonomy or {})
+        )
+        subcategories = tuple(dict.fromkeys(payload.get("subcategory") or []))
+        requested = attempt.requested_product_type
+        if requested and subcategories:
+            questions.append(ScopeQuestion(str(requested), subcategories))
+
+    if not questions:
+        return
+
+    capabilities = ctx.capabilities
+    subcategory_names = sorted(
+        {
+            name
+            for category in capabilities.taxonomy.categories.values()
+            for name in category.subcategories
+        }
+    )
+    verdict = judge.judge(
+        questions,
+        [],
+        subcategories=subcategory_names,
+        colours=[],
+    )
+    if verdict.unavailable:
+        return
+
+    for attempt in attempts:
+        payload = (
+            attempt.taxonomy.model_dump()
+            if isinstance(attempt.taxonomy, BaseModel)
+            else dict(attempt.taxonomy or {})
+        )
+        subcategories = tuple(dict.fromkeys(payload.get("subcategory") or []))
+        requested = attempt.requested_product_type
+        if not requested or not subcategories:
+            continue
+        question = ScopeQuestion(str(requested), subcategories)
+        if verdict.every_subcategory_is_a_kind(question) is None:
+            continue
+        attempt.judge_ruled = True
+        attempt.judged_not_a_kind = verdict.subcategories_to_drop(question)
+
+
 def search_catalog(
     ctx: SearchContext,
     scopes: list[dict[str, Any]],
@@ -2250,6 +2413,8 @@ def search_catalog(
         # another, and their mutations are merged once planning is done.
         attempt.repair = ctx.scope.repair
         attempts.append(attempt)
+
+    _judge_this_call(ctx, attempts)
 
     if len(attempts) > 1:
         # Per-scope purity: each scope is judged against the repair state as it

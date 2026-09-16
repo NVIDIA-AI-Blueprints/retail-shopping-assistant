@@ -2428,7 +2428,15 @@ def _judge_this_call(ctx: SearchContext, attempts: list[_Attempt]) -> None:
             if isinstance(attempt.taxonomy, BaseModel)
             else dict(attempt.taxonomy or {})
         )
-        subcategories = tuple(dict.fromkeys(payload.get("subcategory") or []))
+        # The members this scope will actually search, which for a scope naming
+        # only a category is the whole category. Reading `subcategory` directly
+        # asked nothing about those scopes -- and a scope that is never asked is
+        # never ruled, so it searched the department unjudged. Told jeans are
+        # not skirts, the model sent bare `apparel` and got two blouses and two
+        # dresses; asked for a coat, a camisole came back. Both sides of this
+        # decision now expand the same way.
+        members, _category_only = _scope_members(payload, ctx.capabilities)
+        subcategories = tuple(members)
         requested = attempt.requested_product_type
         # Only scopes whose values this catalog actually advertises. A scope
         # naming a subcategory the shop has no such thing as is settled without
@@ -2463,7 +2471,11 @@ def _judge_this_call(ctx: SearchContext, attempts: list[_Attempt]) -> None:
             if isinstance(attempt.taxonomy, BaseModel)
             else dict(attempt.taxonomy or {})
         )
-        subcategories = tuple(dict.fromkeys(payload.get("subcategory") or []))
+        # Expanded exactly as it was when the question was asked: the reply is
+        # matched on the word and on covering every member sent with it, so
+        # reading it back a different shape would find no answer.
+        members, _category_only = _scope_members(payload, ctx.capabilities)
+        subcategories = tuple(members)
         requested = attempt.requested_product_type
         if not requested or not subcategories:
             continue

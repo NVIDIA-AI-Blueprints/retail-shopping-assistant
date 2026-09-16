@@ -34,6 +34,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+INTERNAL_ERROR_MESSAGE = "An internal error occurred. Please try again."
+
 
 def initialize_agents(config) -> Dict:
     """Initialize all agent instances."""
@@ -136,15 +138,15 @@ async def process_query_stream(request: QueryRequest):
                 async for chunk in graph.astream(state, stream_mode="custom"):
                     yield f"data: {chunk}\n\n"
                 yield "data: [DONE]\n\n"
-            except Exception as e:
-                logger.error(f"Error in streaming: {e}")
-                yield f"data: {json.dumps({'type': 'error', 'payload': str(e)})}\n\n"
+            except Exception:
+                logger.exception("Error in streaming")
+                yield f"data: {json.dumps({'type': 'error', 'payload': INTERNAL_ERROR_MESSAGE})}\n\n"
 
         return StreamingResponse(send_updates(), media_type="text/event-stream")
         
-    except Exception as e:
-        logger.error(f"Error processing streaming query: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        logger.exception("Error processing streaming query")
+        raise HTTPException(status_code=500, detail=INTERNAL_ERROR_MESSAGE)
 
 @app.post("/query/timing", response_model=QueryResponse)
 async def process_query_timing(request: QueryRequest):
@@ -179,9 +181,9 @@ async def process_query_timing(request: QueryRequest):
         logger.info(f"chain-server | /query | Successfully processed timing query in {total_time:.2f}s")
         return response
 
-    except Exception as e:
-        logger.error(f"Error processing timing query: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        logger.exception("Error processing timing query")
+        raise HTTPException(status_code=500, detail=INTERNAL_ERROR_MESSAGE)
         
 @app.get("/health")
 async def health_check():

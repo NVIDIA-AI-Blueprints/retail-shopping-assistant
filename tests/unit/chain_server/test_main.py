@@ -169,6 +169,30 @@ class TestTimingEndpoint:
         assert "total" in body["timings"]
         assert body["timings"]["total"] > 0
 
+    def test_internal_error_is_not_exposed(
+        self,
+        main_module,
+        client: TestClient,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        secret = "connection failed for http://memory-retriever:8011/internal"
+
+        async def fail_ainvoke(_state: State) -> Dict[str, Any]:
+            raise RuntimeError(secret)
+
+        monkeypatch.setattr(main_module._test_compiled, "ainvoke", fail_ainvoke)
+
+        response = client.post(
+            "/query/timing",
+            json={"user_id": 1, "query": "hello"},
+        )
+
+        assert response.status_code == 500
+        assert response.json() == {"detail": main_module.INTERNAL_ERROR_MESSAGE}
+        assert secret not in response.text
+        assert secret in caplog.text
+
 
 class TestStreamEndpoint:
     def test_stream_returns_sse_body_with_done_marker(
@@ -211,6 +235,55 @@ class TestStreamEndpoint:
         state_arg, _ = compiled.astream_calls[-1]
         assert state_arg.image.startswith("data:image/jpeg")
         assert "image" in state_arg.query.lower()
+
+    def test_stream_error_is_not_exposed(
+        self,
+        main_module,
+        client: TestClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        secret = "failed to read /app/shared/private-config.yaml"
+
+        async def fail_astream(_state: State, stream_mode: str = "custom"):
+            raise RuntimeError(secret)
+            yield  # pragma: no cover
+
+        monkeypatch.setattr(main_module._test_compiled, "astream", fail_astream)
+
+        response = client.post(
+            "/query/stream",
+            json={"user_id": 1, "query": "hello"},
+        )
+
+        assert response.status_code == 200
+        assert main_module.INTERNAL_ERROR_MESSAGE in response.text
+        assert secret not in response.text
+
+    def test_stream_setup_error_is_not_exposed(
+        self,
+        main_module,
+        client: TestClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        secret = "database unavailable at sqlite:////app/context.db"
+
+        def fail_create_initial_state(_request: Any) -> State:
+            raise RuntimeError(secret)
+
+        monkeypatch.setattr(
+            main_module,
+            "create_initial_state",
+            fail_create_initial_state,
+        )
+
+        response = client.post(
+            "/query/stream",
+            json={"user_id": 1, "query": "hello"},
+        )
+
+        assert response.status_code == 500
+        assert response.json() == {"detail": main_module.INTERNAL_ERROR_MESSAGE}
+        assert secret not in response.text
 
 
 class TestValidation:

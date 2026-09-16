@@ -23,4 +23,4 @@ ENV RAILS_URL=http://rails:8012
 EXPOSE 8009
 
 # Command to run the application
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8009", "--reload"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8009"]

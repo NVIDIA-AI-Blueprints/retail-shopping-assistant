@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from fastapi import FastAPI
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import List, Dict, Any
 import time
 import os
@@ -12,8 +12,10 @@ import sys
 
 try:
     from app.retriever import Retriever, RetrieverConfig
+    from app.utils import normalize_runtime_image_input
 except ModuleNotFoundError:
     from .retriever import Retriever, RetrieverConfig
+    from .utils import normalize_runtime_image_input
 
 # Set up logging 
 logging.basicConfig(
@@ -97,10 +99,15 @@ class TextQueryRequest(BaseModel):
 
 class ImageQueryRequest(BaseModel):
     text: List[str] = []
-    image_base64: str = ""
+    image_base64: str
     categories: List[str] = []
     filters: Dict[str, Any] = Field(default_factory=dict)
     k: int = 4
+
+    @field_validator("image_base64")
+    @classmethod
+    def validate_image_base64(cls, value: str) -> str:
+        return normalize_runtime_image_input(value)
 
 # Handles queries only containing text.
 @app.post("/query/text")

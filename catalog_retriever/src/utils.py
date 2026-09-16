@@ -2,13 +2,60 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import base64
+import binascii
 import io
 import requests
 import re
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
 import logging
 import sys
 import os
+
+
+def normalize_runtime_image_input(image_data: str) -> str:
+    """Validate runtime image input and return a base64 data URI.
+
+    Runtime queries may provide either a base64 image data URI or raw base64.
+    URLs and filesystem paths are intentionally rejected so untrusted requests
+    cannot trigger server-side network or file access.
+    """
+    value = image_data.strip()
+    if not value:
+        raise ValueError("image_base64 must contain base64 image data")
+
+    if value.startswith("data:"):
+        try:
+            header, payload = value.split(",", 1)
+        except ValueError as exc:
+            raise ValueError("image_base64 must be a base64 image data URI") from exc
+
+        media_type = header[5:].split(";", 1)[0]
+        if not header.endswith(";base64") or not (
+            media_type.startswith("image/") or media_type == "application/octet-stream"
+        ):
+            raise ValueError("image_base64 must be a base64 image data URI")
+    else:
+        payload = value
+
+    compact_payload = "".join(payload.split())
+    if not compact_payload:
+        raise ValueError("image_base64 must contain base64 image data")
+
+    padded_payload = compact_payload + "=" * (-len(compact_payload) % 4)
+    image_format = None
+    try:
+        image_bytes = base64.b64decode(padded_payload, validate=True)
+        with Image.open(io.BytesIO(image_bytes)) as image:
+            image_format = image.format
+            image.verify()
+    except (binascii.Error, UnidentifiedImageError, ValueError, OSError) as exc:
+        raise ValueError("image_base64 must contain valid base64 image data") from exc
+
+    if value.startswith("data:"):
+        return f"{header},{padded_payload}"
+    if not image_format:
+        raise ValueError("image_base64 must contain valid base64 image data")
+    return f"data:image/{image_format.lower()};base64,{padded_payload}"
 
 logging.basicConfig(
     level=logging.INFO,

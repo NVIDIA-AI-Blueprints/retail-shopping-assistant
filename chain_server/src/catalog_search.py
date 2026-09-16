@@ -210,6 +210,16 @@ def _stated_shopper_text(state: Any) -> str:
     shopper conveyed by attaching a photo or video read as model-invented and
     was refused. An image is a statement; this makes the gate able to hear it.
 
+    The garment is a statement on the same terms as the colour, which is why
+    `fashion_items` sits in `_STATED_MEDIA_FIELDS` alongside `colors`. "Shop
+    the jeans in this video" names jeans exactly as typing the word would, and
+    reading the roles from the query alone made the video's own garments count
+    as roles the model had composed -- so the model was free to rename one, and
+    it did: told the shop has no jeans it asked for "bottoms", where a skirt
+    genuinely is a kind of bottoms, and three skirts came back for a jeans
+    request. Every product-scope gate reads this, so the video's words bind the
+    scope the same way the typed ones do.
+
     Only the media fields that describe the media's *content* are included --
     see `_STATED_MEDIA_FIELDS`. The model's reading of the image is still not
     the shopper speaking.
@@ -244,6 +254,9 @@ class _Attempt:
     search_mode: str | None = None
     advertised_choices: Any = None
     candidate_scope_key: Any = None
+    #: Whether the shopper named this scope, in words or by showing it.
+    #: Decided once in the first step; every later step reads it.
+    shopper_named_scope: bool = False
     capabilities: Any = None
     #: True when the shopper never named this role and the model composed it.
     #: Recorded rather than refused: the reply has to present it as proposed,
@@ -453,7 +466,7 @@ def _admit_search(ctx: SearchContext, attempt: _Attempt) -> StepResult:
     shopper_stated_requested_scope = bool(
         initial_scope_key
         and _shopper_stated_product_scope(
-            ctx.state.query,
+            _stated_shopper_text(ctx.state),
             ctx.state.dialogue,
             initial_scope_key,
         )
@@ -467,7 +480,7 @@ def _admit_search(ctx: SearchContext, attempt: _Attempt) -> StepResult:
     )
 
     requested_product_type = _resolved_agent_selected_product_type(
-        query=ctx.state.query,
+        query=_stated_shopper_text(ctx.state),
         dialogue=ctx.state.dialogue,
         requested_product_type=requested_product_type,
         taxonomy_status=taxonomy_status,
@@ -504,6 +517,22 @@ def _admit_search(ctx: SearchContext, attempt: _Attempt) -> StepResult:
             "requested_product_type and repair taxonomy instead.",
         )
     attempt.candidate_scope_key = candidate_scope_key
+    # Decided here and read everywhere else. The same three inputs -- this
+    # scope's key, what the shopper said and showed, and the recent dialogue --
+    # were re-derived at five later points, four of them inside one function,
+    # and a pure text match on identical arguments cannot give five different
+    # answers. What it can do is drift: while one site read the typed query and
+    # another read the query plus the media, "cream" counted as the shopper
+    # speaking and "jeans" from the same video counted as the model's own
+    # invention, three lines apart. One derivation cannot disagree with itself.
+    attempt.shopper_named_scope = bool(
+        candidate_scope_key
+        and _shopper_stated_product_scope(
+            _stated_shopper_text(ctx.state),
+            ctx.state.dialogue,
+            candidate_scope_key,
+        )
+    )
     attempt.capabilities = capabilities
     attempt.requested_product_type = requested_product_type
     attempt.required_constraints = required_constraints
@@ -521,7 +550,6 @@ def _classify_requirements(ctx: SearchContext, attempt: _Attempt) -> StepResult:
     step only classifies; the gates that act on the classification come later.
     """
 
-    candidate_scope_key = attempt.candidate_scope_key
     capabilities = attempt.capabilities
     requested_product_type = attempt.requested_product_type
     required_constraints = attempt.required_constraints
@@ -537,14 +565,7 @@ def _classify_requirements(ctx: SearchContext, attempt: _Attempt) -> StepResult:
         if isinstance(required_constraints, BaseModel)
         else required_constraints
     )
-    shopper_stated_scope = bool(
-        candidate_scope_key
-        and _shopper_stated_product_scope(
-            ctx.state.query,
-            ctx.state.dialogue,
-            candidate_scope_key,
-        )
-    )
+    shopper_stated_scope = attempt.shopper_named_scope
     raw_unadvertised_requirements = (
         constraint_payload.get("unadvertised_requirements", [])
         if isinstance(constraint_payload, dict)
@@ -891,14 +912,7 @@ def _reviewed_provenance(ctx: SearchContext, attempt: _Attempt) -> StepResult:
         "unadvertised_requirements",
         [],
     )
-    shopper_stated_scope = bool(
-        candidate_scope_key
-        and _shopper_stated_product_scope(
-            ctx.state.query,
-            ctx.state.dialogue,
-            candidate_scope_key,
-        )
-    )
+    shopper_stated_scope = attempt.shopper_named_scope
     if (
         unadvertised_requirements
         and shopper_stated_scope
@@ -975,14 +989,7 @@ def _reviewed_provenance(ctx: SearchContext, attempt: _Attempt) -> StepResult:
     # one whole-look turn the shoes role was forced from [flats, sandals] down
     # to flats, and the shopper had to ask for sandals back two turns later.
     agent_selected_issue: str | None = None
-    agent_selected_shopper_scope = bool(
-        candidate_scope_key
-        and _shopper_stated_product_scope(
-            ctx.state.query,
-            ctx.state.dialogue,
-            candidate_scope_key,
-        )
-    )
+    agent_selected_shopper_scope = attempt.shopper_named_scope
     attempt.composed_role = (
         request.taxonomy_status == "agent_selected_type"
         and not agent_selected_shopper_scope
@@ -1195,14 +1202,7 @@ def _reviewed_provenance(ctx: SearchContext, attempt: _Attempt) -> StepResult:
                 _stated_shopper_text(ctx.state), requirement
             )
         ]
-        shopper_stated_scope = bool(
-            candidate_scope_key
-            and _shopper_stated_product_scope(
-                ctx.state.query,
-                ctx.state.dialogue,
-                candidate_scope_key,
-            )
-        )
+        shopper_stated_scope = attempt.shopper_named_scope
         if (
             stated_requirements or shopper_stated_scope
         ) and not suppress_requirement_disclosure:
@@ -1293,14 +1293,7 @@ def _reviewed_provenance(ctx: SearchContext, attempt: _Attempt) -> StepResult:
         else None
     )
     if exact_taxonomy_issue:
-        shopper_stated_scope = bool(
-            candidate_scope_key
-            and _shopper_stated_product_scope(
-                ctx.state.query,
-                ctx.state.dialogue,
-                candidate_scope_key,
-            )
-        )
+        shopper_stated_scope = attempt.shopper_named_scope
         if shopper_stated_scope:
             attempt.repair.failed_repair_scope_key = candidate_scope_key
         return _rejected(
@@ -2090,21 +2083,40 @@ def _judged_vocabulary(ctx: SearchContext, attempt: _Attempt) -> StepResult:
     heels and skirts, the judge returns the skirt alone and the role searches
     its two real members rather than losing all three.
 
+    Two different refusals come out of this, and saying the right one matters
+    because the text is the model's instruction for what to do next. Filing
+    jeans under skirts is a substitution and gets told so. Filing jeans under
+    "jeans" is the honest answer to a shop that has no such subcategory, and
+    telling that scope it "chose a different garment" is nonsense -- it chose
+    the garment it was asked for, and the shop simply does not sell it.
+
     Unjudged scopes fall through untouched. The judge is a single call for the
     whole turn and it can fail; when it has not ruled, the older gates below
     decide as they did before, which is what makes this safe to add before they
     are removed.
     """
 
-    if not attempt.judge_ruled or not attempt.judged_not_a_kind:
-        return None
-
     payload = (
         attempt.taxonomy.model_dump()
         if isinstance(attempt.taxonomy, BaseModel)
         else dict(attempt.taxonomy or {})
     )
-    selected = list(dict.fromkeys(payload.get("subcategory") or []))
+
+    selected, _category_only = _scope_members(payload, ctx.capabilities)
+    if not selected:
+        return None
+
+
+    # A subcategory this catalog has no such thing as needs no judging: there
+    # is nothing to compare the request against. Settled here, which also keeps
+    # it out of the judge's question -- asked whether "jeans" is a kind of
+    # "jeans" against a list that has no jeans in it, the model has to answer a
+    # question that does not mean anything.
+    if all(value not in _advertised_subcategories(ctx.capabilities) for value in selected):
+        return _refused_role(ctx, attempt, selected, has_no_such_subcategory=True)
+
+    if not attempt.judge_ruled or not attempt.judged_not_a_kind:
+        return None
     surviving = [value for value in selected if value not in attempt.judged_not_a_kind]
 
     if surviving:
@@ -2112,20 +2124,82 @@ def _judged_vocabulary(ctx: SearchContext, attempt: _Attempt) -> StepResult:
         attempt.taxonomy = payload
         return None
 
-    # Nothing the scope named is the thing it asked for.
-    #
-    # The refusal has to carry the memory of the last one. A plain "no" is not
-    # enough on its own: told once that jeans are not skirts, the model tried
-    # jumpsuits, then dresses, blouses, camisoles and sweaters, then began the
-    # same cycle again -- 22 refusals in one turn, brute-forcing the enum five
-    # values at a time until it hit the tool-call ceiling. So this reuses the
-    # role lock and the same escalation the unadvertised-type refusal below
-    # uses, keyed on the query rather than the declared type because the
-    # declared type is the part that changes when the model tries again.
+    return _refused_role(ctx, attempt, selected, has_no_such_subcategory=False)
+
+
+def _advertised_subcategories(capabilities: CatalogCapabilities) -> frozenset[str]:
+    """Every subcategory this catalog advertises, across all categories."""
+
+    return frozenset(
+        name
+        for category in capabilities.taxonomy.categories.values()
+        for name in category.subcategories
+    )
+
+
+def _scope_members(
+    taxonomy: BaseModel | dict[str, Any],
+    capabilities: CatalogCapabilities,
+) -> tuple[list[str], bool]:
+    """What this scope will actually search, and whether it named a whole category.
+
+    A scope may name its subcategories or it may name only a category, and the
+    second is a legal text search across everything in it. Judging the first
+    while ignoring the second left the parent category open as an escape: told
+    jeans are not skirts, the model sent `category: [apparel], subcategory: []`
+    and ranked "dark blue jeans" against all of apparel, and two blouses and two
+    dresses came back as the shopper's dark bottom.
+
+    So a category-only scope is judged on the members it is about to search.
+    That also mends the opposite case rather than only blocking this one: asked
+    for pumps across all of footwear, the members that are pumps are the heels,
+    and the scope narrows to them instead of returning boots and sandals too.
+    """
+
+    payload = taxonomy.model_dump() if isinstance(taxonomy, BaseModel) else dict(taxonomy or {})
+    selected = list(dict.fromkeys(payload.get("subcategory") or []))
+    if selected:
+        return selected, False
+
+    members: list[str] = []
+    for name in dict.fromkeys(payload.get("category") or []):
+        category = capabilities.taxonomy.categories.get(name)
+        if category:
+            members.extend(category.subcategories)
+    return list(dict.fromkeys(members)), True
+
+
+def _refused_role(
+    ctx: SearchContext,
+    attempt: _Attempt,
+    selected: list[str],
+    *,
+    has_no_such_subcategory: bool,
+) -> StepResult:
+    """End this role for the turn, and say which of the two reasons it is.
+
+    The refusal has to carry the memory of the last one. A plain "no" is not
+    enough on its own: told once that jeans are not skirts, the model tried
+    jumpsuits, then dresses, blouses, camisoles and sweaters, then began the
+    same cycle again -- 22 refusals in one turn, brute-forcing the enum five
+    values at a time until it hit the tool-call ceiling. So this reuses the
+    role lock and the same STOP_TOOL_USE escalation the unadvertised-type
+    refusal uses, keyed on the query rather than the declared type because the
+    declared type is the part that changes when the model tries again.
+    """
+
     requested = attempt.requested_product_type or attempt.semantic_query
     role_key = _normalize_product_text(attempt.semantic_query)
     with ctx.scope.catalog_lock:
-        already_told = role_key in ctx.scope.roles_not_advertised
+        # Any refusal already made this turn, not this same role refused twice.
+        # Matching the role by its text ends a repeated role and nothing else,
+        # and the model does not repeat itself: told the shop has no jeans, it
+        # asked for "pants", then generalised to "bottoms" -- and a skirt IS a
+        # kind of bottoms, so that one was rightly approved and three skirts
+        # came back for a jeans request. It never sent the same key twice, so a
+        # key match never fired. One refusal is enough to know the turn cannot
+        # cover everything, and the model's job from there is to answer.
+        already_told = bool(ctx.scope.roles_not_advertised)
         ctx.scope.roles_not_advertised.add(role_key)
     if already_told:
         return _rejected(
@@ -2139,19 +2213,48 @@ def _judged_vocabulary(ctx: SearchContext, attempt: _Attempt) -> StepResult:
                 ControlSignal.STOP_TOOL_USE,
             ),
         )
+
+    # Recorded as a fact about the catalog, which is what it is. The turn
+    # collects these into its NOT_CARRIED notice and delivers them beside the
+    # scopes that did find something, so the call as a whole reports "sweaters
+    # found, boots found, jeans not carried" -- a complete answer rather than a
+    # failure.
+    attempt.not_carried = str(requested)
+
+    # Deliberately not SEARCH_VALIDATION_ERROR_PREFIX. Whether this shop sells
+    # jeans is not a defect in the arguments, and saying so in the register of a
+    # validation error told the model its input was malformed -- so it did the
+    # reasonable thing with a malformed-input message and sent another. Refused
+    # on skirts it moved to the whole apparel category, and refused there it
+    # tried dresses. The role has to arrive closed, with nothing about it left
+    # to resubmit.
+    if has_no_such_subcategory:
+        # The scope named the garment as itself, which is the honest thing to
+        # do. Nothing here is a reproach: the shop has no such subcategory, and
+        # that is the whole finding.
+        finding = (
+            f"SCOPE_CLOSED: '{requested}' is not sold here -- this catalog has "
+            f"no {json.dumps(selected)} and nothing of that kind. Nothing was "
+            "chosen wrongly and there is no correction to make."
+        )
+    else:
+        finding = (
+            f"SCOPE_CLOSED: '{requested}' is not sold here. "
+            f"{json.dumps(selected)} is a different garment, and no advertised "
+            f"subcategory is '{requested}', so no taxonomy would make this "
+            "scope true."
+        )
+
     return _rejected(
         attempt,
         SearchRejection.TAXONOMY_NOT_ADVERTISED_FOR_SCOPE,
-        SEARCH_VALIDATION_ERROR_PREFIX
+        finding
         + (
-            f"This scope asks for '{requested}' and files it under "
-            f"{json.dumps(selected)}, which is a different garment rather "
-            "than this shop's word for it. No advertised subcategory is "
-            f"'{requested}', so there is no wider selection to try: it is not "
-            f"carried. Leave this role out of `scopes`, name '{requested}' in "
-            "`not_covered`, and say plainly that this part of the request "
-            "cannot be covered. Do not offer another garment in its place, "
-            "and do not present one as the closest version of it."
+            f" This role is settled: do not search again for '{requested}' in "
+            "any category. Answer the shopper with the roles that did find "
+            f"something and tell them plainly that '{requested}' is not "
+            "carried. Do not offer another garment in its place and do not "
+            "present one as the closest version of it."
         ),
     )
 
@@ -2327,20 +2430,24 @@ def _judge_this_call(ctx: SearchContext, attempts: list[_Attempt]) -> None:
         )
         subcategories = tuple(dict.fromkeys(payload.get("subcategory") or []))
         requested = attempt.requested_product_type
-        if requested and subcategories:
+        # Only scopes whose values this catalog actually advertises. A scope
+        # naming a subcategory the shop has no such thing as is settled without
+        # a model call, so nothing is spent asking whether jeans are a kind of
+        # jeans.
+        if (
+            requested
+            and subcategories
+            and any(
+                value in _advertised_subcategories(ctx.capabilities)
+                for value in subcategories
+            )
+        ):
             questions.append(ScopeQuestion(str(requested), subcategories))
 
     if not questions:
         return
 
-    capabilities = ctx.capabilities
-    subcategory_names = sorted(
-        {
-            name
-            for category in capabilities.taxonomy.categories.values()
-            for name in category.subcategories
-        }
-    )
+    subcategory_names = sorted(_advertised_subcategories(ctx.capabilities))
     verdict = judge.judge(
         questions,
         [],

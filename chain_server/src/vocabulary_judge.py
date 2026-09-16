@@ -170,8 +170,17 @@ class CatalogVocabularyJudge:
             logger.warning("vocabulary judge failed: %s", exc)
             return VocabularyVerdict(unavailable=True)
 
-        return _read(content, questions)
-
+        verdict = _read(content, questions)
+        # Logged when it works, not only when it breaks. A scope that reached
+        # the catalog when it should have been refused looks identical, after
+        # the fact, to one that was never asked about -- and telling those two
+        # apart is the whole of diagnosing a substitution that got through.
+        logger.info(
+            "vocabulary judge: asked=%s verdicts=%s",
+            [(q.requested_product_type, list(q.subcategories)) for q in questions],
+            verdict.kinds,
+        )
+        return verdict
 
 def _prompt(
     questions: list[ScopeQuestion],

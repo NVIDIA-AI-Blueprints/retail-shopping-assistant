@@ -89,6 +89,18 @@ class VocabularyVerdict:
             return None
         return all(answered)
 
+    def colours_for(self, word: str) -> list[str]:
+        """The advertised colours this word may mean, keyed as it was sent.
+
+        The lookup lives here because the key is this module's. The caller
+        normalises product words for taxonomy comparison, which singularises
+        and drops punctuation -- "off-white" becomes "off white" there and
+        stays "off-white" here, so a caller keying the reply itself would find
+        nothing and quietly fall back to ranking.
+        """
+
+        return list(self.colours.get(_normalised(word)) or ())
+
     def subcategories_to_drop(self, question: ScopeQuestion) -> tuple[str, ...]:
         """The members that are not kinds of the requested thing.
 
@@ -170,15 +182,17 @@ class CatalogVocabularyJudge:
             logger.warning("vocabulary judge failed: %s", exc)
             return VocabularyVerdict(unavailable=True)
 
-        verdict = _read(content, questions)
+        verdict = _read(content, questions, colours)
         # Logged when it works, not only when it breaks. A scope that reached
         # the catalog when it should have been refused looks identical, after
         # the fact, to one that was never asked about -- and telling those two
         # apart is the whole of diagnosing a substitution that got through.
         logger.info(
-            "vocabulary judge: asked=%s verdicts=%s",
+            "vocabulary judge: asked=%s verdicts=%s colours=%s->%s",
             [(q.requested_product_type, list(q.subcategories)) for q in questions],
             verdict.kinds,
+            colour_words,
+            verdict.colours,
         )
         return verdict
 
@@ -226,10 +240,13 @@ def _prompt(
     if colour_words:
         lines += [
             "",
-            "TASK B. For each colour word, list EVERY catalogue colour the word "
-            "could plausibly mean. Be generous rather than minimal: a shopper "
-            "saying one word should see all the near matches. Use only colours "
-            "from the list above. Empty list if genuinely none fit.",
+            "TASK B. For each colour word, list EVERY catalogue colour the "
+            "word could plausibly mean, including the word itself if it is on "
+            "the list. Be generous rather than minimal: a shopper saying one "
+            "word should see all the near matches. But do not include a colour "
+            "they would call plainly the wrong colour -- cream means beige and "
+            "white, not black. Use only colours from the list above. Empty "
+            "list if genuinely none fit.",
             "",
             "TASK B words:",
         ]
@@ -244,7 +261,11 @@ def _prompt(
     return "\n".join(lines)
 
 
-def _read(content: str, questions: list[ScopeQuestion]) -> VocabularyVerdict:
+def _read(
+    content: str,
+    questions: list[ScopeQuestion],
+    advertised: list[str],
+) -> VocabularyVerdict:
     """Parse the reply, keeping only answers to questions that were asked.
 
     Answers are matched on the request word *and* on covering every subcategory
@@ -282,12 +303,21 @@ def _read(content: str, questions: list[ScopeQuestion]) -> VocabularyVerdict:
             if sub in wanted[requested] and isinstance(verdict, bool):
                 merged[sub] = verdict
 
+    # Kept to the list the question offered. A mapping becomes a filter, and a
+    # filter naming a value this catalog does not hold matches nothing, so one
+    # invented word would turn a best-effort widening into an empty result.
+    # The prompt says to use only these; this is what makes it true.
+    permitted = {str(value).strip().lower() for value in advertised}
     colours: dict[str, list[str]] = {}
     for word, values in (payload.get("b") or {}).items():
-        if isinstance(values, list):
-            colours[_normalised(str(word))] = [
-                str(v).strip().lower() for v in values if str(v).strip()
-            ]
+        if not isinstance(values, list):
+            continue
+        mapped = [
+            str(value).strip().lower()
+            for value in values
+            if str(value).strip().lower() in permitted
+        ]
+        colours[_normalised(str(word))] = list(dict.fromkeys(mapped))
 
     return VocabularyVerdict(kinds=kinds, colours=colours)
 

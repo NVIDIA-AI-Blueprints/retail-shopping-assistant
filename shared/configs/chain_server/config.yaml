@@ -28,6 +28,13 @@ grounding_editor_reserve_seconds: 15.0
 # its values come from the catalog and reach the model through /capabilities,
 # so a catalog serving new audiences needs no change on this side.
 wearer_audience_field: "target_audience"
+# Catalog filter holding colour. Named the same way and for the same reason:
+# the field name is ours, the values are the catalog's. The scope prompt asks
+# the model to name advertised colours for a word this shop does not list, and
+# it usually does -- "cream" arrives as beige and white. This is the fallback
+# for when it does not, so the colour still filters instead of the field being
+# dropped and sweaters coming back in any colour.
+colour_field: "primary_color"
 # Counts product roles, not calls. It was 3 when one call was one search; #146
 # made several roles share a call and reservation started running per role, so
 # 3 silently became "three roles per turn" and refused the fourth role of a

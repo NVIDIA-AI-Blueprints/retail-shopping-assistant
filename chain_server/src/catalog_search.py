@@ -49,6 +49,7 @@ from .control_signals import (
 from .response_format import (
     SEARCH_RESULT_ATTRIBUTE_LIMIT_NOTE,
     _format_catalog_scope_outcome,
+    _format_colour_words_read_as_advertised_ones,
     _format_product_record,
     _format_search_composed_role_evidence,
     _format_search_direction_evidence,
@@ -288,6 +289,13 @@ class _Attempt:
     #: Words this catalog cannot filter on, set aside before validation rather
     #: than refused. Field name to the values dropped from it.
     set_aside: dict[str, list[str]] = field(default_factory=dict)
+    #: Unadvertised colour words this scope offered, to the advertised colours
+    #: the judge says they may mean. Keyed casefolded on the word as sent.
+    colour_map: dict[str, list[str]] = field(default_factory=dict)
+    #: The subset of those that became a filter, to what they filtered on.
+    #: Read by the disclosure, since "ranked not filtered" stops being true
+    #: for them.
+    colours_mapped: dict[str, list[str]] = field(default_factory=dict)
     request: Any = None
     result: Any = None
     search_budget_exhausted: Any = None
@@ -415,6 +423,37 @@ def _reconciled_with_what_is_advertised(
             for item in offered
             if str(item).casefold() in advertised
         ]
+
+        # A colour word this shop does not list is still a colour. The judge
+        # says which advertised ones it could mean, and those filter in its
+        # place, so the constraint survives rather than the field being deleted
+        # and sweaters coming back in any colour.
+        #
+        # Unioned rather than consulted only when nothing else survived: cream
+        # should mean the same thing whether or not the model happened to send
+        # a valid value beside it. `["beige", "cream"]` filtered on beige alone
+        # is half the shade the shopper described, and that shape is the common
+        # one -- 118 of 3,040 colour scopes, against 15 that named nothing
+        # advertised at all.
+        if name == _colour_field(ctx):
+            for word in dropped:
+                mapped = attempt.colour_map.get(word.casefold()) or []
+                if not mapped:
+                    continue
+                attempt.colours_mapped[word] = mapped
+                kept.extend(colour for colour in mapped if colour not in kept)
+            # Only the words that mapped to nothing were truly set aside. The
+            # rest were filtered on, and the set-aside disclosure says results
+            # are ranked and guarantee nothing -- untrue of these, and the
+            # model repeats it to the shopper.
+            remaining = [
+                word for word in dropped if word not in attempt.colours_mapped
+            ]
+            if remaining:
+                set_aside[name] = remaining
+            else:
+                set_aside.pop(name, None)
+
         if kept:
             constraints[name] = kept
         else:
@@ -1908,6 +1947,11 @@ def _rendered_evidence(ctx: SearchContext, attempt: _Attempt) -> StepResult:
         )
         if set_aside_note:
             lines.append(set_aside_note)
+        colour_note = _format_colour_words_read_as_advertised_ones(
+            attempt.colours_mapped
+        )
+        if colour_note:
+            lines.append(colour_note)
         if scope_relation_evidence:
             lines.append(scope_relation_evidence)
         if evidence.confirmed_filters:
@@ -1982,6 +2026,11 @@ def _rendered_evidence(ctx: SearchContext, attempt: _Attempt) -> StepResult:
     )
     if set_aside_note:
         lines.append(set_aside_note)
+    colour_note = _format_colour_words_read_as_advertised_ones(
+        attempt.colours_mapped
+    )
+    if colour_note:
+        lines.append(colour_note)
     if scope_relation_evidence:
         lines.append(scope_relation_evidence)
     if evidence.confirmed_filters:
@@ -2403,6 +2452,56 @@ def _one_scope_per_category(ctx: SearchContext, scopes: list[Any]) -> list[Any]:
     return fanned
 
 
+def _colour_field(ctx: SearchContext) -> str:
+    """The catalog's colour filter, by name from config rather than baked in.
+
+    Named the same way as the audience field and for the same reason: the field
+    name is this deployment's, the values are the catalog's. A shop calling it
+    `colour` sets one line.
+    """
+
+    return str(getattr(ctx.config, "colour_field", "primary_color") or "")
+
+
+def _colour_words_not_advertised(
+    ctx: SearchContext,
+    attempt: _Attempt,
+    advertised: list[str],
+) -> list[str]:
+    """The colour words this scope asked to filter on and this catalog lacks.
+
+    Read here because here is the only place it can be read: the step that
+    sets an unhonourable value aside is the first of the plan steps, and by the
+    time it has run the word is gone from the constraints.
+
+    Gated on membership rather than sending every colour the scope offered.
+    Measured over 3,040 scopes carrying a colour filter, 95.6% named advertised
+    values throughout -- the scope prompt asks the model to do this mapping and
+    it mostly does. Asking about those would bolt dead words onto almost every
+    search call to serve the 4% that need it.
+    """
+
+    if not advertised:
+        return []
+    constraints = attempt.required_constraints
+    constraints = (
+        constraints.model_dump(exclude_none=True)
+        if isinstance(constraints, BaseModel)
+        else dict(constraints or {})
+    )
+    offered = constraints.get(_colour_field(ctx))
+    if offered is None:
+        return []
+    if not isinstance(offered, (list, tuple)):
+        offered = [offered]
+    known = {value.casefold() for value in advertised}
+    return [
+        str(value)
+        for value in offered
+        if str(value).strip() and str(value).casefold() not in known
+    ]
+
+
 def _judge_this_call(ctx: SearchContext, attempts: list[_Attempt]) -> None:
     """Ask the vocabulary question once for every role in this call.
 
@@ -2452,20 +2551,45 @@ def _judge_this_call(ctx: SearchContext, attempts: list[_Attempt]) -> None:
         ):
             questions.append(ScopeQuestion(str(requested), subcategories))
 
-    if not questions:
+    capability = ctx.capabilities.filters.get(_colour_field(ctx))
+    advertised_colours = [
+        str(value) for value in (getattr(capability, "values", None) or ())
+    ]
+    colour_words = sorted(
+        {
+            word
+            for attempt in attempts
+            for word in _colour_words_not_advertised(ctx, attempt, advertised_colours)
+        }
+    )
+
+    # A colour word alone is worth the call. Requiring a taxonomy question too
+    # would let the one case the mapping exists for decide whether the mapping
+    # runs: "show me it in cream" against a scope carried over from the
+    # previous turn asks nothing about taxonomy.
+    if not questions and not colour_words:
         return
 
     subcategory_names = sorted(_advertised_subcategories(ctx.capabilities))
     verdict = judge.judge(
         questions,
-        [],
+        colour_words,
         subcategories=subcategory_names,
-        colours=[],
+        colours=advertised_colours,
     )
     if verdict.unavailable:
         return
 
     for attempt in attempts:
+        # Before the taxonomy reading below, whose `continue`s would otherwise
+        # skip it. Keyed on the word as this scope sent it: the reply is the
+        # turn's, but a scope only ever looks up a word it dropped itself, so a
+        # call carrying "black boots" beside "cream sweater" cannot pick up the
+        # other's answer.
+        attempt.colour_map = {
+            word.casefold(): verdict.colours_for(word)
+            for word in _colour_words_not_advertised(ctx, attempt, advertised_colours)
+        }
         payload = (
             attempt.taxonomy.model_dump()
             if isinstance(attempt.taxonomy, BaseModel)

@@ -592,47 +592,6 @@ def _advertised_taxonomy_value(
 
 #: Garments shoppers name that a clothing catalog may simply not stock.
 #:
-#: Not a policy about this shop -- every word here is checked against the
-#: advertised taxonomy before it counts, so the day a jeans product type is
-#: published the entry stops meaning anything. The list exists because the
-#: check needs to tell a garment from an adjective without parsing English:
-#: "structured work tote" and "anything under fifty" are honest queries whose
-#: last word is not the garment, and only a garment may contradict a scope.
-_GARMENTS_A_SHOP_MAY_NOT_STOCK = (
-    "jeans",
-    "pants",
-    "trousers",
-    "shorts",
-    "leggings",
-    "jackets",
-    "coats",
-    "blazers",
-    "hoodies",
-    "sweatpants",
-    "socks",
-    "hats",
-    "scarves",
-    "gloves",
-    "swimsuits",
-    "suits",
-    "vests",
-)
-
-
-def _garment_with_no_advertised_value(
-    text: str,
-    capabilities: CatalogCapabilities,
-) -> str | None:
-    """Return a garment named in text that no advertised value denotes."""
-
-    for garment in _GARMENTS_A_SHOP_MAY_NOT_STOCK:
-        if not _text_mentions_product_type(text, garment):
-            continue
-        if _advertised_scope_match(garment, capabilities) is None:
-            return garment
-    return None
-
-
 def _advertised_scope_match(
     requested_product_type: str | None,
     capabilities: CatalogCapabilities,

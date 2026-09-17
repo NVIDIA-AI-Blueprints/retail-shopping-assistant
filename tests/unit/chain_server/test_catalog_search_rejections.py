@@ -370,12 +370,20 @@ def test_each_gate_records_which_gate_refused_the_scope(
 def test_repeated_shopper_scope_is_attributed_to_the_shopper_scope_gate(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A paraphrase of a search that already found something is refused.
+    """A paraphrase of a search that already found something gets that answer.
 
-    The first search has to return products. The rule exists to stop a retry
-    rewording an *answered* search, and a scope that came back empty has not
-    been answered -- relaxing a filter and looking again is the honest next
-    move there, so that case is deliberately allowed.
+    Refused once, with "use the result already returned" -- advice about data,
+    in place of the data. The model cannot act on advice about products it was
+    not given, so it asked again, and J02 turn 4 spent 23 identical searches
+    and the graph's whole recursion budget on the word "shoes".
+
+    The retrieval still runs only once, which is what the rule was for. What
+    changed is what comes back the second time: the products, so there is
+    nothing left to retry.
+
+    The first search has to return products. A scope that came back empty has
+    not been answered -- relaxing a filter and looking again is the honest
+    next move there, so that case is deliberately left alone.
     """
 
     def _with_products(plan, *_args, **_kwargs):
@@ -395,18 +403,24 @@ def test_repeated_shopper_scope_is_attributed_to_the_shopper_scope_gate(
             fallback_used=False,
         )
 
-    monkeypatch.setattr(
-        catalog_search_mod, "execute_catalog_search", _with_products
-    )
+    searches = 0
+
+    def _counted(plan, *args, **kwargs):
+        nonlocal searches
+        searches += 1
+        return _with_products(plan, *args, **kwargs)
+
+    monkeypatch.setattr(catalog_search_mod, "execute_catalog_search", _counted)
     ctx = _context("show me tote bags")
 
     first = search_catalog(ctx, [_scope()])
     second = search_catalog(ctx, [_scope(semantic_query="roomy tote bags")])
 
     assert _rejection_codes(first) == []
-    assert _rejection_codes(second) == [
-        SearchRejection.DUPLICATE_SHOPPER_SCOPE
-    ]
+    assert _rejection_codes(second) == []
+    # Retrieved once, answered twice.
+    assert searches == 1
+    assert "A Tote" in str(second)
 
 
 def test_a_role_the_shopper_never_typed_is_still_searched_only_once(
@@ -446,18 +460,23 @@ def test_a_role_the_shopper_never_typed_is_still_searched_only_once(
             fallback_used=False,
         )
 
-    monkeypatch.setattr(
-        catalog_search_mod, "execute_catalog_search", _with_products
-    )
+    searches = 0
+
+    def _counted(plan, *args, **kwargs):
+        nonlocal searches
+        searches += 1
+        return _with_products(plan, *args, **kwargs)
+
+    monkeypatch.setattr(catalog_search_mod, "execute_catalog_search", _counted)
     ctx = _context("I want to shop this look")
 
     first = search_catalog(ctx, [_scope()])
     second = search_catalog(ctx, [_scope(semantic_query="roomy tote bags")])
 
     assert _rejection_codes(first) == []
-    assert _rejection_codes(second) == [
-        SearchRejection.DUPLICATE_SHOPPER_SCOPE
-    ]
+    assert _rejection_codes(second) == []
+    assert searches == 1
+    assert "A Tote" in str(second)
 
 
 def test_an_empty_scope_may_be_searched_again_with_a_filter_relaxed() -> None:
@@ -480,9 +499,13 @@ def test_an_empty_scope_may_be_searched_again_with_a_filter_relaxed() -> None:
 def test_repeated_catalog_scope_is_attributed_to_the_catalog_scope_gate() -> None:
     """An open role repeats the taxonomy without repeating the shopper's noun.
 
-    The shopper never named the type, so the shopper-scope gate does not fire
-    and the repeat has to be caught -- and named -- by the taxonomy-and-
-    constraints gate instead.
+    The shopper never named the type, so the repeat arrives under the catalog
+    key rather than the shopper key. Both are answered the same way, which is
+    the point of keeping two keys: a repeat comes in two shapes and neither
+    should cost a second retrieval.
+
+    Nothing is retrieved here -- the stub returns no products -- and the
+    second call is handed that same empty finding rather than a rejection.
     """
 
     ctx = _context("put together a work outfit")
@@ -491,7 +514,8 @@ def test_repeated_catalog_scope_is_attributed_to_the_catalog_scope_gate() -> Non
     second = search_catalog(ctx, [_scope(semantic_query="roomy work tote")])
 
     assert _rejection_codes(first) == []
-    assert _rejection_codes(second) == [SearchRejection.DUPLICATE_CATALOG_SCOPE]
+    assert _rejection_codes(second) == []
+    assert str(second) == str(first)
 
 
 #: Three gates keyed on a ``taxonomy_status`` the server no longer derives.
@@ -513,6 +537,10 @@ UNREACHABLE_GATES = frozenset(
 def test_every_reachable_gate_code_is_exercised() -> None:
     """A new gate with no case here would be unattributable in production."""
 
+    # The two duplicate codes are no longer reachable: a repeated scope is
+    # answered from what it already found rather than refused, so nothing
+    # raises them. Kept in the enum so a run that somehow produces one is
+    # still attributable.
     exercised = {case[0] for case in GATE_CASES} | {
         SearchRejection.DUPLICATE_SHOPPER_SCOPE,
         SearchRejection.DUPLICATE_CATALOG_SCOPE,

@@ -1290,18 +1290,13 @@ def _no_direct_match_outcome(ctx: SearchContext, attempt: _Attempt) -> StepResul
                 shopper_scope_key is not None
                 and shopper_scope_key in ctx.scope.searched_shopper_scopes
             ):
-                return _rejected(
-                    attempt,
-                    SearchRejection.DUPLICATE_SHOPPER_SCOPE,
-                    control(
-                        "STOP_TOOL_USE: This shopper-requested product scope "
-                        "was already searched in this turn. Do not search an "
-                        "adjacent taxonomy or report the requested scope as "
-                        "unavailable. Use the result already returned.\n\n"
-                        + _SEARCH_SCOPE_COMPLETE_NOTE,
-                        ControlSignal.STOP_TOOL_USE,
-                    ),
-                )
+                # Answered from the earlier search, as above. This arm is the
+                # model declaring no direct match for a role it already
+                # searched, which is the same repeat wearing a different
+                # status.
+                answer = _already_answered(ctx, attempt)
+                if answer is not None:
+                    return answer
         evidence = SearchEvidence(
             outcome="no_direct_catalog_match",
             requested_product_type=request.requested_product_type,
@@ -1543,20 +1538,21 @@ def _remember_what_this_scope_answered(
 ) -> None:
     """Keep this scope's answer, so a repeat of it is answered from here.
 
-    Only a scope that retrieved something is worth keeping. A scope that found
-    nothing has not been answered, and replaying "no results" at a relaxed
-    retry would refuse the one search that might work -- the same reason the
-    duplicate rule already withdraws a zero-result scope from
-    `searched_shopper_scopes`.
+    Every scope that finished retrieval is recorded, including one that found
+    nothing, and the empty case earns its place by telling two situations
+    apart. A repeat can arrive after the first search returned zero, or while
+    the first search is still running -- two threads reaching the same scope
+    together, which the turn lock serialises but does not prevent. Without a
+    record for the empty case both look identical, and the honest answer for
+    one ("nothing matched") is a false statement about the other, whose
+    products are on their way.
+
+    A relaxed retry is unaffected. It carries different constraints, so it is
+    a different catalog scope with a different key, and it searches.
     """
 
     result = attempt.result
-    if (
-        outcome is None
-        or result is None
-        or not getattr(result, "ok", False)
-        or not getattr(result, "products", None)
-    ):
+    if outcome is None or result is None or not getattr(result, "ok", False):
         return
     with ctx.scope.catalog_lock:
         for key in _scope_answer_keys(attempt):
@@ -1604,32 +1600,32 @@ def _reserved_search_slot(ctx: SearchContext, attempt: _Attempt) -> StepResult:
             if attempt.prior_shopper_scopes is not None
             else ctx.scope.searched_shopper_scopes
         )
-        if (
+        # A scope asked for twice is answered twice, from what it found the
+        # first time. Both of these used to be refusals reading "use the
+        # result already returned" -- advice about data, in place of the data,
+        # and the model cannot act on advice about products it was not given.
+        # So it asked again, was told again, and J02 turn 4 spent 23 identical
+        # searches and the graph's whole recursion budget on the word "shoes".
+        #
+        # Serving the answer costs one dictionary lookup and no retrieval, and
+        # leaves the model nothing to retry: it has the products.
+        repeated = (
             shopper_scope_key is not None
             and shopper_scope_key in already_searched
-        ):
-            return _rejected(
-                attempt,
-                SearchRejection.DUPLICATE_SHOPPER_SCOPE,
-                control(
-                    "STOP_TOOL_USE: This shopper-requested product scope "
-                    "was already searched in this turn. Do not search an "
-                    "adjacent taxonomy. Use the result already returned.\n\n"
-                    + _SEARCH_SCOPE_COMPLETE_NOTE,
-                    ControlSignal.STOP_TOOL_USE,
-                ),
-            )
-        if search_scope in ctx.scope.searched_catalog_scopes:
-            return _rejected(
-                attempt,
-                SearchRejection.DUPLICATE_CATALOG_SCOPE,
-                control(
-                    "STOP_TOOL_USE: This catalog taxonomy and constraint scope was already "
-                    "searched in this turn. Do not retry it "
-                    "with a paraphrase or query expansion. Use the products "
-                    "already returned, or ask one concise clarifying question.",
-                    ControlSignal.STOP_TOOL_USE,
-                ),
+        ) or search_scope in ctx.scope.searched_catalog_scopes
+        if repeated:
+            answer = _already_answered(ctx, attempt)
+            if answer is not None:
+                return answer
+            # Claimed and not yet finished, which is two threads arriving at
+            # the same scope together. Its products land in this turn's
+            # evidence either way, so this says only what is known to be true
+            # and leaves nothing to retry.
+            return (
+                "SEARCH_SCOPE_ALREADY_RUNNING: this exact scope is already "
+                "being searched in this turn, and whatever it finds is part "
+                "of this turn's evidence. Do not send it again. Answer from "
+                "this turn's evidence once it is complete."
             )
         if ctx.scope.catalog_searches >= ctx.config.max_catalog_searches_per_turn:
             return _rejected(

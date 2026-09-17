@@ -152,6 +152,30 @@ def _format_words_this_catalog_cannot_filter_on(
     )
 
 
+def _format_colour_words_read_as_advertised_ones(
+    colours_mapped: dict[str, list[str]],
+) -> str:
+    """Say which colour word was read as which advertised colours.
+
+    The shopper is owed this both ways. They did not get the word they said,
+    and what they did get is a real filter rather than a ranking -- so unlike
+    the note above, every result here genuinely is one of these colours. Saying
+    it in the same register as the results lets the reply pass it on plainly
+    instead of implying the shade was an exact match.
+    """
+
+    if not colours_mapped:
+        return ""
+    return (
+        "SEARCH_COLOUR_READ_AS: "
+        + json.dumps(colours_mapped, sort_keys=True, default=str)
+        + " -- this catalog does not list these colour words, so the closest "
+        "colours it does list were filtered on instead. Every result really "
+        "is one of those colours. Name the colour the shopper is seeing "
+        "rather than implying it is the word they used."
+    )
+
+
 def _format_search_taxonomy_evidence(taxonomy: dict[str, Any]) -> str:
     """Format the advertised taxonomy scope used by a successful search."""
 

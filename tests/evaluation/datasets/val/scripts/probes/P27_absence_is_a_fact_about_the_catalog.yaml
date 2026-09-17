@@ -16,6 +16,8 @@ turns:
   - say: now show me skirts
     expect:
       products_min: 1               # the catalog carries 39
+      every_product: {subcategory: skirts}
   - say: and blouses
     expect:
       products_min: 1               # the catalog carries 9
+      every_product: {subcategory: blouses}

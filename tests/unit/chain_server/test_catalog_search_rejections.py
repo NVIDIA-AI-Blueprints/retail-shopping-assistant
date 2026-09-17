@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 from collections import Counter
 from collections.abc import Callable
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
 
@@ -29,6 +30,7 @@ from chain_server.src.control_signals import (
 )
 from chain_server.src.turn_scope import TurnScope
 from chain_server.src.turn_support import _search_catalog_tool_input_model
+from chain_server.src.vocabulary_judge import VocabularyVerdict
 from shared.commerce_contracts import (
     CatalogCapabilities,
     CatalogFilterCapability,
@@ -969,6 +971,157 @@ def test_a_word_the_catalog_cannot_filter_on_does_not_cost_the_role(
     text = result[0] if isinstance(result, tuple) else result
     assert "SEARCH_WORDS_RANKED_NOT_FILTERED" in text
     assert "tan" in text
+
+
+def _judge_answering_colours(
+    colours: dict[str, list[str]],
+) -> SimpleNamespace:
+    """A judge that answers the colour question and nothing else."""
+
+    verdict = VocabularyVerdict(colours=colours)
+    return SimpleNamespace(judge=lambda *_args, **_kwargs: verdict)
+
+
+def test_an_unlisted_colour_word_filters_on_the_ones_it_could_mean(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The word goes, but the constraint stays.
+
+    The scope prompt asks the model to name advertised colours for a word this
+    shop does not list, and it usually does. When it does not, dropping the
+    value dropped the field -- and the field *is* the filter, so a scope
+    naming only "navy" searched with no colour constraint at all and came back
+    in any colour. The judge says what the word could mean here, and those
+    filter in its place.
+
+    The field is named `color` in this catalog, not `primary_color`, so this
+    also fixes that the name comes from config rather than the code.
+    """
+
+    plans: list[Any] = []
+
+    def _record(plan: Any, *_args: Any, **_kwargs: Any) -> Any:
+        plans.append(plan)
+        return SimpleNamespace(
+            result=SearchCatalogResult(ok=True, products=[]),
+            fallback_attempted=False,
+            fallback_used=False,
+        )
+
+    monkeypatch.setattr(catalog_search_mod, "execute_catalog_search", _record)
+
+    ctx = _context("a navy dress")
+    ctx.config.colour_field = "color"
+    ctx = replace(ctx, vocabulary_judge=_judge_answering_colours({"navy": ["blue"]}))
+
+    result = search_catalog(
+        ctx,
+        [
+            _scope(
+                semantic_query="navy dresses",
+                requested_product_type="dresses",
+                taxonomy={"category": ["apparel"], "subcategory": ["dresses"]},
+                required_constraints={"color": ["navy"]},
+            )
+        ],
+    )
+
+    assert _rejection_codes(result) == []
+    assert plans[0].hard_filters["color"] == ["blue"]
+
+    # Said as a filter, because that is what it is. The set-aside note claims
+    # results are ranked and guarantee nothing, which would be untrue here and
+    # is what the model repeats to the shopper.
+    text = result[0] if isinstance(result, tuple) else result
+    assert "SEARCH_COLOUR_READ_AS" in text
+    assert "navy" in text
+    assert "SEARCH_WORDS_RANKED_NOT_FILTERED" not in text
+
+
+def test_an_unlisted_colour_widens_the_advertised_one_sent_beside_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unioned, so the word means the same thing either way.
+
+    Keeping only the advertised half is half the shade the shopper described,
+    and it is the common shape: of 3,040 scopes carrying a colour filter, 118
+    mixed an unadvertised word with a valid one against 15 that named nothing
+    advertised at all.
+    """
+
+    plans: list[Any] = []
+
+    def _record(plan: Any, *_args: Any, **_kwargs: Any) -> Any:
+        plans.append(plan)
+        return SimpleNamespace(
+            result=SearchCatalogResult(ok=True, products=[]),
+            fallback_attempted=False,
+            fallback_used=False,
+        )
+
+    monkeypatch.setattr(catalog_search_mod, "execute_catalog_search", _record)
+
+    ctx = _context("a midnight dress")
+    ctx.config.colour_field = "color"
+    ctx = replace(ctx, vocabulary_judge=_judge_answering_colours({"midnight": ["blue"]}))
+
+    search_catalog(
+        ctx,
+        [
+            _scope(
+                semantic_query="midnight dresses",
+                requested_product_type="dresses",
+                taxonomy={"category": ["apparel"], "subcategory": ["dresses"]},
+                required_constraints={"color": ["black", "midnight"]},
+            )
+        ],
+    )
+
+    assert plans[0].hard_filters["color"] == ["black", "blue"]
+
+
+def test_a_colour_word_nothing_fits_is_still_ranked_on(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An empty answer leaves the old behaviour exactly where it was.
+
+    The judge is asked generously, but a catalog with no neon has no neon. The
+    word then falls back to ranking and is disclosed as ranked, which is what
+    happened before any of this existed.
+    """
+
+    plans: list[Any] = []
+
+    def _record(plan: Any, *_args: Any, **_kwargs: Any) -> Any:
+        plans.append(plan)
+        return SimpleNamespace(
+            result=SearchCatalogResult(ok=True, products=[]),
+            fallback_attempted=False,
+            fallback_used=False,
+        )
+
+    monkeypatch.setattr(catalog_search_mod, "execute_catalog_search", _record)
+
+    ctx = _context("a neon dress")
+    ctx.config.colour_field = "color"
+    ctx = replace(ctx, vocabulary_judge=_judge_answering_colours({"neon": []}))
+
+    result = search_catalog(
+        ctx,
+        [
+            _scope(
+                semantic_query="neon dresses",
+                requested_product_type="dresses",
+                taxonomy={"category": ["apparel"], "subcategory": ["dresses"]},
+                required_constraints={"color": ["neon"]},
+            )
+        ],
+    )
+
+    assert "color" not in plans[0].hard_filters
+    text = result[0] if isinstance(result, tuple) else result
+    assert "SEARCH_WORDS_RANKED_NOT_FILTERED" in text
+    assert "SEARCH_COLOUR_READ_AS" not in text
 
 
 def test_the_advertised_half_of_a_colour_list_still_filters(

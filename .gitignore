@@ -83,3 +83,7 @@ ui/.next/
 # Spare catalog snapshots kept locally for comparison; never shipped.
 shared/data/enriched_products_0805.jsonl
 shared/data/enriched_products_old.jsonl
+
+# Working notes written while tracing a run. Read alongside the code they
+# describe and superseded by the next run, so they are kept locally.
+docs/reports/

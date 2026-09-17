@@ -1748,18 +1748,42 @@ def _executed_search(ctx: SearchContext, attempt: _Attempt) -> StepResult:
             result.ok,
             fallback_attempted=execution.fallback_attempted,
         )
-        if result.ok and result.products:
-            ctx.scope.product_evidence.add(result.products)
-            _append_product_results(ctx.state, result.products)
-            for product in result.products:
-                if product.image_url:
-                    ctx.scope.retrieved[product.display_name] = product.image_url
     if not result.ok:
         return result.error.message if result.error else "Catalog search failed."
 
     attempt.execution = execution
     attempt.result = result
     return None
+
+
+def _published_in_plan_order(
+    ctx: SearchContext, attempts: list[_Attempt]
+) -> None:
+    """Record what was found in the order the roles were asked for.
+
+    This used to run inside each retrieval, so the products reached the shopper
+    in whatever order the scopes happened to finish. Retrieval fans out across
+    a thread pool, so that order is not stable: the same request for a sweater
+    and boots arrived grouped on three runs and interleaved on a fourth.
+
+    Only the shopper's screen was affected -- the evidence the model reads has
+    always been rendered from `attempts`, in plan order, as `SCOPE 1`,
+    `SCOPE 2`. So the model described products in one order while the pictures
+    beside its words sat in another, and "the first one" meant two different
+    garments depending on which the shopper counted. Publishing here, from the
+    same list the renderer uses, is what makes the two agree.
+    """
+
+    with ctx.scope.catalog_lock:
+        for attempt in attempts:
+            result = attempt.result
+            if result is None or not result.ok or not result.products:
+                continue
+            ctx.scope.product_evidence.add(result.products)
+            _append_product_results(ctx.state, result.products)
+            for product in result.products:
+                if product.image_url:
+                    ctx.scope.retrieved[product.display_name] = product.image_url
 
 
 def _rendered_evidence(ctx: SearchContext, attempt: _Attempt) -> StepResult:
@@ -2641,6 +2665,10 @@ def search_catalog(
                 strict=True,
             ):
                 outcomes[index] = outcome
+
+    # After the fan-out and before anything is rendered, so what the shopper
+    # sees is ordered by the plan rather than by which scope won the race.
+    _published_in_plan_order(ctx, attempts)
 
     notices: list[str] = []
     # What the tool established itself, before anything the model volunteered:

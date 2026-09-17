@@ -1841,11 +1841,39 @@ def _a_list_written_as_json_text(value: Any) -> Any:
 
     if not isinstance(value, str):
         return value
+    text = value.strip()
     try:
-        decoded = json.loads(value)
+        decoded = json.loads(text)
     except (TypeError, ValueError):
-        return value
+        decoded = _a_list_whose_last_bracket_never_arrived(text)
+        if decoded is None:
+            return value
     return decoded if isinstance(decoded, list) else value
+
+
+def _a_list_whose_last_bracket_never_arrived(text: str) -> Any | None:
+    """Read a list missing only its closing bracket, or None if that is not it.
+
+    "do you have that first one in a size 6" resolved correctly -- the right
+    product_ref, the right ordinal, the right turn -- and arrived as 301
+    characters of JSON with one `]` absent. The call errored, the error said
+    nothing the model could act on, and it sent the identical 301 characters
+    twenty-two times until the graph's recursion limit ended the turn.
+
+    Only the bracket is supplied, never a brace. A missing `]` means every
+    object in the list closed, so nothing is being guessed at. A missing `}`
+    would mean an object was cut mid-field, and completing that invents a
+    descriptor: a reference that lost its `ordinal` but kept its `category`
+    would resolve, quietly, to a different product than the shopper meant.
+    Those still fail, which is the outcome they should have.
+    """
+
+    if not text.startswith("[") or text.endswith("]"):
+        return None
+    try:
+        return json.loads(text + "]")
+    except (TypeError, ValueError):
+        return None
 
 
 class _ShopperSkillActivationInput(BaseModel):

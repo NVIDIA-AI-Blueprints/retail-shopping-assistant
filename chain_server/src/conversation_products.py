@@ -10,10 +10,17 @@ from typing import Any, Literal
 from urllib.parse import quote
 
 import requests
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
-
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 from shared.commerce_contracts import ProductSummary
 
+from .turn_support import _a_list_written_as_json_text
 
 _DEFAULT_TIMEOUT_SECONDS = 10.0
 _DEFAULT_INDEX_MAX_CHARS = 12_000
@@ -128,6 +135,14 @@ class ProductReferenceDescriptor(_ConversationProductModel):
 
 class ResolveConversationProductsRequest(_ConversationProductModel):
     """One batched historical-product resolution request."""
+
+    # Forgiven here for the same reason the cart tool and skill activation
+    # forgive it: the list arrives JSON-encoded inside a string often enough to
+    # have cost whole turns, and the contents are validated against the same
+    # model either way.
+    _accept_references_as_text = field_validator("references", mode="before")(
+        _a_list_written_as_json_text
+    )
 
     references: list[ProductReferenceDescriptor] = Field(
         ...,

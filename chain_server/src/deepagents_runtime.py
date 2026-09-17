@@ -13,7 +13,7 @@ import logging
 import os
 import sys
 import time
-from collections.abc import AsyncIterator, Collection
+from collections.abc import AsyncIterator, Collection, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from datetime import date as CalendarDate
@@ -371,6 +371,29 @@ _SHOPPER_CONTEXT_SYSTEM_RULES = """Representative-shopper precedence and safety:
 - Cart, catalog, product-detail, and store-policy evidence remain authoritative.
 - Never infer a shopper's location, the weather, or a seasonal need. Nothing in
   this context establishes any of them, and naming one is an invented fact."""
+def _numbered_for_the_screen(
+    products: Sequence[Any],
+) -> list[dict[str, Any]]:
+    """The turn's products, each carrying the place it holds on the screen.
+
+    So the client renders a given order instead of deriving one. It had been
+    deriving one: the chat row was built from a name-keyed image map, the
+    product list was matched back into it by display name, and the panel kept
+    its own ordering state. Three mechanisms standing in for a number.
+
+    Stamped here rather than on `state.product_results` because that list is
+    re-parsed as `ProductSummary`, which forbids unknown fields. It belongs at
+    this boundary regardless: where a product sits on a screen is a fact about
+    how this turn was presented, not a fact about the product.
+    """
+
+    return [
+        {**product, "position": position}
+        for position, product in enumerate(products, 1)
+        if isinstance(product, dict)
+    ]
+
+
 _GROUNDING_EDITOR_SYSTEM_PROMPT = """You are a final response editor for a retail shopping assistant.
 
 Rewrite the draft response only as needed so every factual claim is supported
@@ -1184,7 +1207,11 @@ class DeepAgentsRuntime:
         products = output.product_results or []
         if products:
             yield json.dumps(
-                {"type": "products", "payload": products, "timestamp": time.time()}
+                {
+                    "type": "products",
+                    "payload": _numbered_for_the_screen(products),
+                    "timestamp": time.time(),
+                }
             )
         images = output.retrieved or {}
         yield json.dumps({"type": "images", "payload": images, "timestamp": time.time()})

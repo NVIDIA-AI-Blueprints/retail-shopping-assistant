@@ -27,6 +27,7 @@ from chain_server.src.catalog_search import (
     _Attempt,
     _published_in_plan_order,
 )
+from chain_server.src.deepagents_runtime import _numbered_for_the_screen
 from chain_server.src.turn_scope import TurnScope
 from shared.commerce_contracts import ProductSummary
 
@@ -156,3 +157,44 @@ def test_the_same_product_from_two_scopes_keeps_its_first_position() -> None:
         "Qute Cashmere",
         "Gentle Meadow",
     ]
+
+
+def test_the_screen_position_is_stamped_from_the_published_order() -> None:
+    """The number and the order come from one list, so they cannot disagree.
+
+    The client had been deriving an order instead of being given one: the chat
+    row was built from a name-keyed image map, the product list was matched back
+    into it by display name, and the panel kept its own ordering state.
+    """
+
+    ctx = _context()
+    _published_in_plan_order(
+        ctx,
+        [
+            _finished("sweaters", "Polished Peplum", "Qute Cashmere"),
+            _finished("boots", "Yantra Boots"),
+        ],
+    )
+
+    numbered = _numbered_for_the_screen(ctx.state.product_results)
+
+    assert [(p["position"], p["display_name"]) for p in numbered] == [
+        (1, "Polished Peplum"),
+        (2, "Qute Cashmere"),
+        (3, "Yantra Boots"),
+    ]
+
+
+def test_the_position_never_reaches_the_product_record() -> None:
+    """`ProductSummary` forbids unknown fields, and the memory path re-parses it.
+
+    Stamping the position into `state.product_results` would fail validation
+    there, so it is added only to the copy handed to the client.
+    """
+
+    ctx = _context()
+    _published_in_plan_order(ctx, [_finished("sweaters", "Polished Peplum")])
+    _numbered_for_the_screen(ctx.state.product_results)
+
+    assert "position" not in ctx.state.product_results[0]
+    ProductSummary(**ctx.state.product_results[0])

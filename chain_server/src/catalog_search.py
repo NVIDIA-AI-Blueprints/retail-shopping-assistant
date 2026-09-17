@@ -269,6 +269,14 @@ class _Attempt:
     #: as approved: it means the older gates below are the ones deciding.
     judged_not_a_kind: tuple[str, ...] = ()
     judge_ruled: bool = False
+    #: For a scope naming no subcategory this catalog advertises: the
+    #: advertised subcategories the judge says *are* kinds of the requested
+    #: word, and whether it answered at all. "Shoes" is not a subcategory here
+    #: but flats and heels are kinds of it, so the shop sells shoes under other
+    #: names; nothing is a kind of "jeans", so it does not sell them. The two
+    #: arrive identically and only this tells them apart.
+    judged_umbrella: tuple[str, ...] = ()
+    judged_umbrella_ruled: bool = False
     constraint_payload: Any = None
     evidence: Any = None
     #: Shopper scopes searched by *earlier calls*, snapshotted at the start
@@ -2156,13 +2164,60 @@ def _judged_vocabulary(ctx: SearchContext, attempt: _Attempt) -> StepResult:
         return None
 
 
-    # A subcategory this catalog has no such thing as needs no judging: there
-    # is nothing to compare the request against. Settled here, which also keeps
-    # it out of the judge's question -- asked whether "jeans" is a kind of
-    # "jeans" against a list that has no jeans in it, the model has to answer a
-    # question that does not mean anything.
+    # Nothing here is a subcategory this catalog advertises. Which of two
+    # findings that is depends on the word, not on the shape: flats and heels
+    # are kinds of "shoes", so a shop listing them sells shoes under other
+    # names, while nothing is a kind of "jeans". Settled without asking, both
+    # came out as absent, and a shoe shop answered a request for shoes with
+    # "we don't sell those".
     if all(value not in _advertised_subcategories(ctx.capabilities) for value in selected):
-        return _refused_role(ctx, attempt, selected, has_no_such_subcategory=True)
+        if attempt.judged_umbrella:
+            # The word is covered, under other names. Corrected in place and
+            # searched, which is the answer the shopper asked for and one round
+            # trip cheaper than handing the scope back to be re-sent.
+            payload["subcategory"] = list(attempt.judged_umbrella)
+            attempt.taxonomy = payload
+            return None
+        if attempt.judged_umbrella_ruled:
+            # Asked, and nothing advertised is a kind of it. That is a fact
+            # about the catalog, and the role closes on it.
+            return _refused_role(ctx, attempt, selected, has_no_such_subcategory=True)
+        # Unruled, so which of the two this is remains unknown -- and "the shop
+        # does not sell it" is not ours to say on a guess. Handed back as the
+        # argument problem it may well be, which is how this behaved before the
+        # judge existed.
+        #
+        # Bounded to one go, because inviting another subcategory is how the
+        # enum walk started: told jeans are not skirts the model tried
+        # jumpsuits, then dresses, blouses, camisoles and sweaters. The same
+        # turn-wide lock the absence path uses stops the second one, so a judge
+        # that cannot be reached costs a retry rather than a whole budget.
+        with ctx.scope.catalog_lock:
+            already_told = bool(ctx.scope.roles_not_advertised)
+            ctx.scope.roles_not_advertised.add(
+                _normalize_product_text(attempt.semantic_query)
+            )
+        if already_told:
+            return _rejected(
+                attempt,
+                SearchRejection.TAXONOMY_NOT_ADVERTISED_FOR_SCOPE,
+                control(
+                    "STOP_TOOL_USE: a role was already turned back this turn "
+                    "and this one names no subcategory this catalog "
+                    "advertises. Do not try another subcategory for it. Answer "
+                    "the shopper with what the other roles found and say "
+                    "plainly which part you could not look up.",
+                    ControlSignal.STOP_TOOL_USE,
+                ),
+            )
+        return _rejected(
+            attempt,
+            SearchRejection.TAXONOMY_NOT_ADVERTISED_FOR_SCOPE,
+            SEARCH_VALIDATION_ERROR_PREFIX
+            + f"this catalog advertises no {json.dumps(selected)}. Send this "
+            "role again scoped to advertised subcategories, or leave it out "
+            "and say which part of the request you could not look up.",
+        )
 
     if not attempt.judge_ruled or not attempt.judged_not_a_kind:
         return None
@@ -2238,6 +2293,34 @@ def _refused_role(
     """
 
     requested = attempt.requested_product_type or attempt.semantic_query
+
+    # Whether this shop sells the thing, and whether these arguments named it
+    # correctly, are two different findings. Only the first belongs in the
+    # NOT_CARRIED notice, and conflating them says the shop lacks what it
+    # sells: "show me tote bags" scoped to a `hatboxes` subcategory is a
+    # mis-named scope over nine tote bags, not an absence. Reported as an
+    # absence it would also disarm the guard that stops a turn whose searches
+    # were all refused, since that guard reads the same notice.
+    #
+    # This one keeps the validation register on purpose. That register is
+    # wrong for an absent garment -- "send different arguments" is not
+    # answerable when no arguments would make jeans exist -- but it is exactly
+    # right here, where different arguments are precisely what is needed, and
+    # naming the advertised subcategory makes the correction one call rather
+    # than a walk through the enum.
+    if _normalize_product_text(str(requested)) in {
+        _normalize_product_text(name)
+        for name in _advertised_subcategories(ctx.capabilities)
+    }:
+        return _rejected(
+            attempt,
+            SearchRejection.TAXONOMY_NOT_ADVERTISED_FOR_SCOPE,
+            SEARCH_VALIDATION_ERROR_PREFIX
+            + f"this catalog has no {json.dumps(selected)}, but it does sell "
+            f"'{requested}'. Send this role again scoped to '{requested}' "
+            "itself.",
+        )
+
     role_key = _normalize_product_text(attempt.semantic_query)
     with ctx.scope.catalog_lock:
         # Any refusal already made this turn, not this same role refused twice.
@@ -2452,6 +2535,31 @@ def _one_scope_per_category(ctx: SearchContext, scopes: list[Any]) -> list[Any]:
     return fanned
 
 
+def _umbrella_candidates(
+    payload: dict[str, Any],
+    capabilities: CatalogCapabilities,
+) -> tuple[str, ...]:
+    """The advertised subcategories a word this catalog lacks might cover.
+
+    Narrowed to the categories the scope named, so "shoes" under `footwear` is
+    asked about footwear rather than about every subcategory in the shop. A
+    scope naming no category has nothing to narrow by and is asked about all
+    of them, which is the honest reading of a request that named none.
+    """
+
+    named = [
+        name
+        for name in dict.fromkeys(payload.get("category") or [])
+        if name in capabilities.taxonomy.categories
+    ]
+    if named:
+        members: list[str] = []
+        for name in named:
+            members.extend(capabilities.taxonomy.categories[name].subcategories)
+        return tuple(dict.fromkeys(members))
+    return tuple(sorted(_advertised_subcategories(capabilities)))
+
+
 def _colour_field(ctx: SearchContext) -> str:
     """The catalog's colour filter, by name from config rather than baked in.
 
@@ -2537,19 +2645,29 @@ def _judge_this_call(ctx: SearchContext, attempts: list[_Attempt]) -> None:
         members, _category_only = _scope_members(payload, ctx.capabilities)
         subcategories = tuple(members)
         requested = attempt.requested_product_type
-        # Only scopes whose values this catalog actually advertises. A scope
-        # naming a subcategory the shop has no such thing as is settled without
-        # a model call, so nothing is spent asking whether jeans are a kind of
-        # jeans.
-        if (
-            requested
-            and subcategories
-            and any(
-                value in _advertised_subcategories(ctx.capabilities)
-                for value in subcategories
-            )
+        if not requested or not subcategories:
+            continue
+        if any(
+            value in _advertised_subcategories(ctx.capabilities)
+            for value in subcategories
         ):
             questions.append(ScopeQuestion(str(requested), subcategories))
+            continue
+
+        # Nothing here is a subcategory this catalog advertises, and that is
+        # two different situations wearing one shape. "Shoes" is not a
+        # subcategory in a shop that lists flats, heels, sandals and boots --
+        # but every one of those is a kind of shoe, so the shop sells shoes
+        # under other names. "Jeans" is not a subcategory either, and nothing
+        # is a kind of jeans, so the shop does not sell them.
+        #
+        # Settling this without asking called both of them absent, so a request
+        # for shoes was answered "we don't sell those" by a shoe shop. Asking
+        # turns the first into a correction inside this call, which is cheaper
+        # than the repair round trip it replaces as well as being right.
+        candidates = _umbrella_candidates(payload, ctx.capabilities)
+        if candidates:
+            questions.append(ScopeQuestion(str(requested), candidates))
 
     capability = ctx.capabilities.filters.get(_colour_field(ctx))
     advertised_colours = [
@@ -2603,6 +2721,26 @@ def _judge_this_call(ctx: SearchContext, attempts: list[_Attempt]) -> None:
         requested = attempt.requested_product_type
         if not requested or not subcategories:
             continue
+
+        # Read back the same way it was asked. A scope naming nothing this
+        # catalog advertises was asked which advertised subcategories are kinds
+        # of its word, so the answer is the covering set rather than a verdict
+        # on what it sent.
+        if not any(
+            value in _advertised_subcategories(ctx.capabilities)
+            for value in subcategories
+        ):
+            candidates = _umbrella_candidates(payload, ctx.capabilities)
+            umbrella = ScopeQuestion(str(requested), candidates)
+            if not candidates or verdict.every_subcategory_is_a_kind(umbrella) is None:
+                continue
+            not_a_kind = set(verdict.subcategories_to_drop(umbrella))
+            attempt.judged_umbrella_ruled = True
+            attempt.judged_umbrella = tuple(
+                value for value in candidates if value not in not_a_kind
+            )
+            continue
+
         question = ScopeQuestion(str(requested), subcategories)
         if verdict.every_subcategory_is_a_kind(question) is None:
             continue

@@ -260,6 +260,41 @@ def _how_the_turn_ended(diagnostics: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+#: Endings that mean the turn ran out of something rather than finished.
+#: `recursion_limit` is the graph's step ceiling and `agent_timeout` the clock;
+#: both leave the shopper a generic apology in place of an answer.
+_RAN_OUT = frozenset({"recursion_limit", "agent_timeout"})
+
+
+def _the_turn_reached_an_end(turn: TurnResult) -> list[Check]:
+    """Assert the turn finished, on every turn, whatever the script asked.
+
+    Not declared per scenario, because the failure it catches is the one nobody
+    thinks to write an expectation for. J01 reported 24 passing checks on a run
+    where turn 17 sent 21 identical searches and died on the graph's recursion
+    limit, and again on a run where the same turn showed the shopper *zero*
+    products. The scripted checks read the final reply, and "This request took
+    too long to complete. Please retry." satisfied them.
+
+    So a scenario can go green while a turn is comprehensively broken, which is
+    how three separate loops survived a passing suite. A turn that ran out of
+    steps or time did not answer, and that is a failure regardless of what the
+    text looks like.
+    """
+
+    if turn.ended not in _RAN_OUT:
+        return []
+    repeats = sum(turn.repeated.values())
+    return [
+        Check(
+            "turn_completed",
+            "fail",
+            f"ended on {turn.ended}"
+            + (f" after {repeats} identical repeated calls" if repeats else ""),
+        )
+    ]
+
+
 def _identical_repeats(calls: Sequence[Mapping[str, Any]]) -> dict[str, int]:
     """How many calls repeated an earlier call's name *and* arguments, by name.
 
@@ -620,7 +655,10 @@ def run_scenario(
             rejected=answered.get("rejected") or [],
             repeated=answered.get("repeated") or {},
         )
-        turn.checks = check_turn(step.get("expect") or {}, turn, previous_cart)
+        turn.checks = [
+            *check_turn(step.get("expect") or {}, turn, previous_cart),
+            *_the_turn_reached_an_end(turn),
+        ]
         previous_cart = turn.cart
         turns.append(turn)
 

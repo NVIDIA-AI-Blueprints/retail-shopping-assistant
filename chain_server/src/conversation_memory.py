@@ -13,10 +13,9 @@ from urllib.parse import quote
 
 import requests
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError
-
-from .agenttypes import SHOPPER_PROFILE_ID_PATTERN, DialogueTurn, ShopperContext
 from shared.commerce_contracts import ProductSummary
 
+from .agenttypes import SHOPPER_PROFILE_ID_PATTERN, DialogueTurn, ShopperContext
 
 TurnStatus = Literal["started", "completed", "failed", "blocked", "abandoned"]
 FinalTurnStatus = Literal["completed", "failed", "blocked"]

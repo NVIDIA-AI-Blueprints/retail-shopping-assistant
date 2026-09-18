@@ -12,15 +12,13 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from memory_retriever.src import main as memory_main
+from memory_retriever.src import product_references
+from memory_retriever.src.migrations import _MIGRATIONS
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
-
-from memory_retriever.src import main as memory_main
-from memory_retriever.src.migrations import _MIGRATIONS
-from memory_retriever.src import product_references
-
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 

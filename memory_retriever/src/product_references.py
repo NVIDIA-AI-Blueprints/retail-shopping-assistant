@@ -17,8 +17,13 @@ from .models import ConversationEvent, ConversationProjection, ConversationTurn
 
 
 PRESENTED_PRODUCTS_EVENT_KEY = "runtime-presented-products"
-#: Where the product sat on the screen, kept with it rather than recounted.
+#: Where the product sat on the screen, kept beside it rather than recounted.
 _SCREEN_POSITION_KEY = "screen_position"
+#: The product itself, inside a recorded entry. Anything the record knows about
+#: how a turn presented a product is a sibling of this key, never a field
+#: within it: the runtime's product contract admits product fields only, and
+#: refuses -- for the whole object -- anything it does not recognise.
+_STORED_PRODUCT_KEY = "product"
 # Query safety bound only. The character budget below is the effective limit:
 # a compact set of eight products is roughly 1KB, so ~15 sets survive and this
 # row cap is never reached. Resolution itself is unbounded and still sees every
@@ -130,22 +135,33 @@ def append_presented_products_event(
 ) -> ConversationEvent | None:
     """Append one event for the ordered products returned to the shopper.
 
-    The place each product holds on the screen is recorded with it, counted
+    The place each product holds on the screen is recorded beside it, counted
     over everything presented and not over what survives this filter. The
     number the shopper reads is stamped on the streamed list, which is not
     filtered, so counting the kept ones would shift every position after a
     dropped product: they would say "the fifth" and be handed the sixth.
     Numbering first leaves a gap instead, and a gap resolves to nothing rather
     than to the wrong garment.
+
+    Beside it, and not on it, because a product record holds product facts. The
+    position was previously stamped into the product itself and popped back off
+    by name when read, which works only while every annotation is remembered in
+    both places. One was not: a second annotation was added, the read path did
+    not know to remove it, and the product came back out of the record carrying
+    a field the runtime's product contract forbids. The runtime refused the
+    whole object, the refusal was read as "no such product", and a shopper
+    asking for a bag they had been shown four turns earlier was told the
+    reference was not valid. Nesting makes that leak unrepresentable rather
+    than remembered.
     """
 
     products = []
     for position, product in enumerate(product_results, start=1):
         if not _is_referenceable_product(product):
             continue
-        stored = _persistable(product)
-        stored[_SCREEN_POSITION_KEY] = position
-        products.append(stored)
+        products.append(
+            {_STORED_PRODUCT_KEY: _persistable(product), _SCREEN_POSITION_KEY: position}
+        )
     if not products:
         return None
 
@@ -660,6 +676,16 @@ def _compact_products(payload_json: str) -> list[dict[str, Any]]:
 
 
 def _event_products(payload_json: str) -> list[tuple[int, dict[str, Any]]]:
+    """Each recorded product and the place on the screen it was shown in.
+
+    Three shapes of entry, because conversations already written keep theirs.
+    The product nested under its own key is what is written now. Before that it
+    was the product itself with the position stamped into it, and before that
+    the product alone. The two older shapes are read by taking the entry as the
+    product and lifting the position off it, which is also what keeps a product
+    recorded the old way from coming back out with a stray field on it.
+    """
+
     try:
         payload = json.loads(payload_json)
     except (TypeError, ValueError):
@@ -669,16 +695,22 @@ def _event_products(payload_json: str) -> list[tuple[int, dict[str, Any]]]:
         return []
 
     products: list[tuple[int, dict[str, Any]]] = []
-    for counted, product in enumerate(raw_products, start=1):
+    for counted, entry in enumerate(raw_products, start=1):
+        if not isinstance(entry, dict):
+            continue
+        nested = entry.get(_STORED_PRODUCT_KEY)
+        if isinstance(nested, dict):
+            product, position = dict(nested), entry.get(_SCREEN_POSITION_KEY)
+        else:
+            product = dict(entry)
+            position = product.pop(_SCREEN_POSITION_KEY, None)
         if not _is_referenceable_product(product):
             continue
-        stored = dict(product)
-        # Recorded before this list was filtered, so it is the number the
-        # shopper was shown. Counting here is the fallback for conversations
-        # written before the number was kept.
-        position = stored.pop(_SCREEN_POSITION_KEY, None)
+        # Recorded before the list was filtered, so it is the number the shopper
+        # was shown. Counting here is the fallback for a conversation written
+        # before the number was kept at all.
         products.append(
-            (position if isinstance(position, int) and position > 0 else counted, stored)
+            (position if isinstance(position, int) and position > 0 else counted, product)
         )
     return products
 

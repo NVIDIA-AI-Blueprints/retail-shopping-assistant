@@ -2113,6 +2113,11 @@ class DeepAgentsRuntime:
             if not requested_items:
                 return "Cart add failed: provide at least one PRODUCT_REF to add."
 
+            #: Refs whose lookup broke rather than came back empty. A reference
+            #: that cannot be read is a fault in this service, and the answer it
+            #: earns is not the one a reference nobody was ever shown earns.
+            lookup_failures: list[str] = []
+
             def _resolve_from_conversation_index(product_ref: str):
                 """Look one ref up in the conversation's durable product index."""
 
@@ -2127,7 +2132,23 @@ class DeepAgentsRuntime:
                         identity.conversation_id,
                         descriptors,
                     )
-                except (ConversationProductsError, ValidationError):
+                except (ConversationProductsError, ValidationError) as exc:
+                    # The lookup itself failed, which is not the same fact as
+                    # this conversation never having shown the product, and
+                    # returning the same `None` for both is how a working lookup
+                    # came out as a missing bag. The record held the product and
+                    # returned it; the response carried one field the product
+                    # contract does not admit, so it was refused here and the
+                    # refusal was read upstream as "no such reference". The
+                    # shopper was told the reference was not valid, and nothing
+                    # anywhere said why.
+                    logger.error(
+                        "chain-server | cart add | the conversation record could "
+                        "not be read for PRODUCT_REF %s: %s",
+                        product_ref,
+                        exc,
+                    )
+                    lookup_failures.append(product_ref)
                     return None
                 scope.product_evidence.add_resolutions(result.results, descriptors)
                 state.system_identified_products = list(
@@ -2150,6 +2171,23 @@ class DeepAgentsRuntime:
                     # This is a lookup in the conversation's own record, not a
                     # catalog search.
                     product = _resolve_from_conversation_index(product_ref)
+                if product is None and product_ref in lookup_failures:
+                    # Read, not missing. Sending this down the path below would
+                    # tell the model to search the catalog for a product the
+                    # record is holding, and to ask the shopper which of the
+                    # results they meant -- about the one they just named.
+                    # Nothing the model can do repairs a fault in this service,
+                    # so say that, and let the turn say so plainly rather than
+                    # inventing a reason the shopper is at fault.
+                    failed.append(
+                        f"- PRODUCT_REF '{product_ref}': this conversation's "
+                        "record could not be read, which is a fault on our "
+                        "side and not a missing product. Do not search for it "
+                        "and do not ask the shopper to identify it again. Tell "
+                        "them the cart could not be updated just now and that "
+                        "they can try again."
+                    )
+                    continue
                 if product is None:
                     # Two different situations reach here, and naming only one
                     # of them stranded the other.

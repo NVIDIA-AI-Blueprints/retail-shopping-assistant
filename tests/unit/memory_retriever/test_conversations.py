@@ -670,15 +670,22 @@ def test_finalize_indexes_ordered_presented_products_once(
         assert events[0].logical_order == 1
         # Everything the shopper was shown, minus the two keys nothing reads
         # back: the prose serialisation and the retrieval score.
+        #
+        # Each entry holds the product under its own key, with what this record
+        # knows about the showing -- the place on the screen -- beside it rather
+        # than within it. The runtime parses that product against a contract
+        # that refuses unrecognised fields, so a presentation fact stored on a
+        # product comes back as a refused product.
         stored = json.loads(events[0].payload_json)["products"]
-        assert [p["display_name"] for p in stored] == [
+        assert [entry["product"]["display_name"] for entry in stored] == [
             p["display_name"] for p in products
         ]
-        assert stored[0]["attributes"] == {
+        assert [entry["screen_position"] for entry in stored] == [1, 2]
+        assert stored[0]["product"]["attributes"] == {
             "taxonomy": {"category": "bags"},
             "primary_color": "black",
         }
-        assert "catalog_text" not in stored[0]["attributes"]
+        assert "catalog_text" not in stored[0]["product"]["attributes"]
         candidate_set_id = events[0].event_id
 
     next_turn = _start_turn(
@@ -916,6 +923,133 @@ def test_product_resolution_uses_candidate_set_ordinal(
     assert result["status"] == "resolved"
     assert result["matches"][0]["product"] == products[1]
     assert result["matches"][0]["position"] == 2
+
+
+def test_the_record_hands_back_a_product_the_runtime_can_read(
+    conversation_db: TestClient,
+) -> None:
+    """Whatever this service records, the runtime has to be able to parse.
+
+    The runtime's product contract admits product fields and refuses the whole
+    object over anything else. So a field this service keeps about how a turn
+    presented a product -- the place on the screen, the heading it was shown
+    under -- reaches the runtime as a refusal, and the refusal was read there as
+    "no such reference". A shopper asking for a bag they had been shown four
+    turns earlier was told the reference was not valid, with the bag sitting in
+    the record and having been returned.
+
+    So this asserts the round trip rather than a field list: present a product,
+    resolve it, and parse what comes back with the contract itself. It is the
+    only test that fails if a new annotation is stored on a product instead of
+    beside one.
+    """
+
+    from shared.commerce_contracts import ProductSummary
+
+    _, candidate_set_id = _present_products(
+        conversation_db,
+        "conversation-contract",
+        request_id="request-contract",
+        products=[
+            {
+                "product_id": "tote-1",
+                "display_name": "Jade Tone Canvas Tote Bag",
+                "category": "tote_bags",
+                "price": {"amount": 39.99, "currency": "USD"},
+                "attributes": {"sizes": ["onesize"], "primary_color": "green"},
+            }
+        ],
+    )
+
+    resolved = conversation_db.post(
+        "/conversations/conversation-contract/products/resolve",
+        json={
+            "references": [
+                {
+                    "reference_id": "by-ref",
+                    "product_ref": "tote-1",
+                    "candidate_set_id": candidate_set_id,
+                }
+            ]
+        },
+    ).json()["results"][0]
+
+    assert resolved["status"] == "resolved"
+    match = resolved["matches"][0]
+    ProductSummary.model_validate(match["product"])
+    # The position still travels -- beside the product, where the runtime reads
+    # it as a presentation coordinate rather than as a product field.
+    assert match["position"] == 1
+
+
+def test_a_product_recorded_the_old_way_still_resolves(
+    conversation_db: TestClient,
+) -> None:
+    """Conversations already written keep the shape they were written in.
+
+    Two older shapes exist: the product with its screen position stamped into
+    it, and, before positions were kept at all, the product alone. Both have to
+    resolve, and neither may hand the stamped field back to the runtime.
+    """
+
+    from shared.commerce_contracts import ProductSummary
+
+    started = _start_turn(
+        conversation_db,
+        "conversation-legacy",
+        request_id="request-legacy",
+        shopper_text="show me bags",
+    ).json()
+    _finalize_turn(
+        conversation_db,
+        "conversation-legacy",
+        started["turn_id"],
+        request_id="request-legacy",
+        attempt_id=started["attempt_id"],
+        output={
+            "product_results": [{"product_id": "bag-1", "display_name": "Only Bag"}],
+            "retrieved": {},
+            "agent_diagnostics": {},
+        },
+    )
+
+    with memory_main.SessionLocal() as db:
+        event = (
+            db.query(memory_main.ConversationEvent)
+            .filter_by(turn_id=started["turn_id"], event_type="candidate_set_presented")
+            .one()
+        )
+        # Rewritten as the two shapes that predate nesting.
+        event.payload_json = json.dumps(
+            {
+                "products": [
+                    {
+                        "product_id": "bag-1",
+                        "display_name": "Only Bag",
+                        "screen_position": 1,
+                    },
+                    {"product_id": "bag-2", "display_name": "Second Bag"},
+                ]
+            }
+        )
+        candidate_set_id = event.event_id
+        db.commit()
+
+    resolved = conversation_db.post(
+        "/conversations/conversation-legacy/products/resolve",
+        json={
+            "references": [
+                {"reference_id": "a", "candidate_set_id": candidate_set_id, "ordinal": 1},
+                {"reference_id": "b", "candidate_set_id": candidate_set_id, "ordinal": 2},
+            ]
+        },
+    ).json()["results"]
+
+    assert [result["status"] for result in resolved] == ["resolved", "resolved"]
+    for result in resolved:
+        product = result["matches"][0]["product"]
+        assert "screen_position" not in product
+        ProductSummary.model_validate(product)
 
 
 def test_an_unreferenceable_product_does_not_shift_the_rest(

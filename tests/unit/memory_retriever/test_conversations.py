@@ -104,6 +104,7 @@ def _present_products(
     *,
     request_id: str,
     products: list[dict],
+    shown_under: dict[str, str] | None = None,
 ) -> tuple[dict, str]:
     started = _start_turn(
         client,
@@ -120,6 +121,7 @@ def _present_products(
         output={
             "product_results": products,
             "retrieved": {},
+            "shown_under": shown_under or {},
             "agent_diagnostics": {},
         },
     )
@@ -472,6 +474,10 @@ def test_start_is_idempotent_and_rejects_active_or_conflicting_reuse(
     assert replay.json()["output"] == {
         "product_results": [{"product_ref": "bag-1"}],
         "retrieved": {"Structured Bag": "/images/bag.png"},
+        # The role each product was shown under. Empty because this turn was
+        # finalized without one, which is what a replay of an older turn looks
+        # like.
+        "shown_under": {},
         "agent_diagnostics": {"final_termination_reason": "completed"},
         "selected_skill_names": [],
     }
@@ -916,6 +922,60 @@ def test_product_resolution_uses_candidate_set_ordinal(
     assert result["status"] == "resolved"
     assert result["matches"][0]["product"] == products[1]
     assert result["matches"][0]["position"] == 2
+
+
+def test_the_word_a_product_was_shown_under_survives_to_the_reference(
+    conversation_db: TestClient,
+) -> None:
+    """A shopper asks for shoes; the catalogue calls them heels and sandals.
+
+    The word is the shopper's, and it is the heading the reply put them under,
+    so it is what they will say next. Nothing else in the record holds it: the
+    catalogue's own `category` splits one ask for shoes across three kinds, and
+    the taxonomy that produced them is gone by the time the products are
+    written down.
+    """
+
+    products = [
+        {"product_id": "shoe-1", "display_name": "Buckled Heels", "category": "heels"},
+        {"product_id": "shoe-2", "display_name": "Satin Sandals", "category": "sandals"},
+    ]
+    _, candidate_set_id = _present_products(
+        conversation_db,
+        "conversation-shown-under",
+        request_id="request-shown-under",
+        products=products,
+        shown_under={"shoe-1": "shoes", "shoe-2": "shoes"},
+    )
+
+    resolved = conversation_db.post(
+        "/conversations/conversation-shown-under/products/resolve",
+        json={
+            "references": [
+                {
+                    "reference_id": "sandal",
+                    "candidate_set_id": candidate_set_id,
+                    "ordinal": 2,
+                }
+            ]
+        },
+    ).json()["results"][0]
+
+    assert resolved["status"] == "resolved"
+    product = resolved["matches"][0]["product"]
+    assert product["category"] == "sandals"
+    assert product["shown_under"] == "shoes"
+
+    # And the index the model reads next turn carries it, so it can say
+    # "shoes" about a sandal without being told the taxonomy.
+    started = _start_turn(
+        conversation_db,
+        "conversation-shown-under",
+        request_id="request-after",
+        shopper_text="the second one",
+    ).json()
+    index = json.dumps(started["projection"]["product_reference_index"])
+    assert '"shown_under": "shoes"' in index
 
 
 def test_an_unreferenceable_product_does_not_shift_the_rest(

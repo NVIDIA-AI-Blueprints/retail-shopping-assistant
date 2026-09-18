@@ -130,6 +130,8 @@ class TurnReplayOutput(BaseModel):
 
     product_results: list[dict[str, Any]]
     retrieved: dict[str, str]
+    #: The role each product was shown under, by product ref.
+    shown_under: dict[str, str] = Field(default_factory=dict)
     agent_diagnostics: dict[str, Any]
     selected_skill_names: list[str] = Field(default_factory=list, max_length=5)
 
@@ -727,6 +729,7 @@ def _finalize_turn(
         turn,
         request.output.product_results if request.output is not None else [],
         created_at=now,
+        shown_under=(request.output.shown_under if request.output is not None else {}),
     )
     db.flush()
     projection = _get_or_create_projection(db, conversation_id)

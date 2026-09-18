@@ -13,7 +13,7 @@ import logging
 import os
 import sys
 import time
-from collections.abc import AsyncIterator, Collection, Sequence
+from collections.abc import AsyncIterator, Collection, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from datetime import date as CalendarDate
@@ -373,6 +373,7 @@ _SHOPPER_CONTEXT_SYSTEM_RULES = """Representative-shopper precedence and safety:
   this context establishes any of them, and naming one is an invented fact."""
 def _numbered_for_the_screen(
     products: Sequence[Any],
+    shown_under: Mapping[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     """The turn's products, each carrying the place it holds on the screen.
 
@@ -381,17 +382,30 @@ def _numbered_for_the_screen(
     product list was matched back into it by display name, and the panel kept
     its own ordering state. Three mechanisms standing in for a number.
 
+    The role the shopper asked each one under travels with it, so a panel can
+    put a heading over them without inventing the grouping. Its own `category`
+    cannot: one ask for shoes comes back filed as heels, flats and sandals, so
+    grouping on that turns a single question into three headings the reply
+    beside it does not use.
+
     Stamped here rather than on `state.product_results` because that list is
     re-parsed as `ProductSummary`, which forbids unknown fields. It belongs at
-    this boundary regardless: where a product sits on a screen is a fact about
-    how this turn was presented, not a fact about the product.
+    this boundary regardless: where a product sits on a screen, and what it was
+    shown as, are facts about how this turn was presented rather than facts
+    about the product.
     """
 
-    return [
-        {**product, "position": position}
-        for position, product in enumerate(products, 1)
-        if isinstance(product, dict)
-    ]
+    roles = shown_under or {}
+    numbered = []
+    for position, product in enumerate(products, 1):
+        if not isinstance(product, dict):
+            continue
+        entry = {**product, "position": position}
+        role = str(roles.get(str(product.get("product_id") or "")) or "").strip()
+        if role:
+            entry["shown_under"] = role
+        numbered.append(entry)
+    return numbered
 
 
 _GROUNDING_EDITOR_SYSTEM_PROMPT = """You are a final response editor for a retail shopping assistant.
@@ -1209,7 +1223,9 @@ class DeepAgentsRuntime:
             yield json.dumps(
                 {
                     "type": "products",
-                    "payload": _numbered_for_the_screen(products),
+                    "payload": _numbered_for_the_screen(
+                        products, output.shown_under
+                    ),
                     "timestamp": time.time(),
                 }
             )
@@ -4006,6 +4022,7 @@ Rules:
                 for product in turn.output.product_results
             ]
             state.retrieved = dict(turn.output.retrieved)
+            state.shown_under = dict(turn.output.shown_under)
             state.agent_diagnostics = dict(turn.output.agent_diagnostics)
             state.selected_skill_names = list(turn.output.selected_skill_names)
         else:
@@ -4049,6 +4066,7 @@ Rules:
             output = TurnReplayOutput(
                 product_results=(state.product_results if present_products else []),
                 retrieved=(state.retrieved if present_products else {}),
+                shown_under=(state.shown_under if present_products else {}),
                 agent_diagnostics=state.agent_diagnostics,
                 selected_skill_names=state.selected_skill_names,
             )

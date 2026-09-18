@@ -17,6 +17,8 @@ from .models import ConversationEvent, ConversationProjection, ConversationTurn
 
 
 PRESENTED_PRODUCTS_EVENT_KEY = "runtime-presented-products"
+#: Where the product sat on the screen, kept with it rather than recounted.
+_SCREEN_POSITION_KEY = "screen_position"
 # Query safety bound only. The character budget below is the effective limit:
 # a compact set of eight products is roughly 1KB, so ~15 sets survive and this
 # row cap is never reached. Resolution itself is unbounded and still sees every
@@ -126,13 +128,24 @@ def append_presented_products_event(
     *,
     created_at: float,
 ) -> ConversationEvent | None:
-    """Append one event for the ordered products returned to the shopper."""
+    """Append one event for the ordered products returned to the shopper.
 
-    products = [
-        _persistable(product)
-        for product in product_results
-        if _is_referenceable_product(product)
-    ]
+    The place each product holds on the screen is recorded with it, counted
+    over everything presented and not over what survives this filter. The
+    number the shopper reads is stamped on the streamed list, which is not
+    filtered, so counting the kept ones would shift every position after a
+    dropped product: they would say "the fifth" and be handed the sixth.
+    Numbering first leaves a gap instead, and a gap resolves to nothing rather
+    than to the wrong garment.
+    """
+
+    products = []
+    for position, product in enumerate(product_results, start=1):
+        if not _is_referenceable_product(product):
+            continue
+        stored = _persistable(product)
+        stored[_SCREEN_POSITION_KEY] = position
+        products.append(stored)
     if not products:
         return None
 
@@ -656,10 +669,17 @@ def _event_products(payload_json: str) -> list[tuple[int, dict[str, Any]]]:
         return []
 
     products: list[tuple[int, dict[str, Any]]] = []
-    for position, product in enumerate(raw_products, start=1):
+    for counted, product in enumerate(raw_products, start=1):
         if not _is_referenceable_product(product):
             continue
-        products.append((position, dict(product)))
+        stored = dict(product)
+        # Recorded before this list was filtered, so it is the number the
+        # shopper was shown. Counting here is the fallback for conversations
+        # written before the number was kept.
+        position = stored.pop(_SCREEN_POSITION_KEY, None)
+        products.append(
+            (position if isinstance(position, int) and position > 0 else counted, stored)
+        )
     return products
 
 

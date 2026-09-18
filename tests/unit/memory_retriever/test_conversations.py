@@ -918,6 +918,52 @@ def test_product_resolution_uses_candidate_set_ordinal(
     assert result["matches"][0]["position"] == 2
 
 
+def test_an_unreferenceable_product_does_not_shift_the_rest(
+    conversation_db: TestClient,
+) -> None:
+    """The shopper counts what is on the screen, and nothing filters that.
+
+    The streamed list carries the number, unfiltered. This record drops a
+    product with no name, so counting what survived made every position after
+    it point one place too early: "the third" was handed the fourth garment,
+    with nothing to say it had happened.
+    """
+
+    products = [
+        {"product_id": "bag-1", "display_name": "First Bag"},
+        {"product_id": "bag-2", "display_name": ""},
+        {"product_id": "bag-3", "display_name": "Third Bag"},
+    ]
+    _, candidate_set_id = _present_products(
+        conversation_db,
+        "conversation-gap",
+        request_id="request-gap",
+        products=products,
+    )
+
+    def resolve(ordinal: int) -> dict:
+        return conversation_db.post(
+            "/conversations/conversation-gap/products/resolve",
+            json={
+                "references": [
+                    {
+                        "reference_id": f"n{ordinal}",
+                        "candidate_set_id": candidate_set_id,
+                        "ordinal": ordinal,
+                    }
+                ]
+            },
+        ).json()["results"][0]
+
+    third = resolve(3)
+    assert third["status"] == "resolved"
+    assert third["matches"][0]["product"]["product_id"] == "bag-3"
+
+    # The dropped one leaves a hole rather than pulling the next into its
+    # place. Nothing resolves there, which is the honest answer.
+    assert resolve(2)["status"] != "resolved"
+
+
 def test_product_resolution_deduplicates_repeated_ref_using_latest_occurrence(
     conversation_db: TestClient,
 ) -> None:

@@ -331,6 +331,7 @@ def _cart_lines(cart: Any) -> list[dict[str, Any]]:
 _SUPPORTED_EXPECTATIONS = {
     "any_of",
     "cart",
+    "cart_holds_shown",
     "cart_lines",
     "cart_unchanged",
     "every_product",
@@ -353,6 +354,7 @@ def check_turn(
     expect: Mapping[str, Any],
     turn: TurnResult,
     previous_cart: Sequence[Mapping[str, Any]],
+    earlier_turns: Sequence[TurnResult] = (),
 ) -> list[Check]:
     """Every assertion answered from state, never from the reply's wording."""
 
@@ -360,6 +362,36 @@ def check_turn(
 
     def record(name: str, ok: bool, detail: str = "") -> None:
         checks.append(Check(name, "pass" if ok else "fail", detail))
+
+    if "cart_holds_shown" in expect:
+        # What an ordinal resolved to, which nothing else here asserts. The
+        # only ordinal add in the suite is checked by counting cart lines,
+        # because a script cannot name the product: "add the second one" points
+        # at whatever retrieval ranked second that run.
+        #
+        # The run knows, though. The turn that showed them recorded them in the
+        # order the shopper saw, so the product is looked up there rather than
+        # pinned here -- which is the difference between asserting that a
+        # reference resolved and asserting that something reached the cart.
+        wanted = expect["cart_holds_shown"] or {}
+        shown_on = int(wanted.get("turn") or 0)
+        position = int(wanted.get("position") or 0)
+        showing = next(
+            (earlier.products for earlier in earlier_turns if earlier.index == shown_on),
+            [],
+        )
+        expected_name = (
+            str((showing[position - 1] or {}).get("display_name") or "")
+            if 0 < position <= len(showing)
+            else ""
+        )
+        in_cart = [str(line.get("item") or "") for line in turn.cart]
+        record(
+            "cart_holds_shown",
+            bool(expected_name) and expected_name in in_cart,
+            f"turn {shown_on} position {position} was "
+            f"{expected_name or '(nothing shown there)'}, cart holds {in_cart}",
+        )
 
     if "any_of" in expect:
         # A turn with more than one right answer. "Add the black one in a 2"
@@ -370,7 +402,8 @@ def check_turn(
         # passing is the turn passing.
         branches = expect["any_of"] or []
         outcomes = [
-            check_turn(branch, turn, previous_cart) for branch in branches
+            check_turn(branch, turn, previous_cart, earlier_turns)
+            for branch in branches
         ]
         passed = [
             index
@@ -656,7 +689,7 @@ def run_scenario(
             repeated=answered.get("repeated") or {},
         )
         turn.checks = [
-            *check_turn(step.get("expect") or {}, turn, previous_cart),
+            *check_turn(step.get("expect") or {}, turn, previous_cart, turns),
             *_the_turn_reached_an_end(turn),
         ]
         previous_cart = turn.cart

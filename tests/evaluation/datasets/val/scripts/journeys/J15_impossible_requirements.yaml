@@ -15,12 +15,21 @@ turns:
     expect: {}
   - say: ok, just show me sandals in a 7
     expect: {products_min: 1}
-  # An ordinal add: which sandal it is varies by run, so the line cannot be
-  # named. That it landed at all can be, and was not.
+  # An ordinal add. Which sandal it is varies by run, so the line cannot be
+  # named here -- but the run knows: turn 5 recorded what it showed, in the
+  # order the shopper saw it, so "the first one" has a right answer and it is
+  # the first product of that showing.
+  #
+  # Counting lines was all this asserted, and a cart line is not a resolution:
+  # the wrong sandal, or a sandal from three turns earlier, passes it. Nothing
+  # in this suite asserted what a reference resolved to, which is how a broken
+  # record lookup reached a journey run as an empty cart and no more.
   - say: add the first one
     expect:
       cart_lines: 1
+      cart_holds_shown: {turn: 5, position: 1}
   - say: what's in my cart
     expect:
       cart_unchanged: true
       cart_lines: 1
+      cart_holds_shown: {turn: 5, position: 1}

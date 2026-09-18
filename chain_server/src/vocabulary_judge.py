@@ -208,11 +208,18 @@ def _prompt(
             " - An umbrella word covers several: \"shoes\" -> flats, heels, "
             "sandals, boots; \"tops\" -> blouses, camisoles, sweaters; "
             "\"jewelry\" -> bracelets, earrings, necklaces.",
-            " - If this catalogue sells no such thing, return an EMPTY list. "
-            "Do NOT reach for the nearest available garment. Jeans are not "
-            "skirts; a belt is not a blouse; a coat is not a camisole. An "
-            "empty list is the right and useful answer, because the shopper "
-            "will be told plainly that the shop does not carry it.",
+            # Says what not to do and stops. Recommending the empty answer --
+            # "the right and useful answer, because the shopper will be told
+            # plainly that the shop does not carry it" -- read as a quota, and
+            # the model filled it from whichever word the examples above left
+            # unanchored. Asked for a dress, shoes and a bag, it answered bags
+            # with nothing on eight of eight attempts, and the shopper was told
+            # this shop sells no bags while six kinds of them sat in the
+            # catalogue. Removing the sentence: 56 of 56, the same prompt
+            # otherwise, and jeans and hats still correctly come back empty.
+            " - Never reach for the nearest available garment: jeans are not "
+            "skirts, a belt is not a blouse, a coat is not a camisole. Return "
+            "an empty list for a word this catalogue sells no form of.",
             "",
             "TASK A words:",
         ]

@@ -229,7 +229,16 @@ def test_completed_search_after_non_search_tool_keeps_model_synthesis() -> None:
     assert response.result[0].content == "answer"
 
 
-def test_completed_scoped_no_match_removes_tools_from_next_model_step() -> None:
+def test_completed_scoped_no_match_keeps_every_tool_available() -> None:
+    """A zero-match closes the scope and nothing else.
+
+    The name of this test said "removes tools" for as long as it has asserted
+    the opposite, and the gap it hides is real: the note a zero-match carries
+    asks for another search with a filter given up, so the tools have to stay.
+    What stops the search that gives up nothing is the identical-call cap
+    below, not this.
+    """
+
     middleware = ToolLoopControlMiddleware()
     result = _tool_result(
         "SEARCH_NO_MATCH_GROUNDING_NOTE: Zero products matched this exact scope.\n\n"
@@ -243,6 +252,108 @@ def test_completed_scoped_no_match_removes_tools_from_next_model_step() -> None:
 
     assert prepared.tools == TOOLS
     assert "## Search Complete" in prepared.system_prompt
+
+
+_NO_MATCH_RESULT = (
+    "SEARCH_NO_MATCH_GROUNDING_NOTE: Zero products matched this exact "
+    "advertised taxonomy and filter scope.\n\n"
+    "SEARCH_SCOPE_COMPLETE: The current role is complete."
+)
+
+
+def _search_call(call_id: str, args: dict[str, Any]) -> AIMessage:
+    return AIMessage(
+        content="",
+        tool_calls=[
+            {"id": call_id, "name": "search_catalog_tool", "args": args}
+        ],
+    )
+
+
+def test_the_same_empty_scope_sent_twice_closes_the_loop() -> None:
+    """A zero-match repeated unchanged cannot come out differently.
+
+    This was uncounted, because a clean zero-match is neither an error nor a
+    refusal: it is a `completed` result whose text says the scope held no
+    products, so it read as usable and the cap never saw it. Live, "now show
+    me some skirts" filtered to an audience no skirt carries matched nothing
+    and was sent 22 times.
+    """
+
+    middleware = ToolLoopControlMiddleware()
+    scope = {
+        "requested_product_type": "skirts",
+        "required_constraints": {"target_audience": "adult_all_genders"},
+    }
+    first_call = _search_call("call-a", scope)
+    first_empty = _tool_result(_NO_MATCH_RESULT, tool_call_id="call-a")
+    second_call = _search_call("call-b", scope)
+    second_empty = _tool_result(_NO_MATCH_RESULT, tool_call_id="call-b")
+
+    _capture_model_request(
+        middleware,
+        [HumanMessage(content="now show me some skirts"), first_call, first_empty],
+    )
+    closed = _capture_model_request(
+        middleware,
+        [
+            HumanMessage(content="now show me some skirts"),
+            first_call,
+            first_empty,
+            second_call,
+            second_empty,
+        ],
+    )
+
+    assert closed.tools == []
+
+
+def test_an_empty_scope_retried_with_a_filter_given_up_stays_open() -> None:
+    """The retry the zero-match note asks for must survive the cap.
+
+    "No black dress runs to a 2 -- here are dresses in a 2 in other colours"
+    is the behaviour that note exists to produce, and it needs a second
+    search. Giving up a filter changes the arguments, so it is a different
+    call and never the repeat being counted.
+    """
+
+    middleware = ToolLoopControlMiddleware()
+    first_call = _search_call(
+        "call-a",
+        {
+            "requested_product_type": "dresses",
+            "required_constraints": {"primary_color": "black", "sizes": "2"},
+        },
+    )
+    first_empty = _tool_result(_NO_MATCH_RESULT, tool_call_id="call-a")
+    without_the_colour = _search_call(
+        "call-b",
+        {
+            "requested_product_type": "dresses",
+            "required_constraints": {"sizes": "2"},
+        },
+    )
+    found = _tool_result(
+        "SEARCH_RESULT_GROUNDING_NOTE: grounded candidates",
+        tool_call_id="call-b",
+    )
+
+    _capture_model_request(
+        middleware,
+        [HumanMessage(content="a black dress in a 2"), first_call, first_empty],
+    )
+    still_open = _capture_model_request(
+        middleware,
+        [
+            HumanMessage(content="a black dress in a 2"),
+            first_call,
+            first_empty,
+            without_the_colour,
+            found,
+        ],
+    )
+
+    assert _tool_names(still_open.tools) == _tool_names(TOOLS)
 
 
 def test_a_closed_search_reports_the_catalog_context_as_spent() -> None:

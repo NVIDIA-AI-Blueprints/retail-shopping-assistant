@@ -675,12 +675,26 @@ def _produced_nothing_usable(result: Any) -> bool:
     for a sweater and a hat in one go, the sweater is found and the hat
     refused, and that call answered part of the shopper's sentence. Only a
     result with no products and a refusal in it is a dead end worth counting.
+
+    A search that matched nothing is such a dead end, and was not counted,
+    because a clean zero-match carries no refusal and no error: it is a
+    `completed` result whose text says plainly that the scope held no
+    products. "Now show me some skirts" filtered to the covers-everyone
+    audience matched none of them and was sent 22 times unchanged.
+
+    Counting it does not fight the note it carries, which asks for another
+    search with a filter given up. That retry changes the arguments, so it
+    lands on a different key and is never what the cap sees. Only the repeat
+    that gave up nothing is, and no scope searched twice unchanged can match
+    on the second attempt what it failed to match on the first.
     """
 
     content = result.content if isinstance(result.content, str) else ""
     if "SEARCH_RESULT_GROUNDING_NOTE" in content:
         return False
     if str(getattr(result, "status", "")) == "error":
+        return True
+    if "SEARCH_NO_MATCH_GROUNDING_NOTE" in content:
         return True
     return SEARCH_VALIDATION_ERROR_PREFIX in content
 

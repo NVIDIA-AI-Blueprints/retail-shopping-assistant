@@ -1406,10 +1406,23 @@ def test_a_number_asked_of_a_onesize_scope_cannot_apply() -> None:
     assert _asked(["tote_bags"], ["8"]) == "8"
 
 
+def test_the_size_is_found_whichever_shape_it_arrives_in() -> None:
+    """J01 t11 again, 2026-09-17, because the case above only sent a list.
+
+    A filter is declared `value | list[value]`, so `"8"` and `["8"]` are both
+    legal calls. The guard read the list shape only and the bare string walked
+    past it: the impossible size reached the query, nothing matched, and the
+    turn offered to look instead of showing the nine totes it could have.
+    """
+
+    assert _asked(["tote_bags"], "8") == "8"
+
+
 def test_a_size_a_garment_really_comes_in_is_kept() -> None:
     """The rule must not start dropping sizes from clothes."""
 
     assert _asked(["dresses"], ["8"]) == ""
+    assert _asked(["dresses"], "8") == ""
 
 
 def test_a_mixed_scope_keeps_the_size() -> None:

@@ -38,6 +38,7 @@ from .agenttypes import State
 from .catalog_execution import execute_catalog_search
 from .catalog_request import (
     CatalogSearchIntent,
+    _filter_values,
     build_catalog_search_plan,
 )
 from .control_signals import (
@@ -1350,12 +1351,17 @@ def _size_that_cannot_apply(
     Returns the offending size so the caller can drop it and say why. Silent
     where any searched subcategory really is sold in sizes, so a garment search
     keeps the size it was given.
+
+    The size is read through the same coercion the query is built with, because
+    a filter is declared `value | list[value]` and both shapes are legal calls.
+    This guard once read the list shape only, so the turn it was written for
+    came back a second time sending `"8"` where the test sent `["8"]`.
     """
 
     asked = (constraints or {}).get("sizes") if isinstance(constraints, dict) else None
-    if not isinstance(asked, list) or not asked:
+    if asked is None:
         return ""
-    wanted = [str(value).strip() for value in asked if str(value).strip()]
+    wanted = _filter_values(asked)
     if not wanted or {value.casefold() for value in wanted} == {_ONE_SIZE}:
         return ""
 

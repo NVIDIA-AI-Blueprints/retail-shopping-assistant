@@ -147,3 +147,34 @@ def test_nothing_here_reads_the_word_itself() -> None:
 
     assert not hasattr(judge_module, "by_name_only")
     assert not hasattr(judge_module, "exact_identity_only")
+
+
+def test_the_prompt_does_not_recommend_the_empty_answer() -> None:
+    """Say what not to substitute, and stop there.
+
+    The prompt used to add that an empty list is "the right and useful answer,
+    because the shopper will be told plainly that the shop does not carry it".
+    Measured against the deployed model, that sentence cost accuracy rather
+    than buying honesty: asked for a dress, shoes and a bag, the reply named no
+    bags on eight of eight attempts -- while the catalogue holds clutches,
+    crossbody bags, satchels, shoulder bags, totes and travel bags -- and the
+    shopper was told this shop does not sell bags.
+
+    It reads as a quota to fill, and the word it was filled from was the one
+    the worked examples did not cover: "shoes" and "jewelry" are named there
+    and never failed in the same position. Without the sentence, 56 of 56 over
+    the same batches.
+
+    The rule it was attached to earns its place and stays: a word for something
+    the shop really does not stock must come back empty rather than as the
+    nearest thing, which is what this whole call exists to prevent.
+    """
+
+    from chain_server.src.vocabulary_judge import _prompt
+
+    prompt = _prompt([ScopeQuestion("bag")], [], _SUBCATEGORIES, _COLOURS)
+
+    assert "useful answer" not in prompt
+    assert "will be told plainly" not in prompt
+    assert "jeans are not skirts" in prompt.lower()
+    assert "empty list" in prompt

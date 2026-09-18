@@ -102,6 +102,7 @@ def _present_products(
     *,
     request_id: str,
     products: list[dict],
+    product_groups: list[dict] | None = None,
 ) -> tuple[dict, str]:
     started = _start_turn(
         client,
@@ -119,6 +120,7 @@ def _present_products(
             "product_results": products,
             "retrieved": {},
             "agent_diagnostics": {},
+            "product_groups": product_groups or [],
         },
     )
     assert finalized.status_code == 200
@@ -472,6 +474,7 @@ def test_start_is_idempotent_and_rejects_active_or_conflicting_reuse(
         "retrieved": {"Structured Bag": "/images/bag.png"},
         "agent_diagnostics": {"final_termination_reason": "completed"},
         "selected_skill_names": [],
+        "product_groups": [],
     }
     assert conflict.status_code == 409
 
@@ -674,7 +677,12 @@ def test_finalize_indexes_ordered_presented_products_once(
         # than within it. The runtime parses that product against a contract
         # that refuses unrecognised fields, so a presentation fact stored on a
         # product comes back as a refused product.
-        stored = json.loads(events[0].payload_json)["products"]
+        # One group here, unheaded: this turn declared no scopes, which is
+        # also the shape every conversation recorded before groups existed
+        # reads back as.
+        groups = json.loads(events[0].payload_json)["groups"]
+        assert [group["heading"] for group in groups] == [""]
+        stored = groups[0]["products"]
         assert [entry["product"]["display_name"] for entry in stored] == [
             p["display_name"] for p in products
         ]
@@ -1048,6 +1056,100 @@ def test_a_product_recorded_the_old_way_still_resolves(
         product = result["matches"][0]["product"]
         assert "screen_position" not in product
         ProductSummary.model_validate(product)
+
+
+def test_a_showing_is_recorded_as_the_groups_the_shopper_saw(
+    conversation_db: TestClient,
+) -> None:
+    """Two headed groups, each numbered from one, as the screen showed them.
+
+    Recorded flat, "the second shoes" had no structural answer: the shoes
+    began at position three, and the only way back to the group was guessing
+    from category strings that two scopes out of one category defeat.
+    """
+
+    products = [
+        {"product_id": "dress-1", "display_name": "Vivienne Lace"},
+        {"product_id": "dress-2", "display_name": "Coral Silk Maxi"},
+        {"product_id": "shoe-1", "display_name": "Wine Red Pumps"},
+    ]
+    _present_products(
+        conversation_db,
+        "conversation-groups",
+        request_id="request-groups",
+        products=products,
+        product_groups=[
+            {"heading": "dresses", "product_ids": ["dress-1", "dress-2"]},
+            {"heading": "shoes", "product_ids": ["shoe-1"]},
+        ],
+    )
+
+    with memory_main.SessionLocal() as db:
+        event = (
+            db.query(memory_main.ConversationEvent)
+            .filter_by(event_type="candidate_set_presented")
+            .one()
+        )
+        groups = json.loads(event.payload_json)["groups"]
+
+    assert [
+        (
+            group["heading"],
+            [
+                (entry["screen_position"], entry["product"]["display_name"])
+                for entry in group["products"]
+            ],
+        )
+        for group in groups
+    ] == [
+        ("dresses", [(1, "Vivienne Lace"), (2, "Coral Silk Maxi")]),
+        ("shoes", [(1, "Wine Red Pumps")]),
+    ]
+
+
+def test_a_product_in_the_second_group_still_resolves_and_still_parses(
+    conversation_db: TestClient,
+) -> None:
+    """Grouping changes the record's shape, so the runtime's read is retested.
+
+    A showing stored one way and read another is how a shopper asking for a
+    bag they had been shown was told the reference was not valid.
+    """
+
+    from shared.commerce_contracts import ProductSummary
+
+    _, candidate_set_id = _present_products(
+        conversation_db,
+        "conversation-groups-resolve",
+        request_id="request-groups-resolve",
+        products=[
+            {"product_id": "dress-1", "display_name": "Vivienne Lace"},
+            {"product_id": "shoe-1", "display_name": "Wine Red Pumps"},
+        ],
+        product_groups=[
+            {"heading": "dresses", "product_ids": ["dress-1"]},
+            {"heading": "shoes", "product_ids": ["shoe-1"]},
+        ],
+    )
+
+    resolved = conversation_db.post(
+        "/conversations/conversation-groups-resolve/products/resolve",
+        json={
+            "references": [
+                {
+                    "reference_id": "a",
+                    "candidate_set_id": candidate_set_id,
+                    "display_name": "Wine Red Pumps",
+                }
+            ]
+        },
+    ).json()["results"]
+
+    assert [result["status"] for result in resolved] == ["resolved"]
+    product = resolved[0]["matches"][0]["product"]
+    assert product["display_name"] == "Wine Red Pumps"
+    assert "screen_position" not in product
+    ProductSummary.model_validate(product)
 
 
 def test_an_unreferenceable_product_does_not_shift_the_rest(

@@ -27,7 +27,7 @@ from chain_server.src.catalog_search import (
     _Attempt,
     _published_in_plan_order,
 )
-from chain_server.src.deepagents_runtime import _numbered_for_the_screen
+from chain_server.src.deepagents_runtime import the_showing
 from chain_server.src.turn_scope import TurnScope
 from shared.commerce_contracts import ProductSummary
 
@@ -159,12 +159,12 @@ def test_the_same_product_from_two_scopes_keeps_its_first_position() -> None:
     ]
 
 
-def test_the_screen_position_is_stamped_from_the_published_order() -> None:
-    """The number and the order come from one list, so they cannot disagree.
+def test_each_scope_becomes_one_headed_group() -> None:
+    """The shopper reads two headed lists, so the turn records two groups.
 
-    The client had been deriving an order instead of being given one: the chat
-    row was built from a name-keyed image map, the product list was matched back
-    into it by display name, and the panel kept its own ordering state.
+    The boundary is the scope that answered, taken where it is already known.
+    Recovering it afterwards would mean comparing category strings between
+    products, which two scopes answering out of one category defeat.
     """
 
     ctx = _context()
@@ -176,13 +176,84 @@ def test_the_screen_position_is_stamped_from_the_published_order() -> None:
         ],
     )
 
-    numbered = _numbered_for_the_screen(ctx.state.product_results)
+    showing = the_showing(ctx.state.product_results, ctx.state.product_groups)
 
-    assert [(p["position"], p["display_name"]) for p in numbered] == [
-        (1, "Polished Peplum"),
-        (2, "Qute Cashmere"),
-        (3, "Yantra Boots"),
+    assert [
+        (group["heading"], [p["display_name"] for p in group["products"]])
+        for group in showing
+    ] == [
+        ("sweaters", ["Polished Peplum", "Qute Cashmere"]),
+        ("boots", ["Yantra Boots"]),
     ]
+
+
+def test_the_number_restarts_inside_each_group() -> None:
+    """Because that is how the shopper counts: "the first boots" is the boots.
+
+    Numbered straight through, the boots began at three and the phrase had no
+    answer the structure could give.
+    """
+
+    ctx = _context()
+    _published_in_plan_order(
+        ctx,
+        [
+            _finished("sweaters", "Polished Peplum", "Qute Cashmere"),
+            _finished("boots", "Yantra Boots"),
+        ],
+    )
+
+    showing = the_showing(ctx.state.product_results, ctx.state.product_groups)
+
+    assert [
+        (group["heading"], [(p["position"], p["display_name"]) for p in group["products"]])
+        for group in showing
+    ] == [
+        ("sweaters", [(1, "Polished Peplum"), (2, "Qute Cashmere")]),
+        ("boots", [(1, "Yantra Boots")]),
+    ]
+
+
+def test_a_group_headed_with_one_of_its_own_products_loses_the_heading() -> None:
+    """Asked to add one tote by name, the model sends that name as the type.
+
+    All four totes would then be headed "Ombre Canvas Tote Bag", three of which
+    are not that. Settled by comparing the heading with the showing's own
+    products -- data in hand, not a list of words.
+    """
+
+    ctx = _context()
+    _published_in_plan_order(
+        ctx,
+        [_finished("Polished Peplum", "Polished Peplum", "Qute Cashmere")],
+    )
+
+    showing = the_showing(ctx.state.product_results, ctx.state.product_groups)
+
+    assert [group["heading"] for group in showing] == [""]
+    assert [p["display_name"] for p in showing[0]["products"]] == [
+        "Polished Peplum",
+        "Qute Cashmere",
+    ]
+
+
+def test_a_product_no_scope_claimed_is_still_shown() -> None:
+    """A name lookup puts products on screen without going through a scope."""
+
+    ctx = _context()
+    _published_in_plan_order(ctx, [_finished("sweaters", "Polished Peplum")])
+    ctx.state.product_results.append(
+        ProductSummary(
+            product_id="yantra-boots", display_name="Yantra Boots"
+        ).model_dump(mode="json")
+    )
+
+    showing = the_showing(ctx.state.product_results, ctx.state.product_groups)
+
+    assert [
+        (group["heading"], [p["display_name"] for p in group["products"]])
+        for group in showing
+    ] == [("sweaters", ["Polished Peplum"]), ("", ["Yantra Boots"])]
 
 
 def test_the_position_never_reaches_the_product_record() -> None:
@@ -194,7 +265,7 @@ def test_the_position_never_reaches_the_product_record() -> None:
 
     ctx = _context()
     _published_in_plan_order(ctx, [_finished("sweaters", "Polished Peplum")])
-    _numbered_for_the_screen(ctx.state.product_results)
+    the_showing(ctx.state.product_results, ctx.state.product_groups)
 
     assert "position" not in ctx.state.product_results[0]
     ProductSummary(**ctx.state.product_results[0])

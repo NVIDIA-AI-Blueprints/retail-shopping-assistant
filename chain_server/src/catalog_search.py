@@ -1772,6 +1772,13 @@ def _published_in_plan_order(
     beside its words sat in another, and "the first one" meant two different
     garments depending on which the shopper counted. Publishing here, from the
     same list the renderer uses, is what makes the two agree.
+
+    Each attempt is also one group on that screen: the shopper asked for shoes
+    and a bag, and the scope that answered for the shoes is the shoes. That
+    boundary is recorded here, where it is already in hand, because the only
+    other way to recover it later is to compare category strings between
+    products and guess -- and two scopes can legitimately answer out of the
+    same category.
     """
 
     with ctx.scope.catalog_lock:
@@ -1781,9 +1788,46 @@ def _published_in_plan_order(
                 continue
             ctx.scope.product_evidence.add(result.products)
             _append_product_results(ctx.state, result.products)
+            _record_the_group_this_scope_showed(ctx.state, attempt, result.products)
             for product in result.products:
                 if product.image_url:
                     ctx.scope.retrieved[product.display_name] = product.image_url
+
+
+def _record_the_group_this_scope_showed(
+    state: Any, attempt: _Attempt, products: list[Any]
+) -> None:
+    """Note the heading and the products for one scope's showing.
+
+    The heading is the word the search was asked for, which is the word the
+    shopper used where they named it. Products are held by id: they are stored
+    once in the turn's results, and a group that copied them would be a second
+    place for the same product to be, free to disagree with the first.
+    """
+
+    heading = str(attempt.requested_product_type or "").strip()
+    product_ids = [
+        str(product.product_id)
+        for product in products
+        if getattr(product, "product_id", None)
+    ]
+    if not product_ids:
+        return
+    state.product_groups.append(
+        {
+            "heading": heading,
+            "taxonomy": _taxonomy_payload(attempt.taxonomy),
+            "product_ids": product_ids,
+        }
+    )
+
+
+def _taxonomy_payload(taxonomy: Any) -> dict[str, Any]:
+    """This scope's taxonomy as plain data, whatever shape it arrived in."""
+
+    if isinstance(taxonomy, BaseModel):
+        return taxonomy.model_dump()
+    return dict(taxonomy) if isinstance(taxonomy, dict) else {}
 
 
 def _rendered_evidence(ctx: SearchContext, attempt: _Attempt) -> StepResult:

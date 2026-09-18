@@ -13,7 +13,7 @@ import logging
 import os
 import sys
 import time
-from collections.abc import AsyncIterator, Collection, Sequence
+from collections.abc import AsyncIterator, Collection, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from datetime import date as CalendarDate
@@ -371,10 +371,107 @@ _SHOPPER_CONTEXT_SYSTEM_RULES = """Representative-shopper precedence and safety:
 - Cart, catalog, product-detail, and store-policy evidence remain authoritative.
 - Never infer a shopper's location, the weather, or a seasonal need. Nothing in
   this context establishes any of them, and naming one is an invented fact."""
-def _numbered_for_the_screen(
+def the_showing(
+    products: Sequence[Any],
+    groups: Sequence[Mapping[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """This turn's products as the shopper sees them: a list of headed groups.
+
+    A showing is not a queue. Asked for dresses and shoes, the shopper reads
+    two headed lists and counts from one inside each, so "the second shoes" is
+    a question the structure can answer. Stored flat, it was eight products in
+    a row and that question had no answer at all.
+
+    Numbering restarts inside each group, because that is how the shopper
+    counts. Everything downstream -- the screen, the reply, resolution -- is
+    handed this same structure, so none of them has to derive an order and
+    none of them can derive a different one.
+
+    Products no group claims are one unheaded group at the end, which is also
+    how a conversation recorded before groups existed reads back.
+    """
+
+    held = {
+        str(product.get("product_id") or ""): product
+        for product in products
+        if isinstance(product, Mapping) and str(product.get("product_id") or "")
+    }
+    shown: list[dict[str, Any]] = []
+    placed: set[str] = set()
+    for group in groups or []:
+        members = []
+        for product_id in group.get("product_ids") or []:
+            product = held.get(str(product_id))
+            if product is not None and str(product_id) not in placed:
+                members.append(product)
+                placed.add(str(product_id))
+        if members:
+            shown.append(
+                {
+                    "heading": _a_heading_that_is_not_a_product(
+                        str(group.get("heading") or ""), products
+                    ),
+                    "taxonomy": dict(group.get("taxonomy") or {}),
+                    "products": _numbered_within_the_group(members),
+                }
+            )
+    unclaimed = [
+        product
+        for product in products
+        if isinstance(product, Mapping)
+        and str(product.get("product_id") or "") not in placed
+    ]
+    if unclaimed:
+        shown.append(
+            {
+                "heading": "",
+                "taxonomy": {},
+                "products": _numbered_within_the_group(unclaimed),
+            }
+        )
+    return shown
+
+
+def _streamed_in_group_order(
+    showing: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """The showing flattened for the wire, every product naming its group."""
+
+    return [
+        {**product, "group": group.get("heading") or ""}
+        for group in showing
+        for product in group.get("products") or []
+    ]
+
+
+def _a_heading_that_is_not_a_product(heading: str, products: Sequence[Any]) -> str:
+    """This heading, unless it is the name of a product being shown under it.
+
+    Asked to add one tote by name, the model sends that name as the product
+    type, and the group of four totes comes out headed "Ombre Canvas Tote Bag"
+    -- three of which are not that. An equality check against the showing's own
+    products, not a word list: the data to settle it is already in hand.
+    """
+
+    wanted = _normalized_display_name(heading)
+    if not wanted:
+        return ""
+    for product in products:
+        if not isinstance(product, Mapping):
+            continue
+        if _normalized_display_name(str(product.get("display_name") or "")) == wanted:
+            return ""
+    return heading
+
+
+def _normalized_display_name(name: str) -> str:
+    return " ".join(name.split()).casefold()
+
+
+def _numbered_within_the_group(
     products: Sequence[Any],
 ) -> list[dict[str, Any]]:
-    """The turn's products, each carrying the place it holds on the screen.
+    """The group's products, each carrying the place it holds under its heading.
 
     So the client renders a given order instead of deriving one. It had been
     deriving one: the chat row was built from a name-keyed image map, the
@@ -1206,10 +1303,16 @@ class DeepAgentsRuntime:
         output = await turn
         products = output.product_results or []
         if products:
+            # Flat, still, and in group order: the client renders a sequence,
+            # and a payload that changed shape would blank the panel. Each
+            # product names its group and its number under that group, which
+            # is what the client needs to draw the headings.
             yield json.dumps(
                 {
                     "type": "products",
-                    "payload": _numbered_for_the_screen(products),
+                    "payload": _streamed_in_group_order(
+                        the_showing(products, output.product_groups)
+                    ),
                     "timestamp": time.time(),
                 }
             )
@@ -4070,7 +4173,7 @@ Rules:
         # one" meaning the second shown to the shopper and the second ranked to
         # the resolver.
         state.product_results = _in_presentation_order(
-            state.product_results or [], state.response or ""
+            state.product_results or [], state.response or "", state.product_groups
         )
         state.retrieved = _images_in_product_order(
             state.retrieved or {}, state.product_results
@@ -4087,6 +4190,7 @@ Rules:
             output = TurnReplayOutput(
                 product_results=(state.product_results if present_products else []),
                 retrieved=(state.retrieved if present_products else {}),
+                product_groups=(state.product_groups if present_products else []),
                 agent_diagnostics=state.agent_diagnostics,
                 selected_skill_names=state.selected_skill_names,
             )

@@ -160,6 +160,16 @@ class State(BaseModel):
         default_factory=list,
         description="Structured product summaries returned during the current turn"
     )
+    product_groups: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description=(
+            "How this turn's products divide into the groups the shopper sees. "
+            "One entry per search scope, in the order they were published, "
+            "each naming the scope's heading and the products it put on "
+            "screen. Recorded where the boundary already exists rather than "
+            "recovered afterwards by comparing category strings."
+        ),
+    )
     token_usage: Dict[str, int] = Field(
         default_factory=dict,
         description="Normalized model token usage for the current turn"

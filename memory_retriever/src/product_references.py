@@ -130,17 +130,24 @@ def append_presented_products_event(
     turn: ConversationTurn,
     product_results: list[dict[str, Any]],
     *,
+    product_groups: list[dict[str, Any]] | None = None,
     created_at: float,
 ) -> ConversationEvent | None:
-    """Append one event for the ordered products returned to the shopper.
+    """Append one event for the groups of products returned to the shopper.
 
-    The place each product holds on the screen is recorded beside it, counted
-    over everything presented and not over what survives this filter. The
-    number the shopper reads is stamped on the streamed list, which is not
-    filtered, so counting the kept ones would shift every position after a
-    dropped product: they would say "the fifth" and be handed the sixth.
-    Numbering first leaves a gap instead, and a gap resolves to nothing rather
-    than to the wrong garment.
+    A showing is a list of headed groups, because that is what the shopper
+    reads: dresses, then shoes, counted from one inside each. Stored as a flat
+    queue it was eight products in a row, and "the second shoes" was a question
+    with no structural answer -- only a guess from category strings, which two
+    scopes out of one category defeat.
+
+    The place each product holds under its heading is recorded beside it,
+    counted over everything that group presented and not over what survives
+    this filter. The number the shopper reads is stamped on the streamed list,
+    which is not filtered, so counting the kept ones would shift every position
+    after a dropped product: they would say "the fifth" and be handed the
+    sixth. Numbering first leaves a gap instead, and a gap resolves to nothing
+    rather than to the wrong garment.
 
     Beside it, and not on it, because a product record holds product facts. The
     position was previously stamped into the product itself and popped back off
@@ -154,14 +161,8 @@ def append_presented_products_event(
     than remembered.
     """
 
-    products = []
-    for position, product in enumerate(product_results, start=1):
-        if not _is_referenceable_product(product):
-            continue
-        products.append(
-            {_STORED_PRODUCT_KEY: _persistable(product), _SCREEN_POSITION_KEY: position}
-        )
-    if not products:
+    groups = _groups_as_shown(product_results, product_groups or [])
+    if not groups:
         return None
 
     logical_order = (
@@ -178,11 +179,75 @@ def append_presented_products_event(
         event_type="candidate_set_presented",
         source_kind="runtime",
         source_ref=turn.catalog_revision,
-        payload_json=_canonical_json({"products": products}),
+        payload_json=_canonical_json({"groups": groups}),
         created_at=created_at,
     )
     db.add(event)
     return event
+
+
+def _groups_as_shown(
+    product_results: list[dict[str, Any]],
+    product_groups: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """The showing, as headed groups of numbered products.
+
+    The groups name their products by id; the products themselves come from
+    the turn's ordered results. Anything no group claims is one unheaded group
+    at the end, which is what a name lookup produces and what a turn with no
+    groups at all becomes.
+    """
+
+    held = {
+        str(product.get("product_id") or ""): product
+        for product in product_results
+        if isinstance(product, Mapping) and str(product.get("product_id") or "")
+    }
+    groups: list[dict[str, Any]] = []
+    placed: set[str] = set()
+    for group in product_groups:
+        if not isinstance(group, Mapping):
+            continue
+        members = []
+        for product_id in group.get("product_ids") or []:
+            product = held.get(str(product_id))
+            if product is not None and str(product_id) not in placed:
+                members.append(product)
+                placed.add(str(product_id))
+        recorded = _numbered_under_a_heading(members)
+        if recorded:
+            groups.append(
+                {
+                    "heading": str(group.get("heading") or ""),
+                    "products": recorded,
+                }
+            )
+    unclaimed = _numbered_under_a_heading(
+        [
+            product
+            for product in product_results
+            if not isinstance(product, Mapping)
+            or str(product.get("product_id") or "") not in placed
+        ]
+    )
+    if unclaimed:
+        groups.append({"heading": "", "products": unclaimed})
+    return groups
+
+
+def _numbered_under_a_heading(
+    products: list[Any],
+) -> list[dict[str, Any]]:
+    """One group's products, each with the place it held under its heading."""
+
+    recorded = []
+    for position, product in enumerate(products, start=1):
+        if not _is_referenceable_product(product):
+            continue
+        recorded.append(
+            {_STORED_PRODUCT_KEY: _persistable(product), _SCREEN_POSITION_KEY: position}
+        )
+    return recorded
 
 
 def _system_identifications_by_turn(db, conversation_id: str) -> list[tuple[int, list[str]]]:
@@ -672,8 +737,51 @@ def _compact_products(payload_json: str) -> list[dict[str, Any]]:
     return products
 
 
+def _event_groups(payload_json: str) -> list[tuple[str, list[tuple[int, dict[str, Any]]]]]:
+    """Each group the shopper was shown, with its heading and its products.
+
+    Two shapes of payload, because conversations already written keep theirs.
+    Groups are what is written now. A flat `products` list is what came before,
+    and it reads back as a single unheaded group -- which is honest: the turn
+    did show those products in that order, and nothing recorded where one kind
+    ended and the next began.
+    """
+
+    try:
+        payload = json.loads(payload_json)
+    except (TypeError, ValueError):
+        return []
+    if not isinstance(payload, dict):
+        return []
+    raw_groups = payload.get("groups")
+    if isinstance(raw_groups, list):
+        groups = []
+        for group in raw_groups:
+            if not isinstance(group, dict):
+                continue
+            products = _entry_products(group.get("products"))
+            if products:
+                groups.append((str(group.get("heading") or ""), products))
+        return groups
+    products = _entry_products(payload.get("products"))
+    return [("", products)] if products else []
+
+
 def _event_products(payload_json: str) -> list[tuple[int, dict[str, Any]]]:
-    """Each recorded product and the place on the screen it was shown in.
+    """Every recorded product with its number, the groups flattened away.
+
+    For the readers that want the turn's products and not its layout.
+    """
+
+    return [
+        numbered
+        for _heading, products in _event_groups(payload_json)
+        for numbered in products
+    ]
+
+
+def _entry_products(raw_products: Any) -> list[tuple[int, dict[str, Any]]]:
+    """One recorded list of products, each with the place it was shown in.
 
     Three shapes of entry, because conversations already written keep theirs.
     The product nested under its own key is what is written now. Before that it
@@ -683,11 +791,6 @@ def _event_products(payload_json: str) -> list[tuple[int, dict[str, Any]]]:
     recorded the old way from coming back out with a stray field on it.
     """
 
-    try:
-        payload = json.loads(payload_json)
-    except (TypeError, ValueError):
-        return []
-    raw_products = payload.get("products") if isinstance(payload, dict) else None
     if not isinstance(raw_products, list):
         return []
 

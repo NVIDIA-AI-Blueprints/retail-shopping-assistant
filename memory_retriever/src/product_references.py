@@ -15,6 +15,7 @@ from sqlalchemy import func
 
 from .models import ConversationEvent, ConversationProjection, ConversationTurn
 
+
 PRESENTED_PRODUCTS_EVENT_KEY = "runtime-presented-products"
 #: Where the product sat on the screen, kept with it rather than recounted.
 _SCREEN_POSITION_KEY = "screen_position"
@@ -564,8 +565,10 @@ def _matches_descriptor(
         return False
     if descriptor.ordinal is not None and match.position != descriptor.ordinal:
         return False
-    if descriptor.attributes:
-        return _attributes_agree(match.product, descriptor.attributes)
+    if descriptor.attributes and not _attributes_agree(
+        match.product, descriptor.attributes
+    ):
+        return False
     return True
 
 

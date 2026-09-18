@@ -21,7 +21,7 @@ from pydantic import (
     field_validator,
     model_validator,
 )
-from sqlalchemy import func
+from sqlalchemy import func, text
 
 from .database import begin_write_transaction
 from .models import (
@@ -39,6 +39,7 @@ from .product_references import (
     resolve_product_references,
 )
 from .shopper_profiles import SHOPPER_PROFILE_ID_PATTERN
+
 
 DEFAULT_ABANDONED_SECONDS = 300
 DEFAULT_RECENT_TURNS_LIMIT = 8

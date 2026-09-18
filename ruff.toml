@@ -15,12 +15,3 @@ src = [
 [lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "W291", "W293"]
 ignore = ["E501"]
-
-[lint.flake8-bugbear]
-# B008 objects to a function call in an argument default, which is exactly how
-# FastAPI declares a dependency: `db: Session = Depends(get_db)`. The rule is
-# aimed at defaults that are built once and then mutated across calls, and
-# `Depends` is not that -- it returns an immutable marker the framework reads,
-# and resolves the dependency per request. Every route in the two services
-# would otherwise need a `noqa`.
-extend-immutable-calls = ["fastapi.Depends"]

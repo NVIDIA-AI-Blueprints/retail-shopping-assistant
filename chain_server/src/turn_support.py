@@ -4083,6 +4083,9 @@ def _customer_safe_search_evidence(payload: dict[str, Any]) -> str:
             "meet it. Present them as candidates and say plainly that it is "
             "unconfirmed. Do not refuse the request."
         )
+    size = _size_the_scope_has_not_line(payload)
+    if size:
+        lines.append(size)
     relation = _scope_relation_line(payload, has_products=True)
     if relation:
         lines.append(relation)
@@ -4172,6 +4175,40 @@ def _composed_role_line(payload: dict[str, Any], *, has_products: bool) -> str:
         "this role was proposed by the assistant. Offer it as a suggestion "
         "rather than as something they asked for, and keep every returned "
         "product's actual catalog category."
+    )
+
+
+def _size_the_scope_has_not_line(payload: dict[str, Any]) -> str:
+    """Say the asked size does not exist here, and name the run that does.
+
+    The size was dropped before the search or there would be nothing to show.
+    Left unsaid, that is an invitation to fill the gap: "do you have a tote bag
+    in a size 8" was answered "the tote bags we carry come in sizes 2, 4, 6 and
+    10", a size run belonging to dresses and to no bag in the catalog.
+
+    So the catalog's own values travel with the products, and the sentence the
+    reply owes the shopper is stated rather than left to be worked out.
+    """
+
+    record = payload.get("size_the_scope_has_not") or {}
+    if not isinstance(record, dict):
+        return ""
+    asked = str(record.get("asked") or "").strip()
+    comes_in = [str(value) for value in (record.get("comes_in") or []) if str(value).strip()]
+    if not asked or not comes_in:
+        return ""
+    run = (
+        "one size"
+        if comes_in == ["onesize"]
+        else ", ".join(value for value in comes_in if value != "onesize")
+    )
+    return (
+        f"SIZE_THE_SCOPE_HAS_NOT: nothing here is made in size {asked}, so the "
+        "size was dropped and these are what the scope holds. Say that first, "
+        f"in a shopper's words, and name what these do come in: {run}. These "
+        "sizes are the catalog's -- state no others, and never present a piece "
+        f"as size {asked}. This is an answer, not a dead end: the products are "
+        "below, so show them rather than asking whether to."
     )
 
 

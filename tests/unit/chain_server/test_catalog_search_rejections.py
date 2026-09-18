@@ -1362,13 +1362,16 @@ def _catalog_with_sizes():
     )
     bags = dict([_sized("tote_bags", ["onesize"]), _sized("clutches", ["onesize"])])
     apparel = dict([_sized("dresses", ["2", "4", "6", "8", "10", "12"])])
+    # Footwear runs its own numbers, which is what makes a dress size asked of
+    # a shoe a vocabulary question rather than a stock-out.
+    footwear = dict([_sized("heels", ["5", "6", "7", "8", "9"])])
     from shared.commerce_contracts import CatalogFilterCapability
     return CatalogCapabilities(
         catalog_id="fashion", retrieval_modes=["text"],
         filters={
             "sizes": CatalogFilterCapability(
                 type="enum", operators=["in"], source_fields=["sizes"],
-                values=["onesize", "2", "4", "6", "8", "10", "12"],
+                values=["onesize", "2", "4", "5", "6", "7", "8", "9", "10", "12"],
             )
         },
         taxonomy=CatalogTaxonomyCapabilities(
@@ -1376,6 +1379,7 @@ def _catalog_with_sizes():
             categories={
                 "bags": CatalogTaxonomyCategory(product_count=2, subcategories=bags),
                 "apparel": CatalogTaxonomyCategory(product_count=1, subcategories=apparel),
+                "footwear": CatalogTaxonomyCategory(product_count=1, subcategories=footwear),
             },
         ),
     )
@@ -1423,6 +1427,45 @@ def test_a_size_a_garment_really_comes_in_is_kept() -> None:
 
     assert _asked(["dresses"], ["8"]) == ""
     assert _asked(["dresses"], "8") == ""
+
+
+def test_a_size_outside_the_scopes_run_cannot_apply_either() -> None:
+    """A dress size asked of footwear is the one-size case, said quietly.
+
+    Bags advertise `onesize` and the mismatch is obvious. Shoes run 5-9, so a
+    12 filters the scope to nothing and reads back as a stock-out -- the shop
+    looks out of a size it never made. Vocabulary decides both.
+    """
+
+    assert _asked(["heels"], "12") == "12"
+    assert _asked(["heels"], "8") == ""
+
+
+def test_the_sizes_a_scope_comes_in_are_the_catalogs() -> None:
+    """The run travels with the result so the reply need not invent one.
+
+    "Do you have a tote bag in a size 8" was answered "the tote bags we carry
+    come in sizes 2, 4, 6 and 10" -- a dress run, and no bag in the catalog.
+    """
+
+    from types import SimpleNamespace
+
+    from chain_server.src.catalog_search import _sizes_this_scope_comes_in
+
+    catalog = _catalog_with_sizes()
+    assert _sizes_this_scope_comes_in(
+        SimpleNamespace(subcategory=["tote_bags"]), catalog
+    ) == ["onesize"]
+    assert _sizes_this_scope_comes_in(
+        SimpleNamespace(subcategory=["dresses"]), catalog
+    ) == ["2", "4", "6", "8", "10", "12"]
+
+
+def test_a_scope_with_no_published_sizes_keeps_the_size_it_was_given() -> None:
+    """Unknown is not narrow: a size cannot be ruled out on missing data."""
+
+    assert _asked([], "8") == ""
+    assert _asked(["not_a_subcategory"], "8") == ""
 
 
 def test_a_mixed_scope_keeps_the_size() -> None:

@@ -319,6 +319,7 @@ class _Attempt:
     taxonomy_payload: Any = None
     taxonomy_status: Any = None
     unconfirmable_requirements: Any = field(default_factory=list)
+    size_the_scope_has_not: Any = field(default_factory=dict)
 
 
 def _rejected(
@@ -1330,12 +1331,57 @@ def _no_direct_match_outcome(ctx: SearchContext, attempt: _Attempt) -> StepResul
     return None
 
 
+def _size_order(value: str) -> tuple[int, float, str]:
+    """Sort sizes as a shopper reads a size run, with the wordy ones last."""
+
+    try:
+        return (0, float(value), "")
+    except ValueError:
+        return (1, 0.0, value.casefold())
+
+
+def _sizes_this_scope_comes_in(taxonomy: Any, capabilities: Any) -> list[str]:
+    """Every size the searched subcategories advertise, in reading order.
+
+    Empty where a searched subcategory publishes no sizes at all: that makes
+    the scope's vocabulary unknown rather than narrow, and a size must not be
+    called inapplicable on missing data.
+    """
+
+    subcategories = list(getattr(taxonomy, "subcategory", None) or [])
+    if not subcategories:
+        return []
+    categories = getattr(getattr(capabilities, "taxonomy", None), "categories", None) or {}
+    advertised: list[str] = []
+    seen_any = False
+    for category in categories.values():
+        for name, published in (getattr(category, "subcategories", None) or {}).items():
+            if name not in subcategories:
+                continue
+            sizes = (getattr(published, "filters", None) or {}).get("sizes")
+            values = [
+                text
+                for text in (
+                    str(value.value if hasattr(value, "value") else value).strip()
+                    for value in (getattr(sizes, "values", None) or ())
+                )
+                if text
+            ]
+            if not values:
+                return []
+            seen_any = True
+            advertised.extend(values)
+    if not seen_any:
+        return []
+    return sorted(dict.fromkeys(advertised), key=_size_order)
+
+
 def _size_that_cannot_apply(
     taxonomy: Any,
     constraints: Any,
     capabilities: Any,
 ) -> str:
-    """The size asked for, when nothing in the searched scope has sizes at all.
+    """The size asked for, when the searched scope comes in no such size.
 
     "Do you have a tote bag in a size 8" spent a turn on: "there aren't any in
     that size... would you like me to show you tote bags in their standard one
@@ -1349,8 +1395,14 @@ def _size_that_cannot_apply(
     requirement, it is one that cannot apply.
 
     Returns the offending size so the caller can drop it and say why. Silent
-    where any searched subcategory really is sold in sizes, so a garment search
-    keeps the size it was given.
+    once any asked size is one the scope advertises, so a garment search keeps
+    the size it was given and filters on it before anything is presented.
+
+    The vocabulary decides this, not the kind of thing being searched. Bags are
+    the loud case -- every bags subcategory advertises `onesize`, so a number
+    there is not an unmet requirement but one that cannot apply -- and asking
+    footwear for a 12 is the same fact more quietly: these run 5-9, and
+    filtering on 12 empties the result while reading like a stock-out.
 
     The size is read through the same coercion the query is built with, because
     a filter is declared `value | list[value]` and both shapes are legal calls.
@@ -1365,26 +1417,14 @@ def _size_that_cannot_apply(
     if not wanted or {value.casefold() for value in wanted} == {_ONE_SIZE}:
         return ""
 
-    subcategories = list(getattr(taxonomy, "subcategory", None) or [])
-    if not subcategories:
+    advertised = {
+        value.casefold() for value in _sizes_this_scope_comes_in(taxonomy, capabilities)
+    }
+    if not advertised:
         return ""
-    categories = getattr(getattr(capabilities, "taxonomy", None), "categories", None) or {}
-    seen_any = False
-    for category in categories.values():
-        for name, advertised in (getattr(category, "subcategories", None) or {}).items():
-            if name not in subcategories:
-                continue
-            sizes = (getattr(advertised, "filters", None) or {}).get("sizes")
-            values = {
-                str(v.value if hasattr(v, "value") else v).strip().casefold()
-                for v in (getattr(sizes, "values", None) or ())
-            }
-            if not values:
-                return ""
-            seen_any = True
-            if values != {_ONE_SIZE}:
-                return ""
-    return ", ".join(wanted) if seen_any else ""
+    if any(value.casefold() in advertised for value in wanted):
+        return ""
+    return ", ".join(wanted)
 
 
 def _planned_search(ctx: SearchContext, attempt: _Attempt) -> StepResult:
@@ -1417,6 +1457,14 @@ def _planned_search(ctx: SearchContext, attempt: _Attempt) -> StepResult:
             if name != "sizes"
         }
         attempt.normalized_constraints = normalized_constraints
+        # Dropping it silently is how "do you have a tote bag in a size 8" got
+        # answered with invented sizes: the products came back with the size
+        # gone from the question and nothing saying so, leaving the size run to
+        # be guessed. The catalog's own values travel with the result instead.
+        attempt.size_the_scope_has_not = {
+            "asked": inapplicable_size,
+            "comes_in": _sizes_this_scope_comes_in(request.taxonomy, capabilities),
+        }
     taxonomy_fields = {
         field_name
         for field_name in (
@@ -1847,6 +1895,7 @@ def _rendered_evidence(ctx: SearchContext, attempt: _Attempt) -> StepResult:
             scope_complete=bool(request.scope_complete),
             budget_exhausted=bool(search_budget_exhausted),
             unconfirmed_requirements=unconfirmable_requirements,
+            size_the_scope_has_not=dict(attempt.size_the_scope_has_not or {}),
             scope_outcome={
                 "outcome": "zero_results",
                 "requested_product_type": request.requested_product_type,
@@ -1924,6 +1973,7 @@ def _rendered_evidence(ctx: SearchContext, attempt: _Attempt) -> StepResult:
         scope_complete=bool(request.scope_complete),
         budget_exhausted=bool(search_budget_exhausted),
         unconfirmed_requirements=unconfirmable_requirements,
+        size_the_scope_has_not=dict(attempt.size_the_scope_has_not or {}),
         products=[
             _search_product_record(product) for product in result.products
         ],

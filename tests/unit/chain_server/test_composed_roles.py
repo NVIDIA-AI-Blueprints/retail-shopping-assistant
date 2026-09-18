@@ -19,14 +19,13 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-
 from chain_server.src import catalog_search as catalog_search_mod
+from chain_server.src import turn_support
 from chain_server.src.agenttypes import State
 from chain_server.src.catalog_search import SearchContext, search_catalog
 from chain_server.src.control_signals import REJECTIONS_KEY
 from chain_server.src.tool_evidence import EVIDENCE_KEY
 from chain_server.src.turn_scope import TurnScope
-from chain_server.src import turn_support
 from chain_server.src.turn_support import (
     _scope_relation_line,
     _scope_relation_payload,

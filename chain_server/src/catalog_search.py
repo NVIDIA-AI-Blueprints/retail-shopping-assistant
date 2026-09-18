@@ -20,10 +20,10 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from dataclasses import dataclass, field
-from collections.abc import Sequence
 from typing import Any
 
 from pydantic import (

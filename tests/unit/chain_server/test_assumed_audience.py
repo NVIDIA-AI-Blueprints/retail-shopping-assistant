@@ -21,7 +21,6 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-
 from chain_server.src import catalog_search as catalog_search_mod
 from chain_server.src.agenttypes import State
 from chain_server.src.catalog_search import (
@@ -33,11 +32,11 @@ from chain_server.src.tool_evidence import EVIDENCE_KEY
 from chain_server.src.turn_scope import TurnScope
 from chain_server.src.turn_support import (
     _assumed_audience_line,
-    _required_constraints_input_model,
     _audience_assumption_events,
-    _turn_audience_events,
     _customer_safe_search_evidence,
+    _required_constraints_input_model,
     _search_catalog_tool_input_model,
+    _turn_audience_events,
 )
 from shared.commerce_contracts import (
     CatalogCapabilities,
@@ -537,7 +536,7 @@ def test_the_dropped_event_cap_matches_what_a_finalize_can_carry() -> None:
         for rule in TurnFinalizeRequest.model_fields["events"].metadata
         if getattr(rule, "max_length", None) is not None
     )
-    assert MAX_FINALIZE_EVENTS == server_bound
+    assert server_bound == MAX_FINALIZE_EVENTS
 
     receipt = TurnFinalizeResult.model_validate(
         {

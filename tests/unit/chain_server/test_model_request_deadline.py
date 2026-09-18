@@ -60,5 +60,11 @@ def test_a_tiny_budget_still_leaves_a_usable_deadline() -> None:
 
 def test_the_client_is_built_with_it() -> None:
     source = open(_REPO_ROOT / "chain_server/src/deepagents_runtime.py").read()
-    block = source[source.index("def _create_chat_model") :][:1600]
+    # The whole method, not its first 1600 characters. The window was a proxy
+    # for "inside this method" and any comment added above the argument broke
+    # it: documenting why sampling is settable moved `timeout=` past the cut
+    # and failed a test about the deadline, which had not changed.
+    start = source.index("def _create_chat_model")
+    end = source.index("\n    def ", start)
+    block = source[start:end]
     assert "timeout=self._model_request_timeout()" in block

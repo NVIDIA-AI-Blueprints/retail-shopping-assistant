@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import unicodedata
@@ -368,8 +369,27 @@ class ToolLoopControlMiddleware(AgentMiddleware):
         the one that works. Counting those ended a turn that was succeeding.
         """
 
-        if not _produced_nothing_usable(result):
-            return False
+        # WORKAROUND for a model failure, not a policy about retries.
+        #
+        # The model emits an assistant message with empty text content whose
+        # tool call is byte-identical to the one it just made, receives a
+        # byte-identical result, and repeats: twelve times in J01 turn 16,
+        # twenty-two tool calls, killed by the graph's recursion limit after
+        # 98 seconds, on a turn whose first call had already retrieved all
+        # sixteen products it asked for. Nothing in the result is being read,
+        # so no wording in it can stop this -- an earlier version that told the
+        # model it had already searched the scope looped the same way.
+        #
+        # Filed against the model. See
+        # docs/reports/2026-09-17__model-bug-report__tool-call-repetition-lock-in.md
+        #
+        # The *pair* is what gets counted, not the call. A repair re-issues the
+        # same arguments after the locked fields are restored, so an identical
+        # call whose result differs is the one that works, and counting those
+        # ended turns that were succeeding. An identical call whose result is
+        # also identical cannot be that: it is the pattern the model is
+        # copying, and the second occurrence is where it establishes.
+        unproductive = _produced_nothing_usable(result)
         key = (
             _tool_name(result),
             json.dumps(
@@ -377,6 +397,7 @@ class ToolLoopControlMiddleware(AgentMiddleware):
                 sort_keys=True,
                 default=str,
             ),
+            "" if unproductive else _what_came_back(result),
         )
         self._calls_made[key] = self._calls_made.get(key, 0) + 1
         return self._calls_made[key] >= _MAX_IDENTICAL_CALLS
@@ -660,6 +681,17 @@ def _tool_name(candidate: Any) -> str:
         function = candidate.get("function") or {}
         return str(candidate.get("name") or function.get("name") or "")
     return str(getattr(candidate, "name", ""))
+
+
+def _what_came_back(result: Any) -> str:
+    """A digest of this result, for telling a repeated pair from a repair.
+
+    Hashed rather than kept, because a turn holds one of these per call and a
+    search result runs to thousands of characters.
+    """
+
+    content = result.content if isinstance(result.content, str) else str(result.content)
+    return hashlib.sha1(content.encode()).hexdigest()
 
 
 def _produced_nothing_usable(result: Any) -> bool:

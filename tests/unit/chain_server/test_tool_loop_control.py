@@ -308,6 +308,67 @@ def test_the_same_empty_scope_sent_twice_closes_the_loop() -> None:
     assert closed.tools == []
 
 
+def test_an_identical_pair_of_call_and_result_closes_the_loop() -> None:
+    """The model failure this exists for: it copies its own last exchange.
+
+    J01 turn 16 produced twelve assistant messages with empty text content,
+    each carrying a byte-identical tool call, each answered by a byte-identical
+    result that already held all sixteen products asked for. The turn died on
+    the recursion limit after 98 seconds. Nothing in the result was being read,
+    so this cannot be fixed by what the result says -- only by refusing to let
+    the pair repeat.
+    """
+
+    middleware = ToolLoopControlMiddleware()
+    scope = {"requested_product_type": "dress", "semantic_query": "a Cancun wedding"}
+    found = "SEARCH_RESULT_GROUNDING_NOTE: grounded candidates\nPRODUCT_REF: p1"
+    first_call = _search_call("call-a", scope)
+    first_result = _tool_result(found, tool_call_id="call-a")
+    second_call = _search_call("call-b", scope)
+    second_result = _tool_result(found, tool_call_id="call-b")
+
+    said = HumanMessage(content="another wedding in Cancun in three months")
+    _capture_model_request(middleware, [said, first_call, first_result])
+    closed = _capture_model_request(
+        middleware,
+        [said, first_call, first_result, second_call, second_result],
+    )
+
+    assert closed.tools == []
+
+
+def test_a_repair_sending_the_same_arguments_is_not_the_loop() -> None:
+    """Identical arguments with a different result is the call that worked.
+
+    A repair restores the locked fields and re-issues, so its arguments can
+    match the call it is fixing. Counting that ended turns that were
+    succeeding, which is why the pair is what gets counted and not the call.
+    """
+
+    middleware = ToolLoopControlMiddleware()
+    scope = {"requested_product_type": "dress", "semantic_query": "a Cancun wedding"}
+    first_call = _search_call("call-a", scope)
+    refused = _tool_result(
+        SEARCH_VALIDATION_ERROR_PREFIX + "{} with error: invalid taxonomy",
+        tool_call_id="call-a",
+        status="error",
+    )
+    repair_call = _search_call("call-b", scope)
+    repaired = _tool_result(
+        "SEARCH_RESULT_GROUNDING_NOTE: grounded candidates\nPRODUCT_REF: p1",
+        tool_call_id="call-b",
+    )
+
+    said = HumanMessage(content="a dress for a Cancun wedding")
+    _capture_model_request(middleware, [said, first_call, refused])
+    after_repair = _capture_model_request(
+        middleware,
+        [said, first_call, refused, repair_call, repaired],
+    )
+
+    assert _tool_names(after_repair.tools) == _tool_names(TOOLS)
+
+
 def test_an_empty_scope_retried_with_a_filter_given_up_stays_open() -> None:
     """The retry the zero-match note asks for must survive the cap.
 

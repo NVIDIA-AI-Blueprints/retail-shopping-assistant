@@ -1,0 +1,30 @@
+id: J16_counting_what_was_shown
+covers: [discovery, references, cart]
+why: >
+  A showing of more than one kind, and then the shopper counting inside it.
+  Numbering restarts under each heading, so "the first one" and "the second
+  shoes" mean different products and neither is the second thing on the
+  screen. Nothing else in this suite asks for a number over a showing with
+  more than one group: the ordinal adds in J15 all happen where only one kind
+  is on screen, which is exactly where per-group and straight-through
+  numbering give the same answer and a mistake cannot show.
+turns:
+  - say: show me some dresses and some shoes for a summer wedding
+    expect: {products_min: 2}
+  # Named, so the group decides which number this is. The second shoes is the
+  # second of the shoes, not the second thing shown.
+  - say: add the second shoes to my cart
+    expect:
+      cart_lines: 1
+      cart_holds_shown: {turn: 1, group: shoes, position: 2}
+  # Unnamed, over a showing that still has two groups. This must not stop to
+  # ask: the first group is the one the reply anchors on, and a shopper who
+  # says "the first one" has not been unclear.
+  - say: add the first one too
+    expect:
+      cart_lines: 2
+      cart_holds_shown: {turn: 1, position: 1}
+  - say: what's in my cart
+    expect:
+      cart_unchanged: true
+      cart_lines: 2

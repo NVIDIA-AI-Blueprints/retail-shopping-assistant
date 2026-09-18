@@ -44,6 +44,11 @@ class ProductReferenceDescriptor(_ReferenceModel):
     turn_sequence: int | None = Field(default=None, ge=1)
     candidate_set_id: str | None = Field(default=None, min_length=1, max_length=64)
     ordinal: int | None = Field(default=None, ge=1)
+    #: The heading the shopper counted under: "the second shoes" is
+    #: ordinal 2 in group "shoes". An ordinal is numbered from one inside each
+    #: group, so without this it names one product per group rather than one
+    #: product.
+    group: str | None = Field(default=None, min_length=1, max_length=256)
     #: What the shopper described rather than named, in advertised attribute
     #: terms: "the black one" is {"primary_color": "black"}. Compared against
     #: the attributes the catalog confirmed when the product was shown, so the
@@ -59,6 +64,7 @@ class ProductReferenceDescriptor(_ReferenceModel):
             self.turn_sequence,
             self.candidate_set_id,
             self.ordinal,
+            self.group,
             self.attributes,
         )
         if not any(selector is not None for selector in selectors):
@@ -82,7 +88,14 @@ class ProductReferenceMatch(_ReferenceModel):
     product: dict[str, Any]
     candidate_set_id: str = Field(..., min_length=1, max_length=64)
     turn_sequence: int
+    #: Where this product sat under its heading. Numbered from one inside each
+    #: group, so it identifies a product only together with the group.
     position: int
+    #: The heading it was shown under, empty where the showing had none.
+    group: str = Field(default="", max_length=256)
+    #: Which group, in the order they were shown. Carried because a bare
+    #: ordinal with nothing to narrow it means the first group on screen.
+    group_index: int = 0
     catalog_revision: str | None = Field(default=None, max_length=512)
 
 
@@ -458,6 +471,7 @@ def _matched_occurrences(
             for occurrence in occurrences
             if _identifier(occurrence.candidate_set_id) == newest
         ]
+        occurrences = _the_group_the_ordinal_counts_in(descriptor, occurrences)
 
     matches_by_ref: dict[str, ProductReferenceMatch] = {}
     for occurrence in occurrences:
@@ -467,6 +481,46 @@ def _matched_occurrences(
         matches_by_ref.pop(product_ref, None)
         matches_by_ref[product_ref] = occurrence
     return list(matches_by_ref.values())
+
+
+def _the_group_the_ordinal_counts_in(
+    descriptor: ProductReferenceDescriptor,
+    occurrences: list[ProductReferenceMatch],
+) -> list[ProductReferenceMatch]:
+    """Narrow one showing to the group the shopper is counting inside.
+
+    A number restarts under each heading, so "the first one" over a showing of
+    dresses and shoes names two products, and the reference that could not be
+    clearer came back as a question to ask.
+
+    Named, the group decides it: "the second shoes" is the shoes. Unnamed, the
+    first group on screen does, which is the one the reply anchors on and the
+    only group there is when the shopper asked for one kind. Assume and
+    disclose: guessing which of four dresses they meant is recoverable in
+    three words, and stopping to ask is not free.
+    """
+
+    if descriptor.group is not None:
+        wanted = _normalized(descriptor.group)
+        named = [
+            occurrence
+            for occurrence in occurrences
+            if _normalized(occurrence.group) == wanted
+        ]
+        # A heading this showing does not know falls through to the default
+        # below rather than narrowing to nothing. The shopper's word for a
+        # group is not always the word the search was asked for -- "frocks"
+        # over a group headed "dresses" -- and leaving it unnarrowed would
+        # answer a clearer reference with a question than a vaguer one.
+        if named:
+            return named
+    groups = {occurrence.group_index for occurrence in occurrences}
+    if len(groups) <= 1:
+        return occurrences
+    first = min(groups)
+    return [
+        occurrence for occurrence in occurrences if occurrence.group_index == first
+    ]
 
 
 def _corroboration_mismatch(
@@ -654,16 +708,21 @@ def _attributes_agree(product: Any, wanted: dict[str, str]) -> bool:
 def _product_occurrences(rows) -> list[ProductReferenceMatch]:
     occurrences = []
     for event, turn in rows:
-        for position, product in _event_products(event.payload_json):
-            occurrences.append(
-                ProductReferenceMatch(
-                    product=product,
-                    candidate_set_id=event.event_id,
-                    turn_sequence=turn.sequence,
-                    position=position,
-                    catalog_revision=turn.catalog_revision,
+        for group_index, (heading, products) in enumerate(
+            _event_groups(event.payload_json)
+        ):
+            for position, product in products:
+                occurrences.append(
+                    ProductReferenceMatch(
+                        product=product,
+                        candidate_set_id=event.event_id,
+                        turn_sequence=turn.sequence,
+                        position=position,
+                        group=heading,
+                        group_index=group_index,
+                        catalog_revision=turn.catalog_revision,
+                    )
                 )
-            )
     return occurrences
 
 
@@ -714,26 +773,37 @@ def _newest_reference_sets_within_budget(
 
 
 def _compact_products(payload_json: str) -> list[dict[str, Any]]:
+    """Every product of one showing, each naming its group and its number.
+
+    The number restarts under each heading, so a position without its group
+    names one product per group. Flattened without the heading, a showing of
+    dresses and shoes offered two first ones and "the first one" resolved to
+    neither.
+    """
+
     products = []
-    for position, product in _event_products(payload_json):
-        compact = {
-            "ref": product["product_id"],
-            "name": product["display_name"],
-            "position": position,
-        }
-        category = product.get("category")
-        if isinstance(category, str) and category.strip():
-            compact["category"] = category
-        # The sizes this product is sold in, so a later turn can tell which of
-        # the things on screen the shopper's "in a 2" could even mean. Whether
-        # a product comes in a 2 is a catalog fact; which one they meant is
-        # not, and only the first belongs in this record.
-        sizes = (product.get("attributes") or {}).get("sizes")
-        if isinstance(sizes, list):
-            kept = [str(value).strip() for value in sizes if str(value).strip()]
-            if kept:
-                compact["sizes"] = kept
-        products.append(compact)
+    for heading, numbered in _event_groups(payload_json):
+        for position, product in numbered:
+            compact = {
+                "ref": product["product_id"],
+                "name": product["display_name"],
+                "position": position,
+            }
+            if heading:
+                compact["group"] = heading
+            category = product.get("category")
+            if isinstance(category, str) and category.strip():
+                compact["category"] = category
+            # The sizes this product is sold in, so a later turn can tell which
+            # of the things on screen the shopper's "in a 2" could even mean.
+            # Whether a product comes in a 2 is a catalog fact; which one they
+            # meant is not, and only the first belongs in this record.
+            sizes = (product.get("attributes") or {}).get("sizes")
+            if isinstance(sizes, list):
+                kept = [str(value).strip() for value in sizes if str(value).strip()]
+                if kept:
+                    compact["sizes"] = kept
+            products.append(compact)
     return products
 
 

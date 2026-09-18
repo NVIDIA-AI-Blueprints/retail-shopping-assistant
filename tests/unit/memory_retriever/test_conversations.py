@@ -874,6 +874,8 @@ def test_product_resolution_batches_unique_ambiguous_and_missing_results(
                 "candidate_set_id": candidate_set_id,
                 "turn_sequence": 1,
                 "position": 1,
+                "group": "",
+                "group_index": 0,
                 "catalog_revision": "catalog-v1",
             }
         ],
@@ -1152,6 +1154,111 @@ def test_a_product_in_the_second_group_still_resolves_and_still_parses(
     ProductSummary.model_validate(product)
 
 
+def _a_dresses_and_shoes_showing(client: TestClient, conversation_id: str) -> str:
+    _, candidate_set_id = _present_products(
+        client,
+        conversation_id,
+        request_id=f"request-{conversation_id}",
+        products=[
+            {"product_id": "dress-1", "display_name": "Coral Silk Maxi"},
+            {"product_id": "dress-2", "display_name": "Vivienne Lace"},
+            {"product_id": "shoe-1", "display_name": "Buckled Heels"},
+            {"product_id": "shoe-2", "display_name": "Wine Red Pumps"},
+        ],
+        product_groups=[
+            {"heading": "dresses", "product_ids": ["dress-1", "dress-2"]},
+            {"heading": "shoes", "product_ids": ["shoe-1", "shoe-2"]},
+        ],
+    )
+    return candidate_set_id
+
+
+def _resolved(client: TestClient, conversation_id: str, **descriptor) -> dict:
+    return client.post(
+        f"/conversations/{conversation_id}/products/resolve",
+        json={"references": [{"reference_id": "r", **descriptor}]},
+    ).json()["results"][0]
+
+
+def test_a_named_group_decides_which_number_the_shopper_meant(
+    conversation_db: TestClient,
+) -> None:
+    """"The second shoes" is the shoes, not the second thing on the screen."""
+
+    _a_dresses_and_shoes_showing(conversation_db, "conversation-second-shoes")
+
+    result = _resolved(
+        conversation_db, "conversation-second-shoes", ordinal=2, group="shoes"
+    )
+
+    assert result["status"] == "resolved"
+    assert result["matches"][0]["product"]["display_name"] == "Wine Red Pumps"
+
+
+def test_a_bare_ordinal_takes_the_first_group_rather_than_asking(
+    conversation_db: TestClient,
+) -> None:
+    """Numbering restarts per group, so "the first one" named two products.
+
+    It came back ambiguous, which is the assistant stopping to ask over a
+    reference the shopper could not have made clearer. The first group is the
+    one the reply anchors on, and it is the only group there is when they
+    asked for one kind.
+    """
+
+    _a_dresses_and_shoes_showing(conversation_db, "conversation-bare-ordinal")
+
+    result = _resolved(conversation_db, "conversation-bare-ordinal", ordinal=1)
+
+    assert result["status"] == "resolved"
+    assert result["matches"][0]["product"]["display_name"] == "Coral Silk Maxi"
+
+
+def test_a_heading_the_record_does_not_know_still_resolves_by_number(
+    conversation_db: TestClient,
+) -> None:
+    """The shopper's word for a group is not always the search's word for it.
+
+    An unrecognised heading narrows nothing rather than resolving nothing.
+    """
+
+    _a_dresses_and_shoes_showing(conversation_db, "conversation-odd-heading")
+
+    result = _resolved(
+        conversation_db, "conversation-odd-heading", ordinal=1, group="frocks"
+    )
+
+    assert result["status"] == "resolved"
+    assert result["matches"][0]["product"]["display_name"] == "Coral Silk Maxi"
+
+
+def test_the_index_a_later_turn_reads_names_each_product_s_group(
+    conversation_db: TestClient,
+) -> None:
+    """Without the heading the index offered two first ones and no way to pick."""
+
+    _a_dresses_and_shoes_showing(conversation_db, "conversation-index-groups")
+    started = _start_turn(
+        conversation_db,
+        "conversation-index-groups",
+        request_id="request-index-groups-next",
+        shopper_text="and the first one?",
+    ).json()
+
+    shown = [
+        (product["group"], product["position"], product["name"])
+        for reference_set in started["projection"]["product_reference_index"]
+        for product in reference_set["products"]
+    ]
+
+    assert shown == [
+        ("dresses", 1, "Coral Silk Maxi"),
+        ("dresses", 2, "Vivienne Lace"),
+        ("shoes", 1, "Buckled Heels"),
+        ("shoes", 2, "Wine Red Pumps"),
+    ]
+
+
 def test_an_unreferenceable_product_does_not_shift_the_rest(
     conversation_db: TestClient,
 ) -> None:
@@ -1239,6 +1346,8 @@ def test_product_resolution_deduplicates_repeated_ref_using_latest_occurrence(
             "candidate_set_id": latest_set_id,
             "turn_sequence": 2,
             "position": 1,
+            "group": "",
+            "group_index": 0,
             "catalog_revision": "catalog-v1",
         }
     ]

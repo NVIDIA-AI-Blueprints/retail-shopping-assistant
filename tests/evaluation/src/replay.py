@@ -376,20 +376,29 @@ def check_turn(
         wanted = expect["cart_holds_shown"] or {}
         shown_on = int(wanted.get("turn") or 0)
         position = int(wanted.get("position") or 0)
+        # Numbered from one under each heading, so a number alone names one
+        # product per group. Read off the product's own recorded group and
+        # position rather than counted along the list, which is the same
+        # arithmetic the shopper is not doing.
+        group = str(wanted.get("group") or "")
         showing = next(
             (earlier.products for earlier in earlier_turns if earlier.index == shown_on),
             [],
         )
-        expected_name = (
-            str((showing[position - 1] or {}).get("display_name") or "")
-            if 0 < position <= len(showing)
-            else ""
+        expected_name = next(
+            (
+                str(product.get("display_name") or "")
+                for product in showing
+                if int(product.get("position") or 0) == position
+                and (not group or str(product.get("group") or "") == group)
+            ),
+            "",
         )
         in_cart = [str(line.get("item") or "") for line in turn.cart]
         record(
             "cart_holds_shown",
             bool(expected_name) and expected_name in in_cart,
-            f"turn {shown_on} position {position} was "
+            f"turn {shown_on} {group + ' ' if group else ''}position {position} was "
             f"{expected_name or '(nothing shown there)'}, cart holds {in_cart}",
         )
 

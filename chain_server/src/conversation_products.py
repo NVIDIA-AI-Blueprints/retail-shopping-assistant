@@ -85,7 +85,21 @@ class ProductReferenceDescriptor(_ConversationProductModel):
             "picked the fourth, the name did not match it, nothing was added, "
             "and the shopper was re-shown the same four in a different order."
             " Sent alone it counts within the most recently shown set, which "
-            "is the one the shopper is looking at."
+            "is the one the shopper is looking at, under the first heading "
+            "shown there."
+        ),
+    )
+    group: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=256,
+        description=(
+            "Optional. The heading in square brackets that the shopper "
+            "counted under, when they named one: 'the second shoes' is "
+            "`ordinal` 2 with `group` 'shoes'. Numbering restarts under each "
+            "heading, so an ordinal alone over a showing of dresses and shoes "
+            "names one product in each. Send the heading as it appears in the "
+            "index. Omit it when the shopper named no kind."
         ),
     )
     attributes: dict[str, str] | None = Field(
@@ -115,6 +129,7 @@ class ProductReferenceDescriptor(_ConversationProductModel):
             self.turn_sequence,
             self.candidate_set_id,
             self.ordinal,
+            self.group,
             self.attributes,
         )
         if not any(value is not None for value in selectors):
@@ -157,7 +172,11 @@ class ConversationProductMatch(_ConversationProductModel):
     product: ProductSummary
     candidate_set_id: str = Field(..., min_length=1, max_length=64)
     turn_sequence: int = Field(..., ge=1)
+    #: Numbered from one under the group's heading, so it identifies a product
+    #: only together with that heading.
     position: int = Field(..., ge=1)
+    group: str = Field(default="", max_length=256)
+    group_index: int = Field(default=0, ge=0)
     catalog_revision: str | None = Field(default=None, max_length=512)
 
 
@@ -625,7 +644,12 @@ def _format_reference_set(value: Any) -> str:
     products = value.get("products")
     if not set_id or not isinstance(turn, int) or not isinstance(products, list):
         return ""
+    # Grouped, and numbered from one inside each group, because that is what
+    # the shopper saw. Rendered as one run of numbers it read as a queue while
+    # the screen showed headed lists, so a position meant one product here and
+    # another there, and "the first one" over dresses and shoes named two.
     rendered = []
+    current_group: str | None = None
     for product in products:
         if not isinstance(product, dict):
             continue
@@ -634,6 +658,11 @@ def _format_reference_set(value: Any) -> str:
         position = product.get("position")
         if not ref or not name or not isinstance(position, int):
             continue
+        group = _one_line(product.get("group"))
+        if group != current_group:
+            current_group = group
+            if group:
+                rendered.append(f"[{group}]")
         category = _one_line(product.get("category"))
         rendered.append(
             f"{position}:{name} [{category}] <{ref}>"

@@ -24,11 +24,28 @@ from tests.evaluation.src.replay import TurnResult, check_turn
 
 
 def _showing(*names: str) -> TurnResult:
+    """One group, numbered as the turn streams it."""
+
+    return _grouped(("", names))
+
+
+def _grouped(*groups: tuple[str, tuple[str, ...]]) -> TurnResult:
+    """A showing of several headed groups, each numbered from one.
+
+    The number restarts under each heading, so the same position exists in
+    every group and the group is half of the coordinate.
+    """
+
+    products = [
+        {"display_name": name, "group": heading, "position": position}
+        for heading, names in groups
+        for position, name in enumerate(names, start=1)
+    ]
     return TurnResult(
         index=5,
         said="ok, just show me sandals in a 7",
         reply="here are some sandals",
-        products=[{"display_name": name} for name in names],
+        products=products,
         cart=[],
         tools=["search_catalog_tool"],
         seconds=9.0,
@@ -106,3 +123,58 @@ def test_a_position_that_was_never_shown_fails() -> None:
 
     assert [(c.name, c.outcome) for c in checks] == [("cart_holds_shown", "fail")]
     assert "nothing shown there" in checks[0].detail
+
+
+def test_the_group_picks_which_second_the_script_meant() -> None:
+    """Two groups on screen, so a number alone names one product in each."""
+
+    checks = check_turn(
+        {"cart_holds_shown": {"turn": 5, "group": "shoes", "position": 2}},
+        _add("Wine Red Pumps"),
+        [],
+        [
+            _grouped(
+                ("dresses", ("Coral Silk Maxi", "Vivienne Lace")),
+                ("shoes", ("Buckled Heels", "Wine Red Pumps")),
+            )
+        ],
+    )
+
+    assert [(c.name, c.outcome) for c in checks] == [("cart_holds_shown", "pass")]
+
+
+def test_the_same_number_in_another_group_fails() -> None:
+    """The second dress is not the second shoes, and the check must say so."""
+
+    checks = check_turn(
+        {"cart_holds_shown": {"turn": 5, "group": "shoes", "position": 2}},
+        _add("Vivienne Lace"),
+        [],
+        [
+            _grouped(
+                ("dresses", ("Coral Silk Maxi", "Vivienne Lace")),
+                ("shoes", ("Buckled Heels", "Wine Red Pumps")),
+            )
+        ],
+    )
+
+    assert [(c.name, c.outcome) for c in checks] == [("cart_holds_shown", "fail")]
+    assert "shoes position 2 was Wine Red Pumps" in checks[0].detail
+
+
+def test_a_number_with_no_group_takes_the_first_group() -> None:
+    """Which is what the resolver does with a bare ordinal, so the two agree."""
+
+    checks = check_turn(
+        {"cart_holds_shown": {"turn": 5, "position": 1}},
+        _add("Coral Silk Maxi"),
+        [],
+        [
+            _grouped(
+                ("dresses", ("Coral Silk Maxi", "Vivienne Lace")),
+                ("shoes", ("Buckled Heels", "Wine Red Pumps")),
+            )
+        ],
+    )
+
+    assert [(c.name, c.outcome) for c in checks] == [("cart_holds_shown", "pass")]

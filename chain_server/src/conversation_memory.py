@@ -117,9 +117,6 @@ class TurnReplayOutput(_MemoryModel):
 
     product_results: list[ProductSummary]
     retrieved: dict[str, str]
-    #: The role each product was shown under, by product ref. Defaulted, so a
-    #: turn recorded before this existed still replays.
-    shown_under: dict[str, str] = Field(default_factory=dict)
     agent_diagnostics: dict[str, JsonValue]
     selected_skill_names: list[str] = Field(default_factory=list, max_length=5)
 

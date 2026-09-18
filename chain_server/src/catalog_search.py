@@ -1781,14 +1781,7 @@ def _published_in_plan_order(
                 continue
             ctx.scope.product_evidence.add(result.products)
             _append_product_results(ctx.state, result.products)
-            # The word the shopper used for this role, kept with what it
-            # returned. This is the only point that knows it: downstream there
-            # is one flat list, and the groups the reply writes are no longer
-            # recoverable from it.
-            asked_for = (attempt.requested_product_type or "").strip()
             for product in result.products:
-                if asked_for:
-                    ctx.state.shown_under.setdefault(product.product_id, asked_for)
                 if product.image_url:
                     ctx.scope.retrieved[product.display_name] = product.image_url
 

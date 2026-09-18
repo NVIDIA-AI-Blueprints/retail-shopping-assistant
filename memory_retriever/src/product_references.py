@@ -19,8 +19,6 @@ from .models import ConversationEvent, ConversationProjection, ConversationTurn
 PRESENTED_PRODUCTS_EVENT_KEY = "runtime-presented-products"
 #: Where the product sat on the screen, kept with it rather than recounted.
 _SCREEN_POSITION_KEY = "screen_position"
-#: The role it was shown under, in the shopper's word for it.
-_SHOWN_UNDER_KEY = "shown_under"
 # Query safety bound only. The character budget below is the effective limit:
 # a compact set of eight products is roughly 1KB, so ~15 sets survive and this
 # row cap is never reached. Resolution itself is unbounded and still sees every
@@ -129,7 +127,6 @@ def append_presented_products_event(
     product_results: list[dict[str, Any]],
     *,
     created_at: float,
-    shown_under: dict[str, str] | None = None,
 ) -> ConversationEvent | None:
     """Append one event for the ordered products returned to the shopper.
 
@@ -140,23 +137,14 @@ def append_presented_products_event(
     dropped product: they would say "the fifth" and be handed the sixth.
     Numbering first leaves a gap instead, and a gap resolves to nothing rather
     than to the wrong garment.
-
-    The role each product was shown under is recorded with it too -- "shoes",
-    the shopper's own word, which the reply also used as a heading. It is the
-    only way a later turn can tell which of the things on screen "the first
-    shoes" counts among, since that group spans several catalog categories.
     """
 
-    labels = shown_under or {}
     products = []
     for position, product in enumerate(product_results, start=1):
         if not _is_referenceable_product(product):
             continue
         stored = _persistable(product)
         stored[_SCREEN_POSITION_KEY] = position
-        label = str(labels.get(str(product.get("product_id") or "")) or "").strip()
-        if label:
-            stored[_SHOWN_UNDER_KEY] = label
         products.append(stored)
     if not products:
         return None
@@ -401,26 +389,6 @@ def _matched_occurrences(
     return list(matches_by_ref.values())
 
 
-def _the_kinds_this_product_answers_to(product: Any) -> list[str]:
-    """The words that name this product's kind: the catalog's and the shopper's.
-
-    They are rarely the same word. The catalog files a shoe under `heels`, and
-    the shopper asked for "shoes" -- which is also the heading the reply wrote
-    it under, so it is the word they are most likely to use again. Accepting
-    either means "the first shoes" need not be translated into a taxonomy
-    before it can be looked up.
-    """
-
-    if not isinstance(product, dict):
-        return []
-    kinds = []
-    for key in ("category", _SHOWN_UNDER_KEY):
-        value = product.get(key)
-        if isinstance(value, str) and value.strip():
-            kinds.append(_normalized(value))
-    return kinds
-
-
 def _corroboration_mismatch(
     descriptor: ProductReferenceDescriptor,
     match: ProductReferenceMatch,
@@ -428,11 +396,9 @@ def _corroboration_mismatch(
     """Name the supplied corroborating fields that disagree with the record."""
 
     mismatched = []
-    if (
-        descriptor.category is not None
-        and _normalized(descriptor.category)
-        not in _the_kinds_this_product_answers_to(match.product)
-    ):
+    if descriptor.category is not None and _normalized(
+        str(match.product.get("category") or "")
+    ) != _normalized(descriptor.category):
         mismatched.append("category")
     if (
         descriptor.turn_sequence is not None
@@ -548,12 +514,12 @@ def _matches_descriptor(
         product["display_name"]
     ) != _normalized(descriptor.display_name):
         return False
-    if (
-        descriptor.category is not None
-        and _normalized(descriptor.category)
-        not in _the_kinds_this_product_answers_to(product)
-    ):
-        return False
+    if descriptor.category is not None:
+        category = product.get("category")
+        if not isinstance(category, str) or _normalized(category) != _normalized(
+            descriptor.category
+        ):
+            return False
     if (
         descriptor.turn_sequence is not None
         and match.turn_sequence != descriptor.turn_sequence
@@ -680,18 +646,6 @@ def _compact_products(payload_json: str) -> list[dict[str, Any]]:
         category = product.get("category")
         if isinstance(category, str) and category.strip():
             compact["category"] = category
-        # The heading it was shown under, where that is not the catalog's own
-        # word for it. Carried so "the second shoes" can be asked of a product
-        # the catalog calls a sandal, and omitted where the two agree, which is
-        # most of them -- the index is read on every turn and pays for itself
-        # per line.
-        shown_under = product.get(_SHOWN_UNDER_KEY)
-        if (
-            isinstance(shown_under, str)
-            and shown_under.strip()
-            and _normalized(shown_under) != _normalized(str(category or ""))
-        ):
-            compact[_SHOWN_UNDER_KEY] = shown_under
         # The sizes this product is sold in, so a later turn can tell which of
         # the things on screen the shopper's "in a 2" could even mean. Whether
         # a product comes in a 2 is a catalog fact; which one they meant is

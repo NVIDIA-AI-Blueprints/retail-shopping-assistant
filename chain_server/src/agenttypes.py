@@ -160,17 +160,6 @@ class State(BaseModel):
         default_factory=list,
         description="Structured product summaries returned during the current turn"
     )
-    #: The word each product was shown under, by product ref -- the role the
-    #: shopper asked for, such as "shoes". Kept beside the products rather than
-    #: on them, because it is a fact about this turn and not about the garment,
-    #: and kept as a map rather than a parallel list so reordering the products
-    #: cannot separate a product from its label.
-    #:
-    #: It is what makes "the first shoes" resolvable. The heading the reply
-    #: writes is the scope, which no catalog field reconstructs: one "shoes"
-    #: scope returns heels, flats and sandals, so counting by category would
-    #: split that group in three and start each of them at one.
-    shown_under: dict[str, str] = Field(default_factory=dict)
     token_usage: Dict[str, int] = Field(
         default_factory=dict,
         description="Normalized model token usage for the current turn"

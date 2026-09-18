@@ -592,47 +592,6 @@ def _advertised_taxonomy_value(
 
 #: Garments shoppers name that a clothing catalog may simply not stock.
 #:
-#: Not a policy about this shop -- every word here is checked against the
-#: advertised taxonomy before it counts, so the day a jeans product type is
-#: published the entry stops meaning anything. The list exists because the
-#: check needs to tell a garment from an adjective without parsing English:
-#: "structured work tote" and "anything under fifty" are honest queries whose
-#: last word is not the garment, and only a garment may contradict a scope.
-_GARMENTS_A_SHOP_MAY_NOT_STOCK = (
-    "jeans",
-    "pants",
-    "trousers",
-    "shorts",
-    "leggings",
-    "jackets",
-    "coats",
-    "blazers",
-    "hoodies",
-    "sweatpants",
-    "socks",
-    "hats",
-    "scarves",
-    "gloves",
-    "swimsuits",
-    "suits",
-    "vests",
-)
-
-
-def _garment_with_no_advertised_value(
-    text: str,
-    capabilities: CatalogCapabilities,
-) -> str | None:
-    """Return a garment named in text that no advertised value denotes."""
-
-    for garment in _GARMENTS_A_SHOP_MAY_NOT_STOCK:
-        if not _text_mentions_product_type(text, garment):
-            continue
-        if _advertised_scope_match(garment, capabilities) is None:
-            return garment
-    return None
-
-
 def _advertised_scope_match(
     requested_product_type: str | None,
     capabilities: CatalogCapabilities,
@@ -1708,11 +1667,27 @@ _WEARER_AUDIENCE_FILTER_DESCRIPTION = (
     # knew what the values meant and never reached for them. So: say plainly
     # when to send it, and keep the covers-everyone value unconditional so
     # there is no judgment to lose.
-    "Who the products are for. Send this whenever the shopper names the person "
-    "they are buying for, however casually. Every one of these counts the same "
-    "as a formal word: hubby, my guy, my man, my other half, my brother, my "
-    "dad, my son, my wife, my girlfriend, my mum, my sister, my daughter, the "
-    "kids. Build the list "
+    #
+    # The trigger was a list of thirteen person-words, and it failed on the
+    # commonest word of all. J01 turn 12 said "my husband is coming too" and
+    # sent no filter, because the list held "hubby" and "my man" but not
+    # "husband" -- it had been measured on "hubby" and the ordinary word was
+    # never tried. Turn 13 then said "he also wants a bag" and sent none
+    # either, because a pronoun names nobody by that rule, and a womens floral
+    # clutch came back for a man. Turn 12 hid the same failure only because
+    # every sunglass this catalog stocks happens to suit all genders.
+    #
+    # So the trigger is a rule now and not an enumeration: the person appears
+    # in this turn's words, in any form, including a pronoun pointing back.
+    # The reverse rule stays -- silence means no filter -- because that is the
+    # part that cannot be enumerated, and "now show me some skirts" must not
+    # inherit a husband.
+    "Who the products are for. Send this whenever this turn's words say who "
+    "the shopper is buying for, however casually and in whatever form: a "
+    "formal word, an affectionate one, or a pronoun pointing back to someone "
+    "already mentioned. \"My husband is coming too\" says it, \"something for "
+    "hubby\" says it, and so does \"he also wants a bag\" one turn later -- a "
+    "pronoun referring to a person is that person, named. Build the list "
     "in two steps, in this order. First: the value covering all genders is "
     "always in the list, because it suits everyone -- it is never the thing "
     "you leave out. Second: add any other value only when its published "
@@ -1723,18 +1698,20 @@ _WEARER_AUDIENCE_FILTER_DESCRIPTION = (
     "If nothing published suits the named person, such as a child in a "
     "catalog whose values are all adult, send what covers everyone, say so "
     "in the reply, and never substitute what does not suit them. "
-    "The person-words listed above are for reading what the shopper said. "
-    "They are not audiences to offer back: a reply may name only audiences "
+    "How the shopper referred to the person is for reading what they said. "
+    "It is not an audience to offer back: a reply may name only audiences "
     "this catalog advertises, and must never suggest looking for one it "
     "does not stock. "
     "When nobody is named, omit this filter entirely -- do not send a "
     "covers-everyone value to mean unspecified, which "
     "discards everything stocked for one audience. Only this turn's words "
-    "count. An audience established earlier never carries into a request that "
-    "does not name that person again, however obviously they are still "
-    "around: send no filter and let the shopper redirect you. Enumerating the "
-    "ways a shopper moves on is hopeless, so the rule is the reverse -- naming "
-    "someone is what turns the filter on."
+    "count, and an audience established earlier never carries into a request "
+    "that says nothing about who it is for, however obviously that person is "
+    "still around: send no filter and let the shopper redirect you. "
+    "Enumerating the ways a shopper moves on is hopeless, so the rule is the "
+    "reverse -- the person appearing in what they just said is what turns the "
+    "filter on. \"Now show me some skirts\" names nobody and gets no filter, "
+    "even one turn after a husband was mentioned."
 )
 
 
@@ -1882,11 +1859,39 @@ def _a_list_written_as_json_text(value: Any) -> Any:
 
     if not isinstance(value, str):
         return value
+    text = value.strip()
     try:
-        decoded = json.loads(value)
+        decoded = json.loads(text)
     except (TypeError, ValueError):
-        return value
+        decoded = _a_list_whose_last_bracket_never_arrived(text)
+        if decoded is None:
+            return value
     return decoded if isinstance(decoded, list) else value
+
+
+def _a_list_whose_last_bracket_never_arrived(text: str) -> Any | None:
+    """Read a list missing only its closing bracket, or None if that is not it.
+
+    "do you have that first one in a size 6" resolved correctly -- the right
+    product_ref, the right ordinal, the right turn -- and arrived as 301
+    characters of JSON with one `]` absent. The call errored, the error said
+    nothing the model could act on, and it sent the identical 301 characters
+    twenty-two times until the graph's recursion limit ended the turn.
+
+    Only the bracket is supplied, never a brace. A missing `]` means every
+    object in the list closed, so nothing is being guessed at. A missing `}`
+    would mean an object was cut mid-field, and completing that invents a
+    descriptor: a reference that lost its `ordinal` but kept its `category`
+    would resolve, quietly, to a different product than the shopper meant.
+    Those still fail, which is the outcome they should have.
+    """
+
+    if not text.startswith("[") or text.endswith("]"):
+        return None
+    try:
+        return json.loads(text + "]")
+    except (TypeError, ValueError):
+        return None
 
 
 class _ShopperSkillActivationInput(BaseModel):
@@ -4078,6 +4083,9 @@ def _customer_safe_search_evidence(payload: dict[str, Any]) -> str:
             "meet it. Present them as candidates and say plainly that it is "
             "unconfirmed. Do not refuse the request."
         )
+    size = _size_the_scope_has_not_line(payload)
+    if size:
+        lines.append(size)
     relation = _scope_relation_line(payload, has_products=True)
     if relation:
         lines.append(relation)
@@ -4167,6 +4175,40 @@ def _composed_role_line(payload: dict[str, Any], *, has_products: bool) -> str:
         "this role was proposed by the assistant. Offer it as a suggestion "
         "rather than as something they asked for, and keep every returned "
         "product's actual catalog category."
+    )
+
+
+def _size_the_scope_has_not_line(payload: dict[str, Any]) -> str:
+    """Say the asked size does not exist here, and name the run that does.
+
+    The size was dropped before the search or there would be nothing to show.
+    Left unsaid, that is an invitation to fill the gap: "do you have a tote bag
+    in a size 8" was answered "the tote bags we carry come in sizes 2, 4, 6 and
+    10", a size run belonging to dresses and to no bag in the catalog.
+
+    So the catalog's own values travel with the products, and the sentence the
+    reply owes the shopper is stated rather than left to be worked out.
+    """
+
+    record = payload.get("size_the_scope_has_not") or {}
+    if not isinstance(record, dict):
+        return ""
+    asked = str(record.get("asked") or "").strip()
+    comes_in = [str(value) for value in (record.get("comes_in") or []) if str(value).strip()]
+    if not asked or not comes_in:
+        return ""
+    run = (
+        "one size"
+        if comes_in == ["onesize"]
+        else ", ".join(value for value in comes_in if value != "onesize")
+    )
+    return (
+        f"SIZE_THE_SCOPE_HAS_NOT: nothing here is made in size {asked}, so the "
+        "size was dropped and these are what the scope holds. Say that first, "
+        f"in a shopper's words, and name what these do come in: {run}. These "
+        "sizes are the catalog's -- state no others, and never present a piece "
+        f"as size {asked}. This is an answer, not a dead end: the products are "
+        "below, so show them rather than asking whether to."
     )
 
 

@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import unicodedata
@@ -32,6 +33,10 @@ SEARCH_BUDGET_EXHAUSTED_PREFIX = "SEARCH_BUDGET_EXHAUSTED:"
 CONSTRAINT_REVIEW_PREFIX = "REVIEW_REQUIRED_CONSTRAINT:"
 UNSUPPORTED_TAXONOMY_PREFIX = "The requested catalog taxonomy cannot be enforced:"
 UNSUPPORTED_CONSTRAINT_PREFIX = "The requested catalog requirement cannot be enforced:"
+#: How many times one rejected call may be sent unchanged before the turn
+#: answers without it. Two: the first refusal carries the reason, and a second
+#: identical attempt shows the reason was not usable.
+_MAX_IDENTICAL_CALLS = 2
 _SYNTHESIS_PROMPT = """## Tool Loop Closed
 
 Do not call or describe another tool. Produce the best concise shopper-facing
@@ -102,6 +107,13 @@ class ToolLoopControlMiddleware(AgentMiddleware):
         #: still owed the add.
         self._search_scope_closed = False
         self._observed_tool_results: set[str] = set()
+        #: Every call this turn, counted by tool name and arguments, whatever
+        #: it returned. Other per-turn budgets are counted inside a tool body,
+        #: so a call refused before the body runs reaches none of them: it
+        #: costs nothing and may be sent again unchanged forever. One turn sent
+        #: the same rejected argument 22 times and ended on the graph's
+        #: recursion limit; another sent nine and ran to the agent timeout.
+        self._calls_made: dict[tuple[str, str], int] = {}
         self._lock = Lock()
 
     def spent_tool_context(self) -> frozenset[str]:
@@ -298,6 +310,15 @@ class ToolLoopControlMiddleware(AgentMiddleware):
                 self._clear_in_flight_repair()
                 self._synthesis_required = True
                 continue
+            if self._an_identical_call_was_already_made(messages, result):
+                # Not a retry limit. A retry with corrected arguments is the
+                # model working, and the repair path below exists to invite
+                # exactly that. A retry that is byte-identical to a call
+                # already made cannot come out differently, so the turn
+                # answers from what it has instead of spending the graph.
+                self._clear_in_flight_repair()
+                self._synthesis_required = True
+                continue
             if self._repair_in_flight:
                 self._clear_in_flight_repair()
                 if (
@@ -322,6 +343,64 @@ class ToolLoopControlMiddleware(AgentMiddleware):
                 # An incomplete successful search closes the current scope.
                 # The configured search cap still bounds subsequent scopes.
                 continue
+
+    def _an_identical_call_was_already_made(
+        self, messages: list[Any], result: ToolMessage
+    ) -> bool:
+        """Whether this call repeats one already made, unchanged, this turn.
+
+        Deliberately blind to `status`. Reading it was the flaw in the first
+        version of this: the counting only ran for results marked `error`, and
+        a refused search is not marked `error` -- it comes back `rejected`, or
+        `completed` carrying a validation message. So the one shape this was
+        written for never reached it. J01 turn 17 sent nine identical searches
+        and ran to the agent timeout with the counter untouched.
+
+        Which gate refused it is deliberately not read either. The gates are a
+        family -- an unadvertised taxonomy, a repair that moved its scope, a
+        duplicate role -- and closing them one at a time moved the loop between
+        them twice rather than ending it.
+
+        What is read is whether the call produced anything. A repeat that
+        returned nothing usable cannot come out differently and is the loop. A
+        repeat that returned products is not: a repair re-issues the same
+        `requested_product_type` after the locked fields are restored, so the
+        arguments can look identical to the call they are fixing and still be
+        the one that works. Counting those ended a turn that was succeeding.
+        """
+
+        # WORKAROUND for a model failure, not a policy about retries.
+        #
+        # The model emits an assistant message with empty text content whose
+        # tool call is byte-identical to the one it just made, receives a
+        # byte-identical result, and repeats: twelve times in J01 turn 16,
+        # twenty-two tool calls, killed by the graph's recursion limit after
+        # 98 seconds, on a turn whose first call had already retrieved all
+        # sixteen products it asked for. Nothing in the result is being read,
+        # so no wording in it can stop this -- an earlier version that told the
+        # model it had already searched the scope looped the same way.
+        #
+        # Filed against the model. See
+        # docs/reports/2026-09-17__model-bug-report__tool-call-repetition-lock-in.md
+        #
+        # The *pair* is what gets counted, not the call. A repair re-issues the
+        # same arguments after the locked fields are restored, so an identical
+        # call whose result differs is the one that works, and counting those
+        # ended turns that were succeeding. An identical call whose result is
+        # also identical cannot be that: it is the pattern the model is
+        # copying, and the second occurrence is where it establishes.
+        unproductive = _produced_nothing_usable(result)
+        key = (
+            _tool_name(result),
+            json.dumps(
+                _arguments_of_call(messages, str(result.tool_call_id or "")),
+                sort_keys=True,
+                default=str,
+            ),
+            "" if unproductive else _what_came_back(result),
+        )
+        self._calls_made[key] = self._calls_made.get(key, 0) + 1
+        return self._calls_made[key] >= _MAX_IDENTICAL_CALLS
 
     def _queue_repair(
         self,
@@ -350,7 +429,7 @@ class ToolLoopControlMiddleware(AgentMiddleware):
             else set()
         )
         sanitized_feedback = _sanitize_repair_feedback(content)
-        arguments = _search_arguments(messages, tool_call_id)
+        arguments = _arguments_of_call(messages, tool_call_id)
         shopper_stated_scope = _shopper_stated_scope(
             self._shopper_statements,
             repair_scope,
@@ -604,6 +683,54 @@ def _tool_name(candidate: Any) -> str:
     return str(getattr(candidate, "name", ""))
 
 
+def _what_came_back(result: Any) -> str:
+    """A digest of this result, for telling a repeated pair from a repair.
+
+    Hashed rather than kept, because a turn holds one of these per call and a
+    search result runs to thousands of characters.
+    """
+
+    content = result.content if isinstance(result.content, str) else str(result.content)
+    return hashlib.sha1(content.encode()).hexdigest()
+
+
+def _produced_nothing_usable(result: Any) -> bool:
+    """Whether this tool result gave the turn nothing it can answer from.
+
+    `status` alone does not say. A refused search comes back `rejected`, or
+    `completed` carrying a validation message in its text, and only some
+    failures are marked `error`, so reading the status was how a nine-call
+    loop went uncounted.
+
+    Evidence decides it instead. A call that retrieved products is productive
+    whatever else it also reported, which matters for a multi-role call: asked
+    for a sweater and a hat in one go, the sweater is found and the hat
+    refused, and that call answered part of the shopper's sentence. Only a
+    result with no products and a refusal in it is a dead end worth counting.
+
+    A search that matched nothing is such a dead end, and was not counted,
+    because a clean zero-match carries no refusal and no error: it is a
+    `completed` result whose text says plainly that the scope held no
+    products. "Now show me some skirts" filtered to the covers-everyone
+    audience matched none of them and was sent 22 times unchanged.
+
+    Counting it does not fight the note it carries, which asks for another
+    search with a filter given up. That retry changes the arguments, so it
+    lands on a different key and is never what the cap sees. Only the repeat
+    that gave up nothing is, and no scope searched twice unchanged can match
+    on the second attempt what it failed to match on the first.
+    """
+
+    content = result.content if isinstance(result.content, str) else ""
+    if "SEARCH_RESULT_GROUNDING_NOTE" in content:
+        return False
+    if str(getattr(result, "status", "")) == "error":
+        return True
+    if "SEARCH_NO_MATCH_GROUNDING_NOTE" in content:
+        return True
+    return SEARCH_VALIDATION_ERROR_PREFIX in content
+
+
 def _current_shopper_message(messages: list[Any]) -> list[Any]:
     """Return only the current shopper message for a repair model call."""
 
@@ -616,7 +743,7 @@ def _current_shopper_message(messages: list[Any]) -> list[Any]:
 def _search_scope(messages: list[Any], tool_call_id: str) -> str:
     """Return the server-owned repair key for one model-authored search call."""
 
-    arguments = _search_arguments(messages, tool_call_id)
+    arguments = _arguments_of_call(messages, tool_call_id)
     requested_product_type = arguments.get("requested_product_type")
     if not requested_product_type:
         return _UNKNOWN_REPAIR_SCOPE
@@ -629,7 +756,7 @@ def _search_has_unadvertised_requirements(
 ) -> bool:
     """Return whether one raw search call carries an unsupported requirement."""
 
-    arguments = _search_arguments(messages, tool_call_id)
+    arguments = _arguments_of_call(messages, tool_call_id)
     if arguments.get("unadvertised_requirements") not in (None, "", [], {}):
         return True
     constraints = arguments.get("required_constraints")
@@ -638,8 +765,8 @@ def _search_has_unadvertised_requirements(
     return bool(constraints.get("unadvertised_requirements"))
 
 
-def _search_arguments(messages: list[Any], tool_call_id: str) -> dict[str, Any]:
-    """Return raw arguments for one model-authored search call."""
+def _arguments_of_call(messages: list[Any], tool_call_id: str) -> dict[str, Any]:
+    """Return raw arguments for one model-authored tool call."""
 
     for message in reversed(messages):
         for tool_call in getattr(message, "tool_calls", None) or []:

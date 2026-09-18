@@ -76,6 +76,13 @@ class TurnResult:
     #: turn rather than summed, because the turns that grow are the ones with
     #: many tool calls and an average hides them.
     token_usage: dict[str, Any] = field(default_factory=dict)
+    #: Why the turn stopped, and what it spent getting there. Declared here
+    #: because the artifact is `vars(turn)`: a key the stream carries and this
+    #: class does not declare is computed and then silently dropped, which is
+    #: how `token_usage` above went twenty-one runs unmeasured.
+    ended: str = ""
+    rejected: list[str] = field(default_factory=list)
+    repeated: dict[str, int] = field(default_factory=dict)
 
 
 def scenario_identity(label: str, scenario_id: str, repeat: int) -> dict[str, Any]:
@@ -197,6 +204,7 @@ class Assistant:
                 str(call.get("tool_name") or "")
                 for call in (diagnostics.get("tool_calls") or [])
             ],
+            **_how_the_turn_ended(diagnostics),
             # What the turn asked the catalog for, not only what came back. A
             # filter the shopper never gave returns nothing and is then reported
             # as though the shop were empty, so the request is the thing to
@@ -220,6 +228,93 @@ class Assistant:
         )
         response.raise_for_status()
         return _cart_lines(response.json())
+
+
+def _how_the_turn_ended(diagnostics: Mapping[str, Any]) -> dict[str, Any]:
+    """What a failed turn needs said about it, beyond a list of tool names.
+
+    A turn that hit the graph's recursion limit recorded 24 tool names, a
+    generic apology and nothing else, so it read as an ordinary quality
+    failure. The reason had been computed and was dropped here, and diagnosing
+    it meant opening the database.
+
+    Rejections are read off `tool_calls`, which carries the name and the
+    reason. `rejected_tool_calls` holds sequence numbers pointing back into
+    that list and nothing else, so it cannot answer "rejected why".
+    """
+
+    calls = [
+        call
+        for call in (diagnostics.get("tool_calls") or [])
+        if isinstance(call, Mapping)
+    ]
+    return {
+        "ended": str(diagnostics.get("final_termination_reason") or ""),
+        "rejected": [
+            f"{call.get('tool_name') or '?'}"
+            f" ({call.get('rejection_reason') or 'no reason given'})"
+            for call in calls
+            if call.get("status") == "rejected"
+        ],
+        "repeated": _identical_repeats(calls),
+    }
+
+
+#: Endings that mean the turn ran out of something rather than finished.
+#: `recursion_limit` is the graph's step ceiling and `agent_timeout` the clock;
+#: both leave the shopper a generic apology in place of an answer.
+_RAN_OUT = frozenset({"recursion_limit", "agent_timeout"})
+
+
+def _the_turn_reached_an_end(turn: TurnResult) -> list[Check]:
+    """Assert the turn finished, on every turn, whatever the script asked.
+
+    Not declared per scenario, because the failure it catches is the one nobody
+    thinks to write an expectation for. J01 reported 24 passing checks on a run
+    where turn 17 sent 21 identical searches and died on the graph's recursion
+    limit, and again on a run where the same turn showed the shopper *zero*
+    products. The scripted checks read the final reply, and "This request took
+    too long to complete. Please retry." satisfied them.
+
+    So a scenario can go green while a turn is comprehensively broken, which is
+    how three separate loops survived a passing suite. A turn that ran out of
+    steps or time did not answer, and that is a failure regardless of what the
+    text looks like.
+    """
+
+    if turn.ended not in _RAN_OUT:
+        return []
+    repeats = sum(turn.repeated.values())
+    return [
+        Check(
+            "turn_completed",
+            "fail",
+            f"ended on {turn.ended}"
+            + (f" after {repeats} identical repeated calls" if repeats else ""),
+        )
+    ]
+
+
+def _identical_repeats(calls: Sequence[Mapping[str, Any]]) -> dict[str, int]:
+    """How many calls repeated an earlier call's name *and* arguments, by name.
+
+    A retry with different arguments is the model working. A retry with the same
+    arguments is the model stuck, and only the second kind is worth a line in a
+    transcript.
+    """
+
+    seen: set[tuple[str, str]] = set()
+    repeats: dict[str, int] = {}
+    for call in calls:
+        name = str(call.get("tool_name") or "")
+        key = (
+            name,
+            json.dumps(call.get("arguments"), sort_keys=True, default=str),
+        )
+        if key in seen:
+            repeats[name] = repeats.get(name, 0) + 1
+        seen.add(key)
+    return repeats
 
 
 def _cart_lines(cart: Any) -> list[dict[str, Any]]:
@@ -556,8 +651,14 @@ def run_scenario(
             scopes=answered.get("scopes") or [],
             seconds=answered["seconds"],
             token_usage=answered.get("token_usage") or {},
+            ended=str(answered.get("ended") or ""),
+            rejected=answered.get("rejected") or [],
+            repeated=answered.get("repeated") or {},
         )
-        turn.checks = check_turn(step.get("expect") or {}, turn, previous_cart)
+        turn.checks = [
+            *check_turn(step.get("expect") or {}, turn, previous_cart),
+            *_the_turn_reached_an_end(turn),
+        ]
         previous_cart = turn.cart
         turns.append(turn)
 
@@ -627,6 +728,20 @@ def write_transcript(
             f"> {turn['seconds']}s · {len(turn['products'])} products · "
             f"tools {turn['tools'] or '—'}"
         )
+        # Only when abnormal. A line on every turn saying "completed" is a line
+        # every reader learns to skip, and then misses the one that says
+        # recursion_limit.
+        if turn.get("ended") and turn["ended"] != "completed":
+            lines.append(f"> ended: **{turn['ended']}**")
+        if turn.get("repeated"):
+            lines.append(
+                "> identical repeats: "
+                + "; ".join(
+                    f"{name} x{count}" for name, count in turn["repeated"].items()
+                )
+            )
+        if turn.get("rejected"):
+            lines.append(f"> rejected: {turn['rejected']}")
         # Named, not counted. A turn answering "do you have a tote bag in a
         # size 8" wrote four tote bags into its reply and handed the shopper
         # eight products: two ankle boots and two pairs of heels came along

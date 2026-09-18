@@ -22,7 +22,11 @@ from typing import Any
 import pytest
 from chain_server.src import catalog_search as catalog_search_mod
 from chain_server.src.agenttypes import State
-from chain_server.src.catalog_search import SearchContext, search_catalog
+from chain_server.src.catalog_search import (
+    SEARCH_VALIDATION_ERROR_PREFIX,
+    SearchContext,
+    search_catalog,
+)
 from chain_server.src.control_signals import (
     NOT_CARRIED_KEY,
     REJECTIONS_KEY,
@@ -102,13 +106,48 @@ def _capabilities(
     )
 
 
+class _Judge:
+    """A judge that answers from a fixed table, in place of the model call.
+
+    Real answers, taken from the archive: the isolated judge maps shoes to the
+    four footwear subcategories, pumps to heels, and jeans to nothing. Fixed
+    here so a test asserts what the search path does with a verdict rather
+    than whether an endpoint was reachable.
+    """
+
+    def __init__(
+        self,
+        scopes: dict[str, list[str]],
+        colours: dict[str, list[str]] | None = None,
+    ) -> None:
+        self.scopes = scopes
+        self.colours = colours or {}
+        self.asked: list[str] = []
+
+    def judge(
+        self,
+        questions: Any,
+        colour_words: Any,
+        *,
+        subcategories: Any,
+        colours: Any,
+    ) -> VocabularyVerdict:
+        self.asked.extend(q.requested_product_type for q in questions)
+        return VocabularyVerdict(
+            scopes=dict(self.scopes),
+            colours=dict(self.colours),
+        )
+
+
 def _context(
     query: str,
     capabilities: CatalogCapabilities | None = None,
+    judge: Any = None,
 ) -> SearchContext:
     capabilities = capabilities or _capabilities()
     search_input_model = _search_catalog_tool_input_model(capabilities)
     return SearchContext(
+        vocabulary_judge=judge,
         config=SimpleNamespace(
             top_k_retrieve=8,
             top_k_retrieve_broad=12,
@@ -331,12 +370,20 @@ def test_each_gate_records_which_gate_refused_the_scope(
 def test_repeated_shopper_scope_is_attributed_to_the_shopper_scope_gate(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A paraphrase of a search that already found something is refused.
+    """A paraphrase of a search that already found something gets that answer.
 
-    The first search has to return products. The rule exists to stop a retry
-    rewording an *answered* search, and a scope that came back empty has not
-    been answered -- relaxing a filter and looking again is the honest next
-    move there, so that case is deliberately allowed.
+    Refused once, with "use the result already returned" -- advice about data,
+    in place of the data. The model cannot act on advice about products it was
+    not given, so it asked again, and J02 turn 4 spent 23 identical searches
+    and the graph's whole recursion budget on the word "shoes".
+
+    The retrieval still runs only once, which is what the rule was for. What
+    changed is what comes back the second time: the products, so there is
+    nothing left to retry.
+
+    The first search has to return products. A scope that came back empty has
+    not been answered -- relaxing a filter and looking again is the honest
+    next move there, so that case is deliberately left alone.
     """
 
     def _with_products(plan, *_args, **_kwargs):
@@ -356,18 +403,24 @@ def test_repeated_shopper_scope_is_attributed_to_the_shopper_scope_gate(
             fallback_used=False,
         )
 
-    monkeypatch.setattr(
-        catalog_search_mod, "execute_catalog_search", _with_products
-    )
+    searches = 0
+
+    def _counted(plan, *args, **kwargs):
+        nonlocal searches
+        searches += 1
+        return _with_products(plan, *args, **kwargs)
+
+    monkeypatch.setattr(catalog_search_mod, "execute_catalog_search", _counted)
     ctx = _context("show me tote bags")
 
     first = search_catalog(ctx, [_scope()])
     second = search_catalog(ctx, [_scope(semantic_query="roomy tote bags")])
 
     assert _rejection_codes(first) == []
-    assert _rejection_codes(second) == [
-        SearchRejection.DUPLICATE_SHOPPER_SCOPE
-    ]
+    assert _rejection_codes(second) == []
+    # Retrieved once, answered twice.
+    assert searches == 1
+    assert "A Tote" in str(second)
 
 
 def test_a_role_the_shopper_never_typed_is_still_searched_only_once(
@@ -407,18 +460,23 @@ def test_a_role_the_shopper_never_typed_is_still_searched_only_once(
             fallback_used=False,
         )
 
-    monkeypatch.setattr(
-        catalog_search_mod, "execute_catalog_search", _with_products
-    )
+    searches = 0
+
+    def _counted(plan, *args, **kwargs):
+        nonlocal searches
+        searches += 1
+        return _with_products(plan, *args, **kwargs)
+
+    monkeypatch.setattr(catalog_search_mod, "execute_catalog_search", _counted)
     ctx = _context("I want to shop this look")
 
     first = search_catalog(ctx, [_scope()])
     second = search_catalog(ctx, [_scope(semantic_query="roomy tote bags")])
 
     assert _rejection_codes(first) == []
-    assert _rejection_codes(second) == [
-        SearchRejection.DUPLICATE_SHOPPER_SCOPE
-    ]
+    assert _rejection_codes(second) == []
+    assert searches == 1
+    assert "A Tote" in str(second)
 
 
 def test_an_empty_scope_may_be_searched_again_with_a_filter_relaxed() -> None:
@@ -441,9 +499,13 @@ def test_an_empty_scope_may_be_searched_again_with_a_filter_relaxed() -> None:
 def test_repeated_catalog_scope_is_attributed_to_the_catalog_scope_gate() -> None:
     """An open role repeats the taxonomy without repeating the shopper's noun.
 
-    The shopper never named the type, so the shopper-scope gate does not fire
-    and the repeat has to be caught -- and named -- by the taxonomy-and-
-    constraints gate instead.
+    The shopper never named the type, so the repeat arrives under the catalog
+    key rather than the shopper key. Both are answered the same way, which is
+    the point of keeping two keys: a repeat comes in two shapes and neither
+    should cost a second retrieval.
+
+    Nothing is retrieved here -- the stub returns no products -- and the
+    second call is handed that same empty finding rather than a rejection.
     """
 
     ctx = _context("put together a work outfit")
@@ -452,7 +514,8 @@ def test_repeated_catalog_scope_is_attributed_to_the_catalog_scope_gate() -> Non
     second = search_catalog(ctx, [_scope(semantic_query="roomy work tote")])
 
     assert _rejection_codes(first) == []
-    assert _rejection_codes(second) == [SearchRejection.DUPLICATE_CATALOG_SCOPE]
+    assert _rejection_codes(second) == []
+    assert str(second) == str(first)
 
 
 #: Three gates keyed on a ``taxonomy_status`` the server no longer derives.
@@ -474,6 +537,10 @@ UNREACHABLE_GATES = frozenset(
 def test_every_reachable_gate_code_is_exercised() -> None:
     """A new gate with no case here would be unattributable in production."""
 
+    # The two duplicate codes are no longer reachable: a repeated scope is
+    # answered from what it already found rather than refused, so nothing
+    # raises them. Kept in the enum so a run that somehow produces one is
+    # still attributable.
     exercised = {case[0] for case in GATE_CASES} | {
         SearchRejection.DUPLICATE_SHOPPER_SCOPE,
         SearchRejection.DUPLICATE_CATALOG_SCOPE,
@@ -706,19 +773,22 @@ def test_a_look_with_a_role_this_shop_does_not_stock_still_shops(
 def test_a_carried_type_over_an_uncarried_query_is_not_the_garment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Relabelling the role does not make a skirt into the jeans.
+    """Relabelling the role does not make a dress into the jeans.
 
-    Checking the declaration caught the model filing jeans under one
-    subcategory, so it stopped declaring jeans. Live, a look whose jeans this
-    shop does not carry came back as ``requested_product_type: "skirts"`` with
-    ``subcategory: ["skirts"]`` -- every field advertised, every field
-    agreeing -- against ``semantic_query: "dark wash straight-leg jeans"``.
-    The substitution had already happened in the model's own head, and the
-    garment the shopper had named survived only in the ranking text. A navy
-    fitted skirt was offered as the dark bottom.
+    Live, a look whose jeans this shop does not carry came back as
+    ``requested_product_type: "dresses"`` with ``subcategory: ["dresses"]`` --
+    every field advertised, every field agreeing -- against
+    ``semantic_query: "dark wash straight-leg jeans"``. The substitution had
+    already happened in the model's own head, and the garment the shopper named
+    survived only in the ranking text. A navy fitted skirt was offered as the
+    dark bottom.
 
-    So the query is read too: a scope may not answer a garment this shop has
-    no value for with one advertised name that is a different garment.
+    The guarantee is unchanged and the mechanism is not. A word list used to
+    read the query looking for garments it knew; the judge is asked where the
+    role's word lives, says jeans live nowhere, and the role is answered as not
+    carried. The sibling tote bag search is untouched, which is the part that
+    used to break: refusing one role armed a turn-wide lock that turned every
+    other role back as ``repair_changed_product_scope``.
     """
 
     searched: list[str] = []
@@ -733,13 +803,18 @@ def test_a_carried_type_over_an_uncarried_query_is_not_the_garment(
 
     monkeypatch.setattr(catalog_search_mod, "execute_catalog_search", _record)
 
-    ctx = _context("I want to shop this look")
+    ctx = _context(
+        "I want to shop this look",
+        judge=_Judge({"jeans": [], "tote bags": ["tote_bags"]}),
+    )
     result = search_catalog(
         ctx,
         [
             _scope(
                 semantic_query="dark wash straight leg jeans",
-                requested_product_type="dresses",
+                # The model's own relabelling, kept verbatim. It is read for
+                # the word "jeans" and its taxonomy is otherwise ignored.
+                requested_product_type="jeans",
                 taxonomy={"category": ["apparel"], "subcategory": ["dresses"]},
             ),
             _scope(semantic_query="roomy tote bags"),
@@ -748,9 +823,11 @@ def test_a_carried_type_over_an_uncarried_query_is_not_the_garment(
 
     assert "dark wash straight leg jeans" not in searched
     assert "roomy tote bags" in searched
-    assert SearchRejection.TAXONOMY_NOT_ADVERTISED_FOR_SCOPE in (
-        _rejection_codes(result)
-    )
+    # Reported as this role's finding, not as a rejection. A rejection is what
+    # invited the next guess: told jeans are not skirts, the model tried
+    # jumpsuits, then dresses, blouses, camisoles and sweaters.
+    assert _rejection_codes(result) == []
+    assert "not sold here" in str(result)
 
 
 def test_naming_many_subcategories_does_not_buy_the_uncarried_garment(
@@ -809,12 +886,16 @@ def test_naming_many_subcategories_does_not_buy_the_uncarried_garment(
 def test_the_uncarried_refusal_does_not_invite_a_wider_selection(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The way out offered is `not_covered`, not another subcategory.
+    """The role arrives closed, with nothing left in it to resubmit.
 
-    What the model is told is the whole of what it has to go on, and the
-    "name all of them" sentence is what it reached for when it widened. A
-    garment this shop has no word for has no wider selection to try, so saying
-    there is one is the bug that stays fixed here.
+    What the model is told is the whole of what it has to go on, and every
+    earlier wording left it a move. "Name all of them" was read as permission
+    to widen, and the identical jeans query came back over six subcategories
+    at once. "Send this role again scoped to advertised subcategories" was
+    read as an instruction to pick another name off the list, which is how one
+    role became a walk through a whole department at 19k of prompt apiece.
+
+    So this asserts an absence: no instruction to search again, in any form.
     """
 
     monkeypatch.setattr(
@@ -827,22 +908,27 @@ def test_the_uncarried_refusal_does_not_invite_a_wider_selection(
         ),
     )
 
-    ctx = _context("I want to shop this look")
+    ctx = _context("I want to shop this look", judge=_Judge({"jeans": []}))
     result = search_catalog(
         ctx,
         [
             _scope(
                 semantic_query="dark wash straight leg jeans",
-                requested_product_type="dresses",
+                requested_product_type="jeans",
                 taxonomy={"category": ["apparel"], "subcategory": ["dresses"]},
             )
         ],
     )
 
     told = result if isinstance(result, str) else str(result)
-    assert "no wider selection to try" in told
-    assert "not_covered" in told
+    assert "is not sold here" in told
+    assert "no correction to make" in told
     assert "name all of them" not in told
+    assert "send this role again" not in told.casefold()
+    # Not dressed as a malformed argument either. Said in that register, the
+    # model did the reasonable thing with a malformed-input message and sent
+    # another one.
+    assert SEARCH_VALIDATION_ERROR_PREFIX not in told
 
 
 def test_the_same_request_twice_is_not_run_a_second_time() -> None:
@@ -1276,13 +1362,16 @@ def _catalog_with_sizes():
     )
     bags = dict([_sized("tote_bags", ["onesize"]), _sized("clutches", ["onesize"])])
     apparel = dict([_sized("dresses", ["2", "4", "6", "8", "10", "12"])])
+    # Footwear runs its own numbers, which is what makes a dress size asked of
+    # a shoe a vocabulary question rather than a stock-out.
+    footwear = dict([_sized("heels", ["5", "6", "7", "8", "9"])])
     from shared.commerce_contracts import CatalogFilterCapability
     return CatalogCapabilities(
         catalog_id="fashion", retrieval_modes=["text"],
         filters={
             "sizes": CatalogFilterCapability(
                 type="enum", operators=["in"], source_fields=["sizes"],
-                values=["onesize", "2", "4", "6", "8", "10", "12"],
+                values=["onesize", "2", "4", "5", "6", "7", "8", "9", "10", "12"],
             )
         },
         taxonomy=CatalogTaxonomyCapabilities(
@@ -1290,6 +1379,7 @@ def _catalog_with_sizes():
             categories={
                 "bags": CatalogTaxonomyCategory(product_count=2, subcategories=bags),
                 "apparel": CatalogTaxonomyCategory(product_count=1, subcategories=apparel),
+                "footwear": CatalogTaxonomyCategory(product_count=1, subcategories=footwear),
             },
         ),
     )
@@ -1320,10 +1410,62 @@ def test_a_number_asked_of_a_onesize_scope_cannot_apply() -> None:
     assert _asked(["tote_bags"], ["8"]) == "8"
 
 
+def test_the_size_is_found_whichever_shape_it_arrives_in() -> None:
+    """J01 t11 again, 2026-09-17, because the case above only sent a list.
+
+    A filter is declared `value | list[value]`, so `"8"` and `["8"]` are both
+    legal calls. The guard read the list shape only and the bare string walked
+    past it: the impossible size reached the query, nothing matched, and the
+    turn offered to look instead of showing the nine totes it could have.
+    """
+
+    assert _asked(["tote_bags"], "8") == "8"
+
+
 def test_a_size_a_garment_really_comes_in_is_kept() -> None:
     """The rule must not start dropping sizes from clothes."""
 
     assert _asked(["dresses"], ["8"]) == ""
+    assert _asked(["dresses"], "8") == ""
+
+
+def test_a_size_outside_the_scopes_run_cannot_apply_either() -> None:
+    """A dress size asked of footwear is the one-size case, said quietly.
+
+    Bags advertise `onesize` and the mismatch is obvious. Shoes run 5-9, so a
+    12 filters the scope to nothing and reads back as a stock-out -- the shop
+    looks out of a size it never made. Vocabulary decides both.
+    """
+
+    assert _asked(["heels"], "12") == "12"
+    assert _asked(["heels"], "8") == ""
+
+
+def test_the_sizes_a_scope_comes_in_are_the_catalogs() -> None:
+    """The run travels with the result so the reply need not invent one.
+
+    "Do you have a tote bag in a size 8" was answered "the tote bags we carry
+    come in sizes 2, 4, 6 and 10" -- a dress run, and no bag in the catalog.
+    """
+
+    from types import SimpleNamespace
+
+    from chain_server.src.catalog_search import _sizes_this_scope_comes_in
+
+    catalog = _catalog_with_sizes()
+    assert _sizes_this_scope_comes_in(
+        SimpleNamespace(subcategory=["tote_bags"]), catalog
+    ) == ["onesize"]
+    assert _sizes_this_scope_comes_in(
+        SimpleNamespace(subcategory=["dresses"]), catalog
+    ) == ["2", "4", "6", "8", "10", "12"]
+
+
+def test_a_scope_with_no_published_sizes_keeps_the_size_it_was_given() -> None:
+    """Unknown is not narrow: a size cannot be ruled out on missing data."""
+
+    assert _asked([], "8") == ""
+    assert _asked(["not_a_subcategory"], "8") == ""
 
 
 def test_a_mixed_scope_keeps_the_size() -> None:

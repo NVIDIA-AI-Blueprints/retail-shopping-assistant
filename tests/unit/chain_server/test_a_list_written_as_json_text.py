@@ -13,9 +13,18 @@ and retrying was the right recovery. The punctuation killed the recovery, no
 retry came, and the reply told the shopper the dress was in their cart. Two of
 three J01 runs ended on that.
 
+`references` did not forgive it either, and it cost a turn a third way. "do you
+have that first one in a size 6" resolved correctly -- right product, right
+ordinal, right turn -- and arrived as 301 characters of JSON with one `]`
+absent. The tool errored, the error said nothing actionable, and the identical
+301 characters were sent twenty-two times until the graph's recursion limit
+ended the turn with a generic apology.
+
 Decoding forgives the punctuation and nothing else: the contents still go
 through the same model, so an unregistered skill or a malformed item fails
-exactly as before.
+exactly as before. A missing closing bracket is forgiven; a missing closing
+brace is not, because completing a half-written object invents fields, and a
+descriptor that lost its `ordinal` would resolve quietly to the wrong product.
 """
 
 from __future__ import annotations
@@ -23,10 +32,12 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
-from pydantic import ValidationError
-
+from chain_server.src.conversation_products import (
+    ResolveConversationProductsRequest,
+)
 from chain_server.src.deepagents_runtime import AddCartItemsToolInput
 from chain_server.src.turn_support import _skill_activation_input_model
+from pydantic import ValidationError
 
 # The builder reads `role` and `exclusive_group` off each registered skill, so
 # a bare tuple of names no longer describes a registry.
@@ -98,3 +109,47 @@ def test_cart_items_may_arrive_as_json_text() -> None:
         AddCartItemsToolInput(items='[{"quantity": 2}]')
     with pytest.raises(ValidationError):
         AddCartItemsToolInput(items="generated:abc")
+
+
+def test_references_may_arrive_as_json_text() -> None:
+    parsed = ResolveConversationProductsRequest(
+        references='[{"reference_id": "r1", "display_name": "Qute Cashmere Sweater"}]'
+    )
+    assert [r.reference_id for r in parsed.references] == ["r1"]
+
+
+#: The argument from J02 turn 2, byte for byte, including the absent `]`.
+_UNCLOSED_FROM_J02 = (
+    '[{"reference_id": "first_sweater", '
+    '"product_ref": "generated:8a785791aa953d49", '
+    '"display_name": "Polished Peplum Pullover Sweater", '
+    '"category": "sweaters", "turn_sequence": 1, '
+    '"candidate_set_id": "7b7fe9f8be534c3a9b5510a9aff0fe5e", "ordinal": 1, '
+    '"attributes": {"primary_color": "cream", "sizes": "6"}}'
+)
+
+
+def test_a_list_missing_only_its_closing_bracket_is_read() -> None:
+    """The turn that spent 22 identical calls and died on the recursion limit."""
+
+    descriptor = ResolveConversationProductsRequest(
+        references=_UNCLOSED_FROM_J02
+    ).references[0]
+    assert descriptor.reference_id == "first_sweater"
+    assert descriptor.display_name == "Polished Peplum Pullover Sweater"
+    assert descriptor.ordinal == 1
+    assert descriptor.turn_sequence == 1
+
+
+def test_a_half_written_object_is_not_completed() -> None:
+    """A brace is not supplied, because supplying one invents a descriptor.
+
+    Cut mid-field, this reference has a category and no ordinal. Closing it
+    would resolve to whatever the category matches first -- a different product
+    than the shopper meant, returned without any sign it was a repair.
+    """
+
+    with pytest.raises(ValidationError):
+        ResolveConversationProductsRequest(
+            references='[{"reference_id": "r1", "category": "sweaters", "ordin'
+        )

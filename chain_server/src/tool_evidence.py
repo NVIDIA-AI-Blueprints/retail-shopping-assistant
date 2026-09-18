@@ -66,6 +66,12 @@ class SearchEvidence:
     #: assumed. Empty once the audience is a stated constraint, because then
     #: there is no assumption left to disclose.
     assumed_audience: list[str] = field(default_factory=list)
+    #: The size asked for and the sizes this scope actually comes in, when the
+    #: two do not meet and the size was dropped to search at all. Same reason
+    #: as the audience above: the server changed the question and the shopper
+    #: cannot see it. ``asked`` and ``comes_in``, both as the catalog writes
+    #: them, so the reply can name the real run instead of inventing one.
+    size_the_scope_has_not: dict[str, Any] = field(default_factory=dict)
 
     def as_artifact(self) -> dict[str, Any]:
         return {
@@ -85,6 +91,7 @@ class SearchEvidence:
                 "scope_outcome": self.scope_outcome,
                 "unconfirmed_requirements": self.unconfirmed_requirements,
                 "assumed_audience": self.assumed_audience,
+                "size_the_scope_has_not": self.size_the_scope_has_not,
             }
         }
 

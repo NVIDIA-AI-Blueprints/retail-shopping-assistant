@@ -19,14 +19,13 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-
 from chain_server.src import catalog_search as catalog_search_mod
+from chain_server.src import turn_support
 from chain_server.src.agenttypes import State
 from chain_server.src.catalog_search import SearchContext, search_catalog
 from chain_server.src.control_signals import REJECTIONS_KEY
 from chain_server.src.tool_evidence import EVIDENCE_KEY
 from chain_server.src.turn_scope import TurnScope
-from chain_server.src import turn_support
 from chain_server.src.turn_support import (
     _scope_relation_line,
     _scope_relation_payload,
@@ -503,7 +502,12 @@ def test_two_looks_at_one_role_in_one_call_both_retrieve(
 def test_an_identical_sibling_in_one_call_still_retrieves_once(
     retrieval: dict[str, Any],
 ) -> None:
-    """Relaxing the sibling rule must not let the same retrieval run twice."""
+    """Relaxing the sibling rule must not let the same retrieval run twice.
+
+    The second scope is answered from the first rather than refused, so no
+    rejection is recorded. What the rule is actually for -- one retrieval --
+    is the assertion below it, and that is unchanged.
+    """
 
     ctx = _context("show me black sweaters under $60")
 
@@ -515,17 +519,19 @@ def test_an_identical_sibling_in_one_call_still_retrieves_once(
         ],
     )
 
-    assert (result[1] or {})[REJECTIONS_KEY] == [
-        None,
-        "duplicate_catalog_scope",
-    ]
+    assert REJECTIONS_KEY not in (result[1] or {})
     assert len(retrieval["filters"]) == 1
 
 
-def test_the_same_role_in_a_later_call_is_still_refused(
+def test_the_same_role_in_a_later_call_is_answered_not_run_again(
     retrieval: dict[str, Any],
 ) -> None:
-    """The rule still does its real job: stopping a paraphrased retry."""
+    """The rule still does its real job: a paraphrased retry costs no search.
+
+    It used to do that by refusing, and the refusal said "use the result
+    already returned" without returning it. Now the result comes back, so the
+    paraphrase is answered and there is nothing to paraphrase again.
+    """
 
     ctx = _context("show me black sweaters under $60")
 
@@ -535,7 +541,7 @@ def test_the_same_role_in_a_later_call_is_still_refused(
         [{**_sweater_scope(price={"max": 60}), "semantic_query": "dark knitwear"}],
     )
 
-    assert (result[1] or {})[REJECTIONS_KEY] == ["duplicate_shopper_scope"]
+    assert REJECTIONS_KEY not in (result[1] or {})
     assert len(retrieval["filters"]) == 1
 
 

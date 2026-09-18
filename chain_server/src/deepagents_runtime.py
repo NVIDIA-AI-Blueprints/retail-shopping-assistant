@@ -3114,11 +3114,24 @@ class DeepAgentsRuntime:
 
         api_key_env = getattr(self.config, "llm_api_key_env", None)
         api_key = os.environ.get(api_key_env, "") if api_key_env else "not-needed"
+        # Sampling is settable so the repetition failure can be bisected.
+        #
+        # J01 turn 16 emitted twelve model steps with empty text content, each
+        # a byte-identical tool call against a byte-identical result, and died
+        # on the recursion limit. That is degenerate repetition under
+        # likelihood-maximising decoding, and at `temperature=0` with no
+        # penalty it cannot be told apart from a model that will not stop. The
+        # default stays 0 so every measurement taken at 0 still holds.
+        sampling: dict[str, Any] = {}
+        frequency_penalty = os.environ.get("APP_LLM_FREQUENCY_PENALTY", "")
+        if frequency_penalty:
+            sampling["frequency_penalty"] = float(frequency_penalty)
         return ChatOpenAI(
             model=self.config.llm_name,
             base_url=self.config.llm_port,
             api_key=api_key or "not-needed",
-            temperature=0,
+            temperature=float(os.environ.get("APP_LLM_TEMPERATURE", "0")),
+            **sampling,
             # Uncapped output let one call run to the model's own ceiling.
             # Callers pick a smaller one where that fits; this is the default.
             max_tokens=(

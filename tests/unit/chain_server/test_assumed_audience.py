@@ -21,7 +21,6 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-
 from chain_server.src import catalog_search as catalog_search_mod
 from chain_server.src.agenttypes import State
 from chain_server.src.catalog_search import (
@@ -33,11 +32,11 @@ from chain_server.src.tool_evidence import EVIDENCE_KEY
 from chain_server.src.turn_scope import TurnScope
 from chain_server.src.turn_support import (
     _assumed_audience_line,
-    _required_constraints_input_model,
     _audience_assumption_events,
-    _turn_audience_events,
     _customer_safe_search_evidence,
+    _required_constraints_input_model,
     _search_catalog_tool_input_model,
+    _turn_audience_events,
 )
 from shared.commerce_contracts import (
     CatalogCapabilities,
@@ -440,13 +439,28 @@ def test_the_audience_filter_carries_the_rule_the_model_needs() -> None:
     assert "covering all genders is always in the list" in described
     assert "only when its published meaning fits the person named" in described
     assert "closest value available is not the test" in described
-    # The vocabulary, which is what "for men" had and "hubby" did not.
-    # Measured: cutting the female terms out of this list dropped "sister" to
-    # 1/4 because the filter stopped firing at all.
-    for word in ("hubby", "my wife", "my sister", "my daughter", "my dad"):
-        assert word in described, word
-    # The vocabulary, which is what "for men" had and "hubby" did not.
-    assert "hubby" in described
+    # The trigger, which was thirteen person-words and is now a rule.
+    #
+    # The enumeration was load-bearing in the form it was measured: cutting the
+    # female terms out of it dropped "sister" to 1/4, because the filter
+    # stopped firing at all. That experiment removed half a list and left the
+    # rest, though, which is not this change -- and the list failed anyway on
+    # the commonest word there is. J01 turn 12 said "my husband is coming too"
+    # and sent no filter, because the list held "hubby" and "my man" but never
+    # "husband". Turn 13 said "he also wants a bag" and sent none either, and a
+    # womens floral clutch came back for a man.
+    #
+    # So the trigger names no words and states the shape instead, with the
+    # three wordings that failed carried as examples rather than as a
+    # vocabulary. Whether comprehension fires as reliably as recognition is
+    # not settled by this test; it is settled by probing the running service
+    # on those same wordings.
+    assert "in whatever form" in described
+    assert "a pronoun pointing back to someone" in described
+    assert "a pronoun referring to a person is that person, named" in described
+    # The examples are illustrations of the rule, not a list to match against.
+    # Kept few on purpose: thirteen of them is what the last one had.
+    assert described.count('"') <= 12, "the examples are growing into a list"
     # The clause protecting the case a required field broke: answering
     # "nobody named" with a covers-everyone value returned no clothing and no
     # shoes at all, only bags.
@@ -457,12 +471,20 @@ def test_the_audience_filter_carries_the_rule_the_model_needs() -> None:
     # FOR block only reports the value. Stated as a positive trigger, because
     # enumerating the ways a shopper moves on cannot be completed.
     assert "Only this turn's words count" in described
-    assert "naming someone is what turns the filter on" in described
-    # The person-words are for parsing, not a menu. A live reply offered
-    # "if you meant men's or kids' pieces instead" in a catalog that
-    # stocks neither -- vocabulary added for recognition leaking into
+    assert (
+        "the person appearing in what they just said is what turns the "
+        "filter on" in described
+    )
+    # The negative case, named explicitly. Widening the trigger to cover a
+    # pronoun is one step away from inheriting an audience nobody mentioned,
+    # and this is the turn that must not: J01 turn 14 asks for skirts one turn
+    # after a husband, and those are the shopper's own skirts.
+    assert "names nobody and gets no filter" in described
+    # How the shopper referred to someone is for parsing, not a menu. A live
+    # reply offered "if you meant men's or kids' pieces instead" in a catalog
+    # that stocks neither -- vocabulary added for recognition leaking into
     # what the assistant proposes.
-    assert "They are not audiences to offer back" in described
+    assert "It is not an audience to offer back" in described
     assert "may name only audiences this catalog advertises" in described
 
 
@@ -514,7 +536,7 @@ def test_the_dropped_event_cap_matches_what_a_finalize_can_carry() -> None:
         for rule in TurnFinalizeRequest.model_fields["events"].metadata
         if getattr(rule, "max_length", None) is not None
     )
-    assert MAX_FINALIZE_EVENTS == server_bound
+    assert server_bound == MAX_FINALIZE_EVENTS
 
     receipt = TurnFinalizeResult.model_validate(
         {

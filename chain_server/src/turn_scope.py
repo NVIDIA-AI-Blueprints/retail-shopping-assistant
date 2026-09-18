@@ -61,6 +61,15 @@ class TurnScope:
     catalog_searches: int = 0
     searched_catalog_scopes: list[dict[str, Any]] = field(default_factory=list)
     searched_shopper_scopes: set[tuple[str, str]] = field(default_factory=set)
+    #: What each answered scope returned, so asking again is answered rather
+    #: than refused. The refusal it replaces told the model to "use the result
+    #: already returned" without returning it -- advisory text standing in for
+    #: data, which is the shape behind every retry loop in this file. Keyed by
+    #: the shopper scope and by the catalog scope, because a repeat arrives as
+    #: either: the same role asked twice, or the same query reworded.
+    answered_scopes: dict[str, str | tuple[str, dict[str, Any]]] = field(
+        default_factory=dict
+    )
     #: Roles already answered as a type this shop does not carry. Told once,
     #: then refused outright: handed the advertised list a second time, the
     #: model reads another name off it and tries that instead, which is how

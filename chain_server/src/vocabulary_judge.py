@@ -39,7 +39,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -54,40 +53,43 @@ _TIMEOUT_SECONDS = 20.0
 
 @dataclass(frozen=True)
 class ScopeQuestion:
-    """One role the model wants to search, as it sent it."""
+    """One thing the shopper asked for, in the shopper's own word.
+
+    No subcategories. The model used to send its own guess at them and this
+    module graded it, which meant a wrong guess had to be caught, reported and
+    resubmitted -- and "report and resubmit" is what every retry storm in the
+    search path was made of. The judge names the values instead, so there is no
+    guess to be wrong and nothing to send back.
+    """
 
     requested_product_type: str
-    subcategories: tuple[str, ...]
 
 
 @dataclass
 class VocabularyVerdict:
-    """What the judge said, and whether it got to say anything at all."""
+    """Where each requested word lives in this catalogue, and in what colours."""
 
-    #: requested type -> subcategory -> is it a kind of the requested thing
-    kinds: dict[str, dict[str, bool]] = field(default_factory=dict)
+    #: requested word -> the advertised subcategories to search for it.
+    #: Present and empty means judged and not carried, which is an answer the
+    #: shopper can be told. Absent means never asked or unreadable, which is
+    #: not the same thing and must not be reported as "we do not sell that".
+    scopes: dict[str, list[str]] = field(default_factory=dict)
     #: unadvertised colour word -> the advertised colours it may mean
     colours: dict[str, list[str]] = field(default_factory=dict)
     #: True when the call did not happen or could not be read.
     unavailable: bool = False
 
-    def every_subcategory_is_a_kind(self, question: ScopeQuestion) -> bool | None:
-        """True, False, or None when this scope was not judged.
+    def subcategories_for(self, word: str) -> list[str] | None:
+        """Where to search for this word, or None when it was not judged.
 
-        None is not False. A scope the judge never ruled on has to be decided by
-        the caller's degraded rule, and conflating the two would refuse a valid
-        umbrella every time the endpoint hiccupped.
+        None is not an empty list. Empty is a verdict -- this catalogue sells
+        no such thing -- and the shopper is told so. None is the absence of a
+        verdict, and telling a shopper "we do not carry jeans" because an
+        endpoint timed out would be inventing a fact about the shop.
         """
 
-        verdicts = self.kinds.get(_normalised(question.requested_product_type))
-        if not verdicts:
-            return None
-        answered = [
-            verdicts[sub] for sub in question.subcategories if sub in verdicts
-        ]
-        if len(answered) != len(question.subcategories):
-            return None
-        return all(answered)
+        found = self.scopes.get(_normalised(word))
+        return None if found is None else list(found)
 
     def colours_for(self, word: str) -> list[str]:
         """The advertised colours this word may mean, keyed as it was sent.
@@ -100,21 +102,6 @@ class VocabularyVerdict:
         """
 
         return list(self.colours.get(_normalised(word)) or ())
-
-    def subcategories_to_drop(self, question: ScopeQuestion) -> tuple[str, ...]:
-        """The members that are not kinds of the requested thing.
-
-        A mixed scope keeps what it got right: asked for footwear as flats, heels
-        and skirts, the judge returns the skirt alone, so the role searches its
-        two real members instead of losing all three.
-        """
-
-        verdicts = self.kinds.get(_normalised(question.requested_product_type)) or {}
-        return tuple(
-            sub
-            for sub in question.subcategories
-            if sub in verdicts and not verdicts[sub]
-        )
 
 
 def _normalised(text: str) -> str:
@@ -153,9 +140,7 @@ class CatalogVocabularyJudge:
         sits with the planning, before any budget is spent.
         """
 
-        questions = [
-            q for q in questions if q.requested_product_type and q.subcategories
-        ]
+        questions = [q for q in questions if q.requested_product_type]
         colour_words = [w for w in colour_words if w]
         if not questions and not colour_words:
             return VocabularyVerdict()
@@ -182,15 +167,15 @@ class CatalogVocabularyJudge:
             logger.warning("vocabulary judge failed: %s", exc)
             return VocabularyVerdict(unavailable=True)
 
-        verdict = _read(content, questions, colours)
+        verdict = _read(content, questions, subcategories, colours)
         # Logged when it works, not only when it breaks. A scope that reached
         # the catalog when it should have been refused looks identical, after
         # the fact, to one that was never asked about -- and telling those two
         # apart is the whole of diagnosing a substitution that got through.
         logger.info(
-            "vocabulary judge: asked=%s verdicts=%s colours=%s->%s",
-            [(q.requested_product_type, list(q.subcategories)) for q in questions],
-            verdict.kinds,
+            "vocabulary judge: asked=%s scopes=%s colours=%s->%s",
+            [q.requested_product_type for q in questions],
+            verdict.scopes,
             colour_words,
             verdict.colours,
         )
@@ -216,26 +201,22 @@ def _prompt(
     if questions:
         lines += [
             "",
-            "TASK A. For each request, a search was scoped to some "
-            "subcategories. For each subcategory, say whether it is genuinely A "
-            "KIND OF the thing requested.",
-            " - A pump IS a kind of heel. A bootie IS a kind of boot. A gown IS "
-            "a dress.",
-            " - An umbrella word covers several: \"shoes\" covers flats, heels, "
-            "sandals and boots; \"tops\" covers blouses, camisoles and "
-            "sweaters; \"bottoms\" covers skirts.",
-            " - A skirt is NOT a kind of jeans. A blouse is NOT a kind of belt. "
-            "Being the nearest available thing, or a reasonable alternative to "
-            "suggest, does NOT make it a kind of the thing. Judge the words "
-            "only.",
+            "TASK A. For each word a shopper asked for, list the subcategories "
+            "from the list above that ARE THAT THING.",
+            " - Exact or near-exact naming: \"dress\" -> dresses, \"pumps\" -> "
+            "heels, \"booties\" -> boots, \"gown\" -> dresses.",
+            " - An umbrella word covers several: \"shoes\" -> flats, heels, "
+            "sandals, boots; \"tops\" -> blouses, camisoles, sweaters; "
+            "\"jewelry\" -> bracelets, earrings, necklaces.",
+            " - If this catalogue sells no such thing, return an EMPTY list. "
+            "Do NOT reach for the nearest available garment. Jeans are not "
+            "skirts; a belt is not a blouse; a coat is not a camisole. An "
+            "empty list is the right and useful answer, because the shopper "
+            "will be told plainly that the shop does not carry it.",
             "",
-            "TASK A requests:",
+            "TASK A words:",
         ]
-        lines += [
-            f'  - requested "{q.requested_product_type}" -> scoped to '
-            f"{list(q.subcategories)}"
-            for q in questions
-        ]
+        lines += [f'  - "{q.requested_product_type}"' for q in questions]
 
     if colour_words:
         lines += [
@@ -255,8 +236,7 @@ def _prompt(
     lines += [
         "",
         "Reply with JSON and nothing else:",
-        '{"a": [{"requested": "...", "verdicts": {"subcategory": true}}], '
-        '"b": {"word": ["colour"]}}',
+        '{"a": {"word": ["subcategory"]}, "b": {"word": ["colour"]}}',
     ]
     return "\n".join(lines)
 
@@ -264,15 +244,10 @@ def _prompt(
 def _read(
     content: str,
     questions: list[ScopeQuestion],
-    advertised: list[str],
+    advertised_subcategories: list[str],
+    advertised_colours: list[str],
 ) -> VocabularyVerdict:
-    """Parse the reply, keeping only answers to questions that were asked.
-
-    Answers are matched on the request word *and* on covering every subcategory
-    that word was sent with. An earlier version of this matched on the word
-    alone, and when one turn asked about "shoes" twice the second question
-    silently collected the first one's verdicts -- and scored itself a pass.
-    """
+    """Parse the reply, keeping only answers to words that were asked about."""
 
     start, end = content.find("{"), content.rfind("}")
     if start < 0 or end <= start:
@@ -284,60 +259,50 @@ def _read(
         logger.warning("vocabulary judge returned unreadable JSON: %s", exc)
         return VocabularyVerdict(unavailable=True)
 
-    wanted: dict[str, set[str]] = {}
-    for question in questions:
-        wanted.setdefault(_normalised(question.requested_product_type), set()).update(
-            question.subcategories
-        )
+    asked = {_normalised(q.requested_product_type) for q in questions}
+    scopes = {
+        word: values
+        for word, values in _kept_to_vocabulary(
+            payload.get("a"), advertised_subcategories
+        ).items()
+        if word in asked
+    }
+    colours = _kept_to_vocabulary(payload.get("b"), advertised_colours)
+    return VocabularyVerdict(scopes=scopes, colours=colours)
 
-    kinds: dict[str, dict[str, bool]] = {}
-    for row in payload.get("a") or []:
-        if not isinstance(row, dict):
-            continue
-        requested = _normalised(str(row.get("requested") or ""))
-        verdicts = row.get("verdicts")
-        if requested not in wanted or not isinstance(verdicts, dict):
-            continue
-        merged = kinds.setdefault(requested, {})
-        for sub, verdict in verdicts.items():
-            if sub in wanted[requested] and isinstance(verdict, bool):
-                merged[sub] = verdict
 
-    # Kept to the list the question offered. A mapping becomes a filter, and a
-    # filter naming a value this catalog does not hold matches nothing, so one
-    # invented word would turn a best-effort widening into an empty result.
-    # The prompt says to use only these; this is what makes it true.
+def _kept_to_vocabulary(
+    mapping: Any,
+    advertised: list[str],
+) -> dict[str, list[str]]:
+    """Read a word -> values mapping, discarding values this catalogue lacks.
+
+    The judge names the values now, so this is the only thing standing between
+    an invented word and a filter. Both uses need it and for the same reason: a
+    filter naming a value the catalogue does not hold matches nothing, so one
+    hallucinated "denim" would turn a real search into an empty result -- and,
+    worse, an empty result is indistinguishable from "we do not sell that".
+
+    Filtering rather than rejecting the whole reply, because a judge that gets
+    three words right and invents a fourth should still be believed about the
+    three. A word left with nothing after filtering stays in the mapping as an
+    empty list, which is the same verdict as a deliberate empty list: searching
+    for it is pointless either way.
+    """
+
+    if not isinstance(mapping, dict):
+        return {}
     permitted = {str(value).strip().lower() for value in advertised}
-    colours: dict[str, list[str]] = {}
-    for word, values in (payload.get("b") or {}).items():
+    kept: dict[str, list[str]] = {}
+    for word, values in mapping.items():
         if not isinstance(values, list):
             continue
-        mapped = [
+        inside = [
             str(value).strip().lower()
             for value in values
             if str(value).strip().lower() in permitted
         ]
-        colours[_normalised(str(word))] = list(dict.fromkeys(mapped))
+        kept[_normalised(str(word))] = list(dict.fromkeys(inside))
+    return kept
 
-    return VocabularyVerdict(kinds=kinds, colours=colours)
 
-
-def exact_identity_only(question: ScopeQuestion) -> bool:
-    """The degraded rule, for when the judge could not be reached.
-
-    Not fuzzy matching. A subcategory passes only when it *is* the requested
-    word once plurals and separators are set aside, so `dress` clears `dresses`
-    and `tote bag` clears `tote_bags`, while `jeans` never clears `skirts`.
-
-    Umbrellas are refused while the judge is unreachable, which is the honest
-    trade: "shoes" is briefly narrowed to nothing rather than a shopper being
-    quietly shown a skirt for jeans during an outage.
-    """
-
-    def stem(value: str) -> str:
-        return re.sub(r"[^a-z]", "", value.lower()).rstrip("s")
-
-    requested = stem(question.requested_product_type)
-    return bool(requested) and all(
-        stem(sub) == requested for sub in question.subcategories
-    )

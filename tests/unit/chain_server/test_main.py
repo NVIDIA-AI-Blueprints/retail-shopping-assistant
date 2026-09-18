@@ -4948,12 +4948,18 @@ class TestDeepAgentsRuntimeRefs:
             start.wait()
             results = [first.result(), second.result()]
 
-        assert sum("PRODUCT_REF: prod_1" in result for result in results) == 1
-        assert sum(
-            "already searched" in result.lower()
-            for result in results
-        ) == 1
+        # Retrieved once under the turn lock, which is what the cap is for.
+        # Both callers are then answered: whichever loses the race is served
+        # the winner's products, or told the scope is already running when it
+        # gets there first. Neither is refused, because a refusal reading "use
+        # the result already returned" without returning it is what sent J02
+        # turn 4 through 23 identical searches.
         assert calls == 1
+        assert all(
+            "PRODUCT_REF: prod_1" in result
+            or "SEARCH_SCOPE_ALREADY_RUNNING" in result
+            for result in results
+        )
         assert state.model_usage["text_embedding"]["calls"] == 1
 
         duplicate_values = tool_text(
@@ -4968,7 +4974,9 @@ class TestDeepAgentsRuntimeRefs:
                 required_constraints={},
             )])
         )
-        assert "already searched" in duplicate_values.lower()
+        # A third paraphrase, arriving after the first search has finished, is
+        # served that search's products. Still one retrieval.
+        assert "PRODUCT_REF: prod_1" in duplicate_values
         assert calls == 1
 
         broader_scope = tool_text(

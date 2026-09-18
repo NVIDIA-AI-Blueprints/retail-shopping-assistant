@@ -339,6 +339,9 @@ def test_historical_index_formatter_is_compact_and_ignores_bad_rows() -> None:
     assert rendered.startswith(
         "HISTORICAL PRODUCT INDEX (read-only, most recently shown first):"
     )
+    # How to read the numbers, beside them. Two products numbered 1 under
+    # different headings had the model asking which was meant.
+    assert "Numbered from 1 under each [heading]" in rendered
     assert "set=set-2 turn=2" in rendered
     assert "1:Structured Tote [tote_bags] <bag-1>" in rendered
     assert "2:Cobalt Crossbody [crossbody_bags] <bag-2>" in rendered
@@ -367,6 +370,10 @@ def test_historical_index_bound_keeps_newest_sets() -> None:
     assert "set=set-1" not in rendered
     assert "earlier historical products omitted" in rendered
     assert len(rendered) <= 256
+    # The showings won the space. How to read the numbers is guidance about
+    # them, so an index that kept the rule and dropped every product would
+    # have been the worse half to keep.
+    assert "Numbered from 1 under each" not in rendered
 
 
 def test_evidence_adds_only_unique_resolved_products() -> None:

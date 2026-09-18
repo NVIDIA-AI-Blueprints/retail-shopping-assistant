@@ -1,4 +1,4 @@
-id: J16_counting_what_was_shown
+id: J22_counting_what_was_shown
 covers: [discovery, references, cart]
 why: >
   A showing of more than one kind, and then the shopper counting inside it.
@@ -8,19 +8,25 @@ why: >
   more than one group: the ordinal adds in J15 all happen where only one kind
   is on screen, which is exactly where per-group and straight-through
   numbering give the same answer and a mistake cannot show.
+
+  Sizes are stated with each add. A sized garment with no size is a question
+  the assistant is right to ask, and leaving it out tested that instead of
+  what this is for.
 turns:
   - say: show me some dresses and some shoes for a summer wedding
     expect: {products_min: 2}
   # Named, so the group decides which number this is. The second shoes is the
-  # second of the shoes, not the second thing shown.
-  - say: add the second shoes to my cart
+  # second of the shoes, not the second thing shown -- and the shoes may have
+  # arrived as several scopes, which is why the heading and not the category
+  # is what the number counts under.
+  - say: add the second shoes to my cart in a 7
     expect:
       cart_lines: 1
       cart_holds_shown: {turn: 1, group: shoes, position: 2}
   # Unnamed, over a showing that still has two groups. This must not stop to
   # ask: the first group is the one the reply anchors on, and a shopper who
   # says "the first one" has not been unclear.
-  - say: add the first one too
+  - say: add the first one too, in a 6
     expect:
       cart_lines: 2
       cart_holds_shown: {turn: 1, position: 1}

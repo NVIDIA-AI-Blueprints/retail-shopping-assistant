@@ -603,6 +603,20 @@ def format_historical_product_index(
     heading = (
         "HISTORICAL PRODUCT INDEX (read-only, most recently shown first):"
     )
+    # The counting rule sits with the numbers, because this is where the model
+    # decides what "the first one" means. Numbering restarts under each
+    # heading, and shown two products numbered 1 the model stopped and asked
+    # which -- over a reference the shopper could not have made clearer. The
+    # resolver already answers a bare ordinal with the first group, but it is
+    # never reached: the question is asked before any tool runs.
+    #
+    # Budgeted after the showings rather than with them. It is guidance and
+    # they are the facts it is about, so where the two do not both fit, an
+    # index of rules and no products is the worse half to keep.
+    counting_rule = (
+        "Numbered from 1 under each [heading]. A number with no kind named "
+        "means the first heading here: take it and say which, do not ask."
+    )
     formatted_sets = []
     for raw_set in reference_sets:
         line = _format_reference_set(raw_set)
@@ -627,6 +641,9 @@ def format_historical_product_index(
             removed = selected_newest_first.pop()
             remaining += len(removed) + 1
     lines = [heading]
+    if len(counting_rule) + 1 <= remaining:
+        lines.append(counting_rule)
+        remaining -= len(counting_rule) + 1
     lines.extend(selected_newest_first)
     if omitted:
         # At the end now: what was dropped is the oldest, and it belongs where

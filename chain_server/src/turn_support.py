@@ -1667,11 +1667,27 @@ _WEARER_AUDIENCE_FILTER_DESCRIPTION = (
     # knew what the values meant and never reached for them. So: say plainly
     # when to send it, and keep the covers-everyone value unconditional so
     # there is no judgment to lose.
-    "Who the products are for. Send this whenever the shopper names the person "
-    "they are buying for, however casually. Every one of these counts the same "
-    "as a formal word: hubby, my guy, my man, my other half, my brother, my "
-    "dad, my son, my wife, my girlfriend, my mum, my sister, my daughter, the "
-    "kids. Build the list "
+    #
+    # The trigger was a list of thirteen person-words, and it failed on the
+    # commonest word of all. J01 turn 12 said "my husband is coming too" and
+    # sent no filter, because the list held "hubby" and "my man" but not
+    # "husband" -- it had been measured on "hubby" and the ordinary word was
+    # never tried. Turn 13 then said "he also wants a bag" and sent none
+    # either, because a pronoun names nobody by that rule, and a womens floral
+    # clutch came back for a man. Turn 12 hid the same failure only because
+    # every sunglass this catalog stocks happens to suit all genders.
+    #
+    # So the trigger is a rule now and not an enumeration: the person appears
+    # in this turn's words, in any form, including a pronoun pointing back.
+    # The reverse rule stays -- silence means no filter -- because that is the
+    # part that cannot be enumerated, and "now show me some skirts" must not
+    # inherit a husband.
+    "Who the products are for. Send this whenever this turn's words say who "
+    "the shopper is buying for, however casually and in whatever form: a "
+    "formal word, an affectionate one, or a pronoun pointing back to someone "
+    "already mentioned. \"My husband is coming too\" says it, \"something for "
+    "hubby\" says it, and so does \"he also wants a bag\" one turn later -- a "
+    "pronoun referring to a person is that person, named. Build the list "
     "in two steps, in this order. First: the value covering all genders is "
     "always in the list, because it suits everyone -- it is never the thing "
     "you leave out. Second: add any other value only when its published "
@@ -1682,18 +1698,20 @@ _WEARER_AUDIENCE_FILTER_DESCRIPTION = (
     "If nothing published suits the named person, such as a child in a "
     "catalog whose values are all adult, send what covers everyone, say so "
     "in the reply, and never substitute what does not suit them. "
-    "The person-words listed above are for reading what the shopper said. "
-    "They are not audiences to offer back: a reply may name only audiences "
+    "How the shopper referred to the person is for reading what they said. "
+    "It is not an audience to offer back: a reply may name only audiences "
     "this catalog advertises, and must never suggest looking for one it "
     "does not stock. "
     "When nobody is named, omit this filter entirely -- do not send a "
     "covers-everyone value to mean unspecified, which "
     "discards everything stocked for one audience. Only this turn's words "
-    "count. An audience established earlier never carries into a request that "
-    "does not name that person again, however obviously they are still "
-    "around: send no filter and let the shopper redirect you. Enumerating the "
-    "ways a shopper moves on is hopeless, so the rule is the reverse -- naming "
-    "someone is what turns the filter on."
+    "count, and an audience established earlier never carries into a request "
+    "that says nothing about who it is for, however obviously that person is "
+    "still around: send no filter and let the shopper redirect you. "
+    "Enumerating the ways a shopper moves on is hopeless, so the rule is the "
+    "reverse -- the person appearing in what they just said is what turns the "
+    "filter on. \"Now show me some skirts\" names nobody and gets no filter, "
+    "even one turn after a husband was mentioned."
 )
 
 

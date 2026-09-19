@@ -107,6 +107,7 @@ class _Cart:
 def cart_tools(base_config, monkeypatch: pytest.MonkeyPatch):
     """The registered cart tools, with the cart and the catalog stubbed."""
 
+    from chain_server.src import cart_operations as cart_ops_mod
     from chain_server.src import deepagents_runtime as runtime_mod
     from chain_server.src import turn_support as runtime_mod_support
 
@@ -154,13 +155,15 @@ def cart_tools(base_config, monkeypatch: pytest.MonkeyPatch):
     catalog: dict[str, Any] = {
         "result": GetProductDetailsResult(ok=True, product=_heels())
     }
+    # The cart tools are called from cart_operations, so that is the module a
+    # double has to be installed in for the call to reach it.
     monkeypatch.setattr(
-        runtime_mod,
+        cart_ops_mod,
         "get_product_details",
         lambda *_a, **_k: catalog["result"],
     )
-    monkeypatch.setattr(runtime_mod, "add_cart_item", cart.add)
-    monkeypatch.setattr(runtime_mod, "remove_cart_item", cart.remove)
+    monkeypatch.setattr(cart_ops_mod, "add_cart_item", cart.add)
+    monkeypatch.setattr(cart_ops_mod, "remove_cart_item", cart.remove)
     monkeypatch.setattr(runtime, "_read_cart", cart.read)
 
     state = State(user_id=111, query="change the heels to an 8")
@@ -173,6 +176,7 @@ def cart_tools(base_config, monkeypatch: pytest.MonkeyPatch):
         cart=cart,
         catalog=catalog,
         runtime_mod=runtime_mod,
+        cart_ops_mod=cart_ops_mod,
         state=state,
     )
 
@@ -201,12 +205,12 @@ class TestASizeChangeIsOneCall:
         order: list[str] = []
         add, remove = cart_tools.cart.add, cart_tools.cart.remove
         monkeypatch.setattr(
-            cart_tools.runtime_mod,
+            cart_tools.cart_ops_mod,
             "add_cart_item",
             lambda *a, **k: (order.append("add"), add(*a, **k))[1],
         )
         monkeypatch.setattr(
-            cart_tools.runtime_mod,
+            cart_tools.cart_ops_mod,
             "remove_cart_item",
             lambda *a, **k: (order.append("remove"), remove(*a, **k))[1],
         )
@@ -311,7 +315,7 @@ class TestWhatIsStillRefused:
             )
 
         monkeypatch.setattr(
-            cart_tools.runtime_mod, "update_cart_item", fake_update
+            cart_tools.cart_ops_mod, "update_cart_item", fake_update
         )
 
         result = _text(
@@ -330,7 +334,7 @@ class TestNothingIsLostWhenAStepFails:
         """Adding first is what makes this failure safe: nothing is half-done."""
 
         monkeypatch.setattr(
-            cart_tools.runtime_mod,
+            cart_tools.cart_ops_mod,
             "add_cart_item",
             lambda *_a, **_k: CartMutationResult(
                 ok=False,
@@ -356,7 +360,7 @@ class TestNothingIsLostWhenAStepFails:
         """
 
         monkeypatch.setattr(
-            cart_tools.runtime_mod,
+            cart_tools.cart_ops_mod,
             "remove_cart_item",
             lambda *_a, **_k: CartMutationResult(
                 ok=False,

@@ -990,7 +990,7 @@ class TestStorePolicyPath:
 
 class TestCartFormatting:
     def test_remove_result_preserves_existing_message_shape(self) -> None:
-        from chain_server.src.deepagents_runtime import _format_cart_remove_result
+        from chain_server.src.response_format import _format_cart_remove_result
 
         formatted = _format_cart_remove_result(
             CartMutationResult(ok=True, message="Removed from cart."),
@@ -1000,7 +1000,7 @@ class TestCartFormatting:
         assert formatted == "Removed from cart."
 
     def test_update_result_formats_shared_cart_lines(self) -> None:
-        from chain_server.src.deepagents_runtime import _format_update_cart_result
+        from chain_server.src.response_format import _format_update_cart_result
 
         line = CartLine(
             cart_line_id="Silk Dress",
@@ -2957,6 +2957,7 @@ class TestDeepAgentsRuntimeRefs:
         base_config,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        from chain_server.src import cart_operations as cart_ops_mod
         from chain_server.src import deepagents_runtime as runtime_mod
         from chain_server.src import tool_schemas as tool_schemas_mod
         from chain_server.src import turn_support as runtime_mod_support
@@ -3510,6 +3511,7 @@ class TestDeepAgentsRuntimeRefs:
             raise AssertionError("ambiguous resolution cannot authorize a product")
 
         monkeypatch.setattr(runtime_mod, "get_product_details", fail_product_read)
+        monkeypatch.setattr(cart_ops_mod, "get_product_details", fail_product_read)
         blocked_add = tool_text(
             tools_by_name["add_cart_items_tool"](
                 items=[{"product_ref": "bag-a", "quantity": 1}]
@@ -3538,7 +3540,7 @@ class TestDeepAgentsRuntimeRefs:
                 ),
             )
 
-        monkeypatch.setattr(runtime_mod, "update_cart_item", fake_update_cart_item)
+        monkeypatch.setattr(cart_ops_mod, "update_cart_item", fake_update_cart_item)
         monkeypatch.setattr(
             runtime,
             "_read_cart",
@@ -5072,6 +5074,7 @@ class TestDeepAgentsRuntimeRefs:
         base_config,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        from chain_server.src import cart_operations as cart_ops_mod
         from chain_server.src import deepagents_runtime as runtime_mod
         from chain_server.src import turn_support as runtime_mod_support
 
@@ -5118,7 +5121,7 @@ class TestDeepAgentsRuntimeRefs:
         monkeypatch.setattr(runtime._media_perception, "analyze", fake_analyze)
         _install_conversation_memory_stub(runtime)
         monkeypatch.setattr(runtime, "_create_agent", fake_create_agent)
-        monkeypatch.setattr(runtime_mod, "add_cart_item", fake_add_cart_item)
+        monkeypatch.setattr(cart_ops_mod, "add_cart_item", fake_add_cart_item)
 
         state = State(
             user_id=111,
@@ -7992,6 +7995,7 @@ class TestDeepAgentsRuntimeRefs:
         must not do without saying so.
         """
 
+        from chain_server.src import cart_operations as cart_ops_mod
         from chain_server.src import deepagents_runtime as runtime_mod
         from chain_server.src import turn_support as runtime_mod_support
 
@@ -8057,9 +8061,19 @@ class TestDeepAgentsRuntimeRefs:
                 ),
             ),
         )
+        monkeypatch.setattr(
+            cart_ops_mod,
+            "get_product_details",
+            lambda request, *a, **k: GetProductDetailsResult(
+                ok=True,
+                product=ProductDetail.model_validate(
+                    (gown if request.product_id == "prod_gown" else lace).model_dump()
+                ),
+            ),
+        )
         added: list[Any] = []
         monkeypatch.setattr(
-            runtime_mod,
+            cart_ops_mod,
             "add_cart_item",
             lambda request, memory_port: added.append(request)
             or CartMutationResult(ok=True, message="ok"),
@@ -8135,6 +8149,7 @@ class TestDeepAgentsRuntimeRefs:
         compose it without deciding anything that belongs to the model.
         """
 
+        from chain_server.src import cart_operations as cart_ops_mod
         from chain_server.src import deepagents_runtime as runtime_mod
         from chain_server.src import turn_support as runtime_mod_support
 
@@ -8190,13 +8205,21 @@ class TestDeepAgentsRuntimeRefs:
 
         added = []
         monkeypatch.setattr(
-            runtime_mod,
+            cart_ops_mod,
             "add_cart_item",
             lambda request, memory_port: added.append(request)
             or CartMutationResult(ok=True, message="ok"),
         )
         monkeypatch.setattr(
             runtime_mod,
+            "get_product_details",
+            lambda request, *a, **k: GetProductDetailsResult(
+                ok=True,
+                product=ProductDetail.model_validate(dress.model_dump()),
+            ),
+        )
+        monkeypatch.setattr(
+            cart_ops_mod,
             "get_product_details",
             lambda request, *a, **k: GetProductDetailsResult(
                 ok=True,
@@ -8477,6 +8500,7 @@ class TestDeepAgentsRuntimeRefs:
         base_config,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        from chain_server.src import cart_operations as cart_ops_mod
         from chain_server.src import deepagents_runtime as runtime_mod
         from chain_server.src import turn_support as runtime_mod_support
 
@@ -8521,7 +8545,7 @@ class TestDeepAgentsRuntimeRefs:
         monkeypatch.setitem(sys.modules, "deepagents", deepagents_mod)
         monkeypatch.setitem(sys.modules, "langchain_core.tools", tools_mod)
         monkeypatch.setitem(sys.modules, "langchain_openai", openai_mod)
-        monkeypatch.setattr(runtime_mod, "add_cart_item", fake_add_cart_item)
+        monkeypatch.setattr(cart_ops_mod, "add_cart_item", fake_add_cart_item)
 
         runtime = runtime_mod.DeepAgentsRuntime(base_config)
         runtime._catalog_capabilities = SimpleNamespace(
@@ -8585,6 +8609,11 @@ class TestDeepAgentsRuntimeRefs:
 
         monkeypatch.setattr(
             runtime_mod,
+            "get_product_details",
+            fake_product_details,
+        )
+        monkeypatch.setattr(
+            cart_ops_mod,
             "get_product_details",
             fake_product_details,
         )
@@ -8816,6 +8845,18 @@ class TestDeepAgentsRuntimeRefs:
                 ),
             ),
         )
+        monkeypatch.setattr(
+            cart_ops_mod,
+            "get_product_details",
+            lambda *args, **kwargs: GetProductDetailsResult(
+                ok=False,
+                error=CommerceError(
+                    code="catalog_request_failed",
+                    message="temporary",
+                    retryable=True,
+                ),
+            ),
+        )
         transient_response = tool_text(
             add_tool(
                 items=[
@@ -8832,6 +8873,7 @@ class TestDeepAgentsRuntimeRefs:
         assert added == []
 
         monkeypatch.setattr(runtime_mod, "get_product_details", fake_product_details)
+        monkeypatch.setattr(cart_ops_mod, "get_product_details", fake_product_details)
 
         runtime._conversation_products = SimpleNamespace(
             resolve=lambda *_: _resolved_conversation_products(

@@ -11,14 +11,13 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Path as ApiPath
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi import Path as ApiPath
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
-from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
 from .database import begin_write_transaction
 from .models import ShopperProfile
-
 
 EXPECTED_SHOPPER_TYPES = frozenset(
     {

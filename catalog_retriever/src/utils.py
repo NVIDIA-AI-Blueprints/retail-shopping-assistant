@@ -3,12 +3,13 @@
 
 import base64
 import io
-import requests
-import re
-from PIL import Image
 import logging
-import sys
 import os
+import re
+import sys
+
+import requests
+from PIL import Image
 
 logging.basicConfig(
     level=logging.INFO,
@@ -18,9 +19,9 @@ logging.basicConfig(
 
 def image_path_to_base64(
         image_path: str,
-        max_width : int = 256, 
-        max_height : int = 256, 
-        quality : int = 85, 
+        max_width : int = 256,
+        max_height : int = 256,
+        quality : int = 85,
         max_b64_length : int = 65535) -> str:
     """
     Converts an image to a base64 string.
@@ -44,10 +45,10 @@ def image_path_to_base64(
         return base64_string
 
 def image_url_to_base64(
-        image_url : str, 
-        max_width : int = 256, 
-        max_height : int = 256, 
-        quality : int = 85, 
+        image_url : str,
+        max_width : int = 256,
+        max_height : int = 256,
+        quality : int = 85,
         max_b64_length : int = 65535):
     """
     Fetches an image from a URL, resizes and compresses it, then returns a base64-encoded string.
@@ -93,13 +94,13 @@ def image_to_base64(image):
     buffered = io.BytesIO()
     image.save(buffered, format="JPEG")  # Save the image in JPEG format to the byte stream
     image_bytes = buffered.getvalue()
-    
+
     # Base64 encode the byte stream
     image_b64 = base64.b64encode(image_bytes).decode()
-    
+
     # Return the base64 string in a data URI format
     base64_string = f"data:image/jpeg;base64,{image_b64}"
-    
+
     return base64_string
 
 def is_url(string: str) -> bool:
@@ -127,17 +128,17 @@ def resize_base64_image(base64_string: str, max_width: int = 256, max_height: in
         else:
             base64_data = base64_string
             header = 'data:image/jpeg;base64'
-        
+
         # Decode and resize
         image_data = base64.b64decode(base64_data)
         img = Image.open(io.BytesIO(image_data)).convert("RGB")
         img.thumbnail((max_width, max_height))
-        
+
         # Re-encode
         buffer = io.BytesIO()
         img.save(buffer, format='JPEG', quality=quality, optimize=True)
         resized_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
-        
+
         return f"{header},{resized_base64}"
     except Exception as e:
         logging.error(f"Error resizing image: {e}")

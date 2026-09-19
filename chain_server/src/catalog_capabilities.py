@@ -10,13 +10,11 @@ from threading import Lock
 from typing import Any
 
 import requests
-
 from shared.commerce_contracts import (
     CatalogCapabilities,
     CatalogFieldCapability,
     CatalogFilterCapability,
 )
-
 
 logger = logging.getLogger(__name__)
 _DEFAULT_TIMEOUT_SECONDS = 2.0

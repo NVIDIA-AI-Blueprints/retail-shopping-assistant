@@ -21,8 +21,6 @@ from urllib.parse import quote
 
 import requests
 from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
-
 from shared.commerce_contracts import (
     AddCartItemInput,
     Cart,
@@ -48,7 +46,7 @@ from shared.commerce_contracts import (
     ToolMeta,
     UpdateCartItemInput,
 )
-
+from urllib3.util.retry import Retry
 
 _POLICY_CACHE: tuple[bool, dict[str, StorePolicy]] | None = None
 _POLICY_CACHE_LOCK = Lock()
@@ -528,7 +526,7 @@ def _load_policies(
         if _POLICY_CACHE is None:
             import yaml
 
-            with open(policies_path, "r") as policy_file:
+            with open(policies_path) as policy_file:
                 data = yaml.safe_load(policy_file) or {}
             configured = data.get("configured") is True
             policy_rows = data.get("policies") or {}

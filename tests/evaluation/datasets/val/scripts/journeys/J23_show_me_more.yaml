@@ -1,0 +1,33 @@
+id: J23_show_me_more
+covers: [discovery, references]
+why: >
+  A shopper who wants to see past the first four. The catalog holds 39 skirts
+  and 33 dresses; one search shows four of them, and nothing in this suite has
+  ever asked what happens next. "Show me more" re-runs the same query against
+  the same index with the same filters, so it comes back with the same four
+  products and a reply that presents them as new. The failure is silent -- the
+  turn completes, products are shown, and only comparing the two showings
+  reveals that nothing moved.
+
+  Turn 4 asks for more of one kind out of a showing that had two, which is the
+  part that needs the group boundary to be real: "more dresses" must not widen
+  the bags, and must not restart the dresses from the top.
+turns:
+  - say: show me some skirts
+    expect: {products_min: 2}
+
+  # The whole point. Nothing here may repeat what turn 1 already showed.
+  - say: show me more skirts
+    expect:
+      products_min: 2
+      products_new_since: {turn: 1}
+
+  - say: now show me some dresses and some bags
+    expect: {products_min: 2}
+
+  # More of one group out of a showing that had two. The dresses move on; the
+  # bags are not re-shown, and not widened either.
+  - say: show me more dresses
+    expect:
+      products_min: 1
+      products_new_since: {turn: 3}

@@ -341,6 +341,7 @@ _SUPPORTED_EXPECTATIONS = {
     "product_named",
     "products_max",
     "products_min",
+    "products_new_since",
     "products_within",
     "reply_asks",
     "reply_must_not_say",
@@ -400,6 +401,38 @@ def check_turn(
             bool(expected_name) and expected_name in in_cart,
             f"turn {shown_on} {group + ' ' if group else ''}position {position} was "
             f"{expected_name or '(nothing shown there)'}, cart holds {in_cart}",
+        )
+
+    if "products_new_since" in expect:
+        # Whether "show me more" moved. A search repeated with the same query
+        # and the same filters returns the same ranked products, so a turn
+        # asking for more can show four the shopper has already seen and read,
+        # in a transcript, as an ordinary turn that showed four products.
+        #
+        # Compared by product_id rather than name, because the catalog gives
+        # two products the same display name and a name comparison would call
+        # a genuinely new product a repeat.
+        wanted = expect["products_new_since"] or {}
+        shown_on = int(wanted.get("turn") or 0)
+        earlier_ids = {
+            str(product.get("product_id") or "")
+            for earlier in earlier_turns
+            if earlier.index == shown_on
+            for product in earlier.products
+            if product.get("product_id")
+        }
+        now_ids = {
+            str(product.get("product_id") or "")
+            for product in turn.products
+            if product.get("product_id")
+        }
+        repeated = now_ids & earlier_ids
+        record(
+            "products_new_since",
+            bool(now_ids) and not repeated,
+            f"{len(repeated)} of {len(now_ids)} already shown on turn {shown_on}"
+            if now_ids
+            else "no products shown",
         )
 
     if "any_of" in expect:

@@ -1853,7 +1853,7 @@ class TestDeepAgentsRuntimeScopes:
 
 class TestDeepAgentsRuntimeTokenUsage:
     def test_collects_normalized_usage_metadata_without_double_counting(self) -> None:
-        from chain_server.src.turn_support import _collect_token_usage
+        from chain_server.src.model_usage import _collect_token_usage
 
         result = {
             "messages": [
@@ -1893,7 +1893,7 @@ class TestDeepAgentsRuntimeTokenUsage:
         }
 
     def test_collect_token_usage_defaults_when_metadata_is_absent(self) -> None:
-        from chain_server.src.turn_support import _collect_token_usage
+        from chain_server.src.model_usage import _collect_token_usage
 
         assert _collect_token_usage({"messages": [{"content": "hello"}]}) == {
             "input_tokens": 0,
@@ -1905,7 +1905,7 @@ class TestDeepAgentsRuntimeTokenUsage:
 
 class TestDeepAgentsRuntimeModelUsage:
     def test_safety_model_usage_matches_guardrails_flows(self) -> None:
-        from chain_server.src.turn_support import _record_safety_model_usage
+        from chain_server.src.model_usage import _record_safety_model_usage
 
         state = State(user_id=1, query="hello")
 
@@ -1918,7 +1918,7 @@ class TestDeepAgentsRuntimeModelUsage:
         assert state.model_usage["topic_control"]["calls"] == 1
 
     def test_safety_model_usage_marks_transport_failures(self) -> None:
-        from chain_server.src.turn_support import _record_safety_model_usage
+        from chain_server.src.model_usage import _record_safety_model_usage
 
         state = State(user_id=1, query="hello")
 
@@ -1949,7 +1949,7 @@ class TestDeepAgentsRuntimeModelUsage:
         assert check_ok is False
 
     def test_language_model_failure_usage_is_explicit(self) -> None:
-        from chain_server.src.turn_support import _record_language_model_failure
+        from chain_server.src.model_usage import _record_language_model_failure
 
         state = State(user_id=1, query="hello")
 
@@ -1989,7 +1989,7 @@ class TestDeepAgentsRuntimeMediaFailures:
         assert "turn.. Please" not in response
 
     def test_explicit_text_query_can_continue_when_media_is_unavailable(self) -> None:
-        from chain_server.src.turn_support import _should_short_circuit_media_failure
+        from chain_server.src.model_usage import _should_short_circuit_media_failure
 
         state = State(
             user_id=1,
@@ -2010,7 +2010,7 @@ class TestDeepAgentsRuntimeMediaFailures:
         assert _should_short_circuit_media_failure(state) is False
 
     def test_image_similarity_query_continues_when_vlm_is_unavailable(self) -> None:
-        from chain_server.src.turn_support import _should_short_circuit_media_failure
+        from chain_server.src.model_usage import _should_short_circuit_media_failure
 
         image_data = "data:image/jpeg;base64,QUFB"
         state = State(
@@ -2934,7 +2934,9 @@ class TestDeepAgentsRuntimeRefs:
             search_mode="hybrid",
         )
 
-        runtime_mod_support._record_catalog_model_usage(
+        from chain_server.src.model_usage import _record_catalog_model_usage
+
+        _record_catalog_model_usage(
             state,
             plan,
             True,

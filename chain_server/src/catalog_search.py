@@ -48,6 +48,9 @@ from .control_signals import (
     SearchRejection,
     control,
 )
+from .model_usage import (
+    _record_catalog_model_usage,
+)
 from .response_format import (
     SEARCH_RESULT_ATTRIBUTE_LIMIT_NOTE,
     _format_catalog_scope_outcome,
@@ -95,7 +98,6 @@ from .turn_support import (
     _normalized_scope_value,
     _product_scope_key,
     _products_with_subcategory_coverage,
-    _record_catalog_model_usage,
     _resolved_agent_selected_product_type,
     _safe_shopper_guidance,
     _same_product_scope,

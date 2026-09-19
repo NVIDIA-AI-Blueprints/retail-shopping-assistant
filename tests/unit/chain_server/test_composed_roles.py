@@ -20,15 +20,21 @@ from typing import Any
 
 import pytest
 from chain_server.src import catalog_search as catalog_search_mod
+from chain_server.src import grounding_evidence as grounding_evidence_mod
+from chain_server.src import search_replies as search_replies_mod
 from chain_server.src import turn_support
 from chain_server.src.agenttypes import State
 from chain_server.src.catalog_search import SearchContext, search_catalog
 from chain_server.src.control_signals import REJECTIONS_KEY
+from chain_server.src.grounding_evidence import (
+    _scope_relation_line,
+)
+from chain_server.src.search_replies import (
+    _scope_relation_payload,
+)
 from chain_server.src.tool_evidence import EVIDENCE_KEY
 from chain_server.src.turn_scope import TurnScope
 from chain_server.src.turn_support import (
-    _scope_relation_line,
-    _scope_relation_payload,
     _search_catalog_tool_input_model,
 )
 from shared.commerce_contracts import (
@@ -370,7 +376,7 @@ def test_the_composer_never_states_one_role_s_filter_about_another_s(
         ],
     }
 
-    groups = turn_support._products_by_confirmed_filters(payload)
+    groups = search_replies_mod._products_by_confirmed_filters(payload)
 
     assert [
         ([p["name"] for p in products], filters) for filters, products in groups
@@ -429,7 +435,7 @@ def test_the_composer_summary_carries_the_proposed_role_disclosure(
     result = search_catalog(ctx, [_role("top", ["blouses", "sweaters"])])
     message = SimpleNamespace(artifact=result[1], content=result[0])
 
-    summary = turn_support._customer_safe_tool_evidence(result[0], message)
+    summary = grounding_evidence_mod._customer_safe_tool_evidence(result[0], message)
 
     assert "did not ask for top" in summary
     assert "blouses, sweaters" in summary

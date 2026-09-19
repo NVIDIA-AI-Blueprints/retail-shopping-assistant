@@ -5139,7 +5139,7 @@ class TestDeepAgentsRuntimeRefs:
         )
 
     def test_partial_product_results_response_is_grounded(self) -> None:
-        from chain_server.src import turn_support as runtime_mod_support
+        from chain_server.src import search_replies as search_replies_mod
 
         state = State(
             user_id=111,
@@ -5154,7 +5154,7 @@ class TestDeepAgentsRuntimeRefs:
             ],
         )
 
-        response = runtime_mod_support._partial_product_results_response(state)
+        response = search_replies_mod._partial_product_results_response(state)
 
         assert "**Yonder Floral Maxi Dress** — dress — $119.99 USD" in response
         assert "overstate outdoor performance" in response
@@ -6900,6 +6900,7 @@ class TestDeepAgentsRuntimeRefs:
         assert "waterproof" not in response
 
     def test_scoped_no_match_is_customer_safe_and_not_search_only(self) -> None:
+        from chain_server.src import grounding_evidence as grounding_evidence_mod
         from chain_server.src import turn_support as runtime_mod_support
 
         result = {
@@ -6924,7 +6925,7 @@ class TestDeepAgentsRuntimeRefs:
             ]
         }
 
-        evidence = runtime_mod_support._collect_tool_grounding_evidence(
+        evidence = grounding_evidence_mod._collect_tool_grounding_evidence(
             result,
             max_chars=12000,
             request_id="current-request",
@@ -6967,7 +6968,7 @@ class TestDeepAgentsRuntimeRefs:
         self,
     ) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
-        from chain_server.src import turn_support as runtime_mod_support
+        from chain_server.src import grounding_evidence as grounding_evidence_mod
 
         message = search_tool_message(
             search_evidence(
@@ -6984,7 +6985,7 @@ class TestDeepAgentsRuntimeRefs:
                 "adjacent product types."
             ),
         )
-        evidence = runtime_mod_support._customer_safe_tool_evidence(
+        evidence = grounding_evidence_mod._customer_safe_tool_evidence(
             message["content"],
             message,
         )
@@ -7081,7 +7082,7 @@ class TestDeepAgentsRuntimeRefs:
         base_config,
     ) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
-        from chain_server.src import turn_support as runtime_mod_support
+        from chain_server.src import search_replies as search_replies_mod
 
         runtime = runtime_mod.DeepAgentsRuntime(base_config)
         state = State(
@@ -7125,14 +7126,14 @@ class TestDeepAgentsRuntimeRefs:
             request_id="current-request",
         )
         assert "**Day Dress**" in response
-        assert runtime_mod_support._UNSUPPORTED_REQUIREMENT_RESPONSE in response
+        assert search_replies_mod._UNSUPPORTED_REQUIREMENT_RESPONSE in response
 
     def test_grouped_search_deduplicates_by_product_ref_not_display_name(
         self,
     ) -> None:
-        from chain_server.src import turn_support as runtime_mod_support
+        from chain_server.src import search_replies as search_replies_mod
 
-        lines, displayed_names = runtime_mod_support._grouped_search_response_lines(
+        lines, displayed_names = search_replies_mod._grouped_search_response_lines(
             [
                 {
                     "guidance": "Use the first role as the base.",
@@ -7217,7 +7218,7 @@ class TestDeepAgentsRuntimeRefs:
         assert "app_llm_grounding_editor" not in output.model_usage
 
     def test_collect_tool_grounding_evidence_uses_customer_safe_summary(self) -> None:
-        from chain_server.src import turn_support as runtime_mod_support
+        from chain_server.src import grounding_evidence as grounding_evidence_mod
 
         result = {
             "messages": [
@@ -7241,7 +7242,7 @@ class TestDeepAgentsRuntimeRefs:
             ]
         }
 
-        evidence = runtime_mod_support._collect_tool_grounding_evidence(
+        evidence = grounding_evidence_mod._collect_tool_grounding_evidence(
             result,
             max_chars=12000,
         )
@@ -7256,7 +7257,7 @@ class TestDeepAgentsRuntimeRefs:
 
     def test_collect_search_evidence_forbids_name_based_attribute_inference(self) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
-        from chain_server.src import turn_support as runtime_mod_support
+        from chain_server.src import grounding_evidence as grounding_evidence_mod
 
         result = {
             "messages": [
@@ -7291,7 +7292,7 @@ class TestDeepAgentsRuntimeRefs:
             ]
         }
 
-        evidence = runtime_mod_support._collect_tool_grounding_evidence(
+        evidence = grounding_evidence_mod._collect_tool_grounding_evidence(
             result,
             max_chars=12000,
         )
@@ -7344,7 +7345,7 @@ class TestDeepAgentsRuntimeRefs:
     def test_collect_search_evidence_preserves_parent_category_caveat(
         self,
     ) -> None:
-        from chain_server.src import turn_support as runtime_mod_support
+        from chain_server.src import grounding_evidence as grounding_evidence_mod
 
         result = {
             "messages": [
@@ -7373,7 +7374,7 @@ class TestDeepAgentsRuntimeRefs:
             ]
         }
 
-        evidence = runtime_mod_support._collect_tool_grounding_evidence(
+        evidence = grounding_evidence_mod._collect_tool_grounding_evidence(
             result,
             max_chars=12000,
         )
@@ -7387,7 +7388,7 @@ class TestDeepAgentsRuntimeRefs:
     def test_skill_activation_content_is_not_commerce_grounding_evidence(
         self,
     ) -> None:
-        from chain_server.src import turn_support as runtime_mod_support
+        from chain_server.src import grounding_evidence as grounding_evidence_mod
 
         result = {
             "messages": [
@@ -7406,7 +7407,7 @@ class TestDeepAgentsRuntimeRefs:
             ]
         }
 
-        evidence = runtime_mod_support._collect_tool_grounding_evidence(
+        evidence = grounding_evidence_mod._collect_tool_grounding_evidence(
             result,
             max_chars=12000,
         )
@@ -7414,7 +7415,7 @@ class TestDeepAgentsRuntimeRefs:
         assert evidence == ""
 
     def test_assistant_claims_are_not_treated_as_tool_evidence(self) -> None:
-        from chain_server.src import turn_support as runtime_mod_support
+        from chain_server.src import grounding_evidence as grounding_evidence_mod
 
         result = {
             "messages": [
@@ -7428,13 +7429,13 @@ class TestDeepAgentsRuntimeRefs:
             ]
         }
 
-        assert runtime_mod_support._collect_tool_grounding_evidence(
+        assert grounding_evidence_mod._collect_tool_grounding_evidence(
             result,
             max_chars=12000,
         ) == ""
 
     def test_grounding_evidence_is_scoped_to_the_current_turn(self) -> None:
-        from chain_server.src import turn_support as runtime_mod_support
+        from chain_server.src import grounding_evidence as grounding_evidence_mod
 
         result = {
             "messages": [
@@ -7459,7 +7460,7 @@ class TestDeepAgentsRuntimeRefs:
             ]
         }
 
-        evidence = runtime_mod_support._collect_tool_grounding_evidence(
+        evidence = grounding_evidence_mod._collect_tool_grounding_evidence(
             result,
             max_chars=12000,
             request_id="current-request",
@@ -7471,7 +7472,7 @@ class TestDeepAgentsRuntimeRefs:
     def test_grounding_evidence_without_current_request_marker_fails_closed(
         self,
     ) -> None:
-        from chain_server.src import turn_support as runtime_mod_support
+        from chain_server.src import grounding_evidence as grounding_evidence_mod
 
         result = {
             "messages": [
@@ -7486,14 +7487,14 @@ class TestDeepAgentsRuntimeRefs:
             ]
         }
 
-        assert runtime_mod_support._collect_tool_grounding_evidence(
+        assert grounding_evidence_mod._collect_tool_grounding_evidence(
             result,
             max_chars=12000,
             request_id="missing-request",
         ) == ""
 
     def test_search_only_filter_groups_preserve_product_scope(self) -> None:
-        from chain_server.src import turn_support as runtime_mod_support
+        from chain_server.src import search_replies as search_replies_mod
 
         result = {
             "messages": [
@@ -7516,7 +7517,7 @@ class TestDeepAgentsRuntimeRefs:
             ]
         }
 
-        assert runtime_mod_support._confirmed_search_filter_groups(
+        assert search_replies_mod._confirmed_search_filter_groups(
             result,
             request_id="current-request",
         ) == [
@@ -7532,7 +7533,7 @@ class TestDeepAgentsRuntimeRefs:
                 "statements": ["primary color is red"],
             },
         ]
-        response = runtime_mod_support._format_search_only_response(
+        response = search_replies_mod._format_search_only_response(
             State(
                 user_id=111,
                 query="Show me black flats and red tops.",
@@ -7588,9 +7589,9 @@ class TestDeepAgentsRuntimeRefs:
         ]
 
     def test_scrub_internal_shopper_language_removes_tool_mechanics(self) -> None:
-        from chain_server.src import turn_support as runtime_mod_support
+        from chain_server.src import search_replies as search_replies_mod
 
-        scrubbed = runtime_mod_support._scrub_internal_shopper_language(
+        scrubbed = search_replies_mod._scrub_internal_shopper_language(
 
                 "The product detail tool doesn't return fabric composition, "
                 "and the sandals weren't added because the tool requires an "

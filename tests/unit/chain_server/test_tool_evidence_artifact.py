@@ -21,6 +21,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from chain_server.src import grounding_evidence as grounding_evidence_mod
 from chain_server.src import response_format
 from chain_server.src import turn_support as runtime_mod_support
 from chain_server.src.tool_evidence import (
@@ -222,7 +223,7 @@ def _results_evidence() -> SearchEvidence:
 def test_composer_summary_for_search_results() -> None:
     """Every fact the composer may repeat, and the limits placed on it."""
 
-    summary = runtime_mod_support._customer_safe_tool_evidence(
+    summary = grounding_evidence_mod._customer_safe_tool_evidence(
         "", _StubToolMessage(_results_evidence())
     )
 
@@ -307,7 +308,7 @@ def test_composer_may_state_a_confirmed_attribute() -> None:
     evidence = _results_evidence()
     evidence.products[0]["attributes"] = {"composition": "100% satin"}
 
-    summary = runtime_mod_support._customer_safe_tool_evidence("", _StubToolMessage(evidence))
+    summary = grounding_evidence_mod._customer_safe_tool_evidence("", _StubToolMessage(evidence))
 
     assert "confirmed: composition: 100% satin" in summary
     assert "any attribute listed as confirmed for that specific product" in summary
@@ -326,7 +327,7 @@ def test_composer_summary_for_zero_results() -> None:
         advertised_category="Bags",
     )
 
-    summary = runtime_mod_support._customer_safe_tool_evidence("", _StubToolMessage(evidence))
+    summary = grounding_evidence_mod._customer_safe_tool_evidence("", _StubToolMessage(evidence))
 
     assert summary.split('SPEAK AS A SHOP ASSISTANT')[0].rstrip() == (
         "CUSTOMER_SAFE_SCOPED_NO_MATCH_EVIDENCE: Zero products matched only "
@@ -381,7 +382,7 @@ def test_composer_summary_for_product_detail() -> None:
         "details": ["care: Machine wash cold.", "composition: 100% linen"],
     }
 
-    summary = runtime_mod_support._customer_safe_tool_evidence(
+    summary = grounding_evidence_mod._customer_safe_tool_evidence(
         "",
         _StubToolMessage(
             artifact=ProductDetailEvidence(products=[record]).as_artifact()
@@ -412,7 +413,7 @@ def test_no_direct_catalog_match_is_a_refusal_not_an_empty_search() -> None:
         requested_product_type="casual sneakers",
     )
 
-    summary = runtime_mod_support._customer_safe_tool_evidence("", _StubToolMessage(evidence))
+    summary = grounding_evidence_mod._customer_safe_tool_evidence("", _StubToolMessage(evidence))
 
     assert summary.startswith("CUSTOMER_SAFE_NO_MATCH_EVIDENCE:")
     assert "No retrieval ran" in summary
@@ -428,7 +429,7 @@ def test_scope_relation_is_absent_when_no_parent_was_substituted() -> None:
     evidence = _results_evidence()
     evidence.advertised_category = None
 
-    summary = runtime_mod_support._customer_safe_tool_evidence("", _StubToolMessage(evidence))
+    summary = grounding_evidence_mod._customer_safe_tool_evidence("", _StubToolMessage(evidence))
 
     assert "REQUESTED_SCOPE_RELATION" not in summary
 
@@ -439,7 +440,7 @@ def test_empty_results_do_not_append_a_blank_line() -> None:
     evidence = _results_evidence()
     evidence.products = []
 
-    summary = runtime_mod_support._customer_safe_tool_evidence("", _StubToolMessage(evidence))
+    summary = grounding_evidence_mod._customer_safe_tool_evidence("", _StubToolMessage(evidence))
 
     assert not summary.endswith("\n")
 
@@ -499,7 +500,7 @@ def test_every_search_summary_tells_the_composer_to_drop_the_jargon() -> None:
     evidence = SearchEvidence(outcome="zero_results")
     message = SimpleNamespace(artifact=evidence.as_artifact())
 
-    summary = runtime_mod_support._customer_safe_tool_evidence("", message)
+    summary = grounding_evidence_mod._customer_safe_tool_evidence("", message)
 
     assert "SPEAK AS A SHOP ASSISTANT" in summary
     for banned in ("search", "filter", "scope", "taxonomy", "query", "results"):
@@ -520,7 +521,7 @@ def test_a_zero_result_tells_the_model_to_relax_its_own_search() -> None:
     to be told to, and told which filter may give.
     """
 
-    from chain_server.src.turn_support import _customer_safe_search_evidence
+    from chain_server.src.grounding_evidence import _customer_safe_search_evidence
 
     summary = _customer_safe_search_evidence(
         {
@@ -542,7 +543,7 @@ def test_a_zero_result_does_not_hand_over_products_of_its_own() -> None:
     """No second search runs here, so nothing can arrive that the reply
     disowns. The heading its results used to land under is gone with it."""
 
-    from chain_server.src.turn_support import _customer_safe_search_evidence
+    from chain_server.src.grounding_evidence import _customer_safe_search_evidence
 
     summary = _customer_safe_search_evidence(
         {

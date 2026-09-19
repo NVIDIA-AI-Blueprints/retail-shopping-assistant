@@ -93,6 +93,8 @@ def lift(module: str, summary: str, names: list[str]) -> None:
             and node.target.id in asked
         ):
             wanted[node.target.id] = node
+        elif isinstance(node, ast.ClassDef) and node.name in asked:
+            wanted[node.name] = node
     missing = asked - set(wanted)
     if missing:
         raise SystemExit(f"not found in {SOURCE}: {sorted(missing)}")

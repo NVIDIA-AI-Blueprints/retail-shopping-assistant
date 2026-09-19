@@ -2242,7 +2242,7 @@ class TestDeepAgentsRuntimeRefs:
         self,
     ) -> None:
         from chain_server.src import catalog_vocabulary as catalog_vocabulary_mod
-        from chain_server.src import turn_support as runtime_mod_support
+        from chain_server.src import tool_schemas as tool_schemas_mod
 
         capabilities = CatalogCapabilities(
             catalog_id="custom",
@@ -2307,7 +2307,7 @@ class TestDeepAgentsRuntimeRefs:
             capabilities,
         )
 
-        schema_model = runtime_mod_support._search_catalog_tool_input_model(capabilities)
+        schema_model = tool_schemas_mod._search_catalog_tool_input_model(capabilities)
         schema = schema_model.model_json_schema()
 
         assert set(schema_model.model_fields) == {
@@ -2775,7 +2775,7 @@ class TestDeepAgentsRuntimeRefs:
     def test_search_catalog_tool_input_rejects_legacy_constraint_fields(
         self, legacy_field: str
     ) -> None:
-        from chain_server.src import turn_support as runtime_mod_support
+        from chain_server.src import tool_schemas as tool_schemas_mod
 
         capabilities = CatalogCapabilities(
             catalog_id="custom",
@@ -2786,7 +2786,7 @@ class TestDeepAgentsRuntimeRefs:
                 },
             ),
         )
-        schema_model = runtime_mod_support._search_catalog_tool_input_model(capabilities)
+        schema_model = tool_schemas_mod._search_catalog_tool_input_model(capabilities)
 
         with pytest.raises(ValueError, match="Extra inputs are not permitted"):
             schema_model.model_validate(
@@ -2958,6 +2958,7 @@ class TestDeepAgentsRuntimeRefs:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
+        from chain_server.src import tool_schemas as tool_schemas_mod
         from chain_server.src import turn_support as runtime_mod_support
 
         captured: dict[str, Any] = {}
@@ -3105,7 +3106,7 @@ class TestDeepAgentsRuntimeRefs:
             "store-policy-answers",
         ]
         search_schema = tools_by_name["search_catalog_tool"].args_schema
-        assert search_schema is not runtime_mod_support.SearchCatalogToolArguments
+        assert search_schema is not tool_schemas_mod.SearchCatalogToolArguments
         # The model-facing schema is now a list of scopes; the per-scope fields
         # are unchanged and live on the scope object.
         assert set(search_schema.model_fields) == {"scopes", "not_covered"}

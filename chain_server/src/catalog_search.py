@@ -91,6 +91,9 @@ from .tool_loop_control import (
     CONSTRAINT_REVIEW_PREFIX,
     SEARCH_VALIDATION_ERROR_PREFIX,
 )
+from .tool_schemas import (
+    SearchCatalogToolArguments,
+)
 from .turn_scope import CatalogRepairState, TurnScope
 from .turn_support import (
     _ONE_SIZE,
@@ -99,7 +102,6 @@ from .turn_support import (
     _SEARCH_RESULT_GROUNDING_NOTE,
     _SEARCH_SCOPE_COMPLETE_NOTE,
     _UNSUPPORTED_SEARCH_MODE_MESSAGE,
-    SearchCatalogToolArguments,
     _advertised_subcategories_for_selection,
     _append_product_results,
     _catalog_search_scope,

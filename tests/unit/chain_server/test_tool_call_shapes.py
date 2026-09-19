@@ -6,7 +6,7 @@ around them. The call was rejected whole and the assistant told the shopper it
 could not complete a valid catalog search for a plainly named product.
 """
 
-from chain_server.src.turn_support import _one_scope_is_a_list_of_one
+from chain_server.src.tool_schemas import _one_scope_is_a_list_of_one
 
 
 def _wrapped(data):

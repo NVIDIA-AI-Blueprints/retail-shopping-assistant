@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 from catalog_retriever.src.catalog import load_catalog
 from chain_server.src.catalog_capabilities import CatalogCapabilities
-from chain_server.src.turn_support import (
+from chain_server.src.tool_schemas import (
     _search_catalog_scopes_input_model,
     _search_catalog_tool_input_model,
     clear_schema_cache,
@@ -131,7 +131,7 @@ def test_the_cached_schema_is_the_one_the_builder_produces(capabilities) -> None
     that what reaches the model is unchanged.
     """
 
-    from chain_server.src.turn_support import _build_search_catalog_tool_input_model
+    from chain_server.src.tool_schemas import _build_search_catalog_tool_input_model
 
     built = _build_search_catalog_tool_input_model(
         capabilities, wearer_audience_field="target_audience"

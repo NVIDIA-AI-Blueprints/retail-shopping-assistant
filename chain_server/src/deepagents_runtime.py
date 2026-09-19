@@ -161,6 +161,10 @@ from .tool_policy import (
 from .tool_policy import (
     load_shopper_skill_registry as _shopper_skill_registry,
 )
+from .tool_schemas import (
+    _search_catalog_scopes_input_model,
+    _search_catalog_tool_input_model,
+)
 from .turn_diagnostics import (
     _catalog_repair_clarification_response,
     _empty_agent_diagnostics,
@@ -201,8 +205,6 @@ from .turn_support import (
     _product_detail_record,
     _products_found_receipt,
     _same_product_display_name,
-    _search_catalog_scopes_input_model,
-    _search_catalog_tool_input_model,
     _shopper_words_this_conversation,
     _skill_activation_input_model,
     _store_policies_path,

@@ -33,10 +33,10 @@ from chain_server.src.search_replies import (
     _scope_relation_payload,
 )
 from chain_server.src.tool_evidence import EVIDENCE_KEY
-from chain_server.src.turn_scope import TurnScope
-from chain_server.src.turn_support import (
+from chain_server.src.tool_schemas import (
     _search_catalog_tool_input_model,
 )
+from chain_server.src.turn_scope import TurnScope
 from shared.commerce_contracts import (
     CatalogCapabilities,
     CatalogFilterCapability,

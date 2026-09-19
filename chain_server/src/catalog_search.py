@@ -1813,21 +1813,13 @@ def _record_the_group_this_scope_showed(
     ]
     if not product_ids:
         return
-    state.product_groups.append(
-        {
-            "heading": heading,
-            "taxonomy": _taxonomy_payload(attempt.taxonomy),
-            "product_ids": product_ids,
-        }
-    )
-
-
-def _taxonomy_payload(taxonomy: Any) -> dict[str, Any]:
-    """This scope's taxonomy as plain data, whatever shape it arrived in."""
-
-    if isinstance(taxonomy, BaseModel):
-        return taxonomy.model_dump()
-    return dict(taxonomy) if isinstance(taxonomy, dict) else {}
+    # The scope's taxonomy went here too, on the reasoning that a heading
+    # varies across turns -- "bag", "bags", "tote bag" -- while the catalog
+    # values do not, so matching a group to a later one would want it. Nothing
+    # matches groups across turns yet. It was computed every search and sent
+    # to the record on every turn, which dropped it on arrival. Added back
+    # where something reads it.
+    state.product_groups.append({"heading": heading, "product_ids": product_ids})
 
 
 def _rendered_evidence(ctx: SearchContext, attempt: _Attempt) -> StepResult:

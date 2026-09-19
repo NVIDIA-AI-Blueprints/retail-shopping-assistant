@@ -411,7 +411,6 @@ def the_showing(
                     "heading": _a_heading_that_is_not_a_product(
                         str(group.get("heading") or ""), products
                     ),
-                    "taxonomy": dict(group.get("taxonomy") or {}),
                     "products": _numbered_within_the_group(members),
                 }
             )
@@ -423,11 +422,7 @@ def the_showing(
     ]
     if unclaimed:
         shown.append(
-            {
-                "heading": "",
-                "taxonomy": {},
-                "products": _numbered_within_the_group(unclaimed),
-            }
+            {"heading": "", "products": _numbered_within_the_group(unclaimed)}
         )
     return shown
 

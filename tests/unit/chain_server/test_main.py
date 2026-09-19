@@ -2036,32 +2036,32 @@ class TestDeepAgentsRuntimeMediaFailures:
 
 class TestDeepAgentsRuntimeRefs:
     def test_product_type_text_normalization_is_conservative(self) -> None:
-        from chain_server.src import shopper_words as shopper_words_mod
+        from chain_server.src import catalog_vocabulary as catalog_vocabulary_mod
 
-        assert shopper_words_mod._normalize_product_text("Accessories") == "accessory"
-        assert shopper_words_mod._normalize_product_text("dresses") == "dress"
-        assert shopper_words_mod._normalize_product_text("crossbody_bags") == (
+        assert catalog_vocabulary_mod._normalize_product_text("Accessories") == "accessory"
+        assert catalog_vocabulary_mod._normalize_product_text("dresses") == "dress"
+        assert catalog_vocabulary_mod._normalize_product_text("crossbody_bags") == (
             "crossbody bag"
         )
-        assert shopper_words_mod._normalize_product_text("Crossbody-Bags") == (
+        assert catalog_vocabulary_mod._normalize_product_text("Crossbody-Bags") == (
             "crossbody bag"
         )
-        assert shopper_words_mod._normalize_product_text("boots & flats") == (
+        assert catalog_vocabulary_mod._normalize_product_text("boots & flats") == (
             "boot and flat"
         )
 
     def test_unadvertised_requirement_must_be_grounded_in_current_turn(self) -> None:
-        from chain_server.src import shopper_words as shopper_words_mod
+        from chain_server.src import lexical_provenance as lexical_provenance_mod
 
-        assert shopper_words_mod._shopper_stated_requirement(
+        assert lexical_provenance_mod._shopper_stated_requirement(
             "Do you have water-resistant bags?",
             "water resistance",
         )
-        assert shopper_words_mod._shopper_stated_requirement(
+        assert lexical_provenance_mod._shopper_stated_requirement(
             "Show me denim skirts",
             "denim",
         )
-        assert not shopper_words_mod._shopper_stated_requirement(
+        assert not lexical_provenance_mod._shopper_stated_requirement(
             "Build a rainy day outfit",
             "water resistance",
         )
@@ -2069,7 +2069,7 @@ class TestDeepAgentsRuntimeRefs:
     def test_full_product_scope_does_not_conflate_advertised_bag_types(
         self,
     ) -> None:
-        from chain_server.src import shopper_words as shopper_words_mod
+        from chain_server.src import catalog_vocabulary as catalog_vocabulary_mod
 
         capabilities = CatalogCapabilities(
             catalog_id="scope-test",
@@ -2091,55 +2091,55 @@ class TestDeepAgentsRuntimeRefs:
             ),
         )
 
-        assert shopper_words_mod._product_scope_key("crossbody_bags") == "crossbody bag"
-        assert not shopper_words_mod._same_product_scope(
+        assert catalog_vocabulary_mod._product_scope_key("crossbody_bags") == "crossbody bag"
+        assert not catalog_vocabulary_mod._same_product_scope(
             "crossbody bag",
             "tote bag",
             capabilities,
         )
-        assert not shopper_words_mod._same_product_scope(
+        assert not catalog_vocabulary_mod._same_product_scope(
             "crossbody bag",
             "formal crossbody bag",
             capabilities,
         )
-        assert shopper_words_mod._same_product_scope(
+        assert catalog_vocabulary_mod._same_product_scope(
             "formal crossbody bag",
             "crossbody bag",
             capabilities,
         )
-        assert not shopper_words_mod._same_product_scope(
+        assert not catalog_vocabulary_mod._same_product_scope(
             "formal crossbody bag",
             "bag",
             capabilities,
         )
-        assert not shopper_words_mod._same_product_scope(
+        assert not catalog_vocabulary_mod._same_product_scope(
             "crossbody bag or tote bag",
             "tote bag",
             capabilities,
         )
-        assert shopper_words_mod._exact_taxonomy_issue(
+        assert catalog_vocabulary_mod._exact_taxonomy_issue(
             "crossbody bags",
             {"category": ["bags"], "subcategory": []},
         ) is not None
-        assert shopper_words_mod._advertised_taxonomy_scope_issue(
+        assert catalog_vocabulary_mod._advertised_taxonomy_scope_issue(
             "crossbody bags",
             "member_of_requested_umbrella",
             {"category": ["bags"], "subcategory": ["tote_bags"]},
             capabilities,
         ) is not None
-        assert shopper_words_mod._advertised_taxonomy_scope_issue(
+        assert catalog_vocabulary_mod._advertised_taxonomy_scope_issue(
             "formal crossbody bags",
             "member_of_requested_umbrella",
             {"category": ["bags"], "subcategory": ["tote_bags"]},
             capabilities,
         ) is not None
-        assert shopper_words_mod._advertised_taxonomy_scope_issue(
+        assert catalog_vocabulary_mod._advertised_taxonomy_scope_issue(
             "formal crossbody bags",
             "exact_requested_type",
             {"category": ["bags"], "subcategory": ["crossbody_bags"]},
             capabilities,
         ) is None
-        assert shopper_words_mod._advertised_taxonomy_scope_issue(
+        assert catalog_vocabulary_mod._advertised_taxonomy_scope_issue(
             "bags",
             "member_of_requested_umbrella",
             {"category": ["apparel"], "subcategory": ["dresses"]},
@@ -2149,7 +2149,7 @@ class TestDeepAgentsRuntimeRefs:
     def test_typed_multi_subcategory_selection_preserves_coverage(
         self,
     ) -> None:
-        from chain_server.src import shopper_words as shopper_words_mod
+        from chain_server.src import catalog_vocabulary as catalog_vocabulary_mod
         from chain_server.src import turn_support as runtime_mod_support
 
         capabilities = CatalogCapabilities(
@@ -2216,7 +2216,7 @@ class TestDeepAgentsRuntimeRefs:
             )
             for index in range(2)
         ]
-        covered = shopper_words_mod._products_with_subcategory_coverage(
+        covered = catalog_vocabulary_mod._products_with_subcategory_coverage(
             products,
             alternatives,
             4,
@@ -2237,7 +2237,7 @@ class TestDeepAgentsRuntimeRefs:
     def test_search_catalog_tool_schema_is_generated_from_catalog_taxonomy(
         self,
     ) -> None:
-        from chain_server.src import shopper_words as shopper_words_mod
+        from chain_server.src import catalog_vocabulary as catalog_vocabulary_mod
         from chain_server.src import turn_support as runtime_mod_support
 
         capabilities = CatalogCapabilities(
@@ -2277,27 +2277,27 @@ class TestDeepAgentsRuntimeRefs:
             ),
         )
 
-        assert shopper_words_mod._duplicates_unavailable_product_type(
+        assert catalog_vocabulary_mod._duplicates_unavailable_product_type(
             ["sneakers"],
             "sneakers",
             capabilities,
         )
-        assert not shopper_words_mod._duplicates_unavailable_product_type(
+        assert not catalog_vocabulary_mod._duplicates_unavailable_product_type(
             ["sneakers", "water resistance"],
             "sneakers",
             capabilities,
         )
-        assert not shopper_words_mod._duplicates_unavailable_product_type(
+        assert not catalog_vocabulary_mod._duplicates_unavailable_product_type(
             ["sneakers", "sneakers"],
             "sneakers",
             capabilities,
         )
-        assert not shopper_words_mod._duplicates_unavailable_product_type(
+        assert not catalog_vocabulary_mod._duplicates_unavailable_product_type(
             ["bags"],
             "bags",
             capabilities,
         )
-        assert not shopper_words_mod._duplicates_unavailable_product_type(
+        assert not catalog_vocabulary_mod._duplicates_unavailable_product_type(
             ["sneakers or boots"],
             "sneakers or boots",
             capabilities,
@@ -2561,7 +2561,7 @@ class TestDeepAgentsRuntimeRefs:
             }
         )
         assert "single taxonomy value must match requested_product_type" in (
-            shopper_words_mod._exact_taxonomy_issue(
+            catalog_vocabulary_mod._exact_taxonomy_issue(
                 mismatched_exact.requested_product_type,
                 mismatched_exact.taxonomy,
             )
@@ -2585,7 +2585,7 @@ class TestDeepAgentsRuntimeRefs:
             }
         )
         assert modified_exact_type.taxonomy.subcategory == ["clutches"]
-        assert shopper_words_mod._exact_taxonomy_issue(
+        assert catalog_vocabulary_mod._exact_taxonomy_issue(
             modified_exact_type.requested_product_type,
             modified_exact_type.taxonomy,
         ) is not None
@@ -2597,7 +2597,7 @@ class TestDeepAgentsRuntimeRefs:
                 "taxonomy_status": "exact_requested_type",
             }
         )
-        assert shopper_words_mod._exact_taxonomy_issue(
+        assert catalog_vocabulary_mod._exact_taxonomy_issue(
             semantic_direction_exact.requested_product_type,
             semantic_direction_exact.taxonomy,
         ) is None
@@ -2630,7 +2630,7 @@ class TestDeepAgentsRuntimeRefs:
             }
         )
         assert "selected taxonomy must faithfully represent one requested type" in (
-            shopper_words_mod._exact_taxonomy_issue(
+            catalog_vocabulary_mod._exact_taxonomy_issue(
                 multi_value_exact.requested_product_type,
                 multi_value_exact.taxonomy,
             )
@@ -2802,7 +2802,7 @@ class TestDeepAgentsRuntimeRefs:
             )
 
     def test_taxonomy_mapping_uses_catalog_fields_and_validates_scope(self) -> None:
-        from chain_server.src import shopper_words as shopper_words_mod
+        from chain_server.src import catalog_vocabulary as catalog_vocabulary_mod
         from chain_server.src import turn_support as runtime_mod_support
 
         capabilities = CatalogCapabilities(
@@ -2904,21 +2904,21 @@ class TestDeepAgentsRuntimeRefs:
                 },
             ),
         )
-        assert shopper_words_mod._advertised_scope_match(
+        assert catalog_vocabulary_mod._advertised_scope_match(
             "waterproof boots",
             footwear_capabilities,
         ) == ("subcategory", "boots", "footwear", "boot")
-        assert shopper_words_mod._advertised_scope_match(
+        assert catalog_vocabulary_mod._advertised_scope_match(
             "closed shoes or boots",
             footwear_capabilities,
         ) is None
-        assert shopper_words_mod._advertised_scope_match(
+        assert catalog_vocabulary_mod._advertised_scope_match(
             "boots & flats",
             footwear_capabilities,
         ) is None
-        assert not shopper_words_mod._same_product_scope(
-            shopper_words_mod._product_scope_key("boots / flats"),
-            shopper_words_mod._product_scope_key("flats"),
+        assert not catalog_vocabulary_mod._same_product_scope(
+            catalog_vocabulary_mod._product_scope_key("boots / flats"),
+            catalog_vocabulary_mod._product_scope_key("flats"),
             footwear_capabilities,
         )
 
@@ -6410,7 +6410,7 @@ class TestDeepAgentsRuntimeRefs:
         assert "Navy Wool Blend Blazer" not in output.response
 
     def test_recent_shopper_statements_exclude_assistant_responses(self) -> None:
-        from chain_server.src import shopper_words as shopper_words_mod
+        from chain_server.src import lexical_provenance as lexical_provenance_mod
         from chain_server.src.agenttypes import DialogueTurn
 
         dialogue = [
@@ -6426,32 +6426,32 @@ class TestDeepAgentsRuntimeRefs:
             ),
         ]
 
-        assert shopper_words_mod._recent_shopper_statements(dialogue) == (
+        assert lexical_provenance_mod._recent_shopper_statements(dialogue) == (
             "Start with a beige top.\nGo back to the beige look."
         )
-        assert "Flat Strappy" not in shopper_words_mod._recent_shopper_statements(
+        assert "Flat Strappy" not in lexical_provenance_mod._recent_shopper_statements(
             dialogue
         )
 
     def test_private_taxonomy_helpers_validate_legacy_execution_modes(self) -> None:
-        from chain_server.src import shopper_words as shopper_words_mod
+        from chain_server.src import catalog_vocabulary as catalog_vocabulary_mod
 
-        assert shopper_words_mod._exact_taxonomy_issue(
+        assert catalog_vocabulary_mod._exact_taxonomy_issue(
             "bottoms",
             {"category": ["apparel"], "subcategory": ["skirts"]},
         ) is not None
-        assert shopper_words_mod._exact_taxonomy_issue(
+        assert catalog_vocabulary_mod._exact_taxonomy_issue(
             "sneakers",
             {"category": ["footwear"], "subcategory": ["flats"]},
         ) is not None
-        assert not shopper_words_mod._agent_selected_scope_is_advertised(
+        assert not catalog_vocabulary_mod._agent_selected_scope_is_advertised(
             "bag",
             {
                 "category": ["bags"],
                 "subcategory": ["clutches", "satchels"],
             },
         )
-        assert shopper_words_mod._agent_selected_scope_is_advertised(
+        assert catalog_vocabulary_mod._agent_selected_scope_is_advertised(
             "clutch",
             {
                 "category": ["bags"],
@@ -6460,7 +6460,7 @@ class TestDeepAgentsRuntimeRefs:
         )
 
     def test_advertised_taxonomy_value_matches_singular_requested_type(self) -> None:
-        from chain_server.src import shopper_words as shopper_words_mod
+        from chain_server.src import catalog_vocabulary as catalog_vocabulary_mod
 
         capabilities = CatalogCapabilities(
             catalog_id="fashion",
@@ -6480,20 +6480,20 @@ class TestDeepAgentsRuntimeRefs:
             ),
         )
 
-        assert shopper_words_mod._advertised_taxonomy_value("bag", capabilities) == "bags"
+        assert catalog_vocabulary_mod._advertised_taxonomy_value("bag", capabilities) == "bags"
         assert (
-            shopper_words_mod._advertised_taxonomy_value("clutch", capabilities)
+            catalog_vocabulary_mod._advertised_taxonomy_value("clutch", capabilities)
             == "clutches"
         )
-        assert shopper_words_mod._advertised_taxonomy_value("backpack", capabilities) is None
-        assert not shopper_words_mod._agent_selected_scope_is_advertised(
+        assert catalog_vocabulary_mod._advertised_taxonomy_value("backpack", capabilities) is None
+        assert not catalog_vocabulary_mod._agent_selected_scope_is_advertised(
             "outerwear",
             {
                 "category": ["apparel"],
                 "subcategory": ["dresses", "skirts"],
             },
         )
-        assert not shopper_words_mod._agent_selected_scope_is_advertised(
+        assert not catalog_vocabulary_mod._agent_selected_scope_is_advertised(
             "shoes",
             {
                 "category": ["footwear"],

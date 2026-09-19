@@ -15,13 +15,12 @@ from typing import Any, Dict
 
 import pytest
 import yaml
-from pydantic import ValidationError
-
 from chain_server.src.config import (
     ChainServerConfig,
     load_config,
     load_config_data,
 )
+from pydantic import ValidationError
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 

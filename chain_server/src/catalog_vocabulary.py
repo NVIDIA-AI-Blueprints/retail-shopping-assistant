@@ -1,4 +1,16 @@
-"""Lining a shopper's words up with the catalog's words.
+"""Comparing a value against the values the catalog advertises.
+
+Every question here is answered against a closed set: the taxonomy the catalog
+publishes. Is `dresses` the same entry as `dress`, is `crossbody_bags` the same
+as `crossbody bag`, is `bag` a value the catalog advertises at all. Casing,
+punctuation and plurals differ between what a model emits and what the catalog
+stores, so the two are normalised before being compared.
+
+This is not matching against shopper language and must not become that. It
+never reads the shopper's sentence; it is handed one value and one catalog and
+answers whether the value is in it. Guessing what a shopper meant is the
+resolver's job, and the one place that still guesses with string operations is
+`lexical_provenance.py`, which is on its way out.
 
 Lifted out of `turn_support.py` unchanged.
 """
@@ -13,7 +25,6 @@ if TYPE_CHECKING:
 
 import re
 import unicodedata
-from collections.abc import Sequence
 from typing import Any
 
 from pydantic import (
@@ -23,8 +34,6 @@ from shared.commerce_contracts import (
     CatalogCapabilities,
     ProductSummary,
 )
-
-from .agenttypes import DialogueTurn
 
 
 def _singularize_product_word(word: str) -> str:
@@ -58,146 +67,10 @@ def _has_alternative_connector(value: str) -> bool:
 
 
 
-def _text_mentions_product_type(text: str, product_type: str) -> bool:
-    """Return whether text names a normalized product-type form."""
-
-    normalized_text = _normalize_product_text(text)
-    padded_text = f" {normalized_text} "
-    normalized_product_type = _normalize_product_text(product_type)
-    return bool(normalized_product_type) and (
-        f" {normalized_product_type} " in padded_text
-    )
-
-
-
-def _requirement_word_stem(word: str) -> str:
-    """Return a conservative stem for literal requirement provenance."""
-
-    for suffix in ("ance", "ence", "ancy", "ency", "ant", "ent", "ing", "ed"):
-        if word.endswith(suffix) and len(word) > len(suffix) + 3:
-            return word[: -len(suffix)]
-    return _singularize_product_word(word)
-
-
-
-def _shopper_stated_requirement(query: str, requirement: str) -> bool:
-    """Return whether a proposed requirement is grounded in the current turn."""
-
-    normalized_query = unicodedata.normalize("NFKC", query).casefold()
-    query_words = {
-        _requirement_word_stem(word)
-        for word in re.findall(r"[^\W_]+", normalized_query)
-    }
-    requirement_words = {
-        _requirement_word_stem(word)
-        for word in re.findall(
-            r"[^\W_]+",
-            unicodedata.normalize("NFKC", requirement).casefold(),
-        )
-    }
-    return bool(requirement_words) and requirement_words.issubset(query_words)
-
-
-
-def a_place_the_shopper_named(
-    shopper_statements: Sequence[str],
-    quoted: str,
-) -> bool:
-    """Whether the words offered as naming the place were ever actually said.
-
-    The tool asks the model to quote the words that named the place, and the
-    model quoted "Italy" on a turn reading "it's going to snow when we get
-    back" -- and, in the next run, "Rome", which the shopper never said in any
-    turn. A required field it can fill with anything is a field it will fill
-    with anything.
-
-    So the citation is checked against the record, which is the same thing
-    `expected_display_name` does for a product name: not what the words mean,
-    only whether they were said. Reusing the constraint-provenance reader so a
-    quotation is judged the same way everywhere.
-
-    The record is every turn the shopper has spoken, not only the current one.
-    Checking the current turn alone was narrower than the defect and cost the
-    behaviour it was meant to protect: nine turns into planning one trip to
-    one city, "will I need a jacket in the evening" names no place, so the
-    call was refused -- and the reply then said no forecast was available for
-    Cancun and described a typical Cancun September anyway. Earlier runs had
-    fetched that forecast and cited the provider.
-
-    What made Rome wrong is not something this function can see. The shopper
-    had stated the conditions, and "when we get back" is home rather than the
-    city of the trip; both are judgments about meaning, and both are stated on
-    the field the quotation comes from. What a substring check can establish is
-    that the words were said by the shopper at all, which is what stopped the
-    invented "Rome", and that is all it claims to establish.
-    """
-
-    if not quoted.strip():
-        return False
-    return any(
-        _shopper_stated_requirement(statement, quoted)
-        for statement in shopper_statements
-    )
-
-
-
 def _product_scope_key(value: str | None) -> str:
     """Return the full normalized product phrase preserved across repair."""
 
     return _normalize_product_text(value or "")
-
-
-
-def _recent_shopper_statements(
-    dialogue: Sequence[DialogueTurn],
-    *,
-    limit: int = 4,
-) -> str:
-    """Read prior shopper text from the typed lane, never from rendered prose.
-
-    Assistant text is deliberately excluded: dialogue may carry shopper intent,
-    but assistant prose is not product, policy, inventory, or cart evidence.
-    """
-
-    recent = list(dialogue)[-limit:]
-    return "\n".join(turn.shopper_text for turn in recent if turn.shopper_text)
-
-
-
-def _shopper_stated_product_scope(
-    query: str,
-    dialogue: Sequence[DialogueTurn],
-    product_scope_key: str,
-) -> bool:
-    """Return whether current or recent shopper text states a product scope."""
-
-    shopper_text = "\n".join(
-        value for value in (query, _recent_shopper_statements(dialogue)) if value
-    )
-    return _text_mentions_product_type(shopper_text, product_scope_key)
-
-
-
-def _resolved_agent_selected_product_type(
-    *,
-    query: str,
-    dialogue: Sequence[DialogueTurn],
-    requested_product_type: str | None,
-    taxonomy_status: str,
-    taxonomy: BaseModel | dict[str, Any],
-) -> str | None:
-    """Derive open-role provenance from the agent's single taxonomy choice."""
-
-    if taxonomy_status != "agent_selected_type":
-        return requested_product_type
-    scope_key = _product_scope_key(requested_product_type)
-    if scope_key and _shopper_stated_product_scope(query, dialogue, scope_key):
-        return requested_product_type
-    payload = taxonomy.model_dump() if isinstance(taxonomy, BaseModel) else taxonomy
-    subcategories = payload.get("subcategory") or []
-    if len(subcategories) == 1:
-        return str(subcategories[0])
-    return requested_product_type
 
 
 

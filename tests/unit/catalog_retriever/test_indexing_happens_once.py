@@ -25,7 +25,6 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
-
 from catalog_retriever.src import retriever as retriever_mod
 from catalog_retriever.src.retriever import Retriever, RetrieverConfig
 from shared.commerce_contracts import CatalogFilterCapability

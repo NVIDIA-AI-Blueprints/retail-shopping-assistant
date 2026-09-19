@@ -41,12 +41,30 @@ from .catalog_request import (
     _filter_values,
     build_catalog_search_plan,
 )
+from .catalog_vocabulary import (
+    _advertised_scope_match,
+    _advertised_taxonomy_scope_issue,
+    _advertised_taxonomy_value,
+    _agent_selected_scope_is_advertised,
+    _catalog_execution_taxonomy_status,
+    _duplicates_unavailable_product_type,
+    _exact_taxonomy_issue,
+    _normalize_product_text,
+    _product_scope_key,
+    _products_with_subcategory_coverage,
+    _same_product_scope,
+)
 from .control_signals import (
     NOT_CARRIED_KEY,
     REJECTIONS_KEY,
     ControlSignal,
     SearchRejection,
     control,
+)
+from .lexical_provenance import (
+    _resolved_agent_selected_product_type,
+    _shopper_stated_product_scope,
+    _shopper_stated_requirement,
 )
 from .model_usage import (
     _record_catalog_model_usage,
@@ -64,22 +82,6 @@ from .response_format import (
     _format_search_taxonomy_evidence,
     _format_search_unadvertised_type_evidence,
     _format_words_this_catalog_cannot_filter_on,
-)
-from .shopper_words import (
-    _advertised_scope_match,
-    _advertised_taxonomy_scope_issue,
-    _advertised_taxonomy_value,
-    _agent_selected_scope_is_advertised,
-    _catalog_execution_taxonomy_status,
-    _duplicates_unavailable_product_type,
-    _exact_taxonomy_issue,
-    _normalize_product_text,
-    _product_scope_key,
-    _products_with_subcategory_coverage,
-    _resolved_agent_selected_product_type,
-    _same_product_scope,
-    _shopper_stated_product_scope,
-    _shopper_stated_requirement,
 )
 from .tool_evidence import (
     EVIDENCE_KEY,

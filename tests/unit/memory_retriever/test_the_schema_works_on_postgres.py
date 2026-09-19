@@ -32,17 +32,15 @@ import os
 from typing import Iterator
 
 import pytest
-from sqlalchemy import inspect, text
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import sessionmaker
-
 from memory_retriever.src.database import build_engine
 from memory_retriever.src.migrations import (
     expected_schema_version,
     run_schema_migrations,
 )
 from memory_retriever.src.models import CartItem, ShopperProfile, new_cart_line_id
-
+from sqlalchemy import inspect, text
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import sessionmaker
 
 POSTGRES_URL = os.environ.get("MEMORY_TEST_POSTGRES_URL")
 

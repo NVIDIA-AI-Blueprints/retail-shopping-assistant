@@ -14,9 +14,8 @@ couldn't complete a valid catalog search for that request".
 from __future__ import annotations
 
 import pytest
-from pydantic import ValidationError
-
 from chain_server.src.turn_support import _required_constraints_input_model
+from pydantic import ValidationError
 from shared.commerce_contracts import (
     CatalogCapabilities,
     CatalogFilterCapability,

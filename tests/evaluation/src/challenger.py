@@ -2,11 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any, Mapping, Optional, Protocol, Sequence
-from urllib.parse import urlparse
 import argparse
 import base64
 import hashlib
@@ -16,6 +11,11 @@ import random
 import re
 import shutil
 import sys
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Mapping, Optional, Protocol, Sequence
+from urllib.parse import urlparse
 
 import requests
 import yaml

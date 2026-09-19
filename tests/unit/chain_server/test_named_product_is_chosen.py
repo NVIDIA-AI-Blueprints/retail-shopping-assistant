@@ -16,8 +16,7 @@ has no size to ask about. Four of the ten worst journeys fail on this shape.
 
 import re
 
-from chain_server.src.turn_support import _advertised_sizes, _ONE_SIZE
-
+from chain_server.src.turn_support import _ONE_SIZE, _advertised_sizes
 
 
 class _Product:

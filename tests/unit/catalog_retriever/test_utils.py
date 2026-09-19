@@ -14,11 +14,8 @@ from __future__ import annotations
 import base64
 import io
 from typing import Any
-from unittest.mock import patch
 
 import pytest
-from PIL import Image
-
 from catalog_retriever.src import utils as utils_mod
 from catalog_retriever.src.utils import (
     image_path_to_base64,
@@ -28,7 +25,7 @@ from catalog_retriever.src.utils import (
     is_url,
     resize_base64_image,
 )
-
+from PIL import Image
 
 # --------------------------------------------------------------------------->
 # Helpers

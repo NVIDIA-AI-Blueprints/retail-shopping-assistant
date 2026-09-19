@@ -188,8 +188,9 @@ def test_the_session_is_the_conversation_not_the_graph_thread() -> None:
         captured.update(kwargs)
         return _Recorder()
 
-    import chain_server.src.deepagents_runtime as runtime
     import sys
+
+    import chain_server.src.deepagents_runtime as runtime
 
     module = SimpleNamespace(using_attributes=fake_using_attributes)
     saved = sys.modules.get("openinference.instrumentation")

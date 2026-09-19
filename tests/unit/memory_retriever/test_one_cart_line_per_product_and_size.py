@@ -20,13 +20,12 @@ from __future__ import annotations
 from typing import Iterator
 
 import pytest
+from memory_retriever.src.migrations import run_schema_migrations
+from memory_retriever.src.models import CartItem
 from sqlalchemy import create_engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
-
-from memory_retriever.src.migrations import run_schema_migrations
-from memory_retriever.src.models import CartItem
 
 
 @pytest.fixture

@@ -85,6 +85,9 @@ from .conversation_products import (
     format_product_resolution,
 )
 from .fencing import MEDIA_FENCE
+from .lexical_provenance import (
+    a_place_the_shopper_named,
+)
 from .media_perception import MediaPerceptionClient
 from .media_summary import summarize_media_analysis
 from .message_shape import (
@@ -129,9 +132,6 @@ from .response_format import (
 )
 from .response_format import (
     WeatherForecastInput as _WeatherForecastInput,
-)
-from .shopper_words import (
-    a_place_the_shopper_named,
 )
 from .skill_activation import (
     SKILL_ACTIVATION_COMPLETE,

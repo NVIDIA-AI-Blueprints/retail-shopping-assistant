@@ -14,9 +14,8 @@ from __future__ import annotations
 import math
 
 import pytest
-from pydantic import ValidationError
-
 from chain_server.src.agenttypes import Cart, Rail, State
+from pydantic import ValidationError
 
 
 class TestCart:

@@ -14,11 +14,14 @@ Run it, then let ruff drop the imports the new module does not need:
 from __future__ import annotations
 
 import ast
+import os
 import pathlib
 import re
 import sys
 
-SOURCE = pathlib.Path("chain_server/src/turn_support.py")
+SOURCE = pathlib.Path(
+    os.environ.get("LIFT_FROM", "chain_server/src/turn_support.py")
+)
 PACKAGE = pathlib.Path("chain_server/src")
 SEARCHED = (pathlib.Path("chain_server"), pathlib.Path("tests"), pathlib.Path("scripts"))
 
@@ -72,13 +75,25 @@ def lift(module: str, summary: str, names: list[str]) -> None:
     text = SOURCE.read_text()
     lines = text.splitlines(keepends=True)
     tree = ast.parse(text)
-    wanted = {
-        node.name: node
-        for node in tree.body
-        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
-        and node.name in set(names)
-    }
-    missing = set(names) - set(wanted)
+    asked = set(names)
+    wanted: dict[str, ast.AST] = {}
+    for node in tree.body:
+        if (
+            isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+            and node.name in asked
+        ):
+            wanted[node.name] = node
+        elif isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id in asked:
+                    wanted[target.id] = node
+        elif (
+            isinstance(node, ast.AnnAssign)
+            and isinstance(node.target, ast.Name)
+            and node.target.id in asked
+        ):
+            wanted[node.target.id] = node
+    missing = asked - set(wanted)
     if missing:
         raise SystemExit(f"not found in {SOURCE}: {sorted(missing)}")
 
@@ -88,7 +103,7 @@ def lift(module: str, summary: str, names: list[str]) -> None:
         del lines[start:end]
     SOURCE.write_text("".join(lines))
 
-    header = f'"""{summary}\n\nLifted out of `turn_support.py` unchanged.\n"""\n\n'
+    header = f'"""{summary}\n\nLifted out of `{SOURCE.name}` unchanged.\n"""\n\n'
     target = PACKAGE / f"{module}.py"
     target.write_text(header + _import_block(text) + "\n" + "\n".join(moved))
     print(f"  {target}: {len(wanted)} functions, {len(target.read_text().splitlines())} lines")
@@ -100,7 +115,7 @@ def _repoint(module: str, names: set[str]) -> None:
     """Rewrite `from ...turn_support import (...)` so moved names come from the new module."""
 
     pattern = re.compile(
-        r"from ((?:\.|[\w.]*\.)?)turn_support import \(([^)]*)\)", re.S
+        rf"from ((?:\.|[\w.]*\.)?){SOURCE.stem} import \(([^)]*)\)", re.S
     )
     touched = 0
     for root in SEARCHED:
@@ -121,8 +136,8 @@ def _repoint(module: str, names: set[str]) -> None:
                 out = []
                 if stay:
                     out.append(
-                        "from {}turn_support import (\n{}\n)".format(
-                            prefix, "\n".join(f"    {n.rstrip(',')}," for n in stay)
+                        "from {}{} import (\n{}\n)".format(
+                            prefix, SOURCE.stem, "\n".join(f"    {n.rstrip(',')}," for n in stay)
                         )
                     )
                 out.append(

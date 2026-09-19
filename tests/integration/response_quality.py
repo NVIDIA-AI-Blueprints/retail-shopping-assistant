@@ -1,13 +1,14 @@
 """
 Performs quality testing given QA pairs, using an LLM.
 """
-from openai import OpenAI
-from typing import Dict, Sequence
+import json
+import os
 from collections import Counter
 from datetime import datetime, timezone
-import os
-import json
+from typing import Dict, Sequence
+
 import yaml
+from openai import OpenAI
 
 
 def _required_env(name: str) -> str:

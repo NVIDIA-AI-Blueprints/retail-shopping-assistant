@@ -4281,7 +4281,7 @@ def _cart_product_choice_note(
 def _cart_size_issue(
     product: Any,
     size: str | None,
-    shopper_words: str = "",
+    catalog_vocabulary: str = "",
 ) -> str:
     """Say why this size cannot be added, or "" if it can.
 
@@ -4326,8 +4326,8 @@ def _cart_size_issue(
             f"Available: {', '.join(sizes)}. Ask the shopper which of those "
             "they want. Nothing was added."
         )
-    if shopper_words and not _size_the_conversation_settles(
-        chosen, sizes, shopper_words
+    if catalog_vocabulary and not _size_the_conversation_settles(
+        chosen, sizes, catalog_vocabulary
     ):
         return (
             f"SIZE NOT CHOSEN. The shopper has not said what size, so "
@@ -4369,7 +4369,7 @@ _LARGEST_WORDS = ("largest", "biggest")
 def _size_the_conversation_settles(
     chosen: str,
     sizes: list[str],
-    shopper_words: str,
+    catalog_vocabulary: str,
 ) -> bool:
     """Whether the shopper's own words settle on this size.
 
@@ -4378,9 +4378,9 @@ def _size_the_conversation_settles(
     shopper chose.
     """
 
-    if re.search(rf"\b{re.escape(chosen)}\b", shopper_words, flags=re.IGNORECASE):
+    if re.search(rf"\b{re.escape(chosen)}\b", catalog_vocabulary, flags=re.IGNORECASE):
         return True
-    spoken = shopper_words.casefold()
+    spoken = catalog_vocabulary.casefold()
     if any(word in spoken for word in _SMALLEST_WORDS):
         return chosen.casefold() == sizes[0].casefold()
     if any(word in spoken for word in _LARGEST_WORDS):

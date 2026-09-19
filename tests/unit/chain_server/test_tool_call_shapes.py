@@ -78,9 +78,8 @@ def test_decoding_forgives_the_punctuation_and_nothing_else() -> None:
     """A malformed item must still fail: only the wrapper is forgiven."""
 
     import pytest as _pytest
-    from pydantic import ValidationError
-
     from chain_server.src.deepagents_runtime import AddCartItemsToolInput
+    from pydantic import ValidationError
 
     with _pytest.raises(ValidationError):
         AddCartItemsToolInput.model_validate({"items": "not json at all"})

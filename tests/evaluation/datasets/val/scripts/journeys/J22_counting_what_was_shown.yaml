@@ -15,21 +15,24 @@ why: >
 turns:
   - say: show me some dresses and some shoes for a summer wedding
     expect: {products_min: 2}
+  # A bare ordinal, asked before anything has narrowed which kind is in play.
+  # It must not stop to ask: the first group is the one the reply anchors on,
+  # and a shopper who says "the first one" has not been unclear. Asked later
+  # in the conversation this would be a different question -- two turns about
+  # shoes and "the first one" means the first shoes -- so it is asked here,
+  # where only the default can answer it.
+  - say: add the first one to my cart, in a 6
+    expect:
+      cart_lines: 1
+      cart_holds_shown: {turn: 1, position: 1}
   # Named, so the group decides which number this is. The second shoes is the
   # second of the shoes, not the second thing shown -- and the shoes may have
   # arrived as several scopes, which is why the heading and not the category
   # is what the number counts under.
-  - say: add the second shoes to my cart in a 7
-    expect:
-      cart_lines: 1
-      cart_holds_shown: {turn: 1, group: shoes, position: 2}
-  # Unnamed, over a showing that still has two groups. This must not stop to
-  # ask: the first group is the one the reply anchors on, and a shopper who
-  # says "the first one" has not been unclear.
-  - say: add the first one too, in a 6
+  - say: add the second shoes too, in a 7
     expect:
       cart_lines: 2
-      cart_holds_shown: {turn: 1, position: 1}
+      cart_holds_shown: {turn: 1, group: shoes, position: 2}
   - say: what's in my cart
     expect:
       cart_unchanged: true

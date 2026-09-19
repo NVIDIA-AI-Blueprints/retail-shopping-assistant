@@ -130,6 +130,9 @@ from .response_format import (
 from .response_format import (
     WeatherForecastInput as _WeatherForecastInput,
 )
+from .shopper_words import (
+    a_place_the_shopper_named,
+)
 from .skill_activation import (
     SKILL_ACTIVATION_COMPLETE,
     ShopperSkillActivationError,
@@ -199,7 +202,6 @@ from .turn_support import (
     _store_policies_path,
     _system_identification_events,
     _turn_audience_events,
-    a_place_the_shopper_named,
     format_most_recent_subject,
 )
 from .vocabulary_judge import CatalogVocabularyJudge

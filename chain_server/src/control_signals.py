@@ -29,8 +29,6 @@ class ControlSignal(StrEnum):
     UNSUPPORTED_TAXONOMY = "unsupported_taxonomy"
     UNSUPPORTED_CONSTRAINT = "unsupported_constraint"
     CONSTRAINT_REVIEW = "constraint_review"
-    REQUEST_REJECTED = "request_rejected"
-    SEARCH_SUCCEEDED = "search_succeeded"
 
 
 class SearchRejection(StrEnum):

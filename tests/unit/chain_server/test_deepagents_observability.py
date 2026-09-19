@@ -363,9 +363,9 @@ def test_tool_trace_distinguishes_rejected_error_and_pending_calls() -> None:
                     "args": {"semantic_query": "another category"},
                 },
                 {
-                    "id": "failed-skill",
-                    "name": "read_file",
-                    "args": {"file_path": "/shopper/missing/SKILL.md"},
+                    "id": "failed-availability",
+                    "name": "check_product_availability_tool",
+                    "args": {"product_ref": "prod-2"},
                 },
                 {
                     "id": "pending-detail",
@@ -378,9 +378,13 @@ def test_tool_trace_distinguishes_rejected_error_and_pending_calls() -> None:
             content="STOP_TOOL_USE: Catalog search limit reached for this turn.",
             tool_call_id="limited-search",
         ),
+        # A tool that failed says so in its status. The reader used to also
+        # sniff `read_file` content for the word "error", because that tool
+        # reported failure in prose; it is no longer callable.
         ToolMessage(
-            content="Error reading file: file not found",
-            tool_call_id="failed-skill",
+            content="Error: that product could not be read.",
+            tool_call_id="failed-availability",
+            status="error",
         ),
     ]
 

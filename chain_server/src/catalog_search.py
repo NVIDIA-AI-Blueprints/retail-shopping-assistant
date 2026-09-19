@@ -2269,38 +2269,6 @@ def _advertised_subcategories(capabilities: CatalogCapabilities) -> frozenset[st
     )
 
 
-def _scope_members(
-    taxonomy: BaseModel | dict[str, Any],
-    capabilities: CatalogCapabilities,
-) -> tuple[list[str], bool]:
-    """What this scope will actually search, and whether it named a whole category.
-
-    A scope may name its subcategories or it may name only a category, and the
-    second is a legal text search across everything in it. Judging the first
-    while ignoring the second left the parent category open as an escape: told
-    jeans are not skirts, the model sent `category: [apparel], subcategory: []`
-    and ranked "dark blue jeans" against all of apparel, and two blouses and two
-    dresses came back as the shopper's dark bottom.
-
-    So a category-only scope is judged on the members it is about to search.
-    That also mends the opposite case rather than only blocking this one: asked
-    for pumps across all of footwear, the members that are pumps are the heels,
-    and the scope narrows to them instead of returning boots and sandals too.
-    """
-
-    payload = taxonomy.model_dump() if isinstance(taxonomy, BaseModel) else dict(taxonomy or {})
-    selected = list(dict.fromkeys(payload.get("subcategory") or []))
-    if selected:
-        return selected, False
-
-    members: list[str] = []
-    for name in dict.fromkeys(payload.get("category") or []):
-        category = capabilities.taxonomy.categories.get(name)
-        if category:
-            members.extend(category.subcategories)
-    return list(dict.fromkeys(members)), True
-
-
 _PLAN_STEPS = (
     # First, because every step after it is entitled to a request this catalog
     # can actually answer. A word it cannot filter on is set aside here rather
@@ -2443,31 +2411,6 @@ def _one_scope_per_category(ctx: SearchContext, scopes: list[Any]) -> list[Any]:
             )
         fanned.extend(expanded or [raw])
     return fanned
-
-
-def _umbrella_candidates(
-    payload: dict[str, Any],
-    capabilities: CatalogCapabilities,
-) -> tuple[str, ...]:
-    """The advertised subcategories a word this catalog lacks might cover.
-
-    Narrowed to the categories the scope named, so "shoes" under `footwear` is
-    asked about footwear rather than about every subcategory in the shop. A
-    scope naming no category has nothing to narrow by and is asked about all
-    of them, which is the honest reading of a request that named none.
-    """
-
-    named = [
-        name
-        for name in dict.fromkeys(payload.get("category") or [])
-        if name in capabilities.taxonomy.categories
-    ]
-    if named:
-        members: list[str] = []
-        for name in named:
-            members.extend(capabilities.taxonomy.categories[name].subcategories)
-        return tuple(dict.fromkeys(members))
-    return tuple(sorted(_advertised_subcategories(capabilities)))
 
 
 def _colour_field(ctx: SearchContext) -> str:

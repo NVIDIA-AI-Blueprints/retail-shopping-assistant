@@ -26,7 +26,6 @@ from .migrations import (
     expected_schema_version,
     cart_mutation_digest,
     ensure_cart_line_id_column,
-    ensure_price_column,
     ensure_product_id_column,
     migrate_quantity_idempotency,
     run_schema_migrations,
@@ -41,7 +40,6 @@ from .models import (
     SchemaMigration,
     ShopperProfile,
     User,
-    new_cart_line_id,
 )
 from .shopper_profiles import (
     bootstrap_shopper_profiles,
@@ -63,16 +61,6 @@ __all__ = (
     "User",
     "build_engine",
 )
-
-
-def _new_cart_line_id() -> str:
-    return new_cart_line_id()
-
-
-def _ensure_price_column() -> None:
-    """Idempotently add the price column for databases created before it existed."""
-    with engine.begin() as connection:
-        ensure_price_column(connection)
 
 
 def _ensure_cart_line_id_column() -> None:

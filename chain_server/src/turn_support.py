@@ -36,7 +36,6 @@ import unicodedata
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from difflib import SequenceMatcher
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Literal
@@ -2483,7 +2482,7 @@ def _rejected_catalog_search_response(
         for raw_call, server_rejected in calls:
             call = _normalized_tool_call(raw_call)
             tool_name = call["tool_name"]
-            if tool_name in {SKILL_ACTIVATION_TOOL_NAME, "read_file"}:
+            if tool_name == SKILL_ACTIVATION_TOOL_NAME:
                 continue
             status = (
                 "rejected"
@@ -2585,7 +2584,7 @@ def _business_tool_result_contents(messages: list[Any]) -> list[str]:
             continue
         name = str(_value(message, "name") or "")
         content = _content_to_text(_value(message, "content"))
-        if name in {SKILL_ACTIVATION_TOOL_NAME, "read_file"} or content.startswith(
+        if name == SKILL_ACTIVATION_TOOL_NAME or content.startswith(
             (
                 SKILL_ACTIVATION_COMPLETE,
                 SKILL_ACTIVATION_REQUIRED,
@@ -2647,10 +2646,6 @@ def _tool_call_status(
     if rejection_reason:
         return "rejected", rejection_reason
     if _value(result_message, "status") == "error":
-        return "error", None
-    if tool_name == "read_file" and content.lower().startswith(
-        ("error", "file not found")
-    ):
         return "error", None
     return "completed", None
 
@@ -2718,23 +2713,16 @@ def _tool_rejection_reason(
 def _skill_file_paths(call: dict[str, Any], status: str) -> list[str]:
     if status != "completed":
         return []
-    arguments = call["arguments"]
-    if call["tool_name"] == SKILL_ACTIVATION_TOOL_NAME:
-        names = arguments.get("skill_names") or []
-        if not isinstance(names, list):
-            return []
-        return [
-            f"/shopper/{name}/SKILL.md"
-            for name in names
-            if isinstance(name, str) and name.strip()
-        ]
-    if call["tool_name"] != "read_file":
+    if call["tool_name"] != SKILL_ACTIVATION_TOOL_NAME:
         return []
-    path = str(arguments.get("file_path") or arguments.get("path") or "")
-    normalized = path.replace("\\", "/")
-    if normalized.startswith("/shopper/") and normalized.endswith("/SKILL.md"):
-        return [normalized]
-    return []
+    names = call["arguments"].get("skill_names") or []
+    if not isinstance(names, list):
+        return []
+    return [
+        f"/shopper/{name}/SKILL.md"
+        for name in names
+        if isinstance(name, str) and name.strip()
+    ]
 
 
 def _serialize_partial_graph_messages(
@@ -3344,7 +3332,7 @@ def _has_search_only_tool_evidence(result: Any, *, request_id: str) -> bool:
         returned_results = (evidence_of(message) or {}).get("outcome") == "results"
         if not name and returned_results:
             name = "search_catalog_tool"
-        if name in {SKILL_ACTIVATION_TOOL_NAME, "read_file"}:
+        if name == SKILL_ACTIVATION_TOOL_NAME:
             continue
         tool_names.append(name)
         if name == "search_catalog_tool" and returned_results:
@@ -3369,7 +3357,6 @@ def _has_successful_non_search_tool_evidence(
         if tool_name in {
             "",
             SKILL_ACTIVATION_TOOL_NAME,
-            "read_file",
             "search_catalog_tool",
         }:
             continue
@@ -4417,7 +4404,7 @@ def _is_tool_evidence_message(message: Any, content: str) -> bool:
     message_type = str(_value(message, "type") or "").lower()
     role = str(_value(message, "role") or "").lower()
     tool_name = str(_value(message, "name") or "")
-    if tool_name in {SKILL_ACTIVATION_TOOL_NAME, "read_file"}:
+    if tool_name == SKILL_ACTIVATION_TOOL_NAME:
         return False
     if content.startswith(
         (
@@ -4993,71 +4980,6 @@ _NAMING_FLOOR = 0.25
 _NAMING_MARGIN = 0.20
 
 
-def _products_the_shopper_fits(
-    shopper_text: str,
-    candidates: Sequence[Any],
-) -> list[Any]:
-    """Which of these products the shopper's words could be pointing at.
-
-    One question, so a second implementation can answer it later without moving
-    the rule that uses it: exactly one fit resolves, anything else is asked
-    about. Today the reading is lexical; a semantic one would score the same
-    candidates the same way and still never pick.
-
-    Words are weighted by how many of the candidates use them, read off the
-    candidates rather than a list of stop words: among four dresses "dress"
-    says nothing and "vivienne" says everything, and among four bags it is the
-    other way round. Two black dresses make "black" worth half, which is why
-    "the black one" cannot settle between them.
-
-    Comparison is by likeness rather than equality, so "the Ofice dress" and
-    "the Office dress" both land on the same product where whole-name matching
-    refused them, and words that match nothing are simply ignored.
-
-    The decision is the gap to the next candidate, not the score. A score alone
-    always has a winner; a gap is the difference between "this is the one" and
-    "it could be either", and only the first should reach a cart.
-    """
-
-    def words(value: str) -> list[str]:
-        return [
-            word
-            for word in _normalize_product_name(value).split()
-            if len(word) >= _MIN_NAMING_WORD
-        ]
-
-    per_candidate = [words(candidate.display_name) for candidate in candidates]
-    shared: dict[str, int] = {}
-    for names in per_candidate:
-        for word in set(names):
-            shared[word] = shared.get(word, 0) + 1
-    said = words(shopper_text)
-
-    scored: list[tuple[float, Any]] = []
-    for candidate, names in zip(candidates, per_candidate, strict=False):
-        total = sum(1 / shared[word] for word in names)
-        if not total:
-            continue
-        matched = sum(
-            1 / shared[word]
-            for word in names
-            if any(
-                SequenceMatcher(None, word, spoken).ratio() >= _NAMING_LIKENESS
-                for spoken in said
-            )
-        )
-        scored.append((matched / total, candidate))
-
-    scored.sort(key=lambda entry: entry[0], reverse=True)
-    if not scored:
-        return []
-    best_score, best = scored[0]
-    runner_up = scored[1][0] if len(scored) > 1 else 0.0
-    if best_score < _NAMING_FLOOR or best_score - runner_up < _NAMING_MARGIN:
-        return []
-    return [best]
-
-
 def _most_recently_shown(state: Any) -> list[dict]:
     """The last set of products put in front of the shopper."""
 
@@ -5124,19 +5046,6 @@ def _cart_product_choice_note(
         "play. It has been added. Say which one you took them to mean and "
         "offer to change it."
     )
-
-
-def _cart_line_size(cart: Any, product_id: str) -> str | None:
-    """The size already on this shopper's line for this product, if any."""
-
-    for line in getattr(cart, "contents", None) or []:
-        if not isinstance(line, dict):
-            continue
-        if str(line.get("product_id") or "") == product_id:
-            size = str(line.get("size") or "").strip()
-            if size:
-                return size
-    return None
 
 
 def _cart_size_issue(

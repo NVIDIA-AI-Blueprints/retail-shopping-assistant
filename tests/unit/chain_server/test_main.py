@@ -7382,6 +7382,10 @@ class TestDeepAgentsRuntimeRefs:
 
         result = {
             "messages": [
+                # The skill body reaches the model injected into the prompt,
+                # not as a tool result. A second message here named `read_file`
+                # used to stand for the model fetching it; that tool is not
+                # callable, so the message cannot occur.
                 {
                     "role": "tool",
                     "name": "activate_shopper_skills_tool",
@@ -7389,11 +7393,6 @@ class TestDeepAgentsRuntimeRefs:
                         "SHOPPER_SKILL_ACTIVATION_COMPLETE: "
                         "/shopper/outfit-styling/SKILL.md"
                     ),
-                },
-                {
-                    "role": "tool",
-                    "name": "read_file",
-                    "content": "# Outfit Styling\nUse styling judgment.",
                 },
             ]
         }

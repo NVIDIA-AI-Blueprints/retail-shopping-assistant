@@ -959,15 +959,6 @@ def _canonical_argument_value(value: Any) -> Any:
     return value
 
 
-def _search_scope_from_arguments(arguments: dict[str, Any]) -> str:
-    """Return normalized requested product type from raw search arguments."""
-
-    requested_product_type = arguments.get("requested_product_type")
-    if not requested_product_type:
-        return _UNKNOWN_REPAIR_SCOPE
-    return _normalize_scope(str(requested_product_type))
-
-
 def _shopper_stated_scope(shopper_statements: Sequence[str], scope: str) -> bool:
     """Check typed current and recent shopper text for a native repair scope."""
 

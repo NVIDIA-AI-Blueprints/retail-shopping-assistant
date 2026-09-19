@@ -347,9 +347,11 @@ except Exception:  # pragma: no cover - dependency import is validated at runtim
 
 
 
+# Must not invite a retry. This path is reached after the turn's tools have
+# already run, so a cart change may have completed; retrying duplicates it.
 _GROUNDING_FAILURE_RESPONSE = (
-    "I couldn't safely verify the final response. Please retry; if this involved "
-    "a cart change, check your cart first."
+    "I ran into a problem writing that reply. Ask me what's in your cart to see "
+    "where things stand -- any change I made will show there."
 )
 _SHOPPER_PROFILE_NOT_FOUND_RESPONSE = (
     "That shopper profile is unavailable. Please choose another shopper and "

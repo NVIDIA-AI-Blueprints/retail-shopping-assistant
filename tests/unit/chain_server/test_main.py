@@ -1147,6 +1147,7 @@ class TestDeepAgentsRuntimeScopes:
         base_config,
     ) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
+        from chain_server.src import turn_diagnostics as turn_diagnostics_mod
         from chain_server.src import turn_support as runtime_mod_support
 
         runtime = runtime_mod.DeepAgentsRuntime(base_config)
@@ -1208,7 +1209,7 @@ class TestDeepAgentsRuntimeScopes:
         turn = runtime._start_conversation_turn(state, identity)
         assert turn is not None
         state.response = "Done"
-        state.agent_diagnostics = runtime_mod_support._empty_agent_diagnostics("completed")
+        state.agent_diagnostics = turn_diagnostics_mod._empty_agent_diagnostics("completed")
         state.selected_skill_names = ["product-discovery"]
         runtime._finalize_conversation_turn(state, identity, turn)
 
@@ -1541,6 +1542,7 @@ class TestDeepAgentsRuntimeScopes:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
+        from chain_server.src import turn_diagnostics as turn_diagnostics_mod
         from chain_server.src import turn_support as runtime_mod_support
         from langchain_core.messages import AIMessage, HumanMessage
 
@@ -1666,7 +1668,7 @@ class TestDeepAgentsRuntimeScopes:
 
         async def complete_turn(state, identity, **_kwargs):
             state.response = "The next turn completed."
-            state.agent_diagnostics = runtime_mod_support._empty_agent_diagnostics("completed")
+            state.agent_diagnostics = turn_diagnostics_mod._empty_agent_diagnostics("completed")
             return state
 
         monkeypatch.setattr(runtime, "_execute_turn", complete_turn)
@@ -1727,6 +1729,7 @@ class TestDeepAgentsRuntimeScopes:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
+        from chain_server.src import turn_diagnostics as turn_diagnostics_mod
         from chain_server.src import turn_support as runtime_mod_support
 
         runtime = runtime_mod.DeepAgentsRuntime(base_config)
@@ -1764,7 +1767,7 @@ class TestDeepAgentsRuntimeScopes:
 
         async def complete_turn(state, _identity, **_kwargs):
             state.response = "Grounded response."
-            state.agent_diagnostics = runtime_mod_support._empty_agent_diagnostics("completed")
+            state.agent_diagnostics = turn_diagnostics_mod._empty_agent_diagnostics("completed")
             return state
 
         monkeypatch.setattr(runtime, "_execute_turn", complete_turn)
@@ -1799,6 +1802,7 @@ class TestDeepAgentsRuntimeScopes:
         base_config,
     ) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
+        from chain_server.src import turn_diagnostics as turn_diagnostics_mod
         from chain_server.src import turn_support as runtime_mod_support
 
         runtime = runtime_mod.DeepAgentsRuntime(base_config)
@@ -1831,7 +1835,7 @@ class TestDeepAgentsRuntimeScopes:
                 }
             ],
             retrieved={"Stale product": "/images/stale.png"},
-            agent_diagnostics=runtime_mod_support._empty_agent_diagnostics("completed"),
+            agent_diagnostics=turn_diagnostics_mod._empty_agent_diagnostics("completed"),
         )
 
         runtime._finalize_conversation_turn(
@@ -5925,7 +5929,7 @@ class TestDeepAgentsRuntimeRefs:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
-        from chain_server.src import turn_support as runtime_mod_support
+        from chain_server.src import turn_diagnostics as turn_diagnostics_mod
         from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
         runtime = runtime_mod.DeepAgentsRuntime(base_config)
@@ -5980,9 +5984,9 @@ class TestDeepAgentsRuntimeRefs:
             request_id="current-request",
         )
 
-        assert response == runtime_mod_support._CATALOG_REPAIR_CLARIFICATION_RESPONSE
+        assert response == turn_diagnostics_mod._CATALOG_REPAIR_CLARIFICATION_RESPONSE
         assert unsafe_model_text not in response
-        assert runtime_mod_support._rejected_catalog_search_response(
+        assert turn_diagnostics_mod._rejected_catalog_search_response(
             result,
             request_id="current-request",
         ) is None
@@ -5994,7 +5998,7 @@ class TestDeepAgentsRuntimeRefs:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
-        from chain_server.src import turn_support as runtime_mod_support
+        from chain_server.src import turn_diagnostics as turn_diagnostics_mod
         from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
         runtime = runtime_mod.DeepAgentsRuntime(base_config)
@@ -6058,7 +6062,7 @@ class TestDeepAgentsRuntimeRefs:
         )
 
         assert "**Everyday Boot**" in response
-        assert runtime_mod_support._CATALOG_REPAIR_CLARIFICATION_RESPONSE in response
+        assert turn_diagnostics_mod._CATALOG_REPAIR_CLARIFICATION_RESPONSE in response
         assert unsafe_model_text not in response
 
     @pytest.mark.asyncio
@@ -6068,7 +6072,7 @@ class TestDeepAgentsRuntimeRefs:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
-        from chain_server.src import turn_support as runtime_mod_support
+        from chain_server.src import turn_diagnostics as turn_diagnostics_mod
         from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
         captured: dict[str, str] = {}
@@ -6079,7 +6083,7 @@ class TestDeepAgentsRuntimeRefs:
                 return AIMessage(
                     content=(
                         "I added Everyday Boot to your cart.\n\n"
-                        + runtime_mod_support._CATALOG_REPAIR_CLARIFICATION_RESPONSE
+                        + turn_diagnostics_mod._CATALOG_REPAIR_CLARIFICATION_RESPONSE
                     )
                 )
 
@@ -6143,9 +6147,9 @@ class TestDeepAgentsRuntimeRefs:
         )
 
         assert "I added Everyday Boot to your cart." in response
-        assert runtime_mod_support._CATALOG_REPAIR_CLARIFICATION_RESPONSE in response
+        assert turn_diagnostics_mod._CATALOG_REPAIR_CLARIFICATION_RESPONSE in response
         assert unsafe_model_text not in captured["prompt"]
-        assert runtime_mod_support._CATALOG_REPAIR_CLARIFICATION_RESPONSE in (
+        assert turn_diagnostics_mod._CATALOG_REPAIR_CLARIFICATION_RESPONSE in (
             captured["prompt"]
         )
         assert "Everyday Boot" in captured["prompt"]
@@ -6157,7 +6161,7 @@ class TestDeepAgentsRuntimeRefs:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
-        from chain_server.src import turn_support as runtime_mod_support
+        from chain_server.src import turn_diagnostics as turn_diagnostics_mod
         from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
         runtime = runtime_mod.DeepAgentsRuntime(base_config)
@@ -6233,7 +6237,7 @@ class TestDeepAgentsRuntimeRefs:
             request_id="current-request",
         )
 
-        assert response == runtime_mod_support._REJECTED_CATALOG_SEARCH_RESPONSE
+        assert response == turn_diagnostics_mod._REJECTED_CATALOG_SEARCH_RESPONSE
         assert "Navy Wool Blend Blazer" not in response
         assert "$189" not in response
         assert "app_llm_grounding_editor" not in state.model_usage
@@ -6241,10 +6245,10 @@ class TestDeepAgentsRuntimeRefs:
     def test_rejected_catalog_search_fallback_does_not_replace_mixed_results(
         self,
     ) -> None:
-        from chain_server.src import turn_support as runtime_mod_support
+        from chain_server.src import turn_diagnostics as turn_diagnostics_mod
         from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-        assert runtime_mod_support._rejected_catalog_search_response(
+        assert turn_diagnostics_mod._rejected_catalog_search_response(
             {
                 "messages": [
                     HumanMessage(content="REQUEST ID: current-request"),
@@ -6283,7 +6287,7 @@ class TestDeepAgentsRuntimeRefs:
             },
             request_id="current-request",
         ) is None
-        assert runtime_mod_support._rejected_catalog_search_response(
+        assert turn_diagnostics_mod._rejected_catalog_search_response(
             {
                 "messages": [
                     HumanMessage(content="REQUEST ID: current-request"),
@@ -6327,6 +6331,7 @@ class TestDeepAgentsRuntimeRefs:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
+        from chain_server.src import turn_diagnostics as turn_diagnostics_mod
         from chain_server.src import turn_support as runtime_mod_support
         from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
@@ -6390,7 +6395,7 @@ class TestDeepAgentsRuntimeRefs:
         monkeypatch.setattr(
             runtime_mod,
             "_safe_collect_agent_diagnostics",
-            lambda *args, **kwargs: runtime_mod_support._empty_agent_diagnostics(
+            lambda *args, **kwargs: turn_diagnostics_mod._empty_agent_diagnostics(
                 "completed"
             ),
         )
@@ -6405,7 +6410,7 @@ class TestDeepAgentsRuntimeRefs:
             identity,
         )
 
-        assert output.response == runtime_mod_support._REJECTED_CATALOG_SEARCH_RESPONSE
+        assert output.response == turn_diagnostics_mod._REJECTED_CATALOG_SEARCH_RESPONSE
         assert output.agent_diagnostics["tool_calls"] == []
         assert "Navy Wool Blend Blazer" not in output.response
 

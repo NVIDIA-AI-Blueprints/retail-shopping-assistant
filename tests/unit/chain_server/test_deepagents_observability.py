@@ -26,11 +26,13 @@ from chain_server.src.tool_loop_control import (
     SEARCH_VALIDATION_ERROR_PREFIX,
     SERVER_RESTORED_TOOL_CALL_FIELDS,
 )
-from chain_server.src.turn_support import (
+from chain_server.src.turn_diagnostics import (
     _REJECTED_CATALOG_SEARCH_RESPONSE,
-    RequestIdentity,
     _collect_agent_diagnostics,
     _rejected_catalog_search_response,
+)
+from chain_server.src.turn_support import (
+    RequestIdentity,
 )
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 

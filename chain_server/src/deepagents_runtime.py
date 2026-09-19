@@ -152,6 +152,13 @@ from .tool_policy import (
 from .tool_policy import (
     load_shopper_skill_registry as _shopper_skill_registry,
 )
+from .turn_diagnostics import (
+    _catalog_repair_clarification_response,
+    _empty_agent_diagnostics,
+    _has_successful_non_search_tool_evidence,
+    _rejected_catalog_search_response,
+    _safe_collect_agent_diagnostics,
+)
 from .turn_scope import TurnScope
 from .turn_support import (
     _ONE_SIZE,
@@ -167,16 +174,13 @@ from .turn_support import (
     _cart_product_choice_note,
     _cart_resize_issue,
     _cart_size_issue,
-    _catalog_repair_clarification_response,
     _collect_tool_grounding_evidence,
     _committed_effect_receipt,
     _conversation_turn_status,
     _detail_fields_already_held,
-    _empty_agent_diagnostics,
     _format_search_only_response,
     _has_grounding_authority,
     _has_search_only_tool_evidence,
-    _has_successful_non_search_tool_evidence,
     _identified_in_the_current_showing,
     _images_in_product_order,
     _in_presentation_order,
@@ -190,8 +194,6 @@ from .turn_support import (
     _product_detail_failure_message,
     _product_detail_record,
     _products_found_receipt,
-    _rejected_catalog_search_response,
-    _safe_collect_agent_diagnostics,
     _same_product_display_name,
     _scrub_internal_shopper_language,
     _search_catalog_scopes_input_model,

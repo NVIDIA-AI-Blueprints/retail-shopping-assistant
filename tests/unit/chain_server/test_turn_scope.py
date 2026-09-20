@@ -23,9 +23,8 @@ def test_each_turn_gets_independent_mutable_state() -> None:
     first.searched_shopper_scopes.add(("bags", "text"))
     first.retrieved["Cobalt Bag"] = "http://example/bag.png"
     first.product_resolution_used = True
-    first.repair.constraint_reviewed_scopes.add("bags")
     first.repair.pending_schema_requirements.append("denim")
-    first.repair.pending_constraint_reviews["bags"] = {"reviewed": True}
+    first.repair.pending_taxonomy_constraints = {"color": ["blue"]}
 
     assert second.catalog_searches == 0
     assert second.product_detail_reads == 0
@@ -33,9 +32,8 @@ def test_each_turn_gets_independent_mutable_state() -> None:
     assert second.searched_shopper_scopes == set()
     assert second.retrieved == {}
     assert second.product_resolution_used is False
-    assert second.repair.constraint_reviewed_scopes == set()
     assert second.repair.pending_schema_requirements == []
-    assert second.repair.pending_constraint_reviews == {}
+    assert second.repair.pending_taxonomy_constraints is None
     assert second.repair is not first.repair
     assert second.product_evidence is not first.product_evidence
     assert second.catalog_lock is not first.catalog_lock
@@ -46,7 +44,6 @@ def test_repair_state_starts_with_nothing_in_flight() -> None:
     repair = CatalogRepairState()
 
     assert repair.failed_repair_scope_key is None
-    assert repair.failed_constraint_scope_key is None
     assert repair.pending_taxonomy_constraints is None
     assert repair.pending_no_direct_constraint_clear is False
 

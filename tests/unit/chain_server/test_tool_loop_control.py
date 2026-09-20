@@ -11,7 +11,6 @@ from typing import Any, cast
 import pytest
 from chain_server.src.skill_activation import ShopperSkillActivationMiddleware
 from chain_server.src.tool_loop_control import (
-    CONSTRAINT_REVIEW_PREFIX,
     SEARCH_BUDGET_EXHAUSTED_PREFIX,
     SEARCH_TOOL_NAME,
     SEARCH_VALIDATION_ERROR_PREFIX,
@@ -920,7 +919,7 @@ def test_incomplete_success_does_not_reset_repair_for_the_same_scope() -> None:
     ).tools == []
 
 
-def test_constraint_review_after_schema_repair_closes_the_scope() -> None:
+def test_a_second_error_after_a_schema_repair_closes_the_scope() -> None:
     middleware = ToolLoopControlMiddleware()
     invalid_call = AIMessage(
         content="",
@@ -950,7 +949,7 @@ def test_constraint_review_after_schema_repair_closes_the_scope() -> None:
         ],
     )
     constraint_review = _tool_result(
-        CONSTRAINT_REVIEW_PREFIX + "Remove the inferred requirement.",
+        SEARCH_VALIDATION_ERROR_PREFIX + "{} with error: invalid taxonomy",
         tool_call_id="call-b",
     )
     constraint_messages = [*messages, constraint_call, constraint_review]
@@ -960,7 +959,7 @@ def test_constraint_review_after_schema_repair_closes_the_scope() -> None:
     assert prepared.tool_choice == "none"
 
     repeated_review = _tool_result(
-        CONSTRAINT_REVIEW_PREFIX + "Still present.",
+        SEARCH_VALIDATION_ERROR_PREFIX + "{} with error: still invalid",
         tool_call_id="call-c",
     )
     repeated_call = AIMessage(
@@ -979,7 +978,7 @@ def test_constraint_review_after_schema_repair_closes_the_scope() -> None:
     ).tools == []
 
 
-def test_constraint_repair_cannot_reopen_with_scope_modifiers() -> None:
+def test_a_repair_cannot_reopen_by_adding_scope_modifiers() -> None:
     middleware = ToolLoopControlMiddleware()
     first_call = AIMessage(
         content="",
@@ -992,7 +991,7 @@ def test_constraint_repair_cannot_reopen_with_scope_modifiers() -> None:
         ],
     )
     first_review = _tool_result(
-        CONSTRAINT_REVIEW_PREFIX + "Remove the inferred requirement.",
+        SEARCH_VALIDATION_ERROR_PREFIX + "{} with error: invalid taxonomy",
     )
     messages = [HumanMessage(content="show me bags"), first_call, first_review]
     drifted_call = AIMessage(
@@ -1013,7 +1012,7 @@ def test_constraint_repair_cannot_reopen_with_scope_modifiers() -> None:
     assert [tool.name for tool in prepared.tools] == ["search_catalog_tool"]
 
     drifted_review = _tool_result(
-        CONSTRAINT_REVIEW_PREFIX + "Still present.",
+        SEARCH_VALIDATION_ERROR_PREFIX + "{} with error: still invalid",
         tool_call_id="call-b",
     )
     drifted_messages = [*messages, drifted_call, drifted_review]
@@ -1030,7 +1029,7 @@ def test_constraint_repair_cannot_reopen_with_scope_modifiers() -> None:
         ],
     )
     repeated_review = _tool_result(
-        CONSTRAINT_REVIEW_PREFIX + "Still present.",
+        SEARCH_VALIDATION_ERROR_PREFIX + "{} with error: still invalid",
         tool_call_id="call-c",
     )
     assert _capture_model_request(
@@ -2141,28 +2140,6 @@ def test_native_repair_scope_lock_clears_after_incomplete_success() -> None:
     assert next_response.result[0].tool_calls[0]["args"] == {
         "requested_product_type": "boots"
     }
-
-
-def test_constraint_review_uses_the_single_search_repair() -> None:
-    middleware = ToolLoopControlMiddleware()
-    review = _tool_result(
-        CONSTRAINT_REVIEW_PREFIX
-        + " Remove requirements inferred only from weather context."
-    )
-
-    prepared = _capture_model_request(middleware, _messages_with_result(review))
-
-    assert [tool.name for tool in prepared.tools] == ["search_catalog_tool"]
-    assert prepared.tool_choice == "auto"
-    normalized_prompt = " ".join(prepared.system_prompt.split())
-    assert "Remove requirements inferred only from weather context" not in (
-        normalized_prompt
-    )
-    assert prepared.messages[0] == HumanMessage(content="shopper request")
-    assert "Remove requirements inferred only from weather context" in (
-        prepared.messages[1].content
-    )
-    assert "legacy runtime prompt" not in normalized_prompt
 
 
 def test_native_validation_feedback_does_not_replay_rejected_kwargs() -> None:

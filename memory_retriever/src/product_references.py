@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -429,58 +429,209 @@ def _blocking_field(
     return blocking
 
 
-#: Fields that describe where a product was seen rather than which product it
-#: is. They stay part of the descriptor and are still checked -- but once an
-#: exact ``product_ref`` has identified a product, they can no longer overrule
-#: it, because a mismatch here is a vocabulary difference and not a different
-#: product.
-#:
-#: The assistant asked for a dress by ref, name, set, turn and position, all
-#: five correct, and added ``category: "apparel"`` -- the catalog's word for the
-#: department, where the index stores the subcategory ``"dresses"``. Matching
-#: was conjunctive, so the sixth field cancelled the other five and the answer
-#: came back not_found. Being more specific was what broke it.
-_CORROBORATING_FIELDS = (
-    "category",
-    "turn_sequence",
-    "candidate_set_id",
-    "ordinal",
-)
+def _identified(
+    descriptor: ProductReferenceDescriptor,
+    occurrences: list[ProductReferenceMatch],
+) -> tuple[list[ProductReferenceMatch], bool]:
+    """Occurrences the ref or the name points at, and whether they contradict.
+
+    These two identify; nothing else in a descriptor does. A ``product_ref`` is
+    an identifier this system minted and printed into the prompt, and a
+    display_name is the catalog's own. Neither is the model's reading of what
+    the shopper wanted, which is what makes them worth trusting over every
+    other field.
+
+    Supplied together they are a checksum on each other, and disagreement is
+    reported rather than resolved. Reading the ref off the wrong line of a
+    numbered index is an ordinary mistake, and letting it win silently puts a
+    dress in the cart that the shopper named and did not ask for.
+    """
+
+    ref_hits = name_hits = None
+    if descriptor.product_ref is not None:
+        ref_hits = [
+            occurrence
+            for occurrence in occurrences
+            if _same_reference(
+                occurrence.product["product_id"], descriptor.product_ref
+            )
+        ]
+    if descriptor.display_name is not None:
+        name_hits = [
+            occurrence
+            for occurrence in occurrences
+            if _normalized(occurrence.product["display_name"])
+            == _normalized(descriptor.display_name)
+        ]
+    if ref_hits is not None and name_hits is not None:
+        # Offered both, they have to agree, and one of them finding nothing is
+        # a disagreement like any other: a ref that matches nothing is as much
+        # a confused caller as a ref that matches the wrong thing. Whichever
+        # way round it is, there is no rule for choosing between two
+        # identifiers neither of which the model authored -- only a caller to
+        # correct, and _blocking_field says which half to correct.
+        named = {
+            _identifier(occurrence.product["product_id"])
+            for occurrence in name_hits
+        }
+        agreed = [
+            occurrence
+            for occurrence in ref_hits
+            if _identifier(occurrence.product["product_id"]) in named
+        ]
+        return agreed, not agreed
+
+    hits = ref_hits if ref_hits is not None else name_hits
+    if hits is None:
+        # Nothing here identifies. Whatever describes the product does.
+        return [], False
+    if hits:
+        return hits, False
+    if descriptor.display_name is not None and descriptor.attributes:
+        # A phrase can be read as a name or as a description, and the model
+        # sends both readings of the same one: display_name "black one" beside
+        # {"primary_color": "black"}. Nothing is called "black one", so the
+        # reading that can match is the one meant, and the name steps aside.
+        return [], False
+    # An identifier was offered and matched nothing shown. With no description
+    # behind it there is nothing else to go on, and offering every product in
+    # the conversation instead would answer "the Missing Bag" with a menu.
+    return [], True
+
+
+def _narrowed_without_emptying(
+    descriptor: ProductReferenceDescriptor,
+    pool: list[ProductReferenceMatch],
+    *,
+    identified: bool,
+) -> tuple[list[ProductReferenceMatch], list[str]]:
+    """Apply every remaining field, in order, but never down to nothing.
+
+    These fields describe: where the product was seen, what it is called a
+    department at a time, what colour the model read into the request. They
+    are worth using to choose between several candidates and are not worth
+    losing a candidate over, because each is the model's account of the
+    shopper rather than the shopper's own words.
+
+    Conjunction made them vetoes. Asked for the first sweater it had shown one
+    turn earlier, the assistant sent the ref, the name, the set, the turn and
+    the position -- all five right -- and added a size run it invented. The
+    sixth field cancelled the other five, the answer came back not_found, and
+    the turn searched the catalog by name for the product whose ref it was
+    already holding. Being more specific was what broke it.
+
+    A field that would empty the pool is reported instead, so the reply is
+    told which of its own values the record does not share.
+    """
+
+    ignored: list[str] = []
+
+    def narrow(field: str, keep: Callable[[ProductReferenceMatch], bool]) -> None:
+        nonlocal pool
+        narrowed = [occurrence for occurrence in pool if keep(occurrence)]
+        if narrowed or not soft:
+            pool = narrowed
+        else:
+            ignored.append(field)
+
+    # Where a product was seen is this system's own bookkeeping, so while
+    # nothing has identified the product it is doing the identifying and a miss
+    # is a real miss: "the third one" over a showing of two is not the showing
+    # of two. Once a ref or a name has named the product, the same fields are
+    # only corroborating it, and a wrong one must not cancel it.
+    soft = identified
+
+    if descriptor.turn_sequence is not None:
+        narrow(
+            "turn_sequence",
+            lambda o: o.turn_sequence == descriptor.turn_sequence,
+        )
+    if descriptor.candidate_set_id is not None:
+        narrow(
+            "candidate_set_id",
+            lambda o: _identifier(o.candidate_set_id)
+            == _identifier(descriptor.candidate_set_id),
+        )
+    if descriptor.ordinal is not None:
+        # "The second one" counts within the showing the shopper is looking at,
+        # and restarts under each heading inside it. Unscoped it counted across
+        # every showing at once, so a conversation with four of them offered
+        # four second ones. Occurrences arrive oldest first.
+        if (
+            descriptor.turn_sequence is None
+            and descriptor.candidate_set_id is None
+            and pool
+        ):
+            newest = _identifier(pool[-1].candidate_set_id)
+            pool = [
+                occurrence
+                for occurrence in pool
+                if _identifier(occurrence.candidate_set_id) == newest
+            ]
+        if pool:
+            pool = _the_group_the_ordinal_counts_in(descriptor, pool)
+        narrow("ordinal", lambda o: o.position == descriptor.ordinal)
+    # From here the fields describe rather than identify: a department name and
+    # the colours and sizes the model read into the request. Those are worth
+    # choosing between candidates with, and never worth losing one over.
+    soft = True
+    if descriptor.category is not None:
+        narrow(
+            "category",
+            lambda o: isinstance(o.product.get("category"), str)
+            and _normalized(o.product["category"])
+            == _normalized(descriptor.category),
+        )
+    # Named one at a time, so the reply learns that sizes disagreed rather than
+    # that "attributes" did. The record's own values are printed with the
+    # match, so naming the field points straight at the correction.
+    for name, value in (descriptor.attributes or {}).items():
+        narrow(
+            f"attributes.{name}",
+            lambda o, n=name, v=value: _attributes_agree(o.product, {n: v}),
+        )
+
+    return pool, ignored
+
+
+def _one_per_product(
+    occurrences: list[ProductReferenceMatch],
+) -> list[ProductReferenceMatch]:
+    """Collapse occurrences to one per product, keeping the newest showing."""
+
+    matches_by_ref: dict[str, ProductReferenceMatch] = {}
+    for occurrence in occurrences:
+        product_ref = _identifier(occurrence.product["product_id"])
+        matches_by_ref.pop(product_ref, None)
+        matches_by_ref[product_ref] = occurrence
+    return list(matches_by_ref.values())
 
 
 def _matched_occurrences(
     descriptor: ProductReferenceDescriptor,
     occurrences: list[ProductReferenceMatch],
 ) -> list[ProductReferenceMatch]:
-    """Collapse matching occurrences to one per product, newest kept."""
+    """Which products this descriptor refers to, one entry each."""
 
-    # "The second one" counts within the showing the shopper is looking at.
-    # Left unscoped it counted within every showing at once, so a conversation
-    # with four of them offered four second ones and the reference that could
-    # not be clearer became a clarification. Occurrences arrive oldest first,
-    # so the last one names the newest set.
-    if (
-        descriptor.ordinal is not None
-        and descriptor.turn_sequence is None
-        and descriptor.candidate_set_id is None
-        and occurrences
-    ):
-        newest = _identifier(occurrences[-1].candidate_set_id)
-        occurrences = [
-            occurrence
-            for occurrence in occurrences
-            if _identifier(occurrence.candidate_set_id) == newest
-        ]
-        occurrences = _the_group_the_ordinal_counts_in(descriptor, occurrences)
+    matches, _ignored, _refused = _resolution_pool(descriptor, occurrences)
+    return matches
 
-    matches_by_ref: dict[str, ProductReferenceMatch] = {}
-    for occurrence in occurrences:
-        if not _matches_descriptor(occurrence, descriptor):
-            continue
-        product_ref = _identifier(occurrence.product["product_id"])
-        matches_by_ref.pop(product_ref, None)
-        matches_by_ref[product_ref] = occurrence
-    return list(matches_by_ref.values())
+
+def _resolution_pool(
+    descriptor: ProductReferenceDescriptor,
+    occurrences: list[ProductReferenceMatch],
+) -> tuple[list[ProductReferenceMatch], list[str], bool]:
+    """Resolve a reference: identify first, then narrow, never to nothing."""
+
+    identified, refused = _identified(descriptor, occurrences)
+    if refused:
+        return [], [], True
+    pool, ignored = _narrowed_without_emptying(
+        descriptor,
+        identified if identified else list(occurrences),
+        identified=bool(identified),
+    )
+    return _one_per_product(pool), ignored, False
 
 
 def _the_group_the_ordinal_counts_in(
@@ -523,61 +674,33 @@ def _the_group_the_ordinal_counts_in(
     ]
 
 
-def _corroboration_mismatch(
-    descriptor: ProductReferenceDescriptor,
-    match: ProductReferenceMatch,
-) -> list[str]:
-    """Name the supplied corroborating fields that disagree with the record."""
-
-    mismatched = []
-    if descriptor.category is not None and _normalized(
-        str(match.product.get("category") or "")
-    ) != _normalized(descriptor.category):
-        mismatched.append("category")
-    if (
-        descriptor.turn_sequence is not None
-        and match.turn_sequence != descriptor.turn_sequence
-    ):
-        mismatched.append("turn_sequence")
-    if descriptor.candidate_set_id is not None and _identifier(
-        match.candidate_set_id
-    ) != _identifier(descriptor.candidate_set_id):
-        mismatched.append("candidate_set_id")
-    if descriptor.ordinal is not None and match.position != descriptor.ordinal:
-        mismatched.append("ordinal")
-    return mismatched
-
-
 def _resolve_descriptor(
     descriptor: ProductReferenceDescriptor,
     occurrences: list[ProductReferenceMatch],
 ) -> ProductResolutionResult:
     blocking_field: str | None = None
-    corroboration_mismatch: list[str] = []
-    matches = _matched_occurrences(descriptor, occurrences)
+    matches, corroboration_mismatch, refused = _resolution_pool(
+        descriptor, occurrences
+    )
 
-    if not matches and descriptor.attributes and descriptor.display_name:
-        # A phrase can be read as a name or as a description, and the model
-        # sent both readings of the same one: display_name "black one"
-        # alongside {"primary_color": "black", "sizes": "2"}. Selectors
-        # compose, so the reading that could never match took the one that
-        # could down with it, and the reference came back NOT FOUND with the
-        # dress it described sitting in the index.
-        #
-        # Nothing is called "black one". When the name finds nothing and a
-        # description was given too, the description is what the shopper meant.
-        # Only a descriptor that resolves nothing reaches here, so a name that
-        # does match is still the answer.
-        matches = _matched_occurrences(
-            descriptor.model_copy(update={"display_name": None}), occurrences
+    if refused:
+        return ProductResolutionResult(
+            reference_id=descriptor.reference_id,
+            status="not_found",
+            matches=[],
+            match_count=0,
+            blocking_field=_blocking_field(descriptor, occurrences),
+            corroboration_mismatch=[],
         )
 
-    if len(matches) > 1 and descriptor.attributes:
-        # Several showings fit the description, so the most recent one is the
-        # one the shopper is pointing at: "the black one" a turn after a black
-        # dress was shown does not mean the black dress from nine turns before.
-        # Within a single showing recency says nothing -- four black dresses on
-        # one screen are equally recent -- and those stay a question to ask.
+    if len(matches) > 1 and descriptor.turn_sequence is None and (
+        descriptor.candidate_set_id is None
+    ):
+        # Several still fit and the shopper never said which showing, so they
+        # mean the one in front of them: "the black one" a turn after a black
+        # dress was shown is not the black dress from nine turns before. Within
+        # one showing recency says nothing -- four black dresses on a screen are
+        # equally recent -- and those stay a question worth asking.
         newest = _identifier(
             max(matches, key=lambda match: match.turn_sequence).candidate_set_id
         )
@@ -586,37 +709,6 @@ def _resolve_descriptor(
             for match in matches
             if _identifier(match.candidate_set_id) == newest
         ]
-
-    if not matches and descriptor.product_ref is not None:
-        # Strictly a second chance: a descriptor that resolves today resolves
-        # identically above, and only one that resolves nothing gets here. The
-        # ref is an identifier this system minted and printed itself, so a ref
-        # that matches has identified the product; display_name is deliberately
-        # not relaxed, because a name that contradicts the ref is the confused
-        # assistant this gate was built to catch.
-        relaxed = descriptor.model_copy(
-            update={name: None for name in _CORROBORATING_FIELDS}
-        )
-        candidates = [
-            occurrence
-            for occurrence in occurrences
-            if _matches_descriptor(occurrence, relaxed)
-        ]
-        if candidates:
-            # A product shown more than once has an occurrence per showing, and
-            # they differ in exactly the fields just relaxed. Take the one the
-            # descriptor describes best, so the facts reported back belong to
-            # the showing the assistant referred to -- and so the mismatch names
-            # only what was really wrong. Taking the newest instead reported
-            # four wrong fields when one was.
-            best = min(
-                reversed(candidates),
-                key=lambda occurrence: len(
-                    _corroboration_mismatch(descriptor, occurrence)
-                ),
-            )
-            matches = [best]
-            corroboration_mismatch = _corroboration_mismatch(descriptor, best)
 
     if not matches:
         status = "not_found"

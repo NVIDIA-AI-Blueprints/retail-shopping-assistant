@@ -30,7 +30,6 @@ SEARCH_VALIDATION_ERROR_PREFIX = (
 STOP_TOOL_USE_PREFIX = "STOP_TOOL_USE:"
 SEARCH_SCOPE_COMPLETE_PREFIX = "SEARCH_SCOPE_COMPLETE:"
 SEARCH_BUDGET_EXHAUSTED_PREFIX = "SEARCH_BUDGET_EXHAUSTED:"
-CONSTRAINT_REVIEW_PREFIX = "REVIEW_REQUIRED_CONSTRAINT:"
 UNSUPPORTED_TAXONOMY_PREFIX = "The requested catalog taxonomy cannot be enforced:"
 UNSUPPORTED_CONSTRAINT_PREFIX = "The requested catalog requirement cannot be enforced:"
 #: How many times one rejected call may be sent unchanged before the turn
@@ -335,9 +334,7 @@ class ToolLoopControlMiddleware(AgentMiddleware):
                 # silent: measured 4/4, an add asked for in plain words was
                 # never attempted, because every tool had been taken away.
                 self._search_scope_closed = True
-            elif _validation_error_body(content) or content.startswith(
-                CONSTRAINT_REVIEW_PREFIX
-            ):
+            elif _validation_error_body(content):
                 self._queue_repair(messages, tool_call_id, content)
             elif "SEARCH_RESULT_GROUNDING_NOTE" in content:
                 # An incomplete successful search closes the current scope.

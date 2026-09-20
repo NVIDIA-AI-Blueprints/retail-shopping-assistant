@@ -19,6 +19,7 @@ what to preserve and what to change, or the repair loops.
 from __future__ import annotations
 
 import json
+import logging
 import time
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
@@ -64,7 +65,6 @@ from .control_signals import (
 from .lexical_provenance import (
     _resolved_agent_selected_product_type,
     _shopper_stated_product_scope,
-    _shopper_stated_requirement,
 )
 from .model_usage import (
     _record_catalog_model_usage,
@@ -88,7 +88,6 @@ from .tool_evidence import (
     SearchEvidence,
 )
 from .tool_loop_control import (
-    CONSTRAINT_REVIEW_PREFIX,
     SEARCH_VALIDATION_ERROR_PREFIX,
 )
 from .tool_schemas import (
@@ -135,6 +134,8 @@ _NO_STAND_IN = (
     "it. Offering to look for a different kind of piece is fine if the shopper "
     "is asked first."
 )
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -356,6 +357,28 @@ def _rejected(
     return result
 
 
+#: Grep for this after a run. It must not appear.
+RETIRED_GATE = "retired search gate"
+
+
+def _retired_gate_reached(gate: str, detail: str) -> None:
+    """Note a condition we used to turn the search back for, and carry on.
+
+    Several gates here corrected the model and then told it, at length, how to
+    re-issue the call. None of them fired across 14,150 recorded turns: the
+    repair instructions the model does receive are followed, so the gates that
+    policed the repair had nothing to catch. Their handling is gone.
+
+    The question each asked is kept, because "has not happened yet" is weaker
+    evidence than "cannot happen". If one of these is ever logged, the model
+    has done something no longer corrected, and the handling should come back
+    from history rather than be written again from memory -- the wording of
+    those repair instructions was tuned against real failures.
+    """
+
+    logger.warning("%s reached: %s | %s", RETIRED_GATE, gate, detail)
+
+
 def _scope_as_sent(attempt: _Attempt) -> str:
     """Fingerprint this scope, so an unchanged retry can be recognised."""
 
@@ -546,15 +569,11 @@ def _admit_search(ctx: SearchContext, attempt: _Attempt) -> StepResult:
         taxonomy=taxonomy,
     )
     candidate_scope_key = _product_scope_key(requested_product_type)
-    locked_repair_scope = (
-        attempt.repair.failed_constraint_scope_key or attempt.repair.failed_repair_scope_key
-    )
+    locked_repair_scope = attempt.repair.failed_repair_scope_key
     repairing_same_scope = bool(
         locked_repair_scope
         and (
-            candidate_scope_key == attempt.repair.failed_constraint_scope_key
-            if attempt.repair.failed_constraint_scope_key
-            else _same_product_scope(
+            _same_product_scope(
                 locked_repair_scope,
                 candidate_scope_key,
                 capabilities,
@@ -657,29 +676,21 @@ def _classify_requirements(ctx: SearchContext, attempt: _Attempt) -> StepResult:
         # schema rather than their request. Choosing what to say is not
         # rewriting what the model sent.
         suppress_requirement_disclosure = True
-    stated_unadvertised_requirements = (
-        [
-            requirement
-            for requirement in raw_unadvertised_requirements
-            if isinstance(requirement, str)
-            and _shopper_stated_requirement(
-                _stated_shopper_text(ctx.state), requirement
-            )
-        ]
-        if isinstance(raw_unadvertised_requirements, list)
-        else []
-    )
     # An unenforceable requirement is a ranking preference, not a veto.
     # It is already carried by the semantic query and is stripped before
     # hard filters are built, so the search that would have run here is
     # the same search either way. Abandoning it left the composer with
     # nothing to show and turned a valid request into a refusal.
+    #
+    # Who first said the word does not change that. This used to disclose
+    # only when the shopper's own sentence contained the requirement, which
+    # meant deciding "waterproof" and "water resistance" were unrelated on
+    # a suffix table. The catalog cannot confirm the attribute either way,
+    # so the reply is told so either way.
     unconfirmable_requirements = (
         list(raw_unadvertised_requirements)
         if not suppress_requirement_disclosure
         and isinstance(raw_unadvertised_requirements, list)
-        and raw_unadvertised_requirements
-        and (shopper_stated_scope or stated_unadvertised_requirements)
         else []
     )
 
@@ -924,14 +935,9 @@ def _reviewed_provenance(ctx: SearchContext, attempt: _Attempt) -> StepResult:
         and normalized_advertised_constraints
         != attempt.repair.pending_taxonomy_constraints
     ):
-        return _rejected(
-            attempt,
-            SearchRejection.REPAIR_CHANGED_CONSTRAINTS,
-            SEARCH_VALIDATION_ERROR_PREFIX
-            + "A taxonomy repair must preserve previously validated "
-            "advertised required_constraints exactly. Change only "
-            "taxonomy or an explicitly identified "
-            "ungrounded product scope.",
+        _retired_gate_reached(
+            "repair_changed_constraints",
+            "a taxonomy repair altered advertised required_constraints",
         )
     if attempt.repair.pending_taxonomy_constraints is not None:
         attempt.repair.pending_taxonomy_constraints = None
@@ -983,30 +989,6 @@ def _reviewed_provenance(ctx: SearchContext, attempt: _Attempt) -> StepResult:
             }
         )
         attempt.repair.pending_schema_requirements = []
-    pending_constraint_review = attempt.repair.pending_constraint_reviews.get(
-        candidate_scope_key
-    )
-    if pending_constraint_review and (
-        request.taxonomy.model_dump()
-        != pending_constraint_review["taxonomy"]
-        or request.scope_complete
-        != pending_constraint_review["scope_complete"]
-        or request.search_mode != pending_constraint_review["search_mode"]
-        or normalized_constraints
-        != pending_constraint_review["required_constraints"]
-    ):
-        return _rejected(
-            attempt,
-            SearchRejection.CONSTRAINT_REPAIR_CHANGED_REQUEST,
-            SEARCH_VALIDATION_ERROR_PREFIX
-            + "A constraint-provenance repair must preserve "
-            "requested_product_type, taxonomy, scope_complete, "
-            "search_mode, and all "
-            "advertised required constraints exactly. Change only the "
-            "reviewed unadvertised requirement wording or remove an "
-            "inferred requirement; the soft semantic query may be "
-            "corrected within the preserved product scope.",
-        )
     # A role the shopper never named is the model's own composition -- "a top"
     # for someone who asked for an outfit, covering blouses and sweaters
     # because the catalog has no "tops". That is not a fault to turn back. It
@@ -1108,88 +1090,23 @@ def _reviewed_provenance(ctx: SearchContext, attempt: _Attempt) -> StepResult:
     if (
         request.taxonomy_status != "no_direct_catalog_match"
         and unadvertised_requirements
+        and not suppress_requirement_disclosure
     ):
-        stated_requirements = [
-            requirement
-            for requirement in unadvertised_requirements
-            if _shopper_stated_requirement(
-                _stated_shopper_text(ctx.state), requirement
-            )
-        ]
-        shopper_stated_scope = attempt.shopper_named_scope
-        if (
-            stated_requirements or shopper_stated_scope
-        ) and not suppress_requirement_disclosure:
-            # Rank on it, disclose it, do not abandon the search.
-            unconfirmable_requirements = list(unadvertised_requirements)
-        if (
-            not unconfirmable_requirements
-            and not suppress_requirement_disclosure
-        ):
-            # Provenance could not be established from this turn, so the
-            # model may have inferred the requirement. That still earns
-            # one review. A requirement the shopper actually stated does
-            # not: it ranks the search and is disclosed instead. Nor does
-            # a value that is simply the product type -- there is no
-            # invented attribute there to establish provenance for.
-            review_scope = candidate_scope_key or "__unknown__"
-            if review_scope in attempt.repair.constraint_reviewed_scopes:
-                return _rejected(
-                    attempt,
-                    SearchRejection.REQUIREMENT_PROVENANCE_UNESTABLISHED,
-                    "The requested catalog requirement cannot be enforced: "
-                    "its current-turn provenance could not be established. "
-                    "Ask the shopper to state the exact required attribute "
-                    "or allow it to be treated as a preference.",
-                )
-            attempt.repair.constraint_reviewed_scopes.add(review_scope)
-            attempt.repair.pending_constraint_reviews[review_scope] = {
-                "requirements": list(unadvertised_requirements),
-                "taxonomy": request.taxonomy.model_dump(),
-                "scope_complete": request.scope_complete,
-                "search_mode": request.search_mode,
-                "required_constraints": dict(normalized_constraints),
-            }
-            attempt.repair.failed_constraint_scope_key = review_scope
-            return _rejected(
-                attempt,
-                SearchRejection.CONSTRAINT_REVIEW_REQUIRED,
-                CONSTRAINT_REVIEW_PREFIX
-                + "These proposed unadvertised requirements do not match "
-                "the current shopper turn's normalized wording: "
-                + json.dumps(unadvertised_requirements, ensure_ascii=False)
-                + ". Preserve requested_product_type "
-                + json.dumps(request.requested_product_type)
-                + ", taxonomy "
-                + json.dumps(request.taxonomy.model_dump(), sort_keys=True)
-                + ", and scope_complete "
-                + json.dumps(request.scope_complete)
-                + ", search_mode "
-                + json.dumps(request.search_mode)
-                + ", and advertised required constraints "
-                + json.dumps(normalized_constraints, sort_keys=True)
-                + ". Keep semantic_query within that same product scope; "
-                "you may remove inferred attribute wording from it"
-                + ". If the shopper explicitly stated the same objective "
-                "requirement using different words, replace each value with "
-                "the shopper's shortest exact wording. Otherwise the model "
-                "inferred it: remove it from required_constraints and remove "
-                "the attribute claim from shopper_guidance. Implied weather, "
-                "occasion, or style goals are not explicit requirements.",
-            )
-
-    reviewed_constraint = attempt.repair.pending_constraint_reviews.pop(
-        candidate_scope_key,
-        None,
-    )
-    if reviewed_constraint:
-        request = request.model_copy(
-            update={
-                "shopper_guidance": _generic_shopper_guidance(
-                    request.requested_product_type
-                )
-            }
-        )
+        # Rank on it, disclose it, do not abandon the search.
+        #
+        # This used to decide first whether the shopper had said the word,
+        # and send the call back for review when it concluded they had not.
+        # Two things were wrong with that. The review never once happened in
+        # 14,150 recorded turns, and deciding it meant stemming the shopper's
+        # sentence with a fixed suffix table and testing set membership --
+        # which reads "waterproof" and "water resistance" as strangers, and
+        # is the matching this codebase has been removing.
+        #
+        # Disclosure is the honest outcome either way. The catalog cannot
+        # filter on the requirement, so the reply may not present a candidate
+        # as confirmed, and that holds whether the shopper asked for it or
+        # the model inferred it from the weather.
+        unconfirmable_requirements = list(unadvertised_requirements)
 
     exact_taxonomy_issue = (
         _exact_taxonomy_issue(
@@ -1250,7 +1167,6 @@ def _reviewed_provenance(ctx: SearchContext, attempt: _Attempt) -> StepResult:
         )
 
     attempt.repair.failed_repair_scope_key = None
-    attempt.repair.failed_constraint_scope_key = None
 
     attempt.normalized_constraints = normalized_constraints
     attempt.request = request
@@ -2847,12 +2763,8 @@ def _merge_repair(target: Any, source: Any) -> None:
     what an earlier rejection recorded.
     """
 
-    target.constraint_reviewed_scopes |= source.constraint_reviewed_scopes
-    for key, value in source.pending_constraint_reviews.items():
-        target.pending_constraint_reviews.setdefault(key, value)
     for name in (
         "failed_repair_scope_key",
-        "failed_constraint_scope_key",
         "pending_taxonomy_constraints",
     ):
         if getattr(target, name) is None and getattr(source, name) is not None:

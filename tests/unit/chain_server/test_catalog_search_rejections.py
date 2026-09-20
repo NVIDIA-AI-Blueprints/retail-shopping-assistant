@@ -13,6 +13,7 @@ one code -- fails here rather than quietly making refusals uncountable again.
 from __future__ import annotations
 
 import json
+import logging
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import replace
@@ -23,6 +24,7 @@ import pytest
 from chain_server.src import catalog_search as catalog_search_mod
 from chain_server.src.agenttypes import State
 from chain_server.src.catalog_search import (
+    RETIRED_GATE,
     SEARCH_VALIDATION_ERROR_PREFIX,
     SearchContext,
     search_catalog,
@@ -240,42 +242,11 @@ GATE_CASES: tuple[GateCase, ...] = (
         _scope(required_constraints={"unadvertised_requirements": "waterproof"}),
     ),
     (
-        SearchRejection.REPAIR_CHANGED_CONSTRAINTS,
-        "show me tote bags",
-        None,
-        lambda ctx: setattr(
-            ctx.scope.repair,
-            "pending_taxonomy_constraints",
-            {"color": ["blue"]},
-        ),
-        _scope(required_constraints={"color": ["black"]}),
-    ),
-    (
         SearchRejection.TAXONOMY_NOT_ADVERTISED_FOR_SCOPE,
         "show me tote bags",
         None,
         lambda ctx: None,
         _scope(taxonomy={"category": ["bags"], "subcategory": ["dresses"]}),
-    ),
-    (
-        SearchRejection.CONSTRAINT_REPAIR_CHANGED_REQUEST,
-        "show me tote bags",
-        None,
-        lambda ctx: ctx.scope.repair.pending_constraint_reviews.update(
-            {
-                "tote bag": {
-                    "requirements": ["laptop sleeve"],
-                    "taxonomy": {
-                        "category": [],
-                        "subcategory": ["crossbody_bags"],
-                    },
-                    "scope_complete": True,
-                    "search_mode": None,
-                    "required_constraints": {},
-                }
-            }
-        ),
-        _scope(),
     ),
     (
         # The shopper named the role; the model answered it with a narrower one.
@@ -286,28 +257,6 @@ GATE_CASES: tuple[GateCase, ...] = (
         _scope(
             semantic_query="handbags",
             requested_product_type="handbags",
-        ),
-    ),
-    (
-        SearchRejection.CONSTRAINT_REVIEW_REQUIRED,
-        "put together a work outfit",
-        None,
-        lambda ctx: None,
-        _scope(
-            required_constraints={
-                "unadvertised_requirements": ["waterproof lining"]
-            },
-        ),
-    ),
-    (
-        SearchRejection.REQUIREMENT_PROVENANCE_UNESTABLISHED,
-        "put together a work outfit",
-        None,
-        lambda ctx: ctx.scope.repair.constraint_reviewed_scopes.add("tote bag"),
-        _scope(
-            required_constraints={
-                "unadvertised_requirements": ["waterproof lining"]
-            },
         ),
     ),
     (
@@ -365,6 +314,41 @@ def test_each_gate_records_which_gate_refused_the_scope(
     result = search_catalog(ctx, [scope])
 
     assert _rejection_codes(result) == [expected_code]
+
+
+class TestTheGatesThatWereRetired:
+    """Two gates policed a repair rather than the request that started it.
+
+    Both only run on a re-issued call, and both ask whether the model kept what
+    the earlier rejection told it to keep. Neither fired across 14,150 recorded
+    turns, because the model does keep it. What is left is the question, asked
+    into the log, so a first occurrence is visible rather than silent.
+    """
+
+    def test_a_repair_that_changes_constraints_is_no_longer_turned_back(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        ctx = _context("show me tote bags", None)
+        ctx.scope.repair.pending_taxonomy_constraints = {"color": ["blue"]}
+
+        with caplog.at_level(logging.WARNING):
+            result = search_catalog(
+                ctx, [_scope(required_constraints={"color": ["black"]})]
+            )
+
+        assert _rejection_codes(result) == []
+        assert "repair_changed_constraints" in caplog.text
+
+    # The second gate of this pair has no test, and cannot have one. It asked
+    # whether a repair preserved a pending constraint review, and constraint
+    # reviews no longer exist -- nothing opens one, so nothing can arrive
+    # carrying one. That condition is unreachable by construction rather than
+    # merely unobserved, so it is not worth an observation either.
+
+    def test_the_marker_is_one_string_a_run_can_be_grepped_for(self) -> None:
+        # The check after a journey run is "this string is absent from the
+        # log", so it has to stay a single fixed phrase.
+        assert RETIRED_GATE == "retired search gate"
 
 
 def test_repeated_shopper_scope_is_attributed_to_the_shopper_scope_gate(

@@ -72,8 +72,6 @@ from .message_shape import (
 from .response_format import (
     _format_cart,
     _format_detail_value,
-    _format_product_detail_record,
-    _format_product_record,
     _format_product_refs,
 )
 from .skill_activation import (
@@ -1263,10 +1261,6 @@ def _search_product_record(product: Any) -> dict[str, Any]:
     }
 
 
-def _format_product(product: Any) -> str:
-    return _format_product_record(_search_product_record(product))
-
-
 def _product_detail_record(product: ProductDetail) -> dict[str, Any]:
     """Project one product-detail read into the record the text renders from."""
 
@@ -1286,10 +1280,6 @@ def _product_detail_record(product: ProductDetail) -> dict[str, Any]:
             for name, value in sorted((product.attributes or {}).items())
         ],
     }
-
-
-def _format_product_details(product: ProductDetail) -> str:
-    return _format_product_detail_record(_product_detail_record(product))
 
 
 def _normalize_cart_add_tool_items(
@@ -1566,6 +1556,38 @@ def _explicitly_named_products(
 
 def _same_product_display_name(expected: str, actual: str) -> bool:
     return _normalize_product_name(expected) == _normalize_product_name(actual)
+
+
+def _where_a_product_was_already_shown(
+    historical_product_sets: list[Any] | None,
+    product_id: str,
+) -> dict[str, Any] | None:
+    """Where an earlier turn put this product, if one did.
+
+    Matched on the catalog's id rather than its name, so it answers whether
+    this exact product was on the screen and not whether something like it
+    was. Newest showing first: the place the shopper is most likely counting
+    from is the last one they saw.
+    """
+
+    wanted = str(product_id or "").strip()
+    if not wanted:
+        return None
+    for entry in reversed(list(historical_product_sets or [])):
+        if not isinstance(entry, dict):
+            continue
+        for product in entry.get("products") or []:
+            if not isinstance(product, dict):
+                continue
+            if str(product.get("ref") or "").strip() != wanted:
+                continue
+            return {
+                # The index writes this as turn_seq, not turn_sequence.
+                "turn_sequence": entry.get("turn_seq"),
+                "position": product.get("position"),
+                "group": product.get("group") or "",
+            }
+    return None
 
 
 #: What the catalog carries for a product sold in exactly one size.

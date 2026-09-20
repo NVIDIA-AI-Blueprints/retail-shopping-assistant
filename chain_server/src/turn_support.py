@@ -4491,6 +4491,7 @@ _NON_ATTRIBUTE_SEARCH_KEYS = frozenset({"catalog_text", "similarity", "taxonomy"
 def _in_presentation_order(
     products: list[dict[str, Any]],
     reply: str,
+    groups: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """The shown products, ordered as the reply presents them.
 
@@ -4502,6 +4503,47 @@ def _in_presentation_order(
     The order is settled once, here, where the reply and the products are both
     in hand -- so every consumer downstream renders one order rather than
     each choosing its own.
+
+    Within a group, never across them. A shopper asked for dresses and shoes
+    sees two headed lists, and a reply that discusses a shoe before finishing
+    with the dresses would otherwise lift that shoe into the dresses. The
+    groups keep the order they were asked for; only the products inside one
+    are sorted by where the reply names them.
+    """
+
+    if not groups:
+        return _as_the_reply_names_them(products, reply)
+    held: dict[str, dict[str, Any]] = {
+        str(product.get("product_id") or ""): product
+        for product in products
+        if str(product.get("product_id") or "")
+    }
+    ordered: list[dict[str, Any]] = []
+    placed: set[str] = set()
+    for group in groups:
+        members = []
+        for product_id in group.get("product_ids") or []:
+            product = held.get(str(product_id))
+            if product is not None and str(product_id) not in placed:
+                members.append(product)
+                placed.add(str(product_id))
+        ordered.extend(_as_the_reply_names_them(members, reply))
+    # A product no group claimed still belongs on the screen. The name lookup
+    # puts products in front of the shopper without going through a scope, so
+    # this is not the empty case it looks like.
+    ordered.extend(
+        product
+        for product in products
+        if str(product.get("product_id") or "") not in placed
+    )
+    return ordered
+
+
+def _as_the_reply_names_them(
+    products: list[dict[str, Any]],
+    reply: str,
+) -> list[dict[str, Any]]:
+    """One list, sorted by where the reply first names each product.
 
     This looks for the exact display names the service itself produced. It reads
     nothing else out of the reply, and decides nothing but sequence: a product

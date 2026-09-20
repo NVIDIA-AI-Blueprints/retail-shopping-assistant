@@ -13,7 +13,7 @@ import logging
 import os
 import sys
 import time
-from collections.abc import AsyncIterator, Collection
+from collections.abc import AsyncIterator, Collection, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from datetime import date as CalendarDate
@@ -347,9 +347,11 @@ except Exception:  # pragma: no cover - dependency import is validated at runtim
 
 
 
+# Must not invite a retry. This path is reached after the turn's tools have
+# already run, so a cart change may have completed; retrying duplicates it.
 _GROUNDING_FAILURE_RESPONSE = (
-    "I couldn't safely verify the final response. Please retry; if this involved "
-    "a cart change, check your cart first."
+    "I ran into a problem writing that reply. Ask me what's in your cart to see "
+    "where things stand -- any change I made will show there."
 )
 _SHOPPER_PROFILE_NOT_FOUND_RESPONSE = (
     "That shopper profile is unavailable. Please choose another shopper and "
@@ -371,6 +373,121 @@ _SHOPPER_CONTEXT_SYSTEM_RULES = """Representative-shopper precedence and safety:
 - Cart, catalog, product-detail, and store-policy evidence remain authoritative.
 - Never infer a shopper's location, the weather, or a seasonal need. Nothing in
   this context establishes any of them, and naming one is an invented fact."""
+def the_showing(
+    products: Sequence[Any],
+    groups: Sequence[Mapping[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """This turn's products as the shopper sees them: a list of headed groups.
+
+    A showing is not a queue. Asked for dresses and shoes, the shopper reads
+    two headed lists and counts from one inside each, so "the second shoes" is
+    a question the structure can answer. Stored flat, it was eight products in
+    a row and that question had no answer at all.
+
+    Numbering restarts inside each group, because that is how the shopper
+    counts. Everything downstream -- the screen, the reply, resolution -- is
+    handed this same structure, so none of them has to derive an order and
+    none of them can derive a different one.
+
+    Products no group claims are one unheaded group at the end, which is also
+    how a conversation recorded before groups existed reads back.
+    """
+
+    held = {
+        str(product.get("product_id") or ""): product
+        for product in products
+        if isinstance(product, Mapping) and str(product.get("product_id") or "")
+    }
+    shown: list[dict[str, Any]] = []
+    placed: set[str] = set()
+    for group in groups or []:
+        members = []
+        for product_id in group.get("product_ids") or []:
+            product = held.get(str(product_id))
+            if product is not None and str(product_id) not in placed:
+                members.append(product)
+                placed.add(str(product_id))
+        if members:
+            shown.append(
+                {
+                    "heading": _a_heading_that_is_not_a_product(
+                        str(group.get("heading") or ""), products
+                    ),
+                    "products": _numbered_within_the_group(members),
+                }
+            )
+    unclaimed = [
+        product
+        for product in products
+        if isinstance(product, Mapping)
+        and str(product.get("product_id") or "") not in placed
+    ]
+    if unclaimed:
+        shown.append(
+            {"heading": "", "products": _numbered_within_the_group(unclaimed)}
+        )
+    return shown
+
+
+def _streamed_in_group_order(
+    showing: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """The showing flattened for the wire, every product naming its group."""
+
+    return [
+        {**product, "group": group.get("heading") or ""}
+        for group in showing
+        for product in group.get("products") or []
+    ]
+
+
+def _a_heading_that_is_not_a_product(heading: str, products: Sequence[Any]) -> str:
+    """This heading, unless it is the name of a product being shown under it.
+
+    Asked to add one tote by name, the model sends that name as the product
+    type, and the group of four totes comes out headed "Ombre Canvas Tote Bag"
+    -- three of which are not that. An equality check against the showing's own
+    products, not a word list: the data to settle it is already in hand.
+    """
+
+    wanted = _normalized_display_name(heading)
+    if not wanted:
+        return ""
+    for product in products:
+        if not isinstance(product, Mapping):
+            continue
+        if _normalized_display_name(str(product.get("display_name") or "")) == wanted:
+            return ""
+    return heading
+
+
+def _normalized_display_name(name: str) -> str:
+    return " ".join(name.split()).casefold()
+
+
+def _numbered_within_the_group(
+    products: Sequence[Any],
+) -> list[dict[str, Any]]:
+    """The group's products, each carrying the place it holds under its heading.
+
+    So the client renders a given order instead of deriving one. It had been
+    deriving one: the chat row was built from a name-keyed image map, the
+    product list was matched back into it by display name, and the panel kept
+    its own ordering state. Three mechanisms standing in for a number.
+
+    Stamped here rather than on `state.product_results` because that list is
+    re-parsed as `ProductSummary`, which forbids unknown fields. It belongs at
+    this boundary regardless: where a product sits on a screen is a fact about
+    how this turn was presented, not a fact about the product.
+    """
+
+    return [
+        {**product, "position": position}
+        for position, product in enumerate(products, 1)
+        if isinstance(product, dict)
+    ]
+
+
 _GROUNDING_EDITOR_SYSTEM_PROMPT = """You are a final response editor for a retail shopping assistant.
 
 Rewrite the draft response only as needed so every factual claim is supported
@@ -383,6 +500,13 @@ Rules:
 - For a styling request, answer the styling question rather than returning a raw
   product list. Connect candidates to the shopper's goal or direct antecedent
   using category/role, exact confirmed filters, and general styling judgment.
+  Answering the styling question is not licence to shrink or reorder the
+  screen. Every candidate in CURRENT-TURN TOOL EVIDENCE is already displayed to
+  the shopper as a picture, in that order, so keep all of them and keep that
+  order, with the styling judgement alongside. Never cut the list down to a
+  favourite: a shopper reading about two while looking at six reads it as the
+  shop having two, and a reordered list changes what their "the first one"
+  refers to.
   Keep styling judgment visibly separate from catalog facts and never derive it
   from words parsed out of a display name.
 - Labeling text as styling judgment does not permit display-name inference. If
@@ -1176,8 +1300,18 @@ class DeepAgentsRuntime:
         output = await turn
         products = output.product_results or []
         if products:
+            # Flat, still, and in group order: the client renders a sequence,
+            # and a payload that changed shape would blank the panel. Each
+            # product names its group and its number under that group, which
+            # is what the client needs to draw the headings.
             yield json.dumps(
-                {"type": "products", "payload": products, "timestamp": time.time()}
+                {
+                    "type": "products",
+                    "payload": _streamed_in_group_order(
+                        the_showing(products, output.product_groups)
+                    ),
+                    "timestamp": time.time(),
+                }
             )
         images = output.retrieved or {}
         yield json.dumps({"type": "images", "payload": images, "timestamp": time.time()})
@@ -2079,6 +2213,11 @@ class DeepAgentsRuntime:
             if not requested_items:
                 return "Cart add failed: provide at least one PRODUCT_REF to add."
 
+            #: Refs whose lookup broke rather than came back empty. A reference
+            #: that cannot be read is a fault in this service, and the answer it
+            #: earns is not the one a reference nobody was ever shown earns.
+            lookup_failures: list[str] = []
+
             def _resolve_from_conversation_index(product_ref: str):
                 """Look one ref up in the conversation's durable product index."""
 
@@ -2093,7 +2232,23 @@ class DeepAgentsRuntime:
                         identity.conversation_id,
                         descriptors,
                     )
-                except (ConversationProductsError, ValidationError):
+                except (ConversationProductsError, ValidationError) as exc:
+                    # The lookup itself failed, which is not the same fact as
+                    # this conversation never having shown the product, and
+                    # returning the same `None` for both is how a working lookup
+                    # came out as a missing bag. The record held the product and
+                    # returned it; the response carried one field the product
+                    # contract does not admit, so it was refused here and the
+                    # refusal was read upstream as "no such reference". The
+                    # shopper was told the reference was not valid, and nothing
+                    # anywhere said why.
+                    logger.error(
+                        "chain-server | cart add | the conversation record could "
+                        "not be read for PRODUCT_REF %s: %s",
+                        product_ref,
+                        exc,
+                    )
+                    lookup_failures.append(product_ref)
                     return None
                 scope.product_evidence.add_resolutions(result.results, descriptors)
                 state.system_identified_products = list(
@@ -2116,6 +2271,23 @@ class DeepAgentsRuntime:
                     # This is a lookup in the conversation's own record, not a
                     # catalog search.
                     product = _resolve_from_conversation_index(product_ref)
+                if product is None and product_ref in lookup_failures:
+                    # Read, not missing. Sending this down the path below would
+                    # tell the model to search the catalog for a product the
+                    # record is holding, and to ask the shopper which of the
+                    # results they meant -- about the one they just named.
+                    # Nothing the model can do repairs a fault in this service,
+                    # so say that, and let the turn say so plainly rather than
+                    # inventing a reason the shopper is at fault.
+                    failed.append(
+                        f"- PRODUCT_REF '{product_ref}': this conversation's "
+                        "record could not be read, which is a fault on our "
+                        "side and not a missing product. Do not search for it "
+                        "and do not ask the shopper to identify it again. Tell "
+                        "them the cart could not be updated just now and that "
+                        "they can try again."
+                    )
+                    continue
                 if product is None:
                     # Two different situations reach here, and naming only one
                     # of them stranded the other.
@@ -3673,6 +3845,16 @@ Rules:
   semantic wording. For outfit requests
   with multiple required item types, send one focused role per distinct
   taxonomy scope in the same call, then stop and synthesize from those results.
+- Every product this turn's search returned is already on the shopper's screen
+  as a picture, in the order the evidence lists it. Name all of them, in that
+  same order, and give the styling guidance after the list rather than instead
+  of part of it. Two reasons, and both are about the shopper rather than
+  completeness for its own sake. A reply that writes up two of six reads as
+  though the shop held two, while six pictures sit beside the words. And the
+  shopper says "the first one" about what they can see, so a list that skips or
+  reorders makes their next sentence mean something you did not intend. Say
+  what each one is; then say which suits the occasion and why, and say plainly
+  if only one or two really do.
 - Advice is not an answer on its own either. A layering formula, a packing list
   or a list of what to look for, with no pieces from this shop beside it, is a
   wardrobe lecture rather than shopping. Search and show real items in every
@@ -3988,7 +4170,7 @@ Rules:
         # one" meaning the second shown to the shopper and the second ranked to
         # the resolver.
         state.product_results = _in_presentation_order(
-            state.product_results or [], state.response or ""
+            state.product_results or [], state.response or "", state.product_groups
         )
         state.retrieved = _images_in_product_order(
             state.retrieved or {}, state.product_results
@@ -4005,6 +4187,7 @@ Rules:
             output = TurnReplayOutput(
                 product_results=(state.product_results if present_products else []),
                 retrieved=(state.retrieved if present_products else {}),
+                product_groups=(state.product_groups if present_products else []),
                 agent_diagnostics=state.agent_diagnostics,
                 selected_skill_names=state.selected_skill_names,
             )

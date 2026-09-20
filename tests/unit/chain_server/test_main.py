@@ -8616,6 +8616,37 @@ class TestDeepAgentsRuntimeRefs:
         assert "search the catalog now" in missing
         assert added == []
 
+        # A lookup that breaks is not a product that was never shown, and the
+        # two earned the same answer. A record that returned the bag, carrying
+        # one field the product contract does not admit, was refused here and
+        # the refusal was read as "no such reference": the shopper was sent to
+        # identify a tote they had just named, and the reply told them their
+        # reference was not valid. Nothing the model does repairs a fault on
+        # this side, so it is told not to search and not to ask.
+        def read_of_the_record_fails(*_args, **_kwargs):
+            raise runtime_mod.ConversationProductsError(
+                "conversation_products_response_invalid",
+                "Historical product resolution returned an invalid response.",
+            )
+
+        runtime._conversation_products = SimpleNamespace(
+            resolve=read_of_the_record_fails
+        )
+        # A ref this turn has not established, so the record is the only place
+        # it can come from and the broken read is what answers.
+        unreadable = tool_text(
+            add_tool(items=[{"product_ref": "prod_green", "quantity": 1}])
+        )
+        assert "could not be read" in unreadable
+        assert "not a missing product" in unreadable
+        assert "Do not search for it" in unreadable
+        assert "not established in this turn" not in unreadable
+        assert added == []
+
+        runtime._conversation_products = SimpleNamespace(
+            resolve=lambda *_: _resolved_conversation_products(product, bag, dress)
+        )
+
         tools_by_name["resolve_conversation_products_tool"](
             references=[
                 {"reference_id": "prod_flats", "product_ref": "prod_flats"},

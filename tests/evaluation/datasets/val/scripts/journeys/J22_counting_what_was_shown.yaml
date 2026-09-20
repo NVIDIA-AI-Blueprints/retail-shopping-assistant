@@ -1,0 +1,51 @@
+id: J22_counting_what_was_shown
+covers: [discovery, references, cart]
+why: >
+  A showing of more than one kind, and then the shopper counting inside it.
+  Numbering restarts under each heading, so "the second shoes" is the second
+  of the shoes and not the second thing on the screen. Nothing else in this
+  suite asks for a number over a showing with more than one group: the ordinal
+  adds in J15 all happen where only one kind is on screen, which is exactly
+  where per-group and straight-through numbering give the same answer and a
+  mistake cannot show.
+
+  Two different things are worth holding here, and they pull in opposite
+  directions. A number that names its group is exact and must resolve without
+  help. A bare number over two groups is genuinely ambiguous, and the right
+  answer is to ask -- an earlier version of this file demanded the opposite,
+  that "the first one" silently take the first group. The assistant asked
+  instead, naming both candidates, and asking is the better conversation.
+
+  Sizes are stated with each add. A sized garment with no size is a question
+  the assistant is right to ask, and leaving it out tested that instead of
+  what this is for.
+turns:
+  - say: show me some dresses and some shoes for a summer wedding
+    expect: {products_min: 2}
+  # Two groups on screen and a number belonging to neither. Nothing may reach
+  # the cart on a guess; the reply should come back naming the choice.
+  # `reply_asks` carries the check. An empty cart on its own would also be
+  # true of a turn that crashed, which is how three journeys "passed" this
+  # shape of assertion on 2026-09-19 while erroring out.
+  - say: add the first one to my cart, in a 6
+    expect:
+      cart_lines: 0
+      reply_asks: true
+  # The same ordinal, now with the group said out loud. This is the one that
+  # has to resolve straight through.
+  - say: the first dress, in a 6
+    expect:
+      cart_lines: 1
+      cart_holds_shown: {turn: 1, group: dresses, position: 1}
+  # Named group again, and a number that means something different inside it.
+  # The shoes arrived as several search scopes -- heels, sandals, flats, boots
+  # -- which is why the number counts under the heading the shopper saw and
+  # not under the scope the catalog happened to answer with.
+  - say: add the second shoes too, in a 7
+    expect:
+      cart_lines: 2
+      cart_holds_shown: {turn: 1, group: shoes, position: 2}
+  - say: what's in my cart
+    expect:
+      cart_unchanged: true
+      cart_lines: 2

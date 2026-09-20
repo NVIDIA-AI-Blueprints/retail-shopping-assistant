@@ -15,8 +15,14 @@ from sqlalchemy import func
 
 from .models import ConversationEvent, ConversationProjection, ConversationTurn
 
-
 PRESENTED_PRODUCTS_EVENT_KEY = "runtime-presented-products"
+#: Where the product sat on the screen, kept beside it rather than recounted.
+_SCREEN_POSITION_KEY = "screen_position"
+#: The product itself, inside a recorded entry. Anything the record knows about
+#: how a turn presented a product is a sibling of this key, never a field
+#: within it: the runtime's product contract admits product fields only, and
+#: refuses -- for the whole object -- anything it does not recognise.
+_STORED_PRODUCT_KEY = "product"
 # Query safety bound only. The character budget below is the effective limit:
 # a compact set of eight products is roughly 1KB, so ~15 sets survive and this
 # row cap is never reached. Resolution itself is unbounded and still sees every
@@ -38,6 +44,11 @@ class ProductReferenceDescriptor(_ReferenceModel):
     turn_sequence: int | None = Field(default=None, ge=1)
     candidate_set_id: str | None = Field(default=None, min_length=1, max_length=64)
     ordinal: int | None = Field(default=None, ge=1)
+    #: The heading the shopper counted under: "the second shoes" is
+    #: ordinal 2 in group "shoes". An ordinal is numbered from one inside each
+    #: group, so without this it names one product per group rather than one
+    #: product.
+    group: str | None = Field(default=None, min_length=1, max_length=256)
     #: What the shopper described rather than named, in advertised attribute
     #: terms: "the black one" is {"primary_color": "black"}. Compared against
     #: the attributes the catalog confirmed when the product was shown, so the
@@ -53,6 +64,7 @@ class ProductReferenceDescriptor(_ReferenceModel):
             self.turn_sequence,
             self.candidate_set_id,
             self.ordinal,
+            self.group,
             self.attributes,
         )
         if not any(selector is not None for selector in selectors):
@@ -76,7 +88,14 @@ class ProductReferenceMatch(_ReferenceModel):
     product: dict[str, Any]
     candidate_set_id: str = Field(..., min_length=1, max_length=64)
     turn_sequence: int
+    #: Where this product sat under its heading. Numbered from one inside each
+    #: group, so it identifies a product only together with the group.
     position: int
+    #: The heading it was shown under, empty where the showing had none.
+    group: str = Field(default="", max_length=256)
+    #: Which group, in the order they were shown. Carried because a bare
+    #: ordinal with nothing to narrow it means the first group on screen.
+    group_index: int = 0
     catalog_revision: str | None = Field(default=None, max_length=512)
 
 
@@ -124,16 +143,39 @@ def append_presented_products_event(
     turn: ConversationTurn,
     product_results: list[dict[str, Any]],
     *,
+    product_groups: list[dict[str, Any]] | None = None,
     created_at: float,
 ) -> ConversationEvent | None:
-    """Append one event for the ordered products returned to the shopper."""
+    """Append one event for the groups of products returned to the shopper.
 
-    products = [
-        _persistable(product)
-        for product in product_results
-        if _is_referenceable_product(product)
-    ]
-    if not products:
+    A showing is a list of headed groups, because that is what the shopper
+    reads: dresses, then shoes, counted from one inside each. Stored as a flat
+    queue it was eight products in a row, and "the second shoes" was a question
+    with no structural answer -- only a guess from category strings, which two
+    scopes out of one category defeat.
+
+    The place each product holds under its heading is recorded beside it,
+    counted over everything that group presented and not over what survives
+    this filter. The number the shopper reads is stamped on the streamed list,
+    which is not filtered, so counting the kept ones would shift every position
+    after a dropped product: they would say "the fifth" and be handed the
+    sixth. Numbering first leaves a gap instead, and a gap resolves to nothing
+    rather than to the wrong garment.
+
+    Beside it, and not on it, because a product record holds product facts. The
+    position was previously stamped into the product itself and popped back off
+    by name when read, which works only while every annotation is remembered in
+    both places. One was not: a second annotation was added, the read path did
+    not know to remove it, and the product came back out of the record carrying
+    a field the runtime's product contract forbids. The runtime refused the
+    whole object, the refusal was read as "no such product", and a shopper
+    asking for a bag they had been shown four turns earlier was told the
+    reference was not valid. Nesting makes that leak unrepresentable rather
+    than remembered.
+    """
+
+    groups = _groups_as_shown(product_results, product_groups or [])
+    if not groups:
         return None
 
     logical_order = (
@@ -150,11 +192,75 @@ def append_presented_products_event(
         event_type="candidate_set_presented",
         source_kind="runtime",
         source_ref=turn.catalog_revision,
-        payload_json=_canonical_json({"products": products}),
+        payload_json=_canonical_json({"groups": groups}),
         created_at=created_at,
     )
     db.add(event)
     return event
+
+
+def _groups_as_shown(
+    product_results: list[dict[str, Any]],
+    product_groups: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """The showing, as headed groups of numbered products.
+
+    The groups name their products by id; the products themselves come from
+    the turn's ordered results. Anything no group claims is one unheaded group
+    at the end, which is what a name lookup produces and what a turn with no
+    groups at all becomes.
+    """
+
+    held = {
+        str(product.get("product_id") or ""): product
+        for product in product_results
+        if isinstance(product, Mapping) and str(product.get("product_id") or "")
+    }
+    groups: list[dict[str, Any]] = []
+    placed: set[str] = set()
+    for group in product_groups:
+        if not isinstance(group, Mapping):
+            continue
+        members = []
+        for product_id in group.get("product_ids") or []:
+            product = held.get(str(product_id))
+            if product is not None and str(product_id) not in placed:
+                members.append(product)
+                placed.add(str(product_id))
+        recorded = _numbered_under_a_heading(members)
+        if recorded:
+            groups.append(
+                {
+                    "heading": str(group.get("heading") or ""),
+                    "products": recorded,
+                }
+            )
+    unclaimed = _numbered_under_a_heading(
+        [
+            product
+            for product in product_results
+            if not isinstance(product, Mapping)
+            or str(product.get("product_id") or "") not in placed
+        ]
+    )
+    if unclaimed:
+        groups.append({"heading": "", "products": unclaimed})
+    return groups
+
+
+def _numbered_under_a_heading(
+    products: list[Any],
+) -> list[dict[str, Any]]:
+    """One group's products, each with the place it held under its heading."""
+
+    recorded = []
+    for position, product in enumerate(products, start=1):
+        if not _is_referenceable_product(product):
+            continue
+        recorded.append(
+            {_STORED_PRODUCT_KEY: _persistable(product), _SCREEN_POSITION_KEY: position}
+        )
+    return recorded
 
 
 def _system_identifications_by_turn(db, conversation_id: str) -> list[tuple[int, list[str]]]:
@@ -365,6 +471,7 @@ def _matched_occurrences(
             for occurrence in occurrences
             if _identifier(occurrence.candidate_set_id) == newest
         ]
+        occurrences = _the_group_the_ordinal_counts_in(descriptor, occurrences)
 
     matches_by_ref: dict[str, ProductReferenceMatch] = {}
     for occurrence in occurrences:
@@ -374,6 +481,46 @@ def _matched_occurrences(
         matches_by_ref.pop(product_ref, None)
         matches_by_ref[product_ref] = occurrence
     return list(matches_by_ref.values())
+
+
+def _the_group_the_ordinal_counts_in(
+    descriptor: ProductReferenceDescriptor,
+    occurrences: list[ProductReferenceMatch],
+) -> list[ProductReferenceMatch]:
+    """Narrow one showing to the group the shopper is counting inside.
+
+    A number restarts under each heading, so "the first one" over a showing of
+    dresses and shoes names two products, and the reference that could not be
+    clearer came back as a question to ask.
+
+    Named, the group decides it: "the second shoes" is the shoes. Unnamed, the
+    first group on screen does, which is the one the reply anchors on and the
+    only group there is when the shopper asked for one kind. Assume and
+    disclose: guessing which of four dresses they meant is recoverable in
+    three words, and stopping to ask is not free.
+    """
+
+    if descriptor.group is not None:
+        wanted = _normalized(descriptor.group)
+        named = [
+            occurrence
+            for occurrence in occurrences
+            if _normalized(occurrence.group) == wanted
+        ]
+        # A heading this showing does not know falls through to the default
+        # below rather than narrowing to nothing. The shopper's word for a
+        # group is not always the word the search was asked for -- "frocks"
+        # over a group headed "dresses" -- and leaving it unnarrowed would
+        # answer a clearer reference with a question than a vaguer one.
+        if named:
+            return named
+    groups = {occurrence.group_index for occurrence in occurrences}
+    if len(groups) <= 1:
+        return occurrences
+    first = min(groups)
+    return [
+        occurrence for occurrence in occurrences if occurrence.group_index == first
+    ]
 
 
 def _corroboration_mismatch(
@@ -518,10 +665,8 @@ def _matches_descriptor(
         return False
     if descriptor.ordinal is not None and match.position != descriptor.ordinal:
         return False
-    if descriptor.attributes and not _attributes_agree(
-        match.product, descriptor.attributes
-    ):
-        return False
+    if descriptor.attributes:
+        return _attributes_agree(match.product, descriptor.attributes)
     return True
 
 
@@ -563,16 +708,21 @@ def _attributes_agree(product: Any, wanted: dict[str, str]) -> bool:
 def _product_occurrences(rows) -> list[ProductReferenceMatch]:
     occurrences = []
     for event, turn in rows:
-        for position, product in _event_products(event.payload_json):
-            occurrences.append(
-                ProductReferenceMatch(
-                    product=product,
-                    candidate_set_id=event.event_id,
-                    turn_sequence=turn.sequence,
-                    position=position,
-                    catalog_revision=turn.catalog_revision,
+        for group_index, (heading, products) in enumerate(
+            _event_groups(event.payload_json)
+        ):
+            for position, product in products:
+                occurrences.append(
+                    ProductReferenceMatch(
+                        product=product,
+                        candidate_set_id=event.event_id,
+                        turn_sequence=turn.sequence,
+                        position=position,
+                        group=heading,
+                        group_index=group_index,
+                        catalog_revision=turn.catalog_revision,
+                    )
                 )
-            )
     return occurrences
 
 
@@ -623,43 +773,115 @@ def _newest_reference_sets_within_budget(
 
 
 def _compact_products(payload_json: str) -> list[dict[str, Any]]:
+    """Every product of one showing, each naming its group and its number.
+
+    The number restarts under each heading, so a position without its group
+    names one product per group. Flattened without the heading, a showing of
+    dresses and shoes offered two first ones and "the first one" resolved to
+    neither.
+    """
+
     products = []
-    for position, product in _event_products(payload_json):
-        compact = {
-            "ref": product["product_id"],
-            "name": product["display_name"],
-            "position": position,
-        }
-        category = product.get("category")
-        if isinstance(category, str) and category.strip():
-            compact["category"] = category
-        # The sizes this product is sold in, so a later turn can tell which of
-        # the things on screen the shopper's "in a 2" could even mean. Whether
-        # a product comes in a 2 is a catalog fact; which one they meant is
-        # not, and only the first belongs in this record.
-        sizes = (product.get("attributes") or {}).get("sizes")
-        if isinstance(sizes, list):
-            kept = [str(value).strip() for value in sizes if str(value).strip()]
-            if kept:
-                compact["sizes"] = kept
-        products.append(compact)
+    for heading, numbered in _event_groups(payload_json):
+        for position, product in numbered:
+            compact = {
+                "ref": product["product_id"],
+                "name": product["display_name"],
+                "position": position,
+            }
+            if heading:
+                compact["group"] = heading
+            category = product.get("category")
+            if isinstance(category, str) and category.strip():
+                compact["category"] = category
+            # The sizes this product is sold in, so a later turn can tell which
+            # of the things on screen the shopper's "in a 2" could even mean.
+            # Whether a product comes in a 2 is a catalog fact; which one they
+            # meant is not, and only the first belongs in this record.
+            sizes = (product.get("attributes") or {}).get("sizes")
+            if isinstance(sizes, list):
+                kept = [str(value).strip() for value in sizes if str(value).strip()]
+                if kept:
+                    compact["sizes"] = kept
+            products.append(compact)
     return products
 
 
-def _event_products(payload_json: str) -> list[tuple[int, dict[str, Any]]]:
+def _event_groups(payload_json: str) -> list[tuple[str, list[tuple[int, dict[str, Any]]]]]:
+    """Each group the shopper was shown, with its heading and its products.
+
+    Two shapes of payload, because conversations already written keep theirs.
+    Groups are what is written now. A flat `products` list is what came before,
+    and it reads back as a single unheaded group -- which is honest: the turn
+    did show those products in that order, and nothing recorded where one kind
+    ended and the next began.
+    """
+
     try:
         payload = json.loads(payload_json)
     except (TypeError, ValueError):
         return []
-    raw_products = payload.get("products") if isinstance(payload, dict) else None
+    if not isinstance(payload, dict):
+        return []
+    raw_groups = payload.get("groups")
+    if isinstance(raw_groups, list):
+        groups = []
+        for group in raw_groups:
+            if not isinstance(group, dict):
+                continue
+            products = _entry_products(group.get("products"))
+            if products:
+                groups.append((str(group.get("heading") or ""), products))
+        return groups
+    products = _entry_products(payload.get("products"))
+    return [("", products)] if products else []
+
+
+def _event_products(payload_json: str) -> list[tuple[int, dict[str, Any]]]:
+    """Every recorded product with its number, the groups flattened away.
+
+    For the readers that want the turn's products and not its layout.
+    """
+
+    return [
+        numbered
+        for _heading, products in _event_groups(payload_json)
+        for numbered in products
+    ]
+
+
+def _entry_products(raw_products: Any) -> list[tuple[int, dict[str, Any]]]:
+    """One recorded list of products, each with the place it was shown in.
+
+    Three shapes of entry, because conversations already written keep theirs.
+    The product nested under its own key is what is written now. Before that it
+    was the product itself with the position stamped into it, and before that
+    the product alone. The two older shapes are read by taking the entry as the
+    product and lifting the position off it, which is also what keeps a product
+    recorded the old way from coming back out with a stray field on it.
+    """
+
     if not isinstance(raw_products, list):
         return []
 
     products: list[tuple[int, dict[str, Any]]] = []
-    for position, product in enumerate(raw_products, start=1):
+    for counted, entry in enumerate(raw_products, start=1):
+        if not isinstance(entry, dict):
+            continue
+        nested = entry.get(_STORED_PRODUCT_KEY)
+        if isinstance(nested, dict):
+            product, position = dict(nested), entry.get(_SCREEN_POSITION_KEY)
+        else:
+            product = dict(entry)
+            position = product.pop(_SCREEN_POSITION_KEY, None)
         if not _is_referenceable_product(product):
             continue
-        products.append((position, dict(product)))
+        # Recorded before the list was filtered, so it is the number the shopper
+        # was shown. Counting here is the fallback for a conversation written
+        # before the number was kept at all.
+        products.append(
+            (position if isinstance(position, int) and position > 0 else counted, product)
+        )
     return products
 
 

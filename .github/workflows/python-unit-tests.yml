@@ -48,24 +48,23 @@ jobs:
         run: python -m pip install ruff
 
       # Repo-wide ruff.toml exists, but the codebase has pre-existing debt
-      # (hundreds of findings) that this PR does not take on. Scoping to
-      # files changed on this branch enforces the convention on new code
+      # (hundreds of findings) that a PR does not take on. Scoping to the
+      # lines changed on this branch enforces the convention on new code
       # without turning every unrelated PR red until that debt is paid down.
-      - name: Determine changed Python files
-        id: changed
-        run: |
-          base="${{ github.event.pull_request.base.sha }}"
-          files=$(git diff --name-only --diff-filter=ACMR "$base"...HEAD -- '*.py' | tr '\n' ' ')
-          echo "files=$files" >> "$GITHUB_OUTPUT"
-
+      #
+      # Scoped to lines rather than files because a branch that moves code
+      # changes every line of its destination: one module split into seven
+      # arrived carrying 156 findings in code it had only relocated.
+      #
       # ruff format --check is intentionally not gated yet: the existing
       # codebase has hundreds of formatting deltas, and reformatting a file
       # incidentally touched by an unrelated change produces a diff that
       # dwarfs and obscures that change. Formatting adoption should be its
       # own dedicated pass.
-      - name: Run ruff check on changed files
-        if: steps.changed.outputs.files != ''
-        run: ruff check ${{ steps.changed.outputs.files }}
+      - name: Run ruff on changed lines
+        run: |
+          python scripts/lint_changed_lines.py \
+            "${{ github.event.pull_request.base.sha }}"
 
       - name: Check AGENTS.md config-field references
         run: python scripts/check_agents_md_config_refs.py

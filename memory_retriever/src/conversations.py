@@ -132,6 +132,9 @@ class TurnReplayOutput(BaseModel):
     retrieved: dict[str, str]
     agent_diagnostics: dict[str, Any]
     selected_skill_names: list[str] = Field(default_factory=list, max_length=5)
+    #: How the products divide into the groups the shopper saw. Optional, so a
+    #: turn finalized by an older runtime still records its products.
+    product_groups: list[dict[str, Any]] = Field(default_factory=list, max_length=16)
 
 
 class TurnFinalizeRequest(BaseModel):
@@ -726,6 +729,9 @@ def _finalize_turn(
         db,
         turn,
         request.output.product_results if request.output is not None else [],
+        product_groups=(
+            request.output.product_groups if request.output is not None else []
+        ),
         created_at=now,
     )
     db.flush()

@@ -1748,18 +1748,78 @@ def _executed_search(ctx: SearchContext, attempt: _Attempt) -> StepResult:
             result.ok,
             fallback_attempted=execution.fallback_attempted,
         )
-        if result.ok and result.products:
-            ctx.scope.product_evidence.add(result.products)
-            _append_product_results(ctx.state, result.products)
-            for product in result.products:
-                if product.image_url:
-                    ctx.scope.retrieved[product.display_name] = product.image_url
     if not result.ok:
         return result.error.message if result.error else "Catalog search failed."
 
     attempt.execution = execution
     attempt.result = result
     return None
+
+
+def _published_in_plan_order(
+    ctx: SearchContext, attempts: list[_Attempt]
+) -> None:
+    """Record what was found in the order the roles were asked for.
+
+    This used to run inside each retrieval, so the products reached the shopper
+    in whatever order the scopes happened to finish. Retrieval fans out across
+    a thread pool, so that order is not stable: the same request for a sweater
+    and boots arrived grouped on three runs and interleaved on a fourth.
+
+    Only the shopper's screen was affected -- the evidence the model reads has
+    always been rendered from `attempts`, in plan order, as `SCOPE 1`,
+    `SCOPE 2`. So the model described products in one order while the pictures
+    beside its words sat in another, and "the first one" meant two different
+    garments depending on which the shopper counted. Publishing here, from the
+    same list the renderer uses, is what makes the two agree.
+
+    Each attempt is also one group on that screen: the shopper asked for shoes
+    and a bag, and the scope that answered for the shoes is the shoes. That
+    boundary is recorded here, where it is already in hand, because the only
+    other way to recover it later is to compare category strings between
+    products and guess -- and two scopes can legitimately answer out of the
+    same category.
+    """
+
+    with ctx.scope.catalog_lock:
+        for attempt in attempts:
+            result = attempt.result
+            if result is None or not result.ok or not result.products:
+                continue
+            ctx.scope.product_evidence.add(result.products)
+            _append_product_results(ctx.state, result.products)
+            _record_the_group_this_scope_showed(ctx.state, attempt, result.products)
+            for product in result.products:
+                if product.image_url:
+                    ctx.scope.retrieved[product.display_name] = product.image_url
+
+
+def _record_the_group_this_scope_showed(
+    state: Any, attempt: _Attempt, products: list[Any]
+) -> None:
+    """Note the heading and the products for one scope's showing.
+
+    The heading is the word the search was asked for, which is the word the
+    shopper used where they named it. Products are held by id: they are stored
+    once in the turn's results, and a group that copied them would be a second
+    place for the same product to be, free to disagree with the first.
+    """
+
+    heading = str(attempt.requested_product_type or "").strip()
+    product_ids = [
+        str(product.product_id)
+        for product in products
+        if getattr(product, "product_id", None)
+    ]
+    if not product_ids:
+        return
+    # The scope's taxonomy went here too, on the reasoning that a heading
+    # varies across turns -- "bag", "bags", "tote bag" -- while the catalog
+    # values do not, so matching a group to a later one would want it. Nothing
+    # matches groups across turns yet. It was computed every search and sent
+    # to the record on every turn, which dropped it on arrival. Added back
+    # where something reads it.
+    state.product_groups.append({"heading": heading, "product_ids": product_ids})
 
 
 def _rendered_evidence(ctx: SearchContext, attempt: _Attempt) -> StepResult:
@@ -2641,6 +2701,10 @@ def search_catalog(
                 strict=True,
             ):
                 outcomes[index] = outcome
+
+    # After the fan-out and before anything is rendered, so what the shopper
+    # sees is ordered by the plan rather than by which scope won the race.
+    _published_in_plan_order(ctx, attempts)
 
     notices: list[str] = []
     # What the tool established itself, before anything the model volunteered:

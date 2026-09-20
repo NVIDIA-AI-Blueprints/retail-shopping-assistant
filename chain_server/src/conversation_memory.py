@@ -119,6 +119,11 @@ class TurnReplayOutput(_MemoryModel):
     retrieved: dict[str, str]
     agent_diagnostics: dict[str, JsonValue]
     selected_skill_names: list[str] = Field(default_factory=list, max_length=5)
+    #: How the products divide into the groups the shopper saw: one entry per
+    #: search scope, naming its heading and the products it showed.
+    product_groups: list[dict[str, JsonValue]] = Field(
+        default_factory=list, max_length=16
+    )
 
 
 class TurnStartResult(_MemoryModel):

@@ -331,6 +331,7 @@ def _cart_lines(cart: Any) -> list[dict[str, Any]]:
 _SUPPORTED_EXPECTATIONS = {
     "any_of",
     "cart",
+    "cart_holds_shown",
     "cart_lines",
     "cart_unchanged",
     "every_product",
@@ -340,6 +341,7 @@ _SUPPORTED_EXPECTATIONS = {
     "product_named",
     "products_max",
     "products_min",
+    "products_new_since",
     "products_within",
     "reply_asks",
     "reply_must_not_say",
@@ -353,6 +355,7 @@ def check_turn(
     expect: Mapping[str, Any],
     turn: TurnResult,
     previous_cart: Sequence[Mapping[str, Any]],
+    earlier_turns: Sequence[TurnResult] = (),
 ) -> list[Check]:
     """Every assertion answered from state, never from the reply's wording."""
 
@@ -360,6 +363,77 @@ def check_turn(
 
     def record(name: str, ok: bool, detail: str = "") -> None:
         checks.append(Check(name, "pass" if ok else "fail", detail))
+
+    if "cart_holds_shown" in expect:
+        # What an ordinal resolved to, which nothing else here asserts. The
+        # only ordinal add in the suite is checked by counting cart lines,
+        # because a script cannot name the product: "add the second one" points
+        # at whatever retrieval ranked second that run.
+        #
+        # The run knows, though. The turn that showed them recorded them in the
+        # order the shopper saw, so the product is looked up there rather than
+        # pinned here -- which is the difference between asserting that a
+        # reference resolved and asserting that something reached the cart.
+        wanted = expect["cart_holds_shown"] or {}
+        shown_on = int(wanted.get("turn") or 0)
+        position = int(wanted.get("position") or 0)
+        # Numbered from one under each heading, so a number alone names one
+        # product per group. Read off the product's own recorded group and
+        # position rather than counted along the list, which is the same
+        # arithmetic the shopper is not doing.
+        group = str(wanted.get("group") or "")
+        showing = next(
+            (earlier.products for earlier in earlier_turns if earlier.index == shown_on),
+            [],
+        )
+        expected_name = next(
+            (
+                str(product.get("display_name") or "")
+                for product in showing
+                if int(product.get("position") or 0) == position
+                and (not group or str(product.get("group") or "") == group)
+            ),
+            "",
+        )
+        in_cart = [str(line.get("item") or "") for line in turn.cart]
+        record(
+            "cart_holds_shown",
+            bool(expected_name) and expected_name in in_cart,
+            f"turn {shown_on} {group + ' ' if group else ''}position {position} was "
+            f"{expected_name or '(nothing shown there)'}, cart holds {in_cart}",
+        )
+
+    if "products_new_since" in expect:
+        # Whether "show me more" moved. A search repeated with the same query
+        # and the same filters returns the same ranked products, so a turn
+        # asking for more can show four the shopper has already seen and read,
+        # in a transcript, as an ordinary turn that showed four products.
+        #
+        # Compared by product_id rather than name, because the catalog gives
+        # two products the same display name and a name comparison would call
+        # a genuinely new product a repeat.
+        wanted = expect["products_new_since"] or {}
+        shown_on = int(wanted.get("turn") or 0)
+        earlier_ids = {
+            str(product.get("product_id") or "")
+            for earlier in earlier_turns
+            if earlier.index == shown_on
+            for product in earlier.products
+            if product.get("product_id")
+        }
+        now_ids = {
+            str(product.get("product_id") or "")
+            for product in turn.products
+            if product.get("product_id")
+        }
+        repeated = now_ids & earlier_ids
+        record(
+            "products_new_since",
+            bool(now_ids) and not repeated,
+            f"{len(repeated)} of {len(now_ids)} already shown on turn {shown_on}"
+            if now_ids
+            else "no products shown",
+        )
 
     if "any_of" in expect:
         # A turn with more than one right answer. "Add the black one in a 2"
@@ -370,7 +444,8 @@ def check_turn(
         # passing is the turn passing.
         branches = expect["any_of"] or []
         outcomes = [
-            check_turn(branch, turn, previous_cart) for branch in branches
+            check_turn(branch, turn, previous_cart, earlier_turns)
+            for branch in branches
         ]
         passed = [
             index
@@ -656,7 +731,7 @@ def run_scenario(
             repeated=answered.get("repeated") or {},
         )
         turn.checks = [
-            *check_turn(step.get("expect") or {}, turn, previous_cart),
+            *check_turn(step.get("expect") or {}, turn, previous_cart, turns),
             *_the_turn_reached_an_end(turn),
         ]
         previous_cart = turn.cart

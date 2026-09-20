@@ -2270,7 +2270,10 @@ class DeepAgentsRuntime:
         ):
             """Change one cart line: its quantity, its size, or both. One call
             moves the line, so never add a size and remove a line to change
-            one. Requires CART_LINE_ID from get_cart_tool.
+            one. Moving replaces: the line stops holding the size it held. A
+            size the shopper wants as well as that one is a second line, so
+            that is add_cart_items_tool and not this.
+            Requires CART_LINE_ID from get_cart_tool.
             """
 
             return normalize_tool_result(

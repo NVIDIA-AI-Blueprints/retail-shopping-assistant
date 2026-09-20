@@ -19,6 +19,7 @@ what to preserve and what to change, or the repair loops.
 from __future__ import annotations
 
 import json
+import logging
 import time
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
@@ -135,6 +136,8 @@ _NO_STAND_IN = (
     "it. Offering to look for a different kind of piece is fine if the shopper "
     "is asked first."
 )
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -354,6 +357,28 @@ def _rejected(
     if attempt.repair is not None:
         attempt.repair.last_rejected_scope = _scope_as_sent(attempt)
     return result
+
+
+#: Grep for this after a run. It must not appear.
+RETIRED_GATE = "retired search gate"
+
+
+def _retired_gate_reached(gate: str, detail: str) -> None:
+    """Note a condition we used to turn the search back for, and carry on.
+
+    Several gates here corrected the model and then told it, at length, how to
+    re-issue the call. None of them fired across 14,150 recorded turns: the
+    repair instructions the model does receive are followed, so the gates that
+    policed the repair had nothing to catch. Their handling is gone.
+
+    The question each asked is kept, because "has not happened yet" is weaker
+    evidence than "cannot happen". If one of these is ever logged, the model
+    has done something no longer corrected, and the handling should come back
+    from history rather than be written again from memory -- the wording of
+    those repair instructions was tuned against real failures.
+    """
+
+    logger.warning("%s reached: %s | %s", RETIRED_GATE, gate, detail)
 
 
 def _scope_as_sent(attempt: _Attempt) -> str:
@@ -924,14 +949,9 @@ def _reviewed_provenance(ctx: SearchContext, attempt: _Attempt) -> StepResult:
         and normalized_advertised_constraints
         != attempt.repair.pending_taxonomy_constraints
     ):
-        return _rejected(
-            attempt,
-            SearchRejection.REPAIR_CHANGED_CONSTRAINTS,
-            SEARCH_VALIDATION_ERROR_PREFIX
-            + "A taxonomy repair must preserve previously validated "
-            "advertised required_constraints exactly. Change only "
-            "taxonomy or an explicitly identified "
-            "ungrounded product scope.",
+        _retired_gate_reached(
+            "repair_changed_constraints",
+            "a taxonomy repair altered advertised required_constraints",
         )
     if attempt.repair.pending_taxonomy_constraints is not None:
         attempt.repair.pending_taxonomy_constraints = None
@@ -995,17 +1015,9 @@ def _reviewed_provenance(ctx: SearchContext, attempt: _Attempt) -> StepResult:
         or normalized_constraints
         != pending_constraint_review["required_constraints"]
     ):
-        return _rejected(
-            attempt,
-            SearchRejection.CONSTRAINT_REPAIR_CHANGED_REQUEST,
-            SEARCH_VALIDATION_ERROR_PREFIX
-            + "A constraint-provenance repair must preserve "
-            "requested_product_type, taxonomy, scope_complete, "
-            "search_mode, and all "
-            "advertised required constraints exactly. Change only the "
-            "reviewed unadvertised requirement wording or remove an "
-            "inferred requirement; the soft semantic query may be "
-            "corrected within the preserved product scope.",
+        _retired_gate_reached(
+            "constraint_repair_changed_request",
+            "a constraint-provenance repair altered the preserved request",
         )
     # A role the shopper never named is the model's own composition -- "a top"
     # for someone who asked for an outfit, covering blouses and sweaters

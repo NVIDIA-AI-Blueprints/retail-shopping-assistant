@@ -49,9 +49,12 @@ class SearchRejection(StrEnum):
     CAPABILITIES_SCHEMA_MISMATCH = "capabilities_schema_mismatch"
 
     # Provenance review: what the repair had to preserve, and what it changed.
-    REPAIR_CHANGED_CONSTRAINTS = "repair_changed_constraints"
+    # Two codes that policed the repair itself are gone. They asked whether a
+    # re-issued call kept what it was told to keep, and across 14,150 recorded
+    # turns it always had. `_retired_gate_reached` now logs those conditions
+    # instead of refusing, so a code with nothing to produce it would only be
+    # something to explain.
     TAXONOMY_NOT_ADVERTISED_FOR_SCOPE = "taxonomy_not_advertised_for_scope"
-    CONSTRAINT_REPAIR_CHANGED_REQUEST = "constraint_repair_changed_request"
     SHOPPER_SCOPE_TAXONOMY_MISMATCH = "shopper_scope_taxonomy_mismatch"
     REQUIREMENT_PROVENANCE_UNESTABLISHED = "requirement_provenance_unestablished"
     CONSTRAINT_REVIEW_REQUIRED = "constraint_review_required"

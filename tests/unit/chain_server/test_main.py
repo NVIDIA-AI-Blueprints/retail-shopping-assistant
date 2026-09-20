@@ -8018,7 +8018,11 @@ class TestDeepAgentsRuntimeRefs:
             price=Money(amount=129.0),
         )
 
-        formatted = runtime_mod_support._format_product(product)
+        from chain_server.src import response_format
+
+        formatted = response_format._format_product_record(
+            runtime_mod_support._search_product_record(product)
+        )
 
         assert "PRODUCT_REF: prod_456" in formatted
         assert "Leather Bag" in formatted
@@ -8040,7 +8044,11 @@ class TestDeepAgentsRuntimeRefs:
             attributes={"sole": "rubber", "fastening": "ankle strap"},
         )
 
-        formatted = runtime_mod_support._format_product_details(product)
+        from chain_server.src import response_format
+
+        formatted = response_format._format_product_detail_record(
+            runtime_mod_support._product_detail_record(product)
+        )
 
         assert "PRODUCT_DETAIL_GROUNDING_NOTE" in formatted
         assert "- sole: rubber" in formatted

@@ -28,7 +28,6 @@ class ControlSignal(StrEnum):
     BUDGET_EXHAUSTED = "budget_exhausted"
     UNSUPPORTED_TAXONOMY = "unsupported_taxonomy"
     UNSUPPORTED_CONSTRAINT = "unsupported_constraint"
-    CONSTRAINT_REVIEW = "constraint_review"
 
 
 class SearchRejection(StrEnum):

@@ -34,6 +34,21 @@ from chain_server.src.tool_evidence import (
 )
 from shared.commerce_contracts import Money, ProductDetail, ProductSummary
 
+
+# The shipped module composes these two calls where it needs the text. It
+# used to also carry a wrapper for each, which only these tests called.
+def _rendered_product(product):
+    return response_format._format_product_record(
+        runtime_mod_support._search_product_record(product)
+    )
+
+
+def _rendered_product_details(detail):
+    return response_format._format_product_detail_record(
+        runtime_mod_support._product_detail_record(detail)
+    )
+
+
 # A product record carries the product and nothing else. The attribute-limit
 # note is a fact about the search, so it is said once per result rather than
 # once per hit, and the image URL is not said at all -- the model cannot open
@@ -114,7 +129,7 @@ class _StubToolMessage:
 def test_search_result_text_the_model_reads(
     product: ProductSummary, expected: str
 ) -> None:
-    assert runtime_mod_support._format_product(product) == expected
+    assert _rendered_product(product) == expected
 
 
 @pytest.mark.parametrize(
@@ -184,7 +199,7 @@ def test_product_detail_text_the_model_reads(
 ) -> None:
     expected = f"{response_format._PRODUCT_DETAIL_GROUNDING_NOTE}\n{expected_body}"
 
-    assert runtime_mod_support._format_product_details(detail) == expected
+    assert _rendered_product_details(detail) == expected
 
 
 # --------------------------------------------------------------------------

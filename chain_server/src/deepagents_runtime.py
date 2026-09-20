@@ -193,6 +193,7 @@ from .turn_support import (
     _store_policies_path,
     _system_identification_events,
     _turn_audience_events,
+    _where_a_product_was_already_shown,
     format_most_recent_subject,
 )
 from .vocabulary_judge import CatalogVocabularyJudge
@@ -1997,11 +1998,24 @@ class DeepAgentsRuntime:
                 for product in found.products:
                     if product.image_url:
                         scope.retrieved[product.display_name] = product.image_url
+                # Whether a product was shown is a fact this record holds, so
+                # it is read rather than assumed. This path used to open by
+                # stating none of these had been shown and to instruct the
+                # reply to repeat it. Reached for a product an earlier turn
+                # did show -- a resolvable reference that came here instead --
+                # it told the shopper the assistant had never shown them the
+                # sweater it had shown them first.
+                shown_before = {
+                    product.product_id: _where_a_product_was_already_shown(
+                        state.historical_product_sets, product.product_id
+                    )
+                    for product in found.products
+                }
                 lines = [
-                    f'CATALOG NAME LOOKUP "{name}": not shown earlier in this '
-                    "conversation. The catalog was searched by that name; these "
-                    "are the closest matches in rank order, none previously "
-                    "shown.",
+                    f'CATALOG NAME LOOKUP "{name}": the catalog was searched '
+                    "by that name; these are the closest matches in rank "
+                    "order. Each line records whether you had already shown "
+                    "it, and only what the line says is true.",
                 ]
                 for rank, product in enumerate(found.products, start=1):
                     price = (
@@ -2009,9 +2023,18 @@ class DeepAgentsRuntime:
                         if getattr(product, "price", None)
                         else ""
                     )
+                    seen = shown_before.get(product.product_id)
+                    if seen:
+                        under = f" under {seen['group']}" if seen["group"] else ""
+                        where = (
+                            f" -- SHOWN EARLIER, turn {seen['turn_sequence']} "
+                            f"as #{seen['position']}{under}"
+                        )
+                    else:
+                        where = " -- not shown earlier"
                     lines.append(
                         f"{rank}. {product.display_name}{price} "
-                        f"[PRODUCT_REF {product.product_id}]"
+                        f"[PRODUCT_REF {product.product_id}]{where}"
                     )
                 exact = [
                     product
@@ -2032,8 +2055,13 @@ class DeepAgentsRuntime:
                     lines.append(
                         f"'{match.display_name}' is the product they named, by "
                         "the catalog's own name for it. They have chosen it. "
-                        "Say plainly that it was not among the ones you had "
-                        "shown, then "
+                        + (
+                            "You showed it earlier; do not suggest otherwise. "
+                            "Then "
+                            if shown_before.get(match.product_id)
+                            else "Say plainly that it was not among the ones "
+                            "you had shown, then "
+                        )
                         + (
                             # Only a catalog that says "onesize" settles it.
                             # Silence about sizes is not evidence of having
@@ -2054,12 +2082,19 @@ class DeepAgentsRuntime:
                     )
                 else:
                     lines.append(
-                        "Say plainly that this was not something you had shown. "
-                        "If one of these is the product the shopper named, offer "
-                        "it and ask which size before adding. If none is, say "
-                        "you do not carry that one and name the closest you do "
-                        "-- never present a different product as the one they "
-                        "asked for."
+                        (
+                            "Some of these you have already shown -- the lines "
+                            "above say which. Do not claim otherwise about "
+                            "those. "
+                            if any(shown_before.values())
+                            else "Say plainly that this was not something you "
+                            "had shown. "
+                        )
+                        + "If one of these is the product the shopper named, "
+                        "offer it and ask which size before adding. If none "
+                        "is, say you do not carry that one and name the "
+                        "closest you do -- never present a different product "
+                        "as the one they asked for."
                     )
                 sections.append("\n".join(lines))
             return "\n\n".join(section for section in sections if section)

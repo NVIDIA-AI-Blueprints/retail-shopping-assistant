@@ -7015,12 +7015,21 @@ class TestDeepAgentsRuntimeRefs:
             display_name="The Office A-line Dress",
             price=Money(amount=179.99),
         )
+        # A second product for the other half of this test: one the record
+        # says was already shown, which has to be a different product because
+        # the first lookup establishes the one it finds.
+        wrap = ProductSummary(
+            product_id="prod_wrap",
+            display_name="The Vintage Wrap Dress",
+            price=Money(amount=149.99),
+        )
         plans = []
 
         def fake_execute(plan, url, **kwargs):
             plans.append(plan)
+            wanted = wrap if plan.semantic_queries == [wrap.display_name] else dress
             return SimpleNamespace(
-                result=SearchCatalogResult(ok=True, products=[dress]),
+                result=SearchCatalogResult(ok=True, products=[wanted]),
                 fallback_attempted=False,
                 fallback_used=False,
             )
@@ -7066,19 +7075,32 @@ class TestDeepAgentsRuntimeRefs:
             cart_user_id=222,
             request_id="request-a",
         )
-        runtime._conversation_products = SimpleNamespace(
-            resolve=lambda *_: ResolveConversationProductsResult(
+        def resolve_nothing(_conversation_id, references):
+            """Nothing resolves, answering about what was actually asked.
+
+            The name lookup pairs each unresolved reference with the
+            descriptor that carries its name, so a stub that answered under a
+            fixed reference_id could only ever be asked one question.
+            """
+
+            return ResolveConversationProductsResult(
                 results=[
                     ProductReferenceResolution(
-                        reference_id="dress",
+                        reference_id=(
+                            descriptor["reference_id"]
+                            if isinstance(descriptor, dict)
+                            else descriptor.reference_id
+                        ),
                         status="not_found",
                         matches=[],
                         match_count=0,
                         blocking_field=None,
                     )
+                    for descriptor in references
                 ]
             )
-        )
+
+        runtime._conversation_products = SimpleNamespace(resolve=resolve_nothing)
         state = State(user_id=111, query="add the Office A-line Dress")
         runtime._create_agent(state, identity)
         resolver = {fn.__name__: fn for fn in captured["tools"]}[
@@ -7102,9 +7124,12 @@ class TestDeepAgentsRuntimeRefs:
         assert plans[0].semantic_queries == ["The Office A-line Dress"]
         assert plans[0].hard_filters == {}
 
-        # What comes back is labelled for what it is.
+        # What comes back is labelled for what it is. Per product, because
+        # whether one was shown is now read from the record rather than
+        # assumed from having arrived here -- and this product was not.
         assert "CATALOG NAME LOOKUP" in missed
-        assert "not shown earlier in this conversation" in missed
+        assert "-- not shown earlier" in missed
+        assert "SHOWN EARLIER" not in missed
         assert "The Office A-line Dress" in missed
         assert "prod_dress" in missed
         assert "which size" in missed
@@ -7132,6 +7157,40 @@ class TestDeepAgentsRuntimeRefs:
             )
         )
         assert "not established in this turn" not in response
+
+        # The same lookup, for a product the record says was shown. Reached
+        # whenever an earlier reference did not resolve, this path used to
+        # open by stating none of these had been shown and to instruct the
+        # reply to repeat it -- so a shopper who asked about the first
+        # sweater they had been shown was told it had never been shown.
+        state.historical_product_sets = [
+            {
+                "candidate_set_id": "set-1",
+                "turn_seq": 1,
+                "products": [
+                    {
+                        "ref": "prod_wrap",
+                        "name": "The Vintage Wrap Dress",
+                        "position": 2,
+                        "group": "dresses",
+                    }
+                ],
+            }
+        ]
+        shown = tool_text(
+            resolver(
+                references=[
+                    {
+                        "reference_id": "wrap",
+                        "display_name": "The Vintage Wrap Dress",
+                    }
+                ]
+            )
+        )
+
+        assert "SHOWN EARLIER, turn 1 as #2 under dresses" in shown
+        assert "-- not shown earlier" not in shown
+        assert "not among the ones you had shown" not in shown
 
     def test_a_name_the_catalog_does_not_carry_is_not_substituted(
         self,

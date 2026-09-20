@@ -1558,6 +1558,38 @@ def _same_product_display_name(expected: str, actual: str) -> bool:
     return _normalize_product_name(expected) == _normalize_product_name(actual)
 
 
+def _where_a_product_was_already_shown(
+    historical_product_sets: list[Any] | None,
+    product_id: str,
+) -> dict[str, Any] | None:
+    """Where an earlier turn put this product, if one did.
+
+    Matched on the catalog's id rather than its name, so it answers whether
+    this exact product was on the screen and not whether something like it
+    was. Newest showing first: the place the shopper is most likely counting
+    from is the last one they saw.
+    """
+
+    wanted = str(product_id or "").strip()
+    if not wanted:
+        return None
+    for entry in reversed(list(historical_product_sets or [])):
+        if not isinstance(entry, dict):
+            continue
+        for product in entry.get("products") or []:
+            if not isinstance(product, dict):
+                continue
+            if str(product.get("ref") or "").strip() != wanted:
+                continue
+            return {
+                # The index writes this as turn_seq, not turn_sequence.
+                "turn_sequence": entry.get("turn_seq"),
+                "position": product.get("position"),
+                "group": product.get("group") or "",
+            }
+    return None
+
+
 #: What the catalog carries for a product sold in exactly one size.
 _ONE_SIZE = "onesize"
 

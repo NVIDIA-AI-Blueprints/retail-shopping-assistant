@@ -7,8 +7,6 @@ from typing import Any
 
 import pytest
 import requests
-from pydantic import ValidationError
-
 from chain_server.src.conversation_products import (
     ConversationProductMatch,
     ConversationProductsClient,
@@ -21,6 +19,7 @@ from chain_server.src.conversation_products import (
     format_historical_product_index,
     format_product_resolution,
 )
+from pydantic import ValidationError
 from shared.commerce_contracts import Money, ProductSummary
 
 
@@ -220,13 +219,13 @@ def test_clarification_carries_the_facts_that_tell_candidates_apart() -> None:
     answer was already held -- it just was not handed back.
     """
 
-    from shared.commerce_contracts import Money, ProductSummary
     from chain_server.src.conversation_products import (
         ConversationProductMatch,
         ProductReferenceResolution,
         ResolveConversationProductsResult,
         format_product_resolution,
     )
+    from shared.commerce_contracts import Money, ProductSummary
 
     def _dress(ref: str, name: str, colour: str) -> ProductSummary:
         return ProductSummary(

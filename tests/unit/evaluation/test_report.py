@@ -1,8 +1,7 @@
-from pathlib import Path
 import sys
+from pathlib import Path
 
 import yaml
-
 
 EVAL_ROOT = Path(__file__).resolve().parents[2] / "evaluation"
 sys.path.insert(0, str(EVAL_ROOT))

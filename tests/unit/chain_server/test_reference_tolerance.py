@@ -7,7 +7,6 @@ the shopper was then told the bag was in their cart.
 """
 
 import pytest
-
 from chain_server.src.conversation_products import ProductEvidence
 from chain_server.src.turn_support import ProductSummary
 

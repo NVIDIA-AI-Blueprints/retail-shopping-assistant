@@ -1,15 +1,15 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import logging
+import os
+import sys
+import time
+from typing import Any
+
+import yaml
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
-from typing import List, Dict, Any
-import time
-import os
-import yaml
-import logging
-import sys
-
 from shared.model_config import resolve_model_config, validate_model_config
 
 try:
@@ -19,7 +19,7 @@ except ModuleNotFoundError:
     from .catalog import build_product_detail, load_catalog
     from .retriever import CatalogFilterError, Retriever, RetrieverConfig
 
-# Set up logging 
+# Set up logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -43,7 +43,7 @@ def load_config(base_config_path: str):
         logging.error(f"Base config file not found at {base_config_path}")
         raise FileNotFoundError(f"Base config file not found at {base_config_path}")
 
-    with open(base_config_path, "r") as f:
+    with open(base_config_path) as f:
         config = yaml.safe_load(f)
 
     return config
@@ -117,7 +117,7 @@ capabilities = snapshot.capabilities
 
 
 # Setup Retriever once when app starts
-config = RetrieverConfig(  
+config = RetrieverConfig(
     text_embed_port=data["text_embed_port"],
     image_embed_port=data["image_embed_port"],
     text_model_name=data["text_model_name"],
@@ -187,19 +187,19 @@ def index_is_ready() -> bool:
 class TextQueryRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    text: List[str] = Field(default_factory=list)
-    categories: List[str] = Field(default_factory=list)
-    filters: Dict[str, Any] = Field(default_factory=dict)
+    text: list[str] = Field(default_factory=list)
+    categories: list[str] = Field(default_factory=list)
+    filters: dict[str, Any] = Field(default_factory=dict)
     k: int = Field(default=4, ge=1, le=50)
     candidate_k: int | None = Field(default=None, ge=1)
 
 class ImageQueryRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    text: List[str] = Field(default_factory=list)
+    text: list[str] = Field(default_factory=list)
     image_base64: str = ""
-    categories: List[str] = Field(default_factory=list)
-    filters: Dict[str, Any] = Field(default_factory=dict)
+    categories: list[str] = Field(default_factory=list)
+    filters: dict[str, Any] = Field(default_factory=dict)
     k: int = Field(default=4, ge=1, le=50)
     candidate_k: int | None = Field(default=None, ge=1)
 

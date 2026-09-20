@@ -28,14 +28,18 @@ from chain_server.src.catalog_search import (
     _assumed_audience,
     search_catalog,
 )
-from chain_server.src.tool_evidence import EVIDENCE_KEY
-from chain_server.src.turn_scope import TurnScope
-from chain_server.src.turn_support import (
+from chain_server.src.grounding_evidence import (
     _assumed_audience_line,
-    _audience_assumption_events,
     _customer_safe_search_evidence,
+)
+from chain_server.src.tool_evidence import EVIDENCE_KEY
+from chain_server.src.tool_schemas import (
     _required_constraints_input_model,
     _search_catalog_tool_input_model,
+)
+from chain_server.src.turn_scope import TurnScope
+from chain_server.src.turn_support import (
+    _audience_assumption_events,
     _turn_audience_events,
 )
 from shared.commerce_contracts import (

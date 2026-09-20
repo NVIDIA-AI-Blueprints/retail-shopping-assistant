@@ -5,20 +5,19 @@
 
 from __future__ import annotations
 
+import json
+import os
+from collections.abc import Mapping
 from dataclasses import dataclass
 from hashlib import sha256
-import json
 from math import isfinite
-import os
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Literal, Mapping
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
 import yaml
-
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from shared.commerce_contracts import CatalogCapabilities, Money, ProductDetail
-
 
 SEARCH_DOCUMENT_TEMPLATE_VERSION = "1"
 
@@ -51,7 +50,7 @@ class CatalogTaxonomySchema(BaseModel):
     fields: list[str] = Field(..., min_length=1, max_length=2)
 
     @model_validator(mode="after")
-    def unique_fields(self) -> "CatalogTaxonomySchema":
+    def unique_fields(self) -> CatalogTaxonomySchema:
         if len(set(self.fields)) != len(self.fields):
             raise ValueError("taxonomy fields must be unique")
         return self
@@ -85,7 +84,7 @@ class CatalogFieldSchema(BaseModel):
     value_meanings: dict[str, str] = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def unique_uses(self) -> "CatalogFieldSchema":
+    def unique_uses(self) -> CatalogFieldSchema:
         self.uses = list(dict.fromkeys(self.uses))
         if "filter" in self.uses and self.type == "text":
             raise ValueError(
@@ -110,7 +109,7 @@ class CatalogSchema(BaseModel):
     fields: dict[str, CatalogFieldSchema] = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def declared_taxonomy_fields(self) -> "CatalogSchema":
+    def declared_taxonomy_fields(self) -> CatalogSchema:
         missing = [name for name in self.taxonomy.fields if name not in self.fields]
         if missing:
             raise ValueError(

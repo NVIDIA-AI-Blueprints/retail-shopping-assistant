@@ -17,7 +17,6 @@ from pydantic import (
     field_validator,
 )
 
-
 _DEFAULT_TIMEOUT_SECONDS = 10.0
 _MANAGED_PROFILE_COUNT = 5
 

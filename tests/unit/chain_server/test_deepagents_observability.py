@@ -11,34 +11,36 @@ import sys
 from types import ModuleType, SimpleNamespace
 from typing import Any
 
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 import pytest
-
 from chain_server.src.agenttypes import State
-from chain_server.src.tool_evidence import SearchEvidence
-from .tool_evidence_fixtures import (
-    detail_artifact,
-    product,
-    product_detail,
-    search_evidence,
-)
 from chain_server.src.deepagents_runtime import (
     DeepAgentsRuntime,
-)
-from chain_server.src.turn_support import (
-    _REJECTED_CATALOG_SEARCH_RESPONSE,
-    RequestIdentity,
-    _collect_agent_diagnostics,
-    _rejected_catalog_search_response,
 )
 from chain_server.src.skill_activation import (
     SKILL_ACTIVATION_COMPLETE,
     SKILL_ACTIVATION_REQUIRED,
     SKILL_ACTIVATION_TOOL_NAME,
 )
+from chain_server.src.tool_evidence import SearchEvidence
 from chain_server.src.tool_loop_control import (
     SEARCH_VALIDATION_ERROR_PREFIX,
     SERVER_RESTORED_TOOL_CALL_FIELDS,
+)
+from chain_server.src.turn_diagnostics import (
+    _REJECTED_CATALOG_SEARCH_RESPONSE,
+    _collect_agent_diagnostics,
+    _rejected_catalog_search_response,
+)
+from chain_server.src.turn_support import (
+    RequestIdentity,
+)
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
+from .tool_evidence_fixtures import (
+    detail_artifact,
+    product,
+    product_detail,
+    search_evidence,
 )
 
 
@@ -363,9 +365,9 @@ def test_tool_trace_distinguishes_rejected_error_and_pending_calls() -> None:
                     "args": {"semantic_query": "another category"},
                 },
                 {
-                    "id": "failed-skill",
-                    "name": "read_file",
-                    "args": {"file_path": "/shopper/missing/SKILL.md"},
+                    "id": "failed-availability",
+                    "name": "check_product_availability_tool",
+                    "args": {"product_ref": "prod-2"},
                 },
                 {
                     "id": "pending-detail",
@@ -378,9 +380,13 @@ def test_tool_trace_distinguishes_rejected_error_and_pending_calls() -> None:
             content="STOP_TOOL_USE: Catalog search limit reached for this turn.",
             tool_call_id="limited-search",
         ),
+        # A tool that failed says so in its status. The reader used to also
+        # sniff `read_file` content for the word "error", because that tool
+        # reported failure in prose; it is no longer callable.
         ToolMessage(
-            content="Error reading file: file not found",
-            tool_call_id="failed-skill",
+            content="Error: that product could not be read.",
+            tool_call_id="failed-availability",
+            status="error",
         ),
     ]
 
@@ -1316,8 +1322,9 @@ class TestRelayInstrumentation:
         }
 
     def _instrument(self, kwargs, enabled=True):
-        from chain_server.src.deepagents_runtime import _relay_instrumented
         from types import SimpleNamespace
+
+        from chain_server.src.deepagents_runtime import _relay_instrumented
 
         return _relay_instrumented(kwargs, SimpleNamespace(relay_enabled=enabled))
 
@@ -1352,7 +1359,6 @@ class TestRelayInstrumentation:
         the skills filesystem. A release that dropped one would remove a gate
         silently, which is worse than having no tracing."""
 
-        from chain_server.src import deepagents_runtime as runtime_mod
 
         module = ModuleType("nemo_relay.integrations.deepagents")
         module.add_nemo_relay_integration = lambda kwargs, **_: {
@@ -1431,6 +1437,7 @@ class TestRelayTurnScope:
 
     def _scope(self, monkeypatch, *, enabled=True, opened=None):
         from types import SimpleNamespace
+
         from chain_server.src.deepagents_runtime import _relay_turn_scope
 
         return _relay_turn_scope(SimpleNamespace(relay_enabled=enabled), "convo-7")
@@ -1501,6 +1508,7 @@ class TestRelayExport:
 
     def _configure(self, monkeypatch, *, enabled=True, endpoint="http://collector:4318"):
         from types import SimpleNamespace
+
         from chain_server.src.deepagents_runtime import configure_relay_tracing
 
         if endpoint is None:

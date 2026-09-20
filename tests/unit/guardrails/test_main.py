@@ -20,7 +20,6 @@ from typing import Any, Dict, Iterator, List
 import pytest
 from fastapi.testclient import TestClient
 
-
 REPO_ROOT = Path(__file__).resolve().parents[3]
 GUARDRAILS_SRC = str(REPO_ROOT / "guardrails" / "src")
 

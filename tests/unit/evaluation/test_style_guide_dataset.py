@@ -3,7 +3,6 @@ from pathlib import Path
 
 import yaml
 
-
 REPO_ROOT = Path(__file__).resolve().parents[3]
 EVAL_ROOT = REPO_ROOT / "tests" / "evaluation"
 STYLE_GUIDE_PATH = EVAL_ROOT / "datasets" / "style_guide" / "scenarios.yaml"

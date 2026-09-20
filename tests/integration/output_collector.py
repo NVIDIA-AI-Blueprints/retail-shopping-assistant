@@ -1,8 +1,9 @@
 import argparse
-import yaml
-import requests
-import time
 import os
+import time
+
+import requests
+import yaml
 
 parser = argparse.ArgumentParser(
                     prog='ConvTest',

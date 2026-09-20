@@ -1,21 +1,23 @@
-from pathlib import Path
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import yaml
 
-
 EVAL_ROOT = Path(__file__).resolve().parents[2] / "evaluation"
 sys.path.insert(0, str(EVAL_ROOT))
 
-from src.config import ConfigError, ModelRuntime, load_eval_config
-from src.judge import (
+# The evaluation package is not installed, so it is only importable once the
+# line above puts it on the path. These two have to follow it.
+from src.judge import (  # noqa: E402
     OpenAICompatibleJudge,
     _judge_scenario_payload,
     _parse_model_mapping,
     _resolve_run_path,
     judge_run,
 )
+
+from src.config import ConfigError, ModelRuntime, load_eval_config  # noqa: E402
 
 
 class FakeJudge:

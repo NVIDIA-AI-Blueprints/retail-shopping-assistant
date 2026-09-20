@@ -41,12 +41,33 @@ from .catalog_request import (
     _filter_values,
     build_catalog_search_plan,
 )
+from .catalog_vocabulary import (
+    _advertised_scope_match,
+    _advertised_taxonomy_scope_issue,
+    _advertised_taxonomy_value,
+    _agent_selected_scope_is_advertised,
+    _catalog_execution_taxonomy_status,
+    _duplicates_unavailable_product_type,
+    _exact_taxonomy_issue,
+    _normalize_product_text,
+    _product_scope_key,
+    _products_with_subcategory_coverage,
+    _same_product_scope,
+)
 from .control_signals import (
     NOT_CARRIED_KEY,
     REJECTIONS_KEY,
     ControlSignal,
     SearchRejection,
     control,
+)
+from .lexical_provenance import (
+    _resolved_agent_selected_product_type,
+    _shopper_stated_product_scope,
+    _shopper_stated_requirement,
+)
+from .model_usage import (
+    _record_catalog_model_usage,
 )
 from .response_format import (
     SEARCH_RESULT_ATTRIBUTE_LIMIT_NOTE,
@@ -70,6 +91,9 @@ from .tool_loop_control import (
     CONSTRAINT_REVIEW_PREFIX,
     SEARCH_VALIDATION_ERROR_PREFIX,
 )
+from .tool_schemas import (
+    SearchCatalogToolArguments,
+)
 from .turn_scope import CatalogRepairState, TurnScope
 from .turn_support import (
     _ONE_SIZE,
@@ -78,31 +102,15 @@ from .turn_support import (
     _SEARCH_RESULT_GROUNDING_NOTE,
     _SEARCH_SCOPE_COMPLETE_NOTE,
     _UNSUPPORTED_SEARCH_MODE_MESSAGE,
-    SearchCatalogToolArguments,
-    _advertised_scope_match,
     _advertised_subcategories_for_selection,
-    _advertised_taxonomy_scope_issue,
-    _advertised_taxonomy_value,
-    _agent_selected_scope_is_advertised,
     _append_product_results,
-    _catalog_execution_taxonomy_status,
     _catalog_search_scope,
-    _duplicates_unavailable_product_type,
-    _exact_taxonomy_issue,
     _generic_shopper_guidance,
     _multi_subcategory_candidate_limit,
-    _normalize_product_text,
     _normalized_scope_value,
-    _product_scope_key,
-    _products_with_subcategory_coverage,
-    _record_catalog_model_usage,
-    _resolved_agent_selected_product_type,
     _safe_shopper_guidance,
-    _same_product_scope,
     _search_product_record,
     _selected_advertised_subcategories,
-    _shopper_stated_product_scope,
-    _shopper_stated_requirement,
     _taxonomy_hard_constraints,
     _tool_search_mode,
     _unsupported_requirement_message,
@@ -2269,38 +2277,6 @@ def _advertised_subcategories(capabilities: CatalogCapabilities) -> frozenset[st
     )
 
 
-def _scope_members(
-    taxonomy: BaseModel | dict[str, Any],
-    capabilities: CatalogCapabilities,
-) -> tuple[list[str], bool]:
-    """What this scope will actually search, and whether it named a whole category.
-
-    A scope may name its subcategories or it may name only a category, and the
-    second is a legal text search across everything in it. Judging the first
-    while ignoring the second left the parent category open as an escape: told
-    jeans are not skirts, the model sent `category: [apparel], subcategory: []`
-    and ranked "dark blue jeans" against all of apparel, and two blouses and two
-    dresses came back as the shopper's dark bottom.
-
-    So a category-only scope is judged on the members it is about to search.
-    That also mends the opposite case rather than only blocking this one: asked
-    for pumps across all of footwear, the members that are pumps are the heels,
-    and the scope narrows to them instead of returning boots and sandals too.
-    """
-
-    payload = taxonomy.model_dump() if isinstance(taxonomy, BaseModel) else dict(taxonomy or {})
-    selected = list(dict.fromkeys(payload.get("subcategory") or []))
-    if selected:
-        return selected, False
-
-    members: list[str] = []
-    for name in dict.fromkeys(payload.get("category") or []):
-        category = capabilities.taxonomy.categories.get(name)
-        if category:
-            members.extend(category.subcategories)
-    return list(dict.fromkeys(members)), True
-
-
 _PLAN_STEPS = (
     # First, because every step after it is entitled to a request this catalog
     # can actually answer. A word it cannot filter on is set aside here rather
@@ -2443,31 +2419,6 @@ def _one_scope_per_category(ctx: SearchContext, scopes: list[Any]) -> list[Any]:
             )
         fanned.extend(expanded or [raw])
     return fanned
-
-
-def _umbrella_candidates(
-    payload: dict[str, Any],
-    capabilities: CatalogCapabilities,
-) -> tuple[str, ...]:
-    """The advertised subcategories a word this catalog lacks might cover.
-
-    Narrowed to the categories the scope named, so "shoes" under `footwear` is
-    asked about footwear rather than about every subcategory in the shop. A
-    scope naming no category has nothing to narrow by and is asked about all
-    of them, which is the honest reading of a request that named none.
-    """
-
-    named = [
-        name
-        for name in dict.fromkeys(payload.get("category") or [])
-        if name in capabilities.taxonomy.categories
-    ]
-    if named:
-        members: list[str] = []
-        for name in named:
-            members.extend(capabilities.taxonomy.categories[name].subcategories)
-        return tuple(dict.fromkeys(members))
-    return tuple(sorted(_advertised_subcategories(capabilities)))
 
 
 def _colour_field(ctx: SearchContext) -> str:

@@ -5,17 +5,16 @@ from __future__ import annotations
 
 import pytest
 from pydantic import ValidationError
-
 from shared.commerce_contracts import (
     AddCartItemInput,
+    Cart,
+    CartLine,
     CatalogCapabilities,
     CatalogCoverage,
     CatalogFieldCapability,
     CatalogTaxonomyCapabilities,
     CatalogTaxonomyCategory,
     CatalogValueCapability,
-    Cart,
-    CartLine,
     CheckProductAvailabilityInput,
     CheckProductAvailabilityResult,
     Money,

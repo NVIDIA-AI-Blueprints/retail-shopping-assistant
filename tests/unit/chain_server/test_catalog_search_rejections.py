@@ -32,8 +32,8 @@ from chain_server.src.control_signals import (
     REJECTIONS_KEY,
     SearchRejection,
 )
+from chain_server.src.tool_schemas import _search_catalog_tool_input_model
 from chain_server.src.turn_scope import TurnScope
-from chain_server.src.turn_support import _search_catalog_tool_input_model
 from chain_server.src.vocabulary_judge import VocabularyVerdict
 from shared.commerce_contracts import (
     CatalogCapabilities,

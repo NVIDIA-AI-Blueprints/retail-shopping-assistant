@@ -158,9 +158,9 @@ async def test_a_genuinely_cancelled_task_still_frees_its_checkpoint() -> None:
     """
 
     import asyncio
+    from types import SimpleNamespace
 
     from chain_server.src.deepagents_runtime import DeepAgentsRuntime
-    from types import SimpleNamespace
 
     runtime = DeepAgentsRuntime.__new__(DeepAgentsRuntime)
     runtime._checkpointer = _CountingCheckpointer()

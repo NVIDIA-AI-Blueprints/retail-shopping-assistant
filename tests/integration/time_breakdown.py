@@ -1,8 +1,9 @@
-import os
-import yaml
 import math
-import numpy as np
+import os
+
 import matplotlib.pyplot as plt
+import numpy as np
+import yaml
 from matplotlib.patches import Patch
 
 CONVERSATION_DIRECTORY = os.environ["TEST_PATH"]

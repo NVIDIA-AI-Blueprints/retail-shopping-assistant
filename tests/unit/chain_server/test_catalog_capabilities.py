@@ -7,7 +7,6 @@ from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 
 import requests
-
 from chain_server.src.catalog_capabilities import (
     CatalogCapabilitiesClient,
     format_catalog_capabilities_for_prompt,

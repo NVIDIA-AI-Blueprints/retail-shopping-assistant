@@ -4,7 +4,6 @@ import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RESPONSE_QUALITY_PATH = REPO_ROOT / "tests" / "integration" / "response_quality.py"
 

@@ -30,18 +30,6 @@ def _current_turn_messages(messages: list[Any], request_id: str) -> list[Any]:
             start = index + 1
     return [] if start is None else messages[start:]
 
-def _prior_turn_messages(messages: list[Any], request_id: str) -> list[Any]:
-    """Return messages before the current server-owned request marker."""
-
-    marker = f"REQUEST ID: {request_id}"
-    for index in range(len(messages) - 1, -1, -1):
-        message = messages[index]
-        if _message_type(message) != "human":
-            continue
-        if marker in _content_to_text(_value(message, "content")):
-            return messages[:index]
-    return []
-
 def _tool_results_by_call_id(messages: list[Any]) -> dict[str, Any]:
     results: dict[str, Any] = {}
     for message in messages:

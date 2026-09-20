@@ -1,33 +1,30 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import anyio.to_thread
-
-from contextlib import asynccontextmanager
 import json
 import time
+from contextlib import asynccontextmanager
 
+import anyio.to_thread
 from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
-from typing import Optional
 
 from .conversations import create_conversation_router, sweep_abandoned_turns
 from .database import (
-    Base,
     DATABASE_URL,
+    Base,
     SessionLocal,
     build_engine,
     configured_max_concurrent_requests,
     engine,
 )
 from .migrations import (
-    expected_schema_version,
     cart_mutation_digest,
     ensure_cart_line_id_column,
-    ensure_price_column,
     ensure_product_id_column,
+    expected_schema_version,
     migrate_quantity_idempotency,
     run_schema_migrations,
 )
@@ -41,13 +38,11 @@ from .models import (
     SchemaMigration,
     ShopperProfile,
     User,
-    new_cart_line_id,
 )
 from .shopper_profiles import (
     bootstrap_shopper_profiles,
     create_shopper_profile_router,
 )
-
 
 __all__ = (
     "Base",
@@ -63,16 +58,6 @@ __all__ = (
     "User",
     "build_engine",
 )
-
-
-def _new_cart_line_id() -> str:
-    return new_cart_line_id()
-
-
-def _ensure_price_column() -> None:
-    """Idempotently add the price column for databases created before it existed."""
-    with engine.begin() as connection:
-        ensure_price_column(connection)
 
 
 def _ensure_cart_line_id_column() -> None:
@@ -130,13 +115,13 @@ class ContextUpdate(BaseModel):
 class ItemUpdate(BaseModel):
     item: str
     amount: int = Field(gt=0)
-    price: Optional[float] = None
+    price: float | None = None
     product_id: str = Field(..., min_length=1)
     idempotency_key: str = Field(..., min_length=1)
     #: None for one-size goods. Reaches both the merge key and the idempotency
     #: digest below, because two sizes of one product are two different things
     #: a shopper owns and two different mutations.
-    size: Optional[str] = Field(default=None, max_length=32)
+    size: str | None = Field(default=None, max_length=32)
 
 class CartRemoveUpdate(BaseModel):
     amount: int = Field(gt=0)
@@ -293,13 +278,13 @@ def report_cart(user_id: int, db=Depends(get_db)):
         return {
             "user_id": user_id,
             "cart": []
-        }      
+        }
     else:
         return {
             "user_id": user_id,
             "cart": [_cart_item_dict(item) for item in cart_items]
         }
-  
+
 @app.get("/user/{user_id}/context")
 def get_context(user_id: int, db=Depends(get_db)):
     user = db.query(User).filter(User.id == user_id).first()

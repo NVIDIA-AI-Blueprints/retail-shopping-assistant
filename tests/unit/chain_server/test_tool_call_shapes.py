@@ -6,7 +6,7 @@ around them. The call was rejected whole and the assistant told the shopper it
 could not complete a valid catalog search for a plainly named product.
 """
 
-from chain_server.src.turn_support import _one_scope_is_a_list_of_one
+from chain_server.src.tool_schemas import _one_scope_is_a_list_of_one
 
 
 def _wrapped(data):
@@ -78,9 +78,8 @@ def test_decoding_forgives_the_punctuation_and_nothing_else() -> None:
     """A malformed item must still fail: only the wrapper is forgiven."""
 
     import pytest as _pytest
-    from pydantic import ValidationError
-
     from chain_server.src.deepagents_runtime import AddCartItemsToolInput
+    from pydantic import ValidationError
 
     with _pytest.raises(ValidationError):
         AddCartItemsToolInput.model_validate({"items": "not json at all"})

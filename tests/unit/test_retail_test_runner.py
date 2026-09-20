@@ -9,7 +9,6 @@ from pathlib import Path
 
 import yaml
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RUNNER_PATH = REPO_ROOT / "skills" / "retail-test-runner" / "scripts" / "run_retail_tests.py"
 

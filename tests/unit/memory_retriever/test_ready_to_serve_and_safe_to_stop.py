@@ -21,16 +21,14 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
-
 from memory_retriever.src import main as memory_main
 from memory_retriever.src.migrations import (
     expected_schema_version,
     run_schema_migrations,
 )
-
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 

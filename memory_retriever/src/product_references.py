@@ -837,19 +837,6 @@ def _event_groups(payload_json: str) -> list[tuple[str, list[tuple[int, dict[str
     return [("", products)] if products else []
 
 
-def _event_products(payload_json: str) -> list[tuple[int, dict[str, Any]]]:
-    """Every recorded product with its number, the groups flattened away.
-
-    For the readers that want the turn's products and not its layout.
-    """
-
-    return [
-        numbered
-        for _heading, products in _event_groups(payload_json)
-        for numbered in products
-    ]
-
-
 def _entry_products(raw_products: Any) -> list[tuple[int, dict[str, Any]]]:
     """One recorded list of products, each with the place it was shown in.
 

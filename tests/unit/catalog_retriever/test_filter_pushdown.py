@@ -5,10 +5,6 @@
 
 from __future__ import annotations
 
-import json
-
-import pytest
-
 from catalog_retriever.src.retriever import Retriever
 from shared.commerce_contracts import CatalogFilterCapability
 

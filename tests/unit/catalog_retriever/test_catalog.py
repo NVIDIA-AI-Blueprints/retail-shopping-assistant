@@ -6,9 +6,7 @@ from __future__ import annotations
 import json
 
 import pytest
-
 from catalog_retriever.src.catalog import build_search_document, load_catalog
-
 
 SCHEMA = """
 record:

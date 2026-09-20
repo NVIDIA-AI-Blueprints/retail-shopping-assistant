@@ -17,12 +17,10 @@ from typing import Iterator
 
 import pytest
 from fastapi.testclient import TestClient
+from memory_retriever.src import main as memory_main
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import QueuePool, StaticPool
-
-from memory_retriever.src import main as memory_main
-
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 

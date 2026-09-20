@@ -8,7 +8,6 @@ from typing import Any
 
 import pytest
 import requests
-
 from chain_server.src.conversation_memory import (
     ConversationEvent,
     ConversationMemoryClient,

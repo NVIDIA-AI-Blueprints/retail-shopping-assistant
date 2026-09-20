@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pytest
 import yaml
-
 from shared.model_config import (
     ModelConfigError,
     model_config_snapshot,

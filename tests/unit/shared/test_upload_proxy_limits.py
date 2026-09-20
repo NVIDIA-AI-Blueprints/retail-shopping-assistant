@@ -8,7 +8,6 @@ import math
 import re
 
 import yaml
-
 from tests.conftest import REPO_ROOT
 
 

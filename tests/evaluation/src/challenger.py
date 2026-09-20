@@ -14,7 +14,8 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping, Optional, Protocol, Sequence
+from collections.abc import Mapping, Sequence
+from typing import Any, Optional, Protocol
 from urllib.parse import urlparse
 
 import requests

@@ -7,7 +7,8 @@ import json
 import sys
 from pathlib import Path
 from statistics import mean
-from typing import Any, Mapping, Optional, Protocol
+from collections.abc import Mapping
+from typing import Any, Optional, Protocol
 
 import yaml
 

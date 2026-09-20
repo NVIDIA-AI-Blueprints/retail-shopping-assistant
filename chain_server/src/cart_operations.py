@@ -595,7 +595,7 @@ def update_a_cart_line(
     """
 
     if size is not None and str(size).strip():
-        return change_a_line_size(runtime, state, identity, scope, 
+        return change_a_line_size(runtime, state, identity, scope,
             cart_line_id,
             quantity,
             str(size).strip(),

@@ -4,8 +4,8 @@ Performs quality testing given QA pairs, using an LLM.
 import json
 import os
 from collections import Counter
+from collections.abc import Sequence
 from datetime import datetime, timezone
-from typing import Dict, Sequence
 
 import yaml
 from openai import OpenAI
@@ -32,7 +32,7 @@ def _quality_output_dir(conversation: str, result_directory: str) -> str:
     return f"conversations/{conversation}/quality/{result_directory}"
 
 
-def _format_prior_turns(prior_turns: Sequence[Dict[str, str]] | None) -> str:
+def _format_prior_turns(prior_turns: Sequence[dict[str, str]] | None) -> str:
     if not prior_turns:
         return ""
 
@@ -135,8 +135,8 @@ def judge_test(
         answer: str, 
         ideal_answer: str,
         verbose: bool = True,
-        prior_turns: Sequence[Dict[str, str]] | None = None,
-        ) -> Dict[str, str]:
+        prior_turns: Sequence[dict[str, str]] | None = None,
+        ) -> dict[str, str]:
     
     if verbose:
         print("judge_test() | Starting judgement.")

@@ -1,10 +1,3 @@
-
-from pathlib import Path
-
-# Resolved from this file, not the working directory: CI runs pytest with
-# `working-directory: tests`, where a path relative to the repo root does not
-# exist. The rest of the suite already does this.
-_REPO_ROOT = Path(__file__).resolve().parents[3]
 """Naming a product by the catalog's own name for it is choosing it.
 
 "add the Southwest Bracelet" -- a real product, never shown in that
@@ -15,8 +8,14 @@ has no size to ask about. Four of the ten worst journeys fail on this shape.
 """
 
 import re
+from pathlib import Path
 
 from chain_server.src.turn_support import _ONE_SIZE, _advertised_sizes
+
+# Resolved from this file, not the working directory: CI runs pytest with
+# `working-directory: tests`, where a path relative to the repo root does not
+# exist. The rest of the suite already does this.
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 class _Product:

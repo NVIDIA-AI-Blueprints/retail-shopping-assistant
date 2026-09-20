@@ -2310,8 +2310,14 @@ class TestProductReferenceResolutionIsForgivingButNeverGuesses:
         assert result.matches == []
         assert result.corroboration_mismatch == []
 
-    def test_a_descriptor_with_no_ref_is_unchanged(self) -> None:
-        """Relaxation is earned by an identifier, not granted to every call."""
+    def test_the_catalog_s_own_name_identifies_as_well_as_the_ref(self) -> None:
+        """Relaxation is earned by an identifier -- and a name is one.
+
+        Neither a ref nor a display_name is the model's reading of the
+        shopper: one this system minted, the other the catalog's own. So the
+        name carries a descriptor with no ref exactly as far, and the
+        department named in the other vocabulary is set aside either way.
+        """
 
         from memory_retriever.src.product_references import _resolve_descriptor
 
@@ -2320,7 +2326,9 @@ class TestProductReferenceResolutionIsForgivingButNeverGuesses:
             [self._occurrence()],
         )
 
-        assert result.status == "not_found"
+        assert result.status == "resolved"
+        assert result.matches[0].product["display_name"] == "Ravenna Crossbody Bag"
+        assert result.corroboration_mismatch == ["category"]
 
     def test_diagnosis_never_resolves_the_product_it_found(self) -> None:
         from memory_retriever.src.product_references import _resolve_descriptor

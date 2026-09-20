@@ -37,7 +37,6 @@ from .tool_evidence import (
 )
 from .tool_loop_control import (
     _SERVER_REJECTED_TOOL_CALLS,
-    CONSTRAINT_REVIEW_PREFIX,
     SEARCH_VALIDATION_ERROR_PREFIX,
     SERVER_CATALOG_CLARIFICATION,
     SERVER_RESTORED_TOOL_CALL_FIELDS,
@@ -437,7 +436,6 @@ def _tool_rejection_reason(
             "invalid_catalog_request",
         ),
         (SEARCH_VALIDATION_ERROR_PREFIX, "invalid_catalog_request"),
-        (CONSTRAINT_REVIEW_PREFIX, "constraint_review_required"),
         (
             UNSUPPORTED_TAXONOMY_PREFIX,
             "unsupported_catalog_taxonomy",

@@ -37,7 +37,10 @@ from shared.commerce_contracts import (
 from .test_main import tool_text
 
 VALIDATION_ERROR = tool_loop_control.SEARCH_VALIDATION_ERROR_PREFIX
-CONSTRAINT_REVIEW = tool_loop_control.CONSTRAINT_REVIEW_PREFIX
+#: The prefix the retired constraint review used to answer with. It is written
+#: out rather than imported because the constant is gone; an assertion that it
+#: is absent is what keeps the review from quietly coming back.
+RETIRED_CONSTRAINT_REVIEW = "REVIEW_REQUIRED_CONSTRAINT:"
 FOUND_SOMETHING = "SEARCH_RESULT_GROUNDING_NOTE"
 FOUND_NOTHING = "SEARCH_NO_MATCH_GROUNDING_NOTE"
 
@@ -585,30 +588,21 @@ class TestARoleNothingGrounds:
 
 
 class TestARequirementTheTurnDoesNotSupport:
-    """An attribute the shopper never said earns one review before it ranks."""
+    """An attribute the catalog cannot filter on is searched on and disclosed.
 
-    def test_an_inferred_requirement_earns_a_review(self, a_turn) -> None:
-        turn = a_turn("build a rainy day outfit", skills=("outfit-styling",))
+    "Water resistance" for a rainy day is the model's inference, not something
+    the shopper said. It used to be sent back to be justified before any search
+    ran. It is not any more: the catalog cannot enforce it either way, so the
+    search proceeds and the reply is told it may not present the attribute as
+    confirmed.
+    """
 
-        answer = turn.search(
-            semantic_query="rainy day dresses",
-            shopper_guidance="A water-resistant trench keeps the shopper dry.",
-            requested_product_type="outerwear",
-            taxonomy={"category": ["apparel"], "subcategory": ["dresses"]},
-            required_constraints={"unadvertised_requirements": ["water resistance"]},
-            scope_complete=False,
-        )
-
-        assert answer.startswith(CONSTRAINT_REVIEW)
-        assert "do not match the current shopper turn" in answer
-        assert "Implied weather" in answer
-        assert turn.searches == 0
-
-    def test_the_repair_searches_and_loses_the_rejected_guidance(
+    def test_an_inferred_requirement_is_disclosed_rather_than_sent_back(
         self, a_turn
     ) -> None:
         turn = a_turn("build a rainy day outfit", skills=("outfit-styling",))
-        turn.search(
+
+        answer = turn.search(
             semantic_query="rainy day dresses",
             shopper_guidance="A water-resistant trench keeps the shopper dry.",
             requested_product_type="outerwear",
@@ -617,19 +611,47 @@ class TestARequirementTheTurnDoesNotSupport:
             scope_complete=False,
         )
 
+        assert RETIRED_CONSTRAINT_REVIEW not in answer
+        assert turn.searches == 1
+        assert FOUND_SOMETHING in answer
+
+    def test_the_disclosure_says_what_cannot_be_confirmed_and_not_to_refuse(
+        self, a_turn
+    ) -> None:
+        turn = a_turn("build a rainy day outfit", skills=("outfit-styling",))
+
         answer = turn.search(
-            semantic_query="practical rainy day dresses",
+            semantic_query="rainy day dresses",
             shopper_guidance="A water-resistant trench keeps the shopper dry.",
-            requested_product_type="dresses",
+            requested_product_type="outerwear",
             taxonomy={"category": ["apparel"], "subcategory": ["dresses"]},
-            required_constraints={},
+            required_constraints={"unadvertised_requirements": ["water resistance"]},
             scope_complete=False,
         )
 
-        assert FOUND_SOMETHING in answer
-        assert "Finding dresses for the shopper's request" in answer
+        assert "'water resistance' is not an advertised hard filter" in answer
+        assert "treat it as a ranking preference" in answer
+        assert "Do not refuse the request." in answer
+
+    def test_the_attribute_claim_does_not_survive_into_the_guidance(
+        self, a_turn
+    ) -> None:
+        # The search runs, but the sentence asserting the trench is water
+        # resistant is not evidence, and is replaced before it can be quoted.
+        turn = a_turn("build a rainy day outfit", skills=("outfit-styling",))
+
+        answer = turn.search(
+            semantic_query="rainy day dresses",
+            shopper_guidance="A water-resistant trench keeps the shopper dry.",
+            requested_product_type="outerwear",
+            taxonomy={"category": ["apparel"], "subcategory": ["dresses"]},
+            required_constraints={"unadvertised_requirements": ["water resistance"]},
+            scope_complete=False,
+        )
+
         assert "water-resistant trench" not in answer
-        assert turn.plan.semantic_queries == ["practical rainy day dresses"]
+        assert "Finding dresses for the shopper's request" in answer
+        assert turn.plan.semantic_queries == ["rainy day dresses"]
 
     def test_a_scrubbed_repair_carries_none_of_the_rejected_wording(
         self, a_turn

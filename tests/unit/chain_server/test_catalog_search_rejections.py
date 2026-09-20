@@ -260,28 +260,6 @@ GATE_CASES: tuple[GateCase, ...] = (
         ),
     ),
     (
-        SearchRejection.CONSTRAINT_REVIEW_REQUIRED,
-        "put together a work outfit",
-        None,
-        lambda ctx: None,
-        _scope(
-            required_constraints={
-                "unadvertised_requirements": ["waterproof lining"]
-            },
-        ),
-    ),
-    (
-        SearchRejection.REQUIREMENT_PROVENANCE_UNESTABLISHED,
-        "put together a work outfit",
-        None,
-        lambda ctx: ctx.scope.repair.constraint_reviewed_scopes.add("tote bag"),
-        _scope(
-            required_constraints={
-                "unadvertised_requirements": ["waterproof lining"]
-            },
-        ),
-    ),
-    (
         SearchRejection.UNSUPPORTED_CATALOG_TAXONOMY,
         "show me handbags",
         None,
@@ -361,30 +339,11 @@ class TestTheGatesThatWereRetired:
         assert _rejection_codes(result) == []
         assert "repair_changed_constraints" in caplog.text
 
-    def test_a_repair_that_changes_the_request_is_no_longer_turned_back(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        ctx = _context("show me tote bags", None)
-        ctx.scope.repair.pending_constraint_reviews.update(
-            {
-                "tote bag": {
-                    "requirements": ["laptop sleeve"],
-                    "taxonomy": {
-                        "category": [],
-                        "subcategory": ["crossbody_bags"],
-                    },
-                    "scope_complete": True,
-                    "search_mode": None,
-                    "required_constraints": {},
-                }
-            }
-        )
-
-        with caplog.at_level(logging.WARNING):
-            result = search_catalog(ctx, [_scope()])
-
-        assert _rejection_codes(result) == []
-        assert "constraint_repair_changed_request" in caplog.text
+    # The second gate of this pair has no test, and cannot have one. It asked
+    # whether a repair preserved a pending constraint review, and constraint
+    # reviews no longer exist -- nothing opens one, so nothing can arrive
+    # carrying one. That condition is unreachable by construction rather than
+    # merely unobserved, so it is not worth an observation either.
 
     def test_the_marker_is_one_string_a_run_can_be_grepped_for(self) -> None:
         # The check after a journey run is "this string is absent from the

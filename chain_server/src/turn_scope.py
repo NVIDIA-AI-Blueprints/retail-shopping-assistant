@@ -19,16 +19,15 @@ class CatalogRepairState:
     """Bookkeeping for at most one in-flight catalog-search repair.
 
     A rejected search may be repaired once. These fields remember what was
-    rejected so the repair cannot silently change product scope, drop
-    capability-validated constraints, or re-review a scope already reviewed.
+    rejected so the repair cannot silently change product scope or drop
+    capability-validated constraints.
+
+    The three fields that tracked constraint reviews are gone with the review
+    itself: an unenforceable requirement is now disclosed rather than sent
+    back to be justified, so there is no review to hold open.
     """
 
     failed_repair_scope_key: str | None = None
-    failed_constraint_scope_key: str | None = None
-    constraint_reviewed_scopes: set[str] = field(default_factory=set)
-    pending_constraint_reviews: dict[str, dict[str, Any]] = field(
-        default_factory=dict
-    )
     pending_taxonomy_constraints: dict[str, Any] | None = None
     pending_no_direct_constraint_clear: bool = False
     pending_schema_requirements: list[str] = field(default_factory=list)

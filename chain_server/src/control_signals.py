@@ -56,8 +56,9 @@ class SearchRejection(StrEnum):
     # something to explain.
     TAXONOMY_NOT_ADVERTISED_FOR_SCOPE = "taxonomy_not_advertised_for_scope"
     SHOPPER_SCOPE_TAXONOMY_MISMATCH = "shopper_scope_taxonomy_mismatch"
-    REQUIREMENT_PROVENANCE_UNESTABLISHED = "requirement_provenance_unestablished"
-    CONSTRAINT_REVIEW_REQUIRED = "constraint_review_required"
+    # The two codes for the constraint review are gone with the review. An
+    # unadvertised requirement is disclosed and ranked on now, never sent back
+    # to be justified, so neither code has anything left that can raise it.
     EXACT_TAXONOMY_NOT_ADVERTISED = "exact_taxonomy_not_advertised"
     ADVERTISED_MATCH_REPORTED_AS_GAP = "advertised_match_reported_as_gap"
 

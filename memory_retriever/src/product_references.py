@@ -471,6 +471,15 @@ def _matched_occurrences(
             for occurrence in occurrences
             if _identifier(occurrence.candidate_set_id) == newest
         ]
+
+    # Which showing the number counts in depends on whether the shopper named
+    # one. Which group it counts in does not: a number restarts under every
+    # heading in any showing. Narrowing the group only inside the branch above
+    # meant a descriptor that named the turn or the set skipped it, and naming
+    # the turn is the helpful thing to do -- both fields are offered. So a
+    # showing of sweaters and boots answered "that first one" with two
+    # products and a reference that could not be clearer became a question.
+    if descriptor.ordinal is not None and occurrences:
         occurrences = _the_group_the_ordinal_counts_in(descriptor, occurrences)
 
     matches_by_ref: dict[str, ProductReferenceMatch] = {}

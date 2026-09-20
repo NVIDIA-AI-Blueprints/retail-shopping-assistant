@@ -1214,6 +1214,56 @@ def test_a_bare_ordinal_takes_the_first_group_rather_than_asking(
     assert result["matches"][0]["product"]["display_name"] == "Coral Silk Maxi"
 
 
+def test_naming_the_showing_does_not_stop_the_number_finding_its_group(
+    conversation_db: TestClient,
+) -> None:
+    """Saying which turn is the helpful thing to do, and it cost the answer.
+
+    Which showing a number counts in depends on whether the shopper named one.
+    Which group it counts in does not. Narrowing the group only when neither
+    the turn nor the set was given meant the model volunteering either --
+    both are offered to it -- came back ambiguous over a showing of dresses
+    and shoes, and "that first one" turned into a question.
+    """
+
+    candidate_set_id = _a_dresses_and_shoes_showing(
+        conversation_db, "conversation-qualified-ordinal"
+    )
+
+    by_turn = _resolved(
+        conversation_db, "conversation-qualified-ordinal", ordinal=1, turn_sequence=1
+    )
+    by_set = _resolved(
+        conversation_db,
+        "conversation-qualified-ordinal",
+        ordinal=1,
+        candidate_set_id=candidate_set_id,
+    )
+
+    for result in (by_turn, by_set):
+        assert result["status"] == "resolved"
+        assert result["matches"][0]["product"]["display_name"] == "Coral Silk Maxi"
+
+
+def test_a_named_group_still_wins_when_the_showing_is_named_too(
+    conversation_db: TestClient,
+) -> None:
+    """"The second shoes, from that first lot" is still the shoes."""
+
+    _a_dresses_and_shoes_showing(conversation_db, "conversation-qualified-group")
+
+    result = _resolved(
+        conversation_db,
+        "conversation-qualified-group",
+        ordinal=2,
+        group="shoes",
+        turn_sequence=1,
+    )
+
+    assert result["status"] == "resolved"
+    assert result["matches"][0]["product"]["display_name"] == "Wine Red Pumps"
+
+
 def test_a_heading_the_record_does_not_know_still_resolves_by_number(
     conversation_db: TestClient,
 ) -> None:

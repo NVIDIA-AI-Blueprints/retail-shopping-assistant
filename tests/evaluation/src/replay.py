@@ -83,6 +83,12 @@ class TurnResult:
     ended: str = ""
     rejected: list[str] = field(default_factory=list)
     repeated: dict[str, int] = field(default_factory=dict)
+    #: The memory the turn was read against: the dialogue window and the
+    #: product index, exactly as the server rendered them. Reading a journey
+    #: means asking why a turn answered as it did, and half of that answer is
+    #: what it could see -- which used to be reconstructable only offline, and
+    #: only approximately, from the products a run happened to report.
+    memory: dict[str, str] = field(default_factory=dict)
 
 
 def scenario_identity(label: str, scenario_id: str, repeat: int) -> dict[str, Any]:
@@ -216,6 +222,11 @@ class Assistant:
                 for scope in ((call.get("arguments") or {}).get("scopes") or [])
             ],
             "token_usage": token_usage,
+            "memory": {
+                lane: text
+                for lane, text in (diagnostics.get("context_lanes") or {}).items()
+                if text
+            },
             "seconds": round(time.monotonic() - started, 1),
             # None if the turn produced no content at all, which is a failure
             # worth telling apart from a fast one rather than recording as 0.
@@ -729,6 +740,7 @@ def run_scenario(
             ended=str(answered.get("ended") or ""),
             rejected=answered.get("rejected") or [],
             repeated=answered.get("repeated") or {},
+            memory=answered.get("memory") or {},
         )
         turn.checks = [
             *check_turn(step.get("expect") or {}, turn, previous_cart, turns),
@@ -842,9 +854,40 @@ def write_transcript(
             mark = {"pass": "ok", "fail": "**FAILED**", "error": "error"}[check["outcome"]]
             detail = f" — {check['detail']}" if check["outcome"] != "pass" else ""
             lines.append(f"> {mark} `{check['name']}`{detail}")
+        lines += _memory_the_turn_read(turn.get("memory") or {})
         lines.append("")
 
     path.write_text("\n".join(lines))
+
+
+def _memory_the_turn_read(memory: Mapping[str, str]) -> list[str]:
+    """Render the lanes folded away, with their sizes on the outside.
+
+    Folded because these are long and every turn has them, and a transcript
+    that opens on twenty screens of dialogue window is one nobody reads to the
+    end. Sizes on the summary line because that is the number a reduction is
+    judged by, and it should not need a click.
+    """
+
+    if not memory:
+        return []
+    total = sum(len(text) for text in memory.values())
+    lines = [
+        "",
+        f"<details><summary>memory read this turn — {total:,} chars</summary>",
+        "",
+    ]
+    for lane, text in memory.items():
+        lines += [
+            f"**{lane}** ({len(text):,} chars)",
+            "",
+            "```",
+            text,
+            "```",
+            "",
+        ]
+    lines.append("</details>")
+    return lines
 
 
 def preflight(config: EvalConfig, scenarios: list[dict[str, Any]]) -> None:

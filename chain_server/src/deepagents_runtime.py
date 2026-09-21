@@ -1254,7 +1254,21 @@ class DeepAgentsRuntime:
     def _exposed_agent_diagnostics(self, output: State) -> dict[str, Any]:
         if not getattr(self.config, "expose_agent_diagnostics", False):
             return {}
-        return output.agent_diagnostics
+        # What the turn could see, beside what it did. Reviewing a journey
+        # means asking both, and the lanes could only be reconstructed
+        # offline and approximately -- from the products a run happened to
+        # report rather than from the projection the turn actually read.
+        lanes = {
+            lane: text
+            for lane, text in (
+                ("dialogue", output.dialogue_context),
+                ("historical_product_index", output.historical_product_index),
+            )
+            if text
+        }
+        if not lanes:
+            return output.agent_diagnostics
+        return {**output.agent_diagnostics, "context_lanes": lanes}
 
     async def astream(
         self,
@@ -3584,12 +3598,14 @@ Rules:
             for entry in (turn.projection.product_reference_index or [])
             if isinstance(entry, dict)
         ]
-        historical_products = format_historical_product_index(
+        state.historical_product_index = format_historical_product_index(
             turn.projection.product_reference_index
         )
-        if historical_products:
+        if state.historical_product_index:
             state.context = "\n\n".join(
-                value for value in (state.context, historical_products) if value
+                value
+                for value in (state.context, state.historical_product_index)
+                if value
             )
         state.cart = Cart(
             contents=[

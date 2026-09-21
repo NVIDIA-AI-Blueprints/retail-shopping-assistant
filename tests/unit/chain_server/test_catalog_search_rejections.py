@@ -1052,6 +1052,168 @@ def _judge_answering_colours(
     return SimpleNamespace(judge=lambda *_args, **_kwargs: verdict)
 
 
+def test_a_department_chosen_for_the_shopper_reaches_the_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End to end, on a catalog that does not call its field `category`.
+
+    "Nothing over $50" names no product type, so one department is a choice
+    made for the shopper, and the turn has to say so and must not call the
+    result the whole shop. The disclosure is derived from the taxonomy
+    evidence, which is keyed by the catalog's own field names -- `department`
+    here -- so reading it by the generic role name finds nothing at all.
+    """
+
+    def _one_product(*_args: Any, **_kwargs: Any) -> Any:
+        return SimpleNamespace(
+            result=SearchCatalogResult(
+                ok=True,
+                products=[
+                    ProductSummary(
+                        product_id="generated:1",
+                        display_name="Ombre Canvas Tote Bag",
+                        price=Money(amount=49.99),
+                    )
+                ],
+            ),
+            fallback_attempted=False,
+            fallback_used=False,
+        )
+
+    monkeypatch.setattr(catalog_search_mod, "execute_catalog_search", _one_product)
+
+    result = search_catalog(
+        _context("nothing over $50"),
+        [
+            _scope(
+                semantic_query="affordable pieces",
+                requested_product_type=None,
+                taxonomy={
+                    "category": ["bags"],
+                    "subcategory": ["tote_bags", "crossbody_bags"],
+                },
+                required_constraints={"price": {"max": 50}},
+            )
+        ],
+    )
+
+    text = result[0] if isinstance(result, tuple) else result
+    assert "CATEGORY CHOSEN FOR THEM" in text
+    assert "bags" in text
+    assert "do not describe them as everything" in text
+
+
+def test_a_product_the_filter_removed_reaches_the_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End to end: the catalog excludes it, the turn is told about it.
+
+    Without this the turn holds four bracelets under budget and no way to
+    know a fifth exists above it, which is how "is the Southwest Bracelet
+    within that" was answered with "this shop does not have one".
+    """
+
+    def _with_a_near_miss(*_args: Any, **_kwargs: Any) -> Any:
+        return SimpleNamespace(
+            result=SearchCatalogResult(
+                ok=True,
+                products=[],
+                excluded_near_miss=ProductSummary(
+                    product_id="generated:1",
+                    display_name="Southwest Bracelet",
+                    price=Money(amount=169.99),
+                ),
+            ),
+            fallback_attempted=False,
+            fallback_used=False,
+        )
+
+    monkeypatch.setattr(
+        catalog_search_mod, "execute_catalog_search", _with_a_near_miss
+    )
+
+    result = search_catalog(
+        _context("is the Canvas Weekender within that"),
+        [
+            _scope(
+                semantic_query="Canvas Weekender",
+                required_constraints={"price": {"max": 110.01}},
+            )
+        ],
+    )
+
+    text = result[0] if isinstance(result, tuple) else result
+    assert "EXCLUDED BY A FILTER ON THIS SEARCH" in text
+    assert "Southwest Bracelet" in text
+    assert "169.99" in text
+
+
+def _judge_recording_words(
+    scopes: dict[str, list[str]],
+    asked: list[str],
+) -> SimpleNamespace:
+    """A judge that answers from `scopes` and records what it was asked."""
+
+    def _judge(questions: Any, *_args: Any, **_kwargs: Any) -> VocabularyVerdict:
+        asked.extend(question.requested_product_type for question in questions)
+        return VocabularyVerdict(scopes=scopes)
+
+    return SimpleNamespace(judge=_judge)
+
+
+def test_a_request_naming_no_product_type_is_not_judged_as_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The judge answers about words the shopper said, and only those.
+
+    "Nothing over $50" names no product type. Required to send one anyway, the
+    model sent "items", and the judge -- correctly, for a question it should
+    never have been asked -- reported that this catalogue sells no such thing.
+    The shopper was told the shop had nothing for them while four tote bags
+    under fifty dollars sat behind a search that never ran.
+
+    A word the shopper really did say is unaffected, and the second scope here
+    is the case the judge exists for: jeans are asked about, named nothing,
+    and answered as not carried.
+    """
+
+    searched: list[str] = []
+
+    def _record(plan: Any, *_args: Any, **_kwargs: Any) -> Any:
+        searched.extend(plan.semantic_queries)
+        return _no_products()
+
+    monkeypatch.setattr(catalog_search_mod, "execute_catalog_search", _record)
+
+    asked: list[str] = []
+    ctx = replace(
+        _context("nothing over $50, and some jeans"),
+        vocabulary_judge=_judge_recording_words({"jeans": []}, asked),
+    )
+
+    result = search_catalog(
+        ctx,
+        [
+            _scope(
+                semantic_query="affordable pieces",
+                requested_product_type=None,
+                taxonomy={"category": [], "subcategory": []},
+                required_constraints={"price": {"max": 50}},
+            ),
+            _scope(
+                semantic_query="jeans",
+                requested_product_type="jeans",
+                taxonomy={"category": ["apparel"], "subcategory": ["skirts"]},
+            ),
+        ],
+    )
+
+    assert asked == ["jeans"]
+    assert searched == ["affordable pieces"]
+    text = result[0] if isinstance(result, tuple) else result
+    assert "jeans" in text.lower()
+
+
 def test_an_unlisted_colour_word_filters_on_the_ones_it_could_mean(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

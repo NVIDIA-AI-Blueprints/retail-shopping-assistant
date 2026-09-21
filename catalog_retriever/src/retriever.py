@@ -78,6 +78,16 @@ class RetrievalOutput:
     products: list[dict[str, Any]] = field(default_factory=list)
     diagnostics: dict[str, Any] = field(default_factory=dict)
     no_result_reason: str | None = None
+    #: The best candidate a hard filter removed, when one was removed. Not a
+    #: result: it does not satisfy the search and must never be offered as
+    #: though it did. It is here because a filtered search cannot answer a
+    #: question about the filter. Asked whether a $169.99 bracelet fits a $150
+    #: budget, a turn searched bracelets under the remaining $110.01, and the
+    #: bracelet -- retrieved, ranked, then dropped by the price filter -- came
+    #: back absent, so the shopper was told this shop does not stock it. A
+    #: filter makes "no, it is over your budget" the one answer the search can
+    #: never return, and that is the answer they asked for.
+    excluded_near_miss: dict[str, Any] | None = None
 
     def __iter__(self):
         yield self.texts
@@ -912,11 +922,7 @@ class Retriever:
         seen_ids = set()
         final_results = []
         for res in interleaved_results:
-            pk_value = res[0].metadata.get("pk")
-            product_id = res[0].metadata.get(self.product_id_field)
-            id_ = str(product_id) if product_id is not None else (
-                str(pk_value) if pk_value is not None else None
-            )
+            id_ = self._result_id(res)
             if id_ is not None and id_ not in seen_ids:
                 seen_ids.add(id_)
                 final_results.append(res)
@@ -947,6 +953,10 @@ class Retriever:
             canonical=True,
         )
         diagnostics["after_filter_count"] = len(filtered_results)
+        excluded_near_miss = self._best_candidate_the_filters_removed(
+            candidate_results,
+            filtered_results,
+        )
         # The Python matcher still runs, and for anything the database decided
         # it must now find nothing left to remove. A non-zero count here means
         # the expression and the matcher disagree, which is a defect worth
@@ -966,6 +976,7 @@ class Retriever:
             return RetrievalOutput(
                 diagnostics=diagnostics,
                 no_result_reason="filtered_out",
+                excluded_near_miss=excluded_near_miss,
             )
 
         thresholded_results = [
@@ -1029,7 +1040,44 @@ class Retriever:
             images=final_images,
             products=final_products,
             diagnostics=diagnostics,
+            excluded_near_miss=excluded_near_miss,
         )
+
+    def _result_id(self, res: Any) -> str | None:
+        """The catalog id for a retrieval hit, or the primary key behind it."""
+
+        product_id = res[0].metadata.get(self.product_id_field)
+        if product_id is not None:
+            return str(product_id)
+        pk_value = res[0].metadata.get("pk")
+        return str(pk_value) if pk_value is not None else None
+
+    def _best_candidate_the_filters_removed(
+        self,
+        candidates: list,
+        kept: list,
+    ) -> dict[str, Any] | None:
+        """The highest-scoring candidate the hard filters took out.
+
+        One, not the whole excluded tail. This exists so a turn can answer "it
+        is $169.99, over your budget" rather than "we do not stock it", and the
+        nearest match is what answers that; returning everything the filter
+        removed would attach a catalog's worth of over-budget product to every
+        search a budget shopper makes.
+
+        The similarity threshold is deliberately not applied here. A question
+        about one specific thing should not go unanswered because the words
+        used to ask for it scored poorly against its description, which is the
+        failure this whole path exists to stop.
+        """
+
+        kept_ids = {self._result_id(res) for res in kept}
+        excluded = [
+            res for res in candidates if self._result_id(res) not in kept_ids
+        ]
+        if not excluded:
+            return None
+        return self._product_payload_from_result(max(excluded, key=lambda r: r[1]))
 
     @staticmethod
     def _coerce_float(value: Any) -> float | None:

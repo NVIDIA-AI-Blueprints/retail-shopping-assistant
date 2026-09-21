@@ -73,6 +73,7 @@ from .response_format import (
     SEARCH_RESULT_ATTRIBUTE_LIMIT_NOTE,
     _format_catalog_scope_outcome,
     _format_colour_words_read_as_advertised_ones,
+    _format_excluded_near_miss,
     _format_product_record,
     _format_search_composed_role_evidence,
     _format_search_direction_evidence,
@@ -1909,6 +1910,13 @@ def _rendered_evidence(ctx: SearchContext, attempt: _Attempt) -> StepResult:
         )
         if colour_note:
             lines.append(colour_note)
+        # Nothing came back, and a filter is why. "We have no bracelet under
+        # $110" and "we have no such bracelet" are different answers, and the
+        # products cannot tell them apart because the filter removed the one
+        # that would have.
+        near_miss_note = _format_excluded_near_miss(result.excluded_near_miss)
+        if near_miss_note:
+            lines.append(near_miss_note)
         if scope_relation_evidence:
             lines.append(scope_relation_evidence)
         if evidence.confirmed_filters:
@@ -1989,6 +1997,12 @@ def _rendered_evidence(ctx: SearchContext, attempt: _Attempt) -> StepResult:
     )
     if colour_note:
         lines.append(colour_note)
+    # Results came back, and the one the shopper asked about may not be among
+    # them because the filter removed it. Four bracelets under budget are no
+    # evidence at all about a fifth that is over it.
+    near_miss_note = _format_excluded_near_miss(result.excluded_near_miss)
+    if near_miss_note:
+        lines.append(near_miss_note)
     if scope_relation_evidence:
         lines.append(scope_relation_evidence)
     if evidence.confirmed_filters:
@@ -2005,7 +2019,9 @@ def _rendered_evidence(ctx: SearchContext, attempt: _Attempt) -> StepResult:
             lines.append(
                 f"CATEGORY CHOSEN FOR THEM: the shopper named no product type, "
                 f"so these are {chosen} only. Say so, and offer the other "
-                "departments."
+                "departments. These are not everything this shop has under "
+                "the filter -- only everything in this one department -- so "
+                "do not describe them as everything, all, or the whole shop."
             )
     if evidence.unconfirmed_requirements:
         lines.append(
@@ -2244,11 +2260,24 @@ def _a_category_the_shopper_did_not_name(evidence: Any, attempt: Any) -> str:
     taxonomy = getattr(evidence, "taxonomy", None) or {}
     if not isinstance(taxonomy, dict):
         return ""
+    # The category list, under whatever the catalog calls that field. This
+    # evidence is keyed by the catalog's own field names, not by the generic
+    # roles the model selects with, so the name has to be read from the
+    # capabilities rather than assumed.
+    #
+    # Flattened across every list here, as this was, it counted subcategories
+    # too and wanted exactly one value in total -- so it fired for a bare
+    # category and went quiet the moment the scope named what was under it,
+    # which is what browsing a department looks like. "Nothing over $50"
+    # searched bags and two of its subcategories, disclosed nothing, and the
+    # reply introduced four bags as everything in the shop under fifty
+    # dollars. Forty-three products qualified, across all five departments.
+    capabilities = getattr(attempt, "capabilities", None)
+    field = getattr(getattr(capabilities, "taxonomy", None), "category_field", None)
+    if not field:
+        return ""
     categories = [
-        str(value)
-        for values in taxonomy.values()
-        if isinstance(values, list)
-        for value in values
+        str(value) for value in (taxonomy.get(field) or []) if str(value).strip()
     ]
     return categories[0] if len(categories) == 1 else ""
 

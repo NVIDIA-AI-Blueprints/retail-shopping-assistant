@@ -228,6 +228,7 @@ async def query_text(req: TextQueryRequest):
         "products": result.products,
         "diagnostics": result.diagnostics,
         "no_result_reason": result.no_result_reason,
+        "excluded_near_miss": result.excluded_near_miss,
     }
 
 # Handles queries containing text and b64 images.
@@ -256,6 +257,7 @@ async def query_image(req: ImageQueryRequest):
         "products": result.products,
         "diagnostics": result.diagnostics,
         "no_result_reason": result.no_result_reason,
+        "excluded_near_miss": result.excluded_near_miss,
     }
 
 @app.get("/ready")

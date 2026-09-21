@@ -176,6 +176,44 @@ def _format_colour_words_read_as_advertised_ones(
     )
 
 
+def _format_excluded_near_miss(near_miss: Any) -> str:
+    """Say what the filter removed, so a question about the filter can be answered.
+
+    A filtered search can confirm that something fits and can never report
+    that it does not. Asked whether a $169.99 bracelet was inside a $150
+    budget, a turn searched bracelets under the $110.01 still unspent; the
+    bracelet was retrieved, ranked, and dropped by the filter, and its absence
+    from the results was read as absence from the shop. The shopper was told
+    this catalog does not stock a product it sells.
+
+    It is evidence and not a result. It fails the search it came from, so it
+    is not offered, not counted and not shown -- it is here to be *told*
+    about, which is what was asked for.
+    """
+
+    if near_miss is None:
+        return ""
+    name = str(getattr(near_miss, "display_name", "") or "").strip()
+    if not name:
+        return ""
+    payload: dict[str, Any] = {"display_name": name}
+    price = getattr(near_miss, "price", None)
+    amount = getattr(price, "amount", None)
+    if amount is not None:
+        # The number, not the Money object. The price is the whole point of
+        # this line -- it is what the shopper asked about -- and serialising
+        # the wrapper puts a currency field between them and the answer.
+        payload["price"] = amount
+    return (
+        "EXCLUDED BY A FILTER ON THIS SEARCH: "
+        + json.dumps(payload, sort_keys=True, default=str)
+        + " -- this product exists in the catalog and does not satisfy the "
+        "filter, which is why it is not among the results. It is not an "
+        "option and must not be offered or listed as one. State it only to "
+        "answer what was asked: never say this shop has no such product."
+    )
+
+
 def _format_search_taxonomy_evidence(taxonomy: dict[str, Any]) -> str:
     """Format the advertised taxonomy scope used by a successful search."""
 
